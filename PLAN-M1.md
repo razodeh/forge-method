@@ -1,0 +1,425 @@
+# PLAN-M1 — Foundations: repo, schemas, core domain
+
+Source: `specs/22` M1. **Build:** monorepo per `02` §2.2; `@forge/schemas`; `@forge/core`; the
+dependency-boundary lint. **Do not build:** engine, adapters, TUI, KB retrieval, any agent.
+
+Fourteen pieces, dependency-ordered. Each has its own public surface, its own tests, and a
+one-sentence mandate, so each can be judged alone against `QUALITY-BAR.md`. Production-code budget is
+≤ ~400 lines per piece (data files and generated JSON Schemas excluded from the count; tests
+excluded).
+
+Legend: **Surface** = what the piece exports. **Checks** = the acceptance evidence a judge reads.
+
+---
+
+## P1 — Workspace scaffold and the deterministic floor
+
+**Mandate:** make `pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm boundaries` real,
+and make every test run deterministically by construction.
+
+**Spec:** `02` §2.1 (tech choices), `02` §2.2 (layout), `21` §21.1 (determinism, no-network).
+
+**Surface:** no runtime exports. `pnpm-workspace.yaml`, `turbo.json`, `tsconfig.base.json`
+(strict, ESM, `NodeNext`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`), root
+`package.json` scripts, `eslint.config.js` (flat, v9), `.prettierrc`, `.changeset/config.json`,
+`vitest.workspace.ts`, `test/setup.ts`, `.github/workflows/ci.yml` (ubuntu + windows, node 20/22/24).
+
+**Checks:**
+- All five floor commands exit 0 on the empty workspace.
+- `test/setup.ts` sets `TZ=UTC`, pins `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and installs a `fetch`
+  interceptor that throws a named error on any outbound request; a test asserts the interceptor
+  throws when `fetch` is called.
+- Coverage thresholds are configured per `QUALITY-BAR.md` §3 and a deliberately uncovered line fails
+  the run.
+- CI matrix includes `windows-latest`.
+
+**Depends on:** nothing.
+
+---
+
+## P2 — Dependency-boundary enforcement
+
+**Mandate:** make an upward or undeclared cross-package import fail CI, from a single declaration of
+the `02` §2.2 graph.
+
+**Spec:** `02` §2.2 (dependency rules), `21` §21.3.
+
+**Surface:** `tools/eslint-plugin-forge-boundaries/`
+- `PACKAGE_GRAPH: Readonly<Record<ForgePackage, readonly ForgePackage[]>>` — the §2.2 table, one
+  declaration, no duplication.
+- rule `no-undeclared-package-import` — an import of `@forge/x` from package `y` is an error unless
+  `x ∈ PACKAGE_GRAPH[y]`.
+- rule `no-deep-package-import` — importing past another package's declared entry points is an error.
+- rule `no-platform-concept` — the tokens `claude`, `subagent`, and model identifiers outside
+  `packages/adapter-*` are an error (`mcp` carved out per `SPEC-QUESTIONS.md` Q2).
+- `scripts/check-boundaries.mjs` → `pnpm boundaries`, a second non-eslint check over the built
+  `package.json` dependency fields.
+
+**Checks:**
+- `RuleTester` cases for each rule: a valid import, an upward import, a sibling-but-undeclared
+  import, a deep import, a relative `../../<pkg>` escape.
+- A fixture package declaring `core → engine` fails `pnpm boundaries` with a non-zero exit and names
+  both packages.
+- `PACKAGE_GRAPH` matches `02` §2.2 exactly — a test asserts every row and rejects extra keys.
+
+**Depends on:** P1.
+
+---
+
+## P3 — `ForgeError` taxonomy
+
+**Mandate:** one error type that every FORGE failure uses, carrying a code, a severity, an actionable
+remedy, and the process exit code it maps to.
+
+**Spec:** `02` §2.6 (taxonomy, code prefixes, exit codes).
+
+**Surface:** `@forge/core/errors`
+- `type ErrorCodePrefix = 'CFG'|'ENV'|'ADP'|'VCS'|'SPEC'|'KB'|'GATE'|'RUN'|'BUD'|'USR'` (literal
+  union, per R1).
+- `type ForgeErrorCode = \`${ErrorCodePrefix}-${string}\`` with a registry of every declared code.
+- `type ErrorSeverity = 'fatal'|'error'|'warning'`.
+- `class ForgeError extends Error { readonly code; readonly severity; readonly remedy: string;
+  readonly docsUrl: string; readonly details: Readonly<Record<string, unknown>>; readonly cause?:
+  unknown; toJSON(): ForgeErrorJson }`.
+- `function exitCodeFor(error: unknown): ExitCode` implementing `0/1/2/3/4/5/6/130`.
+- `function isForgeError(value: unknown): value is ForgeError`.
+- `function formatForTerminal(error: ForgeError, opts: { color: boolean; ascii: boolean }): string`.
+
+**Checks:**
+- Constructing a `ForgeError` without a non-empty `remedy` is a *type* error and a runtime error
+  (test asserts both).
+- Every code in the registry has a prefix from the union, a remedy template, and a `docsUrl`; a test
+  iterates the whole registry.
+- `exitCodeFor` maps each documented case: gate failure → 3, budget → 4, env/prereq → 5, lock → 6,
+  interrupt → 130, usage → 2, unknown non-Forge throwable → 1.
+- `toJSON()` round-trips and never includes a stack in the serialised payload.
+- A wrapped `cause` is preserved and rendered, without leaking the cause's stack into `remedy`.
+
+**Depends on:** P1, P2.
+
+---
+
+## P4 — Atomic filesystem helpers with path containment
+
+**Mandate:** every write to a host project is contained, deny-listed, and atomic — no partial file is
+ever observable.
+
+**Spec:** `02` §2.5 (I/O safety), `18` §18.10 (atomic writes, fsync).
+
+**Surface:** `@forge/core/fs`
+- `class ProjectPaths { constructor(root: string); resolveWithin(relative: string): AbsolutePath }` —
+  rejects `..` traversal, absolute escapes, and symlink escapes (checked with `realpath` on the
+  resolved parent), on both POSIX and Windows path shapes.
+- `const DENIED_PREFIXES` — `.git/`, `.forge/state/`, `node_modules/`.
+- `writeFileAtomic(path: AbsolutePath, contents: string | Uint8Array): Promise<void>` — temp file in
+  the same directory → `fsync(file)` → `rename` → `fsync(dir)`.
+- `readTextFile`, `pathExists`, `ensureDir`, `listDirSorted` (explicit `localeCompare`-free byte
+  sort, per R10).
+- All failures are `ForgeError` with `CFG-`/`RUN-` codes.
+
+**Checks:**
+- Escape attempts rejected with the documented code: `../../etc/passwd`, `/etc/passwd`,
+  `C:\\Windows\\system32`, a symlink inside the project pointing outside it.
+- Deny-list rejection for each of the three prefixes, including nested paths.
+- Atomicity: a write interrupted after the temp write but before rename leaves the destination at its
+  previous content, and no temp file is left behind after a successful write.
+- fsync ordering asserted by spying on the `fs` handle: `fsync` resolves before `rename` is called.
+- `listDirSorted` returns byte-sorted order regardless of the order the FS reports.
+- Every path is built with `node:path`; a lint assertion forbids `'/'` string concatenation.
+
+**Depends on:** P3.
+
+---
+
+## P5 — Base front matter and the artifact type registry
+
+**Mandate:** one canonical front-matter base and one machine-readable registry of the 22 artifact
+types, from which paths, ID widths and parent edges are derived.
+
+**Spec:** `18` §18.6 (canonical front matter), `18` §18.7 (registry), `09` §9.2 (ID rules).
+
+**Surface:** `@forge/schemas/registry`
+- `baseFrontMatterSchema` — `id` (`^[A-Z]+-\d{3,4}(-\d+)?$`), `type`, `schemaVersion`, `title`,
+  `status`, `created`, `updated`, `revision`, `author`, `run?`, `changelog[]`.
+- `ARTIFACT_TYPES: readonly ArtifactTypeDefinition[]` — the §18.7 table verbatim, with
+  `id`, `idPrefix`, `pathTemplate`, `idWidth` (default 3, ADR 4), `parent?`, `cardinality?`,
+  `collection?`, `requiredSections: readonly string[]`.
+- `type ArtifactTypeId` — literal union of the 22 ids.
+- `renderArtifactPath(type, vars): string` — pure, POSIX-only (repo-relative IDs per `02` §2.7).
+- `artifactTypeByPrefix(prefix)`, `artifactTypeById(id)`.
+
+**Checks:**
+- A test asserts the registry equals the §18.7 table row-for-row (all 22 types, prefixes, paths,
+  parents, cardinality, collection flags) and rejects unknown keys.
+- Prefixes are unique; `idWidth` is 4 for ADR and 3 elsewhere unless declared.
+- `renderArtifactPath` rejects an unsubstituted placeholder rather than emitting `{id}` literally.
+- Valid and invalid base front-matter fixtures, each invalid one asserting the **error path**
+  (`21` §21.3) — not merely that it failed.
+
+**Depends on:** P1, P2.
+
+---
+
+## P6 — Spec artifact schemas
+
+**Mandate:** zod schemas for the eight spec-side artifact types, enforcing the rules `09` states as
+validation errors.
+
+**Spec:** `09` §9.3 (Vision, Capability, NFR, Epic, Story, Task), `09` §9.6 (InterfaceContract,
+DataModel), `09` §9.5 (AC ids).
+
+**Surface:** `@forge/schemas/artifacts` — `visionSchema`, `capabilitySchema`, `nfrSchema`,
+`epicSchema`, `storySchema`, `taskSchema`, `interfaceContractSchema`, `dataModelSchema`, plus the
+inferred types and `acceptanceCriterionSchema`.
+
+**Checks:**
+- **A non-numeric NFR target is a validation error** (`09` §9.3: "should be fast" is refused) —
+  asserted with the error path.
+- Story: `size: L` is accepted at `status: draft` and refused at `status: ready`; `files_expected`
+  non-empty for `ready`; every AC is Given/When/Then with a `kind`; AC ids match
+  `^AC-\d{3,4}-\d+$` and are unique within the story.
+- Capability `priority` is the MoSCoW literal union; `stage` required.
+- Every schema: a valid fixture passes and at least three invalid fixtures fail with the expected
+  error path.
+
+**Depends on:** P5.
+
+---
+
+## P7 — KB, session and report artifact schemas
+
+**Mandate:** zod schemas for the remaining fourteen registry types, including the ADR and Diagram
+shapes that other milestones' gates depend on.
+
+**Spec:** `18` §18.7, `08` §8.4 (ADR), `08` §8.11.5 (Diagram), `09` §9.2.
+
+**Surface:** `@forge/schemas/artifacts` — `adrSchema`, `diagramSchema`, `riskSchema`,
+`assumptionSchema`, `openQuestionSchema`, `waiverSchema`, `sessionRecordSchema`, `rcaSchema`,
+`defectSchema`, `environmentSchema`, `runbookSchema`, `gateReportSchema`, `handoffRecordSchema`.
+
+**Checks:**
+- ADR: `reversibility` and `status` are the literal unions from `08` §8.4; `revisit_trigger`
+  required; `superseded_by` and `supersedes` are mutually consistent (a test asserts the refusal).
+- Diagram: `caption` and `alt_text` are **required** (`08` §8.11.5) — asserted with the error path;
+  `generated: true` requires a `generator`.
+- Waiver requires a reason, an owner and an expiry (`specs/22` M5 depends on this).
+- Collection-type artifacts (Risk, Assumption, OpenQuestion, Waiver, Environment, HandoffRecord)
+  validate as entries within one file, not as whole documents.
+- Valid + ≥3 invalid fixtures per schema, each asserting the error path.
+
+**Depends on:** P5.
+
+---
+
+## P8 — Configuration schema
+
+**Mandate:** the whole of `.forge/config.yaml` as one zod schema with a documented default for every
+key and no undocumented keys.
+
+**Spec:** `18` §18.3 (canonical config), `02` §2.8 (precedence — schema only; resolution is M2).
+
+**Surface:** `@forge/schemas/config` — `configSchema`, `type ForgeConfig`, `DEFAULT_CONFIG`,
+`CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>>`.
+
+**Checks:**
+- The canonical YAML block from §18.3 parses and validates unchanged (golden fixture).
+- Unknown keys are refused, not ignored (`strict()`), with the offending path in the error.
+- Every leaf key has an entry in `CONFIG_KEY_DOCS` and a default — a test walks the schema and fails
+  on any key missing either. This is what makes `forge config explain` possible in M2.
+- Enum keys (`level`, `mode`, `autonomy`, `onBreach`, `conflictPolicy`, `driftPolicy`,
+  `destructiveOps`, `secretSource`, `retainLaneWorktrees`, `render`) are literal unions; an invalid
+  member fails with the key path.
+- `redactPatterns` entries compile as regular expressions; an invalid pattern is a validation error.
+
+**Depends on:** P5.
+
+---
+
+## P9 — JSON Schema emission and drift assertion
+
+**Mandate:** every zod schema has a committed, byte-stable JSON Schema, and a drifted one fails CI.
+
+**Spec:** `02` §2.1 (`zod-to-json-schema`), `specs/22` M1 exit test
+(`node -e "require('./scripts/assert-schema-drift.mjs')"`).
+
+**Surface:** `@forge/schemas/json-schema`
+- `emitJsonSchemas(): ReadonlyMap<SchemaFileName, string>` — deterministic: sorted keys, `\n` line
+  endings, trailing newline, no timestamps, no absolute paths.
+- `scripts/emit-schemas.mjs` (writes `packages/schemas/json/*.schema.json`) and
+  `scripts/assert-schema-drift.mjs` (exits non-zero, printing the diff, when committed ≠ emitted).
+
+**Checks:**
+- Emitting twice in the same process and in two processes produces byte-identical output.
+- Every registry type and the config schema has an emitted file; a test asserts the file set matches
+  the schema set exactly, in both directions.
+- Mutating a committed file makes the drift script exit non-zero and name the file.
+- The exit test from `specs/22` M1 runs verbatim and passes.
+
+**Depends on:** P6, P7, P8.
+
+---
+
+## P10 — Migration runner
+
+**Mandate:** run ordered, pure schema migrations across a document, with reversible ones proven to
+round-trip.
+
+**Spec:** `18` §18.9.
+
+**Surface:** `@forge/schemas/migrations`
+- `interface Migration { from: number; to: number; types: readonly ArtifactTypeId[];
+  description: string; reversible: boolean; up(doc: MigratableDocument): MigratableDocument;
+  down?(doc: MigratableDocument): MigratableDocument }`.
+- `planMigrations(type, fromVersion, toVersion): readonly Migration[]` — resolves the chain or fails.
+- `applyMigrations(doc, plan): MigrationResult` — pure; no FS, no network.
+- `MIGRATIONS: readonly Migration[]` (empty at M1 beyond the fixtures, since schemaVersion starts
+  at 1 — the runner and its tests are what M1 delivers).
+
+**Checks:**
+- A chain spanning two versions applies in order; a gap in the chain is refused with a `CFG-` coded
+  failure naming the missing step.
+- `reversible: true` migrations round-trip on a real "before" fixture (golden-file `before` → `after`
+  → `before`).
+- `reversible: false` with a `down` is refused at registration; `reversible: true` without a `down`
+  is refused.
+- Purity: a migration that touches the FS or the clock is caught by the harness (the runner passes a
+  frozen document and asserts the input object is not mutated).
+- Migrating a type not in `migration.types` is a no-op, not a silent corruption.
+
+**Depends on:** P5, P9.
+
+---
+
+## P11 — Template stubs for every artifact type
+
+**Mandate:** every registry type has a template whose front matter validates against its schema and
+whose headings are exactly its `requiredSections`.
+
+**Spec:** `specs/22` M1 acceptance ("a template stub" per type), `18` §18.6 (two-phase validation).
+
+**Surface:** `@forge/templates` (data package; `templates ←` no forge code deps)
+- `templates/artifacts/<TypeId>.md` — 22 files.
+- `TEMPLATE_INDEX: Readonly<Record<ArtifactTypeId, string>>` resolving type → file path.
+
+**Checks:**
+- A single table-driven test over all 22 types: the template exists, its front matter validates
+  against that type's schema, and its `##` headings equal the type's `requiredSections` in order.
+- Templates contain no `TODO`/`FIXME` (R7) — placeholders use an explicit `<…>` angle-bracket
+  convention, matching the spec pack's own style.
+- Handlebars placeholders parse in strict mode with the declared helper set only.
+
+**Depends on:** P6, P7.
+
+---
+
+## P12 — Artifact model and front-matter round-trip
+
+**Mandate:** read and write an artifact file such that a no-op edit is byte-identical, and a
+front-matter change preserves every unrelated byte.
+
+**Spec:** `18` §18.6, `02` §2.3 rule 4 (artifacts are files), `specs/22` M1 acceptance
+("Artifact round-trip preserves formatting exactly").
+
+**Surface:** `@forge/core/artifacts`
+- `class ArtifactDocument { static parse(source: string, path: string): ArtifactDocument;
+  readonly frontMatter: unknown; readonly body: string; get(path): unknown;
+  set(path, value): void; bumpRevision(by, summary, today): void; toString(): string }`
+  — implemented over `yaml`'s `parseDocument` node API so comments, key order, quoting style, anchors
+  and blank lines survive; the body is retained verbatim as a substring, never re-serialised.
+- `validateArtifact(doc, registry): ValidationOutcome` — phase 1 front matter against the type
+  schema, phase 2 body headings against `requiredSections`, returning `ForgeError`s.
+- `readArtifact(paths, relative)`, `writeArtifact(paths, doc)` — via P4's atomic helpers.
+
+**Checks:**
+- Round-trip corpus: for every template from P11 and a hand-built awkward fixture (comments between
+  keys, single- and double-quoted scalars, a block scalar, CRLF line endings, no trailing newline,
+  a BOM), `parse(x).toString() === x` byte-for-byte.
+- A `set()` of one key changes exactly that key's line(s); the diff against the original touches
+  nothing else (asserted as a diff, not a snapshot of the whole file).
+- Missing front matter, unterminated front matter, and non-YAML front matter each fail with a
+  distinct documented code.
+- Two-phase validation: a document with valid front matter but a missing required section fails at
+  phase 2 with the section named.
+- CRLF input round-trips as CRLF (Windows, per R11).
+
+**Depends on:** P4, P5, P11.
+
+---
+
+## P13 — ID allocation
+
+**Mandate:** allocate the next id for a type from a filesystem scan, never reuse one, and serialise
+concurrent allocation.
+
+**Spec:** `18` §18.8, `09` §9.2.
+
+**Surface:** `@forge/core/ids`
+- `class IdAllocator { constructor(deps: { paths: ProjectPaths; registry; clock }) ;
+  scan(): Promise<IdIndex>; allocate(type: ArtifactTypeId): Promise<ArtifactId>;
+  allocateMany(type, n): Promise<readonly ArtifactId[]> }`.
+- `IdIndex` cache persisted to `.forge/state/ids.json` with a `validityHash` over the scanned file
+  set; a mismatched hash forces a rescan rather than trusting the cache.
+
+**Checks:**
+- Truth is the scan: deleting `ids.json` yields the same next id; a hand-edited `ids.json` claiming a
+  lower counter is overridden by the scan, not obeyed.
+- **Never reused:** an artifact with `status: deprecated` still occupies its id; a *deleted* file's id
+  is still not reissued as long as any reference to it survives in a retained artifact, and the
+  documented retention rule (`18` §18.8: files are retained) is asserted by a fixture.
+- Zero-padding respects `idWidth`: `ADR-0001` (4) vs `STORY-001` (3); the 1000th story widens to
+  `STORY-1000` without colliding with `STORY-100`.
+- Concurrency: 50 concurrent `allocate('Story')` calls return 50 distinct, contiguous ids (serialised
+  through one queue), and the same test run twice gives the same set.
+- Cache write is atomic (P4) and a corrupt `ids.json` is discarded with a warning, not fatal.
+- No `Date.now()` — the cache timestamp comes from the injected clock (R10).
+
+**Depends on:** P12.
+
+---
+
+## P14 — The spec graph with typed edges
+
+**Mandate:** build the typed traceability graph from artifacts on disk, and answer the `09` §9.4
+queries the gates will need.
+
+**Spec:** `09` §9.4 (edge table, orphan/coverage checks), `09` §9.1 (the chain).
+
+**Surface:** `@forge/core/graph`
+- `type EdgeKind = 'realises'|'delivers'|'partOf'|'belongsTo'|'proves'|'implements'|'primaryFor'
+  |'constrains'|'consumedBy'|'verifiedBy'` (literal union).
+- `REQUIRED_EDGES: readonly EdgeRule[]` — the §9.4 table as data, including the "1 test proves
+  exactly 1 AC" cardinality.
+- `class SpecGraph { static build(docs: readonly ArtifactDocument[]): SpecGraph;
+  nodes(); edges(); parentsOf(id); childrenOf(id); orphans(): readonly Orphan[];
+  missingRequiredEdges(): readonly GraphViolation[]; detectCycles(): readonly Cycle[];
+  renderCycle(cycle): string }`.
+- Violations surface as `SPEC-` `ForgeError`s with the offending ids in `details`.
+
+**Checks:**
+- The `09` §9.4 edge table is asserted row-for-row against `REQUIRED_EDGES`.
+- A story with no parent epic produces the documented `SPEC-` violation naming the story
+  (`02` §2.6 example: `SPEC-021 STORY-014 has no parent capability`).
+- Cardinality: a TEST proving two ACs is a violation; an AC with many tests is legal.
+- Orphan detection finds both an orphan story and an orphan test (the `09` §9.4 example output).
+- A cycle (`STORY-A depends_on STORY-B depends_on STORY-A`) is detected and `renderCycle` prints the
+  path — required because M5's plan compilation rejects cycles "with a rendered graph".
+- Graph build is deterministic: shuffling the input document order gives an identical graph and
+  identical violation ordering (R10).
+
+**Depends on:** P12, P13.
+
+---
+
+## Exit tests for M1 (`specs/22`)
+
+Run after P14 wins, reported per criterion with command output:
+
+```
+pnpm build && pnpm typecheck && pnpm lint && pnpm test
+pnpm test -- packages/schemas packages/core --coverage   # ≥90% lines
+node -e "require('./scripts/assert-schema-drift.mjs')"    # emitted schemas match committed
+```
+
+Plus the four `specs/22` M1 acceptance statements, each mapped to its piece: registry completeness
+(P5/P6/P7/P9/P11), round-trip fidelity (P12), ID allocation (P13), path containment (P4), boundary
+lint (P2).
