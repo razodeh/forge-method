@@ -165,3 +165,52 @@ conclusion was written down. By round nine the findings required hand-crafting h
 `QUALITY-BAR.md` §4 is the amendment: findings gate a commit only when they are accidental-reachable,
 adversarial-only findings become recorded residual risk, and the loop caps at two critic rounds with
 a scoped verify pass rather than an open-ended re-hunt. The bar itself is unchanged.
+
+---
+
+## P3 — ForgeError taxonomy
+
+**Rounds: 2 (one critic, one scoped verify — the amended loop). Outcome: WON.** Committed `47ba1ea`.
+
+### Round 1 — 3 blocking, 6 major, all accidental-reachable
+
+- **`JSON.stringify(error)` threw** on a cyclic or `bigint` detail, so the event log could not persist
+  the errors this package produces. `render.ts` exists precisely because a renderer that throws while
+  something has already gone wrong replaces a diagnosable failure with an undiagnosable one — and I
+  had applied that reasoning to the message path and not the serialisation path.
+- **`exitCodeFor` returned `undefined`**, typed as `ExitCode`, for `{...error, context}` — the
+  ordinary way to add context in a catch block. `process.exit(undefined)` exits 0, so a failed run
+  would report success.
+- **`fromJSON` took a typed argument at an untrusted boundary** and crashed with a `TypeError` from
+  inside a message template on a truncated log line, which is the input resume reads.
+- **`details` was untyped per code**, so a wrong key compiled and rendered `<missing>`. The critic
+  named this the expensive-in-five-years finding, correctly.
+- The `ErrorCodePrefix` union was decorative; a `PERF-001` row typechecked. `formatForTerminal`
+  honoured neither `ascii` nor `color` for detail values. The warning-severity branch was dead and
+  its test would have passed with the colour hardcoded. The coverage ratchet P3 owned did not exist.
+- **The brand's doc comment was false**: it claimed the value survived a worker boundary, and
+  `structuredClone` drops symbol-keyed properties, so an error silently downgraded to exit 1 — the
+  precise failure the comment claimed to prevent.
+
+### Round 2 — scoped verify: all nine fixed, seven smaller findings
+
+The verify pass reproduced each original defect before confirming the fix, which caught things a
+re-hunt would not have: templates interpolating `${d.key}` directly still rendered the literal string
+`"undefined"` where a key was absent (the `<missing>` assertion passed); `fromJSON` accepted an array,
+since `typeof [] === 'object'`; the circular-detail encoder dropped the *whole* key rather than the
+one offending field, losing the status and body a debugger wants; and `pnpm typecheck` never reached
+`packages/core` at all, because the package declared no `typecheck` script — it was being checked
+incidentally by a test shelling out to `tsc`.
+
+It also flagged, correctly, that adding the ratchet's CLI wrapper to the coverage `exclude` glob is
+the shape `QUALITY-BAR.md` §3 names as a review failure. The mitigation is real — the decision logic
+moved to `scripts/lib/`, is unit tested, and the wrapper is driven as a subprocess — but it wanted
+explicit sign-off rather than passing silently, and it got it.
+
+### Calibration note
+
+The amended loop worked. One critic, one scoped verify, two rounds, committed — against P1b's ten.
+The verify pass being *scoped* is what made it useful: asked "were these fixed", it reproduced each
+defect first and found four residuals in the same families, which an open-ended re-hunt would have
+spent its budget elsewhere. Two of round 1's nine findings were mine to have caught: both were cases
+where a doc comment stated a guarantee and the test named after it asserted something weaker.
