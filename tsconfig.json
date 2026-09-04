@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    // test/network-guard.mjs is plain ESM so `--import` can load it in a worker or child process
+    // without vitest's TypeScript transform (see its header). checkJs keeps it, and the launcher,
+    // under the same type discipline as the rest of the tree — scripts/ was previously typechecked
+    // by nothing at all.
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["test/**/*.ts", "test/**/*.mjs", "scripts/**/*.mjs", "*.config.ts", "*.config.js"]
+}

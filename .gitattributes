@@ -1,0 +1,8 @@
+# Git for Windows ships with core.autocrlf=true, which rewrites every checked-out text file to CRLF.
+# Prettier is configured with endOfLine=lf, so without this the windows-latest CI legs fail `pnpm
+# lint` on every file, and blob hashes differ between platforms — breaking the reproducible-commit
+# assertion in test/determinism.test.ts. specs/02 §2.7 makes Windows a first-class target.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

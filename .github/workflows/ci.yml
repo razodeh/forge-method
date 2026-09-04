@@ -1,0 +1,84 @@
+# specs/02 §2.1 pins Node >= 20.10 tested on 20/22/24; §2.7 makes Windows a first-class target from
+# milestone 1, so it is in the matrix from the first commit rather than added as a retrofit.
+#
+# TZ is deliberately NOT forced to UTC here. Doing so would make every timezone assertion in
+# test/determinism.test.ts pass because the runner is UTC, not because test/setup.ts pinned it —
+# the guard would be untestable in the only environment that runs it. QUALITY-BAR.md R10 requires
+# the opposite: identical results under a non-UTC zone.
+name: ci
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  floor:
+    name: floor (node ${{ matrix.node }}, ${{ matrix.os }}, TZ=${{ matrix.tz }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22', '24']
+        tz: [UTC]
+        include:
+          # Kathmandu's +05:45 offset breaks whole-hour arithmetic as well as day boundaries, so it
+          # catches a class of bug that a whole-hour zone would not.
+          - os: ubuntu-latest
+            node: '22'
+            tz: Asia/Kathmandu
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+  seed:
+    name: scheduler seed variation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # QUALITY-BAR.md R10: a suite whose result depends on file or test ordering is not
+      # deterministic. Shuffling under a fixed seed makes an order dependency fail here rather than
+      # intermittently on someone's branch.
+      - run: pnpm test -- --sequence.shuffle --sequence.seed 20260304
+      - run: pnpm test -- --sequence.shuffle --sequence.seed 99999999
+
+  # Single required status check for branch protection: adding a matrix leg must not silently
+  # create an unguarded path to main.
+  ci-ok:
+    name: ci
+    if: always()
+    needs: [floor, seed]
+    runs-on: ubuntu-latest
+    steps:
+      # `skipped` must not count as success: a floor job that never ran would otherwise make the
+      # single required status check green and open an unguarded path to main.
+      - run: |
+          [ "${{ join(needs.*.result, ',') }}" = "success,success" ]

@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'tools/*'
+  - 'modules/*'
+
+# specs/02 §2.7 requires FORGE's own postinstall to be a no-op for npx friendliness. Dependencies get
+# the same treatment by default: nothing runs an install script unless it is listed here and the
+# reason is recorded.
+onlyBuiltDependencies: []

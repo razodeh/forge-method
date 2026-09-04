@@ -1,0 +1,18 @@
+dist/
+coverage/
+.turbo/
+pnpm-lock.yaml
+
+# Byte-exact e2e fixture host projects (specs/21 §21.2). Reformatting them would silently change
+# what the golden-file tests compare against.
+fixtures/
+
+# Hand-authored governance and specification prose. These are review documents with a deliberate
+# line layout; reflowing them turns every edit into an unreadable diff.
+specs/
+BUILD-PROMPT.md
+QUALITY-BAR.md
+PLAN-*.md
+SPEC-QUESTIONS.md
+GAUNTLET-LOG.md
+BLOCKED-*.md
