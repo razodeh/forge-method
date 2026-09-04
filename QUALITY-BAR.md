@@ -117,3 +117,55 @@ Additionally, and enforced as part of `pnpm test`:
   request (`specs/21` §21.1). A test that needs the network is in the `live` suite or does not exist.
 - **`TZ=UTC` and a pinned git identity** in test setup.
 - **Emitted JSON Schemas match the committed ones** (`scripts/assert-schema-drift.mjs`).
+
+
+---
+
+## 4. The review loop
+
+*Amended after P1b, which ran ten adversarial rounds on a test harness. The bar below is unchanged —
+it is the loop around it that was wrong.*
+
+### 4.1 What gates a commit
+
+A finding gates the commit when it is **blocking or major AND accidental-reachable**: a defect an
+ordinary contributor hits by writing ordinary code, or a defect in shipped behaviour.
+
+A finding is **adversarial-only** when reaching it requires deliberately constructing a hostile
+value — hand-crafting an environment variable to defeat a guard, aliasing a global specifically to
+dodge a lint rule, spelling something no one writes by accident. Adversarial-only findings are
+**recorded in `SPEC-QUESTIONS.md` as residual risk and not fixed**, unless the piece's spec names
+adversarial resistance as its purpose. Critics are asked to label every finding on this axis.
+
+This is not a lowered bar. R1–R12 still all have to be `yes`, the floor still has to pass, and a
+blocking defect is still a blocking defect. What changed is that "a hostile reader can find nothing"
+is no longer the exit condition, because for some artifacts — a sandbox, a lint rule set, anything
+enforcing a negative universal — that condition never terminates.
+
+### 4.2 The rounds
+
+1. **BUILD** — tests first from the spec text, then the implementation. Floor must pass.
+2. **CRITIC** — one subagent, given only the diff, the relevant spec sections and this file. It
+   labels each finding blocking/major/minor and accidental-reachable/adversarial-only.
+3. **FIX** — every gating finding. Adversarial-only ones go to `SPEC-QUESTIONS.md`.
+4. **VERIFY** — a second subagent, scoped: *were these specific findings fixed, and did the fixes
+   introduce a blocking regression?* Not a fresh open-ended hunt.
+5. **JUDGE** — score the rubric with evidence lines. Commit.
+
+**Cap: two critic rounds per piece.** A third is allowed only for a blocking, accidental-reachable
+defect still open after round two. Past that, write `BLOCKED-<piece>.md` and ask — the loop is not
+converging and more rounds will not fix that.
+
+**Proportionality.** Review effort tracks what the piece protects. Domain logic, persistence, the
+scheduler and anything with a resumability or correctness guarantee get the full loop. Build
+configuration and test scaffolding get one critic round and a judge.
+
+### 4.3 The rule that produced this amendment
+
+Ten rounds on P1b found real defects every time, which felt like justification for an eleventh. It
+was not. `BLOCKED-P1b.md` §3 had already identified that an in-process monkey-patch cannot be closed
+against a hostile reader, and the loop kept running anyway — spending the milestone's budget on a
+test harness while `@forge/core` and `@forge/schemas`, the actual M1 deliverables, did not exist.
+
+**A critic finding something is not, by itself, a reason to continue.** The question is whether what
+it found would harm a user of this code. If the answer is no twice in a row, the piece is done.

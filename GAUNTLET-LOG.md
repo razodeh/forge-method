@@ -140,3 +140,28 @@ blocking finding in three consecutive rounds, and I patched symptoms each time. 
 a round would converge and was wrong. `BLOCKED-P1b.md` §3 states the conclusion plainly: an
 in-process monkey-patch cannot be closed against a hostile reader, and I have been reporting closure
 it does not have.
+
+### Rounds 6-10, and the conclusion
+
+Rounds 6 through 10 each found real defects, and the blocking count did not reach zero: 2, 0, 2, 2,
+and round 10 never completed — it died on a spend limit, which is its own finding.
+
+What they caught, briefly: `dns.lookupService` unconditionally permitted (it is `getnameinfo` and
+always sends a PTR query); the `scripts/**` R10 exemption reintroduced one glob over from where it
+had just been removed, with a comment in the adjacent block explaining why that would be wrong;
+`0.0.0.0` denied, which is what `dgram.bind(0)` always reports, so the canonical UDP round-trip was
+impossible; a `tsc` race that made the suite green only in parallel; the allow-list applied to the
+queried DNS *name* rather than the nameserver it is sent to, so `dns.reverse('127.0.0.1')` sent real
+packets; and the same `NODE_OPTIONS` fail-open shipped three times — substring, then token scan, then
+finally a real parse.
+
+**The calibration finding is about the loop, not the bar.** Every round found something, and that
+felt like justification for another. `BLOCKED-P1b.md` §3 had already concluded that an in-process
+monkey-patch cannot be closed against a hostile reader; the loop ran seven more rounds after that
+conclusion was written down. By round nine the findings required hand-crafting hostile values —
+`--title <guardUrl>` — which no contributor writes by accident, while `@forge/core` and
+`@forge/schemas`, the actual M1 deliverables, still did not exist.
+
+`QUALITY-BAR.md` §4 is the amendment: findings gate a commit only when they are accidental-reachable,
+adversarial-only findings become recorded residual risk, and the loop caps at two critic rounds with
+a scoped verify pass rather than an open-ended re-hunt. The bar itself is unchanged.
