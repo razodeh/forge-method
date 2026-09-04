@@ -3,7 +3,7 @@
 Source: `specs/22` M1. **Build:** monorepo per `02` §2.2; `@forge/schemas`; `@forge/core`; the
 dependency-boundary lint. **Do not build:** engine, adapters, TUI, KB retrieval, any agent.
 
-Fourteen pieces, dependency-ordered. Each has its own public surface, its own tests, and a
+Fifteen pieces, dependency-ordered (P1b added mid-milestone; see its entry). Each has its own public surface, its own tests, and a
 one-sentence mandate, so each can be judged alone against `QUALITY-BAR.md`. Production-code budget is
 ≤ ~400 lines per piece (data files and generated JSON Schemas excluded from the count; tests
 excluded).
@@ -14,8 +14,14 @@ Legend: **Surface** = what the piece exports. **Checks** = the acceptance eviden
 
 ## P1 — Workspace scaffold and the deterministic floor
 
-**Mandate:** make `pnpm build && pnpm typecheck && pnpm lint && pnpm test && pnpm boundaries` real,
-and make every test run deterministically by construction.
+**Mandate:** make the floor commands real, with a strict, formatted, cross-platform toolchain behind
+them.
+
+> **Scope narrowed after P1's third review** (approved; see `BLOCKED-P1.md` §4, option B). P1 owns the
+> toolchain and configuration. The *hermetic test environment* — network denial, locale, collection
+> completeness, and proof that each rule actually fires — moved to **P1b**, because "no bypass
+> exists" is a security property that needs a threat model and a test per declared channel, not a
+> deny-list extended one critic at a time.
 
 **Spec:** `02` §2.1 (tech choices), `02` §2.2 (layout), `21` §21.1 (determinism, no-network).
 
@@ -25,15 +31,94 @@ and make every test run deterministically by construction.
 `vitest.workspace.ts`, `test/setup.ts`, `.github/workflows/ci.yml` (ubuntu + windows, node 20/22/24).
 
 **Checks:**
-- All five floor commands exit 0 on the empty workspace.
-- `test/setup.ts` sets `TZ=UTC`, pins `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, and installs a `fetch`
-  interceptor that throws a named error on any outbound request; a test asserts the interceptor
-  throws when `fetch` is called.
-- Coverage thresholds are configured per `QUALITY-BAR.md` §3 and a deliberately uncovered line fails
-  the run.
-- CI matrix includes `windows-latest`.
+- The four floor commands available at this point (`build`, `typecheck`, `lint`, `test`) exit 0 on
+  the empty workspace. `pnpm boundaries` is **not** among them: its implementation is P2's mandate,
+  and adding a script that exits 0 without checking anything would be exactly the stub `QUALITY-BAR`
+  R7 forbids. P2 adds both the script and its CI step. *(Amended after P1's review, which correctly
+  read the original wording as promising five.)*
+- `pnpm install --frozen-lockfile` succeeds from a clean checkout — the first step of every CI leg.
+- The timezone is pinned and the pin is load-bearing: the suite passes under a non-UTC host zone, and
+  the assertions observe rendered output rather than reading back the variable that was just set.
+- Git is pinned to reproducible *bytes*, not just identity: a `git init && commit` in a tmpdir
+  produces a fixed SHA, which fails if author, committer, date, `core.autocrlf`, `commit.gpgsign` or
+  the default branch is uncontrolled.
+- Per-file coverage thresholds per `QUALITY-BAR.md` §3, with a fixture proving an uncovered line
+  fails the run — aggregate thresholds pass a wholly untested module and are not sufficient.
+- `.gitattributes` normalises line endings, without which the `windows-latest` legs fail
+  `prettier --check` on checkout.
+- Every source file in the repo is covered by `tsconfig` (`scripts/` included) — a file typechecked
+  by nothing is outside the discipline this piece exists to install.
+- CI matrix includes `windows-latest` and a non-UTC timezone leg; the required status check treats a
+  skipped job as failure.
 
 **Depends on:** nothing.
+
+---
+
+## P1b — The hermetic test environment
+
+**Mandate:** every guarantee the floor claims is proven by a test that fails when the guarantee is
+removed — and the network control is specified by a threat model with a closed allow-list, not by a
+list of bypasses someone happened to think of.
+
+Added mid-milestone after P1's third review (approved). `BLOCKED-P1.md` §3 records why: three
+adversarial rounds found the same three classes of defect — an allow-list that fails open, an
+enforcement claim with no test, and each new mechanism arriving as unguarded surface.
+
+**Spec:** `21` §21.1 (network denial, determinism), `QUALITY-BAR.md` R10, §3.
+
+**Surface:** `test/network-guard.mjs`, `scripts/run-tests.mjs`, the collection and coverage globs in
+`vitest.config.ts`, the R10 rule set in `eslint.config.js`, and the tests that prove each fires.
+
+**Design constraint — patch before the ESM facade exists.** The guard reaches `node:dns`, `node:net`,
+`node:dgram`, `node:worker_threads` and `node:child_process` through `process.getBuiltinModule`,
+never a static import.
+Node builds a builtin's ESM facade once and snapshots its exports, so a patch applied afterwards is
+invisible to `import { resolve4 } from 'node:dns'` — the spelling ordinary code uses. That single
+mechanism defeated three channels across three reviews before being recognised as one cause; see
+`BLOCKED-P1b.md` §1.
+
+**Design constraint — the allow-list is positive and closed.** The guard permits exactly: a unix
+domain socket, the literal host `localhost` (case-insensitively), an IPv4 literal in
+`127.0.0.0/8` as validated by `net.isIP`, the IPv6 loopback in any of its legal spellings, and the
+unspecified addresses `0.0.0.0` and `::` — which is what `server.address().address` reports for a
+server bound with no host, and denying them forced tests into worse workarounds. Everything else is denied, including every hostname and every
+input whose destination cannot be determined. No prefix matching on a host string anywhere. This is
+what makes `127.0.0.1.nip.io`, a `String` object host, and any future spelling denied *by
+construction* rather than by having been anticipated.
+
+**Threat model — one declared channel, one test.** `fetch`; `node:http`/`https`/`net`/`tls`/`http2`;
+`dgram` addressed and connected; `dns`, `dns.promises` and `Resolver`; `WebSocket`; a worker thread,
+including one with explicit `execArgv` and a nested one; **a child process**, which is reachable
+because the guard already arrives there via inherited `NODE_OPTIONS`; and dynamic `import()` of any
+of the above. Anything genuinely out of reach is listed in `SPEC-QUESTIONS.md` with a rationale that
+has been *executed*, not assumed.
+
+**Checks:**
+- One test per declared channel, each asserting `NetworkAccessDeniedError` with its `channel` field.
+- `isPermittedHost` has direct unit tests, including `127.example.com`, `127.0.0.1.nip.io`, a
+  bracketed IPv6 form, a non-string input, and every permitted case.
+- Loopback stays usable: a test starts a server on `127.0.0.1` and reaches it over both `net` and
+  `fetch`.
+- **Collection completeness by set equality.** A whole-repo walk for `*.{test,spec}.*` at any
+  extension is compared with `vitest list --json` as an equality, not a subset — the round-2 version
+  scanned the same roots as the globs and so could never observe a gap.
+- A planted failing test at the repo root, in `scripts/`, in a package `specs/` directory, in a
+  dot-directory, and with an `.mjs` extension is each collected; one of them is additionally run in a
+  nested invocation to prove a failing test actually fails the run rather than merely being found.
+- **Coverage cannot be dodged.** Ignore pragmas (`v8 ignore`, `istanbul ignore`, `c8 ignore`) are a
+  lint error, per `QUALITY-BAR.md` §3, which names adding one as a review failure in itself. Coverage
+  globs are extension-agnostic, and a test asserts every workspace package keeps its source where the
+  globs look.
+- **The lint rules have tests.** `ESLint#lintText` over a fixture per spelling — alias, `globalThis`,
+  destructuring, default-import, and detached-method forms — asserting the specific message. Deleting
+  the R10 rule block must fail the suite; today it does not.
+- Ambient locale is not depended upon: production code may not call `localeCompare`, `toLocale*` or
+  `Intl.*` without an explicit locale, enforced by lint and proven by the lint tests. The environment
+  variables the launcher sets are belt-and-braces for POSIX, not the guarantee — ICU reads the system
+  locale on Windows and ignores them.
+
+**Depends on:** P1.
 
 ---
 
@@ -64,6 +149,10 @@ the `02` §2.2 graph.
 
 **Depends on:** P1.
 
+**Also owns (deferred from P1):** a `runtime-floor` CI job that runs the built artifact on Node
+20.10 — the floor `specs/02` §2.1 sets for published packages, which the dev toolchain itself cannot
+run on. See `SPEC-QUESTIONS.md` Q9.
+
 ---
 
 ## P3 — `ForgeError` taxonomy
@@ -93,6 +182,10 @@ remedy, and the process exit code it maps to.
 - `exitCodeFor` maps each documented case: gate failure → 3, budget → 4, env/prereq → 5, lock → 6,
   interrupt → 130, usage → 2, unknown non-Forge throwable → 1.
 - `toJSON()` round-trips and never includes a stack in the serialised payload.
+- **Coverage ratchet automation** (deferred here from P1, which has no package to ratchet):
+  `scripts/check-coverage-ratchet.mjs` compares the achieved per-file coverage against a committed
+  high-water mark and fails when a committed threshold sits below it, so `specs/13` F-TEST-5 is a
+  check rather than a comment. Wired into `pnpm test`.
 - A wrapped `cause` is preserved and rendered, without leaking the cause's stack into `remedy`.
 
 **Depends on:** P1, P2.

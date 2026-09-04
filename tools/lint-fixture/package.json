@@ -1,0 +1,7 @@
+{
+  "name": "@forge/lint-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hosts production-shaped source files for test/lint-rules.test.ts. Not shipped, not imported."
+}

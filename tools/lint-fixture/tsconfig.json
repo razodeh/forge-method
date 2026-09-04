@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // The fixtures include .mjs cases, because `.mjs` is production source per vitest.config.ts and
+    // an eslint exemption once switched every determinism rule off for it.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [".fixtures/**/*.ts", ".fixtures/**/*.mjs"]
+}
