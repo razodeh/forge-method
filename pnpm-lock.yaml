@@ -14,9 +14,15 @@ importers:
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
+      '@types/estree':
+        specifier: 1.0.9
+        version: 1.0.9
       '@types/node':
         specifier: 20.19.35
         version: 20.19.35
+      '@typescript-eslint/parser':
+        specifier: 8.69.0
+        version: 8.69.0(eslint@9.39.5)(typescript@5.9.3)
       '@vitest/coverage-v8':
         specifier: 4.1.11
         version: 4.1.11(vitest@4.1.11)
@@ -44,6 +50,10 @@ importers:
       vitest:
         specifier: 4.1.11
         version: 4.1.11(@types/node@20.19.35)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@20.19.35)(esbuild@0.27.7)(yaml@2.9.0))
+
+  packages/core: {}
+
+  tools/eslint-plugin-forge-boundaries: {}
 
   tools/lint-fixture: {}
 

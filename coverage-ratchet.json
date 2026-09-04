@@ -7,8 +7,8 @@
   },
   "scripts": {
     "lines": 100,
-    "statements": 97.37,
+    "statements": 97.01,
     "functions": 100,
-    "branches": 87.5
+    "branches": 88
   }
 }

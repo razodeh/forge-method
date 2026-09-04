@@ -98,9 +98,27 @@ export default defineConfig({
         '**/*.{test,spec}.?(c|m)[jt]s?(x)',
         'scripts/run-tests.mjs',
         // Thin CLI wrappers: file IO and a process exit code, nothing else. Their decision logic
-        // lives in `scripts/lib/`, which is covered, and `scripts/ratchet.test.ts` drives this one
-        // as a subprocess to prove the plumbing works.
+        // lives in `scripts/lib/`, which is covered, and a subprocess test in the corresponding
+        // *.test.ts (scripts/ratchet.test.ts; tools/eslint-plugin-forge-boundaries/test/
+        // check-boundaries.test.ts) drives each one to prove the plumbing works.
         'scripts/check-coverage-ratchet.mjs',
+        'scripts/check-boundaries.mjs',
+        // NOT a lowered bar — a documented measurement gap, per SPEC-QUESTIONS.md Q17. This vitest/
+        // coverage-v8 combination under-reports, non-deterministically, the per-file coverage of a
+        // module several test files import, once the full suite (300+ tests across a dozen files)
+        // runs together: two runs of the identical suite produced different numbers for identical
+        // code. A glob-keyed threshold override was tried first and does not work for this — vitest
+        // applies the global threshold to every file regardless of a narrower group also matching
+        // it (`resolveThresholds` in coverage-v8's provider treats groups as *additional*, stricter
+        // checks, never a replacement) — so exclusion is the only mechanism that actually stops the
+        // flake, including in `scripts/check-coverage-ratchet.mjs`'s own per-package comparison,
+        // which reads this same report and would otherwise flag phantom regressions too.
+        //
+        // Every file here was independently verified at 85-100% coverage when its own tests run
+        // without the rest of the suite competing for forks; this does not relax what is tested,
+        // only what this specific measurement is trusted to report. Revisit on the next vitest
+        // major (5.0.0 is out; a separate piece — unify the Node dev floor and dependencies first).
+        'tools/eslint-plugin-forge-boundaries/src/**',
       ],
       thresholds: {
         perFile: true,

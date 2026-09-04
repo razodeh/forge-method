@@ -1,0 +1,14 @@
+{
+  "name": "@forge/eslint-plugin-forge-boundaries",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The specs/02 SS2.2 dependency graph, as an ESLint plugin and a standalone check.",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./graph": "./src/graph.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

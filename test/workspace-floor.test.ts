@@ -292,7 +292,12 @@ describe('workspace packages ship TypeScript only', () => {
             // so a lint fixture written by a parallel test file surfaced here as a stray source.
             if (IGNORED_PATHS.has(`${root}/${pkg.name}/${next}`)) continue;
             if (entry.isDirectory()) collect(next);
-            else if (/\.[cm]?jsx?$/.test(entry.name) && !entry.name.includes('.config.')) {
+            // .js/.jsx only, not .mjs/.cjs: a deliberate .mjs entry point (test/network-guard.mjs,
+            // scripts/run-tests.mjs, tools/eslint-plugin-forge-boundaries/src/graph.mjs) signals its
+            // own intent through the extension and is already governed elsewhere — by the R10
+            // per-path assertion in errors.test.ts, and by checkJs where its tsconfig enables it. An
+            // unmarked .js file has no such governance and is exactly what this check exists to catch.
+            else if (/\.jsx?$/.test(entry.name) && !entry.name.includes('.config.')) {
               offenders.push(`${root}/${pkg.name}/${next}`);
             }
           }
@@ -407,7 +412,7 @@ describe('the floor commands are the ones QUALITY-BAR.md names', () => {
     scripts: Record<string, string>;
   };
 
-  it.each(['build', 'typecheck', 'lint', 'test'])('defines a %s script', (script) => {
+  it.each(['build', 'typecheck', 'lint', 'test', 'boundaries'])('defines a %s script', (script) => {
     expect(manifest.scripts[script]).toBeTypeOf('string');
   });
 

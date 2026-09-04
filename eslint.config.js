@@ -13,6 +13,8 @@ import eslint from '@eslint/js';
 import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
 
+import forgeBoundaries from './tools/eslint-plugin-forge-boundaries/src/index.mjs';
+
 /**
  * Node builtins that must be imported with the `node:` prefix. Derived from the running Node so the
  * list cannot drift out of date or omit a module by oversight.
@@ -346,6 +348,19 @@ export default tseslint.config(
     extends: [tseslint.configs.disableTypeChecked],
     rules: {
       'no-console': 'off',
+    },
+  },
+  {
+    // specs/02 §2.2's dependency graph and the platform-boundary rule, from PLAN-M1.md P2. Every
+    // rule in this plugin already no-ops outside `packages/*` internally (specs/02 §2.2 does not
+    // govern `tools/` or `modules/` — SPEC-QUESTIONS.md Q5), so the glob only needs to name where
+    // the graph applies; it is not what keeps `tools/eslint-plugin-forge-boundaries` itself exempt.
+    files: ['packages/**/*.{ts,tsx,mjs,cjs,js,jsx}'],
+    plugins: { 'forge-boundaries': forgeBoundaries },
+    rules: {
+      'forge-boundaries/no-undeclared-package-import': 'error',
+      'forge-boundaries/no-deep-package-import': 'error',
+      'forge-boundaries/no-platform-concept': 'error',
     },
   },
   prettier,

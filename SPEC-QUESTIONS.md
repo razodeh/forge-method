@@ -314,3 +314,108 @@ what an exit code coarsely conveys.
 **Recommended resolution:** give operator rejection its own code — 7 is free — or state in §2.6 that
 130 deliberately covers both and that callers must read the event log to distinguish them. This wants
 deciding before `specs/14`'s CI templates start branching on exit status.
+
+---
+
+## Q16 — Two gaps in `specs/02` §2.2's table, and how `no-platform-concept` avoids a third
+
+*Written after review found three source comments citing this entry before it existed — the
+citations were added when the reasoning was decided, the entry itself was not. Recorded now with
+the content those comments always meant to point at.*
+
+**Gap 1 — `templates` and `testkit` have no row in the §2.2 dependency table.** `templates` is
+described in the §2.2 layout tree as bundled data (templates, workflows, checklists), not logic, so
+it is given no forge dependencies at all — `PACKAGE_GRAPH.templates: []`. `testkit` is required by
+`specs/22` M4 to implement `FakePlatformAdapter`, which needs `adapter-kit`'s interface, so it is
+given `['adapter-kit', 'schemas']`. Both are proceeding-with defaults per `CLAUDE.md`'s rule for
+spec silence, asserted directly in `tools/eslint-plugin-forge-boundaries/test/boundaries.test.ts`
+rather than left as an unchecked assumption.
+
+**Gap 2 (a design note, not a spec gap) — how `platform.claudeCode`-shaped config avoids becoming a
+banned platform concept.** `specs/18` §18.3's canonical config shows a `platform.claudeCode` block
+with adapter-specific fields (`transport`, `bare`, `minimumVersion`). Read literally, `@forge/schemas`
+— which sits below `adapter-kit` in the §2.2 graph — would need to hardcode a Claude-specific key,
+directly contradicting `specs/README` §2 principle 8 ("no platform-specific concept may leak past
+@forge/adapter-kit"). The resolution: `platform.primary` and any per-adapter config block are typed
+generically (`z.string()` for the id, a passthrough record for adapter-specific fields) in the
+schema — never a closed enum naming `'claude-code'` — with each adapter package responsible for its
+own config sub-schema, registered at the `adapter-kit` boundary rather than baked into `@forge/schemas`.
+This is what `no-platform-concept` (`specs/README` §2 principle 8) leans on: platform and model
+identifiers are meant to be opaque values below `adapter-kit`, never literals or enum members in
+behavioural code, so the rule does not need a carve-out for them the way `mcp` needed one (Q2) — a
+literal genuinely should not appear there. Binding for `@forge/schemas`, built in a later piece
+(`PLAN-M1.md` P8); recorded now so that piece does not hardcode the field.
+
+**Recommended resolution:** none needed for gap 1. For the design note, confirm before P8 builds the
+config schema.
+
+---
+
+## Q17 — Coverage-v8 under-reports a widely-shared module's coverage, non-deterministically, at full-suite scale
+
+**Not a spec question — a build-tooling limitation, recorded here because it produces a declared
+divergence from `QUALITY-BAR.md` §3's coverage floor and that divergence must not pass silently.**
+
+`tools/eslint-plugin-forge-boundaries/src/{graph,locate}.mjs` are imported by every rule module in
+the plugin; the rule modules are each imported by exactly one test file. Both classes of file report
+well below the 85/80 per-file threshold when the *full* test suite runs, despite being thoroughly
+tested.
+
+**Evidence, in order of what was tried:**
+
+1. Every plugin source file, run via its own dedicated test file with nothing else in the suite:
+   85–100% lines/branches/functions, repeatedly, across several isolated runs.
+2. The same six test files, run together as `tools/` only (no other package's tests in the run):
+   92–100%. Still clean.
+3. The full suite (12 files, 300+ tests, everything in the repo): 60–75%. The shortfall appears only
+   once files outside `tools/` join the run — not a property of the plugin's own tests.
+4. Ruled out as the cause, each independently verified not to reproduce the shortfall in isolation:
+   the `NODE_OPTIONS` network-guard injection; `RuleTester`'s internal `describe`/`it` flattening;
+   `RuleTester`/`Linter`'s own CJS dependencies (espree); running serially via `--fileParallelism`;
+   `test.isolate: false` (this made it *worse*, disproving a per-file module-reset theory); a fan-in
+   of six files sharing one module in a minimal synthetic repo (stayed at 100%).
+5. **Non-determinism, conclusively:** two full-suite runs with byte-identical configuration and code
+   produced different coverage numbers for the same files (one run: `no-deep-package-import.mjs`
+   72.72% lines; the next, unchanged, run: 45.45%). A deterministic algorithmic merge defect would
+   reproduce identically; this does not. It is a race in coverage collection under this many
+   concurrent forks with this vitest/coverage-v8 version (4.1.11), not a gap in what is tested.
+6. Consolidating the plugin's five per-module test files into one (`boundaries.test.ts`) measurably
+   improved but did not eliminate the shortfall — kept as the test organisation regardless, since it
+   is a reasonable structure on its own merits and reduces the effect's severity.
+
+**Answer taken (proceeding):** a glob-keyed threshold override was tried first
+(`'tools/eslint-plugin-forge-boundaries/src/**': { lines: 0, ... }`) and does not work: vitest's
+coverage-v8 provider applies the *global* threshold to every file regardless of whether a narrower
+group also matches it — groups only add a stricter, additional check, never a replacement (see
+`resolveThresholds` in `@vitest/coverage-v8`'s `provider.js`: "Global threshold is for all files,
+even if they are included by glob patterns"). There is no config-level way to give one glob a
+*lower* bar than the global one.
+
+`vitest.config.ts`'s `coverage.exclude` therefore carries the glob instead, with the same evidence
+inline as a comment. This also had to cover `scripts/check-coverage-ratchet.mjs`'s own per-package
+comparison, which reads the same `coverage-summary.json` and would otherwise flag the identical
+files as regressing against their own prior high-water mark on an unlucky run. This is categorically
+different from lowering a threshold on undertested code: the code is tested, verified repeatedly
+above 85/80 in isolation; only the automated *measurement* is unreliable at full-suite scale, and
+excluding it from that measurement is the only mechanism vitest offers for saying so.
+
+**The exclusion alone was an incomplete answer, corrected during review.** Excluding the glob from
+the *full-suite* run's coverage removed the flake, but it also removed *all* coverage enforcement
+for this plugin going forward — including for code the flake never touched. Verified: a planted,
+untested, unreachable-branch function added to `locate.mjs` passed `pnpm lint`, `pnpm typecheck` and
+the full `pnpm test` without a single warning. That is a real gap this piece introduced while fixing
+a different one.
+
+The fix is `vitest.boundaries-coverage.config.ts`: a second, narrowly-scoped vitest config, run
+against only this plugin's own six test files with real 85/80 thresholds and no exclusion — the
+exact scope this investigation proved trustworthy (92–100% coverage, repeatably, whenever these
+files ran without the rest of the suite's hundreds of tests competing for forks). `pnpm test` now
+runs it as a required third step (`pnpm coverage:boundaries`), and it was verified both ways: the
+planted dead function above fails it (`functions 66.66%`, `statements 83.33%`, exit 1), and the
+clean tree passes it (100%/98.57%/100%/100%).
+
+**Recommended resolution:** vitest 5.0.0 is published; revisit the full-suite exclusion when the
+toolchain next moves to it (a separate piece — it is a major-version bump across `vitest`,
+`@vitest/coverage-v8` and possibly `@vitest/*` peers, not a P2-scoped change). If the same shortfall
+reproduces there, file it upstream with the reproduction steps above. The isolated compensating
+config can retire at the same time, once the full-suite run is trustworthy again for this plugin.
