@@ -214,3 +214,68 @@ The verify pass being *scoped* is what made it useful: asked "were these fixed",
 defect first and found four residuals in the same families, which an open-ended re-hunt would have
 spent its budget elsewhere. Two of round 1's nine findings were mine to have caught: both were cases
 where a doc comment stated a guarantee and the test named after it asserted something weaker.
+
+---
+
+## P2 — dependency-boundary enforcement
+
+**Rounds: 2 (one critic, one scoped verify — plus a self-verified follow-up fix, see below).
+Outcome: WON.** Committed `bb6e67d`.
+
+### Round 1 — 5 findings (2 blocking, 3 major), all accidental-reachable
+
+- **Neither `no-undeclared-package-import` nor `no-deep-package-import` handled TypeScript's inline
+  type-import form** (`type X = import('@forge/engine').Scheduler`). It parses to its own AST node
+  (`TSImportType`), which neither rule's visitor set watched, so an upward or deep type-only import
+  passed silently — and ordinary code reaches for this form specifically to avoid a full value
+  import, so it isn't an edge case.
+- **The `SPEC-QUESTIONS.md` Q17 coverage exclusion had no compensating check.** I'd excluded the
+  plugin's own source from the full-suite coverage measurement to fix a genuine, proven
+  non-determinism (documented at length in Q17), but the exclusion covered the whole directory, not
+  just the two flaky files, and nothing else measured it. Planted a dead function, `pnpm test` never
+  noticed.
+- **Three source comments cited `SPEC-QUESTIONS.md` Q16, which was never written** — a forward
+  reference I made when deciding the reasoning and then forgot to follow through on.
+- **`no-platform-concept` fired on the one edge `PACKAGE_GRAPH` legitimately grants** (`cli` →
+  `adapter-claude-code`), undocumented and untested — looked like a contradiction between what the
+  graph permits and what the lint rule allows to be written.
+- **`checkBoundaries` crashed with a raw `TypeError`** on a `package.json` that parses to `null` or
+  `[]` — valid JSON, not a manifest — which would have silently swallowed any real violation later
+  in the same directory listing.
+
+### Round 2 — scoped verify: 4 of 5 fixed cleanly, one (Q17) confirmed still open
+
+The verify pass reproduced each defect before confirming the fix — caught a real bug in my own fix
+along the way: my `TSImportType` test asserted 2 errors where the real AST produces 3 (a non-renamed
+named import parses to two separate `Identifier` nodes, `imported` and `local`, both naming the same
+thing). Fixed the assertion, not the rule — the rule was already correct.
+
+The verifier's judgment on Q17 was right and I accepted it without arguing: "documented is not
+compensated." I'd explained the gap thoroughly in `SPEC-QUESTIONS.md` and left it exactly that — a
+paragraph, not a control.
+
+### Follow-up — the compensating check itself, self-verified rather than a third agent round
+
+Built `vitest.boundaries-coverage.config.ts`: a second, narrowly-scoped vitest config running only
+this plugin's own tests with real 85/80 thresholds and no exclusion, wired into `pnpm test` as a
+required third step. Verified both directions myself before committing, with the same rigor a critic
+round would apply: planted the same dead function the verifier used, confirmed
+`vitest.boundaries-coverage.config.ts` catches it (`functions 66.66%`, exit 1); removed it, confirmed
+the check passes clean (100%/98.57%/100%/100%). Writing the compensating check surfaced one more real
+gap while building it — `src/index.mjs`, the plugin's own barrel file, had zero test coverage because
+nothing in the suite imports it directly (only `eslint.config.js` does, at ESLint's own startup,
+outside any test run) — closed with a direct test.
+
+Did not spawn a third critic agent for this follow-up: it is a small, mechanical, fully self-verified
+fix to a single documented gap, not a fresh piece of unreviewed logic, and `QUALITY-BAR.md` §4's cap
+exists precisely to prevent re-looping past the point of value — which P1b's ten rounds already
+taught the expensive way.
+
+### Calibration note
+
+Every finding across both rounds was real. The pattern worth naming: three of the eight total
+findings across this piece's two pieces (P1b's ESM-facade class, and here) trace back to the same
+root habit — writing a rule or a check against the *common* shape of an input and not the *complete*
+grammar of it (import declarations but not inline type-imports; `JSON.parse` succeeding but not
+checking the result is an object). Worth watching for specifically in P4 onward, where the surface
+(artifact front matter, YAML parsing) has the same shape of risk.

@@ -124,7 +124,7 @@ has been *executed*, not assumed.
 
 ## P2 — Dependency-boundary enforcement
 
-*(P1 and P1b are committed: `9b98217`, `7fef54d`.)*
+*(P1, P1b and P3 are committed: `9b98217`, `7fef54d`, `47ba1ea`. P2 is committed: `bb6e67d`.)*
 
 **Mandate:** make an upward or undeclared cross-package import fail CI, from a single declaration of
 the `02` §2.2 graph.
