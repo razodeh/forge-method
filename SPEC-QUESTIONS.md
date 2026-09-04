@@ -296,3 +296,21 @@ scheduled: it buys defence against a hostile committer, which is not the threat 
 names, and it costs CI infrastructure no milestone budgets.
 
 **Revisit trigger:** the first time a test reaches the network in CI despite the guard.
+
+---
+
+## Q15 — `USR-001` and a SIGINT share exit code 130
+
+**Ambiguity in a normative table.** `specs/02` §2.6 lists `130 interrupted` and gives `USR-001 gate
+rejected by operator` as the `USR-` example. Taken together, a deliberate human rejection at a gate
+and a process killed by SIGINT exit with the same status, so CI cannot tell "someone said no" from
+"the job was cancelled" — and §2.4 makes SIGINT a *graceful pause* that leaves the run resumable,
+while a gate rejection is a decision that should not be retried unchanged.
+
+**Answer taken (proceeding):** implement 130 as the spec states. Diverging here would be exactly the
+quiet improvement `CLAUDE.md` forbids, and the two are at least both "a human stopped this", which is
+what an exit code coarsely conveys.
+
+**Recommended resolution:** give operator rejection its own code — 7 is free — or state in §2.6 that
+130 deliberately covers both and that callers must read the event log to distinguish them. This wants
+deciding before `specs/14`'s CI templates start branching on exit status.

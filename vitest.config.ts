@@ -93,7 +93,15 @@ export default defineConfig({
       // at all: an exported, branching, never-called function in `scripts/` passed `pnpm test`.
       // `run-tests.mjs` is the launcher itself, which starts the run rather than being imported by it.
       include: ['{packages,tools,modules}/*/src/**', 'scripts/**'],
-      exclude: ['**/*.d.ts', '**/*.{test,spec}.?(c|m)[jt]s?(x)', 'scripts/run-tests.mjs'],
+      exclude: [
+        '**/*.d.ts',
+        '**/*.{test,spec}.?(c|m)[jt]s?(x)',
+        'scripts/run-tests.mjs',
+        // Thin CLI wrappers: file IO and a process exit code, nothing else. Their decision logic
+        // lives in `scripts/lib/`, which is covered, and `scripts/ratchet.test.ts` drives this one
+        // as a subprocess to prove the plumbing works.
+        'scripts/check-coverage-ratchet.mjs',
+      ],
       thresholds: {
         perFile: true,
         lines: 85,

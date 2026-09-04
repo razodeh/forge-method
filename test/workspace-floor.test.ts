@@ -42,6 +42,9 @@ const IGNORED_ROOT_DIRECTORIES = new Set(['specs', 'fixtures']);
 /** Source and test file extensions, matching the collection globs in `vitest.config.ts`. */
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
 
+/** Test files, which `vitest.config.ts` collects and coverage excludes. */
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+
 /**
  * Lists workspace-relative paths of files directly inside a workspace package whose name matches.
  *
@@ -235,7 +238,13 @@ describe('production source lives where the coverage globs look', () => {
         if (next !== 'src' && !IGNORED_PATHS.has(`${packageRelative}/${next}`)) {
           strays.push(...straySources(packageDir, next, packageRelative));
         }
-      } else if (SOURCE_FILE.test(entry.name) && !entry.name.includes('.config.')) {
+      } else if (
+        SOURCE_FILE.test(entry.name) &&
+        !TEST_FILE.test(entry.name) &&
+        !entry.name.includes('.config.')
+      ) {
+        // Test files are not production source and carry no coverage floor of their own, so a
+        // package's `test/` directory is a legitimate sibling of `src/`.
         strays.push(next);
       }
     }
@@ -365,6 +374,31 @@ describe('every source file in the repository is typechecked', () => {
     // A file typechecked by nothing is outside the discipline this floor exists to install — which
     // is how `scripts/` and then `eslint.config.js` each slipped through in turn.
     expect(onDisk.filter((file) => !listed.has(file)).sort()).toEqual([]);
+  });
+});
+
+describe('every workspace package is reached by the floor commands', () => {
+  it('declares a typecheck script, so `pnpm typecheck` actually checks its source', () => {
+    // `turbo run typecheck` only runs what packages declare. Without this, `packages/core` was
+    // typechecked incidentally — by a test shelling out to tsc — rather than by the floor command
+    // QUALITY-BAR §3 names.
+    const missing: string[] = [];
+    for (const root of WORKSPACE_ROOTS) {
+      const rootPath = path.join(repoRoot, root);
+      if (!existsSync(rootPath)) continue;
+      for (const pkg of readdirSync(rootPath, { withFileTypes: true })) {
+        if (!pkg.isDirectory()) continue;
+        const manifestPath = path.join(rootPath, pkg.name, 'package.json');
+        if (!existsSync(manifestPath)) continue;
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+          scripts?: Record<string, string>;
+        };
+        // A data-only package has no source to check; one with a tsconfig does.
+        if (!existsSync(path.join(rootPath, pkg.name, 'tsconfig.json'))) continue;
+        if (manifest.scripts?.['typecheck'] === undefined) missing.push(`${root}/${pkg.name}`);
+      }
+    }
+    expect(missing.sort()).toEqual([]);
   });
 });
 

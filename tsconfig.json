@@ -10,5 +10,12 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["test/**/*.ts", "test/**/*.mjs", "scripts/**/*.mjs", "*.config.ts", "*.config.js"]
+  "include": [
+    "test/**/*.ts",
+    "test/**/*.mjs",
+    "scripts/**/*.mjs",
+    "scripts/**/*.ts",
+    "*.config.ts",
+    "*.config.js"
+  ]
 }

@@ -184,10 +184,13 @@ remedy, and the process exit code it maps to.
 - `exitCodeFor` maps each documented case: gate failure → 3, budget → 4, env/prereq → 5, lock → 6,
   interrupt → 130, usage → 2, unknown non-Forge throwable → 1.
 - `toJSON()` round-trips and never includes a stack in the serialised payload.
-- **Coverage ratchet automation** (deferred here from P1, which has no package to ratchet):
-  `scripts/check-coverage-ratchet.mjs` compares the achieved per-file coverage against a committed
-  high-water mark and fails when a committed threshold sits below it, so `specs/13` F-TEST-5 is a
-  check rather than a comment. Wired into `pnpm test`.
+- **Coverage ratchet automation** (deferred here from P1, which had no package to ratchet):
+  `scripts/check-coverage-ratchet.mjs` compares achieved per-package coverage against the committed
+  high-water marks in `coverage-ratchet.json` and fails when coverage falls, so `specs/13` F-TEST-5
+  is a check rather than a comment. Wired into `pnpm test`. Its decision logic lives in
+  `scripts/lib/coverage-ratchet.mjs` and is unit tested; the command itself is driven as a
+  subprocess against fixture trees, because a check nobody has exercised is indistinguishable from
+  one that always passes.
 - A wrapped `cause` is preserved and rendered, without leaking the cause's stack into `remedy`.
 
 **Depends on:** P1, P2.

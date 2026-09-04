@@ -326,6 +326,15 @@ export default tseslint.config(
     rules: {
       'no-restricted-syntax': 'off',
       'no-restricted-imports': 'off',
+    },
+  },
+  {
+    // Command entry points directly under `scripts/`: printing to the console and reading argv is
+    // what they are for. Only `no-console` is relaxed — the determinism rules stay on, which is the
+    // half that matters for `PLAN-M1.md` P9's schema emitter and its byte-stable-output mandate.
+    // Decision logic lives in `scripts/lib/`, which gets no exemption at all.
+    files: ['scripts/*.mjs'],
+    rules: {
       'no-console': 'off',
     },
   },
