@@ -411,3 +411,68 @@ resolution and didn't get it, because writing a function and remembering every s
 decision that constrains it are two different acts of attention. Worth checking, for every piece from
 here on: does this new code obey every previously-recorded `SPEC-QUESTIONS.md` resolution that
 applies to it, not just the spec section this piece cites directly.
+
+---
+
+## P6 — spec artifact schemas
+
+**Rounds: 1 (one critic, plus a self-verified follow-up fix — see below, same pattern P2 used).
+Outcome: WON.** Committed `273ffcf`.
+
+Before the critic ran, this piece surfaced three spec problems of its own while implementing eight
+schemas against `09` §9.3/§9.5/§9.6 — recorded as `SPEC-QUESTIONS.md` Q19–Q21, not gauntlet findings,
+since I found and fixed each myself before review:
+
+- **Q19**: `09` §9.3's own Story example has a field literally named `type` (feature/tech/spike/
+  bug/chore/migration) that collides with the base front matter's `type` discriminator built in P5 —
+  the same YAML document cannot have two keys named `type`. Renamed to `storyType` in the schema.
+- **Q20**: Task, InterfaceContract and DataModel have no field-level spec anywhere — only a one-line
+  purpose description each. Rather than invent fields, their schemas are the base front matter
+  narrowed to a literal `type`, matching Q18's discipline in P5.
+- **Q21**: found while writing `nfrSchema`'s own valid fixture, transcribed verbatim from `09` §9.3 —
+  it failed against the already-committed P5 registry, because every NFR id anywhere in the spec
+  pack is 4 digits but the registry gave NFR no `idWidth` override (defaulting it to 3). Went back
+  and corrected `ARTIFACT_TYPES` (`packages/schemas/src/registry/artifact-types.ts`) rather than
+  writing a test that encoded the wrong width just to make it pass.
+
+A fourth, purely structural problem (not a spec question) also surfaced building this piece:
+`baseFrontMatterSchema`'s `.superRefine()` returns a `ZodEffects` in zod 3, which has no `.extend()`
+— so no per-type schema could actually build on the P5-committed base without this refactor.
+Split it into an exported `baseFrontMatterShape` (the plain, extendable `ZodObject`) and an exported
+`checkIdMatchesRegisteredType` (the refinement function, now reapplied by all nine schemas — the
+base and the eight per-type ones — instead of duplicated). Confirmed behavior-preserving by diffing
+against the P5-committed version and re-running P5's full test suite unchanged: all 45 tests passed
+with no edits.
+
+### Round 1 — 1 finding (major, accidental-reachable)
+
+- **NFR's "numeric and verifiable" target check accepted qualitative prose that merely contained a
+  digit somewhere in the sentence.** `target: z.string().regex(/\d/, ...)` correctly rejected the
+  spec's own negative example ("should be fast") but also accepted `"ship version 2 of the
+  dashboard"` and `"reduce onboarding to 1 click before launch"` — ordinary, non-adversarial prose an
+  author would plausibly write, neither of which is a measurable threshold. The check existed
+  specifically to catch unverifiable targets and a same-shaped one slipped past it under a
+  sufficiently loose regex. No test exercised this boundary in either direction, so the gap was
+  invisible until an outside reader tried exactly this kind of input.
+
+### Follow-up — self-verified, no second critic round
+
+Tightened the regex to require the value *start* with an optional comparison operator followed by a
+number (`/^(?:[<>]=?|=)?\s*\d+(?:\.\d+)?/`) — matches every example in `09` §9.3 verbatim, rejects
+both false positives above. Added both as explicit invalid-fixture tests, then proved them
+load-bearing the way this project always does: reverted to the old `/\d/` regex, watched both new
+tests fail for the right reason, restored the fix, watched all 18 pass again. Not spawned as a
+second agent round — one regex, two tests, self-verified against the exact scenario named, the same
+scale of fix P2's Q17 follow-up used to justify skipping a third round there.
+
+### Calibration note
+
+Three of this piece's four self-found problems (Q19, Q21, the `.extend()` refactor) came from
+actually trying to use the P5-committed registry and base schema for something new, not from reading
+them more carefully. Q21 in particular: nobody caught the NFR idWidth mismatch during P5's own
+gauntlet rounds, because P5 never had to construct a real `NFR-0002`-shaped fixture against its own
+id-width rule — it only had to prove the rule *worked*, with fixtures it invented itself. A rule is
+only as tested as the fixtures thrown at it, and a piece's own examples are a much weaker adversary
+than the next piece's real, spec-sourced ones. Worth remembering going into P7 and beyond: building
+against a prior piece's committed API is itself a review of that piece, and it will keep finding
+things the original gauntlet rounds structurally could not.
