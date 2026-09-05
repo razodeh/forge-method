@@ -658,3 +658,72 @@ the threshold failures, not by reasoning about what "should" need coverage). Bot
 "the code looks right" and "the floor is green" are different claims, and only the second one is the
 actual bar — a piece is not done until its own commands have been run and their output read, not
 predicted.
+
+---
+
+## P10 — schema migration runner
+
+**Rounds: 2 (one critic finding a real major, one scoped verify). Outcome: WON.** Committed
+`5873bbe`, fixed in `9796a10`.
+
+Two design questions had to be settled before any code, both recorded in `SPEC-QUESTIONS.md` Q27:
+`PLAN-M1.md`'s own stated `planMigrations` signature (`readonly Migration[]`, no room to report
+failure) reruns the exact `schemas ← (no forge deps)` tension Q3 already resolved for `ForgeError` —
+resolved the same way, with `success`-discriminated result types matching the one existing precedent
+in this package (`registry/paths.ts`'s `RenderArtifactPathResult`). Separately, `18` §18.9's own
+worked example mutates its input and returns the same reference, which directly contradicts
+`PLAN-M1.md` P10's own purity Check ("the runner passes a frozen document and asserts the input
+object is not mutated") — resolved by treating the spec's code block as illustrative pseudocode of
+what a migration does, not a literal contract for how to write one, and building every fixture in
+this piece's own tests in genuinely non-mutating style.
+
+### Round 1 — one major (accidental-reachable, fixed), several minors (fixed), no adversarial-only residue
+
+The critic's most consequential finding: `applyMigrations`'s own deep-freeze mechanism corrupted its
+own legitimate output. Freezing a document before handing it to a migration step is necessary to
+catch a mutation attempt, but nothing ever un-froze what the step *returned* — a migration written in
+the perfectly ordinary "only rebuild what changed" style (`up: (doc) => ({ ...doc, body: newBody
+})`) would leave its untouched nested `frontmatter` values as the exact frozen references it was
+handed, and those stayed frozen forever, including in the final document `applyMigrations` hands back
+to its caller. The one fixture this piece's own tests used (`addReversibility`) happened to have an
+entirely flat, reference-free `frontmatter`, so the leak had nothing to hide behind and no test
+caught it — a fixture-shape blind spot, not a logic gap the tests were even positioned to find. Fixed
+by deep-cloning every step's return value into fresh, unfrozen memory (`freshClone`, plain
+`structuredClone`, no freezing) before it becomes the next `current`, verified afterward (by both the
+fix's own re-run and an independent round-2 repro) to still let the freeze-before-calling guard catch
+an actual in-place mutation attempt — the two mechanisms don't interfere with each other because one
+runs before the migration executes and the other after.
+
+Minor, accidental-reachable gaps, also fixed: three exported result types (`ValidateMigrationRegistryResult`,
+`PlanMigrationsResult`, `ApplyMigrationsResult`) had no TSDoc while every sibling type in the same
+file did (R8); one `as Record<string, unknown>` cast in `deepFreeze` had no adjacent invariant
+comment (R1); a doc comment on `Migration` overstated what deep-freezing actually enforces (only
+catches a migration mutating its own input in place — nothing about clock, FS, or network reads,
+despite the comment's "must be pure ... enforces this" phrasing, itself inherited from the same
+imprecision in `PLAN-M1.md`'s own Check text). One design-soundness note taken as worth fixing even
+though labeled minor: `validateMigrationRegistry` had no way to catch two migrations both claiming to
+bridge the same `(type, from, to)` — `Array.prototype.find` would silently resolve to whichever came
+first rather than reporting the collision, a realistic copy-paste/merge mistake rather than an
+adversarial one. Added duplicate-step detection, run once per-migration registration checks pass.
+
+### Round 2 — scoped verify, 0 findings
+
+A fresh agent independently re-derived the original bug rather than trusting the diff: wrote and ran
+a throwaway repro reproducing the exact scenario (a shallow-rebuild migration against a document with
+nested `frontmatter`), confirmed the returned document's nested values are genuinely unfrozen and
+ordinarily mutable post-fix, and confirmed a real in-place-mutation attempt still throws and is still
+caught — proving the fix addresses the actual defect without disabling the mechanism it was protecting.
+Also checked `structuredClone`'s behavior against realistic front-matter shapes from `18` §18.6
+(`Date` values, an explicit `undefined`) and found no compatibility gap. No new findings.
+
+### Calibration note
+
+The bug the round-1 critic found was invisible to this piece's own test suite not because the tests
+were shallow, but because the one fixture they exercised had a flat `frontmatter` with nowhere for a
+frozen reference to hide — a reminder that a passing round-trip test proves the mechanism works for
+the *shape of data it was given*, not for every shape a real migration will eventually see. The fix
+itself needed the opposite of trust, too: rather than accepting the diff's own claim of correctness,
+round 2 re-derived the original failure from scratch and confirmed both that it is gone and that the
+fix did not quietly disable the property it was supposed to preserve — the same "verify the claim,
+don't just read the diff" discipline this project has applied to critic findings themselves, now
+applied to a fix in response to one.

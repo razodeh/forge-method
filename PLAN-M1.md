@@ -362,26 +362,27 @@ key and no undocumented keys.
 
 ## P10 — Migration runner
 
-*(P1, P1b, P3, P2, P4, P5, P6, P7, P8 and P9 are committed: `9b98217`, `7fef54d`, `47ba1ea`,
-`bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`.)*
-
 **Mandate:** run ordered, pure schema migrations across a document, with reversible ones proven to
 round-trip.
 
 **Spec:** `18` §18.9.
 
-**Surface:** `@forge/schemas/migrations`
+**Surface:** `@forge/schemas/migrations` — see `SPEC-QUESTIONS.md` Q27 for why the two functions
+below return typed results rather than the bare array/throw this section originally sketched.
 - `interface Migration { from: number; to: number; types: readonly ArtifactTypeId[];
   description: string; reversible: boolean; up(doc: MigratableDocument): MigratableDocument;
   down?(doc: MigratableDocument): MigratableDocument }`.
-- `planMigrations(type, fromVersion, toVersion): readonly Migration[]` — resolves the chain or fails.
-- `applyMigrations(doc, plan): MigrationResult` — pure; no FS, no network.
+- `planMigrations(type, fromVersion, toVersion, migrations = MIGRATIONS): PlanMigrationsResult` —
+  resolves the chain (in either direction) or fails with a typed reason.
+- `applyMigrations(doc, plan): ApplyMigrationsResult` — pure; no FS, no network; deep-freezes the
+  document handed to each step so an in-place mutation throws rather than corrupting shared state.
 - `MIGRATIONS: readonly Migration[]` (empty at M1 beyond the fixtures, since schemaVersion starts
   at 1 — the runner and its tests are what M1 delivers).
 
 **Checks:**
-- A chain spanning two versions applies in order; a gap in the chain is refused with a `CFG-` coded
-  failure naming the missing step.
+- A chain spanning two versions applies in order; a gap in the chain is refused with a typed failure
+  naming the missing step (a `CFG-` `ForgeError` is for whatever caller outside `@forge/schemas`
+  eventually surfaces this to a user, per Q27 — schemas itself never throws, per Q3).
 - `reversible: true` migrations round-trip on a real "before" fixture (golden-file `before` → `after`
   → `before`).
 - `reversible: false` with a `down` is refused at registration; `reversible: true` without a `down`
@@ -393,6 +394,10 @@ round-trip.
 **Depends on:** P5, P9.
 
 ---
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8, P9 and P10 are committed: `9b98217`, `7fef54d`, `47ba1ea`,
+`bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`, `5873bbe` (fix:
+`9796a10`).)*
 
 ## P11 — Template stubs for every artifact type
 
