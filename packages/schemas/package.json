@@ -8,7 +8,8 @@
     "./registry": "./src/registry/index.ts",
     "./artifacts": "./src/artifacts/index.ts",
     "./config": "./src/config/index.ts",
-    "./json-schema": "./src/json-schema/index.ts"
+    "./json-schema": "./src/json-schema/index.ts",
+    "./migrations": "./src/migrations/index.ts"
   },
   "engines": {
     "node": ">=20.10"

@@ -668,3 +668,46 @@ worse, silently diverge from this convention.
 `RegExp` syntax with the one `(?i)`-prefix case-insensitivity convention this schema now defines, or
 add a separate structure (`{ pattern, flags }` instead of a bare string) so case sensitivity is
 explicit rather than inferred from a borrowed PCRE idiom.
+
+---
+
+## Q27 — Migration runner: `18` §18.9's own example mutates its input, and `PLAN-M1.md`'s stated
+signatures cannot report failure without throwing
+
+**Conflict, two parts.**
+
+First, the same `schemas ← (no forge deps)` tension Q3 already resolved recurs here in a new shape.
+`PLAN-M1.md` P10's stated surface is `planMigrations(type, fromVersion, toVersion): readonly
+Migration[]` — a bare array, no room to report "resolves the chain **or fails**" (P10's own Mandate)
+without throwing, which `@forge/schemas` cannot do (Q3).
+
+Second, `18` §18.9's own worked example is not pure by the definition P10's own Checks demand of it.
+The spec's code block does `up(doc) { doc.frontmatter.reversibility ??= 'medium'; ...; return doc; }`
+— mutating the input and returning the same reference. P10's own Check says the opposite is required:
+"the runner passes a frozen document and asserts the input object is not mutated." A migration written
+exactly as `18` §18.9 illustrates would throw a `TypeError` the instant it ran against a frozen input
+(`??=` on a frozen object's missing property is an assignment attempt, which throws in strict-mode
+ESM) — the spec's own reference implementation fails its own build plan's acceptance check.
+
+**Answer taken (proceeding):**
+- `planMigrations` and `applyMigrations` return `{ success: true; ... } | { success: false; ... }`
+  discriminated unions (matching `registry/paths.ts`'s `RenderArtifactPathResult`, the one precedent
+  already in this package), not bare arrays or thrown errors. `planMigrations` gains a fourth,
+  optional `migrations` parameter defaulting to the real `MIGRATIONS` registry, so a plan can be
+  resolved against fixture migrations in a test without waiting for M1's real (empty) registry to
+  gain entries — the three-argument call `planMigrations(type, fromVersion, toVersion)` still matches
+  `PLAN-M1.md`'s stated call shape exactly for production use.
+- `applyMigrations` deep-freezes the document it hands to each `up`/`down` call. A migration written
+  in `18` §18.9's own mutating style throws immediately; `applyMigrations` catches that (and any other
+  thrown error) and reports it as a typed failure rather than letting it propagate, so the "never
+  throws" rule holds even when a migration itself is buggy or written against the spec's illustrative
+  (non-conforming) style. `18` §18.9's code block is treated as illustrative pseudocode of *what* a
+  migration does (add fields with defaults), not a literal contract for *how* to write one — no
+  migration in this repository is written that way; the fixtures built for this piece's own tests
+  return new objects instead of mutating.
+
+**Recommended resolution:** amend `18` §18.9's example to a non-mutating style (`return { ...doc,
+frontmatter: { ...doc.frontmatter, reversibility: doc.frontmatter.reversibility ?? 'medium', ... } }`)
+so the spec's own illustration would pass the purity check `PLAN-M1.md` requires of every real
+migration; amend `PLAN-M1.md` P10's stated `planMigrations` signature to name its actual, result-
+returning shape rather than a bare array.
