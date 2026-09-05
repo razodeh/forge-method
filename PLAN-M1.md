@@ -314,9 +314,6 @@ shapes that other milestones' gates depend on.
 
 ## P8 — Configuration schema
 
-*(P1, P1b, P3, P2, P4, P5, P6 and P7 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
-`dfc56b5`, `b082407`, `273ffcf`, `0f979fb`.)*
-
 **Mandate:** the whole of `.forge/config.yaml` as one zod schema with a documented default for every
 key and no undocumented keys.
 
@@ -340,6 +337,9 @@ key and no undocumented keys.
 ---
 
 ## P9 — JSON Schema emission and drift assertion
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7 and P8 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
+`dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`.)*
 
 **Mandate:** every zod schema has a committed, byte-stable JSON Schema, and a drifted one fails CI.
 

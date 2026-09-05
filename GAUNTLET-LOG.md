@@ -530,3 +530,61 @@ progressively verified as each later piece's real fixtures run against it, and a
 was never evidence that P6 and P7 wouldn't find something. Nothing in this round's critic pass
 found a *new* instance of the pattern, which is itself mild evidence the sweep in Q24 actually
 closed it out, not just for HandoffRecord.
+
+---
+
+## P8 — configuration schema
+
+**Rounds: 1 (one critic, no blocking findings). Outcome: WON.** Committed `4d540d3`.
+
+This piece hit, directly, the fork `SPEC-QUESTIONS.md` Q16 flagged months earlier and deferred with
+"confirm before P8 builds the config schema": `18` §18.3's own canonical config literally names a
+platform (`platform.claudeCode`, `primary: claude-code`, `models.tiers.*.claude-code`, and the model
+names `haiku`/`sonnet`/`opus`) — and the already-shipped `no-platform-concept` lint rule refuses
+every one of those tokens anywhere under `packages/schemas`, in test fixtures exactly as in
+production code, not just as an architectural preference but as a hard `pnpm lint` failure. Verified
+this mechanically before designing around it, rather than trusting Q16's older, more abstract
+framing: read the actual rule source, confirmed it scans every `Identifier` and string `Literal`
+under `packages/*` outside `adapter-*`. Resolved by making `platform.adapterConfig` a
+`Record<string, Record<string, unknown>>` keyed by an opaque platform id (Q25), and by discovering,
+separately, that `18` §18.3's own `redactPatterns` example uses `(?i)`, a PCRE idiom that is not
+valid JavaScript `RegExp` syntax at all — verified directly (`new RegExp('(?i)x')` throws) — and
+resolved with a narrow, single-idiom translation rather than either rejecting the spec's own example
+or attempting general PCRE emulation (Q26).
+
+The other piece of this build worth naming: `CONFIG_KEY_DOCS`'s completeness is checked by an actual
+schema walker (`configLeafPaths`) run against the real `configSchema` in the test, not by trusting
+that a hand-written `ConfigKeyPath` union and a hand-written docs map happen to agree — the same
+"a check against the common shape, not the complete grammar" failure mode named after P1b and P2
+would otherwise have been fully available here (a doc map that matches its own hand-written type
+union proves nothing about matching the actual schema).
+
+### Round 1 — 0 findings blocking; two minor fixed, one adversarial-only recorded
+
+The critic re-derived the platform-token ban and the `(?i)` incompatibility independently (not just
+trusting the builder's citations) and found both correctly and completely implemented — the walker
+handles the real schema's `ZodUnion` (`execution.concurrency`) and nested objects correctly, all 27
+nested objects are `.strict()`, and grepping the new files case-insensitively for every banned token
+turned up nothing outside doc comments.
+
+Two real, minor, accidental-reachable gaps: the golden-fixture doc comment (and Q25's own text)
+claimed *one* substitution (the platform id) when there were actually two (the model tier names
+`haiku`/`sonnet`/`opus` also had to change, for the identical reason) — fixed in both places. And two
+casts in `walk.ts` were flagged as uncommented and "provably redundant" by the critic's own
+bare-`tsc` test; re-verifying with this project's actual lint config (not just `tsc --noEmit`) showed
+the opposite — `@typescript-eslint/no-unsafe-argument` fails without them, because zod's own type
+declarations resolve `_def.innerType`/`_def.schema` to `any` at the point these narrow. Restored both
+with a comment naming why, rather than accepting a fix that would have reduced the actual, applicable
+type safety with the specific reasoning behind it in a comment. One adversarial-only finding (a
+`redactPatterns` entry that is exactly `"(?i)"`, an empty case-insensitive pattern, compiles
+successfully and matches every position — syntactically valid, semantically useless) recorded as
+residual risk for whatever piece eventually applies these patterns, not fixed here.
+
+### Calibration note
+
+The critic's own finding needed a second look before accepting it: "provably redundant" was true
+under one tool (`tsc --noEmit`) and false under the tool that actually gates this project's commits
+(`pnpm lint`, with its stricter unsafe-argument rule). A critic's claim of provable redundancy is
+still a claim about a specific check, not a fact about the code — worth re-deriving against the
+project's *actual* applicable floor before accepting a "simplification" a review offers, the same
+discipline already applied to the builder's own claims throughout this project.
