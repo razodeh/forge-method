@@ -279,3 +279,78 @@ root habit — writing a rule or a check against the *common* shape of an input 
 grammar of it (import declarations but not inline type-imports; `JSON.parse` succeeding but not
 checking the result is an object). Worth watching for specifically in P4 onward, where the surface
 (artifact front matter, YAML parsing) has the same shape of risk.
+
+---
+
+## P4 — atomic filesystem helpers with path containment
+
+**Rounds: 2 (one critic, one scoped verify). Outcome: WON.** Committed `dfc56b5`.
+
+### Round 1 — 5 findings (2 blocking, 1 major, 2 minor)
+
+- **The deny list checked the wrong path.** `resolveWithin` computed both the nominal path
+  (`relPosix`) and the symlink-resolved real path (`realRelPosix`) — the latter specifically to catch
+  a symlink escaping the project root — but the deny-list check (`isDenied`) only ever looked at
+  `relPosix`. A symlink inside the project pointing at `.git` (`alias -> .git`) let
+  `resolveWithin('alias/config')` succeed with no `CFG-004`, because the literal segment typed was
+  `alias`, never `.git`. The fix and the escape it closes were both already latent in the function —
+  the real path was computed and then simply not used for the one check it most needed to inform.
+- **`writeFileAtomic` could throw a raw, non-`ForgeError` exception after the write had already
+  succeeded.** `fsyncDirectoryBestEffort`'s `handle.sync()` was wrapped in try/catch, but the paired
+  `handle.close()` sat in an unprotected `finally`, so a `close()` failure (simulated: `EIO`)
+  propagated straight out of `writeFileAtomic`, contradicting its own doc comment, the function's
+  stated "must not fail the write over it" contract, and R2's closed `ForgeError` invariant — despite
+  the file already being correctly written and renamed.
+- **The new R11 path-concatenation lint rule matched only the exact literal `/`.** `dir + 'sub/' +
+  name`, `` `${dir}/sub/${name}` ``, `parts.join('/')`, and `''.concat(dir, '/', name)` all built a
+  disk path by hand and all passed clean — the rule existed to catch precisely this class of bug and
+  caught only its narrowest spelling.
+- **The same rule had no test.** `test/lint-rules.test.ts`'s own header explains why this project
+  keeps one: "a rule with no test is a comment," written after two earlier reviews found live holes
+  in commented rules. R11 got the comment and not the test, so the fs-scoped glob, the selectors, or
+  the whole rule could have been deleted without `pnpm test` noticing.
+- **Two minor, real doc-comment inaccuracies** (not blocking): `fs/index.ts` claimed the subpath
+  export meant a bare `@forge/core` import avoided pulling in filesystem code — false, since
+  `index.ts`'s root barrel already re-exports `fs/index.ts` (a repetition of the same claim already
+  made, and already false, for `./errors`, not a new mistake); and `byteCompare`'s comment called its
+  ordering "byte order (UTF-16 code-unit comparison)" as if the two were equivalent, which they are
+  not for an astral-plane character.
+
+### Round 2 — scoped verify: 3 of 5 held clean, 1 needed a second look, and the verifier found a new
+gap in each of the two runtime fixes' immediate neighborhood
+
+The deny-list fix held against six adversarial variants the verifier tried beyond my one test — a
+symlink nested a directory deeper, a two-hop symlink chain, a target whose leaf doesn't exist yet, a
+symlink into `node_modules`, a case-variant real directory name, and a symlink into `.forge/state`
+rather than `.git`. No gap found.
+
+The `writeFileAtomic` fix held for the exact scenario it was built for, but the verifier kept
+looking in the same function and found a sibling bug I hadn't: the catch block's own cleanup —
+`await fsp.rm(tempPath, { force: true })` — was itself unprotected. `force: true` suppresses
+`ENOENT`, not `EACCES` or a permissions race; if the cleanup attempt failed after a real write
+failure, the cleanup's raw error replaced the original `cause` and reached the caller unwrapped —
+the identical invariant the round-1 finding was about, one line away. Fixed the same way: wrapped in
+its own try/catch, the original `cause` preserved regardless of whether cleanup succeeds.
+
+The lint rule broadening held for every spelling in my own test suite plus most of the verifier's
+adversarial set (spread-then-join, three-placeholder templates, `Array.prototype.concat`, optional
+chaining) — but not a computed member access (`obj['join'](...)`, `''['concat'](...)`) or a
+detached/bound method reference (`const j = parts.join.bind(parts); j('/')`), both of which key off
+`callee.property.name`, which is only populated for a literal, non-computed member. Judged
+adversarial-only rather than fixed in this round: `@typescript-eslint/dot-notation` already nudges
+away from the primary bypass (a static string key in brackets), and the rule is a self-authored
+defense-in-depth measure over the load-bearing property (containment, atomicity, the deny list),
+which the verify pass confirmed clean. Recorded here as residual risk, not chased further, per
+`QUALITY-BAR.md` §4's two-round cap.
+
+### Calibration note
+
+Both real runtime findings this round were the same failure shape: a value or a step computed
+correctly, then not consistently used or protected everywhere it needed to be — the deny check ran
+against one of two available paths, and `close()`/`rm()` each got protected in one call site but not
+its sibling. Read as a pattern rather than as two unrelated bugs: whenever a piece introduces a
+"comprehensive" property (every write goes through `ProjectPaths`; every failure is a `ForgeError`),
+the finding is rarely that the property is wrong — it's that some third or fourth call site the
+property should cover was written before the pattern was fully in mind, or after, and never swept
+back over. Worth a deliberate final pass over "every place this same shape of call appears" before
+calling a piece done, not just the one the acceptance check happened to name.
