@@ -103,7 +103,7 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     id: 'HandoffRecord',
     idPrefix: 'HO',
     pathTemplate: 'reports/handoffs.md',
-    idWidth: 3,
+    idWidth: 4,
     collection: true,
   },
 ];
@@ -165,10 +165,10 @@ describe('specs/18 §18.7 — the registry table', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('defaults idWidth to 3, except ADR and NFR at 4 (SPEC-QUESTIONS.md Q21)', () => {
+  it('defaults idWidth to 3, except ADR, NFR and HandoffRecord at 4 (SPEC-QUESTIONS.md Q21, Q24)', () => {
+    const fourDigitTypes = new Set(['ADR', 'NFR', 'HandoffRecord']);
     for (const type of ARTIFACT_TYPES) {
-      const expected = type.id === 'ADR' || type.id === 'NFR' ? 4 : 3;
-      expect(type.idWidth, type.id).toBe(expected);
+      expect(type.idWidth, type.id).toBe(fourDigitTypes.has(type.id) ? 4 : 3);
     }
   });
 

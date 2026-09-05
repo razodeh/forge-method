@@ -292,7 +292,7 @@ inferred types and `acceptanceCriterionSchema`.
 *(P1, P1b, P3, P2, P4, P5 and P6 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
 `dfc56b5`, `b082407`, `273ffcf`.)*
 
-**Mandate:** zod schemas for the remaining fourteen registry types, including the ADR and Diagram
+**Mandate:** zod schemas for the remaining thirteen registry types, including the ADR and Diagram
 shapes that other milestones' gates depend on.
 
 **Spec:** `18` §18.7, `08` §8.4 (ADR), `08` §8.11.5 (Diagram), `09` §9.2.

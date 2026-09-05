@@ -108,11 +108,13 @@ const RAW_ARTIFACT_TYPES = [
   },
   { id: 'Runbook', idPrefix: 'RUN', pathTemplate: 'kb/ops/runbooks/{id}-{slug}.md', idWidth: 3 },
   { id: 'GateReport', idPrefix: 'GATE', pathTemplate: 'reports/gates/{gate}-{ts}.md', idWidth: 3 },
+  // idWidth 4, not the default 3: the one HandoffRecord id example in the spec pack is 4 digits
+  // (HO-0042); see SPEC-QUESTIONS.md Q24.
   {
     id: 'HandoffRecord',
     idPrefix: 'HO',
     pathTemplate: 'reports/handoffs.md',
-    idWidth: 3,
+    idWidth: 4,
     collection: true,
   },
 ] as const;

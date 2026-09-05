@@ -521,3 +521,82 @@ times over. Updated `PLAN-M1.md` P5's already-committed registry (`ARTIFACT_TYPE
 NFR `idWidth: 4`, matching actual usage.
 
 **Recommended resolution:** add `idWidth: 4` to NFR's row in `18` §18.7's table, next to ADR's.
+
+---
+
+## Q22 — SessionRecord's own `type` field collides with the base front matter's `type` discriminator (same defect as Q19, a second type)
+
+**Conflict, same shape as Q19.** `16` §16.5's own worked SessionRecord example uses `type: brainstorm`
+for the session's technique category (one of the ten `16` §16.2 session types: brainstorm,
+design-review, tradeoff, premortem, retro, war-room, estimation, standup, discovery-interview,
+story-refinement) — colliding with the base front matter's `type: SessionRecord` discriminator
+(`18` §18.6), exactly as Story's own `type: feature` did.
+
+**Answer taken (proceeding):** renamed to `sessionType` in `sessionRecordSchema`, using the same
+reasoning Q19 already recorded (and the same replacement name pattern: `<Type>Type`) — enumerated
+from `16` §16.2's closed, ten-row table verbatim.
+
+**Recommended resolution:** rename the field in `16` §16.5's example to `sessionType` (or another name
+distinct from the base `type`), matching Q19's recommendation for Story.
+
+---
+
+## Q23 — Six collection-entry types and GateReport have only partial or no field-level spec
+
+`PLAN-M1.md` P7 names schemas for all thirteen remaining registry types. Unlike ADR (`08` §8.4),
+Diagram (`08` §8.11.5), SessionRecord (`16` §16.5), RCA and Defect (`13` §13, INTAKE and RECORD
+steps) — each with a complete worked example or an exhaustive field list — seven types have only
+partial or no spec content:
+
+- **Risk**, **Assumption**, **OpenQuestion**, **Waiver**, **Environment**, **HandoffRecord** are
+  registry `collection: true` types (many entries in one shared file, not a whole front-matter
+  document each — `PLAN-M1.md` P7's own Check names this distinction). Of these, `Assumption` and
+  `HandoffRecord` have complete worked examples (an assumption entry embedded in `05` §5.6's
+  HandoffRecord example; the HandoffRecord example itself). `Waiver` has an explicit three-field
+  list (`reason`, `owner`, `expiry` — `20` §20, `21` §21.3 E4, `PLAN-M1.md`'s own Check) and
+  `Environment` has an explicit seven-field list (`14` §14, "purpose, URL, deploy trigger, data
+  policy, secrets source, owner, and how to get access"). `Risk` has only a four-field shorthand
+  (`08` §8.2: "likelihood/impact/mitigation/owner" — no field for what the risk actually *is*).
+  `OpenQuestion` has no field list at all, only a purpose description ("unanswered questions
+  blocking or shadowing work", `08` §8.2) and a plain-string usage in `05` §5.6's
+  `open_questions: [ "..." ]` — never a structured entry shape.
+- **GateReport** has no field-level spec anywhere — `10` §10's gate rules say only that "every gate
+  evaluation writes a `GateReport` artifact... with the exact command output," never what fields
+  that document has.
+
+**Answer taken (proceeding):**
+- `waiverSchema` and `environmentSchema` are built fully from their explicit field lists.
+- `assumptionSchema` and `handoffRecordSchema` are built fully from their worked examples (and
+  `handoffRecordSchema`'s `assumptions` field reuses `assumptionSchema` for its entries, rather than
+  a second, possibly-drifting transcription).
+- `riskSchema` adds one field beyond the stated four, `statement` (what the risk is), reusing the
+  same field name every other artifact type in this registry already uses for "the thing being
+  described in prose" (NFR, Capability) — a naming choice, not a structural invention, and the
+  narrowest addition that makes a "register" of risks legible at all.
+- `openQuestionSchema`, given no field shape at all, is minimal: `id`, `question`, and `status`
+  (`open | resolved`) — `status` justified directly by `10` §10's gate rule that "blocking OQs must
+  be resolved," which presupposes a resolved/open state to check.
+- `gateReportSchema` is the base front matter narrowed to `type: z.literal('GateReport')` only, no
+  invented fields — the same Q20 discipline for a type with no spec content at all.
+
+**Recommended resolution:** author a worked example for OpenQuestion and GateReport matching the
+other types' style; confirm `riskSchema`'s added `statement` field name (or replace it) when Risk's
+own worked example is written.
+
+---
+
+## Q24 — HandoffRecord's own worked example is 4 digits, the same `idWidth` defect as Q21, a second type
+
+**Conflict, same shape as Q21.** `05` §5.6's only HandoffRecord example (`id: HO-0042`) is 4 digits;
+`18` §18.7's registry gives HandoffRecord no `idWidth` override, defaulting it to 3. Surfaced the same
+way Q21 was: `handoffRecordSchema`'s valid-fixture test, transcribed verbatim from the spec example,
+failed against the registry's default width.
+
+**Answer taken (proceeding):** corrected `ARTIFACT_TYPES`'s `HandoffRecord` row to `idWidth: 4`,
+matching the one existing usage — there is no competing 3-digit example to weigh it against, so this
+is the same call Q21 made, not a new kind of judgment.
+
+**Recommended resolution:** add `idWidth: 4` to HandoffRecord's row in `18` §18.7's table. Given two
+of twenty-one rows have now needed this correction from real usage the table itself did not predict,
+also worth a pass checking every remaining type's only-ever-used id width against its declared
+default before more schemas are built against it.

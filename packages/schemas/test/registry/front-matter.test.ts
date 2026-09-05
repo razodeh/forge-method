@@ -66,7 +66,7 @@ describe('baseFrontMatterSchema — the valid case', () => {
       ['Environment', 'ENV-001'],
       ['Runbook', 'RUN-001'],
       ['GateReport', 'GATE-001'],
-      ['HandoffRecord', 'HO-001'],
+      ['HandoffRecord', 'HO-0001'],
     ];
     for (const [type, id] of cases) {
       const result = baseFrontMatterSchema.safeParse({ ...validStoryFrontMatter(), type, id });
