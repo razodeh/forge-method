@@ -338,9 +338,6 @@ key and no undocumented keys.
 
 ## P9 — JSON Schema emission and drift assertion
 
-*(P1, P1b, P3, P2, P4, P5, P6, P7 and P8 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
-`dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`.)*
-
 **Mandate:** every zod schema has a committed, byte-stable JSON Schema, and a drifted one fails CI.
 
 **Spec:** `02` §2.1 (`zod-to-json-schema`), `specs/22` M1 exit test
@@ -364,6 +361,9 @@ key and no undocumented keys.
 ---
 
 ## P10 — Migration runner
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8 and P9 are committed: `9b98217`, `7fef54d`, `47ba1ea`,
+`bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`.)*
 
 **Mandate:** run ordered, pure schema migrations across a document, with reversible ones proven to
 round-trip.

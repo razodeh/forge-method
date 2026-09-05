@@ -588,3 +588,73 @@ under one tool (`tsc --noEmit`) and false under the tool that actually gates thi
 still a claim about a specific check, not a fact about the code — worth re-deriving against the
 project's *actual* applicable floor before accepting a "simplification" a review offers, the same
 discipline already applied to the builder's own claims throughout this project.
+
+---
+
+## P9 — JSON Schema emission and drift assertion
+
+**Rounds: 1 (one critic, no blocking findings). Outcome: WON.** Committed `27cf2b9`.
+
+The core design problem this piece had to solve before any code: `specs/22`'s M1 exit test is the
+literal, unmodifiable invocation `node -e "require('./scripts/assert-schema-drift.mjs')"` — bare
+`node`, zero flags — yet computing a fresh JSON Schema means loading `@forge/schemas`'s TypeScript
+source, which a flag-free `node` cannot parse at all. Verified every step of the solution empirically
+rather than from memory of Node's release notes, on both Node 22.14.0 and the actual dev-toolchain
+floor Node 20.19.6 (installed via `nvm install 20.19.6` specifically to check this): a bare
+`require()` can load an `.mjs` file that itself statically imports other local `.mjs`/builtin
+modules and spawns child processes; a bare `node` genuinely cannot import `.ts` with zero flags; and
+`--experimental-strip-types` can. Resolved by pushing the one TS-importing step
+(`scripts/lib/emit-schemas-child.mjs`) into a child process spawned with that flag from an otherwise
+flag-free parent (`scripts/lib/schema-drift.mjs`), so only that one function's implementation needs
+the flag rather than every caller of the file needing to already be running under it.
+
+A real, self-found bug caught before it ever reached a committed run: the child process's
+`--experimental-strip-types` warning was leaking to stderr on every invocation, discovered by
+noticing it appeared for a real file but not for a trivial inline `-e` script, and traced to
+`execFileSync`'s default `stdio` inheriting the child's stderr. Fixed by explicitly capturing rather
+than inheriting stdio, while still surfacing a genuine child failure's stderr via the thrown error.
+
+A second, real gap this piece's own floor run caught (not the critic): committing the new thin CLI
+wrappers (`scripts/emit-schemas.mjs`, `scripts/assert-schema-drift.mjs`,
+`scripts/lib/emit-schemas-child.mjs`) without extending `vitest.config.ts`'s existing coverage-exclude
+list for thin wrappers (the same category `check-boundaries.mjs`/`check-coverage-ratchet.mjs` already
+used, since a wrapper invoked only via `execFileSync` runs in a process the parent's v8 coverage
+collector cannot see) failed the coverage floor outright — `0%` against an 85% threshold for each new
+file. Fixed by extending that same, pre-existing exclusion pattern rather than inventing a new one.
+Separately, the real logic file (`schema-drift.mjs`, unit-tested in-process, not just via subprocess)
+had one genuinely uncovered branch — the `readdirSync` failure path for a `packages/schemas/json/`
+directory that does not exist at all — which is a real, reachable state (a fresh checkout before the
+first `pnpm emit-schemas`), not a hypothetical; added a real test for it rather than excluding the
+branch or the file.
+
+### Round 1 — 0 findings blocking; one minor/nit recorded as residual risk
+
+The critic independently ran the literal M1 exit-test command (`node -e
+"require('./scripts/assert-schema-drift.mjs')"`) against this repository's real, committed state and
+got exit 0; independently diffed all 22 committed `*.schema.json` files against a fresh
+`emitJsonSchemas()` call and found them byte-identical; independently removed the `schema as
+z.ZodSchema` cast in `emit.ts` and confirmed `pnpm lint` fails without it (the cast is load-bearing,
+not decorative — `zodToJsonSchema`'s parameter type is `ZodType<any, ZodTypeDef, any>`, not
+`ZodTypeAny` = `ZodType<any, any, any>`, and the middle type parameter's mismatch is exactly what
+`@typescript-eslint/no-unsafe-argument` flags); and independently confirmed no `@forge/*` import and
+no banned platform token appears anywhere in the new files.
+
+One minor, adversarial-only finding: `emit.ts`'s sort comparator (`a < b ? -1 : 1`) treats a tie as
+"a > b", which is wrong for a genuine equal pair, and the adjacent comment's claim that "no two
+entries ever tie" is true today but not compiler-enforced the way `ArtifactTypeId` exhaustiveness is
+— a contributor could hand-write a colliding `fileStem` in `ARTIFACT_SCHEMAS`. Not fixed: reaching it
+requires a deliberate naming collision, not an ordinary edit, and `emit.test.ts`'s exact
+`schemas.size === ARTIFACT_TYPES.length + 1` assertion would already fail loudly (wrong `Map` size,
+one schema silently dropped) the next time `pnpm test` ran, before anything shipped — the failure
+mode is self-catching via an unrelated, already-existing test, not silent. Recorded as residual risk
+rather than hardened, matching this project's standing calibration against adversarial-only findings.
+
+### Calibration note
+
+Two genuine defects in this piece were caught by its own floor run, not by the critic: the leaking
+`ExperimentalWarning` (found by comparing two invocations' output, not by inspection) and the missing
+coverage-exclude entries for the new thin wrappers (found by running `pnpm test` itself and reading
+the threshold failures, not by reasoning about what "should" need coverage). Both are reminders that
+"the code looks right" and "the floor is green" are different claims, and only the second one is the
+actual bar — a piece is not done until its own commands have been run and their output read, not
+predicted.
