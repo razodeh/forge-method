@@ -227,6 +227,53 @@ export const ERROR_CODES = {
       `Filesystem operation "${show(d.operation)}" failed for ${show(d.path)}.`,
     remedy: 'Check the underlying cause (permissions, disk space, a locked file) and retry.',
   },
+  'CFG-005': {
+    // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
+    // than treating it as a document with empty front matter — every registered artifact type
+    // requires `id`/`type`/... (`18` §18.6), so a file missing the block entirely can never validate
+    // regardless, and failing at parse time names the actual defect instead of a confusing pile of
+    // "required field missing" errors for every field at once.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) =>
+      `No front matter found in ${show(d.path)}: the file must start with a "---" line.`,
+    remedy: 'Add a YAML front-matter block, delimited by "---" lines, to the top of the file.',
+  },
+  'CFG-006': {
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) =>
+      `Unterminated front matter in ${show(d.path)}: no closing "---" line found.`,
+    remedy: 'Add the closing "---" line after the front-matter block.',
+  },
+  'CFG-007': {
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; issue: string }) =>
+      `Front matter in ${show(d.path)} is not valid YAML: ${show(d.issue)}`,
+    remedy: 'Fix the YAML syntax between the "---" delimiters.',
+  },
+  'CFG-008': {
+    // Phase 1 of `18` §18.6's two-phase validation: front matter against the type's schema. Distinct
+    // from CFG-007 (which fires before a type is even known, for text that is not YAML at all) — this
+    // is well-formed YAML that does not satisfy its declared type's fields.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; issues: string }) =>
+      `Front matter in ${show(d.path)} does not match its schema: ${show(d.issues)}`,
+    remedy: 'Fix the listed fields, or correct the "type" if the wrong schema is being applied.',
+  },
+  'CFG-009': {
+    // Phase 2 of `18` §18.6's two-phase validation: body structure against the type's
+    // `requiredSections`. Fires once per missing section, not once per document, so a document
+    // missing three sections is reported as three findings rather than one that a fix might only
+    // partially address.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; section: string }) =>
+      `${show(d.path)} is missing its required "## ${show(d.section)}" section.`,
+    remedy: 'Add the missing "## " heading and its content to the document body.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

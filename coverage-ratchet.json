@@ -1,9 +1,9 @@
 {
   "packages/core": {
-    "lines": 99.43,
-    "statements": 98.97,
+    "lines": 99.66,
+    "statements": 99.37,
     "functions": 100,
-    "branches": 97.37
+    "branches": 98.28
   },
   "scripts": {
     "lines": 100,
@@ -12,6 +12,12 @@
     "branches": 89.29
   },
   "packages/schemas": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 100
+  },
+  "packages/templates": {
     "lines": 100,
     "statements": 100,
     "functions": 100,

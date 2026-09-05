@@ -7,12 +7,20 @@
     ".": "./src/index.ts",
     "./errors": "./src/errors/index.ts",
     "./constants": "./src/constants.ts",
-    "./fs": "./src/fs/index.ts"
+    "./fs": "./src/fs/index.ts",
+    "./artifacts": "./src/artifacts/index.ts"
   },
   "engines": {
     "node": ">=20.10"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/schemas": "workspace:*",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "zod": "3.25.76"
   }
 }
