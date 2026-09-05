@@ -46,7 +46,7 @@ framework: '<the decision framework used, if any>'
 
 <...>
 
-### Negative
+### Negative / accepted costs
 
 <...>
 

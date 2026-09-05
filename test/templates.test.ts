@@ -89,12 +89,22 @@ function readTemplate(type: TemplateArtifactTypeId): {
   return { data: parsed.data, content: parsed.content, raw };
 }
 
-/** The `##`-level headings in `content`, in order. `###`+ subsections are deliberately excluded. */
+/**
+ * The `##`-level headings in `content`, in order. `###`+ subsections are deliberately excluded, and
+ * so is a `## `-prefixed line inside a ` ``` ` fenced code block — a template quoting another
+ * artifact's structure as an example is not itself declaring a section.
+ */
 function topLevelHeadings(content: string): string[] {
-  return content
-    .split('\n')
-    .filter((line) => line.startsWith('## '))
-    .map((line) => line.slice('## '.length).trim());
+  const headings: string[] = [];
+  let inFence = false;
+  for (const line of content.split('\n')) {
+    if (line.startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence && line.startsWith('## ')) headings.push(line.slice('## '.length).trim());
+  }
+  return headings;
 }
 
 const HANDLEBARS_BUILTIN_HELPERS = new Set([
@@ -131,15 +141,29 @@ function collectHelperCallNames(node: unknown, names: Set<string>): void {
   if (node === null || typeof node !== 'object') return;
   const record = node as Record<string, unknown>;
   const type = record['type'];
+  const hash = record['hash'];
   if (type === 'BlockStatement' || type === 'MustacheStatement' || type === 'SubExpression') {
     const params = record['params'];
     const isCall =
       type === 'BlockStatement' ||
       (Array.isArray(params) && params.length > 0) ||
-      record['hash'] !== undefined;
+      hash !== undefined;
     const pathNode = record['path'] as { original?: unknown } | undefined;
     if (isCall && typeof pathNode?.original === 'string') names.add(pathNode.original);
     if (Array.isArray(params)) for (const param of params) collectHelperCallNames(param, names);
+  }
+  // A hash argument's value can itself be a SubExpression calling another helper
+  // (`{{helper key=(otherHelper x)}}`) — without this, that inner call is invisible to every
+  // caller of this function, since it lives under `hash.pairs[].value`, not `params` or `body`.
+  if (hash !== null && typeof hash === 'object') {
+    const pairs = (hash as Record<string, unknown>)['pairs'];
+    if (Array.isArray(pairs)) {
+      for (const pair of pairs) {
+        if (pair !== null && typeof pair === 'object') {
+          collectHelperCallNames((pair as Record<string, unknown>)['value'], names);
+        }
+      }
+    }
   }
   for (const key of ['body', 'program', 'inverse']) {
     const child = record[key];
@@ -173,6 +197,28 @@ describe('undeclaredHelperCalls (the Handlebars check itself)', () => {
 
   it('names an undeclared custom block helper', () => {
     expect(undeclaredHelperCalls('{{#customBlock}}y{{/customBlock}}')).toEqual(['customBlock']);
+  });
+
+  it('names an undeclared helper nested inside a hash argument', () => {
+    // `{{helper key=(subHelper x)}}` — `subHelper` lives under `hash.pairs[].value`, not `params`
+    // or `body`; a walk that skips `hash` entirely (the bug this test guards against) would report
+    // only `helper` and miss `subHelper` completely.
+    expect(undeclaredHelperCalls('{{helper key=(subHelper x)}}').sort()).toEqual([
+      'helper',
+      'subHelper',
+    ]);
+  });
+});
+
+describe('topLevelHeadings (the ## extraction itself)', () => {
+  it('does not count a ## line inside a fenced code block as a heading', () => {
+    const content = ['## Real Heading', '', '```', '## Not a heading', '```', ''].join('\n');
+    expect(topLevelHeadings(content)).toEqual(['Real Heading']);
+  });
+
+  it('resumes recognising headings once the fence closes', () => {
+    const content = ['```', '## Not a heading', '```', '## Real Heading'].join('\n');
+    expect(topLevelHeadings(content)).toEqual(['Real Heading']);
   });
 });
 
