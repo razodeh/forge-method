@@ -289,9 +289,6 @@ inferred types and `acceptanceCriterionSchema`.
 
 ## P7 — KB, session and report artifact schemas
 
-*(P1, P1b, P3, P2, P4, P5 and P6 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
-`dfc56b5`, `b082407`, `273ffcf`.)*
-
 **Mandate:** zod schemas for the remaining thirteen registry types, including the ADR and Diagram
 shapes that other milestones' gates depend on.
 
@@ -316,6 +313,9 @@ shapes that other milestones' gates depend on.
 ---
 
 ## P8 — Configuration schema
+
+*(P1, P1b, P3, P2, P4, P5, P6 and P7 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`,
+`dfc56b5`, `b082407`, `273ffcf`, `0f979fb`.)*
 
 **Mandate:** the whole of `.forge/config.yaml` as one zod schema with a documented default for every
 key and no undocumented keys.

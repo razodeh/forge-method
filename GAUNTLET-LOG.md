@@ -476,3 +476,57 @@ only as tested as the fixtures thrown at it, and a piece's own examples are a mu
 than the next piece's real, spec-sourced ones. Worth remembering going into P7 and beyond: building
 against a prior piece's committed API is itself a review of that piece, and it will keep finding
 things the original gauntlet rounds structurally could not.
+
+---
+
+## P7 — remaining artifact schemas for all 21 registry types
+
+**Rounds: 1 (one critic, no findings). Outcome: WON.** Committed `0f979fb`.
+
+The P6 calibration note's prediction held immediately: building the last 13 schemas against real
+spec examples surfaced two more defects in already-committed work before the critic ever ran —
+
+- **Q22**: `16` §16.5's own SessionRecord example has the identical defect Q19 found in Story — a
+  field named `type` (session category: brainstorm/retro/tradeoff/...) colliding with the base
+  front-matter discriminator. Same fix as Q19: renamed to `sessionType`.
+- **Q24**: `05` §5.6's only HandoffRecord example is 4 digits (`HO-0042`); the P5-committed registry
+  gave it no `idWidth` override, the identical defect Q21 found in NFR. Corrected the registry the
+  same way. Prompted a full sweep of every registered prefix's actual digit-width usage across the
+  whole spec pack (`grep`, not sampling) before continuing — found nothing else off; recorded in
+  Q24 as a completed check, not a remaining worry.
+
+Also, per Q23: seven of the thirteen types have partial or no field-level spec (Risk, Assumption,
+OpenQuestion, Waiver, Environment, HandoffRecord, GateReport). Built each from exactly what's stated
+— Waiver and Environment from explicit field lists, Assumption and HandoffRecord from complete
+worked examples (the latter reusing `assumptionSchema` for its own `assumptions` field rather than
+re-transcribing the same shape) — and kept OpenQuestion and GateReport minimal where no field list
+exists at all, matching P5/P6's Q18/Q20 discipline. Risk got one field beyond its four-field spec
+hint (`statement`, reusing NFR/Capability's existing name for "what this is" rather than inventing a
+new one) — flagged in Q23 as the one addition worth a second look once Risk gets a real worked
+example.
+
+### Round 1 — 0 findings
+
+The critic specifically probed the areas most likely to hide a coincidental-pass: ADR's
+`supersedes`/`superseded_by` mutual-consistency check (confirmed it does not wrongly reject a
+non-superseded ADR that itself supersedes an older one — a real, spec-sanctioned case distinct from
+what the check actually guards), each of the six collection-entry schemas' `entryIdSchema` call for
+a copy-paste wrong-type argument (none found — each passes its own correct `ArtifactTypeId`),
+`handoffRecordSchema`'s nested reuse of `assumptionSchema` for array-index and double-`.strict()`
+surprises (none — correct path, correct error), and RCA's open-record `timeline` field for being
+either too permissive or too strict against the spec's own heterogeneous example (correctly
+in between). All held on the first pass.
+
+### Calibration note
+
+Two rounds in a row (P6, P7) have now found real defects in already-committed registry data purely
+by trying to construct a real, spec-sourced fixture against it — never by re-reading the committed
+code more carefully. That is no longer a coincidence worth a one-line note; it is the actual
+mechanism by which this registry gets correct, and the gauntlet rounds on P5 itself could not have
+caught either defect, because P5 had no reason to construct an `NFR-0002`- or `HO-0042`-shaped
+fixture until something downstream needed one. Worth stating plainly for whatever comes after M1:
+the registry's field-level correctness is not "done" when P5's own gauntlet passes — it is
+progressively verified as each later piece's real fixtures run against it, and a clean P5 review
+was never evidence that P6 and P7 wouldn't find something. Nothing in this round's critic pass
+found a *new* instance of the pattern, which is itself mild evidence the sweep in Q24 actually
+closed it out, not just for HandoffRecord.
