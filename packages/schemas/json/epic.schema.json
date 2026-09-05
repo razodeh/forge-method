@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "capability": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "data": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "exit_criteria": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "goal": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "interfaces": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "scope_in": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "scope_out": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "stage": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "stories": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "Epic",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "capability",
+    "stage",
+    "goal",
+    "scope_in",
+    "scope_out",
+    "stories",
+    "interfaces",
+    "data",
+    "exit_criteria"
+  ],
+  "type": "object"
+}

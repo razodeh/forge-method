@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "blast_radius": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "category": {
+      "enum": [
+        "product",
+        "architecture",
+        "data",
+        "delivery",
+        "ops",
+        "security",
+        "process"
+      ],
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "date": {
+      "format": "date",
+      "type": "string"
+    },
+    "deciders": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "diagrams": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "framework": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "related": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reversibility": {
+      "enum": [
+        "trivial",
+        "easy",
+        "medium",
+        "hard",
+        "one-way"
+      ],
+      "type": "string"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "revisit_trigger": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "accepted",
+        "rejected",
+        "superseded",
+        "deprecated"
+      ],
+      "type": "string"
+    },
+    "superseded_by": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "supersedes": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "ADR",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "category",
+    "deciders",
+    "date",
+    "reversibility",
+    "blast_radius",
+    "revisit_trigger",
+    "supersedes",
+    "superseded_by",
+    "related",
+    "diagrams",
+    "framework"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "access": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "data_policy": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "deploy_trigger": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^ENV-\\d{3}(-\\d+)?$",
+      "type": "string"
+    },
+    "owner": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "purpose": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "secrets_source": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "url": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "purpose",
+    "url",
+    "deploy_trigger",
+    "data_policy",
+    "secrets_source",
+    "owner",
+    "access"
+  ],
+  "type": "object"
+}

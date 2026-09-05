@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "applies_to": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "performance",
+        "availability",
+        "scalability",
+        "security",
+        "privacy",
+        "maintainability",
+        "operability",
+        "cost",
+        "accessibility",
+        "compliance"
+      ],
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "conditions": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "metric": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "statement": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "target": {
+      "pattern": "^(?:[<>]=?|=)?\\s*\\d+(?:\\.\\d+)?",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "NFR",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    },
+    "verification": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "test",
+            "benchmark",
+            "monitor",
+            "review",
+            "audit"
+          ],
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "category",
+    "statement",
+    "metric",
+    "target",
+    "verification",
+    "applies_to"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,797 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "budget": {
+      "additionalProperties": false,
+      "properties": {
+        "dailyUsd": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "onBreach": {
+          "enum": [
+            "pause",
+            "finish-lanes",
+            "abort"
+          ],
+          "type": "string"
+        },
+        "perRunUsd": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "perStepUsdDefault": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "perRunUsd",
+        "perStepUsdDefault",
+        "dailyUsd",
+        "onBreach"
+      ],
+      "type": "object"
+    },
+    "diagrams": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedNotations": {
+          "items": {
+            "enum": [
+              "mermaid",
+              "plantuml",
+              "d2",
+              "dot",
+              "structurizr"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "complexity": {
+          "additionalProperties": false,
+          "properties": {
+            "hardMaxNodes": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "maxEdges": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxNodes",
+            "maxEdges",
+            "hardMaxNodes"
+          ],
+          "type": "object"
+        },
+        "defaultNotation": {
+          "enum": [
+            "mermaid",
+            "plantuml",
+            "d2",
+            "dot",
+            "structurizr"
+          ],
+          "type": "string"
+        },
+        "driftPolicy": {
+          "enum": [
+            "fail",
+            "autofix",
+            "warn"
+          ],
+          "type": "string"
+        },
+        "remoteRenderer": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "render": {
+          "enum": [
+            "never",
+            "on-demand",
+            "on-gate"
+          ],
+          "type": "string"
+        },
+        "requireCaptions": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "defaultNotation",
+        "allowedNotations",
+        "render",
+        "remoteRenderer",
+        "complexity",
+        "driftPolicy",
+        "requireCaptions"
+      ],
+      "type": "object"
+    },
+    "execution": {
+      "additionalProperties": false,
+      "properties": {
+        "autonomy": {
+          "enum": [
+            "supervised",
+            "guided",
+            "autonomous"
+          ],
+          "type": "string"
+        },
+        "autonomyByGate": {
+          "additionalProperties": {
+            "enum": [
+              "supervised",
+              "guided",
+              "autonomous"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            }
+          ]
+        },
+        "conflictPolicy": {
+          "enum": [
+            "agent",
+            "human",
+            "abort"
+          ],
+          "type": "string"
+        },
+        "integrationBranch": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "retainLaneWorktrees": {
+          "enum": [
+            "never",
+            "on-failure",
+            "always"
+          ],
+          "type": "string"
+        },
+        "sharedMutablePaths": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "glob": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "strategy": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "glob",
+              "strategy"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "concurrency",
+        "autonomy",
+        "autonomyByGate",
+        "retainLaneWorktrees",
+        "integrationBranch",
+        "conflictPolicy",
+        "sharedMutablePaths"
+      ],
+      "type": "object"
+    },
+    "kb": {
+      "additionalProperties": false,
+      "properties": {
+        "packBudgetTokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "retrieval": {
+          "additionalProperties": false,
+          "properties": {
+            "embeddings": {
+              "type": "boolean"
+            },
+            "graphHops": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "embeddings",
+            "graphHops"
+          ],
+          "type": "object"
+        },
+        "staleness": {
+          "additionalProperties": false,
+          "properties": {
+            "architecture": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "data": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "delivery": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "ops": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "product": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "architecture",
+            "data",
+            "delivery",
+            "product",
+            "ops"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "packBudgetTokens",
+        "retrieval",
+        "staleness"
+      ],
+      "type": "object"
+    },
+    "mcp": {
+      "additionalProperties": false,
+      "properties": {
+        "adoptHostServers": {
+          "type": "boolean"
+        },
+        "defaults": {
+          "additionalProperties": false,
+          "properties": {
+            "grantMode": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "injectionPosture": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "grantMode",
+            "injectionPosture"
+          ],
+          "type": "object"
+        },
+        "grants": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "servers": {
+          "items": {},
+          "type": "array"
+        }
+      },
+      "required": [
+        "servers",
+        "grants",
+        "defaults",
+        "adoptHostServers"
+      ],
+      "type": "object"
+    },
+    "models": {
+      "additionalProperties": false,
+      "properties": {
+        "overrides": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "tiers": {
+          "additionalProperties": false,
+          "properties": {
+            "balanced": {
+              "$ref": "#/properties/models/properties/tiers/properties/frugal"
+            },
+            "frugal": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "max": {
+              "$ref": "#/properties/models/properties/tiers/properties/frugal"
+            }
+          },
+          "required": [
+            "frugal",
+            "balanced",
+            "max"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "tiers",
+        "overrides"
+      ],
+      "type": "object"
+    },
+    "output": {
+      "additionalProperties": false,
+      "properties": {
+        "ascii": {
+          "type": "boolean"
+        },
+        "color": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "style": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "color",
+        "ascii",
+        "style"
+      ],
+      "type": "object"
+    },
+    "paths": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "kb": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "plans": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reports": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sessions": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "specs": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kb",
+        "specs",
+        "plans",
+        "sessions",
+        "reports",
+        "code"
+      ],
+      "type": "object"
+    },
+    "platform": {
+      "additionalProperties": false,
+      "properties": {
+        "adapterConfig": {
+          "additionalProperties": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "perAgent": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "primary": {
+          "type": "string"
+        },
+        "routing": {
+          "additionalProperties": false,
+          "properties": {
+            "onOutage": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "onRateLimit": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "onRateLimit",
+            "onOutage"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "primary",
+        "fallback",
+        "perAgent",
+        "routing",
+        "adapterConfig"
+      ],
+      "type": "object"
+    },
+    "project": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "L0",
+            "L1",
+            "L2",
+            "L3",
+            "L4"
+          ],
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "guided",
+            "express"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "repoUrl": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "slug",
+        "description",
+        "level",
+        "mode",
+        "repoUrl"
+      ],
+      "type": "object"
+    },
+    "quality": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "additionalProperties": false,
+          "properties": {
+            "branches": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "lines": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "ratchet": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "lines",
+            "branches",
+            "ratchet"
+          ],
+          "type": "object"
+        },
+        "dodProfileDefault": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "flake": {
+          "additionalProperties": false,
+          "properties": {
+            "maxRatePct": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "quarantineCap": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "window": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxRatePct",
+            "window",
+            "quarantineCap"
+          ],
+          "type": "object"
+        },
+        "pyramid": {
+          "additionalProperties": false,
+          "properties": {
+            "maxE2ESharePct": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "maxE2ESharePct"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "coverage",
+        "flake",
+        "pyramid",
+        "dodProfileDefault"
+      ],
+      "type": "object"
+    },
+    "roster": {
+      "additionalProperties": false,
+      "properties": {
+        "add": {
+          "items": {},
+          "type": "array"
+        },
+        "alias": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "disable": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enable": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "preset": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "split": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "preset",
+        "enable",
+        "disable",
+        "alias",
+        "add",
+        "split"
+      ],
+      "type": "object"
+    },
+    "security": {
+      "additionalProperties": false,
+      "properties": {
+        "destructiveOps": {
+          "enum": [
+            "confirm",
+            "deny",
+            "allow-in-lane"
+          ],
+          "type": "string"
+        },
+        "redactPatterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "secretCommand": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secretSource": {
+          "enum": [
+            "env",
+            "keychain",
+            "file",
+            "command"
+          ],
+          "type": "string"
+        },
+        "toolCeilingEscalations": {
+          "items": {},
+          "type": "array"
+        }
+      },
+      "required": [
+        "secretSource",
+        "secretCommand",
+        "toolCeilingEscalations",
+        "destructiveOps",
+        "redactPatterns"
+      ],
+      "type": "object"
+    },
+    "skills": {
+      "additionalProperties": false,
+      "properties": {
+        "hardBodyCapTokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "packBudgetTokens": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "packBudgetTokens",
+        "hardBodyCapTokens"
+      ],
+      "type": "object"
+    },
+    "telemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "boolean"
+        },
+        "otlpEndpoint": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "network",
+        "otlpEndpoint"
+      ],
+      "type": "object"
+    },
+    "vcs": {
+      "additionalProperties": false,
+      "properties": {
+        "allowCommits": {
+          "type": "boolean"
+        },
+        "commitConvention": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "signCommits": {
+          "type": "boolean"
+        },
+        "trailers": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allowCommits",
+        "commitConvention",
+        "signCommits",
+        "trailers"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "project",
+    "paths",
+    "platform",
+    "models",
+    "execution",
+    "budget",
+    "roster",
+    "kb",
+    "skills",
+    "mcp",
+    "diagrams",
+    "quality",
+    "security",
+    "vcs",
+    "telemetry",
+    "output"
+  ],
+  "type": "object"
+}

@@ -17,7 +17,9 @@
     "test:watch": "node scripts/run-tests.mjs",
     "boundaries": "node scripts/check-boundaries.mjs",
     "changeset": "changeset",
-    "coverage:ratchet": "node scripts/check-coverage-ratchet.mjs"
+    "coverage:ratchet": "node scripts/check-coverage-ratchet.mjs",
+    "emit-schemas": "node scripts/emit-schemas.mjs",
+    "schema-drift": "node scripts/assert-schema-drift.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "2.31.1",

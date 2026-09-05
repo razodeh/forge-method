@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^OQ-\\d{3}(-\\d+)?$",
+      "type": "string"
+    },
+    "question": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "open",
+        "resolved"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "question",
+    "status"
+  ],
+  "type": "object"
+}

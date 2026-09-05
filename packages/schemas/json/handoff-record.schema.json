@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "acceptance_for_receiver": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^ASM-\\d{3}(-\\d+)?$",
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "validate_by": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "confidence",
+          "validate_by"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "constraints_for_receiver": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "delivered": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "from": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^HO-\\d{4}(-\\d+)?$",
+      "type": "string"
+    },
+    "open_questions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "step": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "to": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "from",
+    "to",
+    "step",
+    "timestamp",
+    "delivered",
+    "open_questions",
+    "assumptions",
+    "constraints_for_receiver",
+    "acceptance_for_receiver"
+  ],
+  "type": "object"
+}

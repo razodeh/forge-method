@@ -1,0 +1,147 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "acceptance_summary": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "depends_on": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "epics": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "metrics": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "nfrs": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "priority": {
+      "enum": [
+        "must",
+        "should",
+        "could",
+        "wont"
+      ],
+      "type": "string"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "stage": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "statement": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "Capability",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "statement",
+    "priority",
+    "stage",
+    "depends_on",
+    "nfrs",
+    "metrics",
+    "acceptance_summary",
+    "epics"
+  ],
+  "type": "object"
+}

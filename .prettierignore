@@ -7,6 +7,11 @@ pnpm-lock.yaml
 # what the golden-file tests compare against.
 fixtures/
 
+# Generated JSON Schema files (specs/02 §2.1, PLAN-M1.md P9). Their canonical byte format is owned
+# and tested by packages/schemas/src/json-schema/emit.ts, not by prettier's own JSON style —
+# reformatting them here would make `pnpm schema-drift` report drift against every committed file.
+packages/schemas/json/*.schema.json
+
 # Hand-authored governance and specification prose. These are review documents with a deliberate
 # line layout; reflowing them turns every edit into an unreadable diff.
 specs/

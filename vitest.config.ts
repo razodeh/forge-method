@@ -103,6 +103,15 @@ export default defineConfig({
         // check-boundaries.test.ts) drives each one to prove the plumbing works.
         'scripts/check-coverage-ratchet.mjs',
         'scripts/check-boundaries.mjs',
+        'scripts/emit-schemas.mjs',
+        'scripts/assert-schema-drift.mjs',
+        // Never imported in-process at all — always run as a spawned `--experimental-strip-types`
+        // child (see scripts/lib/schema-drift.mjs's doc comment), so v8 coverage in the parent
+        // process cannot see it execute regardless of how much of it a test exercises. Its own
+        // single call is proven by scripts/schema-drift.test.ts's "deterministic across two
+        // separate processes" test and by every other schema-drift.test.ts case, all of which
+        // spawn it indirectly through `runEmitSchemas`.
+        'scripts/lib/emit-schemas-child.mjs',
         // NOT a lowered bar — a documented measurement gap, per SPEC-QUESTIONS.md Q17. This vitest/
         // coverage-v8 combination under-reports, non-deterministically, the per-file coverage of a
         // module several test files import, once the full suite (300+ tests across a dozen files)

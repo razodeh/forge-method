@@ -1,0 +1,236 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "acceptance": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "given": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^AC-\\d{3,4}-\\d+$",
+            "type": "string"
+          },
+          "kind": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "nfr": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "then": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "when": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "given",
+          "when",
+          "then",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "blocked_by": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "capability": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "context_refs": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "data": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "depends_on": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "dod_profile": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "epic": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "files_expected": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "interfaces": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "owner_role": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "size": {
+      "enum": [
+        "S",
+        "M",
+        "L"
+      ],
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "ready",
+        "in-progress",
+        "in-review",
+        "verified",
+        "done",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "storyType": {
+      "enum": [
+        "feature",
+        "tech",
+        "spike",
+        "bug",
+        "chore",
+        "migration"
+      ],
+      "type": "string"
+    },
+    "tests": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "Story",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "epic",
+    "capability",
+    "storyType",
+    "size",
+    "owner_role",
+    "depends_on",
+    "blocked_by",
+    "interfaces",
+    "data",
+    "files_expected",
+    "context_refs",
+    "acceptance",
+    "tests",
+    "dod_profile"
+  ],
+  "type": "object"
+}

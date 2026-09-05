@@ -8,4 +8,5 @@
  */
 export * from './artifacts/index.ts';
 export * from './config/index.ts';
+export * from './json-schema/index.ts';
 export * from './registry/index.ts';

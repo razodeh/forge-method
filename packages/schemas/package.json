@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./registry": "./src/registry/index.ts",
     "./artifacts": "./src/artifacts/index.ts",
-    "./config": "./src/config/index.ts"
+    "./config": "./src/config/index.ts",
+    "./json-schema": "./src/json-schema/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -16,6 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "zod": "3.25.76"
+    "zod": "3.25.76",
+    "zod-to-json-schema": "3.25.2"
   }
 }

@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^RISK-\\d{3}(-\\d+)?$",
+      "type": "string"
+    },
+    "impact": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "likelihood": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "mitigation": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "owner": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "statement": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "statement",
+    "likelihood",
+    "impact",
+    "mitigation",
+    "owner"
+  ],
+  "type": "object"
+}
