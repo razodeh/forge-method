@@ -30,7 +30,9 @@ const RAW_ARTIFACT_TYPES = [
     idWidth: 3,
     parent: 'Vision',
   },
-  { id: 'NFR', idPrefix: 'NFR', pathTemplate: 'specs/nfr/{id}.md', idWidth: 3 },
+  // idWidth 4, not the default 3: every NFR id used anywhere else in the spec pack is 4 digits
+  // (NFR-0002, NFR-0005, NFR-0007, NFR-0009); see SPEC-QUESTIONS.md Q21.
+  { id: 'NFR', idPrefix: 'NFR', pathTemplate: 'specs/nfr/{id}.md', idWidth: 4 },
   {
     id: 'Epic',
     idPrefix: 'EPIC',

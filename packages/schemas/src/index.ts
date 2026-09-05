@@ -6,4 +6,5 @@
  *
  * @see specs/02 §2.2
  */
+export * from './artifacts/index.ts';
 export * from './registry/index.ts';

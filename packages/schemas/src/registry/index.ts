@@ -12,5 +12,10 @@ export {
   type ArtifactTypeDefinition,
   type ArtifactTypeId,
 } from './artifact-types.ts';
-export { baseFrontMatterSchema, type BaseFrontMatter } from './front-matter.ts';
+export {
+  baseFrontMatterSchema,
+  baseFrontMatterShape,
+  checkIdMatchesRegisteredType,
+  type BaseFrontMatter,
+} from './front-matter.ts';
 export { renderArtifactPath, type RenderArtifactPathResult } from './paths.ts';

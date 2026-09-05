@@ -48,7 +48,7 @@ describe('baseFrontMatterSchema — the valid case', () => {
     const cases: readonly [type: string, id: string][] = [
       ['Vision', 'VIS-001'],
       ['Capability', 'CAP-004'],
-      ['NFR', 'NFR-002'],
+      ['NFR', 'NFR-0002'],
       ['Epic', 'EPIC-003'],
       ['Story', 'STORY-014'],
       ['Task', 'TASK-041'],

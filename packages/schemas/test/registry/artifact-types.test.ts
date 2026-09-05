@@ -34,7 +34,7 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     idWidth: 3,
     parent: 'Vision',
   },
-  { id: 'NFR', idPrefix: 'NFR', pathTemplate: 'specs/nfr/{id}.md', idWidth: 3 },
+  { id: 'NFR', idPrefix: 'NFR', pathTemplate: 'specs/nfr/{id}.md', idWidth: 4 },
   {
     id: 'Epic',
     idPrefix: 'EPIC',
@@ -165,9 +165,9 @@ describe('specs/18 §18.7 — the registry table', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('defaults idWidth to 3, except ADR at 4', () => {
+  it('defaults idWidth to 3, except ADR and NFR at 4 (SPEC-QUESTIONS.md Q21)', () => {
     for (const type of ARTIFACT_TYPES) {
-      const expected = type.id === 'ADR' ? 4 : 3;
+      const expected = type.id === 'ADR' || type.id === 'NFR' ? 4 : 3;
       expect(type.idWidth, type.id).toBe(expected);
     }
   });
