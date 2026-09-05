@@ -7,6 +7,10 @@ import { z } from 'zod';
 
 import { baseFrontMatterShape, checkIdMatchesRegisteredType } from '../registry/front-matter.ts';
 
+/** `08` §8.11.2's notation table. Exported so `@forge/schemas/config`'s `diagrams.*Notation*` keys
+ * reuse the same closed set rather than a second transcription. */
+export const DIAGRAM_NOTATIONS = ['mermaid', 'plantuml', 'd2', 'dot', 'structurizr'] as const;
+
 export const diagramSchema = baseFrontMatterShape
   .extend({
     type: z.literal('Diagram'),
@@ -14,7 +18,7 @@ export const diagramSchema = baseFrontMatterShape
     // reference table of common values, not stated as an exhaustive enum, and includes qualified
     // forms ("flowchart LR") that a closed union would reject unfairly — left open.
     kind: z.string().min(1),
-    notation: z.enum(['mermaid', 'plantuml', 'd2', 'dot', 'structurizr']),
+    notation: z.enum(DIAGRAM_NOTATIONS),
     source: z.string().min(1),
     generated: z.boolean(),
     generator: z.string().min(1).optional(),

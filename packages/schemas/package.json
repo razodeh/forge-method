@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./registry": "./src/registry/index.ts",
-    "./artifacts": "./src/artifacts/index.ts"
+    "./artifacts": "./src/artifacts/index.ts",
+    "./config": "./src/config/index.ts"
   },
   "engines": {
     "node": ">=20.10"

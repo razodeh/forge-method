@@ -15,7 +15,7 @@ export { assumptionSchema, type Assumption } from './assumption.ts';
 export { capabilitySchema, type Capability } from './capability.ts';
 export { dataModelSchema, type DataModel } from './data-model.ts';
 export { defectSchema, SEVERITIES, type Defect } from './defect.ts';
-export { diagramSchema, type Diagram } from './diagram.ts';
+export { diagramSchema, DIAGRAM_NOTATIONS, type Diagram } from './diagram.ts';
 export { environmentSchema, type Environment } from './environment.ts';
 export { epicSchema, type Epic } from './epic.ts';
 export { gateReportSchema, type GateReport } from './gate-report.ts';

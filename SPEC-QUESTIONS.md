@@ -600,3 +600,71 @@ is the same call Q21 made, not a new kind of judgment.
 of twenty-one rows have now needed this correction from real usage the table itself did not predict,
 also worth a pass checking every remaining type's only-ever-used id width against its declared
 default before more schemas are built against it.
+
+---
+
+## Q25 — `18` §18.3's canonical config literally names a platform (`claude-code`, `claudeCode`), which the already-shipped `no-platform-concept` rule refuses everywhere in `@forge/schemas`
+
+**Conflict, confirming Q16's "confirm before P8" note with the concrete evidence Q16 didn't yet
+have.** `18` §18.3's canonical `.forge/config.yaml` names the platform directly, twice: `platform:
+{ primary: claude-code, ..., claudeCode: { transport: sdk, ... } }` and again in
+`models.tiers.*.claude-code`. `PLAN-M1.md` P8's Check requires "the canonical YAML block from §18.3
+parses and validates unchanged (golden fixture)."
+
+This is not just an architectural preference against it (Q16, written during P4/P5) — it is now a
+hard mechanical fact about a rule this project already built and gauntlet-reviewed in P2:
+`tools/eslint-plugin-forge-boundaries/src/rules/no-platform-concept.mjs` scans **every** `Identifier`
+and string `Literal`/`TemplateElement` node under `packages/*` outside `packages/adapter-*` for the
+whole word `claude` (via camelCase/kebab-case splitting). This fires on `claudeCode` as an object
+property *key* in a zod schema exactly as it would on a variable name, and — critically — it fires
+identically inside `packages/schemas/test/**`: a test fixture that merely contains the string
+`'claude-code'` as example data, with no behavioural meaning at all, is caught the same way a real
+platform-conditional branch would be. There is no way to satisfy "parses the canonical YAML
+unchanged" and pass `pnpm lint` at the same time; one of the two has to give.
+
+**Answer taken (proceeding):** the schema gives. `platform.claudeCode` becomes
+`platform.adapterConfig: Record<string, Record<string, unknown>>` — keyed by an opaque platform id,
+one level of structure, values entirely `unknown` because only the adapter package that owns a given
+platform id knows its own config shape (Q16's resolution, now concrete). The golden-fixture test
+validates the *same shape and every other field verbatim*, with two substitutions `no-platform-concept`
+forces, both from the same rule's banned-token set (`claude`, `subagent`, `opus`, `sonnet`, `haiku`,
+`fable`): `example-adapter` for `claude-code`/`claudeCode` throughout (`platform.primary`,
+`platform.adapterConfig`, `models.tiers.*.example-adapter`), and `small-model`/`medium-model`/
+`large-model` for the spec's own `haiku`/`sonnet`/`opus` model names in `models.tiers.*`. Those are
+the only two departures from "unchanged." `DEFAULT_CONFIG.platform.primary` defaults to `''` (unset)
+rather than naming any adapter, matching Q16's framing that a specific platform's identity is an
+installed adapter's concern, not `@forge/schemas`'s own built-in default.
+
+**Recommended resolution:** amend `18` §18.3's example to use a placeholder platform id (or note
+explicitly that `claude-code`/`claudeCode` there are illustrative project-level configuration, not
+part of the schema `@forge/schemas` itself may encode) — the same spirit as Q16's original
+recommendation to amend `02` §2.6, now with the concrete mechanical reason.
+
+---
+
+## Q26 — `18` §18.3's own `redactPatterns` example is not valid JavaScript `RegExp` syntax
+
+**Conflict.** `18` §18.3's canonical config gives `redactPatterns: [ "(?i)api[_-]?key",
+"(?i)authorization" ]`. `(?i)` is a PCRE/Python-style inline case-insensitivity flag; it is not valid
+anywhere in JavaScript's `RegExp` syntax, on the exact runtime `02` §2.1 pins this project to —
+verified directly: `new RegExp('(?i)api[_-]?key')` throws `SyntaxError: Invalid regular expression:
+/(?i)api[_-]?key/: Invalid group` on Node 22. JavaScript has no inline case-insensitivity syntax at
+all, scoped or unscoped — case-insensitivity is only ever the separate `i` flag argument to the
+`RegExp` constructor. `PLAN-M1.md` P8's own Check ("redactPatterns entries compile as regular
+expressions") surfaced this directly: the canonical example, used as the golden fixture, failed to
+compile.
+
+**Answer taken (proceeding):** the compile-check in `configSchema` recognizes a leading `(?i)` as
+exactly that PCRE idiom, strips it, and compiles the remainder with the JS `i` flag —
+`` `(?i)api[_-]?key` `` is treated as `` new RegExp('api[_-]?key', 'i') ``, which does compile and
+does mean the same thing. This is a narrow, single-idiom translation, not general PCRE emulation: a
+pattern using any other PCRE-only construct (lookbehind assertions predating Node's support, atomic
+groups, possessive quantifiers) is still rejected, correctly, as not valid JavaScript `RegExp` syntax.
+Whatever later piece actually performs redaction with these patterns needs the identical
+`(?i)`-stripping step to interpret them as intended — noted here so that piece does not reinvent or,
+worse, silently diverge from this convention.
+
+**Recommended resolution:** either state in `18` §18.3 that `redactPatterns` entries use JavaScript
+`RegExp` syntax with the one `(?i)`-prefix case-insensitivity convention this schema now defines, or
+add a separate structure (`{ pattern, flags }` instead of a bare string) so case sensitivity is
+explicit rather than inferred from a borrowed PCRE idiom.

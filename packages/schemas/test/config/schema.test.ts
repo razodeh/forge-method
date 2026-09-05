@@ -1,0 +1,216 @@
+/**
+ * `configSchema` — `18` §18.3's canonical config.
+ *
+ * @see specs/18 §18.3
+ * @see specs/21 §21.3
+ * @see SPEC-QUESTIONS.md Q16, Q25, Q26
+ */
+import { describe, expect, it } from 'vitest';
+
+import { configSchema } from '../../src/config/schema.ts';
+
+/**
+ * `18` §18.3's canonical YAML block, transcribed as a plain object — field for field, value for
+ * value — with two deliberate substitutions, both forced by the same constraint: `18` §18.3's own
+ * example names banned platform-concept tokens (`SPEC-QUESTIONS.md` Q25), and the already-shipped
+ * `no-platform-concept` lint rule refuses every one of them anywhere under `packages/schemas`,
+ * including in test fixtures, not just production code.
+ *
+ * 1. `claude-code`/`claudeCode` becomes `example-adapter`/`adapterConfig` everywhere it appears
+ *    (`platform.primary`, `platform.claudeCode` -> `platform.adapterConfig`,
+ *    `models.tiers.*.claude-code` -> `models.tiers.*.'example-adapter'`).
+ * 2. `models.tiers.{frugal,balanced,max}`'s model names — `haiku`, `sonnet`, `opus` in the spec's own
+ *    example — become `small-model`/`medium-model`/`large-model`: the same lint rule's
+ *    `PLATFORM_TOKENS` set bans these three words too, not only "claude".
+ */
+function goldenConfig(): Record<string, unknown> {
+  return {
+    version: 1,
+    project: {
+      name: 'acme-billing',
+      slug: 'acme-billing',
+      description: 'Invoicing for small agencies',
+      level: 'L3',
+      mode: 'guided',
+      repoUrl: 'https://github.com/acme/billing',
+    },
+    paths: {
+      kb: 'docs/forge/kb',
+      specs: 'docs/forge/specs',
+      plans: 'docs/forge/plans',
+      sessions: 'docs/forge/sessions',
+      reports: 'docs/forge/reports',
+      code: '.',
+    },
+    platform: {
+      primary: 'example-adapter',
+      fallback: null,
+      perAgent: {},
+      routing: { onRateLimit: 'fallback', onOutage: 'fallback' },
+      adapterConfig: {
+        'example-adapter': { transport: 'sdk', bare: true, minimumVersion: '2.0.0' },
+      },
+    },
+    models: {
+      tiers: {
+        frugal: { 'example-adapter': 'small-model' },
+        balanced: { 'example-adapter': 'medium-model' },
+        max: { 'example-adapter': 'large-model' },
+      },
+      overrides: { architect: 'max', diagnostician: 'max' },
+    },
+    execution: {
+      concurrency: 'auto',
+      autonomy: 'guided',
+      autonomyByGate: { 'G-Deliver': 'supervised' },
+      retainLaneWorktrees: 'on-failure',
+      integrationBranch: 'forge/integration/{stage}',
+      conflictPolicy: 'agent',
+      sharedMutablePaths: [
+        { glob: 'pnpm-lock.yaml', strategy: 'regenerate', command: 'pnpm install --lockfile-only' },
+        { glob: 'CHANGELOG.md', strategy: 'append-only' },
+      ],
+    },
+    budget: {
+      perRunUsd: 25,
+      perStepUsdDefault: 2,
+      dailyUsd: 100,
+      onBreach: 'pause',
+    },
+    roster: { preset: 'startup-lean', enable: [], disable: [], alias: {}, add: [], split: {} },
+    kb: {
+      packBudgetTokens: 20_000,
+      retrieval: { embeddings: false, graphHops: 1 },
+      staleness: { architecture: 90, data: 90, delivery: 60, product: 120, ops: 60 },
+    },
+    skills: { packBudgetTokens: 8000, hardBodyCapTokens: 6000 },
+    mcp: {
+      servers: [],
+      grants: {},
+      defaults: { grantMode: 'explicit', injectionPosture: 'untrusted-content' },
+      adoptHostServers: false,
+    },
+    diagrams: {
+      defaultNotation: 'mermaid',
+      allowedNotations: ['mermaid'],
+      render: 'on-demand',
+      remoteRenderer: null,
+      complexity: { maxNodes: 20, maxEdges: 30, hardMaxNodes: 40 },
+      driftPolicy: 'fail',
+      requireCaptions: true,
+    },
+    quality: {
+      coverage: { lines: 85, branches: 80, ratchet: true },
+      flake: { maxRatePct: 2, window: 20, quarantineCap: 5 },
+      pyramid: { maxE2ESharePct: 15 },
+      dodProfileDefault: 'backend-default',
+    },
+    security: {
+      secretSource: 'env',
+      secretCommand: null,
+      toolCeilingEscalations: [],
+      destructiveOps: 'confirm',
+      redactPatterns: ['(?i)api[_-]?key', '(?i)authorization'],
+    },
+    vcs: {
+      allowCommits: true,
+      commitConvention: 'conventional',
+      signCommits: false,
+      trailers: true,
+    },
+    telemetry: { network: false, otlpEndpoint: null },
+    output: { color: 'auto', ascii: false, style: 'acme-house' },
+  };
+}
+
+describe('configSchema — the golden fixture (18 §18.3, with the Q25 platform-id substitution)', () => {
+  it('parses and validates', () => {
+    const result = configSchema.safeParse(goldenConfig());
+    expect(result.success, !result.success ? JSON.stringify(result.error.issues) : '').toBe(true);
+  });
+});
+
+describe('configSchema — unknown keys are refused, with the offending path', () => {
+  it('rejects an unknown top-level key', () => {
+    const result = configSchema.safeParse({ ...goldenConfig(), extra: 'nope' });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual([]);
+  });
+
+  it('rejects an unknown nested key', () => {
+    const config = goldenConfig() as { project: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      project: { ...config.project, nickname: 'billing' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['project']);
+  });
+});
+
+describe('configSchema — enum keys (PLAN-M1.md P8 Check)', () => {
+  const enumCases: readonly [section: string, key: string, invalidValue: string][] = [
+    ['project', 'level', 'L9'],
+    ['project', 'mode', 'chaotic'],
+    ['execution', 'autonomy', 'unattended'],
+    ['budget', 'onBreach', 'ignore'],
+    ['execution', 'conflictPolicy', 'coinflip'],
+    ['diagrams', 'driftPolicy', 'shrug'],
+    ['security', 'destructiveOps', 'yolo'],
+    ['security', 'secretSource', 'sticky-note'],
+    ['execution', 'retainLaneWorktrees', 'sometimes'],
+    ['diagrams', 'render', 'eventually'],
+  ];
+
+  it.each(enumCases)('rejects an invalid %s.%s', (section, key, invalidValue) => {
+    const config = goldenConfig() as Record<string, Record<string, unknown>>;
+    const result = configSchema.safeParse({
+      ...config,
+      [section]: { ...config[section], [key]: invalidValue },
+    });
+    expect(result.success, `${section}.${key}`).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual([section, key]);
+  });
+});
+
+describe('configSchema — redactPatterns compile as regular expressions (PLAN-M1.md P8 Check)', () => {
+  it("accepts the (?i) case-insensitive idiom (18 §18.3's own examples, SPEC-QUESTIONS Q26)", () => {
+    const config = goldenConfig() as { security: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      security: { ...config.security, redactPatterns: ['(?i)api[_-]?key'] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a plain JS-syntax pattern with no (?i) prefix', () => {
+    const config = goldenConfig() as { security: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      security: { ...config.security, redactPatterns: ['api[_-]?key'] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a pattern that does not compile, naming the array index', () => {
+    const config = goldenConfig() as { security: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      security: { ...config.security, redactPatterns: ['api[_-]?key', '(unclosed'] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues[0]?.path).toEqual(['security', 'redactPatterns', 1]);
+  });
+
+  it('rejects (?i) followed by an otherwise-invalid pattern, not just bare (?i)', () => {
+    const config = goldenConfig() as { security: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      security: { ...config.security, redactPatterns: ['(?i)(unclosed'] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues[0]?.path).toEqual(['security', 'redactPatterns', 0]);
+  });
+});
