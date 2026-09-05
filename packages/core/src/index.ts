@@ -8,3 +8,4 @@
  */
 export { DOCS_BASE_URL } from './constants.ts';
 export * from './errors/index.ts';
+export * from './fs/index.ts';

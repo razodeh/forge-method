@@ -17,7 +17,9 @@
  * @see PLAN-M1.md P2
  */
 import { readFileSync } from 'node:fs';
-// eslint-disable-next-line no-restricted-imports -- @forge/core/fs's listDirSorted (PLAN-M1.md P4) does not exist yet; sorted explicitly below. Migrate once P4 lands.
+// Needs Dirent.isDirectory() per entry, which @forge/core/fs's listDirSorted (names only,
+// PLAN-M1.md P4) does not provide; sorted explicitly below.
+// eslint-disable-next-line no-restricted-imports -- see comment above
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 

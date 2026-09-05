@@ -189,6 +189,44 @@ export const ERROR_CODES = {
     message: (d: { gate: string }) => `Gate ${show(d.gate)} was rejected by the operator.`,
     remedy: 'Address the reported findings and re-run the gate, or record a waiver with an expiry.',
   },
+  'CFG-003': {
+    // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path
+    // that resolves outside the project root — by traversal, by being absolute, or by a symlink —
+    // is a defect in the caller (an artifact ID, a lane path) presenting FORGE with something it
+    // must never touch, so this is CFG- (an invalid request), not a runtime I/O failure.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; root: string }) =>
+      `Path escapes the project root: ${show(d.path)} is not inside ${show(d.root)}.`,
+    remedy: 'Pass a path relative to the project root, with no leading "/" and no ".." segments.',
+  },
+  'CFG-004': {
+    // Distinct from CFG-003: this path IS inside the project, but names a directory FORGE must
+    // never write to directly — `.git/` (VCS owns it), `.forge/state/` (the event log is
+    // append-only and owns its own durability), `node_modules/` (package-manager owned). Case
+    // folded before comparison: `specs/02` §2.7 makes Windows and macOS's default filesystem both
+    // first-class, and both are case-insensitive, so `.Git/config` and `.git/config` are the same
+    // file there — a case-sensitive check would let the deny-list be bypassed by capitalisation on
+    // exactly the platforms this project is required to support.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) =>
+      `Path is in a directory FORGE must not write to: ${show(d.path)}.`,
+    remedy:
+      'Write through the owning subsystem instead: git operations through @forge/vcs, event-log ' +
+      "entries through the run's append-only writer, dependencies through the package manager.",
+  },
+  'RUN-034': {
+    // One code for every filesystem operation this module performs (write, read, mkdir, list),
+    // parameterised by `operation` rather than split into a code per verb — the failure a caller
+    // cares about is "the disk said no", and the underlying OS error survives as `cause` regardless
+    // of which call produced it.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { operation: string; path: string }) =>
+      `Filesystem operation "${show(d.operation)}" failed for ${show(d.path)}.`,
+    remedy: 'Check the underlying cause (permissions, disk space, a locked file) and retry.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

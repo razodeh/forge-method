@@ -1,9 +1,9 @@
 {
   "packages/core": {
-    "lines": 98.94,
-    "statements": 98.1,
+    "lines": 99.43,
+    "statements": 98.97,
     "functions": 100,
-    "branches": 96.39
+    "branches": 97.37
   },
   "scripts": {
     "lines": 100,

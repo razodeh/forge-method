@@ -45,6 +45,181 @@ const BARE_BUILTINS = builtinModules.filter(
   (name) => !name.startsWith('node:') && !name.startsWith('_'),
 );
 
+/**
+ * QUALITY-BAR.md R10: determinism. A clock, a random source or an environment read that is not
+ * injected makes behaviour depend on the machine it runs on. The config layer and the test harness
+ * are exempted below; nothing else is. Extracted to a const (rather than written inline in the rules
+ * object) so `no-restricted-syntax` can be reused as-is by the `fs/**` block below: flat config
+ * replaces a rule's value entirely for an overlapping file rather than merging it, so a file-scoped
+ * addition has to restate the whole array or lose every selector here for files under `fs/**`.
+ */
+const DETERMINISM_SYNTAX_RULES = [
+  // Each selector names an ambient *root* rather than a property name. Property-name-only
+  // selectors were tried and rejected: `MemberExpression[property.name='now']` flags
+  // `clock.now()` — the injected-clock pattern R10 exists to encourage — and
+  // `[property.name='env']` flags any `config.env`. Aliasing is closed separately, by
+  // forbidding the alias itself, so precision here costs no coverage.
+  {
+    selector:
+      "MemberExpression[object.name='Date'][property.name='now'], MemberExpression[object.property.name='Date'][property.name='now']",
+    message: 'R10: take the time from an injected clock, not Date.now().',
+  },
+  {
+    // Both `new Date()` and `Date()` — the call form omits `new` and reads the same wall clock.
+    selector:
+      'NewExpression[callee.name="Date"][arguments.length=0], CallExpression[callee.name="Date"][arguments.length=0]',
+    message: 'R10: take the time from an injected clock, not new Date().',
+  },
+  {
+    // `process` is a global, so the node:process import ban does not reach these; they are
+    // ambient clocks exactly as much as Date.now is.
+    selector:
+      "MemberExpression[object.name='process'][property.name=/^(hrtime|uptime)$/], MemberExpression[object.property.name='process'][property.name=/^(hrtime|uptime)$/]",
+    message: 'R10: take the time from an injected clock, not process.hrtime/uptime.',
+  },
+  {
+    selector:
+      "MemberExpression[object.name='performance'][property.name=/^(now|timeOrigin)$/], MemberExpression[object.property.name='performance'][property.name=/^(now|timeOrigin)$/]",
+    message: 'R10: take the time from an injected clock, not performance.now().',
+  },
+  {
+    selector:
+      "MemberExpression[object.name='Math'][property.name='random'], MemberExpression[object.property.name='Math'][property.name='random']",
+    message: 'R10: use a seeded RNG, not Math.random().',
+  },
+  {
+    // Property-name only. Root-precise selectors were defeated by an import rename
+    // (`import nodeCrypto from 'node:crypto'`) and by `webcrypto`, and these names collide
+    // with nothing else worth writing.
+    selector: `MemberExpression[property.name=/^(${RANDOM_NAMES.join('|')})$/]`,
+    message: 'R10: use a seeded RNG, not crypto randomness.',
+  },
+  {
+    selector:
+      "MemberExpression[object.name='process'][property.name='env'], MemberExpression[object.property.name='process'][property.name='env']",
+    message: 'R10: read configuration through the config layer, not process.env directly.',
+  },
+  {
+    // `const { env } = process` reaches the same object without ever forming
+    // `process.env` as a member expression.
+    selector: "VariableDeclarator[init.name='process'] > ObjectPattern > Property[key.name='env']",
+    message: 'R10: read configuration through the config layer, not process.env directly.',
+  },
+  {
+    // Host facts — home directory, temp directory, hostname, network interfaces — differ per
+    // machine exactly as a clock does, and no rule covered them at all.
+    // Property-name only, and paired with an import ban below. Root-precise selectors were
+    // defeated by `import { tmpdir } from 'node:os'` and by a namespace import — the exact
+    // lesson this config already records for node:crypto and then failed to apply here. These
+    // names collide with nothing else worth writing.
+    selector: `MemberExpression[property.name=/^(${HOST_FACT_NAMES.join('|')})$/]`,
+    message: 'R10: host facts vary by machine; take them from the config layer.',
+  },
+  {
+    // Closes every alias route at the source: with the roots un-aliasable, the precise
+    // selectors above cannot be sidestepped by `const m = Math` or `const clock = Date`.
+    selector:
+      'VariableDeclarator[init.name=/^(Date|Math|crypto|process|performance|Intl)$/], VariableDeclarator[init.property.name=/^(Date|Math|crypto|process|performance|Intl)$/]',
+    message: 'R10: do not alias an ambient global; inject a clock, a seeded RNG or config instead.',
+  },
+  {
+    // A computed key (`Date[NOW]()`) sidesteps every `property.name` selector above, and
+    // `@typescript-eslint/dot-notation` only rescues *literal* keys. Forbidding a computed
+    // member on these roots closes the last spelling.
+    selector:
+      'MemberExpression[computed=true][object.name=/^(Date|Math|crypto|process|performance)$/]',
+    message:
+      'R10: do not reach an ambient global through a computed key; inject a clock, a seeded RNG or config.',
+  },
+  {
+    // `opendir` and `glob` return entries in the same unordered fashion as `readdir`.
+    selector: `MemberExpression[property.name=/^(${LISTING_NAMES.join('|')})$/]`,
+    message:
+      'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+  },
+  {
+    // R10: ambient locale. ICU resolves the default locale from the host environment, so a
+    // call with no explicit locale produces different output on a different machine. Matching
+    // the member expression rather than the call also catches a detached method reference.
+    selector:
+      'MemberExpression[property.name=/^toLocale(String|DateString|TimeString|UpperCase|LowerCase)$/]:not(CallExpression[arguments.length>0] > MemberExpression)',
+    message: 'R10: pass an explicit locale; the default comes from the host environment.',
+  },
+  {
+    // `localeCompare` takes the compared string first, so its locale argument is the second:
+    // a zero-argument test misses `a.localeCompare(b)`, the spelling that actually appears.
+    selector: 'CallExpression[callee.property.name="localeCompare"][arguments.length<2]',
+    message: 'R10: pass an explicit locale; the default comes from the host environment.',
+  },
+  {
+    selector:
+      "NewExpression[callee.object.name='Intl'][arguments.length=0], CallExpression[callee.object.name='Intl'][arguments.length=0]",
+    message: 'R10: pass an explicit locale to Intl; the default comes from the host.',
+  },
+  {
+    // Argument *count* is not a proxy for "an explicit locale": passing `undefined` — which is
+    // what an optional `locale?: string` parameter yields — falls back to the host locale just
+    // as an omitted argument does. This is the spelling most likely to reach production.
+    selector:
+      'CallExpression[callee.property.name=/^(toLocale|localeCompare)/] > Identifier.arguments[name="undefined"], NewExpression[callee.object.name="Intl"] > Identifier.arguments[name="undefined"], CallExpression[callee.object.name="Intl"] > Identifier.arguments[name="undefined"]',
+    message: 'R10: an undefined locale falls back to the host locale; pass a real locale string.',
+  },
+];
+
+/**
+ * QUALITY-BAR.md R11: cross-platform correctness — disk paths are composed with `node:path`, never
+ * by concatenating a literal `/` separator, which is wrong on Windows. Not folded into
+ * `DETERMINISM_SYNTAX_RULES` above: that array applies everywhere, and a global ban on `'/'` in a
+ * template literal would flag `@forge/core/errors`' `docsUrlFor`, which builds a URL — always
+ * forward-slash, on every platform — not a disk path. Scoped instead to the one place a literal `/`
+ * concatenation is actually a disk-path bug: `@forge/core/fs` and any future package's own `fs/`
+ * subdirectory (`PLAN-M1.md` P4's Checks).
+ */
+const PATH_CONCAT_SYNTAX_RULES = [
+  ...DETERMINISM_SYNTAX_RULES,
+  {
+    // `left + '/sub'` and `'/sub' + right` are each their own BinaryExpression node, so this catches
+    // every position in a chain like `dir + '/' + file` without needing to match the whole chain at
+    // once. Matches a literal *containing* a slash, not only a literal that is exactly `/`: `dir +
+    // 'sub/' + name` is exactly as much a disk-path bug as `dir + '/' + name`, and an exact-match
+    // selector missed it (found by review; verified no legitimate fs/** code concatenates a slash
+    // into a string with `+` for a non-path reason, unlike the template-literal case below).
+    selector:
+      "BinaryExpression[operator='+'][left.value=/\\//], BinaryExpression[operator='+'][right.value=/\\//]",
+    message:
+      'R11: build disk paths with node:path (path.join/path.resolve), not string concatenation.',
+  },
+  {
+    // A join between two placeholders (`${a}/${b}`, `${a}/sub/${b}`) or a leading separator
+    // (`/${a}`) is a TemplateElement whose raw text contains `/` and whose `tail` is false — there is
+    // an expression after it, which is what makes this a *join* rather than formatting one
+    // already-built value. `tail: true` (trailing text with nothing after it, as in
+    // `` `${relPosix}/` `` for a deny-list prefix check) is not a join and stays excluded: an
+    // exact-equality version of this selector flagged that real, correct code before this rule was
+    // narrowed to `tail`, and a substring version needs the same guard for the same reason.
+    selector: 'TemplateElement[value.raw=/\\//][tail=false]',
+    message:
+      'R11: build disk paths with node:path (path.join/path.resolve), not a template literal.',
+  },
+  {
+    // `segments.join('/')` builds a disk path exactly as much as `+` concatenation does, and an
+    // array-of-segments-plus-join is a common alternative spelling of the same bug. Excludes
+    // `x.split(path.sep).join('/')`: that is the sanctioned way to turn an already-`node:path`-built
+    // disk path into the POSIX-style string R11 itself calls for in a repo-relative artifact ID
+    // (`relativePosixWithin` in `paths.ts` does exactly this) — reformatting an existing path's
+    // separators is not the same operation as assembling one from raw segments.
+    selector:
+      "CallExpression[callee.property.name='join']:not([callee.object.callee.property.name='split']) > Literal[value='/'].arguments",
+    message: "R11: build disk paths with node:path (path.join), not Array.prototype.join('/').",
+  },
+  {
+    // `''.concat(dir, '/', name)` — rare in modern code, but named explicitly in review as a spelling
+    // the two selectors above do not reach: neither a BinaryExpression nor a TemplateElement.
+    selector: "CallExpression[callee.property.name='concat'] > Literal[value=/\\//].arguments",
+    message: 'R11: build disk paths with node:path (path.join), not String.prototype.concat.',
+  },
+];
+
 export default tseslint.config(
   {
     ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.turbo/**', 'fixtures/**'],
@@ -151,128 +326,26 @@ export default tseslint.config(
       // QUALITY-BAR.md R10: determinism. A clock, a random source or an environment read that is
       // not injected makes behaviour depend on the machine it runs on. The config layer and the
       // test harness are exempted below; nothing else is.
-      'no-restricted-syntax': [
-        'error',
-        // Each selector names an ambient *root* rather than a property name. Property-name-only
-        // selectors were tried and rejected: `MemberExpression[property.name='now']` flags
-        // `clock.now()` — the injected-clock pattern R10 exists to encourage — and
-        // `[property.name='env']` flags any `config.env`. Aliasing is closed separately, by
-        // forbidding the alias itself, so precision here costs no coverage.
-        {
-          selector:
-            "MemberExpression[object.name='Date'][property.name='now'], MemberExpression[object.property.name='Date'][property.name='now']",
-          message: 'R10: take the time from an injected clock, not Date.now().',
-        },
-        {
-          // Both `new Date()` and `Date()` — the call form omits `new` and reads the same wall clock.
-          selector:
-            'NewExpression[callee.name="Date"][arguments.length=0], CallExpression[callee.name="Date"][arguments.length=0]',
-          message: 'R10: take the time from an injected clock, not new Date().',
-        },
-        {
-          // `process` is a global, so the node:process import ban does not reach these; they are
-          // ambient clocks exactly as much as Date.now is.
-          selector:
-            "MemberExpression[object.name='process'][property.name=/^(hrtime|uptime)$/], MemberExpression[object.property.name='process'][property.name=/^(hrtime|uptime)$/]",
-          message: 'R10: take the time from an injected clock, not process.hrtime/uptime.',
-        },
-        {
-          selector:
-            "MemberExpression[object.name='performance'][property.name=/^(now|timeOrigin)$/], MemberExpression[object.property.name='performance'][property.name=/^(now|timeOrigin)$/]",
-          message: 'R10: take the time from an injected clock, not performance.now().',
-        },
-        {
-          selector:
-            "MemberExpression[object.name='Math'][property.name='random'], MemberExpression[object.property.name='Math'][property.name='random']",
-          message: 'R10: use a seeded RNG, not Math.random().',
-        },
-        {
-          // Property-name only. Root-precise selectors were defeated by an import rename
-          // (`import nodeCrypto from 'node:crypto'`) and by `webcrypto`, and these names collide
-          // with nothing else worth writing.
-          selector: `MemberExpression[property.name=/^(${RANDOM_NAMES.join('|')})$/]`,
-          message: 'R10: use a seeded RNG, not crypto randomness.',
-        },
-        {
-          selector:
-            "MemberExpression[object.name='process'][property.name='env'], MemberExpression[object.property.name='process'][property.name='env']",
-          message: 'R10: read configuration through the config layer, not process.env directly.',
-        },
-        {
-          // `const { env } = process` reaches the same object without ever forming
-          // `process.env` as a member expression.
-          selector:
-            "VariableDeclarator[init.name='process'] > ObjectPattern > Property[key.name='env']",
-          message: 'R10: read configuration through the config layer, not process.env directly.',
-        },
-        {
-          // Host facts — home directory, temp directory, hostname, network interfaces — differ per
-          // machine exactly as a clock does, and no rule covered them at all.
-          // Property-name only, and paired with an import ban below. Root-precise selectors were
-          // defeated by `import { tmpdir } from 'node:os'` and by a namespace import — the exact
-          // lesson this config already records for node:crypto and then failed to apply here. These
-          // names collide with nothing else worth writing.
-          selector: `MemberExpression[property.name=/^(${HOST_FACT_NAMES.join('|')})$/]`,
-          message: 'R10: host facts vary by machine; take them from the config layer.',
-        },
-        {
-          // Closes every alias route at the source: with the roots un-aliasable, the precise
-          // selectors above cannot be sidestepped by `const m = Math` or `const clock = Date`.
-          selector:
-            'VariableDeclarator[init.name=/^(Date|Math|crypto|process|performance|Intl)$/], VariableDeclarator[init.property.name=/^(Date|Math|crypto|process|performance|Intl)$/]',
-          message:
-            'R10: do not alias an ambient global; inject a clock, a seeded RNG or config instead.',
-        },
-        {
-          // A computed key (`Date[NOW]()`) sidesteps every `property.name` selector above, and
-          // `@typescript-eslint/dot-notation` only rescues *literal* keys. Forbidding a computed
-          // member on these roots closes the last spelling.
-          selector:
-            'MemberExpression[computed=true][object.name=/^(Date|Math|crypto|process|performance)$/]',
-          message:
-            'R10: do not reach an ambient global through a computed key; inject a clock, a seeded RNG or config.',
-        },
-        {
-          // `opendir` and `glob` return entries in the same unordered fashion as `readdir`.
-          selector: `MemberExpression[property.name=/^(${LISTING_NAMES.join('|')})$/]`,
-          message:
-            'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
-        },
-        {
-          // R10: ambient locale. ICU resolves the default locale from the host environment, so a
-          // call with no explicit locale produces different output on a different machine. Matching
-          // the member expression rather than the call also catches a detached method reference.
-          selector:
-            'MemberExpression[property.name=/^toLocale(String|DateString|TimeString|UpperCase|LowerCase)$/]:not(CallExpression[arguments.length>0] > MemberExpression)',
-          message: 'R10: pass an explicit locale; the default comes from the host environment.',
-        },
-        {
-          // `localeCompare` takes the compared string first, so its locale argument is the second:
-          // a zero-argument test misses `a.localeCompare(b)`, the spelling that actually appears.
-          selector: 'CallExpression[callee.property.name="localeCompare"][arguments.length<2]',
-          message: 'R10: pass an explicit locale; the default comes from the host environment.',
-        },
-        {
-          selector:
-            "NewExpression[callee.object.name='Intl'][arguments.length=0], CallExpression[callee.object.name='Intl'][arguments.length=0]",
-          message: 'R10: pass an explicit locale to Intl; the default comes from the host.',
-        },
-        {
-          // Argument *count* is not a proxy for "an explicit locale": passing `undefined` — which is
-          // what an optional `locale?: string` parameter yields — falls back to the host locale just
-          // as an omitted argument does. This is the spelling most likely to reach production.
-          selector:
-            'CallExpression[callee.property.name=/^(toLocale|localeCompare)/] > Identifier.arguments[name="undefined"], NewExpression[callee.object.name="Intl"] > Identifier.arguments[name="undefined"], CallExpression[callee.object.name="Intl"] > Identifier.arguments[name="undefined"]',
-          message:
-            'R10: an undefined locale falls back to the host locale; pass a real locale string.',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...DETERMINISM_SYNTAX_RULES],
 
       // Failure handling: an ignored rejection is a silent failure path (QUALITY-BAR.md R6).
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       'no-console': 'error',
+    },
+  },
+  {
+    // QUALITY-BAR.md R11 / PLAN-M1.md P4: disk-path composition. See PATH_CONCAT_SYNTAX_RULES above
+    // for why this cannot just add a selector to the global block's `no-restricted-syntax`. Matched
+    // by directory name rather than anchored to `packages/*/`, so a package under `modules/` gets the
+    // same protection without a second glob added later — and so `test/lint-rules.test.ts` can prove
+    // this rule fires using a fixture nested at `tools/lint-fixture/.fixtures/src/fs/`, the same way
+    // every other rule in this file is proven against a real, lint-checked file rather than trusted
+    // by inspection.
+    files: ['**/src/fs/**/*.ts', '**/src/**/fs/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', ...PATH_CONCAT_SYNTAX_RULES],
     },
   },
   {

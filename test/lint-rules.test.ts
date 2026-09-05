@@ -34,6 +34,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
  */
 const fixtureDir = path.join(repoRoot, 'tools', 'lint-fixture', '.fixtures');
 
+/**
+ * Nested under `fixtureDir` so its path matches the R11 path-concatenation rule's `**\/src/fs/**`
+ * glob (`eslint.config.js`) — a case written at `fixtureDir`'s top level would not be scoped into
+ * that rule at all, and every assertion below would pass while testing nothing.
+ */
+const fsFixtureDir = path.join(fixtureDir, 'src', 'fs');
+
 // Remove only the transient case files; `.fixtures/placeholder.ts` is committed so this project
 // always has a tsc input (see its header). Deleting the directory would take the placeholder with
 // it and reintroduce the TS18003 race.
@@ -41,6 +48,7 @@ afterAll(() => {
   for (const extension of ['ts', 'mjs']) {
     rmSync(path.join(fixtureDir, `case.${extension}`), { force: true });
   }
+  rmSync(path.join(fsFixtureDir, 'case.ts'), { force: true });
 });
 
 /**
@@ -50,9 +58,13 @@ afterAll(() => {
  * synthetic path, because typescript-eslint's project service resolves a real path against a real
  * tsconfig; a path that does not exist on disk yields a parsing error and no rule ever runs.
  */
-async function lintProductionSource(code: string, extension = 'ts'): Promise<readonly string[]> {
-  mkdirSync(fixtureDir, { recursive: true });
-  const file = path.join(fixtureDir, `case.${extension}`);
+async function lintProductionSource(
+  code: string,
+  extension = 'ts',
+  dir = fixtureDir,
+): Promise<readonly string[]> {
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `case.${extension}`);
   writeFileSync(file, code);
   try {
     const eslint = new ESLint({ cwd: repoRoot });
@@ -66,8 +78,13 @@ async function lintProductionSource(code: string, extension = 'ts'): Promise<rea
 }
 
 /** Asserts a snippet produces at least one message from `rule`. */
-async function expectRuleFires(code: string, rule: string, extension = 'ts'): Promise<void> {
-  const messages = await lintProductionSource(code, extension);
+async function expectRuleFires(
+  code: string,
+  rule: string,
+  extension = 'ts',
+  dir = fixtureDir,
+): Promise<void> {
+  const messages = await lintProductionSource(code, extension, dir);
   expect(messages.filter((message) => message.startsWith(rule)).length).toBeGreaterThan(0);
 }
 
@@ -162,6 +179,79 @@ describe('QUALITY-BAR.md R10 — the determinism rules fire on every spelling', 
   it('permits an injected clock, so the rule constrains ambience rather than time', async () => {
     const messages = await lintProductionSource(
       'export function stamp(clock: { now: () => number }): number {\n  return clock.now();\n}\n',
+    );
+    expect(messages.filter((message) => message.startsWith('no-restricted-syntax'))).toEqual([]);
+  });
+});
+
+describe('QUALITY-BAR.md R11 — the path-concatenation rules fire under fs/**, on every spelling', () => {
+  beforeAll(async () => {
+    // Guards the whole block: if the fs-scoped glob in eslint.config.js stopped matching this
+    // fixture's path, every case below would pass while asserting nothing — the exact failure mode
+    // `test/lint-rules.test.ts`'s header describes for R10, now extended to R11.
+    const messages = await lintProductionSource(
+      "export function bad(dir: string, name: string): string {\n  return dir + '/' + name;\n}\n",
+      'ts',
+      fsFixtureDir,
+    );
+    expect(messages.some((message) => message.startsWith('no-restricted-syntax'))).toBe(true);
+  });
+
+  it.each([
+    [
+      'string concatenation with a literal that is exactly "/"',
+      "export function f(dir: string, name: string): string {\n  return dir + '/' + name;\n}\n",
+    ],
+    [
+      'string concatenation with a literal that only contains "/"',
+      "export function f(dir: string, name: string): string {\n  return dir + 'sub/' + name;\n}\n",
+    ],
+    [
+      'a joining template literal',
+      'export function f(dir: string, name: string): string {\n  return `${dir}/${name}`;\n}\n',
+    ],
+    [
+      'a joining template literal with extra text between placeholders',
+      'export function f(dir: string, name: string): string {\n  return `${dir}/sub/${name}`;\n}\n',
+    ],
+    [
+      "Array.prototype.join('/')",
+      "export function f(parts: string[]): string {\n  return parts.join('/');\n}\n",
+    ],
+    [
+      'String.prototype.concat with a "/" argument',
+      "export function f(dir: string, name: string): string {\n  return ''.concat(dir, '/', name);\n}\n",
+    ],
+  ])('flags %s in fs/**', async (_name, code) => {
+    await expectRuleFires(code, 'no-restricted-syntax', 'ts', fsFixtureDir);
+  });
+
+  it('does not flag a template literal with only a trailing separator, formatting one already-built value', async () => {
+    // `${relativePosix.toLowerCase()}/` in paths.ts is not a join between two segments — it appends
+    // one marker character to a single already-computed value, for a deny-list prefix comparison.
+    const messages = await lintProductionSource(
+      'export function isDenied(relativePosix: string): string {\n  return `${relativePosix.toLowerCase()}/`;\n}\n',
+      'ts',
+      fsFixtureDir,
+    );
+    expect(messages.filter((message) => message.startsWith('no-restricted-syntax'))).toEqual([]);
+  });
+
+  it("does not flag Array.prototype.join('/') reconstituting an already-node:path-built value", async () => {
+    // `relative.split(path.sep).join('/')` (paths.ts's relativePosixWithin) reformats a path that
+    // node:path already built into the POSIX-style string R11 itself calls for in a repo-relative
+    // artifact ID — the opposite operation from assembling a path out of raw segments.
+    const messages = await lintProductionSource(
+      "export function f(relative: string, sep: string): string {\n  return relative.split(sep).join('/');\n}\n",
+      'ts',
+      fsFixtureDir,
+    );
+    expect(messages.filter((message) => message.startsWith('no-restricted-syntax'))).toEqual([]);
+  });
+
+  it('does not flag the same "/" concatenation outside fs/**, where it may be building a URL, not a disk path', async () => {
+    const messages = await lintProductionSource(
+      'export function f(base: string, id: string): string {\n  return `${base}/errors/${id}`;\n}\n',
     );
     expect(messages.filter((message) => message.startsWith('no-restricted-syntax'))).toEqual([]);
   });
