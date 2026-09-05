@@ -229,8 +229,6 @@ ever observable.
 
 ## P5 — Base front matter and the artifact type registry
 
-*(P1, P1b, P3, P2 and P4 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`, `dfc56b5`.)*
-
 **Mandate:** one canonical front-matter base and one machine-readable registry of the 21 artifact
 types, from which paths, ID widths and parent edges are derived.
 
@@ -264,6 +262,9 @@ types, from which paths, ID widths and parent edges are derived.
 ---
 
 ## P6 — Spec artifact schemas
+
+*(P1, P1b, P3, P2, P4 and P5 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`, `dfc56b5`,
+`b082407`.)*
 
 **Mandate:** zod schemas for the eight spec-side artifact types, enforcing the rules `09` states as
 validation errors.

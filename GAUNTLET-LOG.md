@@ -354,3 +354,60 @@ the finding is rarely that the property is wrong — it's that some third or fou
 property should cover was written before the pattern was fully in mind, or after, and never swept
 back over. Worth a deliberate final pass over "every place this same shape of call appears" before
 calling a piece done, not just the one the acceptance check happened to name.
+
+---
+
+## P5 — base front matter and the artifact type registry
+
+**Rounds: 2 (one critic, one scoped verify). Outcome: WON.** Committed `b082407`.
+
+### Round 1 — 5 findings (1 blocking, 4 minor/residual)
+
+- **`renderArtifactPath` threw a bare `Error`, contradicting a convention this project had already
+  decided for exactly this package.** `SPEC-QUESTIONS.md` Q3 — written before this piece, resolving
+  the same `schemas ← (no forge deps)` tension `ForgeError` sits in — says `@forge/schemas` never
+  throws; it returns typed results, and `@forge/core` is the only place a failure becomes a thrown
+  `ForgeError`. Both of `renderArtifactPath`'s throws violated this, and one of them (a missing
+  template variable) is reachable through ordinary, well-typed use — a caller simply omitting a
+  `vars` entry a given template needs, not an adversarial cast. I had written and cited Q3 as a
+  general architectural resolution and then not applied it to the one function in this piece where
+  it mattered most.
+- **An uncommented `as` cast**, R1's letter violated next to a cast three lines below it that got a
+  full paragraph of justification — the asymmetry is what made it visible.
+- **The suffixed sub-id form (`STORY-014-2`) was allowed by both the base regex and the per-type
+  check but never exercised by a positive test** — the kind of gap coverage tooling cannot see, since
+  it's one regex accepting a shape, not a branch.
+- Two residual, adversarial-only observations, not required to fix: an empty-string template
+  variable produces a degenerate-but-technically-substituted path; a placeholder literally named
+  `constructor`/`toString` would resolve through the prototype chain if any of the 21 real templates
+  ever used such a name (none do).
+
+### Round 2 — scoped verify: the redesign held, plus one self-directed follow-up
+
+The fix for the blocking finding was not a patch but a real API change: `renderArtifactPath` now
+returns `{ success: true, path } | { success: false, missingVariable }` instead of throwing, and the
+"unregistered type" throw was eliminated entirely (not converted to a result variant) by adding
+`definitionForType(id: ArtifactTypeId)` — a lookup that is definite, never `undefined`, for a
+compile-time-known type, mirroring the same `Record`-over-a-closed-union trick P4's
+`front-matter.ts` had already used once. The verifier traced every call site of both
+`renderArtifactPath` and `definitionForType`, confirmed no throw is reachable through the typed
+public API, spot-checked prefix/width rejection against five types beyond the two the builder's own
+tests happened to cover, and reasoned through what a repeated placeholder (`{id}-{id}`, not present
+in any real template) would do without corrupting anything. All held.
+
+The one thing the verifier surfaced — explicitly below "minor," not a blocker — was that the
+registry's `id`-uniqueness invariant (which `definitionForType`'s `Object.fromEntries` construction
+depends on for correctness, since a duplicate key is silently dropped rather than erroring) was only
+indirectly tested, via the row-for-row transcription check, not asserted directly the way the
+adjacent `idPrefix`-uniqueness test already is. Added the direct test myself, without a third agent
+round: it is a one-line assertion parallel to an existing one, not new unreviewed logic.
+
+### Calibration note
+
+The blocking finding here was different in kind from P4's: not a missing check, but a *known,
+already-decided* rule (Q3) that simply was not carried through to every function it applied to.
+Q3 was written for `ForgeError` specifically, in the abstract; `renderArtifactPath` needed the same
+resolution and didn't get it, because writing a function and remembering every standing architectural
+decision that constrains it are two different acts of attention. Worth checking, for every piece from
+here on: does this new code obey every previously-recorded `SPEC-QUESTIONS.md` resolution that
+applies to it, not just the spec section this piece cites directly.
