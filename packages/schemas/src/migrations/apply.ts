@@ -30,11 +30,28 @@ function frozenClone<T>(value: T): T {
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
+    // Safe: the check above already narrowed `value` to a non-null `object`, so every one of its
+    // own keys resolves to a value `deepFreeze` can recurse into regardless of that value's type.
     for (const key of Object.keys(value)) {
       deepFreeze((value as Record<string, unknown>)[key]);
     }
   }
   return value;
+}
+
+/**
+ * Deep-clones `value` into entirely fresh, unfrozen objects.
+ *
+ * A migration that only rebuilds the parts of the document it actually changes (ordinary, encouraged
+ * style — `up: (doc) => ({ ...doc, body: newBody })`) returns an object whose *untouched* nested
+ * values are still the exact frozen references `frozenClone` handed it. Left alone, those frozen
+ * fragments would leak into `current` for the next step and, on the last step, into this function's
+ * own success result — turning a migration's ordinary output into a write-once landmine for whatever
+ * reads it next. Calling this on every step's return value guarantees `current` is always freshly
+ * mutable, independent of how much of the document a given migration actually rebuilt.
+ */
+function freshClone<T>(value: T): T {
+  return structuredClone(value);
 }
 
 /**
@@ -47,7 +64,10 @@ function deepFreeze<T>(value: T): T {
  *
  * Every step receives a frozen, independent clone of the document as it stood after the previous
  * step — never the caller's own object, and never a reference a later step could see mutated out from
- * under it.
+ * under it. What a step returns is immediately re-cloned into fresh, unfrozen memory (`freshClone`)
+ * before becoming the next `current`, so a step that only rebuilds part of the document never leaks
+ * one of its own frozen input fragments into `current` or, on the last step, into this function's
+ * own result.
  */
 export function applyMigrations(
   doc: MigratableDocument,
@@ -69,9 +89,9 @@ export function applyMigrations(
     // that true by construction instead of asserting it).
     try {
       if (plan.direction === 'up') {
-        current = step.up(frozenClone(current));
+        current = freshClone(step.up(frozenClone(current)));
       } else if (step.down !== undefined) {
-        current = step.down(frozenClone(current));
+        current = freshClone(step.down(frozenClone(current)));
       } else {
         // Unreachable for a plan `planMigrations` produced (it already refuses a 'down' plan whose
         // step lacks `down`); reachable only for a plan a caller or test hand-builds directly.

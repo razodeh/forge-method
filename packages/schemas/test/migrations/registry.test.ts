@@ -20,8 +20,10 @@ const reversibleWithDown: Migration = {
 };
 
 const irreversibleWithoutDown: Migration = {
-  from: 1,
-  to: 2,
+  // Deliberately a different (type, from, to) triple than `reversibleWithDown`: they're combined in
+  // a registry together below, and this piece's duplicate-step detection would otherwise flag them.
+  from: 2,
+  to: 3,
   types: ['ADR'],
   description: 'irreversible, without down',
   reversible: false,
@@ -73,6 +75,39 @@ describe('validateMigrationRegistry', () => {
     expect(result).toEqual({
       success: false,
       reason: { kind: 'reversible-without-down', migration: badFirst },
+    });
+  });
+
+  it('refuses two migrations that both claim to bridge the same version, for the same type', () => {
+    const second: Migration = { ...reversibleWithDown, description: 'a second, colliding step' };
+    const result = validateMigrationRegistry([reversibleWithDown, second]);
+    expect(result).toEqual({
+      success: false,
+      reason: {
+        kind: 'duplicate-step',
+        type: 'ADR',
+        from: 1,
+        to: 2,
+        first: reversibleWithDown,
+        second,
+      },
+    });
+  });
+
+  it('does not flag two migrations bridging the same version for genuinely different types', () => {
+    const storyVersion: Migration = { ...reversibleWithDown, types: ['Story'] };
+    const result = validateMigrationRegistry([reversibleWithDown, storyVersion]);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('checks duplicate steps only after every migration individually passes registration', () => {
+    // A per-migration violation is reported even when it would also collide on (type, from, to) —
+    // the more specific, more actionable reason wins.
+    const malformedDuplicate: Migration = { ...irreversibleWithoutDown, reversible: true };
+    const result = validateMigrationRegistry([irreversibleWithoutDown, malformedDuplicate]);
+    expect(result).toEqual({
+      success: false,
+      reason: { kind: 'reversible-without-down', migration: malformedDuplicate },
     });
   });
 });

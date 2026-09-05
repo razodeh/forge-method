@@ -23,9 +23,11 @@ export interface MigratableDocument {
  * One versioned transformation of a `MigratableDocument`, per `18` §18.9.
  *
  * `up`/`down` must be pure: no FS, no network, no clock — `document in, document out`. Per
- * `SPEC-QUESTIONS.md` Q27, `applyMigrations` enforces this by deep-freezing the document it passes
- * in, so a migration written in `18` §18.9's own mutating illustrative style throws rather than
- * silently corrupting its input; write `up`/`down` to return a new object instead.
+ * `SPEC-QUESTIONS.md` Q27, `applyMigrations` deep-freezes the document it passes in, which catches
+ * one specific way a migration can fail to be pure — mutating its own input, as `18` §18.9's own
+ * illustrative style does — by throwing rather than silently corrupting shared state. It cannot and
+ * does not catch a migration that reads the clock, the filesystem, or the network without touching
+ * its input; write `up`/`down` to return a new object instead, and to read nothing but `doc`.
  *
  * `reversible` and `down` must agree: a `reversible: true` migration without a `down`, or a
  * `reversible: false` migration that defines one, is refused — see `validateMigrationRegistry`.
@@ -49,8 +51,17 @@ export type MigrationRegistryFailureReason =
   | {
       readonly kind: 'irreversible-with-down';
       readonly migration: Migration;
+    }
+  | {
+      readonly kind: 'duplicate-step';
+      readonly type: ArtifactTypeId;
+      readonly from: number;
+      readonly to: number;
+      readonly first: Migration;
+      readonly second: Migration;
     };
 
+/** Whether a candidate migration registry is well-formed, per `validateMigrationRegistry`. */
 export type ValidateMigrationRegistryResult =
   | { readonly success: true }
   | { readonly success: false; readonly reason: MigrationRegistryFailureReason };
@@ -77,6 +88,7 @@ export type MigrationPlanFailureReason =
       readonly migration: Migration;
     };
 
+/** `planMigrations`'s result: a resolved `MigrationPlan`, or why one could not be resolved. */
 export type PlanMigrationsResult =
   | { readonly success: true; readonly plan: MigrationPlan }
   | { readonly success: false; readonly reason: MigrationPlanFailureReason };
@@ -87,6 +99,7 @@ export interface MigrationStepFailure {
   readonly cause: unknown;
 }
 
+/** `applyMigrations`'s result: the migrated document and what ran, or where it stopped and why. */
 export type ApplyMigrationsResult =
   | {
       readonly success: true;
