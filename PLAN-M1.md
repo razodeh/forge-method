@@ -231,7 +231,7 @@ ever observable.
 
 *(P1, P1b, P3, P2 and P4 are committed: `9b98217`, `7fef54d`, `47ba1ea`, `bb6e67d`, `dfc56b5`.)*
 
-**Mandate:** one canonical front-matter base and one machine-readable registry of the 22 artifact
+**Mandate:** one canonical front-matter base and one machine-readable registry of the 21 artifact
 types, from which paths, ID widths and parent edges are derived.
 
 **Spec:** `18` §18.6 (canonical front matter), `18` §18.7 (registry), `09` §9.2 (ID rules).
@@ -242,15 +242,20 @@ types, from which paths, ID widths and parent edges are derived.
 - `ARTIFACT_TYPES: readonly ArtifactTypeDefinition[]` — the §18.7 table verbatim, with
   `id`, `idPrefix`, `pathTemplate`, `idWidth` (default 3, ADR 4), `parent?`, `cardinality?`,
   `collection?`, `requiredSections: readonly string[]`.
-- `type ArtifactTypeId` — literal union of the 22 ids.
-- `renderArtifactPath(type, vars): string` — pure, POSIX-only (repo-relative IDs per `02` §2.7).
-- `artifactTypeByPrefix(prefix)`, `artifactTypeById(id)`.
+- `type ArtifactTypeId` — literal union of the 21 ids.
+- `renderArtifactPath(type, vars): RenderArtifactPathResult` — pure, POSIX-only (repo-relative IDs
+  per `02` §2.7); returns `{ success: true, path }` or `{ success: false, missingVariable }` rather
+  than throwing, per `SPEC-QUESTIONS.md` Q3 (`@forge/schemas` cannot import `ForgeError` from
+  `@forge/core`, and Q3's resolution is that this package never throws — it returns typed results).
+- `artifactTypeByPrefix(prefix)`, `artifactTypeById(id)`, `definitionForType(id: ArtifactTypeId)` —
+  the last one definite (never `undefined`) for a caller who already has a real `ArtifactTypeId`.
 
 **Checks:**
-- A test asserts the registry equals the §18.7 table row-for-row (all 22 types, prefixes, paths,
+- A test asserts the registry equals the §18.7 table row-for-row (all 21 types, prefixes, paths,
   parents, cardinality, collection flags) and rejects unknown keys.
 - Prefixes are unique; `idWidth` is 4 for ADR and 3 elsewhere unless declared.
-- `renderArtifactPath` rejects an unsubstituted placeholder rather than emitting `{id}` literally.
+- `renderArtifactPath` returns a failure result naming the missing variable, rather than emitting
+  `{id}` literally.
 - Valid and invalid base front-matter fixtures, each invalid one asserting the **error path**
   (`21` §21.3) — not merely that it failed.
 
@@ -396,11 +401,11 @@ whose headings are exactly its `requiredSections`.
 **Spec:** `specs/22` M1 acceptance ("a template stub" per type), `18` §18.6 (two-phase validation).
 
 **Surface:** `@forge/templates` (data package; `templates ←` no forge code deps)
-- `templates/artifacts/<TypeId>.md` — 22 files.
+- `templates/artifacts/<TypeId>.md` — 21 files.
 - `TEMPLATE_INDEX: Readonly<Record<ArtifactTypeId, string>>` resolving type → file path.
 
 **Checks:**
-- A single table-driven test over all 22 types: the template exists, its front matter validates
+- A single table-driven test over all 21 types: the template exists, its front matter validates
   against that type's schema, and its `##` headings equal the type's `requiredSections` in order.
 - Templates contain no `TODO`/`FIXME` (R7) — placeholders use an explicit `<…>` angle-bracket
   convention, matching the spec pack's own style.

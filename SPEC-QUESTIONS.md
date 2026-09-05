@@ -419,3 +419,31 @@ toolchain next moves to it (a separate piece — it is a major-version bump acro
 `@vitest/coverage-v8` and possibly `@vitest/*` peers, not a P2-scoped change). If the same shortfall
 reproduces there, file it upstream with the reproduction steps above. The isolated compensating
 config can retire at the same time, once the full-suite run is trustworthy again for this plugin.
+
+---
+
+## Q18 — `18` §18.6's per-type `requiredSections` has no source of values for the §18.7 registry types
+
+`18` §18.6 says validation is two-phase: front matter against the type's JSON Schema, "then body
+structure against required sections declared by the type (`requiredSections: [Statement, Rationale,
+…]`)." `PLAN-M1.md` P5 accordingly names `requiredSections: readonly string[]` as a field on
+`ArtifactTypeDefinition`.
+
+Nothing in the spec pack supplies the actual list for any of the §18.7 registry's 21 types. §18.7's
+own table (the "canonical" source this piece transcribes verbatim) has no `requiredSections` column
+at all. §9.3 ("essentials") shows only front-matter YAML for six of the 21 types (Vision, Capability,
+NFR, Epic, Story, Task) — no body markdown, no section headings. The one concrete example of the
+pattern, `08` §8.3's `## Statement` / `## Rationale` / `## Implications` / `## Verification`, is for
+a knowledge-base entry (`type: knowledge`), which is not one of the §18.7 registry's 21 types at all
+— KB entries use a distinct `KB-<AREA>-####` id shape (`KB-PROD-0001`, seen in the Vision example at
+§9.3), not the registry's `^[A-Z]+-\d{3,4}(-\d+)?$` pattern, and are `PLAN-M1.md` P7's schemas, not
+P5's. `PLAN-M1.md` P6 and P7, which define the eight spec-side and remaining artifact types' detailed
+field schemas, also do not mention `requiredSections` anywhere in their Checks.
+
+**Recommended resolution:** keep the field on `ArtifactTypeDefinition` (the surface `PLAN-M1.md`
+documents, and body-structure validation is a real, named `18` §18.6 mechanism that some later piece
+will need it for), but set every type's value to `[]` in this piece rather than invent section names
+with no spec source. Populate real values type-by-type only when each type's detailed schema is
+authored and a spec section actually states its required sections — not before. Proceeding with `[]`
+for M1; revisit if a later milestone's spec pages (`18` §18.6's mechanism is exercised by `forge kb
+lint`, not named again after §18) supply the missing lists.

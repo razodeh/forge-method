@@ -10,5 +10,11 @@
     "statements": 97.01,
     "functions": 100,
     "branches": 88
+  },
+  "packages/schemas": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 100
   }
 }
