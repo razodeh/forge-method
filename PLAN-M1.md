@@ -407,19 +407,31 @@ whose headings are exactly its `requiredSections`.
 **Spec:** `specs/22` M1 acceptance ("a template stub" per type), `18` §18.6 (two-phase validation).
 
 **Surface:** `@forge/templates` (data package; `templates ←` no forge code deps)
-- `templates/artifacts/<TypeId>.md` — 21 files.
-- `TEMPLATE_INDEX: Readonly<Record<ArtifactTypeId, string>>` resolving type → file path.
+- `templates/artifacts/<TypeId>.md` — 21 files, package-relative (`packages/templates/templates/artifacts/`).
+- `TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>>` resolving type → file path —
+  `TemplateArtifactTypeId` is its own 21-member union, not `@forge/schemas`'s `ArtifactTypeId`: this
+  package cannot import `@forge/schemas` at all (`templates: []`, same as `schemas: []`); see
+  `SPEC-QUESTIONS.md` Q28.
 
 **Checks:**
 - A single table-driven test over all 21 types: the template exists, its front matter validates
   against that type's schema, and its `##` headings equal the type's `requiredSections` in order.
+  Lives at `test/templates.test.ts` (repo root), not inside either package — `@forge/templates` and
+  `@forge/schemas` each have zero `@forge/*` dependencies, so neither can validate against the other
+  from its own `src/` or `test/`; see `SPEC-QUESTIONS.md` Q28.
 - Templates contain no `TODO`/`FIXME` (R7) — placeholders use an explicit `<…>` angle-bracket
   convention, matching the spec pack's own style.
-- Handlebars placeholders parse in strict mode with the declared helper set only.
+- Handlebars placeholders parse in strict mode with the declared helper set only. None of the 21
+  templates use `{{...}}` syntax at M1 (Handlebars renders per `19` §19.2, once the M2 engine
+  exists) — the check itself is real and unit-tested against synthetic examples, not vacuous.
 
 **Depends on:** P6, P7.
 
 ---
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8, P9, P10 and P11 are committed: `9b98217`, `7fef54d`,
+`47ba1ea`, `bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`, `5873bbe`
+(fix: `9796a10`), `608a011` (fix: `3de0be0`).)*
 
 ## P12 — Artifact model and front-matter round-trip
 

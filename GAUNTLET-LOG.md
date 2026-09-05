@@ -727,3 +727,72 @@ round 2 re-derived the original failure from scratch and confirmed both that it 
 fix did not quietly disable the property it was supposed to preserve — the same "verify the claim,
 don't just read the diff" discipline this project has applied to critic findings themselves, now
 applied to a fix in response to one.
+
+---
+
+## P11 — template stubs for every artifact type
+
+**Rounds: 2 (one critic finding a real major, one scoped verify). Outcome: WON.** Committed
+`608a011`, fixed in `3de0be0`.
+
+This piece hit three separate prerequisites before any template file could be written, none of
+which PLAN-M1.md's own text anticipated, all recorded in `SPEC-QUESTIONS.md` Q28. First, Q18's
+deferred `requiredSections` question ("revisit once every type's detailed schema is authored") —
+now that P6/P7 have authored them, a real search of the spec pack found genuine, spec-given
+`##`-heading lists for exactly two types (ADR, SessionRecord), confirming the other 19 were correctly
+left `[]`, not merely unresearched. Second, a real structural deadlock: `PLAN-M1.md`'s own Check
+needs front matter validated against `@forge/schemas`'s real zod schemas, but `@forge/templates` and
+`@forge/schemas` both have zero `@forge/*` dependencies (`02` §2.2), and — confirmed by reading the
+boundary ESLint rule's actual file glob — that restriction applies to `test/` exactly as it does to
+`src/`, with no exemption. Neither package can validate against the other from inside itself.
+Resolved by placing the cross-cutting test at the repository root (`test/templates.test.ts`), the
+one place already established for checks no single package's own boundary permits. Third, a genuine
+ambiguity in this piece's own Check text: "front matter validates against its schema" (concrete,
+literal values) and "Handlebars placeholders parse... with the declared helper set" (implying
+`{{...}}` syntax) can't both hold in the same field — a raw Handlebars expression is not a valid date
+or enum member. Resolved by keeping all 21 stubs fully static (no `{{...}}` anywhere), while still
+building and unit-testing the Handlebars check for real, against synthetic examples, so it isn't
+vacuous scaffolding.
+
+Also discovered mid-build, not anticipated: 6 of the 21 types (`collection: true` per the registry)
+have *flat* zod schemas with no base front matter at all — `riskSchema` etc. don't extend
+`baseFrontMatterShape`, since a collection entry (one row of a shared register file) isn't a whole
+document. The 21 templates therefore split into two real shapes, not one uniform one, discovered by
+reading the schemas directly rather than assumed from the registry's `collection` flag alone.
+
+### Round 1 — one major (accidental-reachable once Handlebars is ever used, fixed), two minor (fixed), one nit (fixed)
+
+The critic independently re-derived correctness for all 21 templates against their real schemas
+(every required field, enum, regex, and `.superRefine()` rule re-checked by hand, not trusted from a
+green test run) and found every one correct, including the 6 flat collection-entry schemas' stricter,
+smaller field sets. It also independently confirmed the `gray-matter` + `yaml` (eemeli) wiring is
+load-bearing, not decorative — gray-matter's own default engine parses a YAML date into a native
+`Date` object, which would fail every date field's `z.string().date()` check; the custom engine is
+what keeps dates as plain strings.
+
+The one major finding: `collectHelperCallNames` (the AST walk backing the Handlebars check) never
+traversed a hash argument's value, so `{{helper key=(subHelper x)}}` reported only `helper` and
+missed `subHelper` entirely — a real gap in a mechanism whose entire purpose is proving itself correct
+*before* any real template exercises it, not after. Fixed by recursing into `hash.pairs[].value`,
+with a new test for exactly that shape. Two minor, fixed: `topLevelHeadings` didn't skip a fenced
+code block, so a future template quoting example Markdown could accidentally register a heading;
+ADR.md's "Negative" subsection dropped `08` §8.4's exact "/ accepted costs" suffix. One nit, fixed:
+the root `package.json`'s new devDependencies were inserted out of alphabetical order.
+
+### Round 2 — scoped verify, 0 findings
+
+A fresh agent independently reproduced the original bug with a standalone script (confirming
+`subHelper` was genuinely invisible before the fix) and confirmed the fix is truly recursive, not a
+single added level, by testing a three-deep nesting case (`helper` → `subHelper` → `deepHelper`, all
+three found). Separately confirmed no false positives: a hash value that is a plain literal or path
+(not a call) is correctly never reported. No new findings.
+
+### Calibration note
+
+The bug this round caught was in test infrastructure with zero live callers today — no committed
+template uses `{{...}}` syntax, so the flaw could not have caused a single failing assertion right
+now. It mattered anyway, for the same reason `P9`'s coverage-exclude gap and `P10`'s frozen-output
+leak mattered: a mechanism built now, for a use that arrives later, only earns the trust later code
+will place in it if it is actually correct today — "nothing currently exercises this" is not the same
+claim as "this works," and the difference is exactly what a fresh critic re-deriving correctness by
+hand, rather than trusting a green run, exists to catch.
