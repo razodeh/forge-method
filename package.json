@@ -30,11 +30,17 @@
     "@vitest/coverage-v8": "4.1.11",
     "eslint": "9.39.5",
     "eslint-config-prettier": "10.1.8",
+    "@forge/schemas": "workspace:*",
+    "@forge/templates": "workspace:*",
+    "gray-matter": "4.0.3",
+    "handlebars": "4.7.9",
     "prettier": "3.9.6",
     "tsup": "8.5.1",
     "turbo": "2.10.12",
     "typescript": "5.9.3",
     "typescript-eslint": "8.69.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "yaml": "2.9.0",
+    "zod": "3.25.76"
   }
 }

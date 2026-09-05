@@ -178,6 +178,33 @@ describe('specs/18 §18.7 — the registry table', () => {
     expect(withCardinality[0]?.cardinality).toBe('one');
   });
 
+  it('only ADR and SessionRecord declare requiredSections; every other type is [] (SPEC-QUESTIONS.md Q28)', () => {
+    const withSections = new Map(
+      ARTIFACT_TYPES.filter((type) => type.requiredSections.length > 0).map((type) => [
+        type.id,
+        type.requiredSections,
+      ]),
+    );
+    expect([...withSections.keys()]).toEqual(['ADR', 'SessionRecord']);
+    expect(withSections.get('ADR')).toEqual([
+      'Context',
+      'Options considered',
+      'Decision',
+      'Diagram',
+      'Consequences',
+      'Reversal plan',
+    ]);
+    expect(withSections.get('SessionRecord')).toEqual([
+      'Frame',
+      'Diverge',
+      'Converge',
+      'Decisions',
+      'Non-decisions',
+      'Actions',
+      'KB write-back',
+    ]);
+  });
+
   it('marks exactly the six collection types the spec table declares', () => {
     const collections = ARTIFACT_TYPES.filter((type) => type.collection === true).map(
       (type) => type.id,

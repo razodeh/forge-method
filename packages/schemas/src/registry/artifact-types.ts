@@ -131,7 +131,10 @@ export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
  * does either (the only concrete example, `specs/08` §8.3's Statement/Rationale/Implications/
  * Verification, is for a knowledge-base entry, a different artifact family with its own `KB-*-####`
  * id scheme, out of this registry). Left `[]` for every type here rather than invented; see
- * `SPEC-QUESTIONS.md` Q18.
+ * `SPEC-QUESTIONS.md` Q18. `PLAN-M1.md` P11 revisited this once every type's detailed schema existed
+ * (Q18's own condition for doing so) and found two — ADR, SessionRecord — with a genuine, spec-given
+ * `##`-heading list; see `SPEC-QUESTIONS.md` Q28. The other 19 stay `[]`: not an oversight, but the
+ * same "no spec source, don't invent one" standard Q18 set, still correct for them.
  */
 export interface ArtifactTypeDefinition {
   readonly id: ArtifactTypeId;
@@ -149,9 +152,26 @@ export interface ArtifactTypeDefinition {
  * if a row's `parent` were misspelled, the object literal would no longer be assignable to
  * `ArtifactTypeDefinition`'s `parent?: ArtifactTypeId`, and `tsc` would fail on this line.
  */
+/** The two types `SPEC-QUESTIONS.md` Q28 found a genuine, spec-given `##`-heading list for. */
+const REQUIRED_SECTIONS: Partial<Record<ArtifactTypeId, readonly string[]>> = {
+  // specs/08 §8.4's full worked example, top-level `##` headings only (`### Positive`/`### Negative`/
+  // `### Follow-on work` are `###` subsections of Consequences, not additional top-level sections).
+  ADR: ['Context', 'Options considered', 'Decision', 'Diagram', 'Consequences', 'Reversal plan'],
+  // specs/16 §16.5's full worked example.
+  SessionRecord: [
+    'Frame',
+    'Diverge',
+    'Converge',
+    'Decisions',
+    'Non-decisions',
+    'Actions',
+    'KB write-back',
+  ],
+};
+
 export const ARTIFACT_TYPES: readonly ArtifactTypeDefinition[] = RAW_ARTIFACT_TYPES.map((type) => ({
   ...type,
-  requiredSections: [],
+  requiredSections: REQUIRED_SECTIONS[type.id] ?? [],
 }));
 
 /**

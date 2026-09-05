@@ -711,3 +711,69 @@ frontmatter: { ...doc.frontmatter, reversibility: doc.frontmatter.reversibility 
 so the spec's own illustration would pass the purity check `PLAN-M1.md` requires of every real
 migration; amend `PLAN-M1.md` P10's stated `planMigrations` signature to name its actual, result-
 returning shape rather than a bare array.
+
+---
+
+## Q28 — P11's three prerequisites: real `requiredSections` values, a `templates`↔`schemas`
+boundary deadlock, and what "Handlebars placeholders parse" means for a static template stub
+
+Three separate things had to be settled before any P11 code, all discovered by actually trying to
+build the piece rather than by re-reading the plan text.
+
+**1. `requiredSections` (deferred by Q18).** Q18 left every type's `requiredSections` as `[]`,
+recommending it be revisited "only when each type's detailed schema is authored and a spec section
+actually states its required sections" — P6/P7 have since authored every type's schema, so this
+piece did the deferred search. Two types have a concrete, spec-given `##`-heading list in a full
+worked example (front matter *and* body): ADR (`08` §8.4) — `Context`, `Options considered`,
+`Decision`, `Diagram`, `Consequences`, `Reversal plan` — and SessionRecord (`16` §16.5) — `Frame`,
+`Diverge`, `Converge`, `Decisions`, `Non-decisions`, `Actions`, `KB write-back`. No other type has
+one: several (Runbook, Environment) have prose naming *candidate fields* ("symptoms, immediate
+mitigation, diagnosis steps...") with no literal heading list — Q18's own standard ("not invent
+section names with no spec source") rules out promoting prose-only mentions into headings, so those
+stay `[]`, correctly, not from oversight. Diagram (`.mmd` raw source) and InterfaceContract (a `.yaml`
+file) cannot have `##` sections at all — structurally different file formats, `[]` is the only
+correct value, not a placeholder for missing data.
+
+**2. `@forge/templates` cannot import `@forge/schemas`, in `src/` *or* `test/`.** `PLAN-M1.md` P11's
+own Check — "front matter validates against that type's schema" — requires the per-type zod schemas
+from `@forge/schemas`. But `02` §2.2's graph gives `templates: []`: zero `@forge/*` dependencies, and
+(confirmed by reading `tools/eslint-plugin-forge-boundaries/src/index.mjs`'s file-glob registration)
+the boundary ESLint rules apply to `packages/**/*.{ts,...}` with no `test/` exemption — so a test
+*inside* `packages/templates/test/` importing `@forge/schemas` would fail `pnpm lint` exactly as a
+`src/` import would. `@forge/schemas` is equally forbidden from importing `@forge/templates`
+(`schemas: []` too), so there is no package on either side of this validation that is allowed to
+depend on both.
+
+**Answer taken (proceeding):** `@forge/templates` stays a pure data package — `TEMPLATE_INDEX` is
+typed by a `TemplateArtifactTypeId` union declared independently *inside* `packages/templates`
+(the 21 names transcribed again, not imported), not by `@forge/schemas`'s `ArtifactTypeId`. The actual
+cross-package validation test (front matter against schema, headings against `requiredSections`, and
+`TemplateArtifactTypeId`'s set kept in sync with the real registry) lives at the repository root
+(`test/templates.test.ts`), which the `packages/**` boundary glob does not cover — the same place
+`test/workspace-floor.test.ts` and `test/lint-rules.test.ts` already do cross-cutting checks no single
+package's own boundary permits. This is an implementation-location decision, not a specs/ conflict
+(neither `PLAN-M1.md` nor any spec file says where the test file must live), recorded here because the
+reason is easy to lose without it.
+
+**3. Handlebars.** `02`'s tech-stack table pins Handlebars, strict mode, a custom helper set, for
+*rendering* templates (`19` §19.2's `TemplateContext`) — a run-time mechanism no piece before M2's
+engine work implements. `PLAN-M1.md` P11's own Check nonetheless says "Handlebars placeholders parse
+in strict mode with the declared helper set only." Putting a real `{{project.name}}`-style expression
+in one of these 21 files' *front matter* would break the other Check in the same list — front matter
+must validate against the type's schema, and a raw Handlebars expression is not a valid date, enum
+member, or id pattern. Resolved by keeping these 21 stub templates entirely static: concrete,
+schema-valid front matter, and `<…>` angle-bracket placeholders (per this Check's own other half) for
+every piece of body prose a human or agent must supply — no `{{...}}` anywhere in any of the 21 files.
+The Handlebars Check is still real and tested, not vacuous by construction: `test/templates.test.ts`
+scans every template for `{{...}}`-shaped substrings (finding none today) and separately unit-tests
+the scanning function itself against both a valid and a deliberately malformed/undeclared-helper
+Handlebars expression, so the mechanism is proven before the day some future template actually uses
+it, rather than "passing" only because nothing has ever exercised it.
+
+**Recommended resolution:** none needed for (1) — Q18's own plan already anticipated this outcome.
+For (2), no spec text needs changing; if a later `templates ← schemas` or `schemas ← templates` edge
+is ever proposed, note that this M1 piece is the reason validation of one against the other currently
+lives outside both packages. For (3), no spec text needs changing; a note that "template stub" (`22`'s
+M1 acceptance wording) means a static, hand-editable file at M1, with Handlebars rendering arriving
+only once `19` §19.2's engine exists, would avoid a future reader assuming these files are already
+render-ready.

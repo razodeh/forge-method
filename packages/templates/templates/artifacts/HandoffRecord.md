@@ -1,0 +1,15 @@
+---
+id: HO-0001
+from: '<the agent or role handing off>'
+to: '<the agent or role receiving the handoff>'
+step: '<the workflow step this handoff occurs at>'
+timestamp: '2026-01-15T10:00:00Z'
+delivered: []
+open_questions: []
+assumptions: []
+constraints_for_receiver: []
+acceptance_for_receiver: []
+---
+
+<A one-off entry stub: copy this front-matter block into `reports/handoffs.md` to register a new
+handoff. This type has no whole-document body — the register is the front matter itself.>
