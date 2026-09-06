@@ -82,30 +82,25 @@ export const DEFAULT_ARTIFACT_REGISTRY: ArtifactSchemaRegistry = Object.fromEntr
  * `## `-prefixed line inside a ` ``` ` fenced code block — a document quoting another artifact's
  * structure as an example is not itself declaring a section.
  *
- * An odd number of fence markers — one opened but never closed by the end of the body — is treated
- * as though the unmatched one were not a fence at all, rather than as an open fence extending to
- * EOF: this function's job is finding real headings for a validation check, not rendering Markdown,
- * and a single stray/mistyped ` ``` ` earlier in a large document should not silently make every
- * later, genuinely-present heading read as missing.
+ * Every ` ``` ` line toggles fence state, strictly in document order, with no attempt to guess which
+ * markers "really" pair up — CommonMark itself has no such concept; a fence marker always toggles,
+ * and an unclosed one really does extend to end-of-file. An earlier version of this function tried to
+ * detect and ignore a single "stray" unclosed fence so a later real heading would still be found, but
+ * that heuristic mis-paired markers the moment a document had *more than one* fence issue, both
+ * hiding a genuine heading and letting fenced content leak through as one — worse than the problem it
+ * tried to solve. A document with a genuinely unclosed fence is malformed; every heading after that
+ * point is, correctly, invisible to this check, the same as it would be to a real Markdown renderer.
  */
 function topLevelHeadings(body: string): string[] {
-  const lines = body.split('\n');
-  const fenceLineIndices: number[] = [];
-  lines.forEach((line, index) => {
-    if (line.startsWith('```')) fenceLineIndices.push(index);
-  });
-  const closedFenceCount = fenceLineIndices.length - (fenceLineIndices.length % 2);
-  const fenceLines = new Set(fenceLineIndices.slice(0, closedFenceCount));
-
   const headings: string[] = [];
   let inFence = false;
-  lines.forEach((line, index) => {
-    if (fenceLines.has(index)) {
+  for (const line of body.split('\n')) {
+    if (line.startsWith('```')) {
       inFence = !inFence;
-      return;
+      continue;
     }
     if (!inFence && line.startsWith('## ')) headings.push(line.slice('## '.length).trim());
-  });
+  }
   return headings;
 }
 

@@ -77,7 +77,6 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
-    devDependencies:
       zod:
         specifier: 3.25.76
         version: 3.25.76

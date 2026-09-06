@@ -169,14 +169,18 @@ describe('validateArtifact — phase 2 (body structure against requiredSections)
     expect(outcome.errors[0]?.message).toContain('Context');
   });
 
-  it('still finds a real heading after an earlier, unclosed fence', () => {
-    // A single stray/mistyped ``` earlier in the body must not silently disable heading detection
-    // for everything after it — both "Context" and "Decision" genuinely appear as plain headings.
+  it('treats an unclosed fence as extending to end-of-file, per real Markdown semantics', () => {
+    // "Decision" sits after a fence that never closes — a real Markdown renderer would treat it as
+    // part of the code block too, so it is correctly reported missing, not found by accident.
     const body = ['## Context', '', '```', 'some unclosed example', '', '## Decision', ''].join(
       '\n',
     );
     const doc = ArtifactDocument.parse(`---\ntype: ADR\n---\n${body}`, 'x.md');
-    expect(validateArtifact(doc, registry)).toEqual({ valid: true });
+    const outcome = validateArtifact(doc, registry);
+    expect(outcome.valid).toBe(false);
+    if (outcome.valid) return;
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0]?.message).toContain('Decision');
   });
 
   it('does not run phase 2 at all when phase 1 already failed', () => {
