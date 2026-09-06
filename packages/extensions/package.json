@@ -10,7 +10,9 @@
     "./agents": "./src/agents/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./skills": "./src/skills/index.ts",
-    "./workflows": "./src/workflows/index.ts"
+    "./workflows": "./src/workflows/index.ts",
+    "./presets": "./src/presets/index.ts",
+    "./style": "./src/style/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -21,6 +23,7 @@
   "dependencies": {
     "@forge/core": "workspace:*",
     "@forge/schemas": "workspace:*",
+    "yaml": "2.9.0",
     "zod": "3.25.76"
   }
 }

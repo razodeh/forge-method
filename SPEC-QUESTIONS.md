@@ -1083,3 +1083,61 @@ guessing at a document shape no page actually shows.
 
 **Recommended resolution:** add a worked YAML (or front-matter) example for a template overlay to `15`
 §15.7, matching the treatment every sibling subsection in the same section already gets.
+
+## Q38 — Several preset postures (`15` §15.9's own table) name facts no overlay-able document kind
+this milestone's own schemas can express
+
+**Conflict.** `15` §15.9's preset table describes postures partly in terms P1–P7's own overlay schemas
+can express directly (a custom role, a review step's perspectives, an MCP server list, a custom gate
+check) and partly in terms that are real, schema'd concepts — but belong to `18` §18.3's *top-level*
+`.forge/config.yaml` (`@forge/schemas`' already-committed `configSchema`, M1), not to any `.forge/
+overrides/**` overlay-able document kind: `solo-fast`'s "L1–L2 default" is `configSchema`'s
+`project.level`; "autonomy `autonomous` for non-destructive steps" is `execution.autonomy`/
+`autonomyByGate`; `enterprise-rigor`'s "all gates `alwaysHuman`" is also `execution.autonomyByGate`.
+Still others (`regulated`'s "no `emerging`-maturity technology," every preset's exact "waivers require
+expiry ≤ 30 days"-style numeric policy) have no schema anywhere in the spec pack at all, config.yaml
+or overlay.
+
+**Answer taken (proceeding):** `PRESET_REGISTRY`'s own overlay files are scoped to exactly the seven
+document kinds this milestone's own schemas cover (roster, agent overlay, MCP grants, workflow
+overlay, gate check, framework overlay, style profile) — the same kinds `ejectPreset`'s round-trip
+property (`AC15-8`) can actually mean something for, since only `.forge/overrides/**` files are
+resolved by `@forge/extensions/resolve`'s layer model at all; `.forge/config.yaml` is a single,
+already-existing physical file per project, not a layered/merged document, and patching *part* of it
+non-destructively is a materially different, unaddressed problem this piece's own Surface (`styleProfileSchema`, `presetSchema`, `PRESET_REGISTRY`, `applyPreset`, `ejectPreset`) never mentions.
+Each preset's `posture` field carries the *full* prose from `15` §15.9's own table, including the
+config.yaml-level and unschematised facts, as a human-readable description — real information, just
+not machine-applied by this piece. A concept with no schema anywhere (`emerging`-maturity technology,
+a specific waiver-expiry-day number) is not invented a field for, matching `SPEC-QUESTIONS.md`
+Q18/Q20/Q32/Q33's "no spec source, don't invent one" precedent.
+
+**Recommended resolution:** give `.forge/config.yaml` an explicit, spec-named mechanism for a preset to
+patch a *subset* of it non-destructively (the way overlays already patch `.forge/overrides/**`
+documents), and give the still-unschematised posture facts (technology maturity, waiver-expiry
+policy) a real field somewhere, so a future piece has something concrete to apply rather than prose.
+
+## Q39 — `AC15-8`'s "apply then resolve" half needs infrastructure that does not exist until `PLAN-M2.md`
+P9
+
+**Conflict.** `PLAN-M2.md` P7's own Check restates `AC15-8` literally: "`applyPreset('enterprise-rigor')`
+then *resolving*, versus `ejectPreset('enterprise-rigor')`'s files applied as ordinary L3 overrides
+then *resolving*, produce byte-identical resolved output." But `@forge/extensions/resolve`'s own
+`Resolver.resolve(id, contributions, options)` (`PLAN-M2.md` P2) is a pure, in-memory, *per-entity*
+function — it takes an already-assembled `LayerContribution[]` and returns one `ResolvedEntity`; there
+is no function anywhere in `@forge/extensions` (this milestone's own package) that reads a whole
+project's `.forge/overrides/**` tree off disk and turns it into the `LayerContribution[]` set
+`Resolver.resolve` needs, per entity, across every overlay-able document kind. `PLAN-M2.md`'s own P9
+("The compile pipeline and `overlay explain`") is explicitly where that reading-and-assembling logic
+is scoped to live — it does not exist yet.
+
+**Answer taken (proceeding):** this piece verifies the mechanical precondition `AC15-8` actually
+depends on — that `applyPreset(id, target)`'s written files and `ejectPreset(id)`'s returned files are
+identical in path and content for the same preset — since if apply and eject ever disagreed about
+*what* gets written, no resolve-based check downstream could produce byte-identical output either.
+The full end-to-end version (actually resolving both trees and diffing the resolved entities) is
+recorded here as blocked on P9's own compile pipeline existing, not silently skipped without a reason
+on record.
+
+**Recommended resolution:** once `PLAN-M2.md` P9 lands a "read `.forge/overrides/**` into
+`LayerContribution[]`" function, add the literal `AC15-8` round-trip test this piece's own Check
+describes, using that function plus this piece's already-built `applyPreset`/`ejectPreset`.

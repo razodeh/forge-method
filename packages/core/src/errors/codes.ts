@@ -336,6 +336,16 @@ export const ERROR_CODES = {
     remedy:
       'Update the overlay to name an id that exists, or remove the stale $replaceWhere entry.',
   },
+  // `15` §15.9: presets are addressed by id (`forge preset apply <id>`, `forge preset show <id>`).
+  // No spec page numbers a code for naming one that doesn't exist; `PLAN-M2.md` P7 picks the next
+  // free `CFG-*` slot, matching P1's `CFG-011` and P2's `CFG-012`'s own precedent for exactly this
+  // situation (a referenced id that does not resolve).
+  'CFG-013': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) => `No preset registered with id ${show(d.id)}.`,
+    remedy: 'Run `forge preset list` to see the available preset ids.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */
