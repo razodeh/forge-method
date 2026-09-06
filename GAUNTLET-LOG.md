@@ -1283,3 +1283,58 @@ reference" with "the reference must be markdown-link-shaped" — checked against
 `15` §15.4.2's own worked example rather than against a plausible-looking but self-invented convention.
 A test suite built from the same premise (as this piece's own was) cannot find a defect in the premise
 itself; only re-deriving the check from the spec's actual example text, as the critic did, surfaces it.
+
+## M2 P5 — MCP registry: parsing and grant validation
+
+**Rounds: 2 (one critic finding a real bypass and flagging a lower-confidence gap; one scoped verify
+confirming both fixes with no residual defects). Outcome: WON.**
+
+`15` §15.5.1's own worked example never shows a *server-wide* grant's on-disk shape — only tool-level
+grants. This piece chose to encode one as the literal string `'*'` in place of a tool-name array
+(`SPEC-QUESTIONS.md` Q34), gated by `defaults.grantMode: 'server-wide'` per §15.5.2 rule 2. That
+encoding choice is exactly what round 1's defect exploited.
+
+### Round 1 — one confirmed major, one accepted hardening
+
+- **Major: `'*'` smuggled inside a tool array silently bypassed the `grantMode` gate.** The original
+  `toolGrantValueSchema` was `z.union([z.array(z.string().min(1)), z.literal('*')])` — an array
+  containing the single string `"*"` (`['*']`) matched the array-of-tool-names branch trivially, since
+  nothing excluded the sentinel value from being treated as an ordinary tool name. `validateMcpConfig`'s
+  only server-wide check was strict equality against the bare literal (`tools === '*'`), which never
+  inspected array contents. Result: `grants: { pm: { 'acme-jira': ['*'] } }` validated cleanly under
+  the *default* `grantMode: explicit`, with zero findings — exactly the server-wide intent rule 2's
+  gate exists to catch, expressed one syntactic layer away from the sentinel this piece itself chose.
+  Neither `schema.test.ts` nor `validate.test.ts` exercised this input; the suite only tested the bare
+  string form, sharing the same blind spot as the code. Fixed by excluding `'*'` from the tool-name
+  schema itself (`z.string().min(1).refine((value) => value !== '*', ...)`), so `'*'` can now only ever
+  appear as the whole grant value, never as an array element — `['*']` and `['search_issues', '*']`
+  are both now schema errors.
+- **Accepted hardening, not a cited spec-rule violation: duplicate `server.id` entries were silently
+  collapsed.** `new Map(config.servers.map((server) => [server.id, server]))` keeps only the last
+  server for a repeated id, with no diagnostic — a second, more-permissive definition (e.g.
+  `readOnly: false` where the first said `true`) could silently win. Not named by any of §15.5.2's six
+  numbered rules, but `15` §15.5.5's own commands (`forge mcp grant <id>`, `forge mcp revoke <id>`)
+  treat `id` as a registry key, so a silent collision is a real, cheap-to-catch correctness gap. Fixed
+  by adding a `duplicate-server-id` error finding, one per distinct repeated id regardless of how many
+  extra copies exist.
+
+### Round 2 — scoped verify: both fixes confirmed, no residual defects
+
+A fresh agent stress-tested the `'*'`-exclusion fix in every array position (first, last, middle, sole
+element), confirmed names merely *containing* `*` as a substring are still accepted, and confirmed the
+bare-`'*'` sentinel still works end-to-end under both `grantMode` settings. It also confirmed the
+duplicate-id fix reports exactly one finding per distinct duplicated id (not one per extra copy, not
+one per pair) and traced that the underlying `Map` still silently keeps a last-write-wins server for
+`effectiveGrants`/gating purposes even after the finding fires — judged not a functional defect, since
+the `duplicate-server-id` finding always forces `outcome.valid = false`, so a caller correctly gating
+on `valid` before trusting `effectiveGrants` is protected regardless of which duplicate the `Map` kept.
+
+### Calibration note
+
+The round-1 defect is this session's now-familiar pattern in a new shape: a deliberate, documented
+encoding choice (Q34's bare `'*'` sentinel) was checked for correctness in isolation — does the bare
+literal work? — without checking whether the *type* meant to exclude it (an ordinary tool-name array)
+actually did. The test suite, built to confirm the sentinel worked, never tried to break it by putting
+it somewhere it wasn't supposed to go. The lesson repeats: a boundary a schema is supposed to enforce
+needs a test that tries to cross it from the adjacent, easy-to-reach direction, not just a test that
+the intended path works.

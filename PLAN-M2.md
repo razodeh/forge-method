@@ -221,6 +221,8 @@ as untrusted, not the runtime wrapping itself).
 
 **Depends on:** P1, P2.
 
+*(P1, P2, P3, P4, P5 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`, `7705672`.)*
+
 ---
 
 ## P6 — Workflow, gate-check, framework, and template overlays
