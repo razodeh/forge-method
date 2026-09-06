@@ -5,15 +5,19 @@
  * @see PLAN-M3.md P2
  */
 
-/** One `08` §8.11.7 check id this package raises (`diagram:syntax` is P1's own `ForgeError`, not a
- * `DiagramFinding` — this type covers the checks that operate on an already-parsed diagram). */
+/** One `08` §8.11.7 check id this package raises as a `DiagramFinding` (`diagram:syntax` is P1's own
+ * `ForgeError`, never a `DiagramFinding` — it fails before there is a diagram to report a finding
+ * about). `diagram:drift`/`diagram:transclusion` are raised by `@forge/diagrams/drift` (P4), not this
+ * module, but share this one closed id set so every check in the package reports through one shape. */
 export type DiagramCheckId =
   | 'diagram:refs'
   | 'diagram:orphan-nodes'
   | 'diagram:complexity'
   | 'diagram:label-quality'
   | 'diagram:caption'
-  | 'diagram:staleness';
+  | 'diagram:staleness'
+  | 'diagram:drift'
+  | 'diagram:transclusion';
 
 /** One violation of one `08` §8.11.7 check against one diagram. `nodeId` is present whenever the
  * finding names a specific node (`diagram:refs`, `diagram:orphan-nodes`, `diagram:label-quality`) and

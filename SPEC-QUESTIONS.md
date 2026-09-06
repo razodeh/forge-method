@@ -1414,3 +1414,70 @@ was type-closed (`ErCardinality`) but never actually checked against `VALID_ER_C
 runtime, leaving the exact `runGenerator`/dynamic-dispatch boundary case the type existed to guard
 against still open — fixed by validating it in `renderErDiagram` itself and raising `KB-002` for an
 invalid value, the same code the shape checks already use.
+
+## Q47 — P4's first draft never actually wired `diagram:transclusion` into its own stated entry point,
+and its marker parser broke on ordinary Markdown formatting variance
+
+**Conflict.** `08` §8.11.4 says a diverged transcluded block "is a lint error (`KB-031`), not a silent
+inconsistency," and §8.11.7's own table lists `diagram:transclusion` as an **error**-severity gate
+check, the same tier as `diagram:drift`. A first draft of `@forge/diagrams/drift` built
+`parseTransclusionMarkers`/`checkTransclusion` as real, working, separately-tested functions, but
+never called either one from `validateDiagrams` — the one entry point this milestone's own
+`SPEC-QUESTIONS.md` Q43 names as "everything `@forge/diagrams` can check" — and `DiagramToValidate`
+had no field even capable of carrying a Markdown document to check. A gauntlet critic found this by
+reading the diff's own doc comments against its own behaviour: `@forge/diagrams/lint`'s own
+`DiagramCheckId` doc comment, written in the same change, already claimed
+"`diagram:drift`/`diagram:transclusion` are raised by `@forge/diagrams/drift`" — false the moment it
+was written, since nothing raised the second half of that sentence.
+
+Separately, and found by the same critic feeding the marker parser real, ordinary Markdown formatting
+variance (not adversarial input): a first version anchored one large regex to the spec's own worked
+example's *exact* line layout — one specific attribute order (`id=` before `src=`), no blank lines
+between the marker comment and the fence, no trailing whitespace on either — and silently returned no
+match at all (not an error, just `[]`) for any of: swapped attribute order, one blank line in either
+gap, or trailing spaces on the marker/fence lines. It also compared fenced content and `.mmd` source
+content without normalising internal line endings, so a document saved with CRLF (the ordinary Windows
+default) reported real drift against a byte-identical LF `.mmd` file.
+
+**Answer taken (proceeding):**
+
+*Wiring:* `ValidateDiagramsOptions` gained a `markdownDocuments?: readonly string[]` field.
+`validateDiagrams` resolves each document's own transclusion markers' `src` attribute against the
+`diagrams` array's own `diagram.source`/`actualSource` pairs directly (the same relative path a
+transclusion marker names is, by construction, a diagram's own committed `.mmd` path) — no second
+source-lookup mechanism needed. A mismatch is reported as a `diagram:transclusion` finding whose
+message is read from a never-thrown `ForgeError('KB-031', ...)` (the same "construct it only to read
+`.message`" pattern `@forge/extensions/invariants`, M2 P8, already established), so the rendered text
+can never drift from `08` §8.11.4's own registered code.
+
+*Parser:* rewritten as a real line-based scan rather than one regex — an opening-marker line's
+attributes are extracted independently of order, blank lines are tolerated between the marker and the
+fence and between the fence and the closing marker, trailing whitespace is tolerated on every marker/
+fence line, and every line is compared after normalising `\r\n`/`\r` to `\n` throughout (both in the
+parser and in `checkTransclusion`'s own final comparison), so a CRLF-saved document is judged on its
+real content, never on its line-ending convention alone.
+
+*Batch resilience, found in the same round:* `validateDiagrams` originally let one entry's own
+`parseDiagram`/`checkDrift` failure abort the whole call, discarding every other entry's already-
+computed findings — a poor fit for a batch-lint entry point whose whole point is checking many
+diagrams at once. `validateDiagrams` now returns `{ findings, errors }`: one entry's failure is caught
+and recorded in `errors` (naming its `diagramId`), while every other entry's findings are still
+returned.
+
+**Recommended resolution:** none needed against the spec pack itself — `08` §8.11.4/§8.11.7 already
+say what `diagram:transclusion` must do; the gap was entirely this piece's own first draft not yet
+doing it, now fixed and covered by tests exercising the exact formatting variance and batch scenario
+the critic found.
+
+**Verify-round addendum: two more real gaps found by the verify pass's own further probing beyond the
+original findings, fixed without a third round.** A quoted marker attribute (`id="DIAG-001"`, the
+ordinary way anyone used to HTML-comment-shaped syntax reaches for, even though the spec's own worked
+example writes it bare) parsed with the quote characters still attached to the value, silently
+producing a `src` that could never match any real diagram's own `.mmd` path — the exact "ordinary
+formatting variance, silent failure" shape this whole question already exists to close, just for a
+variant the original round did not try. **Fixed** by accepting either a bare or a quoted (single- or
+double-quoted) attribute value, stripping the quotes. Separately, `checkDrift` (`drift.ts`) — the
+sibling comparison to `checkTransclusion` — normalised only trailing whitespace, not internal line
+endings, meaning the exact CRLF false-drift defect already fixed for transclusion still existed one
+file over, for the generator-drift comparison itself. **Fixed** the same way: line endings normalised
+on the `actualSource` side before comparing.

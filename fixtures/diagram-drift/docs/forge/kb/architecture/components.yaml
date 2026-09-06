@@ -1,0 +1,13 @@
+# The real component inventory `components-to-c4` (08 §8.11.6) derives
+# `containers.mmd` from. No parser for architecture/components.md exists yet
+# (a later milestone's concern) — this file is this fixture's own record of
+# what that real inventory currently says, read directly by
+# test/drift/drift.test.ts and fed to componentsToC4 as its generator input.
+components:
+  - id: component:api
+    label: API
+    dependsOn:
+      - component:db
+  - id: component:db
+    label: Database
+    dependsOn: []

@@ -203,6 +203,17 @@ export const ERROR_CODES = {
     remedy:
       'Pass the input shape this generator documents, or call it directly with a typed input.',
   },
+  // `08` §8.11.6: "diagrams that can be derived MUST be derived" presupposes the diagram actually
+  // names the generator that derives it — a `generated: true` diagram with no `generator`, or one
+  // naming a generator this package does not register, cannot be checked for drift at all.
+  'KB-003': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { diagramId: string; generator: string }) =>
+      `Diagram ${show(d.diagramId)} is generated but names no working generator: ${show(d.generator)}.`,
+    remedy:
+      "Set the diagram's generator field to a real, registered generator name, or set generated: false.",
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

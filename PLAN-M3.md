@@ -184,21 +184,41 @@ marker), detect when its fenced content has diverged from the `.mmd` file it cla
 the three policies), §8.11.7 (`diagram:drift`, `diagram:transclusion`); `specs/22` M3's own diagram
 exit test names a `fixtures/diagram-drift` fixture this piece creates.
 
-**Surface:** `@forge/diagrams/drift`
+**Surface:** `@forge/diagrams/drift` — corrected in place from an earlier draft that had `checkDrift`
+regenerate with no generator *input* to regenerate from, and `validateDiagrams` returning
+synchronously despite needing `parseDiagram` (async, `SPEC-QUESTIONS.md`): neither omission survives
+contact with what P3's real `GENERATORS` and P1's real `parseDiagram` actually require.
 - `interface DriftResult { diagramId: string; hasDrift: boolean; expected: string; actual: string }`.
-- `checkDrift(diagram: Diagram, actualSource: string): DriftResult` — regenerates via
-  `GENERATORS[diagram.generator]` (`ForgeError`, `generated: true` with no registered generator name)
-  and string-compares.
+- `checkDrift(diagram: Diagram, actualSource: string, generatorInput: unknown): DriftResult` — a
+  generator needs real input to regenerate from (P3's own `ComponentsToC4Input` etc.), which this
+  piece cannot fetch itself (no project-tree access — `diagrams ← core, schemas` only); the caller,
+  wherever it has that current input, supplies it. Throws `ForgeError('KB-003', ...)` for
+  `generated: true` with no `generator` name, or a name outside `GENERATOR_NAMES`.
 - `interface TransclusionBlock { diagramId: string; src: string; fencedContent: string }`,
   `parseTransclusionMarkers(markdown: string): readonly TransclusionBlock[]`,
   `checkTransclusion(block: TransclusionBlock, sourceContent: string): boolean` — `true` when the
-  fenced copy matches its `.mmd` source exactly (module comment line included, per the worked example's
-  own `%% forge:generated-from ... — do not edit here` line); a mismatch is reported by the caller as
-  `ForgeError('KB-031', ...)` — `08` §8.11.4's own exact, spec-given code for this one case, registered
-  in `@forge/core/errors` (not invented here, since it is already normative text).
-- `validateDiagrams(diagrams: readonly { diagram: Diagram; actualSource: string }[], options: { driftPolicy: 'fail' | 'autofix' | 'warn' }): { findings: readonly DiagramFinding[] }` — the one entry
-  point `SPEC-QUESTIONS.md` Q43 has M3's kb-lint-equivalent Checks call; composes P2's per-diagram
-  findings with this piece's drift findings under the same `DiagramFinding` shape.
+  fenced copy matches its `.mmd` source exactly, including the transclusion's own injected
+  `%% forge:generated-from <src> — do not edit here` header line (the worked example's own line —
+  not part of the `.mmd` file itself, added at transclusion time); a mismatch is reported by the
+  caller as `ForgeError('KB-031', ...)` — `08` §8.11.4's own exact, spec-given code for this one case,
+  registered in `@forge/core/errors` (not invented here, since it is already normative text).
+- `applyAutofix(target: AbsolutePath, expected: string): Promise<void>` — `@forge/core/fs`'s
+  `writeFileAtomic`, one call; the caller resolves `diagram.source` (a project-relative path) to a
+  real `AbsolutePath` — this package owns no project-root/containment logic of its own.
+- `interface DiagramToValidate { diagram: Diagram; actualSource: string; knownIds?: ReadonlySet<string>; generatorInput?: unknown; target?: AbsolutePath; now?: Date }`,
+  `interface ValidateDiagramsOptions { driftPolicy: 'fail' | 'autofix' | 'warn'; complexity?: ComplexityBudget; requireCaptions?: boolean; markdownDocuments?: readonly string[] }`,
+  `async function validateDiagrams(diagrams: readonly DiagramToValidate[], options: ValidateDiagramsOptions): Promise<{ findings: readonly DiagramFinding[]; errors: readonly { diagramId: string; error: unknown }[] }>` —
+  the one entry point `SPEC-QUESTIONS.md` Q43 has M3's kb-lint-equivalent Checks call; parses each
+  `actualSource` (P1), runs P2's `lintDiagram`, and for every `generated: true` entry also runs
+  `checkDrift` (skipped, not failed, when `generatorInput` is omitted — the same "caller didn't supply
+  it, not caller supplied nothing" shape `knownIds` already uses) — `autofix` actually rewrites the
+  file only when the entry also supplies `target`. `markdownDocuments`, when supplied, is scanned for
+  `08` §8.11.4 transclusion markers, each resolved against `diagrams`' own `diagram.source`/
+  `actualSource` pairs and reported as `diagram:transclusion` on a mismatch — corrected in place
+  after a gauntlet critic found an earlier draft's `validateDiagrams` never actually called
+  `checkTransclusion` despite claiming to (`SPEC-QUESTIONS.md` Q47); `errors` — also added in that
+  round — means one entry's own `parseDiagram`/`checkDrift` failure no longer discards every other
+  entry's already-computed findings.
 
 **Checks:**
 - `fixtures/diagram-drift` (created here): one `generated: true` diagram whose committed source has

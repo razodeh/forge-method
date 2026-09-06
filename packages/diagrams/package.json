@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./parse": "./src/parse/index.ts",
     "./lint": "./src/lint/index.ts",
-    "./generate": "./src/generate/index.ts"
+    "./generate": "./src/generate/index.ts",
+    "./drift": "./src/drift/index.ts"
   },
   "engines": {
     "node": ">=20.10"
