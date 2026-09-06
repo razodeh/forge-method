@@ -259,7 +259,11 @@ specific guardrail `15` §15.7 names for it.
   half of this rule; the cross-entity, whole-resolved-set version is P8's to assert if it turns out
   to need the full compiled set rather than just these two documents).
 
-**Depends on:** P1, P2 (`@forge/schemas` for template field checks — already a declared dependency).
+**Depends on:** P1, P2 (`@forge/schemas` for template field checks — allowed by `02` §2.2's boundary
+graph, but not yet an actual `package.json` dependency until this piece added it).
+
+*(P1, P2, P3, P4, P5, P6 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`, `7705672`,
+`2f786a0`.)*
 
 ---
 

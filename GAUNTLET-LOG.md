@@ -1338,3 +1338,64 @@ actually did. The test suite, built to confirm the sentinel worked, never tried 
 it somewhere it wasn't supposed to go. The lesson repeats: a boundary a schema is supposed to enforce
 needs a test that tries to cross it from the adjacent, easy-to-reach direction, not just a test that
 the intended path works.
+
+## M2 P6 — workflow, gate-check, framework, and template overlays
+
+**Rounds: 2 (one critic finding two real defects and one accepted behavioral note; one scoped verify
+confirming both fixes with no residual defects). Outcome: WON.**
+
+This piece discovered a genuine spec-internal contradiction before writing any code: `10` §10.1's own
+prose cites `GATE-501`/`CFG-502` for two workflow-overlay guardrails, but `15` §15.10's own invariant
+table already assigns those exact codes to two different invariants (I3, I2) — recorded as
+`SPEC-QUESTIONS.md` Q35, with the resolution that this piece mints no real numbered `ForgeError` code
+for either of its own guardrails at all. Round 1's first defect was this piece's own code failing to
+actually follow that resolution.
+
+### Round 1 — two real defects, one accepted behavioral note
+
+- **Major: `applyInsertAfter` threw a real `CFG-011`, contradicting this piece's own `SPEC-QUESTIONS.md`
+  Q35 record.** Q35's own text groups the `$insertAfter` missing-anchor refusal together with
+  `checkWorkflowStepRemoval`'s guardrail as both avoiding real numbered codes — but the shipped code
+  threw `@forge/core/errors`' already-registered `CFG-011` for a missing anchor, whose canned remedy
+  ("pick a valid array operator") is actively wrong advice for what is actually a bad anchor id, not a
+  malformed operator. Fixed by splitting into a non-throwing `checkInsertAfterAnchors` (returns an
+  `insert-after-anchor-missing` finding, a new `WorkflowGuardrailCode` member) and a resilient
+  `applyInsertAfter` that now silently no-ops a directive whose anchor doesn't resolve, matching every
+  other guardrail in this module's own "validate returns, it does not throw" shape.
+- **Major: a fanout step's own outer `agent` masked its nested step's real `agent` in the red/review
+  protection check.** `protectionReason`'s original `step.agent ?? step.step?.agent` gave the outer
+  field unconditional priority — `types.ts`'s own doc comment on `WorkflowStepSummary.step` already
+  said the nested step's agent is "what actually runs per item," but the lookup order did the
+  opposite. A `fanout` step shaped `{ agent: 'architect', step: { agent: 'reviewer' } }` — outer agent
+  irrelevant, real work done by the nested reviewer — went completely unprotected: naming it in
+  `$remove` produced zero findings. Fixed by checking the nested step's agent first for `fanout` steps
+  specifically, falling back to the outer field only when there is no nested step at all.
+- **Accepted, documented, not fixed: two `$insertAfter` directives sharing the same anchor apply in
+  LIFO order relative to each other** (the second directive's insertion lands closer to the anchor than
+  the first's). No spec text settles which order is "correct" for this case, so this was left as
+  behavior — but it was previously undocumented and completely untested; both are now fixed, the
+  behavior itself is not.
+
+### Round 2 — scoped verify: both fixes confirmed, no residual defects
+
+A fresh agent traced a 4-directive case (valid anchor → valid via an earlier directive's own insertion
+→ missing anchor → valid again) through both `checkInsertAfterAnchors` and `applyInsertAfter` by hand
+and confirmed the two never diverge — a directive is a no-op in one iff it produces a finding in the
+other, at every step of the simulation. It also confirmed the fanout fix correctly resolves an
+outer-`reviewer`-vs-nested-`sdet` conflict (nested wins outright, exactly as designed) and confirmed a
+non-fanout step never consults a `.step` field even if one happens to be present. It judged a
+double-nested `fanout` (a fanout step's own nested step itself being another fanout) as out of scope
+rather than a residual gap, since no spec worked example ever shows that shape and Q36's own resolution
+text scopes the rule to one level of nesting by name.
+
+### Calibration note
+
+Round 1's first defect is a new variant of a lesson this session keeps relearning: writing a design
+decision into `SPEC-QUESTIONS.md` and implementing it correctly are two different acts, and nothing
+mechanically checks that the second actually happened — only re-reading the code against the decision's
+own words (as the critic did, not as this piece's own author had, having written both the decision and
+the contradicting code in the same sitting) catches the gap. The second defect is the same "adjacent,
+easy-to-reach direction" lesson `GAUNTLET-LOG.md`'s own P5 entry named days earlier, in a new shape: a
+type's own doc comment stated the intended precedence in plain English, and the code that was supposed
+to implement it got the `??` operands backwards — a one-token inversion invisible to a test suite that,
+like the implementation, never tried constructing a step where the two fields disagreed.
