@@ -8,6 +8,7 @@
     "./merge": "./src/merge/index.ts",
     "./resolve": "./src/resolve/index.ts",
     "./agents": "./src/agents/index.ts",
+    "./mcp": "./src/mcp/index.ts",
     "./skills": "./src/skills/index.ts"
   },
   "engines": {

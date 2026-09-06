@@ -985,3 +985,22 @@ same limitation.
 next to `budget_tokens` in `15` §15.4.2 or §15.4.5; and give Windows script-executability its own rule
 in `02` §2.7 or `15` §15.4 (a known-extension allowlist, a shebang check, or simply "scripts are a
 POSIX-only concept in v1") rather than leaving "executable" to mean only what it means on POSIX.
+
+## Q34 — P5's `grants` map has no worked example for a server-wide grant's own shape
+
+**Conflict.** `15` §15.5.2 rule 2: "Server-wide grants require `grantMode: server-wide` and are
+reported per run." But §15.5.1's own worked example only ever shows tool-level grants
+(`pm: { acme-jira: [ search_issues, get_issue, create_issue ] }`) — no example anywhere in `15` shows
+what a *server-wide* entry in that same map looks like in place of a tool-name array.
+
+**Answer taken (proceeding):** a server-wide grant is written as the literal string `'*'` in place of
+the tool-name array (`grants[role][serverId]: readonly string[] | '*'`) — the smallest change to the
+worked example's own shape that can express "every tool," reusing a wildcard convention already
+familiar from allowlist fields elsewhere in `15` (e.g. `tools.exec` glob entries) rather than adding a
+second, differently-shaped field. `validateMcpConfig` reports `'*'` used under `grantMode: 'explicit'`
+(the default) as an error, and under `grantMode: 'server-wide'` as accepted — the compile-time half of
+rule 2; "reported per run" is a runtime/event-log concern for whichever piece owns execution.
+
+**Recommended resolution:** add a server-wide grant to `15` §15.5.1's own worked example (even a
+single line, `sre: { acme-postgres-staging: "*" }` or similar) so the map's two grant shapes are both
+spec-given rather than one inferred.
