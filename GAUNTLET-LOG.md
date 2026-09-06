@@ -1963,3 +1963,78 @@ too-literal parser," "a text-normalisation fix applied to one comparison and not
 recurs across otherwise-unrelated pieces of the same file once introduced, and that the discipline of
 actually probing further after the named findings are fixed, rather than stopping at the list handed
 in, is what catches the recurrence before it ships.
+
+## M3 P5 — Self-contained HTML render fallback
+
+**Rounds: 2 (one critic finding two major and one minor defect, zero blocking; one scoped verify
+confirming all three fixes hold and finding nothing new). Outcome: WON.**
+
+This piece also produced a pre-build plan correction (`SPEC-QUESTIONS.md` Q48): the original
+`PLAN-M3.md` P5 "Checks" text demanded the emitted HTML contain no `fetch(`/`http://`/`https://`
+substring anywhere, "mechanically greppable" — inspecting the real, pinned `mermaid.min.js` bundle
+this piece inlines, before writing any code, found that check unsatisfiable as written: the bundle
+legitimately contains 81 `http://`/`https://` occurrences (SVG/XML namespace URIs, MIT license
+comments, Chevrotain doc links in error strings — all inert vendored text, never fetched) and three
+`fetch(` substrings in dead error-handling paths. The plan's own checks were corrected in place to
+what's actually meaningful before building against them: a static check scoped to the HTML wrapper
+this function itself authors (excluding the vendored bundle text), plus a behavioural check —
+spying on `fetch`/`XMLHttpRequest.send` during a real render pass — for code this package does not
+author.
+
+### Round 1 — critic: two major, one minor, zero blocking
+
+- **Major: the full 3.5MB bundled Mermaid script was read from disk at module *import* time, not on
+  first actual use.** `bundle.ts` exported `BUNDLED_MERMAID_SCRIPT` as a top-level
+  `const = readFileSync(...)`, which ran the instant anything imported `@forge/diagrams` at all —
+  `render` shares one barrel file (`src/index.ts`) with `parse`/`lint`/`generate`/`drift` — so even a
+  caller only using `parseDiagram` for the CI-facing validate-only path paid the full read and heap
+  cost `08` §8.11.8 explicitly says that path should never need ("no browser, no network... this is
+  what runs in gates and CI"). The critic measured this directly: ~38ms and 3.5MB of heap regardless
+  of whether `renderHtml` was ever called.
+- **Major: `08` §8.11.8/§8.11.9's third named theming requirement, "colour-blind-safe palette," had
+  no implementation and no acknowledgment anywhere in the code.** `RenderOptions.theme` covered the
+  light/dark pair and the legend covered shape semantics, but the palette field named in the same
+  sentence — and quoted verbatim in `types.ts`'s own doc comment from §8.11.9's worked config — was
+  silently dropped with no note that it was a deliberate narrowing rather than an oversight.
+- **Minor:** `expect(typeof window.fetch).toBe('undefined')` in the render test asserted a fact about
+  jsdom's own default environment, true regardless of what the code under test does, rather than
+  actually exercising the "no network" claim.
+
+**Fixes:** `bundle.ts`'s `BUNDLED_MERMAID_SCRIPT` became `getBundledMermaidScript()`, a function that
+reads the file lazily on first call and memoizes the result (`cachedScript ??= readOwnDependencyFile
+(...)`); `BUNDLED_MERMAID_VERSION` (a short string, not the 3.5MB text) stays eager, since it costs
+nothing. Verified empirically: importing `bundle.ts` alone pays ~24ms of module overhead and no
+measurable heap cost from the bundle; the first `getBundledMermaidScript()` call pays the real ~2.5ms
+read; every call after is ~4000x faster (memoized). For the palette gap: rather than inventing colour
+values the spec pack does not provide anywhere (`grep -rniE "colour-blind|colorblind|palette"
+specs/*.md` turns up only the same bare principle stated twice, never concrete hex/RGB values),
+`types.ts`'s doc comment now names the dropped field explicitly and points to `SPEC-QUESTIONS.md` Q49,
+which records the reasoning and names customization surface **C16** (`15` §15.1, confirmed to name
+"Diagrams | notation, allowed dialects, theme and legend") as the actual right home for translating a
+project's `palette: colorblind-safe` setting into concrete theme values — a resolution layer above
+this one rendering primitive, not invented here. The weak test assertion was replaced with an
+`it.each(DIAGRAM_KINDS)` test that monkey-patches real Node `http.request`/`https.request`/
+`globalThis.fetch` to throw if called, runs a genuine render pass through `jsdom` for all ten diagram
+kinds, and restores the originals in a `finally`.
+
+### Round 2 — scoped verify: all three confirmed, nothing new
+
+Verify independently reproduced the lazy-load timing evidence (import alone: heap delta consistent
+with module overhead only; first call: real read cost; second call: ~4246x faster), confirmed the
+palette doc-comment/Q49 pairing is an honest, specifically-cited narrowing rather than a hand-wave (it
+independently re-ran the spec-pack grep and separately confirmed the C16 citation against `specs/15`
+line 43), and proved the network guard is not vacuous by copying the module, injecting an
+unconditional `fetch(...)` call into a scratch copy of `renderHtml`, confirming the exact guard
+mechanism throws against it, and confirming `finally`-restoration still holds afterward — then deleted
+the scratch copy. It found nothing new.
+
+### Calibration note
+
+The plan-text correction (Q48) is the sixth instance this milestone of the same root pattern: a
+check or assumption that reads as reasonable in the abstract — "no `fetch(`/`http://` substring
+anywhere, mechanically greppable" — turns out wrong the instant it is checked against a real,
+concrete artifact (here, the actual vendored `mermaid.min.js`) rather than reasoned about on paper.
+Unlike Q45–Q47, this one was caught by the builder itself, before writing any code, precisely by
+following the milestone's own now-established habit of inspecting real dependency contents first —
+evidence the discipline generalizes to "check before you build the check," not only "check before you
+trust the fix."

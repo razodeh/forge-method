@@ -285,6 +285,8 @@ legitimately contains SVG namespace URIs, license-comment URLs and dead-code `fe
 
 **Depends on:** nothing new (takes raw Mermaid source directly; does not need P1's structural model).
 
+*(P5 is committed: `40bee2f`.)*
+
 *(Diagrams track (P1–P5) complete at this point — `@forge/diagrams` has no further pieces this
 milestone.)*
 
