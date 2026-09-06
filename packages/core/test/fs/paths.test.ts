@@ -30,6 +30,18 @@ afterEach(() => {
   projectRoot = undefined;
 });
 
+/** Symlink creation needs elevated privileges on Windows without Developer Mode. */
+function canCreateSymlinks(root: string): boolean {
+  try {
+    const probe = path.join(root, '.symlink-capability-probe');
+    symlinkSync(root, probe, 'dir');
+    rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('ProjectPaths construction', () => {
   it('accepts a root that exists', () => {
     expect(() => new ProjectPaths(freshRoot())).not.toThrow();
@@ -117,18 +129,6 @@ describe('resolveWithin — traversal and absolute escapes', () => {
 });
 
 describe('resolveWithin — symlink escapes', () => {
-  /** Symlink creation needs elevated privileges on Windows without Developer Mode. */
-  function canCreateSymlinks(root: string): boolean {
-    try {
-      const probe = path.join(root, '.symlink-capability-probe');
-      symlinkSync(root, probe, 'dir');
-      rmSync(probe, { force: true });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   it.runIf(canCreateSymlinks(mkdtempSync(path.join(tmpdir(), 'forge-symlink-probe-'))))(
     'rejects a path reaching through a symlink that points outside the project',
     () => {
@@ -267,4 +267,38 @@ describe('resolveState', () => {
     const paths = new ProjectPaths(root);
     expect(() => paths.resolveState('gitignore-like-cache.json')).not.toThrow();
   });
+
+  it.runIf(canCreateSymlinks(mkdtempSync(path.join(tmpdir(), 'forge-symlink-probe-'))))(
+    'permits .forge/state itself being a symlink to somewhere inside the project',
+    () => {
+      // A legitimate way to relocate FORGE's state onto different storage. A naive
+      // `path.join(this.realRoot, '.forge', 'state')` base (rather than actually resolving this
+      // symlink) would compare the *target*'s real path against a base that never followed it,
+      // rejecting this as an escape.
+      const root = freshRoot();
+      mkdirSync(path.join(root, 'real-state'));
+      mkdirSync(path.join(root, '.forge'));
+      symlinkSync(path.join(root, 'real-state'), path.join(root, '.forge', 'state'), 'dir');
+      const paths = new ProjectPaths(root);
+      expect(() => paths.resolveState('ids.json')).not.toThrow();
+    },
+  );
+
+  it.runIf(canCreateSymlinks(mkdtempSync(path.join(tmpdir(), 'forge-symlink-probe-'))))(
+    'rejects a path reaching through a symlink inside .forge/state/ that points outside the project',
+    () => {
+      const root = freshRoot();
+      const outside = mkdtempSync(path.join(tmpdir(), 'forge-outside-'));
+      try {
+        mkdirSync(path.join(root, '.forge', 'state'), { recursive: true });
+        symlinkSync(outside, path.join(root, '.forge', 'state', 'escape-link'), 'dir');
+        const paths = new ProjectPaths(root);
+        expect(() => paths.resolveState('escape-link/secret.txt')).toThrow(
+          expect.objectContaining({ code: 'CFG-003' }) as Error,
+        );
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    },
+  );
 });

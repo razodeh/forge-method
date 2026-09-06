@@ -829,6 +829,18 @@ out. For (2), state a collection file's real on-disk shape once — multiple con
 blocks, one YAML list, or a table — so `IdAllocator.scan()` (and whatever later piece writes a new
 entry into one of these files) has an actual format to target instead of each independently guessing.
 
+**Implementation note, added after initial review:** `IdAllocator.scan()` originally tried to skip
+the expensive parse phase whenever a *cheap* directory-listing hash (`computeValidityHash` over the
+scanned file *paths* only) matched the on-disk cache's own stored hash. A gauntlet critic found this
+unsound: editing an existing artifact's `id`/`type` in place, with no file added or removed, leaves
+the listing hash unchanged while the true maximum id changes underneath it — exactly the silent
+duplication `18` §18.8's "never reused" exists to prevent, reachable by nothing more adversarial than
+a human fixing a typo by hand. `scan()` now always does the full parse; the on-disk cache is read
+only to detect and warn about corruption, and `validityHash` is written for provenance, not consulted
+as a skip-the-scan signal. `PLAN-M1.md` P13's Check ("a mismatched hash forces a rescan") only ever
+required a mismatch to force one — it never required a match to skip one — so this is a correction to
+an over-eager optimization this piece invented on its own, not a reopened spec question.
+
 ---
 
 ## Q30 — `PLAN-M1.md` P13's own Check contradicts the already-shipped, exact-width id regex from P5/P6

@@ -86,19 +86,40 @@ describe('IdAllocator.scan', () => {
     await expect(allocator.allocate('Story')).resolves.toBe('STORY-001');
   });
 
-  it('reuses the cache when the scanned file set has not changed since it was written', async () => {
+  it('a scan is always full: an in-place edit to an existing file is seen even though the file set is unchanged', async () => {
+    // The gap a round-1 gauntlet critic found: an earlier version of this allocator trusted the
+    // on-disk cache whenever a *cheap* directory-listing hash still matched, skipping re-parsing —
+    // which missed exactly this case, since editing a file's own content in place never changes
+    // which files exist. Two files, no file added or removed at any point, yet the true maximum
+    // changes twice.
     const paths = freshProject();
     const root = paths.resolveWithin('.');
-    write(root, 'specs/stories/STORY-002-c.md', story('STORY-002'));
-    await new IdAllocator({ paths, clock: fakeClock() }).scan();
-    const cacheAfterFirstScan = readFileSync(paths.resolveState('ids.json'), 'utf8');
+    write(root, 'specs/stories/a.md', story('STORY-001'));
+    write(root, 'specs/stories/b.md', story('STORY-002'));
+    expect(await new IdAllocator({ paths, clock: fakeClock() }).allocate('Story')).toBe(
+      'STORY-003',
+    );
 
-    // A second allocator, same on-disk file set: the cache should be trusted as-is (same
-    // validityHash), not overwritten by a redundant scan producing byte-identical content anyway —
-    // asserted structurally (same counters) rather than by mocking the filesystem.
+    // Same two files, same file set — but `a.md` is now hand-edited to claim a much higher id.
+    write(root, 'specs/stories/a.md', story('STORY-010'));
+    rmSync(paths.resolveState('ids.json'), { force: true });
+    expect(await new IdAllocator({ paths, clock: fakeClock() }).allocate('Story')).toBe(
+      'STORY-011',
+    );
+  });
+
+  it('a scan is always full even across two allocator instances with an unchanged file set', async () => {
+    const paths = freshProject();
+    const root = paths.resolveWithin('.');
+    write(root, 'specs/stories/a.md', story('STORY-002'));
+    await new IdAllocator({ paths, clock: fakeClock() }).scan();
+
+    // Hand-edit the one existing file's own claimed id upward, with no cache deletion this time —
+    // the point is that a *second* allocator instance must not trust the first's on-disk cache
+    // just because the file listing (still just "a.md") has not changed.
+    write(root, 'specs/stories/a.md', story('STORY-007'));
     const second = new IdAllocator({ paths, clock: fakeClock() });
-    expect((await second.scan()).counters).toEqual({ Story: 2 });
-    expect(readFileSync(paths.resolveState('ids.json'), 'utf8')).toBe(cacheAfterFirstScan);
+    expect((await second.scan()).counters).toEqual({ Story: 7 });
   });
 });
 

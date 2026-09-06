@@ -188,7 +188,13 @@ export class ProjectPaths {
    */
   resolveState(relative: string): AbsolutePath {
     const stateRoot = path.join(this.root, '.forge', 'state');
-    const realStateRoot = path.join(this.realRoot, '.forge', 'state');
+    // Not `path.join(this.realRoot, '.forge', 'state')`: `.forge` or `.forge/state` can itself be a
+    // symlink (a legitimate way to relocate FORGE's state onto different storage), and a naive join
+    // would compare the *target* path against a base that never resolved that symlink — rejecting a
+    // perfectly legitimate location as an escape. `realpathOfDeepestExistingAncestor` handles both
+    // that and `.forge/state/` not existing yet, the same way it already does for `resolveWithin`'s
+    // own target path below.
+    const realStateRoot = realpathOfDeepestExistingAncestor(stateRoot);
     return this.resolveContained(stateRoot, realStateRoot, relative).resolved as AbsolutePath;
   }
 }

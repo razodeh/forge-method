@@ -50,10 +50,13 @@ export class IdAllocator {
   }
 
   /**
-   * Returns the current `IdIndex` — from the on-disk cache if a cheap directory listing shows the
-   * scanned file set has not changed since that cache was written, otherwise from a fresh, full scan
-   * (`18` §18.8: "truth is a scan of existing artifacts"). Queued like every other operation, so it
-   * cannot race a concurrent `allocate`.
+   * Returns the current `IdIndex`, from a fresh, full scan — `18` §18.8: "truth is a scan of
+   * existing artifacts," unconditionally, not "truth is a scan, except when a cheap check suggests
+   * skipping it": the P13 gauntlet critic found that trusting the on-disk cache whenever the scanned
+   * *file set* was unchanged missed the exact case retention (`18` §18.8) exists to guard against —
+   * an in-place edit to an existing artifact's `id`/`type` with no file added or removed, which
+   * leaves the file-listing hash identical while the true maximum id changes underneath it. Queued
+   * like every other operation, so it cannot race a concurrent `allocate`.
    */
   async scan(): Promise<IdIndex> {
     return this.enqueue(() => this.refreshIndex());
@@ -120,22 +123,27 @@ export class IdAllocator {
     return this.cachedIndex ?? this.refreshIndex();
   }
 
+  /**
+   * The on-disk cache is read here only to detect and warn about corruption (`PLAN-M1.md` P13's
+   * Check) — its `counters` are never trusted as a substitute for scanning. `validityHash` is
+   * written for provenance (a record of what file set produced this index, readable by a human or a
+   * future `forge doctor`), not consulted as a skip-the-scan signal: see this function's caller,
+   * `scan()`'s doc comment, and `SPEC-QUESTIONS.md` Q29 for why that signal turned out unsound.
+   */
   private async refreshIndex(): Promise<IdIndex> {
-    const scannedFiles = await listArtifactFiles(this.paths);
-    const validityHash = computeValidityHash(scannedFiles);
-
     const cached = await readIdCache(this.paths);
     if (cached.kind === 'corrupt') {
       // eslint-disable-next-line no-console -- PLAN-M1.md P13's Check: discarded with a warning.
       console.warn(`IdAllocator: discarding corrupt .forge/state/ids.json (${cached.reason}).`);
     }
-    if (cached.kind === 'ok' && cached.index.validityHash === validityHash) {
-      this.cachedIndex = cached.index;
-      return cached.index;
-    }
 
+    const scannedFiles = await listArtifactFiles(this.paths);
     const counters = await countIdsFromFiles(this.paths, scannedFiles, this.registry);
-    const index: IdIndex = { validityHash, writtenAt: this.clock.now(), counters };
+    const index: IdIndex = {
+      validityHash: computeValidityHash(scannedFiles),
+      writtenAt: this.clock.now(),
+      counters,
+    };
     await writeIdCache(this.paths, index);
     this.cachedIndex = index;
     return index;
