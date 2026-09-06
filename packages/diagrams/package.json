@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./parse": "./src/parse/index.ts"
+    "./parse": "./src/parse/index.ts",
+    "./lint": "./src/lint/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -15,6 +16,7 @@
   },
   "dependencies": {
     "@forge/core": "workspace:*",
+    "@forge/schemas": "workspace:*",
     "jsdom": "29.1.1",
     "mermaid": "11.17.2"
   }

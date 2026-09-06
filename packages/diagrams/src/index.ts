@@ -5,3 +5,4 @@
  * @see PLAN-M3.md
  */
 export * from './parse/index.ts';
+export * from './lint/index.ts';
