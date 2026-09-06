@@ -1224,3 +1224,55 @@ inputs from data that does not exist in this piece's own input shape.
 (later milestones), extend `compile()`'s own input to include them and widen the derived `ResolvedSet`
 accordingly — the ten invariants left as caller-supplied here are not less real, only differently
 sourced than the two this piece can already reach.
+
+## Q43 — `PLAN-M3.md`'s own exit tests name `forge kb lint`/`forge diagram validate` CLI invocations,
+but `@forge/cli` does not exist until M6
+
+**Conflict.** `specs/22` §M3's Exit tests read `pnpm forge kb lint -C fixtures/greenfield-service
+--json` and `pnpm forge diagram validate -C fixtures/diagram-drift` (exit 3 with drift reported). But
+`specs/22` §M6 is where `@forge/cli` is first built ("`@forge/cli` with every ... command") — no `forge`
+binary of any kind exists at M3's point in the build order, so neither command can literally run yet.
+This is the same shape of gap M2 hit with its own exit tests (a literal invocation the milestone's own
+build order cannot yet satisfy), not a new kind of problem.
+
+**Answer taken (proceeding):** `@forge/kb` and `@forge/diagrams` each expose the real behaviour as a
+library function — `lintKb(...)` returning the same structured result `--json` would print, and
+`validateDiagrams(...)` returning a result whose `hasDrift`/severity fields are what a future CLI
+wrapper maps to exit code 3 — and M3's own Checks call these functions directly against
+`fixtures/greenfield-service` and `fixtures/diagram-drift` (both created in this milestone, since
+neither exists in the repo yet). Whichever piece wires `@forge/cli` in M6 becomes a thin argument-
+parsing shell around these same two functions; nothing about their public contract is expected to
+change shape at that point, only to gain a CLI entry point.
+
+**Recommended resolution:** none needed against the spec pack itself — `specs/22`'s per-milestone exit
+tests are written against the finished system's command surface throughout, and M6 is where the
+literal `pnpm forge ...` invocations given here become runnable as written.
+
+## Q44 — `diagram:refs`, `diagram:required` and `diagram:adr-coverage` (`08` §8.11.7) each need data
+only `@forge/kb` owns, but `02` §2.2 forbids `@forge/diagrams` from depending on `@forge/kb`
+
+**Conflict.** `02` §2.2's dependency rule is `diagrams ← core, schemas` — no KB dependency in either
+direction except `kb ← diagrams`. But three of `08` §8.11.7's gate checks are, by their own stated
+rule, checks against KB-owned data: `diagram:refs` ("every node in `depicts` resolves to a real
+component, datastore, entity or actor" — the KB's own `components.md` inventory and domain entities);
+`diagram:required` (taxonomy coverage "for the current level and gate" — the project's level lives in
+`.forge/config.yaml`, read nowhere in `@forge/diagrams`' own dependency list); `diagram:adr-coverage`
+("structural ADRs contain or reference ≥1 diagram" — enumerating "structural ADRs" means reading every
+`ADR` entry in the KB). None of the three can be *implemented* inside `@forge/diagrams` without either
+violating the dependency rule or inventing a second, parallel way to read KB data.
+
+**Answer taken (proceeding):** `@forge/diagrams`' own validator (`PLAN-M3.md` P2) implements
+`diagram:refs` against a caller-supplied resolver (`knownIds: ReadonlySet<string>` or an equivalent
+callback) rather than resolving ids itself — the check's *logic* (does this depicted id exist) lives in
+`@forge/diagrams`, but *what counts as existing* is injected, so the direction of the dependency stays
+`diagrams ← core, schemas` exactly as `02` §2.2 requires. `diagram:required` and `diagram:adr-coverage`
+are not implemented in `@forge/diagrams` at all: both run inside `@forge/kb`'s own linter (`PLAN-M3.md`
+P10), which already reads the project's KB tree (ADRs, `components.md`) and is the one place with
+legitimate access to every input either check needs. Both checks still report under the same
+`diagram:*` id namespace `08` §8.11.7 gives them — the namespace is a reporting convention, not a
+claim about which package's code raises the finding.
+
+**Recommended resolution:** none needed against the spec pack itself — `08` §8.11.7's table names the
+checks and their rules, not which package implements each one; `02` §2.2's dependency graph is what
+actually decides that, and the split above is the only assignment consistent with both.
+
