@@ -1172,3 +1172,55 @@ codes are registered exactly as `15` §15.10 gives them.
 no single milestone piece should make unilaterally), or update `15` §15.10's own table to cite
 `CFG-507`/`CFG-508`/`CFG-509` in place of the `SEC-*` codes it currently gives, so the spec pack's own
 two pages agree on what these three invariants are actually called.
+
+## Q41 — `PLAN-M2.md` P9's own Surface reuses P8's `ResolvedSet` type name for a structurally
+incompatible shape
+
+**Conflict.** `PLAN-M2.md` P9's own Surface (written before P8 was actually built) declares
+`interface CompileResult { readonly resolvedSet: ResolvedSet; ... }`, naming the same `ResolvedSet`
+type P8 (`@forge/extensions/invariants`) exports. But P9's own Checks describe what that field must
+actually contain: "a resolved set covering every kind `15` §15.2 rule 1 names (`agents, workflows,
+frameworks, templates, checks, skills`) — matching, not a subset" — a document grouped *by kind*. P8's
+real `ResolvedSet` is grouped by *invariant input shape* instead (`outputReviewAssignments`,
+`gateConfigs`, `scanTargets`, …) — an intentionally different, incompatible axis, designed around
+"whichever slice a caller already has," not "every document kind a compile pass touches." The same
+name cannot honestly describe both shapes; `PLAN-M2.md`'s own Surface line is a leftover from
+before P8's real shape existed.
+
+**Answer taken (proceeding):** `CompileResult` carries the six-kind resolved document tree under its
+own name, `documents: CompiledDocuments` (`Record<DocumentKind, ReadonlyMap<string, ResolvedEntity>>`)
+— matching what P9's own Checks actually test — not a field literally typed `ResolvedSet`.
+`PLAN-M2.md`'s own P9 Surface section is corrected in place to match, the same way earlier corrections
+were made to this plan's own inaccuracies (e.g. P6/P7's "Depends on" notes). `compile({ check: true })`
+still derives a real P8 `ResolvedSet` internally to call `runInvariants` — see Q42 for which of the
+twelve invariants that derivation can actually cover from `CompileSources` alone.
+
+**Recommended resolution:** none needed against the spec pack itself — this is a planning artifact
+inside this repository's own `PLAN-M2.md`, already corrected there.
+
+## Q42 — Most of P8's twelve invariants need data no `CompileSources`-shaped input actually carries
+
+**Conflict.** `PLAN-M2.md` P9's own Check says `compile({ check: true })` must "surface every invariant
+violation from P8." But `CompileSources` (this piece's own input) only carries layer contributions for
+the six document kinds `15` §15.2 rule 1 names (agents, workflows, frameworks, templates, checks,
+skills) — it has no gate-required/disabled-check flags (`gateCheckSchema`, P6, carries no such field
+at all), no `config.yaml`-level autonomy/roster/security data (I3, I5, I6, I10, I12 all need some of
+this), and no cross-reference between a workflow step's producer agent and a later review/test/
+diagnose step for the same output (I1, I2) — none of which any of the six resolved document kinds
+records as data, only as prose or as fields a different, not-yet-built piece owns.
+
+**Answer taken (proceeding):** `compile({ check: true })` derives and runs only the invariants whose
+full input is mechanically reachable from `CompileSources` alone, with no invented cross-referencing:
+**I8** and **I9** (scanning every resolved document's own string content for secret-shaped literals
+and injection patterns — genuinely available once every entity is resolved) are the only two run
+automatically. The other ten remain exactly what P8 itself already designed them to be — functions a
+caller with the richer data (a real `.forge/config.yaml`, a real workflow engine's step sequencing)
+calls directly via `@forge/extensions/invariants`' own `runInvariants` with a hand-assembled
+`ResolvedSet`. `compile()`'s own Check ("surfaces every invariant violation from P8") is satisfied for
+the violations it is actually positioned to find, not by fabricating the other ten invariants' missing
+inputs from data that does not exist in this piece's own input shape.
+
+**Recommended resolution:** once a real `.forge/config.yaml` reader and workflow-step sequencer exist
+(later milestones), extend `compile()`'s own input to include them and widen the derived `ResolvedSet`
+accordingly — the ten invariants left as caller-supplied here are not less real, only differently
+sourced than the two this piece can already reach.

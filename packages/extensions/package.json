@@ -13,7 +13,8 @@
     "./workflows": "./src/workflows/index.ts",
     "./presets": "./src/presets/index.ts",
     "./style": "./src/style/index.ts",
-    "./invariants": "./src/invariants/index.ts"
+    "./invariants": "./src/invariants/index.ts",
+    "./compile": "./src/compile/index.ts"
   },
   "engines": {
     "node": ">=20.10"
