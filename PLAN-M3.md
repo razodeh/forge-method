@@ -236,6 +236,8 @@ contact with what P3's real `GENERATORS` and P1's real `parseDiagram` actually r
 
 **Depends on:** P1, P2, P3.
 
+*(P4 is committed: `63919c5`.)*
+
 ---
 
 ## P5 — Self-contained HTML render fallback

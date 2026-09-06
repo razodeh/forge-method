@@ -1883,3 +1883,83 @@ same standard the original defect was held to). The critic's decisive move in ro
 trust "re-parses cleanly" as a stand-in for "is faithfully represented" and instead feeding real inputs
 into the real `mermaid` package; round 2 applied that identical discipline one layer deeper, to the
 fix's own new code path, and found the same class of gap waiting there too.
+
+## M3 P4 — Drift detection and transclusion sync
+
+**Rounds: 2 (one critic finding one blocking, two major, and three minor defects; one scoped verify
+confirming all six fixes and finding two more real gaps of the same shape through its own further
+probing — all fixed and re-verified locally without a third round, per this loop's own cap). Outcome:
+WON.**
+
+This piece composes P1 (parsing) and P2 (lint) with two new checks — regeneration drift and
+transclusion divergence — into one entry point. The single largest defect was not a logic bug in
+either check but a wiring gap: the entry point's own doc comment claimed to raise a finding that
+nothing in its body actually could.
+
+### Round 1 — critic: one blocking, two major, three minor
+
+- **Blocking: `diagram:transclusion` could never actually be produced by the piece's own stated entry
+  point.** `parseTransclusionMarkers`/`checkTransclusion` were built as real, independently correct,
+  independently tested functions — but `validateDiagrams` never called either one, and its own input
+  type had no field even capable of carrying a Markdown document to check. Two other places in the
+  same change asserted otherwise: a sibling module's doc comment claimed `diagram:transclusion` "is
+  raised by `@forge/diagrams/drift`," and `validateDiagrams`'s own doc comment claimed to cover
+  "everything `@forge/diagrams` can check." Both were false the moment they were written. `08`
+  §8.11.4/§8.11.7 both treat a transclusion mismatch as an error-severity gate check on par with
+  drift itself — this was not a documented, deliberate scope narrowing, just an unfinished wire-up.
+- **Major: the marker parser silently matched nothing for ordinary, non-adversarial Markdown
+  formatting.** A single regex anchored to the spec's own one worked example's *exact* layout (a
+  fixed attribute order, no blank lines, no trailing whitespace) returned an empty result — not an
+  error, total silence — for the two attributes in the opposite order, a blank line before the fence
+  or before the closing comment, or trailing spaces on the marker/fence lines. None of these require
+  hostile intent; they are routine editor/formatting variance.
+- **Major: comparing fenced content against `.mmd` source content did not normalise internal line
+  endings.** A document saved with CRLF (the ordinary Windows default) reported real drift against a
+  byte-identical-in-content LF `.mmd` file, purely from line-ending convention.
+- **Minor ×3:** an uncommented `as readonly string[]` cast; `ValidateDiagramsOptions` had no TSDoc at
+  all despite being the entry point's primary options type; one diagram entry's own thrown exception
+  (an unregistered generator name, a syntax error) discarded every other entry's already-computed
+  findings in the same batch call — a poor fit for what is meant to be a batch-lint entry point.
+
+**Fixes:** `validateDiagrams` gained a `markdownDocuments` option; each document's transclusion
+markers are resolved against the same `diagrams` array's own `diagram.source`/`actualSource` pairs
+already supplied for drift-checking (no second source-lookup mechanism needed), and a mismatch is
+reported via a never-thrown `ForgeError('KB-031', ...)` read only for its `.message` — the same
+pattern `@forge/extensions/invariants` (M2 P8) already established for "the rendered text can never
+drift from the code's own template." The single fragile regex was replaced with a real line-based
+scan: attributes extracted independently of order, blank lines tolerated in both gaps, trailing
+whitespace tolerated on every marker/fence line, and every line normalised to `\n` before comparison
+anywhere in the module. `validateDiagrams` now returns `{ findings, errors }` — one entry's own
+failure is caught and named in `errors` rather than aborting the whole call.
+
+### Round 2 — scoped verify: all six confirmed, two more found by the same discipline applied further
+
+Verify independently re-ran every scenario against the real exported functions (a genuinely diverged
+transclusion producing a real finding end-to-end, swapped attributes, a blank-line variant, a CRLF
+body, and a two-entry batch with one broken entry) and confirmed all six fixes hold. It then kept
+probing past the named list and found two more instances of the *same* defect shape the round had
+just fixed elsewhere:
+
+- **A quoted marker attribute (`id="DIAG-001"`) parsed with the quote characters still attached to
+  the value.** The marker syntax visually mimics HTML attributes, where quoting is the norm, even
+  though the spec's own worked example happens to write it bare — the exact "ordinary formatting
+  variance, silent failure" shape the whole round exists to close, just for a variant the first pass
+  never tried. **Fixed** by accepting a bare or quoted (single- or double-quoted) value and stripping
+  the quotes.
+- **`checkDrift`'s own comparison had the identical CRLF gap `checkTransclusion`'s fix had just
+  closed one file over** — only trailing whitespace was normalised, not internal line endings, so a
+  `.mmd` file checked out with CRLF would still report false `diagram:drift` even after transclusion's
+  own CRLF handling was fixed. **Fixed** the same way, in the sibling file.
+
+### Calibration note
+
+The blocking defect in this piece is a variation the session has not quite seen in this exact form
+before: not a wrong implementation, but a *complete, correct, independently-tested implementation
+never actually connected to the interface that was supposed to expose it* — caught only because the
+critic cross-checked the diff's own doc comments against its own runtime behaviour rather than
+trusting either alone. The verify round's own two findings are the sharpest evidence yet, across this
+entire milestone's gauntlet log, that a defect's *shape* — "ordinary formatting variance defeats a
+too-literal parser," "a text-normalisation fix applied to one comparison and not its sibling" —
+recurs across otherwise-unrelated pieces of the same file once introduced, and that the discipline of
+actually probing further after the named findings are fixed, rather than stopping at the list handed
+in, is what catches the recurrence before it ships.
