@@ -928,3 +928,31 @@ nfr-coverage` or the advisory half of the traceability matrix, not one to make s
 matching `09` §9.4's own table; give `Task` a real `story: string` field once a spec page actually
 specifies one; and, when a future piece needs `FILE`/`ADR`/`INT`/`NFR` edges for a real gate, add Checks
 for each one's resolution rule at the same time, rather than inheriting an unverified guess from here.
+
+## Q32 — P3's required-role levels reuse `L0`–`L4` for a concept `15` §15.2 already owns, and that
+concept is never itself defined
+
+**Conflict.** `PLAN-M2.md` P3's `REQUIRED_ROLES` names each required role's minimum level verbatim
+from `15` §15.3.3: "`pm` (L2+), `architect` (L2+), `test-architect` (L1+)." But `L0`–`L4` is *already*
+a defined term in this exact spec file — §15.2's five customization layers (built-in, module, org,
+project, personal) — and §15.3.3's "L1+"/"L2+" plainly mean something else: a **project scale level**,
+the only other place that notation appears in the whole spec pack being `10` §10's module-manifest
+example (`levels: [ L1, L2, L3, L4 ] # which scale levels this applies to`). Neither page defines what
+distinguishes an `L0` project from an `L4` one, how a project's own current scale level is chosen,
+selected, or stored (`03`'s `forge discover` is described as doing "level selection," but no page
+gives the mechanics), or even confirms `L0`–`L4` for scale levels has the same five-member range as
+the customization layers — it could coincidentally share notation with a different cardinality.
+
+**Answer taken (proceeding):** treated as a distinct, ordinal `ProjectLevel` type (`L0`...`L4`,
+matching the layer notation's own range since nothing contradicts it), kept structurally and
+nominally separate from `@forge/extensions/resolve`'s `Layer` — two same-shaped types for two
+unrelated axes, not one reused type, so nothing conflates "project scale" with "which overlay layer."
+`REQUIRED_ROLES`' checking function takes the project's current `ProjectLevel` as a plain parameter
+the caller supplies; this piece does not read it from `.forge/config.yaml` or invent a config field
+for it, since no spec page says where it lives. A role's own `minLevel` is compared ordinally
+(`L0 < L1 < ... < L4`), the only reading `15` §15.3.3's "L1+"/"L2+" notation actually supports.
+
+**Recommended resolution:** define project scale levels once, by name, with what each tier actually
+means and where a project's own level is set and read (most plausibly `03`'s `forge discover` /
+`.forge/config.yaml`) — ideally in a section of `10` or `11` that owns level selection already, not
+reusing `15` §15.2's `L0`–`L4` notation for an unrelated axis without at least a cross-reference.
