@@ -57,29 +57,35 @@ export type SchemaFileName = `${string}.schema.json`;
  * because several ids are all-caps acronyms (`ADR`, `NFR`, `RCA`) that a mechanical PascalCase-to-
  * kebab-case split would mangle (`ADR` -> `a-d-r`).
  */
-const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema: z.ZodTypeAny }> = {
-  Vision: { fileStem: 'vision', schema: visionSchema },
-  Capability: { fileStem: 'capability', schema: capabilitySchema },
-  NFR: { fileStem: 'nfr', schema: nfrSchema },
-  Epic: { fileStem: 'epic', schema: epicSchema },
-  Story: { fileStem: 'story', schema: storySchema },
-  Task: { fileStem: 'task', schema: taskSchema },
-  ADR: { fileStem: 'adr', schema: adrSchema },
-  InterfaceContract: { fileStem: 'interface-contract', schema: interfaceContractSchema },
-  DataModel: { fileStem: 'data-model', schema: dataModelSchema },
-  Diagram: { fileStem: 'diagram', schema: diagramSchema },
-  Risk: { fileStem: 'risk', schema: riskSchema },
-  Assumption: { fileStem: 'assumption', schema: assumptionSchema },
-  OpenQuestion: { fileStem: 'open-question', schema: openQuestionSchema },
-  Waiver: { fileStem: 'waiver', schema: waiverSchema },
-  SessionRecord: { fileStem: 'session-record', schema: sessionRecordSchema },
-  RCA: { fileStem: 'rca', schema: rcaSchema },
-  Defect: { fileStem: 'defect', schema: defectSchema },
-  Environment: { fileStem: 'environment', schema: environmentSchema },
-  Runbook: { fileStem: 'runbook', schema: runbookSchema },
-  GateReport: { fileStem: 'gate-report', schema: gateReportSchema },
-  HandoffRecord: { fileStem: 'handoff-record', schema: handoffRecordSchema },
-};
+/**
+ * Exported (not module-private) so a per-type zod schema is available without a second, hand-kept
+ * `ArtifactTypeId -> schema` map elsewhere — `PLAN-M2.md` P6's `requiredFieldsFor` reads `.schema`
+ * off this same table rather than re-importing and re-listing all 21 artifact schemas itself.
+ */
+export const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema: z.ZodTypeAny }> =
+  {
+    Vision: { fileStem: 'vision', schema: visionSchema },
+    Capability: { fileStem: 'capability', schema: capabilitySchema },
+    NFR: { fileStem: 'nfr', schema: nfrSchema },
+    Epic: { fileStem: 'epic', schema: epicSchema },
+    Story: { fileStem: 'story', schema: storySchema },
+    Task: { fileStem: 'task', schema: taskSchema },
+    ADR: { fileStem: 'adr', schema: adrSchema },
+    InterfaceContract: { fileStem: 'interface-contract', schema: interfaceContractSchema },
+    DataModel: { fileStem: 'data-model', schema: dataModelSchema },
+    Diagram: { fileStem: 'diagram', schema: diagramSchema },
+    Risk: { fileStem: 'risk', schema: riskSchema },
+    Assumption: { fileStem: 'assumption', schema: assumptionSchema },
+    OpenQuestion: { fileStem: 'open-question', schema: openQuestionSchema },
+    Waiver: { fileStem: 'waiver', schema: waiverSchema },
+    SessionRecord: { fileStem: 'session-record', schema: sessionRecordSchema },
+    RCA: { fileStem: 'rca', schema: rcaSchema },
+    Defect: { fileStem: 'defect', schema: defectSchema },
+    Environment: { fileStem: 'environment', schema: environmentSchema },
+    Runbook: { fileStem: 'runbook', schema: runbookSchema },
+    GateReport: { fileStem: 'gate-report', schema: gateReportSchema },
+    HandoffRecord: { fileStem: 'handoff-record', schema: handoffRecordSchema },
+  };
 
 /**
  * Recursively sorts every plain object's keys, leaving array element order untouched (a JSON

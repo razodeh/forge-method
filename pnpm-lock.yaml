@@ -86,6 +86,9 @@ importers:
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/schemas':
+        specifier: workspace:*
+        version: link:../schemas
       zod:
         specifier: 3.25.76
         version: 3.25.76

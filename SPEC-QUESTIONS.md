@@ -1004,3 +1004,82 @@ rule 2; "reported per run" is a runtime/event-log concern for whichever piece ow
 **Recommended resolution:** add a server-wide grant to `15` §15.5.1's own worked example (even a
 single line, `sre: { acme-postgres-staging: "*" }` or similar) so the map's two grant shapes are both
 spec-given rather than one inferred.
+
+## Q35 — `10` §10.1's inline error codes for workflow-overlay guardrails collide with `15` §15.10's
+own invariant table
+
+**Conflict.** `10` §10.1's "Customization" subsection says, in prose: "delete a gate step
+(`GATE-501`), define a gate with zero deterministic checks (`GATE-502`), or remove the `red`
+(test-first) or `review` steps from the inner loop (`CFG-502`)." But `15` §15.10's own invariant
+table — the authoritative registry PLAN-M2.md P8 is built around — already assigns those exact codes
+to two different invariants: `GATE-501` is I3 ("a gate cannot be approved with a failing deterministic
+check; only waived"), and `CFG-502` is I2 ("the test-authoring step and the implementation step cannot
+be the same agent instance"). Only `GATE-502` genuinely agrees between the two pages (both say "a gate
+defined with zero deterministic checks"). `@forge/core/errors`' code registry (`packages/core/src/
+errors/codes.ts`) is a flat `Record` keyed by code string — two different `ErrorDefinition`s cannot
+share one key, so whichever piece registers real codes for these three guardrails cannot literally
+follow `10` §10.1's text without silently colliding with `15` §15.10's own I2/I3 entries.
+
+**Answer taken (proceeding):** P6 (`@forge/extensions/workflows`) does not mint or reference any
+`GATE-`/`CFG-` numbered `ForgeError` code at all for its own two guardrails (refusing `$remove` on a
+gate/red/review step, refusing an unresolvable `$insertAfter` anchor) — it returns typed, piece-local
+finding objects (`code: 'gate-step-removed' | 'protected-step-removed'`, etc.), the same
+"validate returns, it does not throw" shape `@forge/schemas` established (Q3) and P3/P4/P5 all reused.
+Minting the real numbered code is deferred to whichever piece actually wires a refusal into
+`@forge/core/errors`' registry (most likely P9's compile pipeline) — recorded here now so that piece
+does not rediscover this collision from scratch. When it does, `GATE-502` can be reused as-is (both
+pages agree); the "delete a gate step" and "remove red/review steps" refusals need *fresh* numbers
+(e.g. `GATE-504`, `CFG-506` — the next free slot in each family after `15` §15.10's own I1–I12), not
+`10`'s stated `GATE-501`/`CFG-502`, since those are already spoken for.
+
+**Recommended resolution:** fix `10` §10.1's prose to cite the numbers `15` §15.10 actually assigns
+these two guardrails (assigning them fresh codes there, and reflecting the same codes back into `10`),
+rather than leaving two pages of the same spec pack disagreeing about what `GATE-501`/`CFG-502` mean.
+
+## Q36 — No mechanical, general-purpose marker identifies a workflow's `red` (test-first) or `review`
+step
+
+**Conflict.** `10` §10.1 says an overlay may not remove "the `red` (test-first) or `review` steps
+from the inner loop," and §10.6 names `red`/`green`/`review` as canonical *phase* names in a ten-step
+sequence — but no page defines a mechanical field on a step object itself (no `phase` key, no `kind:
+red` value — `kind` is drawn from an unrelated eleven-value set: `agent`/`command`/`gate`/`elicit`/
+`session`/`fanout`/`merge`/`subworkflow`/`checkpoint`/`parallel`/`sequence`) that identifies which step
+in an *arbitrary* custom workflow plays which canonical-loop role. The only evidence given is `10`
+§10.1's own worked `build-stage.workflow.yaml`, where the step conventionally named `id: review` sets
+`agent: reviewer`, and the step conventionally named `id: generate-tests` (phase 3, "red") sets
+`agent: sdet` — role assignment, not a dedicated marker field.
+
+**Answer taken (proceeding):** a step (or, for a `fanout` step, its nested `step`) is treated as the
+protected "review" step if its `agent` is literally `'reviewer'`, and as the protected "red" step if
+its `agent` is literally `'sdet'` — the only two role-to-phase associations the spec pack actually
+shows, matching this session's precedent of role-id literals as the mechanical signal (P5's
+`WRITE_DENIED_ROLES`). A `kind: gate` step is identified structurally and needs no such convention.
+
+**Recommended resolution:** give steps an explicit, spec-defined marker for their canonical-loop role
+(a `phase` field, or a reserved value in an extended `kind` enum) so "is this the red/review step" is
+answerable without inferring it from which role happens to be assigned, which breaks the moment a
+project renames or reassigns those roles for a legitimate reason unrelated to weakening the loop.
+
+## Q37 — No worked example exists anywhere for a template overlay's own document shape
+
+**Conflict.** `15` §15.7's "Template overlays" subsection is prose only: "Every artifact template is
+overridable. Required schema fields stay required — a template that omits one fails compile with the
+field name." Every *other* overlay-able kind in the same section (workflows, gate checks, frameworks)
+gets a concrete YAML worked example; templates get none. Separately, `packages/templates/src/
+artifacts/*.md` (`PLAN-M1.md` P11) shows what a *base* template actually looks like: a real front-
+matter document whose keys are literally the artifact type's own schema field names, holding
+placeholder values (`title: '<the story name>'`) instead of `$`-operator directives — templates are
+customized by wholesale replacement, not `15` §15.2's incremental merge operators, unlike every other
+overlay-able kind this milestone covers.
+
+**Answer taken (proceeding):** `templateOverlaySchema` validates only that a template overlay parses
+to a plain front-matter object (reusing `@forge/core`'s already-committed `splitFrontMatter`/
+`parseFrontMatterYaml`, the same primitives P4 reused for `SKILL.md`) — no operator support, no
+invented field list. `requiredFieldsFor(artifactType)` reads the required (non-`.optional()`)
+top-level keys straight off `@forge/schemas`'s own per-type zod schema (via the newly-exported
+`ARTIFACT_SCHEMAS` table), and `checkTemplateRequiredFields` compares those against the overlay's own
+parsed front-matter keys — the concrete, mechanically-checkable half of the spec's prose, without
+guessing at a document shape no page actually shows.
+
+**Recommended resolution:** add a worked YAML (or front-matter) example for a template overlay to `15`
+§15.7, matching the treatment every sibling subsection in the same section already gets.
