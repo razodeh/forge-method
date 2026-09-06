@@ -944,3 +944,79 @@ Separately worth naming: this is the second piece in a row (after P12's fence-pa
 an optimization *invented by the builder*, not requested by any spec or Check, turned out to be the
 actual source of a real defect — a reminder that added cleverness carries its own burden of proof, and
 "no Check requires this" is itself a reason to weigh a shortcut's risk against what it actually saves.
+
+---
+
+## P14 — the spec graph with typed edges
+
+**Rounds: 2 (one critic finding three real majors, one scoped verify confirming the fix and finding
+nothing further). Outcome: WON.**
+
+Two spec conflicts had to be resolved before any graph code, both recorded in `SPEC-QUESTIONS.md` Q31:
+`02` §2.6's illustrative `SPEC-021` example ("`STORY-014 has no parent capability`") names a different
+parent type than `09` §9.4's own normative edge table (`STORY partOf EPIC`) — resolved by treating §9.4
+as authoritative; and, of the eleven rows in that table, only five (`realises`/`delivers`/`partOf`/
+`belongsTo`/`proves`) are ones this piece's own Checks actually exercise. The other six (`TASK
+implements STORY`, `COMMIT implements STORY`, `FILE primaryFor STORY`, `ADR constrains …`, `INT
+consumedBy STORY`, `NFR verifiedBy …`) were deliberately left unbuilt rather than half-built from an
+untested guess at each one's resolution rule — two have no data to build them from at all, and the
+other four have data but no Check to validate a resolution rule against. `REQUIRED_EDGES` still
+transcribes all eleven rows as data, since the Check asks for the table row-for-row, not only the
+checkable subset.
+
+### Round 1 — three majors, all accidental-reachable, all fixed
+
+What the critic caught that I missed, all stemming from the same blind spot: my own tests for
+"duplicate id" and "duplicate AC id" were shaped to match what the implementation already did, not
+independently re-derived from what determinism (`QUALITY-BAR.md` R10) actually requires.
+
+- **Two documents sharing an id could each contribute an edge.** `buildGraphData` deduplicated *nodes*
+  by id (first doc wins) but still pushed every matching document into the internal `rows` list used to
+  build edges — so two `Epic` documents both claiming `id: EPIC-001` (a hand-edited or copy-pasted file,
+  not a hostile construction; `IdAllocator` is supposed to make this impossible but this function has
+  no way to assume that always held) produced two `delivers` edges from the same id, with which one
+  survived, and in what order, depending on `docs`' array position. My own dedicated test for "two
+  documents share an id" only used two `Vision` documents — a type with no outgoing edge at all — so it
+  could not have caught this no matter how carefully it was read.
+- **The same defect, for `Vision`'s cardinality-one role.** `CAP realises VIS` picked "whichever `Vision`
+  node came first" from an array built in document order, rather than anything intrinsic to the
+  documents — order-dependent for the same reason.
+- **A duplicate acceptance-criterion id across two different stories was silently dropped, with zero
+  diagnostic.** `storySchema`'s own `superRefine` only ever sees one story's `acceptance[]` at a time, so
+  a second story reusing an id from a first is invisible until the whole corpus is in one graph — exactly
+  what this graph exists to catch, per `09` §9.4's own emphasis on traceability integrity, and it wasn't
+  catching it.
+
+Fixed by grouping candidates by id before deciding anything, and picking a winner by a property
+intrinsic to the documents rather than their position in the input array: the lexicographically
+smallest `ArtifactDocument.path` for a shared document id, the smallest claiming story id for a shared
+AC id. A new code, `SPEC-023`, reports every AC id claimed by more than one story, naming all claimants.
+One related minor, noted but not fixed as a defect: a genuinely malformed AC id (failing
+`acceptanceCriterionSchema`'s own regex) is accepted as a graph node with no format check of its own,
+since `ArtifactDocument.parse` deliberately validates only that front matter is a YAML mapping, not that
+it matches any type's schema — a test correctly naming that malformed id is then reported as "proves no
+AC" rather than "malformed AC id." Left as documented residual risk: the real defect in that scenario is
+upstream, already caught by `validateArtifact` (P12) before a real workflow would ever reach graph
+construction, and duplicating that check here would be scope the piece's own Checks never asked for.
+
+### Round 2 — scoped verify: fix confirmed, nothing further found
+
+A fresh agent hand-traced the three-way-duplicate-id case (confirmed the smallest-path candidate always
+wins, for any permutation and any candidate count), the compound case of a duplicate id landing on one
+of two distinct `Vision` documents (confirmed no interaction bug between the two dedup mechanisms), and
+independently verified — rather than trusting the fix's own comment — that `SPEC-023`'s claimant list is
+provably already sorted ascending by construction (`rows` is sorted by id before the claimants loop
+runs), not by an assumption that happened to hold in testing. One adversarial-only wrinkle noted and
+accepted: two distinct `ArtifactDocument` objects sharing an *identical* `path` string tie-break by
+array order — inconsequential, since that scenario means the same file was fed into `SpecGraph.build`
+twice with identical content.
+
+### Calibration note
+
+A third piece in a row (after P12's fence-pairing heuristic, P13's cache-trust optimization) where the
+builder's own test suite missed a real defect because the test was shaped to fit the implementation's
+assumptions rather than independently re-derived from the property being protected — here, "shuffling
+input order gives an identical graph" was tested only with inputs that happened to have nothing for
+order to affect. The recurring fix has been the same each time, too: replace "whichever came first" with
+a tie-break intrinsic to the data itself (a file path, a sorted id) wherever more than one candidate for
+the same role can legitimately exist.

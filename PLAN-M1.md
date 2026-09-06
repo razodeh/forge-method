@@ -538,16 +538,24 @@ queries the gates will need.
 
 **Checks:**
 - The `09` §9.4 edge table is asserted row-for-row against `REQUIRED_EDGES`.
-- A story with no parent epic produces the documented `SPEC-` violation naming the story
-  (`02` §2.6 example: `SPEC-021 STORY-014 has no parent capability`).
+- A story with no parent epic produces the documented `SPEC-021` violation naming the story: `STORY-014
+  has no parent Epic` — `02` §2.6's own example (`SPEC-021 STORY-014 has no parent capability`) names a
+  different parent type than `09` §9.4's normative edge table (`STORY partOf EPIC`); §9.4 is treated as
+  authoritative for graph structure. See `SPEC-QUESTIONS.md` Q31.
 - Cardinality: a TEST proving two ACs is a violation; an AC with many tests is legal.
 - Orphan detection finds both an orphan story and an orphan test (the `09` §9.4 example output).
 - A cycle (`STORY-A depends_on STORY-B depends_on STORY-A`) is detected and `renderCycle` prints the
   path — required because M5's plan compilation rejects cycles "with a rendered graph".
 - Graph build is deterministic: shuffling the input document order gives an identical graph and
-  identical violation ordering (R10).
+  identical violation ordering (R10) — including when two documents share an id, or two stories share
+  an acceptance-criterion id (`SPEC-023`); see `GAUNTLET-LOG.md` P14.
 
 **Depends on:** P12, P13.
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8, P9, P10, P11, P12, P13 and P14 are committed: `9b98217`,
+`7fef54d`, `47ba1ea`, `bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`,
+`5873bbe` (fix: `9796a10`), `608a011` (fix: `3de0be0`), `da22d38` (fixes: `3ede652`, `d112f92`),
+`5205b49` (fixes: `be55513`, `e6aeacc`), `6e365f8`.)*
 
 ---
 
