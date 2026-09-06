@@ -351,6 +351,8 @@ rebuilt).
 `openQuestionSchema`, `environmentSchema`, and the four new collection-file wrapper schemas),
 `@forge/core/artifacts` (front-matter parsing), `@forge/core/fs`.
 
+*(P6 is committed: `28e0946`.)*
+
 ---
 
 ## P7 — KB id allocation and `KbWriter`

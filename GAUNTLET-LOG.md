@@ -2038,3 +2038,87 @@ Unlike Q45–Q47, this one was caught by the builder itself, before writing any 
 following the milestone's own now-established habit of inspecting real dependency contents first —
 evidence the discipline generalizes to "check before you build the check," not only "check before you
 trust the fix."
+
+## M3 P6 — The KB entry schema and on-disk tree
+
+**Rounds: 2 (one critic finding one blocking, two major, and three minor defects; one scoped verify
+confirming all of them fixed and finding one more minor gap immediately adjacent to the blocking fix
+— fixed and re-verified locally without a third round). Outcome: WON.**
+
+This piece opens the `@forge/kb` track and closes two long-deferred spec gaps from earlier milestones
+before writing any code: `SPEC-QUESTIONS.md` Q29 (M1) never got a real on-disk shape for a populated
+`collection: true` file, and no spec page anywhere states the `section`→id-abbreviation table
+`kbEntrySchema`'s own id-format check needs. Both are recorded as new questions (Q50, Q51) with
+evidence-based, minimally-invented answers before P6's own code was written against them — Q50's own
+design (a wrapper schema per collection file, modelled on `05` §5.6's one real precedent for "a list
+of Risk/Assumption-shaped objects," `{ id: ASM-004, ... }` embedded in a `HandoffRecord`'s own front
+matter) is exactly what the critic round below found still had a real gap in.
+
+### Round 1 — critic: one blocking, two major, three minor
+
+- **Blocking: `parseKbTree` threw instead of returning an empty result for a brand-new project with
+  no KB written yet.** Its own doc comment promised "never throws... a `KbParseError` per bad file
+  instead," but the *initial* directory listing had no try/catch at all — `listDirEntriesSorted`
+  throws `RUN-034` "including path not existing," and every existing test happened to pre-create the
+  tree before calling `parseKbTree`, so this was untested. A brand-new project before its first `forge
+  kb` write is the ordinary starting state, not a failure.
+- **Major: `ops/runbooks/*.md` — a real `08` §8.2 subtree and a real, already-registered `18` §18.7
+  type (`Runbook`, with its own already-built `runbookSchema`) — always fell through to the generic
+  `kbEntrySchema` case and always failed there** (13 unrelated Zod issues on a well-formed Runbook
+  file: wrong id shape, missing `section`/`confidence`/`owner`/etc., `unrecognized_keys` for the base
+  front matter Runbook actually needs). `parseKbTree`'s own claim to be "a single parse/validate entry
+  point over the whole tree" was false for this real subtree.
+- **Major: the four new collection-file wrapper schemas dropped the entire `18` §18.6 base front
+  matter — not just `id` — with no stated reason beyond the one given for `id` itself,** and, being
+  `.strict()`, actively rejected a compliant author tracking who last touched a register and when,
+  something every sibling schema in the registry (`adrSchema`, `diagramSchema`) already supports.
+- **Minor ×3:** `hasVerificationContent` was satisfied by a lone HTML comment with no real content
+  beneath a `## Verification` heading (GitHub/GitLab render such a comment as nothing at all); its
+  heading pattern was anchored at column 0 exactly, rejecting a CommonMark-valid up-to-3-space-indented
+  heading that renders identically to an unindented one; no check catches two entries in the same
+  collection file sharing one id (noted as a real gap, not fixed — see below).
+
+**Fixes:** `parseKbTree` now checks `pathExists` on the resolved `kbRoot` first and returns an empty
+result before attempting to list it. `classifyFile` gained a `ops/runbooks/RUN-\d{3}-.+\.md` branch
+routing to the already-built `runbookSchema` (no new schema needed — `@forge/schemas` already exported
+one, just never wired into this piece's dispatch table), with a matching `KbParsedEntry` variant and a
+real fixture file. `collection-file.ts`'s four schemas now build from
+`baseFrontMatterShape.omit({ id: true }).extend({...})` instead of a bare `z.object({...})` — every
+base field except `id` is required again, matching every sibling schema; the fixture's four collection
+files and the schema's own test file were updated to include the now-required fields.
+`hasVerificationContent` strips `<!-- ... -->` spans (single- or multi-line) before checking for a
+non-blank line, and both its heading patterns now tolerate up to three leading spaces. The duplicate-
+id gap is **not fixed** — documented instead, in `collection-file.ts`'s own doc comment and in
+`SPEC-QUESTIONS.md` Q50, as deliberately deferred to the KB linter (`08` §8.7, `PLAN-M3.md` P10):
+cross-entry-in-one-file id uniqueness is a project-wide invariant needing a broader scan than one
+file's own schema, the same shape of deferral this milestone has already used for other project-wide
+checks a single piece's own schema cannot see.
+
+### Round 2 — scoped verify: all four confirmed, one more found immediately adjacent to the blocking fix
+
+Verify independently reproduced every fix with fresh, non-shipped inputs (a from-scratch empty
+project, a from-scratch runbook file at a different path than the fixture's own, individually omitting
+each of the seven base fields from a collection-file payload, eight fresh HTML-comment/indentation
+variations against the Verification check — including confirming a 4-space-indented heading correctly
+still counts as *no* heading at all, per CommonMark's own indented-code-block rule) and confirmed all
+four hold. It then found one more real gap immediately next to the blocking fix it had just verified:
+
+- **`pathExists` alone does not distinguish "no KB yet" from "something is sitting where the KB
+  directory should be."** A plain file (not a directory) at the resolved `kbRoot` path still threw
+  `RUN-034` (`ENOTDIR`) out of `listDirEntriesSorted`, the exact same "never throws" contract the
+  blocking fix had just closed for the *missing* case, still open for the *wrong-type* case. **Fixed**
+  by wrapping the initial tree listing in its own try/catch and reporting any failure there — not only
+  `ENOTDIR` — as one tree-level `KbParseError` naming `kbRoot` itself, rather than letting it propagate.
+
+### Calibration note
+
+Two of this piece's four Round 1 findings (the runbook misrouting and the collection-file base-field
+drop) share the same underlying shape: a schema or dispatch table built to satisfy the *specific*
+worked examples this piece's own plan named, without re-checking the *complete* `08` §8.2 directory
+listing or the *complete* `18` §18.6 base contract against what was actually built. Both were caught
+by a critic doing exactly that — tracing the dispatch logic against the spec's full listing rather
+than the fixture's own necessarily-partial sample, and diffing the new schema's fields against the
+sibling schemas' own established contract rather than judging it in isolation. The verify round's own
+finding repeats this milestone's now-familiar "fixing the named case doesn't guarantee the sibling
+case is also fixed" pattern (`pathExists` closes "missing" but not "wrong type") — the same shape as
+P4's CRLF fix landing in one function and not its sibling, found again here one milestone piece later.
