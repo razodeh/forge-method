@@ -1,8 +1,12 @@
 /**
  * `listArtifactFiles`, `countIdsFromFiles`, `scanProject` — `18` §18.8's "truth is a scan of existing
  * artifacts," split into a cheap phase (which files exist) and an expensive one (what ids they
- * claim), so `IdAllocator` can skip the expensive phase entirely when the cheap one proves nothing
- * has changed since the last real scan.
+ * claim). An earlier version of `IdAllocator` used the cheap phase alone to decide whether to skip
+ * the expensive one; a gauntlet critic found that unsound (an in-place edit to an existing file's own
+ * `id`/`type` changes nothing the cheap phase can see), so `IdAllocator.scan()` now always runs both
+ * phases — see `SPEC-QUESTIONS.md` Q29's implementation note. The split itself is kept because the
+ * two phases remain independently useful and independently tested, not because anything still
+ * conditions on the cheap one alone.
  *
  * Best-effort per file, not best-effort per scan: a file that is not an artifact document at all (a
  * README, a spec page under `specs/`) or one that fails to parse is skipped, not fatal — a scan that
