@@ -796,3 +796,81 @@ leak mattered: a mechanism built now, for a use that arrives later, only earns t
 will place in it if it is actually correct today — "nothing currently exercises this" is not the same
 claim as "this works," and the difference is exactly what a fresh critic re-deriving correctness by
 hand, rather than trusting a green run, exists to catch.
+
+---
+
+## P12 — artifact model and front-matter round-trip
+
+**Rounds: 3 (one critic finding two blocking + one major; one scoped verify that itself found a
+lockfile gap and a deeper flaw in one of the fixes; one final correction). Outcome: WON.** Committed
+`da22d38`, fixed in `3ede652`, corrected again in `d112f92`.
+
+Two empirical discoveries shaped the whole design before any of the class's methods were written.
+First, `yaml`'s own `Document.toString()` — the obvious way to implement "parse, edit, write back" —
+does not round-trip byte-for-byte: verified directly that it normalises a double space before a
+trailing comment to one, collapses two consecutive blank lines to one, and silently converts CRLF to
+LF. Any one of those breaks `specs/22`'s M1 acceptance criterion outright. Resolved by never
+re-serialising anything: `prefix`/`frontMatterText`/`infix`/`body` are stored as literal substrings of
+the source, and `toString()` on an untouched document is that source, verbatim — not a
+re-serialisation of it. Second, a parsed node's `.range` does not update after `Document.setIn`
+followed by `.toString()` (verified directly: a later key's range stayed anchored to its position in
+the *original* text after an earlier edit changed the document's length) — so every `get`/`set`/append
+operation re-parses fresh from the current text rather than reusing or mutating a cached `Document`.
+
+### Round 1 — two blocking (fixed), one major (fixed, then found incomplete), two minor (one fixed, one recorded)
+
+The critic independently reproduced both empirical claims above before trusting them, then found two
+real, silently-corrupting bugs, both reachable through ordinary document shapes rather than
+adversarial ones. `appendChangelogEntry` computed its insertion point from a flow-style changelog
+entry's own range — which, unlike a block-style entry's, ends right after its closing `}`, mid-line —
+and glued the new entry onto that closing brace with no separating newline, producing YAML that
+cannot be re-parsed. `18` §18.6's *own* canonical example writes changelog entries in exactly this
+flow style, making this the spec's documented format failing against the spec's own building block.
+Separately, `spliceValue` mishandled an *implicit* YAML null (a bare `key:` with nothing after it, or
+with only a trailing comment) — these parse to a zero-width source range, and splicing a new value
+directly into that zero-width point either broke re-parsing outright or silently folded a trailing
+comment into the new value's own text, depending on the exact whitespace. Both fixed: the changelog
+append now detects whether its insertion point already starts a fresh line and adds a separator only
+when it does not; `spliceValue` pads a zero-width splice with a single space on whichever side is not
+already blank. One major finding — an unclosed fence anywhere in a body silently hid every later
+heading from phase-2 validation — was also "fixed" in round 1, with a heuristic that ignored an odd,
+unpaired fence marker. Round 2 found this heuristic itself broken (below). One minor (`zod` declared
+as a `devDependency` despite appearing in `@forge/core`'s own exported type surface) was fixed by
+moving it to `dependencies`; one minor/adversarial-only (fence-length matching for 4-backtick fences)
+was recorded as residual risk, not fixed.
+
+### Round 2 — scoped verify: one real lockfile gap, one real flaw in the round-1 fence fix
+
+A fresh agent reproduced every round-1 fix's original failure and confirmed the changelog and
+implicit-null fixes hold, including a boundary check neither round 1 nor the fix's own tests
+covered (a zero-width splice at the very start or end of the whole text). It also caught something
+round 1 missed entirely: moving `zod` to a real dependency changed `package.json` without
+regenerating `pnpm-lock.yaml`, which would have failed CI's `pnpm install --frozen-lockfile` outright
+— a real, if mechanical, gap in what "the floor is green" actually checked, since a local `pnpm test`
+run never exercises a frozen-lockfile install. More consequentially, it constructed a document with a
+stray unclosed fence *followed by additional, correctly-closed fence pairs* and showed the round-1
+fence fix's "drop the last unpaired marker" heuristic mis-pairs the remaining markers — hiding a
+genuine heading in one direction, and letting fenced content leak through as a real heading in the
+other. The specific case the round-1 critic reported was fixed; the general class was not.
+
+### Final correction
+
+Re-examining the mis-pairing bug rather than patching it further: CommonMark has no concept of a
+"stray" fence marker to identify and ignore — every triple-backtick line toggles fence state, in
+strict document order, and a fence that never closes genuinely does extend to end-of-file. The
+round-1 heuristic was solving a problem that does not have the shape it assumed, and each attempt to
+patch it around a new counterexample would only relocate the mis-pairing rather than remove it.
+Reverted to the plain strict toggle this function started with: a document with a truly unclosed
+fence is malformed, and every heading after that point is, correctly, invisible to this check — the
+same as a real Markdown renderer would treat it. Also synced `pnpm-lock.yaml` for the `zod` move.
+
+### Calibration note
+
+The most consequential lesson this piece leaves: a fix that resolves the *specific case a critic
+reported* is not the same claim as a fix that resolves the *underlying defect*, and the gap between
+those two is exactly where a second, harder-nosed look (here, the round-2 scoped verify) earns its
+keep. It is also worth naming plainly that the *correct* resolution to round 2's finding was not a
+better heuristic but recognising the heuristic's premise was wrong from the start — "detect and skip
+a stray fence marker" assumes a concept CommonMark does not have, and no amount of additional
+casework was ever going to make that assumption sound. Sometimes the fix for an incomplete fix is not
+to improve it further but to stop asking it to do something no correct implementation could do.

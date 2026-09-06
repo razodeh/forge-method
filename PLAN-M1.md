@@ -445,8 +445,13 @@ front-matter change preserves every unrelated byte.
 - `class ArtifactDocument { static parse(source: string, path: string): ArtifactDocument;
   readonly frontMatter: unknown; readonly body: string; get(path): unknown;
   set(path, value): void; bumpRevision(by, summary, today): void; toString(): string }`
-  — implemented over `yaml`'s `parseDocument` node API so comments, key order, quoting style, anchors
-  and blank lines survive; the body is retained verbatim as a substring, never re-serialised.
+  — `prefix`/`frontMatterText`/`infix`/`body` are stored as literal substrings of the source and
+  `toString()` just concatenates them; `yaml`'s own `Document.toString()` was tried first and found
+  (verified directly) to normalise comment spacing, collapse consecutive blank lines, and convert
+  CRLF to LF, any of which breaks byte-exact round-tripping. `set()`/`bumpRevision()` instead splice
+  only the specific byte range a change touches, using a fresh `YAML.parseDocument` per call (a
+  node's `.range` does not update after a document is mutated, verified directly, so a cached
+  `Document` would splice into the wrong place on a second edit).
 - `validateArtifact(doc, registry): ValidationOutcome` — phase 1 front matter against the type
   schema, phase 2 body headings against `requiredSections`, returning `ForgeError`s.
 - `readArtifact(paths, relative)`, `writeArtifact(paths, doc)` — via P4's atomic helpers.
@@ -466,6 +471,10 @@ front-matter change preserves every unrelated byte.
 **Depends on:** P4, P5, P11.
 
 ---
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8, P9, P10, P11 and P12 are committed: `9b98217`, `7fef54d`,
+`47ba1ea`, `bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`, `5873bbe`
+(fix: `9796a10`), `608a011` (fix: `3de0be0`), `da22d38` (fixes: `3ede652`, `d112f92`).)*
 
 ## P13 — ID allocation
 
