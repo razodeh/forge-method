@@ -7,3 +7,4 @@
  * @see specs/02 §2.2
  */
 export * from './merge/index.ts';
+export * from './resolve/index.ts';

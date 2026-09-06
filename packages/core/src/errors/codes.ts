@@ -323,6 +323,19 @@ export const ERROR_CODES = {
       'Replace it with one of $set, $append, $prepend, $remove, $replaceWhere, $clear, or ' +
       '$append_guidance where a plain object is expected.',
   },
+  // `15` §15.2's own worked example: "compile emits `CFG-04x overlay target not found`." No spec
+  // page fixes the exact number; `PLAN-M2.md` P2 picks the next free `CFG-*` slot, matching P1's
+  // `CFG-011`. Fires when a `$replaceWhere` entry's `id` does not resolve against what the layers
+  // applied so far actually contain — a project overlay referencing a step, perspective, or option
+  // id that was renamed or removed upstream, caught at compile time rather than silently no-op'd.
+  'CFG-012': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; id: string }) =>
+      `Overlay target not found: ${show(d.path)}'s $replaceWhere names id ${show(d.id)}, which does not exist there.`,
+    remedy:
+      'Update the overlay to name an id that exists, or remove the stale $replaceWhere entry.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

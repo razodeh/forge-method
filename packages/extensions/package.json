@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./merge": "./src/merge/index.ts"
+    "./merge": "./src/merge/index.ts",
+    "./resolve": "./src/resolve/index.ts"
   },
   "engines": {
     "node": ">=20.10"
