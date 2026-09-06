@@ -49,6 +49,30 @@ export async function pathExists(path: AbsolutePath): Promise<boolean> {
 }
 
 /**
+ * Whether `path` exists and carries the POSIX executable bit for its owner, group, or others.
+ *
+ * Returns `false` for "does not exist" for the same reason `pathExists` does — callers checking
+ * "is this script runnable" want one answer for both "missing" and "not executable," and can call
+ * `pathExists` first themselves when they need to tell the two apart in an error message.
+ *
+ * POSIX-only in what it actually measures: `specs/02` §2.7 makes Windows first-class, but Windows has
+ * no equivalent executable bit — a shell script there needs an interpreter regardless of any mode
+ * value Node reports, and getting that right needs real Windows verification this environment cannot
+ * perform. Recorded as a known gap rather than guessed at; see `SPEC-QUESTIONS.md` Q33.
+ *
+ * @throws {ForgeError} `RUN-034` for a failure other than the path not existing.
+ */
+export async function isExecutable(path: AbsolutePath): Promise<boolean> {
+  try {
+    const stats = await fsp.stat(path);
+    return (stats.mode & 0o111) !== 0;
+  } catch (cause) {
+    if (errorCode(cause) === 'ENOENT') return false;
+    throw new ForgeError('RUN-034', { operation: 'isExecutable', path }, { cause });
+  }
+}
+
+/**
  * Creates `path` as a directory, including any missing intermediate directories. A no-op if the
  * directory already exists.
  * @throws {ForgeError} `RUN-034` on any other failure.

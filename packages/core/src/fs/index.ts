@@ -12,6 +12,7 @@
 export { writeFileAtomic } from './atomic.ts';
 export {
   ensureDir,
+  isExecutable,
   listDirEntriesSorted,
   listDirSorted,
   pathExists,

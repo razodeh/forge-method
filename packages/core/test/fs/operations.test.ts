@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ensureDir,
+  isExecutable,
   listDirEntriesSorted,
   listDirSorted,
   pathExists,
@@ -101,6 +102,46 @@ describe('pathExists', () => {
     writeFileSync(target, 'x');
     vi.spyOn(fsp, 'access').mockRejectedValueOnce(new Error('unexplained failure'));
     await expect(pathExists(target)).rejects.toMatchObject({ code: 'RUN-034' });
+  });
+});
+
+describe('isExecutable', () => {
+  it('is true for a file with the owner executable bit set', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('script.sh');
+    writeFileSync(target, '#!/bin/sh\necho hi\n', { mode: 0o755 });
+    expect(await isExecutable(target)).toBe(true);
+  });
+
+  it('is false for a file with no executable bit set', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('data.txt');
+    writeFileSync(target, 'x', { mode: 0o644 });
+    expect(await isExecutable(target)).toBe(false);
+  });
+
+  it('is false, not thrown, for a path that does not exist', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('missing.sh');
+    expect(await isExecutable(target)).toBe(false);
+  });
+
+  it('rethrows as a ForgeError for a failure other than "does not exist"', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('script.sh');
+    writeFileSync(target, 'x', { mode: 0o755 });
+    vi.spyOn(fsp, 'stat').mockRejectedValueOnce(
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+    );
+    await expect(isExecutable(target)).rejects.toMatchObject({ code: 'RUN-034' });
+  });
+
+  it('rethrows as a ForgeError for a rejection that carries no error code at all', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('script.sh');
+    writeFileSync(target, 'x', { mode: 0o755 });
+    vi.spyOn(fsp, 'stat').mockRejectedValueOnce(new Error('unexplained failure'));
+    await expect(isExecutable(target)).rejects.toMatchObject({ code: 'RUN-034' });
   });
 });
 

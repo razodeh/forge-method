@@ -6,6 +6,7 @@
  */
 export { ArtifactDocument, type FrontMatterPath } from './document.ts';
 export { readArtifact, writeArtifact } from './io.ts';
+export { parseFrontMatterYaml, splitFrontMatter, type FrontMatterSplit } from './parse.ts';
 export {
   DEFAULT_ARTIFACT_REGISTRY,
   validateArtifact,

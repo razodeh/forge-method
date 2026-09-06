@@ -9,3 +9,4 @@
 export * from './agents/index.ts';
 export * from './merge/index.ts';
 export * from './resolve/index.ts';
+export * from './skills/index.ts';

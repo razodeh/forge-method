@@ -956,3 +956,32 @@ for it, since no spec page says where it lives. A role's own `minLevel` is compa
 means and where a project's own level is set and read (most plausibly `03`'s `forge discover` /
 `.forge/config.yaml`) — ideally in a section of `10` or `11` that owns level selection already, not
 reusing `15` §15.2's `L0`–`L4` notation for an unrelated axis without at least a cross-reference.
+
+## Q33 — P4's skill validation: two numbers `15` §15.4.5 requires checking against, neither given a
+value; and a Windows executable-bit gap `02` §2.7 requires be first-class
+
+**Conflict 1 — no hard cap number.** `15` §15.4.5: "body ≤ `budget_tokens` (warn) and ≤ hard cap
+(error)." `budget_tokens` is a real, per-skill front-matter field (§15.4.2's own worked example sets
+it to `3000`), but "hard cap" names a *second*, presumably project-wide ceiling that no page in the
+spec pack ever gives a number for, or even a config key.
+
+**Answer taken (proceeding):** `validateSkill` takes the hard cap as an explicit parameter
+(`hardCapTokens`), not a hardcoded constant or an invented default — the same resolution `PLAN-M2.md`
+P3 used for `ProjectLevel` (`SPEC-QUESTIONS.md` Q32): a real number with no spec source is the
+caller's to supply once a spec page gives one, not this piece's to guess.
+
+**Conflict 2 — Windows has no POSIX executable bit.** `15` §15.4.5: "scripts are executable and
+declared." `@forge/core/fs`'s new `isExecutable` (added by this piece, additive to the already-
+committed P4-of-M1 module) checks the POSIX mode bit, which is meaningful on macOS/Linux but not on
+Windows, where a shell script needs an interpreter regardless of any mode value Node reports there —
+and `02` §2.7 makes Windows first-class for the whole project, not an afterthought.
+
+**Answer taken (proceeding):** implemented and documented as POSIX-only, with the gap named in
+`isExecutable`'s own doc comment rather than a guessed cross-platform check this environment cannot
+verify against a real Windows host. `validateSkill`'s own script-executability check inherits the
+same limitation.
+
+**Recommended resolution:** state the hard-cap token number (and where it is configured, if at all)
+next to `budget_tokens` in `15` §15.4.2 or §15.4.5; and give Windows script-executability its own rule
+in `02` §2.7 or `15` §15.4 (a known-extension allowlist, a shebang check, or simply "scripts are a
+POSIX-only concept in v1") rather than leaving "executable" to mean only what it means on POSIX.

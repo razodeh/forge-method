@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./merge": "./src/merge/index.ts",
     "./resolve": "./src/resolve/index.ts",
-    "./agents": "./src/agents/index.ts"
+    "./agents": "./src/agents/index.ts",
+    "./skills": "./src/skills/index.ts"
   },
   "engines": {
     "node": ">=20.10"
