@@ -169,6 +169,8 @@ call without knowing the individual generator functions.
 
 **Depends on:** P1 (re-parse check), `@forge/core/graph` (`specgraph-to-graph`).
 
+*(P3 is committed: `15826b1`.)*
+
 ---
 
 ## P4 — Drift detection and transclusion sync

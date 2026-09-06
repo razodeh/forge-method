@@ -1790,3 +1790,96 @@ not just against the three examples themselves. The round-2 regression is the sa
 deeper: fixing a heuristic to handle one under-covered case (a script with no spaces) by loosening a
 *different* signal (length) rather than adding the *actual* missing signal (which script) reintroduces
 the same class of over-broad match the round 1 fixes had just removed.
+
+## M3 P3 — The eight diagram generators
+
+**Rounds: 2 (one critic finding two blocking and three major defects plus four minor findings; one
+scoped verify confirming five of nine outright, finding two of the remaining four only partially
+addressed by design, and surfacing two genuinely new regressions the fixes themselves introduced —
+all fixed and re-verified locally without a third round, per this loop's own cap). Outcome: WON.**
+
+The eight generators turn structured input into Mermaid source through three shared renderers. Both
+blocking defects were found by the critic actually feeding the code's own output into a real
+`mermaid@11.17.2` parser rather than trusting the "re-parses cleanly" tests' own coverage — the tests
+proved every generator's *typical* output parsed, not that *every id shape* a real project would use
+survives contact with Mermaid's own identifier grammar.
+
+### Round 1 — critic: two blocking, three major, four minor
+
+- **Blocking: `sanitizeMermaidId`'s character replacement is not injective, and nothing detected the
+  collision.** Two distinct domain ids differing only by a character the sanitizer treats the same
+  way (`component-api` / `component_api`, both becoming `component_api`) silently merged into one
+  node when fed into real Mermaid — the second declaration's label overwrote the first's, and any
+  edge referencing either now pointed at the merged node. No error, no warning, nothing distinguishing
+  this from two genuinely identical ids.
+- **Blocking: several ordinary words fail to parse as bare Mermaid identifiers at all.** `end`,
+  `class`, `style`, `subgraph` in flowchart grammar and `end` and other keywords in sequence-diagram
+  grammar — verified by feeding each into real Mermaid — are all completely ordinary real-world names
+  (a workflow step, a CI stage) that produced outright parse failures, not just cosmetic ugliness.
+- **Major: `depicts` was order-dependent on raw caller input for six of eight generators**, while each
+  generator's own `.source` string was already sorted internally — reordering upstream input with no
+  semantic change left `.source` byte-identical but changed `.depicts`'s array order, an internally
+  inconsistent determinism story a future drift check would misread as an actual change.
+- **Major: `components-to-c4` silently implements one of the three C4 views its own taxonomy row
+  promises**, with the gap disclosed only in a source comment that nothing in the type or runtime
+  behaviour surfaces to a caller.
+- **Major: `runGenerator`'s by-name dispatch cast `unknown` straight to a concrete input type with no
+  runtime validation** — a caller passing a malformed shape (the realistic failure mode for dynamic
+  dispatch) got a raw native `TypeError` from deep inside a generator instead of a typed `ForgeError`.
+- **Minor ×4:** `InterfacesToSequenceInput.flowName` was accepted and tested but never actually read;
+  several public types had no TSDoc; `pipeline-to-flow`'s own taxonomy row names "gates," which its
+  input shape has no representation for; `ErRelationship.cardinality` was an unconstrained `string`
+  for what is actually a small, fully enumerable closed grammar.
+
+**Fixes:** `buildSanitizedIdMap` replaced ad hoc `sanitizeMermaidId` calls everywhere — one shared,
+deterministic pass per diagram that de-collides (numbered suffixes, first claim by sorted id order)
+and escapes a curated, empirically-verified reserved-word set. Every generator now sorts (and
+deduplicates) its own `depicts` the same way its renderer sorts `.source`. The C4 and pipeline-gate
+scope gaps, and the database-introspection narrowing `schema-introspect-to-er` already had, are now
+recorded together in `SPEC-QUESTIONS.md` Q46 rather than left to a source comment alone.
+`requireArrayField`/`requireGraphField` validate each generator's own required fields and raise a new
+`ForgeError('KB-002', ...)` for a shape mismatch. `flowName` now emits a real `title` line.
+`ErCardinality` closes the crow's-foot grammar to its real 16 combinations at the type level.
+
+### Round 2 — scoped verify: two confirmed-partial by design, two new regressions found and fixed
+
+Verify confirmed the collision fix, the `depicts` ordering fix, the `KB-002` validation, the `flowName`
+fix, and the missing-TSDoc fix all hold up under direct execution against real Mermaid. It correctly
+read the C4-view and pipeline-gate gaps as deliberately-documented scope decisions, not silent defects
+— the same class of judgement call `08` §8.11.3's own gantt/quadrantChart narrowing from P1 already
+established as acceptable when named honestly. It also found two things the round-1 fix itself had
+introduced:
+
+- **The reserved-word/collision fix for `sequenceDiagram` traded one silent-identity defect for
+  another.** Sanitizing a participant id for Mermaid's grammar left the *sanitized* id as the only
+  thing ever shown on screen (Mermaid's implicit-declaration path displays the identifier itself) — a
+  participant named `end` rendered correctly but *displayed* as "n_end," not "end": exactly the
+  "silent identity change with no signal" shape the whole sanitization pass exists to prevent,
+  resurfacing one layer up. **Fixed** by declaring every participant explicitly as `participant
+  <sanitized> as <real name>` — Mermaid's own alias syntax — so the visible name is always the real
+  one. `erDiagram` has no equivalent alias mechanism (verified empirically: a bracket-quoted label
+  after an entity id parses but has no display effect), so that one case is now a documented, real
+  limitation of Mermaid's own ER grammar rather than a further gap to chase.
+- **`ErCardinality`'s type-level closure was never actually checked at runtime.** The exact
+  `runGenerator`/dynamic-dispatch boundary `KB-002` exists to guard was still open for this one field —
+  a caller through dynamic dispatch could still pass a nonsense cardinality string straight into
+  Mermaid source. **Fixed** by validating against `VALID_ER_CARDINALITIES` inside `renderErDiagram`
+  itself and raising `KB-002` for an invalid value.
+
+A subsequent local coverage-ratchet check (not part of either agent round) found three more provably
+unreachable three-way string comparators (`a === b` paths on `Set`-deduplicated inputs, the same shape
+already fixed once earlier in this same piece) dragging the package aggregate below its own recorded
+baseline; two were simplified to honest two-way comparators and the third (`depicts`'s own sort, which
+*can* legitimately see duplicate ids from raw caller input) was fixed by deduplicating `depicts`
+itself — a genuine, if minor, correctness improvement independent of coverage.
+
+### Calibration note
+
+Every real defect in this piece — both blocking ones, and both of round 2's regressions — shares the
+same shape: proof by *typical* example (does this ordinary id look fine, does the standard test suite
+pass) standing in for proof by *adversarial* example (does this exact identifier survive the real
+target grammar's own reserved words, does this exact fix's own side effect get checked against the
+same standard the original defect was held to). The critic's decisive move in round 1 was refusing to
+trust "re-parses cleanly" as a stand-in for "is faithfully represented" and instead feeding real inputs
+into the real `mermaid` package; round 2 applied that identical discipline one layer deeper, to the
+fix's own new code path, and found the same class of gap waiting there too.
