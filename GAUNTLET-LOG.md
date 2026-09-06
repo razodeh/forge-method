@@ -1163,3 +1163,61 @@ different flavour of the same recurring pattern this log keeps naming (P12, P13,
 gap wasn't in the reasoning, it was in translating a correct rule into a check that tests exactly what
 the rule means, rather than something merely correlated with it in every case the fix's own author had
 in mind while writing it.
+
+---
+
+## M2 P3 — agent overlays: schema, roster composition, tool ceilings
+
+**Rounds: 2 (one critic finding one blocking and one major; one scoped verify confirming both fixes
+and finding nothing further beyond two test-coverage suggestions, folded in). Outcome: WON.**
+
+Built on P1/P2 (already committed) without reopening either; added one purely-additive export to P1's
+own module (`overlayArrayField`, a zod shape shared by every overlay-able document field this and
+future pieces need). Hit a genuine spec gap doing so, recorded as `SPEC-QUESTIONS.md` Q32: `15`
+§15.3.3 requires roles at project "scale levels" L1+/L2+, reusing the exact `L0`–`L4` notation `15`
+§15.2 already defines for something else entirely (the five customization layers) — with the scale
+levels themselves never formally defined anywhere in the spec pack. Resolved by keeping a distinct,
+separately-named `ProjectLevel` type rather than reusing `@forge/extensions/resolve`'s `Layer`, with
+the project's current level taken as a plain parameter this piece does not invent a config field for.
+
+### Round 1 — one blocking, one major, both accidental-reachable and fixed
+
+- **Blocking: `checkToolCeiling`'s escalation-coverage check dropped the ceiling's own grants.**
+  `15` §15.3.2's own worked example states an escalation's `grant` as only the fields it *widens*
+  (`{ deploy: true, network: full }`, silent on `write`/`exec`) — but the check re-validated the full
+  request against `escalation.grant` alone, treating every field the escalation didn't restate as
+  fully denied rather than falling back to what the plain ceiling already permitted. A request within
+  the ceiling on `write`/`exec` and covered by the escalation on `deploy`/`network` — exactly the
+  ordinary shape of a real escalation — was wrongly refused, directly contradicting this piece's own
+  Check ("raising past it *with* a matching entry succeeds"). Fixed with `mergeGrants(ceiling,
+  escalation.grant)` (escalation's own defined fields override; fields it's silent on fall back to the
+  ceiling), checked against that merged grant instead of the escalation alone.
+- **Major: `checkRequiredRoles` never consulted `roster.enable`.** `15` §15.3.3 describes `enable`
+  ("turn on optional roles") and `disable` as siblings, and the natural way to undo a preset's disable
+  of a required role is a project override naming it in `enable` too — but the function only ever read
+  `disable`, so a role explicitly re-enabled was still reported as disabled and refused, permanently
+  closing off the one override path the spec implies for exactly this composition. Fixed by netting
+  `enable` against `disable` first — a role named in both is treated as enabled.
+
+### Round 2 — scoped verify: both fixes confirmed correct
+
+A fresh agent hand-traced `mergeGrants` for the classic `??`-vs-`false` footgun (an escalation
+explicitly narrowing a field the ceiling already granted, e.g. `write: false` overriding a ceiling's
+`write: true`) and confirmed the filter (`value !== undefined`, not a truthiness check) gets this
+right; confirmed no literal `undefined` ever leaks into the merged grant under
+`exactOptionalPropertyTypes`; confirmed the `enable`/`disable` netting is correctly scoped to
+`checkRequiredRoles` alone (`checkCustomAgents`/`checkSplitFileOwnership` operate on unrelated roster
+surfaces and correctly never consult either list); and found no further defects — only two real but
+narrow gaps in the *tests themselves* (the narrowing case and a stray-`enable` case were asserted by
+inspection but not by a dedicated test). Both were added rather than left as residual risk, since they
+were cheap, safe, and closed a real (if narrow) verification gap the fix's own correctness depended on.
+
+### Calibration note
+
+Both round-1 defects share a shape distinct from this log's usual "builder-invented optimization was
+the bug" pattern: here, the code correctly modeled *one side* of a two-sided spec relationship
+(ceiling-or-escalation; disable-or-enable) and simply never wired in the other, structurally sound but
+incomplete. Neither gap was found by the piece's own test suite because every test, like the code, was
+written from the same one-sided mental model — a different instance of this session's most frequent
+lesson: a test independently re-derived from the spec text catches what a test mirroring the
+implementation's own assumptions cannot.

@@ -141,6 +141,8 @@ project overlay is bound by is declared by the *module*, not invented here).
 
 **Depends on:** P1, P2.
 
+*(P1, P2, P3 are committed: `f9da688`, `44fd9db`, `868b35e`.)*
+
 ---
 
 ## P4 — Skill packets: parsing and validation
