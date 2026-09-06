@@ -30,9 +30,9 @@
     "branches": 100
   },
   "packages/diagrams": {
-    "lines": 99.73,
+    "lines": 99.74,
     "statements": 99.7,
     "functions": 100,
-    "branches": 94.74
+    "branches": 94.81
   }
 }

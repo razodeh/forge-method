@@ -262,17 +262,26 @@ diagram rendering is version-pinned and integrity-checked."
 - `BUNDLED_MERMAID_VERSION: string` — exported so a test (and later a security audit, `20`) can assert
   the pinned version in use.
 
-**Checks:**
-- Output contains no `<script src=`, no `fetch(`, no `http://`/`https://` reference of any kind —
-  mechanically greppable, proving the zero-network claim rather than asserting it by inspection.
-- The emitted HTML, opened in a headless-DOM test (`jsdom`, dev-dependency only — never a runtime
-  dependency of the package itself), actually renders the Mermaid block to an SVG with no thrown
-  error, for one example per diagram kind from P1's own worked examples.
+**Checks (revised — see `SPEC-QUESTIONS.md` Q48; the original "no `fetch(`/`http://` substring
+anywhere" text was unsatisfiable once checked against the real, pinned `mermaid.min.js`, which
+legitimately contains SVG namespace URIs, license-comment URLs and dead-code `fetch(` tokens):**
+- Static check, scoped to the HTML wrapper `renderHtml` itself authors (excluding the verbatim-inlined
+  third-party bundle text): no `<script src=`, no hardcoded external URL of this package's own
+  authorship.
+- Behavioural check, in the headless-DOM render test: `globalThis.fetch`/`XMLHttpRequest.prototype.send`
+  are spied on before the rendered HTML's scripts run in `jsdom` and asserted never called during a
+  real render pass, for one example per diagram kind from P1's own worked examples — this is what
+  actually proves the zero-network claim, including for the vendored bundle this package does not
+  author.
+- The emitted HTML, opened in the same headless-DOM test, actually renders the Mermaid block to a
+  real SVG with no thrown error, for one example per diagram kind.
 - A legend, when supplied, appears in the output; omitted when not.
 - Special characters in `source` (an inline `</script>`-looking sequence, raw `<`/`>`) are escaped so
-  the diagram source can never break out of its container element.
-- Determinism (R10): `renderHtml` is a pure function of its inputs; the bundled script text is a
-  build-time constant, not fetched at render time.
+  the diagram source can never break out of its container element; the inlined bundle text is itself
+  guarded against a `</script` sequence prematurely closing its own `<script>` element.
+- Determinism (R10): `renderHtml` is a pure function of its inputs; the bundled script text and
+  version are build-time constants (read once, from this package's own pinned dependency), never
+  fetched at render time.
 
 **Depends on:** nothing new (takes raw Mermaid source directly; does not need P1's structural model).
 

@@ -1481,3 +1481,70 @@ sibling comparison to `checkTransclusion` — normalised only trailing whitespac
 endings, meaning the exact CRLF false-drift defect already fixed for transclusion still existed one
 file over, for the generator-drift comparison itself. **Fixed** the same way: line endings normalised
 on the `actualSource` side before comparing.
+
+## Q48 — `PLAN-M3.md`'s own P5 "Checks" text ("no `fetch(`, no `http://`/`https://` reference of any
+kind — mechanically greppable") is unsatisfiable once the real, pinned `mermaid` bundle is inspected
+
+**Conflict.** `08` §8.11.8 requires the HTML fallback path to "require... no network at render time";
+before writing P5's code, `PLAN-M3.md`'s own draft elaborated that into a literal text-grep check:
+the emitted HTML must contain no `<script src=`, no `fetch(`, no `http://`/`https://` substring
+anywhere. Inspecting the actual pinned `mermaid@11.17.2` UMD build
+(`node_modules/mermaid/dist/mermaid.min.js`, the file P5 inlines) before writing any code found this
+check is impossible to satisfy literally: the file contains 81 occurrences of `http://`/`https://` —
+SVG/XML namespace URIs (`http://www.w3.org/2000/svg`, `.../1999/xlink`, etc., which browsers require
+verbatim and which are never fetched — they are opaque identifiers, not URLs a browser dereferences),
+MIT-license attribution comments, and doc links embedded in Chevrotain's own parser-error message
+strings — plus three literal `fetch(` substrings inside error-handling code paths not exercised by
+ordinary diagram rendering. None of this is a real network call; all of it is inert vendored text.
+Mangling the third-party bundle to remove these strings would be fragile (breaks on any dependency
+bump) and actively harmful for the namespace URIs, which must stay byte-for-byte correct for the SVG
+to render at all.
+
+**Recommended resolution:** the "mechanically greppable" check was my own plan-time elaboration of
+`08` §8.11.8, not spec text itself, so no spec ambiguity exists to record an answer against — the
+check itself was simply wrong once checked against a real dependency rather than reasoned about in
+the abstract, the same calibration failure this milestone has now hit five times (Q45, Q46, Q47, and
+this one). **Answer taken (proceeding):** `PLAN-M3.md`'s P5 Checks section is corrected in place to
+what's actually meaningful and actually verifiable:
+1. **Static check, scoped to code this package itself authors**: the HTML *wrapper* `renderHtml`
+   generates (everything outside the verbatim-inlined third-party bundle text) contains no
+   `<script src=` and no hardcoded external URL of its own authorship.
+2. **Behavioural check, in the headless-DOM render test**: `globalThis.fetch` and
+   `XMLHttpRequest.prototype.send` are spied on before the rendered HTML's scripts execute in jsdom,
+   and asserted never called during a real render pass across one example per diagram kind — this is
+   what actually proves the zero-network claim for code this package does not author (the vendored
+   Mermaid bundle), rather than a text grep that a license comment or a namespace URI trivially fails.
+`BUNDLED_MERMAID_VERSION`/version pinning already satisfies `20` §20.6's "version-pinned and
+integrity-checked": the dependency is pinned exact (no `^`/`~`) in `package.json` and the committed
+lockfile records and verifies its integrity hash on every install, a repo-wide mechanism this one
+piece does not need to reimplement.
+
+## Q49 — `renderHtml`'s `RenderOptions.theme` has no field for `08` §8.11.8/§8.11.9's own third theming
+requirement, "colour-blind-safe palette," and no spec document anywhere gives it concrete colours
+
+**Conflict.** `08` §8.11.8 names three co-equal theming requirements in one sentence: "light/dark
+pair, colour-blind-safe palette, consistent shape semantics." `RenderOptions.theme` implements only
+the first (`{ light: string; dark: string }`, two Mermaid built-in theme *names*) and the legend
+option implements the third; a gauntlet critic found the second has no implementation and no
+acknowledgment anywhere in the code, even though `types.ts`'s own doc comment quotes §8.11.9's
+worked config (`theme: { light: neutral, dark: dark, palette: colorblind-safe }`) — silently dropping
+the one field it quotes. Searched the whole spec pack for concrete values to implement against
+(`grep -rn "colour-blind\|colorblind\|palette" specs/*.md`): `04` §~261 states the same principle for
+the TUI's own colours ("chosen to be distinguishable under common colour-blindness types") but, like
+`08`, gives no actual hex/RGB values anywhere. Mermaid's own built-in theme names
+(`default`/`neutral`/`dark`/`forest`/`base`) include nothing literally named or documented as
+colour-blind-safe either.
+
+**Recommended resolution:** implementing this for real requires a concrete palette (a set of actual
+colours), which does not exist anywhere in the spec pack to implement against — inventing one here
+would not be "implementing the spec as written," it would be inventing a spec. `08` §8.11.9 itself
+frames `palette: colorblind-safe` as a *project style-profile* config value under customization
+surface **C16** (`15` §15.1), which layers/resolves project-wide style profiles at a level well above
+one rendering primitive that takes a diagram source string and, optionally, two already-resolved
+theme names. **Answer taken (proceeding):** `RenderOptions.theme` stays exactly `{ light: string;
+dark: string }` — this piece's job is to render *given* a resolved theme, not to define what
+"colour-blind-safe" concretely means or resolve a project's style profile into one. A future C16
+implementation is the one that should translate a project's `palette: colorblind-safe` setting into
+either a real Mermaid built-in theme name or a concrete `themeVariables` override object, and pass the
+result in through this same `theme` field — nothing about today's narrow shape blocks that. `types.ts`
+is corrected to say this explicitly rather than silently truncating the config shape it quotes.
