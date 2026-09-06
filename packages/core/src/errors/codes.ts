@@ -191,6 +191,18 @@ export const ERROR_CODES = {
     remedy:
       'Fix the Mermaid syntax the parser reports, or open the source in a Mermaid live editor.',
   },
+  // `08` §8.11.6: a generator's own input shape is a real contract (PLAN-M3.md P3's Surface), and a
+  // caller reaching a generator by name through `runGenerator` has only `unknown` at the type level —
+  // this is what turns a mismatched shape into an actionable failure instead of a raw `TypeError`
+  // from deep inside the generator's own body.
+  'KB-002': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { generator: string; detail: string }) =>
+      `Generator ${show(d.generator)} received an input that does not match its own shape: ${show(d.detail)}.`,
+    remedy:
+      'Pass the input shape this generator documents, or call it directly with a typed input.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

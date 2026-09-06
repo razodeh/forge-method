@@ -6,3 +6,4 @@
  */
 export * from './parse/index.ts';
 export * from './lint/index.ts';
+export * from './generate/index.ts';

@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./parse": "./src/parse/index.ts",
-    "./lint": "./src/lint/index.ts"
+    "./lint": "./src/lint/index.ts",
+    "./generate": "./src/generate/index.ts"
   },
   "engines": {
     "node": ">=20.10"

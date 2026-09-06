@@ -76,6 +76,7 @@ const SAMPLE_DETAILS = {
   kind: 'flowchart',
   diagramId: 'DIAG-014',
   src: 'architecture/views/containers.mmd',
+  generator: 'components-to-c4',
 } satisfies Record<string, unknown> as never;
 
 /**

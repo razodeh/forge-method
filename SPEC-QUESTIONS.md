@@ -1343,3 +1343,74 @@ structural). `Diagram.fromText`, the class-based, non-deprecated path to the sam
 separately exported as its own runtime chunk (only as a `.d.ts` — the class is inlined into the main
 bundle). The deprecated call is used deliberately, with an inline `eslint-disable` naming this
 reasoning, rather than working around a warning with a worse design.
+
+## Q46 — `sanitizeMermaidId`'s character-replacement alone is not injective and can produce a Mermaid
+reserved word, plus three generators implement less than their own taxonomy row literally promises
+
+**Conflict.** `08` §8.11.6's own table gives each generator's Output as a short phrase — "Context +
+Container + Component views" for `components-to-c4`, "ER diagram reflecting *actual* schema" for
+`schema-introspect-to-er` (sourced from "a live/dev database or migration files"), "CI/CD pipeline
+stages & gates" is `08` §8.11.3's row for the same output `pipeline-to-flow` produces — none of which
+this milestone's own scope (`specs/22` M3, one piece, `@forge/diagrams` with no adapter/engine
+dependency) can fully build: three C4 abstraction levels is a materially larger generator than one
+flat dependency graph; a real database/migration-file introspector is its own substantial subsystem
+with no home before brownfield ingestion (M10); "gates" (approval/pass-fail semantics) have no
+representation in a plain stage-dependency list. Separately, and found empirically while building
+this piece (not a spec gap): a first implementation's `sanitizeMermaidId` replaced every character
+outside `[A-Za-z0-9_]` with `_` and used the result directly as a bare Mermaid identifier. This is not
+injective — `component-api` and `component_api` both sanitize to `component_api` — and a gauntlet
+critic proved, by feeding both into a real `mermaid@11.17.2`, that two distinct declared nodes
+silently collapse into one (the second declaration's label wins, the first's is lost, and any edge to
+either now points at the merged node). The critic also proved several ordinary words — `end`, `class`,
+`style`, `subgraph` in flowchart grammar; `end`, `participant`, and other sequence-diagram keywords —
+fail to parse at all as a bare, unsanitized identifier, and are entirely ordinary real-world names (a
+workflow step called `end`, a CI stage called `style`).
+
+**Answer taken (proceeding):**
+
+*Scope narrowing (three generators):* `components-to-c4` produces only the container-level view (`08`
+§8.11.3's own `C4Container`/`flowchart` row) — the single most load-bearing of the three; the context
+and component views are a documented gap for a future piece, not attempted. `schema-introspect-to-er`
+takes already-extracted table/column/foreign-key structure as its own input — the actual database
+query or migration-file parse that produces that structure is a separate, larger concern, deferred to
+whichever future piece (plausibly brownfield ingestion, M10) builds real introspection. `pipeline-to-
+flow` models stage ordering only, with no gate/approval concept — `PipelineToFlowInput` has no field
+for one. All three narrowings are named in the affected generator's own doc comment in
+`generators.ts`, not left silent.
+
+*Sanitization fix:* `sanitizeMermaidId`'s raw character replacement is now only ever the first pass of
+`buildSanitizedIdMap`, which every generator's rendering path (`render-flowchart.ts`, `render-er.ts`,
+`render-sequence.ts`) calls once per diagram (and, for entity attributes, once per entity) over every
+id it is about to emit. It assigns ids in a fixed, sorted order (never input order, so two calls over
+the same id set always agree) and appends a numbered suffix (`_2`, `_3`, ...) to any later id that
+would otherwise collide with an earlier one's sanitized form, and prefixes (`n_`) any id that
+sanitizes to the empty string or to a curated, case-insensitive set of words verified empirically to
+break at least one Mermaid grammar this package generates. That curated set is explicitly not claimed
+exhaustive — Mermaid publishes no single reserved-word list — so a future word this set misses would
+still be a real, if currently unencountered, gap of the same shape.
+
+**Recommended resolution:** none needed against the spec pack itself for the sanitization half — that
+was this piece's own implementation defect, now fixed. For the three scope narrowings: `08` §8.11.6's
+table is the finished system's target, not a claim that one small piece must reach it in full; each
+gap is named at its own generator and can be picked up as its own future piece without changing this
+one's public surface (the return shape, `GeneratedDiagram`, does not preclude a richer implementation
+later).
+
+**Verify-round addendum: the sanitization fix itself introduced a display-identity regression in
+`sequenceDiagram` output, found and fixed without a third round.** The first version of the fix
+sanitized participant ids for use as Mermaid identifiers but left them to double as the *displayed*
+name too — Mermaid's implicit participant declaration shows the identifier itself on screen, so a
+participant named `end` (sanitized to `n_end` to parse at all) displayed as "n_end," not "end": the
+exact "silent identity change with no signal" defect class the sanitization work exists to close,
+resurfacing one layer up. Fixed by declaring every participant explicitly as `participant <sanitized>
+as <real name>` — Mermaid's own alias mechanism — so the visible name is always the real one
+regardless of what sanitization did to the identifier underneath it. `erDiagram` entities/attributes
+have no equivalent alias mechanism (verified empirically: a bracket-quoted label after an entity id
+parses without error but has no effect on the displayed name), so a real-world entity/attribute name
+needing sanitization is the one case `renderErDiagram` genuinely cannot show its original spelling
+for — documented on `ErEntity` directly as a Mermaid-grammar-imposed limitation, not a further
+implementation gap to chase. The same verify round also found `renderErDiagram`'s `cardinality` field
+was type-closed (`ErCardinality`) but never actually checked against `VALID_ER_CARDINALITIES` at
+runtime, leaving the exact `runGenerator`/dynamic-dispatch boundary case the type existed to guard
+against still open — fixed by validating it in `renderErDiagram` itself and raising `KB-002` for an
+invalid value, the same code the shape checks already use.
