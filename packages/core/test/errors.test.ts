@@ -59,6 +59,7 @@ const SAMPLE_DETAILS = {
   acs: 'AC-014-1, AC-014-2',
   acId: 'AC-014-2',
   stories: 'STORY-014, STORY-015',
+  detail: 'unrecognised operator $appand',
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -308,6 +308,21 @@ export const ERROR_CODES = {
       "Widen the type's idWidth in the registry (a schema change, reviewed like any other), or " +
       'retire older entries for this type.',
   },
+  // `15` §15.2: "Unknown operators are a compile error, never ignored," and "arrays require an
+  // operator, because silent array replacement is the single most confusing behaviour in every
+  // config system ever built." No spec page numbers this code; `PLAN-M2.md` P1 picks the next free
+  // `CFG-*` slot. `detail` carries the specific shape violation rather than a fixed enum, since a
+  // caller who already knows the exact overlay shape violation is better placed to phrase it than a
+  // registry entry can be for every shape this could ever be.
+  'CFG-011': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; detail: string }) =>
+      `Invalid overlay at ${show(d.path)}: ${show(d.detail)}.`,
+    remedy:
+      'Replace it with one of $set, $append, $prepend, $remove, $replaceWhere, $clear, or ' +
+      '$append_guidance where a plain object is expected.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */
