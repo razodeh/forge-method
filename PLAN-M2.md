@@ -369,20 +369,27 @@ itself is `@forge/cli`, M6).
 `forge overlay explain <id>` only).
 
 **Surface:** `@forge/extensions/compile`
-- `interface CompileResult { readonly resolvedSet: ResolvedSet; readonly violations: readonly InvariantViolation[]; readonly warnings: readonly CompileWarning[] }`.
+- `interface CompileResult { readonly documents: CompiledDocuments; readonly violations: readonly InvariantViolation[]; readonly warnings: readonly CompileWarning[] }`
+  — `documents` (not `resolvedSet: ResolvedSet` as originally drafted here; see `SPEC-QUESTIONS.md`
+  Q41, written once P8's real `ResolvedSet` shape turned out structurally incompatible with what this
+  field actually needs to hold) is `Record<DocumentKind, ReadonlyMap<string, ResolvedEntity>>`, one
+  entry per `15` §15.2 rule 1 kind.
 - `compile(sources: CompileSources, options?: { check?: boolean }): CompileResult`.
-- `explainOverlay(result: CompileResult, entityKind: EntityKind, id: string): readonly FieldProvenanceEntry[]`.
+- `explainOverlay(result: CompileResult, kind: DocumentKind, id: string): readonly FieldProvenanceEntry[]`.
 
 **Checks:**
-- `compile()` over a fixture five-layer input produces a resolved set covering every kind `15` §15.2
+- `compile()` over a fixture five-layer input produces `documents` covering every kind `15` §15.2
   rule 1 names (`agents, workflows, frameworks, templates, checks, skills`) — matching, not a subset.
-- `compile({ check: true })` surfaces every invariant violation from P8 without partially returning a
-  resolved set a caller could mistake for a clean compile.
+- `compile({ check: true })` surfaces every invariant violation `CompileSources` alone can actually
+  supply the input for — `SPEC-QUESTIONS.md` Q42 records which of P8's twelve that is (I8, I9) and
+  why the other ten remain a caller's own direct `runInvariants` call with a richer, hand-assembled
+  `ResolvedSet` — without partially returning a resolved set a caller could mistake for a clean
+  compile.
 - `explainOverlay` reproduces `AC15-2` exactly through the full pipeline (not just P2's unit-level
   guarantee): every field of a real, multi-layer fixture's resolved object names its true supplying
   layer end to end.
 - Determinism (R10): compiling the same `sources` twice, and compiling with a same-layer, non-conflicting
-  contribution order shuffled, produce byte-identical `resolvedSet` and identically-ordered
+  contribution order shuffled, produce byte-identical `documents` and identically-ordered
   `violations`/`warnings`.
 - `specs/22`'s own M2 exit tests map onto this piece directly: `pnpm test -- packages/extensions
   --coverage` (≥90%, exercising everything built in P1–P9); `pnpm test -- --grep "invariant I"` (P8's
@@ -393,6 +400,9 @@ itself is `@forge/cli`, M6).
   to whichever M6 piece first wires `forge compile` to this function.
 
 **Depends on:** P1, P2, P3, P4, P5, P6, P7, P8.
+
+*(P1, P2, P3, P4, P5, P6, P7, P8, P9 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`,
+`7705672`, `2f786a0`, `3cc6102`, `fbf4737`, `a06bb05`. M2 is complete.)*
 
 ---
 

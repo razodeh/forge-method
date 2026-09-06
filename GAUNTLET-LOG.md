@@ -1549,3 +1549,72 @@ never re-read the source table closely enough to notice; a message template buil
 before composing, rather than composing at render time). In every case, the fix was to go back to the
 *actual* source — the spec's own worked example, the real `REQUIRED_EDGES` table, the real
 `CeilingViolation` shape — rather than trust the comment that was already sitting next to the bug.
+
+## M2 P9 — the compile pipeline and `overlay explain` (final piece of M2)
+
+**Rounds: 2 (one critic finding two real defects in the piece's own most novel logic; one scoped
+verify that, while confirming those two fixes, found two *further* real defects the fix itself
+introduced — both fixed and re-verified without a third round, per this loop's own cap). Outcome:
+WON.**
+
+The tie-together piece for the whole milestone: `compile()` assembles P1–P8 into `15` §15.12's two
+library functions. Its one genuinely new piece of logic — cross-entity `$extends` resolution, which
+`@forge/extensions/resolve`'s own `Resolver` (P2) deliberately leaves for "a caller with visibility
+across all entities" to implement — turned out to be the highest-risk code in this entire milestone,
+and both gauntlet rounds found real bugs in it.
+
+### Round 1 — two real defects in the original `$extends` topological resolution
+
+- **Major: a statically-peeked `$extends` candidate could misclassify an ordinary relationship as a
+  cycle and silently drop real content.** `Resolver.resolve` only consults a supplied `extendedBase`
+  "while nothing real has been established yet" for an entity — a later contribution's own `$extends`
+  is a documented no-op once an earlier contribution already produced real content. The original code
+  peeked at raw documents for "the first `$extends` found," which cannot tell a genuine dependency
+  apart from that no-op case. Two entities cross-wired this way (one genuinely depending on the other,
+  the other's own `$extends` a no-op) were misdetected as mutually cyclic, and the losing side's real
+  content vanished with no warning.
+- **Major: the cycle-fallback path was not actually "no extendedBase," contradicting its own doc
+  comment.** For a genuine cycle, members were resolved sequentially in alphabetical order, letting an
+  earlier-sorted member's just-computed value leak into a later one — not the symmetric,
+  no-one-helps-anyone resolution the code's own comment promised. The existing test for this case used
+  the same field name on both sides of the cycle, masking the leak either way.
+- **Fix:** replaced static peeking with an *empirical probe* — resolving the same contributions with
+  and without a distinctive sentinel value as `extendedBase` and comparing results, rather than
+  re-implementing `Resolver`'s own internal establishment gate a second time (a copy that could drift
+  from the original). Cycle members now resolve up front using the same result `Resolver.resolve`
+  itself already produces with no `extendedBase` at all, applied symmetrically to every member.
+
+### Round 2 — scoped verify: the fix's own two new defects, found and fixed without a third round
+
+- **Major: the probe itself could throw for a scenario the real resolution would never fail on.**
+  Forcing any non-`undefined` sentinel onto the probe routes the merge through a path that requires an
+  explicit array operator for a bare array field — a path the *real* resolution only takes when a real
+  extended base actually exists. When the `$extends` target didn't resolve to anything at all (outside
+  the entity batch), the real resolution would have taken the seed path instead (bare arrays
+  auto-wrap, no operator needed) — but the probe crashed before ever reaching that real resolution,
+  turning a legitimately quiet no-op into an uncaught exception.
+- **Major: cycle detection over-broadened to entities that merely depend on a cycle member.** The
+  original "nothing in the whole remaining set is ready" test correctly identified a cycle's own
+  members but also swept in any *other* entity blocked behind one — an entity with an ordinary,
+  non-circular dependency on a cycle member got dumped into the same no-help fallback, silently losing
+  a real dependency one hop away from the actual cycle.
+- **Fix:** the probe now catches its own forced-crash and treats the exception itself as proof of a
+  real dependency (the only condition under which it can happen is exactly the condition under which
+  `extendedBase` genuinely matters) — the real, later resolve decides on its own merits whether the
+  same throw is real. Cycle *membership* is now computed exactly, via traversal of the underlying
+  functional dependency graph (each entity has at most one outgoing edge, so a cycle is precisely a
+  revisited node on the current traversal path) — resolving only true cycle members up front, leaving
+  a genuinely acyclic graph for everyone else, including entities that depend on a former cycle member
+  without being part of it.
+
+### Calibration note
+
+This entry is the clearest example this session has produced of why the verify round exists at all: a
+fix aimed squarely at two confirmed defects introduced two *more* defects of its own, in the same
+piece of genuinely novel logic, and the scoped verify pass caught both before they ever reached a
+commit. The pattern connecting all four defects is the same: reasoning about `$extends` resolution *in
+the abstract* ("does supplying a base change the result," "is anything left unresolved") missed
+concrete mechanical details — a shared merge-path branch with unrelated array-operator rules, a
+transitively-blocked entity mistaken for a cycle member — that only surfaced by tracing specific,
+concrete inputs through the real `Resolver` and the real topological loop by hand, exactly as both
+fresh agents did and the original design reasoning did not.
