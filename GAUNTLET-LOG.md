@@ -1087,3 +1087,79 @@ operator," and the rule applies to all three identically. Fixing a defect by pat
 specific reported shape, rather than by re-deriving the rule the shape was an instance of, is a subtler
 version of the same lesson P12/P13/M1-P14 each recorded: a fix scoped to the counter-example that
 found it is not yet the same thing as a fix scoped to the property that was actually violated.
+
+---
+
+## M2 P2 — the five-layer resolver, `$extends`, and per-field provenance
+
+**Rounds: 2 (one critic finding three blocking and one minor; one scoped verify confirming four of
+five fixes and finding one further major, itself fixed without a third dispatch). Outcome: WON.**
+
+Built on P1's `applyOverlay` (already committed) without reopening it. Two design decisions this piece
+had to make with no worked example to anchor them, both recorded as reasoning in the code rather than
+in `SPEC-QUESTIONS.md` since neither contradicts spec text, they just fill a gap it leaves open: (1)
+per-field provenance is computed by *unioning* a reference-equality diff of the merged result with a
+direct walk of each contribution's own declared fields — the diff alone cannot tell "re-declared the
+same value" from "never touched," since JS primitives compare equal by value regardless of which layer
+wrote them; (2) the very first contribution to an entity is treated as a seed, not an overlay, so a
+base agent definition can write a plain `skills: [a, b, c]` without `$set` — `applyOverlay`'s "arrays
+require an operator" rule exists to stop a later layer *silently replacing* an existing array, which
+cannot happen when nothing exists yet to replace.
+
+### Round 1 — three blocking, one minor (fixed); one minor found stayed fixed
+
+- **Blocking: stale provenance survived whole-subtree deletion.** Deleting a nested object via an
+  RFC-7386 `null` overlay correctly removed it from the resolved value, but the provenance map kept
+  reporting `explainField` results — from whichever layer had originally set them — for fields that no
+  longer existed anywhere in the document. Fixed by pruning every provenance entry nested under a
+  deleted (or replaced) path, and by not recording provenance at all for a path whose new value is a
+  deletion, rather than tombstoning it to the deleting layer.
+- **Blocking: a contribution whose own `$extends` named a different id discarded everything earlier
+  contributions to the *same* id had already built**, even when real content already existed — the
+  fix used `options.extendedBase` unconditionally whenever `$extends` didn't match, rather than only
+  when there was nothing yet to discard. Two L1 modules to the same custom-agent id, one plain and one
+  `$extends`-bearing, silently lost the plain one's fields. Fixed by only consulting `extendedBase`
+  while the running value has no real content yet — later, redundant `$extends` declarations become a
+  no-op on the base, with their own other fields still merging normally.
+- **Blocking: `checkReplaceWhereTargets` false-positived on a legal same-directive pattern.** The
+  target-existence check ran against the base as it stood *before* the whole directive, not accounting
+  for `applyOverlay`'s fixed operator order — so `{ $append: [{id:'new'}], $replaceWhere: [{id:'new',
+  ...}] }`, which `applyOverlay` itself handles correctly (append runs first), was refused as a stale
+  target by this piece's own additional check. Fixed by simulating `$set`/`$append`/`$prepend`/
+  `$remove`'s id-introducing-or-removing effect within the same directive before validating
+  `$replaceWhere`.
+- **Minor, fixed anyway (cheap and safe):** same-layer conflict detection compared values via
+  `JSON.stringify`, which is key-order sensitive, so two structurally-identical values with
+  differently-ordered object keys could spuriously warn. Fixed with a canonical-key-order stringify.
+
+A fifth, previously-undiscovered bug surfaced while writing the regression test for the second
+finding: the "first contribution is a seed" rule bypassed `applyOverlay` *entirely*, so a seed
+document that happened to use a real operator (a redundant `$append`, say) never actually executed
+it — the raw, unexecuted directive object became the literal field value. Fixed by routing the seed
+through `applyOverlay` too (onto an empty object), with bare arrays pre-wrapped as `$set` so both the
+"no operator needed yet" case and the "operator present" case work correctly through the one real
+merge path, rather than two divergent code paths.
+
+### Round 2 — scoped verify: four of five fixes confirmed; the `$extends` fix's own scope found wrong
+
+A fresh agent hand-traced the seed-wrapping fix through four levels of nesting, confirmed
+delete-then-recreate provenance correctly re-attributes to the recreating layer, confirmed
+`$remove`-by-scalar-value is honoured in the same-directive `$replaceWhere` check, and confirmed
+determinism holds — then found that round 1's `$extends` fix used the wrong proxy for "has anything
+real been built yet": it tested `value === undefined`, but a **no-op contribution** (only
+`$description`, nothing else) still produces a real, defined `{}` via the seed path — meaning a
+*genuine* `$extends` on the very next contribution was wrongly treated as "something already exists,"
+silently defeating it with no error. A module shipping a description-only stub for a custom agent id
+ahead of the real `$extends`-bearing override was exactly the ordinary-looking case this would have
+broken silently. Fixed by testing "is there at least one real field," not "is the accumulator
+merely defined" — an empty object from a no-op contribution no longer counts as established.
+
+### Calibration note
+
+The `$extends` fix in round 1 already knew the right *rule* ("only seed while nothing real exists
+yet") but implemented it with a proxy (`value === undefined`) that was not actually equivalent to that
+rule — a no-op contribution's empty `{}` satisfies "defined" without satisfying "real." This is a
+different flavour of the same recurring pattern this log keeps naming (P12, P13, M1-P14, M2-P1): the
+gap wasn't in the reasoning, it was in translating a correct rule into a check that tests exactly what
+the rule means, rather than something merely correlated with it in every case the fix's own author had
+in mind while writing it.

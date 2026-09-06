@@ -93,12 +93,15 @@ every field traceable to the layer that supplied it.
   the field, per `15` §15.2 rule 4 — the resolution is never silent.
 - A later layer's `$replaceWhere`/field-path target that does not exist in what the earlier layers
   produced is a specific, named error (`15` §15.2's own worked example: `CFG-04x overlay target not
-  found`) rather than a silent no-op or a crash — the exact code number is this piece's to pick and
-  record in `SPEC-QUESTIONS.md`, mirroring P1's `$4xx` gap.
+  found`) rather than a silent no-op or a crash — implemented as `CFG-012`, checked against the ids a
+  same-directive `$set`/`$append`/`$prepend`/`$remove` would actually leave in place (matching
+  `applyOverlay`'s fixed operator order), not only against the base as it stood before the directive.
 - Determinism (R10): resolving the same `contributions` array twice, or with two same-layer,
   non-conflicting contributions swapped, produces byte-identical `value` and `provenance`.
 
 **Depends on:** P1.
+
+*(P1, P2 are committed: `f9da688`, `44fd9db`.)*
 
 ---
 
