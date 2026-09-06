@@ -9,7 +9,8 @@
     "./constants": "./src/constants.ts",
     "./fs": "./src/fs/index.ts",
     "./artifacts": "./src/artifacts/index.ts",
-    "./ids": "./src/ids/index.ts"
+    "./ids": "./src/ids/index.ts",
+    "./graph": "./src/graph/index.ts"
   },
   "engines": {
     "node": ">=20.10"

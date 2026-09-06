@@ -11,4 +11,5 @@ export * from './artifacts/index.ts';
 export * from './clock.ts';
 export * from './errors/index.ts';
 export * from './fs/index.ts';
+export * from './graph/index.ts';
 export * from './ids/index.ts';

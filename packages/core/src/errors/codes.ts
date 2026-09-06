@@ -143,6 +143,27 @@ export const ERROR_CODES = {
       `${show(d.artifact)} has no parent ${show(d.expectedParent)}.`,
     remedy: 'Add the missing parent reference to the artifact front matter, or mark it deprecated.',
   },
+  // `09` §9.4: "1 test proves exactly 1 AC; an AC may have many tests" — the reverse cardinality
+  // (many-to-one) is legal, so this fires only when a single test names more than one.
+  'SPEC-022': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { test: string; acs: string }) =>
+      `Test ${show(d.test)} proves ${show(d.acs)}; a test must prove exactly one acceptance criterion.`,
+    remedy:
+      'Split the test into one test per acceptance criterion, or name only the one it proves.',
+  },
+  // `09` §9.4's `AC belongsTo STORY` edge assumes one home per AC id; `storySchema`'s own duplicate
+  // check only sees one story's `acceptance[]` at a time, so a second story reusing an id is only
+  // visible once the whole corpus is in one graph — see `PLAN-M1.md` P14, `SPEC-QUESTIONS.md` Q31.
+  'SPEC-023': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { acId: string; stories: string }) =>
+      `Acceptance criterion ${show(d.acId)} is claimed by more than one story: ${show(d.stories)}.`,
+    remedy:
+      'Rename all but one acceptance criterion so each id is unique across the whole project.',
+  },
   'KB-005': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,

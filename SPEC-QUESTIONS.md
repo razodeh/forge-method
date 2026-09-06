@@ -869,3 +869,62 @@ allocation with `CFG-010`, naming the type and the digit ceiling, rather than "w
 to `idWidth`" — either "allocation fails past the digit ceiling" (what this piece implements) or "ids
 widen past the ceiling" (which would mean revisiting the id regex everywhere it's already enforced:
 `registry/front-matter.ts`, `artifacts/entry-id.ts`, and every per-type schema built on top of them).
+
+## Q31 — P14's spec graph: `02` §2.6's "capability" vs `09` §9.4's "epic," and which required edges are
+actually derivable from `ArtifactDocument[]` alone
+
+**Conflict 1 — parent-type wording.** `PLAN-M1.md` P14's Check says: "a story with no parent epic
+produces the documented `SPEC-` violation naming the story (`02` §2.6 example: `SPEC-021 STORY-014 has
+no parent capability`)." But `09` §9.4's own edge table states the Story's one required edge as
+`STORY partOf EPIC`, not `STORY … CAPABILITY` — the two spec pages name a different parent type for
+the same node. `02` §2.6's line is a one-off illustrative example in an error-taxonomy table, not a
+restatement of the traceability rules; `09` §9.4 is the section this piece implements and the one
+`REQUIRED_EDGES` transcribes row-for-row.
+
+**Answer taken (proceeding):** `09` §9.4 is authoritative for graph structure — the checked edge is
+`STORY partOf EPIC`, sourced from `story.epic`. `SPEC-021` (already shipped, `errors/codes.ts`) takes a
+generic `{ artifact, expectedParent }` pair and renders `"<artifact> has no parent <expectedParent>."`;
+`SpecGraph` calls it with `expectedParent: 'Epic'` for this violation. `02` §2.6's "capability" wording
+is read as loose illustrative phrasing (the Story's ultimate ancestor chain does end at a Capability,
+two hops up), not a second literal requirement — nothing in `09` §9.4 or anywhere else asks for a direct
+`STORY → CAPABILITY` edge, and `Story`'s own `capability` field (`schemas/artifacts/story.ts`) is
+treated as denormalized convenience data, not a graph edge, since `EdgeKind` has no member for it.
+
+**Conflict 2 — five of the eleven `09` §9.4 rows are not derivable from `ArtifactDocument[]` alone
+under the schemas P6/P7 already shipped.** `SpecGraph.build`'s stated surface takes only
+`docs: readonly ArtifactDocument[]`. Checking each row against what a `Story`/`Epic`/`Capability`/
+`Task`/`ADR`/`InterfaceContract`/`NFR` document's front matter actually carries:
+
+| Row | Data exists to derive it? | Built by `SpecGraph.build` in M1? | Source / why not |
+|---|---|---|---|
+| `CAP realises VIS` | yes | **yes** | implicit: `Capability.parent === 'Vision'` (registry) and Vision is a singleton (`cardinality: 'one'`) — every `Capability` node realises the one `Vision` node present, no field needed |
+| `EPIC delivers CAP` | yes | **yes** | `epic.capability` |
+| `STORY partOf EPIC` | yes | **yes** | `story.epic` |
+| `AC belongsTo STORY` | yes | **yes** | synthesized: each `story.acceptance[]` entry is an AC node, implicitly belonging to the Story document it is embedded in |
+| `TEST proves AC` | yes, by convention | **yes** | `story.tests[]` entries are test-name strings; `09` §9.5 point 1 requires a test's name to start with the AC id it proves (`AC-014-2 …`); a leading `^AC-\d{3,4}-\d+` token is extracted as the `proves` target. No token, or a token naming an AC absent from the graph, makes the test an orphan (`09` §9.4's own example: `TEST-198 proves no AC`). The same test-name string resolving to more than one distinct AC anywhere in the corpus is the cardinality violation the Check names. |
+| `TASK implements STORY` | no | no | `taskSchema` (P6, `SPEC-QUESTIONS.md` Q20) has no field beyond `type: 'Task'` — deliberately, since `09` §9.3 gives Task no field list. Neither does `Story` carry a reverse `tasks: string[]`. There is currently no data anywhere in an `ArtifactDocument` that names which Story a Task implements. |
+| `COMMIT implements STORY` | no | no | a git commit is not a FORGE artifact document at all; this needs VCS history, not front matter. No such ingestion exists in M1. |
+| `FILE primaryFor STORY` | yes (partial: "claims" half only) | no | `story.files_expected[]` gives the "claims" half of "advisory (from claims + commit history)"; "+ commit history" is unavailable in M1. Deferred rather than half-built: `PLAN-M1.md` P14's Checks never exercise this row, and this piece has no way to test the advisory ranking a real `spec matrix` view would need against real commit history. |
+| `ADR constrains EPIC/STORY/component` | yes (partial: no way to tell "component" from a typo) | no | `adr.blast_radius[]` is a free-form string list naming affected ids or components, with nothing distinguishing "a component name the graph legitimately has no node for" from "an id that no longer resolves because it was renamed." Deferred alongside `FILE primaryFor STORY` for the same reason: no Check exercises it, and building it now would be exactly the kind of unverified, builder-invented resolution rule this project's own `GAUNTLET-LOG.md` has twice already found to be where the real defects hide (P12's fence-pairing heuristic, P13's cache-trust optimization). |
+| `INT consumedBy STORY` | yes | no | `story.interfaces[]` names the ids (the edge would be authored from the consuming Story's side, not a back-reference on `InterfaceContract`, which P6 left field-free like Task, `SPEC-QUESTIONS.md` Q20) — deferred for the same reason as the two rows above. |
+| `NFR verifiedBy TEST/benchmark/monitor` | yes | no | `nfr.verification.ref` names the target, but it may be a real `TEST` node, a benchmark, or a monitor — three different resolution rules with nothing in the front matter distinguishing which applies, and again no Check exercising any of them. |
+
+**Answer taken (proceeding):** `REQUIRED_EDGES` transcribes all eleven `09` §9.4 rows verbatim, as data
+— the Check asks for the table row-for-row, not for only the checkable subset. `SpecGraph.build`
+constructs real edges only for the five rows `PLAN-M1.md` P14's Checks actually exercise (`realises`,
+`delivers`, `partOf`, `belongsTo`, `proves`); the other six are deferred, not half-built from an
+untested guess at each one's resolution rule. `missingRequiredEdges()` correspondingly evaluates only
+the three parent-chain rows (`SPEC-021`) and the `proves` cardinality rule (`SPEC-022`) — evaluating an
+unbuilt row would either flag every `Task`/`ADR`/`InterfaceContract`/`NFR` document as a violation (a
+wall of false positives) or silently claim compliance it cannot verify, and neither is better than not
+evaluating it at all. This scoping is recorded in `graph/build.ts`'s own doc comment and in
+`SpecGraph.parentsOf`'s, not hidden. Closing `TASK`/`COMMIT` needs either a spec-given `Task.story`
+field (revisiting the P6 schema `SPEC-QUESTIONS.md` Q20 deliberately left minimal) or a git-integration
+piece (a later milestone); closing `FILE`/`ADR`/`INT`/`NFR` needs a real Check to build and test each
+row's resolution rule against, which is a decision for whichever future piece first needs `spec:
+nfr-coverage` or the advisory half of the traceability matrix, not one to make speculatively here.
+
+**Recommended resolution:** align `02` §2.6's example to say `"SPEC-021 STORY-014 has no parent epic"`,
+matching `09` §9.4's own table; give `Task` a real `story: string` field once a spec page actually
+specifies one; and, when a future piece needs `FILE`/`ADR`/`INT`/`NFR` edges for a real gate, add Checks
+for each one's resolution rule at the same time, rather than inheriting an unverified guess from here.

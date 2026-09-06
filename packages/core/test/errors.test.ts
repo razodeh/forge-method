@@ -55,6 +55,10 @@ const SAMPLE_DETAILS = {
   section: 'Context',
   type: 'Story',
   idWidth: 3,
+  test: 'AC-014-1 AC-014-2 combined validation',
+  acs: 'AC-014-1, AC-014-2',
+  acId: 'AC-014-2',
+  stories: 'STORY-014, STORY-015',
 } satisfies Record<string, unknown> as never;
 
 /**
