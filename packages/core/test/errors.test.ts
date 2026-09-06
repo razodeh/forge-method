@@ -61,6 +61,18 @@ const SAMPLE_DETAILS = {
   stories: 'STORY-014, STORY-015',
   detail: 'unrecognised operator $appand',
   id: 'review',
+  role: 'reviewer',
+  gateId: 'G-Verify',
+  checkId: 'coverage.min',
+  autonomy: 'supervised',
+  edgeKind: 'STORY->ACCEPTANCE_CRITERION',
+  subsystem: 'the event log',
+  agentId: 'sap-integrator',
+  missing: 'file_ownership',
+  capability: 'exec',
+  field: 'write',
+  location: '.forge/overrides/skills/acme-standards/SKILL.md',
+  level: 'L2',
 } satisfies Record<string, unknown> as never;
 
 /**

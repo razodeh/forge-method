@@ -7,6 +7,7 @@
  * @see specs/02 §2.2
  */
 export * from './agents/index.ts';
+export * from './invariants/index.ts';
 export * from './mcp/index.ts';
 export * from './merge/index.ts';
 export * from './presets/index.ts';

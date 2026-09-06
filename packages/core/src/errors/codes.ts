@@ -346,6 +346,144 @@ export const ERROR_CODES = {
     message: (d: { id: string }) => `No preset registered with id ${show(d.id)}.`,
     remedy: 'Run `forge preset list` to see the available preset ids.',
   },
+  // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
+  // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
+  // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the
+  // first free slots after this table's own `CFG-501`–`CFG-505`, since `CFG-506` is already reserved
+  // for a different guardrail (`SPEC-QUESTIONS.md` Q35).
+  'CFG-501': {
+    // I1: `05` §5's own line: "An overlay that would let an agent review, test or diagnose its own
+    // output fails compile."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { role: string }) =>
+      `Role ${show(d.role)} is configured to review, test, or diagnose its own output.`,
+    remedy:
+      'Choose a different agent for the reviewing, testing, or diagnosing role, or remove the ' +
+      'alias or assignment that collapses them into the same instance.',
+  },
+  'CFG-502': {
+    // I2: `10` §10.6: "the agent that writes tests is never the agent that makes them pass... Test
+    // files are outside the implementer's file claim."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) =>
+      `Test-authoring and implementation separation violated: ${show(d.detail)}.`,
+    remedy:
+      'Choose a different agent instance to author tests than the one implementing them, and ' +
+      "keep test file paths outside any implementer's file_ownership.",
+  },
+  'GATE-501': {
+    // I3: the configuration-shape half only — "cannot be approved with a failing check" is a
+    // run-time gate-approval fact (M5's to enforce); this checks that a gate's own config does not
+    // let itself be marked approved while a check it requires is disabled.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string; checkId: string }) =>
+      `Gate ${show(d.gateId)} would allow approval while its required check ${show(d.checkId)} is disabled.`,
+    remedy:
+      "Restore the required check, or remove it from the gate's required-check list if it is " +
+      'genuinely no longer required.',
+  },
+  'GATE-502': {
+    // I4: "a gate cannot be defined with zero deterministic checks."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string }) =>
+      `Gate ${show(d.gateId)} is defined with zero deterministic checks.`,
+    remedy: 'Add at least one deterministic check to the gate before it can be compiled.',
+  },
+  'GATE-503': {
+    // I5: "alwaysHuman gates (production delivery, one-way-door ADRs) cannot be downgraded by
+    // overlay."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string; autonomy: string }) =>
+      `Gate ${show(d.gateId)} is alwaysHuman and cannot be downgraded to ${show(d.autonomy)} by an overlay.`,
+    remedy:
+      "Remove the overlay's autonomy downgrade for this gate; alwaysHuman gates cannot be " +
+      'relaxed by customization.',
+  },
+  'SPEC-501': {
+    // I6: "traceability edges required by the spec graph cannot be disabled."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { edgeKind: string }) =>
+      `Overlay disables the required spec-graph traceability edge ${show(d.edgeKind)}.`,
+    remedy:
+      'Remove the overlay directive disabling this edge; required traceability edges cannot be ' +
+      'turned off.',
+  },
+  'CFG-503': {
+    // I10: "overlays cannot disable the event log, the cost ledger, or the audit trail."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { subsystem: string }) =>
+      `An overlay disables ${show(d.subsystem)}, which cannot be turned off.`,
+    remedy:
+      'Remove the overlay directive disabling this subsystem; the event log, cost ledger, and ' +
+      'audit trail are not customizable off.',
+  },
+  'CFG-504': {
+    // I11: "a custom agent cannot be created without a mandate, outputs, and file ownership" — the
+    // invariant-level re-assertion of `PLAN-M2.md` P3's own `checkCustomAgents`. `detail` is that
+    // check's own already-complete, already-reviewed violation message
+    // (`Custom agent "x" is missing y, z — there is no unconstrained agent.`) passed straight
+    // through, not re-derived into separate fields this code would have to keep in sync by hand.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) => show(d.detail),
+    remedy: "Add the missing field(s) to the custom agent's roster.add entry.",
+  },
+  'CFG-505': {
+    // I12: "required roles cannot be disabled at their applicable level" — the invariant-level
+    // re-assertion of `PLAN-M2.md` P3's own `checkRequiredRoles`. `detail` is that check's own
+    // already-complete violation message, passed straight through for the same reason as `CFG-504`.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) => show(d.detail),
+    remedy:
+      'Remove the disable directive for this role, or use autonomy settings instead if the goal ' +
+      'is to reduce its involvement.',
+  },
+  // `CFG-506` is deliberately left free here: `SPEC-QUESTIONS.md` Q35 already reserved it for a
+  // *different* future guardrail (an overlay deleting a gate step, `PLAN-M2.md` P6/P9's own
+  // territory) before this piece ever needed a slot of its own. I7–I9 register one slot higher
+  // (`CFG-507`–`CFG-509`) so the two reservations do not collide (`SPEC-QUESTIONS.md` Q40).
+  'CFG-507': {
+    // I7 (`SEC-501` in `15` §15.10; see `SPEC-QUESTIONS.md` Q40): "tool grants cannot exceed module
+    // ceilings without a recorded, expiring escalation" — the whole-resolved-set re-assertion of
+    // `PLAN-M2.md` P3's own `checkToolCeiling`. `field`/`detail` are kept separate (not pre-joined
+    // into one string) so this template can compose a grammatical sentence around them itself.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { role: string; field: string; detail: string }) =>
+      `Role ${show(d.role)}'s "${show(d.field)}" grant exceeds its module ceiling: ${show(d.detail)}.`,
+    remedy: 'Create an escalation for this grant, or reduce it to within the module ceiling.',
+  },
+  'CFG-508': {
+    // I8 (`SEC-502` in `15` §15.10; see `SPEC-QUESTIONS.md` Q40): "secrets cannot be placed in
+    // prompts, artifacts, skills, or the KB."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { location: string }) =>
+      `A secret-shaped literal was found in resolved content at ${show(d.location)}, not a "\${secret:...}" reference.`,
+    remedy:
+      'Replace the literal with a "${secret:<name>}" reference and store the real value in the ' +
+      'configured secret source.',
+  },
+  'CFG-509': {
+    // I9 (`SEC-503` in `15` §15.10; see `SPEC-QUESTIONS.md` Q40): "skills and MCP results cannot
+    // alter the FORGE operating contract, tool grants, or autonomy" — the whole-resolved-set
+    // re-assertion of `PLAN-M2.md` P4's own `INJECTION_PATTERNS`.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { location: string }) =>
+      `Resolved content at ${show(d.location)} contains instruction-shaped text targeting the operating contract.`,
+    remedy:
+      "Remove or rewrite the flagged text; skill and MCP content cannot alter FORGE's own " +
+      'operating contract.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

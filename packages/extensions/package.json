@@ -12,7 +12,8 @@
     "./skills": "./src/skills/index.ts",
     "./workflows": "./src/workflows/index.ts",
     "./presets": "./src/presets/index.ts",
-    "./style": "./src/style/index.ts"
+    "./style": "./src/style/index.ts",
+    "./invariants": "./src/invariants/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -23,6 +24,7 @@
   "dependencies": {
     "@forge/core": "workspace:*",
     "@forge/schemas": "workspace:*",
+    "minimatch": "10.2.6",
     "yaml": "2.9.0",
     "zod": "3.25.76"
   }

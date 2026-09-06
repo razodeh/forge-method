@@ -1032,6 +1032,14 @@ pages agree); the "delete a gate step" and "remove red/review steps" refusals ne
 (e.g. `GATE-504`, `CFG-506` — the next free slot in each family after `15` §15.10's own I1–I12), not
 `10`'s stated `GATE-501`/`CFG-502`, since those are already spoken for.
 
+**Update (P8):** `PLAN-M2.md` P8 (`SPEC-QUESTIONS.md` Q40) independently needed fresh `CFG-*` slots
+for its own I7–I9 and, without cross-referencing this entry, first landed on `CFG-506` too — the exact
+slot this entry had already reserved for the future "delete a gate step" guardrail. Caught before
+either piece's code shipped with the collision: P8's I7–I9 now register one slot higher
+(`CFG-507`–`CFG-509`), leaving `CFG-506` exactly as reserved here. Any future piece minting the "delete
+a gate step" code should still use `CFG-506` (not re-check this coordination against Q40 again — it is
+now settled) and `GATE-504` for "remove red/review steps," unchanged from this entry's own numbers.
+
 **Recommended resolution:** fix `10` §10.1's prose to cite the numbers `15` §15.10 actually assigns
 these two guardrails (assigning them fresh codes there, and reflecting the same codes back into `10`),
 rather than leaving two pages of the same spec pack disagreeing about what `GATE-501`/`CFG-502` mean.
@@ -1141,3 +1149,26 @@ on record.
 **Recommended resolution:** once `PLAN-M2.md` P9 lands a "read `.forge/overrides/**` into
 `LayerContribution[]`" function, add the literal `AC15-8` round-trip test this piece's own Check
 describes, using that function plus this piece's already-built `applyPreset`/`ejectPreset`.
+
+## Q40 — `15` §15.10's `SEC-` code prefix does not exist in `@forge/core/errors`' closed registry
+
+**Conflict.** `15` §15.10's own invariant table assigns I7/I8/I9 the codes `SEC-501`/`SEC-502`/
+`SEC-503`. But `@forge/core/errors`' `ErrorCodePrefix` (`02` §2.6) is a *closed* union of exactly ten
+prefixes (`CFG`/`ENV`/`ADP`/`VCS`/`SPEC`/`KB`/`GATE`/`RUN`/`BUD`/`USR`) with no `SEC` member —
+`PLAN-M2.md` P8's own design note flagged this before any code was written, recommending folding
+I7–I9 under `CFG-5xx` rather than widening the closed union unilaterally.
+
+**Answer taken (proceeding):** I7/I8/I9 register as `CFG-507`/`CFG-508`/`CFG-509` — `CFG` is `02`
+§2.6's own "Configuration/validation" category, broad enough to cover a refused resolved-set
+condition. Originally drafted as `CFG-506`–`CFG-508` (the next three free slots after `15` §15.10's
+own I1/I2/I10/I11/I12, `CFG-501`–`CFG-505`), but `SPEC-QUESTIONS.md` Q35 — written earlier, during
+P6 — had already reserved `CFG-506` for a *different* future guardrail ("delete a gate step" via
+overlay). Caught before either piece's code shipped with the collision; I7–I9 shifted one slot higher
+so `CFG-506` stays exactly as Q35 reserved it. I3–I6's own `GATE-501`/`GATE-502`/`GATE-503`/`SPEC-501`
+need no change: `GATE` and `SPEC` are both already-valid prefixes in the closed union, so those five
+codes are registered exactly as `15` §15.10 gives them.
+
+**Recommended resolution:** either add `SEC` to `02` §2.6's closed prefix list (a cross-cutting change
+no single milestone piece should make unilaterally), or update `15` §15.10's own table to cite
+`CFG-507`/`CFG-508`/`CFG-509` in place of the `SEC-*` codes it currently gives, so the spec pack's own
+two pages agree on what these three invariants are actually called.

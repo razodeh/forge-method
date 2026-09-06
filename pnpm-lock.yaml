@@ -89,6 +89,9 @@ importers:
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      minimatch:
+        specifier: 10.2.6
+        version: 10.2.6
       yaml:
         specifier: 2.9.0
         version: 2.9.0
