@@ -91,6 +91,8 @@ pure JavaScript with no browser and no server"); `02` §2.1's "Diagram validatio
 **Depends on:** nothing new beyond `@forge/core`'s `ForgeError`. `mermaid` and `jsdom` are new runtime
 dependencies of this package only, per `SPEC-QUESTIONS.md` Q45.
 
+*(P1 is committed: `59d17bc`.)*
+
 ---
 
 ## P2 — Diagram lint rules and the `Diagram` artifact

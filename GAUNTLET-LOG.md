@@ -1618,3 +1618,99 @@ concrete mechanical details — a shared merge-path branch with unrelated array-
 transitively-blocked entity mistaken for a cycle member — that only surfaced by tracing specific,
 concrete inputs through the real `Resolver` and the real topological loop by hand, exactly as both
 fresh agents did and the original design reasoning did not.
+
+## M3 P1 — Mermaid parsing and the diagram structural model
+
+**Rounds: 2 (one critic finding one blocking defect plus eight major/minor findings; one scoped verify
+confirming all fixes and finding no new real defects). Outcome: WON.**
+
+The opening piece of M3, and the first piece of `@forge/diagrams`: `parseDiagram` syntax-checks
+Mermaid source and extracts a typed node/edge/subgraph model, the one parse call every later diagrams
+check in this milestone reads through. Two of the fresh critic's findings came from the same root
+cause this session has now hit in M2 P9 too — a design comment stating a negative claim ("Mermaid
+ships no data for X," "the DOM shim is contained to this module") that a slightly deeper empirical
+check showed was false.
+
+### Round 1 — critic: one blocking, four major, four minor
+
+- **Blocking: a leading `---`-delimited YAML frontmatter block (real, valid, commonly-authored
+  Mermaid) defeated kind detection.** `detectKind`'s "first non-blank, non-`%%`-comment line" scan
+  never accounted for Mermaid's own frontmatter syntax, so a diagram opening with a `title`/`config`
+  block — encouraged, ordinary usage — was rejected as having "no recognised diagram keyword," while
+  the identical string parsed successfully when handed to `mermaid.mermaidAPI.getDiagramFromText`
+  directly. Direct violation of the one normative rule this piece implements (`08` §8.11.7
+  `diagram:syntax`: "every diagram parses in its declared notation").
+- **Major: all four `C4*` kinds silently reported an empty graph on a false premise.** The code
+  claimed "no normalised structural data shipped by Mermaid itself yet" for `C4Context`/`C4Container`/
+  `C4Component`/`C4Deployment` (alongside `gantt`/`quadrantChart`, where the claim happened to be
+  irrelevant to this milestone's own node/edge model). Empirically false for C4: `db.getC4ShapeArray()`
+  and `db.getRels()` return real shape/relationship data — they simply weren't found by the reflection
+  technique used while investigating `sequenceDiagram`/`stateDiagram-v2`/`erDiagram`
+  (`Object.getOwnPropertyNames(Object.getPrototypeOf(db))`, which only sees inherited methods; the C4
+  methods are the `db` object's own properties, visible only via `Object.keys(db)`).
+- **Major: three public types and the package's one exported function had no doc comments** —
+  `DiagramNode`/`DiagramEdge`/`DiagramSubgraph` (re-exported through both public barrels) carried no
+  TSDoc, and `parseDiagram` itself had no comment attached to its own declaration, only a file-header
+  block 120 lines away that no tool associates with it.
+- **Major: tests imported past the package's own public barrels**, reaching directly into
+  `src/parse/parse.ts`/`src/parse/types.ts` instead of `src/index.ts`, so a pure internal refactor
+  that preserved the public surface could break the tests for a reason unrelated to behaviour.
+- **Major: `installDomShim` overwrote global DOM objects with no check against the real global
+  state** — only a private in-module boolean guarded re-installation, so a process that already had
+  its own `document` for any reason would still have it silently replaced.
+- **Minor ×4:** `KB-001`'s "no keyword matched" message never named the actual offending line, only
+  the valid-keyword list; `@forge/schemas` and `zod` were declared as dependencies with zero uses;
+  several reachable branches (`%%`-comment skip, `graph`/bare-`stateDiagram` aliases, no-label edge
+  ternaries, the non-`Error` catch branch) had no test coverage; `coverage-ratchet.json` had no
+  baseline entry for the new package.
+
+**Fixes:** `detectKind` now strips a leading, properly-closed frontmatter block before scanning for a
+keyword (an unterminated one is deliberately left unstripped, so Mermaid's own parser raises the real
+syntax error rather than this piece guessing). All four `C4*` kinds now extract real nodes/edges via
+`getC4ShapeArray()`/`getRels()`, sharing one `C4Db` shape; `gantt`/`quadrantChart` keep an empty graph,
+now justified accurately (a task list and quadrant coordinates are not a node/edge graph in the sense
+this model represents — a modelling boundary, not a missing-extraction gap). Added TSDoc to every
+public type and to `parseDiagram` directly. Tests re-pointed at the public barrel. `installDomShim`
+now checks `typeof globalThis.document !== 'undefined'` before installing anything, in addition to its
+own idempotency flag. `KB-001`'s detail now includes the actual offending line via `JSON.stringify`.
+Unused dependencies removed. Coverage ratchet baseline recorded.
+
+**A regression found and fixed during the fix round itself, before dispatching verify:** adding a test
+for the untested non-`Error` catch branch required spying on `mermaid.mermaidAPI.getDiagramFromText`,
+which required a top-level `import mermaid from 'mermaid'` in the test file — and that one import,
+placed before the barrel import that transitively triggers the DOM shim, caused `mermaid` to
+initialize an internal singleton (its DOMPurify sanitizer setup) against a process with no `document`
+yet, breaking roughly a third of the *other*, previously-passing tests in the same file with an
+unrelated-looking `DOMPurify.addHook is not a function` error — deterministic, not a race, and
+reproduced with that one file in complete isolation. Root cause confirmed by a standalone probe
+(outside vitest, with and without the exact same import ordering). Fixed by dropping that one test
+and its direct `mermaid` import entirely: `mermaid.mermaidAPI` is frozen at runtime
+(`Object.isFrozen` true, `getDiagramFromText` non-configurable), so the branch cannot be exercised via
+a spy under any import order — confirmed empirically before accepting this as a documented, provably
+unreachable residual gap rather than continuing to chase it.
+
+### Round 2 — scoped verify: all nine findings confirmed fixed or accounted for, no new defects
+
+Verify independently re-ran the exact frontmatter and C4 scenarios against the shipped `parseDiagram`
+(not just reading the diff) and confirmed both now return real data. Confirmed the `mermaid-db.ts`
+comment's own empirical claim (own- vs inherited-property visibility) is accurate, not another
+unverified assertion. Found the non-`Error`-branch gap still open (expected — see above) plus a
+handful of adjacent, never-implicated-in-the-original-findings defensive fallback branches
+(`?? node.id`, `?? []`, a C4 shape's own empty-label fallback, a sequence actor's `description ?? name
+?? id` chain) with no coverage — explicitly assessed as "none are bugs," the same defensive-fallback
+shape as the accepted residual gap, not new defects requiring another round.
+
+### Calibration note
+
+The C4-data finding is this session's second recurrence (after M2 P9's own calibration note) of the
+same lesson stated even more specifically this time: a negative result from reflecting on an external
+library's object shape is only as trustworthy as the *specific reflection technique* used, not a fact
+about the library. `Object.getOwnPropertyNames(Object.getPrototypeOf(x))` and `Object.keys(x)` answer
+different questions, and treating the first as "no such method exists" — rather than re-checking with
+a second technique before writing it into a design comment as settled fact — is exactly the gap the
+critic's own empirical verification exists to close. The mid-fix regression is a smaller instance of
+the same discipline in the other direction: a test written to *increase* coverage introduced a new,
+real defect (the import-ordering hazard) that only a full local re-run — not just re-reading the new
+test — surfaced, which is why "run the suite, don't just read the diff" stayed the standing rule for
+every fix in this loop, including a fix aimed at raising coverage rather than at a reported behaviour
+defect.
