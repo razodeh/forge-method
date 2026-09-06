@@ -1,0 +1,21 @@
+id: DIAG-001
+type: Diagram
+schemaVersion: 1
+title: Container decomposition
+status: active
+created: 2026-01-05
+updated: 2026-01-05
+revision: 1
+author: architect
+changelog: []
+kind: flowchart
+notation: mermaid
+source: architecture/views/containers.mmd
+generated: false
+depicts:
+  - component:api
+  - component:db
+explains: []
+caption: The container-level decomposition of the service.
+alt_text: Two boxes, API and Database, with API depending on Database.
+owner: architect

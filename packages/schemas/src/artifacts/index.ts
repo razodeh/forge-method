@@ -13,6 +13,16 @@ export { acceptanceCriterionSchema, type AcceptanceCriterion } from './acceptanc
 export { adrSchema, type ADR } from './adr.ts';
 export { assumptionSchema, type Assumption } from './assumption.ts';
 export { capabilitySchema, type Capability } from './capability.ts';
+export {
+  risksFileSchema,
+  assumptionsFileSchema,
+  openQuestionsFileSchema,
+  environmentsFileSchema,
+  type RisksFile,
+  type AssumptionsFile,
+  type OpenQuestionsFile,
+  type EnvironmentsFile,
+} from './collection-file.ts';
 export { dataModelSchema, type DataModel } from './data-model.ts';
 export { defectSchema, SEVERITIES, type Defect } from './defect.ts';
 export { diagramSchema, DIAGRAM_NOTATIONS, type Diagram } from './diagram.ts';

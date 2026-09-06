@@ -1548,3 +1548,113 @@ implementation is the one that should translate a project's `palette: colorblind
 either a real Mermaid built-in theme name or a concrete `themeVariables` override object, and pass the
 result in through this same `theme` field — nothing about today's narrow shape blocks that. `types.ts`
 is corrected to say this explicitly rather than silently truncating the config shape it quotes.
+
+## Q50 — Closing `SPEC-QUESTIONS.md` Q29's second deferred point: a real on-disk shape for a
+populated `collection: true` KB file (`risks.md`, `assumptions.md`, `open-questions.md`,
+`kb/delivery/environments.md`)
+
+**Conflict, continuing Q29.** `08` §8.2 calls `risks.md`/`assumptions.md`/`open-questions.md`
+"registers" but gives no worked example of a populated file's actual body once it holds more than one
+entry; Q29 (M1, `IdAllocator`) hit the same gap and explicitly deferred it — "state a collection
+file's real on-disk shape once ... so ... whatever later piece writes a new entry into one of these
+files has an actual format to target instead of each independently guessing." `parseKbTree` (this
+piece) is that later piece: it has to actually read these four files (all four are under `08` §8.2's
+own `docs/forge/kb/**` tree — `environments.md` is at `kb/delivery/environments.md`, matching the
+registry's `Environment` row exactly, alongside `Risk`/`Assumption`/`OpenQuestion`), and
+`@forge/core/artifacts`'s existing `ArtifactDocument`/`splitFrontMatter` — the parser `PLAN-M3.md`'s
+own P6 mandate says to reuse — throws `CFG-005`/`CFG-006` on any file with no `---`-delimited front
+matter at all, so "no front matter, just a table" is not an option compatible with existing tooling
+without a second, bespoke parser this piece has no mandate to build.
+
+Searched the spec pack for any worked example of *multiple* Risk/Assumption/OpenQuestion/Environment-
+shaped records written together in one place. Found exactly one: `05` §5.6's `HandoffRecord` example
+embeds one assumption as `assumptions: [ { id: ASM-004, text: ..., confidence: ..., validate_by: ... }
+]` — a YAML list of the exact same entry shape `assumptionSchema` already validates, nested under a
+plain key in a document's front matter. This is also the identical shape this same codebase already
+uses for `changelog` (`baseFrontMatterShape`'s `changelog: [{ revision, date, by, summary }]`) — a
+list of structured objects living directly in a document's front matter is not a new pattern being
+invented for this decision, it is the one already in force everywhere else in the schema layer.
+
+**Answer taken (proceeding):** each of the four files gets a thin front-matter-only wrapper schema
+(`@forge/schemas/artifacts/collection-file.ts`, since these are front-matter *shapes* like every
+other artifact schema, not KB-specific logic — `@forge/kb` reuses them exactly as it reuses
+`adrSchema`/`diagramSchema`, per this piece's own mandate to add no schema `@forge/kb` doesn't have
+to): `{ type: '<Risk|Assumption|OpenQuestion|Environment>' (literal), schemaVersion: number }` plus
+one array field holding that type's own already-built entry schema — `risks: Risk[]`,
+`assumptions: Assumption[]`, `open_questions: OpenQuestion[]` (snake_case, matching every other
+multi-word front-matter key in the spec pack: `superseded_by`, `review_by`, `blast_radius`), and
+`environments: Environment[]`. No `id` field at the wrapper level (a collection file names many ids,
+not one, so `checkIdMatchesRegisteredType`-style single-id checking does not apply — the same
+reasoning `entry-id.ts` already gives for why entry schemas themselves skip `baseFrontMatterShape`).
+`schemaVersion` is kept (unlike a bare `id`) because `@forge/schemas`'s migration registry
+(`packages/schemas/src/migrations/`) is keyed by `(ArtifactTypeId, schemaVersion)` uniformly across
+every registered type, `Risk`/`Assumption`/`OpenQuestion`/`Environment` included — a collection file
+with no `schemaVersion` would be unmigratable by the very infrastructure this repo already built for
+every other type. The body (after the front matter) is left as free-form, unparsed prose, exactly like
+`ArtifactDocument.body` already treats every artifact's body — `08` never states a required body
+structure for a register the way it does for a `knowledge` entry's `## Statement`/`## Rationale`/etc.,
+so none is invented.
+
+**Recommended resolution:** state this shape once, normatively, in `08` §8.2 or `18` §18.7 (a `Risk[]`-
+shaped worked example next to `risks.md`'s row would settle it beyond any doubt). The same shape is
+the recommended answer for the two `collection: true` types P6 does not touch — `Waiver`
+(`reports/waivers.md`) and `HandoffRecord` (`reports/handoffs.md`), both outside `docs/forge/kb/**`
+and out of this milestone's scope — though `05` §5.6's own `HandoffRecord` worked example is a flat,
+single-record document, in real tension with `18` §18.7 marking `HandoffRecord` itself `collection:
+true` over one shared file; that specific tension is left unresolved here since neither file is part
+of the KB tree this piece parses, and revisiting it belongs to whichever later piece actually builds
+`HandoffRecord`'s own read/write path.
+
+**Critic-round addendum: the first version dropped the entire `18` §18.6 base, not just `id`, fixed.**
+A gauntlet critic found the first version of these four schemas omitted `title`/`status`/`created`/
+`updated`/`revision`/`author`/`changelog` alongside `id`, with no stated reason beyond the one given
+for `id` itself — and, being `.strict()`, actively rejected a compliant author who tracked who last
+touched the register and when, something every sibling schema in the registry (`adrSchema`,
+`diagramSchema`) already supports. **Fixed** by building from `baseFrontMatterShape.omit({ id: true
+})` instead of a bare `z.object({...})` — every other base field is kept, only `id` (which genuinely
+does not apply to a many-ids file) is dropped. Separately noted, not fixed (deliberately deferred, see
+`collection-file.ts`'s own doc comment): two entries in the same file sharing one id is not caught at
+this schema level — cross-entry uniqueness is a project-wide invariant (`18` §18.8: ids "never
+reused") that belongs to the KB linter (`08` §8.7, `PLAN-M3.md` P10), not a single file's schema.
+
+## Q51 — `kbEntrySchema`'s `section`→id-abbreviation mapping, and where `glossary.md`/`index.md` fit
+`08` §8.3's own `type:` enum
+
+**Gap, not a conflict.** `kbEntrySchema` needs to validate that a `KB-{SECTION}-####` id's own
+embedded token agrees with its `section:` field (`PLAN-M3.md` P6's own Check: "a `KB-{SECTION}-####`
+id in a section that does not match its own file's directory ... is a distinct, named validation
+failure"). Grepping every `KB-[A-Z]+-\d+` occurrence across the whole spec pack finds real evidence
+for four of `08` §8.2's eight named subdirectories: `product`→`PROD` (`KB-PROD-0001`,
+`KB-PROD-0009`), `architecture`→`ARCH` (`KB-ARCH-0007`, three occurrences), `data`→`DATA`
+(`KB-DATA-0001`, `-0003`, `-0011`), `constraints`→`CON` (`KB-CON-0003`, three letters, not four —
+confirming this is a hand-chosen abbreviation table, not a fixed-width rule I could derive
+mechanically). No spec-pack occurrence exists for the other four subdirectories (`domain`,
+`delivery`, `ops`, `engineering`) or for the KB root's own two special files, `glossary.md` and
+`index.md`.
+
+**Answer taken (proceeding):** completed the table with the same "short, human-legible, no fixed
+width" character the four confirmed entries already show, choosing the least ambiguous short form for
+each: `domain`→`DOM`, `delivery`→`DELIV`, `ops`→`OPS`, `engineering`→`ENG`, `glossary`→`GLOSS`
+(`glossary` treated as its own root-level pseudo-section — see below). Flagged explicitly in
+`kbEntrySchema`'s own source as which four entries are spec-confirmed and which five are this piece's
+own reasonable, but invented, choice — a maintainer correcting any of the five to match a future
+spec-stated value changes one table entry, not the check's shape.
+
+Two related scope decisions, made at the same time:
+- **`glossary.md`** is one whole `kbEntrySchema` document (`type: 'glossary'`, `section: 'glossary'`,
+  its own `KB-GLOSS-####` id), not a `collection: true`-style file holding many separately-validated
+  term records — `08` §8.3's own `type:` enum lists `glossary` as one value a *generic* KB entry can
+  take, the same schema `knowledge` entries use, and nothing in the spec pack gives field names for an
+  individual glossary term the way it does for a Risk/Assumption/OpenQuestion/Environment row, so none
+  are invented. `glossary.md`'s actual term list ("term → definition → source") lives in the entry's
+  free-form Markdown body, exactly like every other artifact body — unparsed, untyped, same as
+  `ArtifactDocument.body` already treats every other file's body.
+- **`index.md`** is out of scope for this piece. `08` §8.2 calls it "generated: table of contents +
+  counts + health" — derived output, not hand-authored content with front matter to validate — and
+  `PLAN-M3.md` P6's own Surface never named it. `parseKbTree` does not attempt to parse it; generating
+  it is a later piece's concern (nothing in this milestone's remaining P7–P10 currently claims it
+  either — worth flagging at M3's own close if it still has no owner).
+
+**Recommended resolution:** state the full nine-entry `section`→id-abbreviation table once,
+normatively, in `08` §8.2 or §8.3 (the same fix Q50 asks for the collection-file shape) so the five
+uninvented entries here have a real source to defer to.

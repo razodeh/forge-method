@@ -117,6 +117,18 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/kb:
+    dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@forge/diagrams':
+        specifier: workspace:*
+        version: link:../diagrams
+      '@forge/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+
   packages/schemas:
     dependencies:
       zod:

@@ -296,11 +296,19 @@ milestone.)*
 
 **Mandate:** give every KB file kind its schema and give the whole `docs/forge/kb/**` tree (`08` §8.2)
 a single parse/validate entry point, reusing `@forge/schemas`'s already-built `adrSchema` and
-`diagramSchema` (and its `Risk`/`Assumption`/`OpenQuestion` collection-entry schemas) rather than
-redefining any of the four, and adding the one schema that does not already exist anywhere: the
-generic `knowledge`/`glossary` KB entry `08` §8.3 describes, which — per `SPEC-QUESTIONS.md` Q18/the
-`@forge/schemas` registry's own comment — is deliberately outside the 21-type `specs/18` §18.7
-registry and so has never been built.
+`diagramSchema` (and its `Risk`/`Assumption`/`OpenQuestion`/`Environment` collection-*entry* schemas)
+rather than redefining any of the five, and adding two things that do not already exist anywhere: the
+generic `knowledge`/`glossary` KB entry `08` §8.3 describes (deliberately outside the 21-type
+`specs/18` §18.7 registry per `SPEC-QUESTIONS.md` Q18/the `@forge/schemas` registry's own comment, so
+never built), and — discovered only while actually trying to parse the tree, not anticipated in this
+plan's first draft — a wrapper schema for each `collection: true` file's own on-disk shape
+(`risks.md`/`assumptions.md`/`open-questions.md`/`kb/delivery/environments.md`), since no spec section
+states what a *populated* collection file looks like once it holds more than one entry
+(`SPEC-QUESTIONS.md` Q29's second deferred point, closed by Q50). The four wrapper schemas live in
+`@forge/schemas/artifacts/collection-file.ts`, alongside the entry schemas they wrap, not in
+`@forge/kb` — this piece's own mandate is to *reuse* schemas, not grow new ones inside `@forge/kb`
+itself; `kbEntrySchema` remains the one schema that is genuinely `@forge/kb`'s own to define, since it
+has no home in the 21-type registry at all.
 
 **Spec:** `08` §8.2 (layout), §8.3 (entry format, verbatim worked example), §8.4 (ADR, reused not
 rebuilt).
@@ -319,10 +327,10 @@ rebuilt).
   `superseded_by`-consistency pattern from M1).
 - `parseKbTree(rootDir: AbsolutePath): Promise<KbTree>` — walks `08` §8.2's fixed directory shape,
   parsing each file with `@forge/core/artifacts`'s existing front-matter parser and the right schema
-  for its path (ADR files → `adrSchema`, `views/*.mmd.yaml` → `diagramSchema`, everything else →
-  `kbEntrySchema` or the relevant collection schema); never throws for one bad file — collects a
-  `KbParseError` per file instead, matching `@forge/extensions`' established never-throws-on-
-  boundary-input pattern.
+  for its path (ADR files → `adrSchema`, `views/*.mmd.yaml` → `diagramSchema`, the four
+  `collection: true` files → their new `@forge/schemas` wrapper schema (`SPEC-QUESTIONS.md` Q50),
+  everything else → `kbEntrySchema`); never throws for one bad file — collects a `KbParseError` per
+  file instead, matching `@forge/extensions`' established never-throws-on-boundary-input pattern.
 
 **Checks:**
 - `08` §8.3's own worked example (`KB-ARCH-0007`) parses to the exact field values shown.
@@ -333,12 +341,15 @@ rebuilt).
 - `sources: []` fails ("a write with no source is rejected" — checked here at the schema level; P7
   enforces it again at the write boundary since a hand-edited file could otherwise slip past).
 - A minimal valid KB tree (`fixtures/greenfield-service`, created here — the base this milestone's
-  later pieces extend) parses with zero `KbParseError`s.
+  later pieces extend) parses with zero `KbParseError`s, including all four `collection: true` files
+  populated with more than one entry each (the exact case `SPEC-QUESTIONS.md` Q29/Q50 found nothing
+  in the spec pack to test against before).
 - ADR and Diagram files inside the tree parse via the *existing* `@forge/schemas` schemas — asserted
   by checking the returned value's type tag, proving no shadow re-implementation was written.
 
 **Depends on:** `@forge/schemas` (`adrSchema`, `diagramSchema`, `riskSchema`, `assumptionSchema`,
-`openQuestionSchema`), `@forge/core/artifacts` (front-matter parsing), `@forge/core/fs`.
+`openQuestionSchema`, `environmentSchema`, and the four new collection-file wrapper schemas),
+`@forge/core/artifacts` (front-matter parsing), `@forge/core/fs`.
 
 ---
 

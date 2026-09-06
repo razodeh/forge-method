@@ -1,0 +1,21 @@
+{
+  "name": "@forge/kb",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/core": "workspace:*",
+    "@forge/diagrams": "workspace:*",
+    "@forge/schemas": "workspace:*"
+  }
+}
