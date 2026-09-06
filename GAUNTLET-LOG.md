@@ -1473,3 +1473,79 @@ own "every preset validates" assertion could not have caught this by constructio
 content is schema-valid by definition — the gap only closes by re-deriving each preset's claimed facts
 from the base documents they patch, which is exactly what the fresh critic did and the builder's own
 authoring pass had no structural reason to do.
+
+## M2 P8 — the twelve compile-time invariants (I1–I12)
+
+**Rounds: 2 (one critic finding four real defects spanning a matching algorithm, a data-shape edge
+case, a type-surface gap, and a code-numbering collision plus broken message grammar; one scoped
+verify confirming all four with no residual defects beyond a stale comment, also fixed). Outcome:
+WON.**
+
+The tie-together piece for this milestone: no spec page gives a ready-made "whole resolved project"
+shape, so this piece designed its own `ResolvedSet` — an all-optional bag, one field (or a few) per
+invariant, each shaped to be exactly what that invariant's own check needs, letting a caller supply
+only the slice a given invariant requires. Four of the twelve (I7, I9, I11, I12) directly re-assert
+already-committed P3/P4 checks at the whole-set level; the other eight are new. Before writing a
+single code, this piece resolved a conflict its own `PLAN-M2.md` design note had already flagged —
+`15` §15.10's `SEC-*` prefix for I7–I9 does not exist in `@forge/core/errors`' closed ten-prefix union
+— recorded as `SPEC-QUESTIONS.md` Q40.
+
+### Round 1 — four real defects
+
+- **Major: I2's file-ownership overlap check used exact string matching against globs.** `15`
+  §15.3.1's own worked example shows `file_ownership` entries as globs (`"src/api/**"`), not literal
+  paths — but the check compared `implementerFileOwnership` entries to `testPaths` entries via
+  `Set.has`, an exact match. A real implementer glob genuinely covering a test directory (`src/api/**`
+  covering `src/api/__tests__/handler.test.ts`) was silently never caught — only byte-identical
+  strings triggered the invariant this check exists for. The code's own comment justified this by
+  citing `PLAN-M2.md` P3's `checkSplitFileOwnership` precedent, but that precedent excuses a
+  genuinely harder problem (glob-vs-glob intersection); I2's actual need — literal-path-vs-one-glob
+  membership — is solved and well-supported. Fixed by adding `minimatch` as a real dependency and
+  matching each claimed glob against every test path.
+- **Major: I6's edge-key matching silently no-op'd for the one `REQUIRED_EDGES` row with a compound
+  target.** `@forge/core/graph`'s own `REQUIRED_EDGES` table has one `required: 'yes'` row — `NFR
+  verifiedBy TEST/benchmark/monitor` — whose `to` field names three real targets at once as a single
+  compound label, not a literal one any real caller would construct. The exact-string composite-key
+  match (`${from}:${edge}:${to}`) could never match a realistic `{ from: 'NFR', edge: 'verifiedBy', to:
+  'TEST' }` input against that row, making this specific required edge un-flaggable through any input
+  a caller would actually supply. Fixed by splitting the rule's own `to` on `/` and checking
+  membership instead of exact equality — a no-op for every other row, none of which has a `/` in
+  either `from` or `to`.
+- **Major: I1's `reviewerRole` type omitted `test-architect`, one of `05` §5.2's own four
+  separation-of-duties roles** ("`reviewer`, `critic`, `diagnostician`, and `test-architect` MUST
+  never be the same session instance as the author of the work under review"). The check's own logic
+  never branched on the role value, so this was purely a type-surface gap — but a real one, making it
+  impossible for a caller to represent a test-architect self-review scenario without an unsafe cast.
+  Fixed by adding the missing member to the union.
+- **Major: I7's error code collided with a slot this session had already reserved, and its message
+  rendered broken English.** `CFG-506` was independently re-derived here (`SPEC-QUESTIONS.md` Q40) as
+  "the next free `CFG-*` slot" without cross-referencing `SPEC-QUESTIONS.md` Q35, written earlier
+  during a different piece (P6), which had already reserved that exact number for an unrelated future
+  guardrail. Separately, the message template embedded a single pre-joined `capability` string
+  mid-sentence, producing genuinely broken output for every I7 violation: `"Role backend-agent's
+  write: requests write access the ceiling does not grant grant exceeds..."` (note the doubled
+  "grant"). Fixed by shifting I7–I9 one slot higher (`CFG-507`–`CFG-509`, freeing `CFG-506` exactly as
+  Q35 reserved it) and by passing the ceiling violation's `field`/`detail` as separate template
+  parameters the message composes correctly.
+
+### Round 2 — scoped verify: all four fixes confirmed, one stale comment found and fixed
+
+A fresh agent independently verified `minimatch`'s actual matching semantics against several glob
+shapes the original fix's own tests didn't cover (a single-`*` pattern that should not cross a `/`, an
+exact-literal pattern as a degenerate case), re-read the *entire* `REQUIRED_EDGES` table by hand to
+confirm no other row has a compound field the fix might mishandle, confirmed the `test-architect`
+addition was purely additive with no logic change required, and confirmed the renumbering introduced
+no new collisions anywhere in the registry. It found one genuine but purely cosmetic residual: a code
+comment eight lines above the corrected one still said "`CFG-506`–`CFG-508`" instead of the
+now-correct `CFG-507`–`CFG-509` — fixed immediately, no further round needed.
+
+### Calibration note
+
+Three of round 1's four defects share a shape this session keeps re-encountering in new clothes: a
+design comment correctly *names* the right precedent or constraint, then the actual code beneath it
+quietly does something narrower or different (a stretched precedent excusing exact-match instead of
+real glob matching; a composite key built from a data shape that has one real exception the author
+never re-read the source table closely enough to notice; a message template built by string-joining
+before composing, rather than composing at render time). In every case, the fix was to go back to the
+*actual* source — the spec's own worked example, the real `REQUIRED_EDGES` table, the real
+`CeilingViolation` shape — rather than trust the comment that was already sitting next to the bug.

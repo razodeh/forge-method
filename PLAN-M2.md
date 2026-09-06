@@ -354,6 +354,9 @@ resolution (most likely: fold I7/I8/I9 under `CFG-5xx`, since `02` §2.6 defines
 
 **Depends on:** P3, P4, P5, P6 (each invariant's fixture), `@forge/core/graph` (I6).
 
+*(P1, P2, P3, P4, P5, P6, P7, P8 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`,
+`7705672`, `2f786a0`, `3cc6102`, `fbf4737`.)*
+
 ---
 
 ## P9 — The compile pipeline and `overlay explain`
