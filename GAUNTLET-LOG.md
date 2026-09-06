@@ -874,3 +874,73 @@ better heuristic but recognising the heuristic's premise was wrong from the star
 a stray fence marker" assumes a concept CommonMark does not have, and no amount of additional
 casework was ever going to make that assumption sound. Sometimes the fix for an incomplete fix is not
 to improve it further but to stop asking it to do something no correct implementation could do.
+
+---
+
+## P13 — filesystem-scan-based id allocation
+
+**Rounds: 3 (one critic finding a real major and a related minor; one scoped verify confirming both
+fixes and catching one stale doc comment). Outcome: WON.** Committed `5205b49`, fixed in `be55513`,
+`e6aeacc`.
+
+Two prerequisites had to be solved before any allocator code, both discovered by trying to build the
+piece rather than by re-reading the plan text. First, `18` §18.8 and `09` §9.2 both place the id cache
+at `.forge/state/ids.json`, verbatim — but P4's own deny list (`CFG-004`) blocks every write under
+`.forge/state/` unconditionally, with no exception for a cache file the spec itself names. Resolved by
+adding `ProjectPaths.resolveState()`, a second resolver scoped to `.forge/state/` that shares
+`resolveWithin`'s containment logic but never consults the deny list, matching `CFG-004`'s own remedy
+text ("write through the owning subsystem instead"). Second, this piece's own Check ("the 1000th story
+widens to `STORY-1000`") turned out to directly contradict the exact-width id regex P5/P6 had already
+shipped and gauntlet-reviewed (`STORY-1000` is 4 digits; `idWidth` 3 requires exactly 3) — resolved by
+refusing an overflowing allocation with a new, actionable code (`CFG-010`) rather than reopening
+already-reviewed code for a scenario no spec page actually requires. Both recorded in
+`SPEC-QUESTIONS.md` (Q29, Q30).
+
+### Round 1 — one major (accidental-reachable, fixed), one minor (fixed)
+
+The critic independently reproduced both of this piece's own central empirical claims before trusting
+them (that a mutated `Document`'s node ranges go stale, and that the naive re-serialisation problem
+from P12 doesn't recur here) and then found a real defect in the caching design itself: `scan()` computed
+a "cheap" validity hash from only the scanned *file listing* (paths), and trusted the on-disk cache's
+stored counters outright whenever that hash matched — skipping any re-parsing of file content. This
+missed the exact scenario `18` §18.8's retention rule exists to guard against: hand-editing an existing
+artifact's `id` or `type` field in place, with no file added or removed, leaves the listing hash
+identical while the true maximum changes underneath it. Reachable by nothing more adversarial than a
+human fixing a typo or resolving a merge conflict by hand — not a hostile construction. The existing
+test for the analogous Check ("a hand-edited `ids.json`... overridden by the scan") only exercised a
+cache file tampered with a *mismatched* hash, never the sharper case of a *matching* hash concealing
+real drift, so a broken implementation exactly like the shipped one passed every existing test. Fixed
+by making `scan()` always perform the full parse, unconditionally — the on-disk cache is read only to
+detect and warn about corruption (a separate, already-required Check), never to skip scanning.
+`validityHash` stays in the cache file, but now purely as a provenance field, not a trust signal.
+
+One related minor, also fixed: `resolveState()`'s containment check used a naive `path.join` for
+`.forge/state/`'s "real" path rather than actually resolving it, so a legitimate setup where
+`.forge/state` is itself a symlink (relocating FORGE's state onto different storage) was rejected as
+an escape. Fails safe, not a vulnerability, but a real behavioural gap in a helper the refactor was
+supposed to make consistent with `resolveWithin`. Fixed by reusing the same
+`realpathOfDeepestExistingAncestor` helper `resolveWithin` already relies on for its own target path.
+
+### Round 2 — scoped verify: both fixes confirmed, one stale doc comment found
+
+A fresh agent independently reproduced the original cache-trust bug against a brand-new `IdAllocator`
+instance (confirming the fix returns the true scanned maximum, not a stale cached value), confirmed
+the fix did not introduce a performance cliff (50 concurrent `allocate()` calls on one instance still
+trigger exactly one real filesystem scan, not fifty, since the in-memory `cachedIndex` field — a
+different, sound mechanism from the removed on-disk-cache-trust one — still serves the rest of a
+batch), confirmed the corruption-warning behaviour still fires correctly, and confirmed both directions
+of the `resolveState` symlink fix (a legitimate relocation permitted, a genuine escape still rejected).
+One minor finding: `scan.ts`'s own module doc comment still described the just-removed optimization,
+left stale by the round-1 fix touching only `allocator.ts`. Fixed with a follow-up commit.
+
+### Calibration note
+
+The bug round 1 found was invisible to this piece's own test suite for the same reason a similar gap
+was invisible in P12: the one Check written to test "the cache doesn't override the scan" was satisfied
+by a fixture (a mismatched-hash cache file) that happened not to exercise the *specific* mechanism the
+implementation actually used to decide trust (a listing-only hash, not file content) — passing a Check
+by matching its literal wording is not the same as exercising the property the Check exists to protect.
+Separately worth naming: this is the second piece in a row (after P12's fence-pairing heuristic) where
+an optimization *invented by the builder*, not requested by any spec or Check, turned out to be the
+actual source of a real defect — a reminder that added cleverness carries its own burden of proof, and
+"no Check requires this" is itself a reason to weigh a shortcut's risk against what it actually saves.

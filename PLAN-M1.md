@@ -487,8 +487,12 @@ concurrent allocation.
 - `class IdAllocator { constructor(deps: { paths: ProjectPaths; registry; clock }) ;
   scan(): Promise<IdIndex>; allocate(type: ArtifactTypeId): Promise<ArtifactId>;
   allocateMany(type, n): Promise<readonly ArtifactId[]> }`.
-- `IdIndex` cache persisted to `.forge/state/ids.json` with a `validityHash` over the scanned file
-  set; a mismatched hash forces a rescan rather than trusting the cache.
+- `IdIndex` cache persisted to `.forge/state/ids.json` (via `ProjectPaths.resolveState`, added by this
+  piece — see `SPEC-QUESTIONS.md` Q29) with a `validityHash` over the scanned file set. `scan()` always
+  runs a full, real scan; the on-disk cache is read only to detect and warn about corruption, and
+  `validityHash` is written for provenance, not consulted to skip scanning — an earlier version of
+  this piece tried the latter as an optimization and a gauntlet critic found it unsound (Q29's
+  implementation note).
 
 **Checks:**
 - Truth is the scan: deleting `ids.json` yields the same next id; a hand-edited `ids.json` claiming a
@@ -508,6 +512,11 @@ concurrent allocation.
 **Depends on:** P12.
 
 ---
+
+*(P1, P1b, P3, P2, P4, P5, P6, P7, P8, P9, P10, P11, P12 and P13 are committed: `9b98217`, `7fef54d`,
+`47ba1ea`, `bb6e67d`, `dfc56b5`, `b082407`, `273ffcf`, `0f979fb`, `4d540d3`, `27cf2b9`, `5873bbe`
+(fix: `9796a10`), `608a011` (fix: `3de0be0`), `da22d38` (fixes: `3ede652`, `d112f92`), `5205b49`
+(fixes: `be55513`, `e6aeacc`).)*
 
 ## P14 — The spec graph with typed edges
 
