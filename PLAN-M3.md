@@ -133,6 +133,8 @@ fields in `@forge/schemas`' `diagramsSchema`).
 
 **Depends on:** P1 (`ParsedDiagram`), `@forge/schemas` (`diagramSchema`, `DIAGRAM_NOTATIONS`).
 
+*(P2 is committed: `2a137a4`.)*
+
 ---
 
 ## P3 — The eight diagram generators

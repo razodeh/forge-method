@@ -1714,3 +1714,79 @@ real defect (the import-ordering hazard) that only a full local re-run — not j
 test — surfaced, which is why "run the suite, don't just read the diff" stayed the standing rule for
 every fix in this loop, including a fix aimed at raising coverage rather than at a reported behaviour
 defect.
+
+## M3 P2 — Diagram lint rules and the `Diagram` artifact
+
+**Rounds: 2 (one critic finding one blocking and two major logic/documentation defects plus five
+minor findings; one scoped verify confirming all fixes, and finding one new real defect the fix for
+one of those findings itself introduced — fixed locally and re-verified without a third round, per
+this loop's own cap). Outcome: WON.**
+
+`lintDiagram` implements six of `08` §8.11.7's per-diagram gate checks. The two most consequential
+defects both came from the same shape of mistake: a heuristic built to match the spec's own *named
+examples* (`foo`, `TODO`, `Component1`) ended up also matching things the examples never meant to
+cover, because the code checked for the wrong invariant (word identity instead of "is this word ever
+a real domain term," digit-optional instead of digit-required).
+
+### Round 1 — critic: one blocking, two major, five minor
+
+- **Blocking: the placeholder-word list flagged ordinary, spec-required labels as errors.**
+  `PLACEHOLDER_WORDS` included two very common English words (one meaning "TODO" and one meaning
+  "verify behaviour"), checked case-insensitively — meaning a node in a required CI/CD pipeline
+  diagram named for its verification stage, or an entity in a required `erDiagram` named for its
+  everyday domain meaning, was flagged as an error-severity placeholder. Concretely: `08` §8.11.3's
+  own taxonomy *requires* a pipeline-stage diagram, and the single most common stage name in one is
+  exactly the word this list banned; the same taxonomy row requires an `erDiagram`, whose most
+  common tutorial-domain entity name is exactly the other banned word.
+- **Major: the "generic noun" placeholder regex flagged bare, undigited domain nouns.** The pattern
+  matched a curated noun list with an *optional* trailing digit, so plain, ordinary single-word
+  domain terms (several completely unremarkable nouns any storage, ORM, or catalog diagram might
+  use) were flagged with zero justification from the spec's own example, which is never bare — only
+  ever noun-plus-digit.
+- **Major (rubric R8): three of four public types had missing or incomplete TSDoc** — two with none
+  at all, a third with an undocumented interface and an undocumented field.
+- **Minor ×5:** a whitespace-word-count "non-trivial caption" heuristic misread a genuine, detailed
+  caption in a script with no inter-word spacing (Chinese) as "a single word"; the same placeholder
+  regex missed common separator-joined auto-generated spellings (`Component_1`, `Node-2`); a doc
+  comment's "never throws" claim was broader than what the function actually defends against; the
+  default complexity budget was an exported, unfrozen shared object; a test helper's synthetic graph
+  builder silently produced more edges than the test intended, letting an unrelated finding ride
+  along undetected by a weak assertion.
+
+**Fixes:** the two banned English words were removed from the case-insensitive set; the two
+placeholder-*comment* idioms the spec actually names are now checked in their shouting-case spelling
+only (case-sensitive), since that spelling is unambiguous while the same words' ordinary-case forms
+collide with real domain nouns. The generic-noun regex now requires a digit suffix (with an optional
+separator, closing the missed-spellings minor too) rather than making it optional. TSDoc added to
+every public type and field. The default budget is now `Object.freeze`d. The synthetic-graph test
+was given an explicit, generous edge budget so it isolates the one boundary it actually names, with a
+precise assertion instead of a permissive one.
+
+### Round 2 — scoped verify: one new regression found and fixed without a third round
+
+Verify independently re-executed every relabelled scenario (confirmed the three literal spec
+examples still fire, confirmed every previously-miscaught label now passes) and confirmed seven of
+eight findings clean. The eighth — the caption/alt-text non-trivial check — the fix itself introduced
+a new hole: the length-based exemption for space-free scripts was gated on length alone, with no
+check that the text was actually in a script that lacks inter-word spaces, so an ordinary long single
+*English* "word" (no spaces, purely coincidentally over the length threshold) now silently passed as
+a real caption — the exact kind of no-op caption the rule exists to catch. Verified live: a made-up
+concatenated word and a run of repeated characters both passed as "non-trivial" under the interim
+fix. **Fixed directly:** the length exemption is now gated on the text actually containing a
+non-ASCII character, not on length alone — a plain-ASCII single word is trivial at any length; a
+non-ASCII single run is only exempted once it is also long enough to plausibly be a real sentence.
+Re-verified locally (full typecheck/lint/test/boundaries, plus new tests for the exact regression
+scenario) before committing.
+
+### Calibration note
+
+Both major/blocking defects in this piece are variations on the same failure this session's own log
+has now named three times: a heuristic is built to satisfy a spec's *literal examples* without
+checking whether the *general pattern* extracted from those examples is actually true. "Foo, TODO,
+Component1 are placeholders" does not imply "any word that happens to share a spelling with one of
+these three, or a shape loosely like the third, is a placeholder" — that inference has to be checked
+against real, ordinary usage the spec elsewhere *requires* (a CI/CD stage diagram, an `erDiagram`),
+not just against the three examples themselves. The round-2 regression is the same lesson one layer
+deeper: fixing a heuristic to handle one under-covered case (a script with no spaces) by loosening a
+*different* signal (length) rather than adding the *actual* missing signal (which script) reintroduces
+the same class of over-broad match the round 1 fixes had just removed.
