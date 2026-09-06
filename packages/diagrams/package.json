@@ -1,0 +1,21 @@
+{
+  "name": "@forge/diagrams",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parse": "./src/parse/index.ts"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/core": "workspace:*",
+    "jsdom": "29.1.1",
+    "mermaid": "11.17.2"
+  }
+}

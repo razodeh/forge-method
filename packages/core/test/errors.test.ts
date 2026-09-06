@@ -73,6 +73,9 @@ const SAMPLE_DETAILS = {
   field: 'write',
   location: '.forge/overrides/skills/acme-standards/SKILL.md',
   level: 'L2',
+  kind: 'flowchart',
+  diagramId: 'DIAG-014',
+  src: 'architecture/views/containers.mmd',
 } satisfies Record<string, unknown> as never;
 
 /**

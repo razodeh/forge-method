@@ -1276,3 +1276,70 @@ claim about which package's code raises the finding.
 checks and their rules, not which package implements each one; `02` §2.2's dependency graph is what
 actually decides that, and the split above is the only assignment consistent with both.
 
+## Q45 — The `mermaid` package itself cannot parse in Node without a DOM, contradicting `02` §2.1's
+"no browser" framing taken literally
+
+**Conflict.** `02` §2.1 names "`mermaid` parser (pure JS, no browser)" as the diagram-validation
+decision, and `08` §8.11.2 rule 3 says Mermaid "parses in pure JavaScript with no browser and no
+server, so validation is cheap enough to run on every gate." Empirically (verified directly against
+`mermaid@11` in a plain Node ESM script, no bundler): calling `mermaid.parse(source)` throws
+immediately (`DOMPurify.addHook is not a function`) with no DOM globals present — the package's
+sanitize step unconditionally expects a real `document`. `@mermaid-js/parser`, Mermaid's own newer
+Langium-based pure-grammar package with no DOM dependency, is real and does run standalone, but its
+exported `parse()` only covers `info | packet | pie | treeView | architecture | gitGraph |
+eventmodeling | radar | railroad* | treemap | wardley | cynefin` — none of which is a kind `08`
+§8.11.3's taxonomy table actually names (`flowchart`, `sequenceDiagram`, `stateDiagram-v2`, `erDiagram`,
+`gantt`, `C4*`, `quadrantChart`). The diagram kinds this milestone must actually validate are exactly
+the ones still implemented by Mermaid's older, DOM-coupled parsers, not the new pure-grammar ones.
+
+**Answer taken (proceeding):** use `mermaid` itself (not `@mermaid-js/parser`) with `jsdom` supplying
+the minimal DOM surface it requires (`document`/`window`/`navigator`/`SVGElement`/`HTMLElement`/`Node`
+set once at module load) — verified working for every taxonomy kind tested
+(`flowchart`/`sequenceDiagram`/`stateDiagram-v2`/`erDiagram`/`gantt`/`C4Context`/`quadrantChart`, all
+parse successfully with this shim in place). `jsdom` is a pure-JS DOM *emulation* library with no
+rendering engine, no network access, and no external process — categorically different from "a
+browser" or "Puppeteer" in the sense `02` §2.1 and `08` §8.11.8 are actually guarding against (a heavy
+install, a spawned browser binary, a network call); it is the accepted mechanism the wider Node
+ecosystem already uses to run browser-oriented libraries headlessly, and stays entirely in-process and
+synchronous-enough for a gate check. `@forge/diagrams/parse` further found that Mermaid's own unified
+renderer data (`diagram.db.getData()`) already returns a normalised `{nodes, edges}` shape for
+`flowchart`/`stateDiagram-v2`/`erDiagram` — reused directly rather than hand-walking three separate
+per-kind ASTs — while `sequenceDiagram` (`getActors()`/`getMessages()`) and all four `C4*` kinds
+(`getC4ShapeArray()`/`getRels()`, shared across `C4Context`/`C4Container`/`C4Component`/
+`C4Deployment`) each need their own two-call extraction, no `getData()` support. Only `gantt` and
+`quadrantChart` report an intentionally empty graph — not because Mermaid ships no data for them
+(`gantt`'s `getTasks()`/`getSections()` and `quadrantChart`'s `getQuadrantData()` are real and were
+found during this same investigation) but because a task list and a set of quadrant coordinates are
+not a node/edge graph in the sense `diagram:orphan-nodes`/`diagram:complexity`/`diagram:label-quality`
+reason about — a deliberate modelling boundary, not a missing-extraction gap, and the two are not the
+same thing (an earlier draft of this note conflated them, caught by this piece's own gauntlet critic).
+
+**Correction from the critic round:** the C4 methods above are *own properties* of `diagram.db`, not
+inherited ones — `Object.getOwnPropertyNames(Object.getPrototypeOf(db))`, used to enumerate methods
+for `sequenceDiagram`/`stateDiagram-v2`/`erDiagram` during the first build pass, found nothing for C4
+and was taken as proof no structural data existed there. `Object.keys(db)` (own properties) tells the
+true story. The lesson generalises past this one file: a negative result from reflecting on an
+external library's object shape is only as trustworthy as the specific reflection technique used, and
+is worth re-checking a second way before it becomes a design decision — the same "trace concrete real
+inputs, don't reason in the abstract" pattern this codebase's own `GAUNTLET-LOG.md` names repeatedly.
+
+**Also found and fixed in the critic round:** the first build pass's keyword-detection (`detectKind`)
+rejected any diagram beginning with Mermaid's own `---`-delimited YAML frontmatter block (a real,
+commonly-authored, valid construct for a diagram `title`/`config`) — fixed by stripping a leading
+frontmatter block before looking for the kind keyword.
+
+**Recommended resolution:** none needed against the spec pack itself — "pure JS, no browser" is best
+read as "no headless-browser binary, no Puppeteer, no network," which `jsdom` genuinely satisfies; if a
+future Mermaid release moves `flowchart`/`sequenceDiagram`/`erDiagram`/`stateDiagram-v2` onto the
+DOM-free `@mermaid-js/parser` grammars (already underway for other kinds), this piece's dependency on
+`jsdom` should be dropped in favour of it without changing `@forge/diagrams/parse`'s own public
+surface.
+
+**Build note:** reaching the parsed `.db` (needed for node/edge extraction) requires
+`mermaid.mermaidAPI.getDiagramFromText`, which the package itself marks `@deprecated` in favour of
+`parse`/`render` — verified that the non-deprecated `parse` returns only `{ diagramType, config }` (no
+structural data) and that `render` produces a full SVG (heavier than needed and still DOM-shaped, not
+structural). `Diagram.fromText`, the class-based, non-deprecated path to the same `db`, is not
+separately exported as its own runtime chunk (only as a `.d.ts` — the class is inlined into the main
+bundle). The deprecated call is used deliberately, with an inline `eslint-disable` naming this
+reasoning, rather than working around a warning with a worse design.

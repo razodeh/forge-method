@@ -180,6 +180,25 @@ export const ERROR_CODES = {
       `Knowledge entry ${show(d.entry)} passed its review date of ${show(d.reviewBy)}.`,
     remedy: 'Re-verify the entry against the code and update its `verified` date, or supersede it.',
   },
+  // `08` §8.11.1/§8.11.2: "validated: syntax-checked" — the one failure `@forge/diagrams/parse` can
+  // raise. `KB-005`/`KB-010`/`KB-031` are already spec-registered for other `08` rules (contradiction,
+  // staleness, transclusion mismatch); this is the next free low slot. See PLAN-M3.md P1.
+  'KB-001': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { kind: string; detail: string }) =>
+      `Diagram of kind ${show(d.kind)} failed to parse: ${show(d.detail)}.`,
+    remedy:
+      'Fix the Mermaid syntax the parser reports, or open the source in a Mermaid live editor.',
+  },
+  // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
+  'KB-031': {
+    severity: 'error',
+    exitCode: EXIT_CODES.gateFailed,
+    message: (d: { diagramId: string; src: string }) =>
+      `Transcluded diagram ${show(d.diagramId)} no longer matches its source ${show(d.src)}.`,
+    remedy: 'Run `forge diagram sync` to refresh the transcluded block, or edit the `.mmd` source.',
+  },
   'GATE-102': {
     severity: 'error',
     exitCode: EXIT_CODES.gateFailed,

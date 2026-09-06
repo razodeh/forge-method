@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Only this package needs DOM ambient types: `mermaid` and `jsdom`'s own type declarations
+    // reference `Window`/`Document`/`Node` (SPEC-QUESTIONS.md Q45's DOM shim). Every other package
+    // stays on the base `ES2023`-only `lib`.
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

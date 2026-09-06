@@ -28,5 +28,11 @@
     "statements": 100,
     "functions": 100,
     "branches": 100
+  },
+  "packages/diagrams": {
+    "lines": 98.82,
+    "statements": 98.98,
+    "functions": 100,
+    "branches": 86.89
   }
 }

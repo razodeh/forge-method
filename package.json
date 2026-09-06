@@ -27,6 +27,7 @@
     "@forge/schemas": "workspace:*",
     "@forge/templates": "workspace:*",
     "@types/estree": "1.0.9",
+    "@types/jsdom": "30.0.0",
     "@types/node": "20.19.35",
     "@typescript-eslint/parser": "8.69.0",
     "@vitest/coverage-v8": "4.1.11",
