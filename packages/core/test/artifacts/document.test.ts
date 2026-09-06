@@ -157,6 +157,30 @@ describe('ArtifactDocument.set', () => {
     doc.set(['title'], 'New Title');
     expect(doc.body).toBe('body\n');
   });
+
+  describe('an implicit ("zero-width") null value — a key with nothing written after it', () => {
+    it('sets a bare "key:" with nothing after it on the line', () => {
+      const doc = ArtifactDocument.parse('---\nrun:\nfoo: bar\n---\nbody\n', 'x.md');
+      doc.set(['run'], 'run_01H');
+      expect(doc.get(['run'])).toBe('run_01H');
+      expect(doc.toString()).toBe('---\nrun: run_01H\nfoo: bar\n---\nbody\n');
+    });
+
+    it('sets "key: " with one trailing space and no comment', () => {
+      const doc = ArtifactDocument.parse('---\nrun: \nfoo: bar\n---\nbody\n', 'x.md');
+      doc.set(['run'], 'run_01H');
+      expect(doc.get(['run'])).toBe('run_01H');
+    });
+
+    it('sets an implicit null that has its own trailing comment, keeping the comment intact', () => {
+      const doc = ArtifactDocument.parse('---\nrun:  # tbd\nfoo: bar\n---\nbody\n', 'x.md');
+      doc.set(['run'], 'run_01H');
+      expect(doc.get(['run'])).toBe('run_01H');
+      expect(doc.toString()).toContain('# tbd');
+      // The whole point: the comment must be a real comment, not folded into the scalar's own text.
+      expect(doc.toString()).not.toContain('run_01H#');
+    });
+  });
 });
 
 describe('ArtifactDocument.bumpRevision', () => {
@@ -190,6 +214,34 @@ describe('ArtifactDocument.bumpRevision', () => {
       { revision: 2, date: '2026-02-02', by: 'po', summary: 'First bump' },
       { revision: 3, date: '2026-03-03', by: 'architect', summary: 'Second bump' },
     ]);
+  });
+
+  it('appends after a flow-style last entry ("18" §18.6\'s own example format)', () => {
+    // A flow-map item's YAML range ends right after its closing "}", mid-line — not, as a
+    // block-style item's does, after a trailing newline. Appending must still separate the two
+    // entries onto their own lines rather than gluing the new one onto the old one's closing brace.
+    const flowSource = [
+      '---',
+      'id: STORY-014',
+      'revision: 1',
+      'updated: 2026-01-01',
+      'changelog:',
+      '  - { revision: 1, date: 2026-01-01, by: po, summary: Initial }',
+      '---',
+      'body\n',
+    ].join('\n');
+    const doc = ArtifactDocument.parse(flowSource, 'x.md');
+    doc.bumpRevision('architect', 'Second bump', '2026-02-02');
+
+    expect(doc.get(['changelog'])).toEqual([
+      { revision: 1, date: '2026-01-01', by: 'po', summary: 'Initial' },
+      { revision: 2, date: '2026-02-02', by: 'architect', summary: 'Second bump' },
+    ]);
+    // The corruption this guards against reads back as a mis-shapen changelog even when a bug makes
+    // it "succeed" here, so also assert the exact rendered form has each entry on its own line.
+    expect(doc.toString()).toContain(
+      '  - { revision: 1, date: 2026-01-01, by: po, summary: Initial }\n  - revision: 2\n',
+    );
   });
 
   it('keeps the document CRLF if the source was CRLF', () => {

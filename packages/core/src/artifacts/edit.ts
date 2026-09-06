@@ -57,10 +57,25 @@ function indentLines(block: string, indent: string): string {
   return lines.map((line, i) => (i === lastIndex ? line : indent + line)).join('\n');
 }
 
+/** Whether `character` is horizontal whitespace or a line break — "already separated enough". */
+function isBlankOrEol(character: string | undefined): boolean {
+  return character === ' ' || character === '\t' || character === '\n' || character === '\r';
+}
+
 /**
  * Replaces the value at `path` in front-matter `text`, returning the new text. Only `path`'s own
  * value range changes — everything else in `text`, including that value's trailing comment, is an
  * untouched substring of the original.
+ *
+ * An *implicit* null (`key:` with nothing after it, per `18` §18.6's optional `run` field, or any
+ * blank field left for a human to fill in later) parses to a genuinely zero-width range — `start`
+ * equals `end` — sitting wherever the parser first expected a value to start. Splicing into that
+ * exact point with no surrounding space either glues the new value onto the colon itself (`key:5`,
+ * which fails to reparse as a `MULTILINE_IMPLICIT_KEY` error) or onto whatever immediately follows,
+ * most commonly a trailing comment (`key:  5# comment`, which reparses without error but silently
+ * folds the comment into the scalar's own text). Verified both failure modes directly. A normal,
+ * already-written scalar's range always has real characters on both sides of it in the source, so
+ * this padding is only ever added for the zero-width case.
  *
  * @throws {RangeError} if `path` does not already resolve to a value in `text` — see
  * `ArtifactDocument.set`'s doc comment for why this is a caller's programming error, not a
@@ -80,7 +95,13 @@ export function spliceValue(
     );
   }
   const [start, end] = node.range;
-  return text.slice(0, start) + stringifyScalar(value) + text.slice(end);
+  const newValue = stringifyScalar(value);
+  if (start !== end) {
+    return text.slice(0, start) + newValue + text.slice(end);
+  }
+  const leadingSpace = isBlankOrEol(text[start - 1]) ? '' : ' ';
+  const trailingSpace = isBlankOrEol(text[end]) ? '' : ' ';
+  return text.slice(0, start) + leadingSpace + newValue + trailingSpace + text.slice(end);
 }
 
 export interface ChangelogEntry {
@@ -136,5 +157,14 @@ export function appendChangelogEntry(
   // last element here can never be the `undefined` `noUncheckedIndexedAccess` otherwise adds.
   const lastItem = node.items[node.items.length - 1] as YAML.Node;
   const insertAt = (lastItem.range as [number, number, number])[1];
-  return text.slice(0, insertAt) + toDocumentEol(entryBlock, text) + text.slice(insertAt);
+  // A block-style last item's range already extends through its own trailing newline (verified
+  // directly), so `insertAt` lands at the start of a fresh line and no separator is needed. A
+  // *flow*-style item (`{ revision: 1, ... }` — `18` §18.6's own example shows this form) ends its
+  // range right after the closing brace, mid-line: without an inserted newline here, the new entry
+  // would be glued onto the same line as the old one, corrupting the document. Detected from the
+  // text itself rather than the item's own style, since a `YAMLMap`'s flow-vs-block flag is not
+  // reliably present after every parse path this function is reached through.
+  const atLineStart = insertAt > 0 && text[insertAt - 1] === '\n';
+  const insertion = toDocumentEol(atLineStart ? entryBlock : `\n${entryBlock.trimEnd()}`, text);
+  return text.slice(0, insertAt) + insertion + text.slice(insertAt);
 }

@@ -81,17 +81,31 @@ export const DEFAULT_ARTIFACT_REGISTRY: ArtifactSchemaRegistry = Object.fromEntr
  * The `## `-level headings in `body`, in order. `###`+ subsections are excluded, and so is a
  * `## `-prefixed line inside a ` ``` ` fenced code block — a document quoting another artifact's
  * structure as an example is not itself declaring a section.
+ *
+ * An odd number of fence markers — one opened but never closed by the end of the body — is treated
+ * as though the unmatched one were not a fence at all, rather than as an open fence extending to
+ * EOF: this function's job is finding real headings for a validation check, not rendering Markdown,
+ * and a single stray/mistyped ` ``` ` earlier in a large document should not silently make every
+ * later, genuinely-present heading read as missing.
  */
 function topLevelHeadings(body: string): string[] {
+  const lines = body.split('\n');
+  const fenceLineIndices: number[] = [];
+  lines.forEach((line, index) => {
+    if (line.startsWith('```')) fenceLineIndices.push(index);
+  });
+  const closedFenceCount = fenceLineIndices.length - (fenceLineIndices.length % 2);
+  const fenceLines = new Set(fenceLineIndices.slice(0, closedFenceCount));
+
   const headings: string[] = [];
   let inFence = false;
-  for (const line of body.split('\n')) {
-    if (line.startsWith('```')) {
+  lines.forEach((line, index) => {
+    if (fenceLines.has(index)) {
       inFence = !inFence;
-      continue;
+      return;
     }
     if (!inFence && line.startsWith('## ')) headings.push(line.slice('## '.length).trim());
-  }
+  });
   return headings;
 }
 

@@ -169,6 +169,16 @@ describe('validateArtifact — phase 2 (body structure against requiredSections)
     expect(outcome.errors[0]?.message).toContain('Context');
   });
 
+  it('still finds a real heading after an earlier, unclosed fence', () => {
+    // A single stray/mistyped ``` earlier in the body must not silently disable heading detection
+    // for everything after it — both "Context" and "Decision" genuinely appear as plain headings.
+    const body = ['## Context', '', '```', 'some unclosed example', '', '## Decision', ''].join(
+      '\n',
+    );
+    const doc = ArtifactDocument.parse(`---\ntype: ADR\n---\n${body}`, 'x.md');
+    expect(validateArtifact(doc, registry)).toEqual({ valid: true });
+  });
+
   it('does not run phase 2 at all when phase 1 already failed', () => {
     const doc = ArtifactDocument.parse('---\ntype: NotReal\n---\nno headings\n', 'x.md');
     const outcome = validateArtifact(doc, registry);
