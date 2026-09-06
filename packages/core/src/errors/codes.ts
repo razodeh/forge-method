@@ -274,6 +274,19 @@ export const ERROR_CODES = {
       `${show(d.path)} is missing its required "## ${show(d.section)}" section.`,
     remedy: 'Add the missing "## " heading and its content to the document body.',
   },
+  'CFG-010': {
+    // `PLAN-M1.md` P13, per `SPEC-QUESTIONS.md` Q30: the id regex every per-type schema enforces
+    // (`registry/front-matter.ts`, `artifacts/entry-id.ts`) requires *exactly* `idWidth` digits, not
+    // "at least" — so an allocation past the digit ceiling (the 1000th `Story`) must refuse here,
+    // loudly, rather than hand back an id the schema would silently reject on the next validation.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { type: string; idWidth: number }) =>
+      `Cannot allocate another ${show(d.type)} id: it would need more than ${show(d.idWidth)} digits.`,
+    remedy:
+      "Widen the type's idWidth in the registry (a schema change, reviewed like any other), or " +
+      'retire older entries for this type.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

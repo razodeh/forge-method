@@ -11,7 +11,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ensureDir, listDirSorted, pathExists, readTextFile } from '../../src/fs/operations.ts';
+import {
+  ensureDir,
+  listDirEntriesSorted,
+  listDirSorted,
+  pathExists,
+  readTextFile,
+} from '../../src/fs/operations.ts';
 import { ProjectPaths } from '../../src/fs/paths.ts';
 
 let projectRoot: string | undefined;
@@ -208,5 +214,46 @@ describe('listDirSorted', () => {
     const paths = freshProject();
     const dir = paths.resolveWithin('missing');
     await expect(listDirSorted(dir)).rejects.toMatchObject({ code: 'RUN-034' });
+  });
+});
+
+describe('listDirEntriesSorted', () => {
+  it('returns entries sorted, each tagged with whether it is a directory', async () => {
+    const paths = freshProject();
+    const dir = paths.resolveWithin('.');
+    writeFileSync(path.join(dir, 'zebra.md'), 'x');
+    mkdirSync(path.join(dir, 'mango'));
+    writeFileSync(path.join(dir, 'apple.md'), 'x');
+    expect(await listDirEntriesSorted(dir)).toEqual([
+      { name: 'apple.md', isDirectory: false },
+      { name: 'mango', isDirectory: true },
+      { name: 'zebra.md', isDirectory: false },
+    ]);
+  });
+
+  it('sorts by code-unit order, not by locale collation', async () => {
+    const paths = freshProject();
+    const dir = paths.resolveWithin('.');
+    for (const name of ['zebra.md', 'école.md', 'apple.md']) {
+      writeFileSync(path.join(dir, name), 'x');
+    }
+    expect((await listDirEntriesSorted(dir)).map((entry) => entry.name)).toEqual([
+      'apple.md',
+      'zebra.md',
+      'école.md',
+    ]);
+  });
+
+  it('returns an empty array for an empty directory', async () => {
+    const paths = freshProject();
+    const dir = paths.resolveWithin('empty');
+    mkdirSync(dir);
+    expect(await listDirEntriesSorted(dir)).toEqual([]);
+  });
+
+  it('throws a RUN-034 ForgeError for a directory that does not exist', async () => {
+    const paths = freshProject();
+    const dir = paths.resolveWithin('missing');
+    await expect(listDirEntriesSorted(dir)).rejects.toMatchObject({ code: 'RUN-034' });
   });
 });

@@ -10,5 +10,12 @@
  * @see specs/18 §18.10
  */
 export { writeFileAtomic } from './atomic.ts';
-export { ensureDir, listDirSorted, pathExists, readTextFile } from './operations.ts';
+export {
+  ensureDir,
+  listDirEntriesSorted,
+  listDirSorted,
+  pathExists,
+  readTextFile,
+  type DirEntry,
+} from './operations.ts';
 export { DENIED_PREFIXES, ProjectPaths, type AbsolutePath } from './paths.ts';

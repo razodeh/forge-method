@@ -496,8 +496,10 @@ concurrent allocation.
 - **Never reused:** an artifact with `status: deprecated` still occupies its id; a *deleted* file's id
   is still not reissued as long as any reference to it survives in a retained artifact, and the
   documented retention rule (`18` §18.8: files are retained) is asserted by a fixture.
-- Zero-padding respects `idWidth`: `ADR-0001` (4) vs `STORY-001` (3); the 1000th story widens to
-  `STORY-1000` without colliding with `STORY-100`.
+- Zero-padding respects `idWidth`: `ADR-0001` (4) vs `STORY-001` (3); an allocation that would need
+  more digits than `idWidth` allows (a 1000th `Story`) fails with `CFG-010`, naming the type and the
+  digit ceiling, rather than silently handing back an id the already-shipped exact-width id regex
+  (`registry/front-matter.ts`, P5) would then reject — see `SPEC-QUESTIONS.md` Q30.
 - Concurrency: 50 concurrent `allocate('Story')` calls return 50 distinct, contiguous ids (serialised
   through one queue), and the same test run twice gives the same set.
 - Cache write is atomic (P4) and a corrupt `ids.json` is discarded with a warning, not fatal.

@@ -777,3 +777,83 @@ lives outside both packages. For (3), no spec text needs changing; a note that "
 M1 acceptance wording) means a static, hand-editable file at M1, with Handlebars rendering arriving
 only once `19` §19.2's engine exists, would avoid a future reader assuming these files are already
 render-ready.
+
+---
+
+## Q29 — P13's cache path is inside `resolveWithin`'s own deny list, and no spec states a real
+collection file's on-disk shape
+
+Two separate gaps, both discovered while trying to build the ID allocator, neither answerable by
+re-reading the same section again.
+
+**1. `.forge/state/ids.json` vs `CFG-004`.** `18` §18.8 and `09` §9.2 both name
+`.forge/state/ids.json` as the ID cache's location, verbatim. But `02` §2.5's deny list — implemented
+in P4 as `ProjectPaths.resolveWithin`'s `CFG-004` — blocks every write under `.forge/state/`
+unconditionally, with no exception for a cache file. Read literally, the spec asks for a file at a
+path the spec's own write gate refuses to resolve. `CFG-004`'s own remedy text already gestures at
+the answer without building it: "Write through the owning subsystem instead: ... event-log entries
+through the run's own append-only writer" — implying `.forge/state/`'s internal writers use a
+different route than ordinary artifact/content writes, but P4 never built that second route, because
+nothing before this piece needed one.
+
+**Answer taken (proceeding):** added `ProjectPaths.resolveState(relative)`, a second resolver scoped
+to `<root>/.forge/state/` — traversal- and symlink-escape-checked exactly like `resolveWithin`
+(sharing its containment logic), but never consulting the deny list, since being *inside*
+`.forge/state/` is the point of calling it, not something to refuse. `resolveWithin` itself is
+unchanged: an ordinary caller still cannot write there. Only `IdAllocator`'s cache (and, going
+forward, whatever the event log and the project lock end up implemented against) uses the new method.
+
+**2. No spec states what a populated `collection: true` file (`kb/risks.md`, `reports/waivers.md`,
+...) actually looks like on disk once it holds more than one entry.** `08` §8.2 calls `risks.md` a
+"register," and `PLAN-M1.md` P11's own stub template for each collection type (`SPEC-QUESTIONS.md`
+Q28) is a single `---`-fenced entry with a comment telling a human to copy it into the shared file —
+but copying *how many times, formatted how* (concatenated front-matter blocks? one YAML document
+listing all entries? a Markdown table?) is not stated anywhere in the spec pack, and P11 deliberately
+did not invent an answer for the stub alone.
+
+**Answer taken (proceeding):** `IdAllocator.scan()` (`18` §18.8: "truth is a scan of existing
+artifacts") walks the project tree and treats every `.md` file that parses as a single
+`ArtifactDocument` (`@forge/core/artifacts`, P12) with a registered `type` and a matching `id` as one
+artifact — which covers all 15 document types, and covers a collection-type entry *if* it is stored
+as its own file (a real, if unproven, convention already implicit in specs/22 M1's overall single-
+file-per-artifact framing). It does **not** parse a shared collection file for multiple concatenated
+entries; scanning `kb/risks.md` for more than one `RISK-###` inside it is out of scope until a spec
+page states the file's actual shape. Every allocator test in this piece uses one-artifact-per-file
+fixtures for the six collection types, matching what it actually implements — not a claim that the
+eventual real format will look like this.
+
+**Recommended resolution:** for (1), amend `02` §2.5 to name the exception `18` §18.8/`09` §9.2 both
+already assume: `.forge/state/`'s own internal writers (the event log, the project lock, the ID
+cache) resolve within it directly, without the deny-list check that exists to keep everything *else*
+out. For (2), state a collection file's real on-disk shape once — multiple concatenated front-matter
+blocks, one YAML list, or a table — so `IdAllocator.scan()` (and whatever later piece writes a new
+entry into one of these files) has an actual format to target instead of each independently guessing.
+
+---
+
+## Q30 — `PLAN-M1.md` P13's own Check contradicts the already-shipped, exact-width id regex from P5/P6
+
+**Conflict.** `PLAN-M1.md` P13's Check says: "the 1000th story widens to `STORY-1000` without
+colliding with `STORY-100`." But `checkIdMatchesRegisteredType` (`registry/front-matter.ts`, P5) and
+`entryIdSchema` (`artifacts/entry-id.ts`, P6) both build their id-validation regex as
+`` `^${idPrefix}-\d{${idWidth}}(-\d+)?$` `` — an **exact** digit count, not "at least." Under the
+schema as already committed and gauntlet-reviewed, `STORY-1000` (4 digits) fails Story's own front
+matter validation outright (`idWidth` is 3 for every type but ADR/NFR/HandoffRecord). No spec page
+states overflow behaviour either way — `09` §9.2 and `18` §18.8 both just say "zero-padded to 3 (4
+for ADR)," silent on what happens past 999. The Check's "widens" language appears to have been
+written without checking it against the id regex two milestone pieces had already locked in.
+
+**Answer taken (proceeding):** the schema is not revisited — reopening P5/P6's already-reviewed,
+gauntlet-passed regex for a scenario neither spec page actually requires is a disproportionate risk
+for this piece to take on. Instead, `IdAllocator.allocate`/`allocateMany` refuse to produce an id that
+would need more digits than `idWidth` allows, failing with a new, actionable code (`CFG-010`) rather
+than silently handing back an id the schema's own validation would then reject on the next
+`validateArtifact` call — a caller finding out at allocation time, with a clear remedy, is strictly
+better than finding out later at validation time with a confusing schema error pointing at a
+perfectly-formed id string. `PLAN-M1.md` P13's Check is corrected to match: the 1000th `Story` fails
+allocation with `CFG-010`, naming the type and the digit ceiling, rather than "widening."
+
+**Recommended resolution:** state the real overflow behaviour once, in `18` §18.8, next to "zero-padded
+to `idWidth`" — either "allocation fails past the digit ceiling" (what this piece implements) or "ids
+widen past the ceiling" (which would mean revisiting the id regex everywhere it's already enforced:
+`registry/front-matter.ts`, `artifacts/entry-id.ts`, and every per-type schema built on top of them).

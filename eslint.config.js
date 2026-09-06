@@ -349,6 +349,16 @@ export default tseslint.config(
     },
   },
   {
+    // `@forge/core`'s own `Clock` interface (`PLAN-M1.md` P13) is the injected-clock boundary R10
+    // asks every other production file to consume instead of reaching for `Date` directly — so this
+    // one file has to read the real wall clock somewhere. Narrowly by name, not `packages/core/**`:
+    // a package-wide exemption would switch the rule off for every other file R10 actually governs.
+    files: ['**/src/clock.ts'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+  {
     // The test harness and the launcher are the layer that *pins* the clock, the locale and the
     // environment, so they are the one place that must read and write them directly, and the one
     // place that lists directories before @forge/core/fs exists. R10 constrains production code.

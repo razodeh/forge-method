@@ -53,6 +53,8 @@ const SAMPLE_DETAILS = {
   issue: 'bad indentation at line 3',
   issues: 'title: Required',
   section: 'Context',
+  type: 'Story',
+  idWidth: 3,
 } satisfies Record<string, unknown> as never;
 
 /**
@@ -64,7 +66,7 @@ const SAMPLE_DETAILS = {
  * remedies are "do the thing again after fixing it".
  */
 const IMPERATIVE_VERBS =
-  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix)\b/;
+  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix|Widen)\b/;
 
 /** CSI introducer. Written as an escape so the source stays free of control characters. */
 const ESC = '[';

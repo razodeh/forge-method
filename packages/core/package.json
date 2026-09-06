@@ -8,7 +8,8 @@
     "./errors": "./src/errors/index.ts",
     "./constants": "./src/constants.ts",
     "./fs": "./src/fs/index.ts",
-    "./artifacts": "./src/artifacts/index.ts"
+    "./artifacts": "./src/artifacts/index.ts",
+    "./ids": "./src/ids/index.ts"
   },
   "engines": {
     "node": ">=20.10"

@@ -227,3 +227,44 @@ describe('resolveWithin — a bare backslash is not treated as a separator', () 
     expect(paths.resolveWithin('odd\\name.txt')).toBe(path.join(root, 'odd\\name.txt'));
   });
 });
+
+describe('resolveState', () => {
+  it('resolves inside <root>/.forge/state/, unlike resolveWithin', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(paths.resolveState('ids.json')).toBe(path.join(root, '.forge', 'state', 'ids.json'));
+    expect(() => paths.resolveWithin('.forge/state/ids.json')).toThrow(
+      expect.objectContaining({ code: 'CFG-004' }) as Error,
+    );
+  });
+
+  it('resolves a nested path inside .forge/state/', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(paths.resolveState('runs/run_01H/events.ndjson')).toBe(
+      path.join(root, '.forge', 'state', 'runs', 'run_01H', 'events.ndjson'),
+    );
+  });
+
+  it('rejects a relative traversal out of .forge/state/, with CFG-003', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(() => paths.resolveState('../../escape.txt')).toThrow(
+      expect.objectContaining({ code: 'CFG-003' }) as Error,
+    );
+  });
+
+  it('rejects an absolute path, with CFG-003', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(() => paths.resolveState('/etc/passwd')).toThrow(
+      expect.objectContaining({ code: 'CFG-003' }) as Error,
+    );
+  });
+
+  it('does not apply resolveWithin\'s deny list — a name that merely contains "git" is fine', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(() => paths.resolveState('gitignore-like-cache.json')).not.toThrow();
+  });
+});

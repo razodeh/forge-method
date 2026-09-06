@@ -98,3 +98,31 @@ export async function listDirSorted(path: AbsolutePath): Promise<readonly string
     throw new ForgeError('RUN-034', { operation: 'listDirSorted', path }, { cause });
   }
 }
+
+/** One entry from `listDirEntriesSorted` — a name plus whether it is itself a directory. */
+export interface DirEntry {
+  readonly name: string;
+  readonly isDirectory: boolean;
+}
+
+/**
+ * Lists the entries directly inside `path`, sorted by byte value, each tagged with whether it is
+ * itself a directory — a recursive walk (ID allocation's project scan, `PLAN-M1.md` P13) needs this
+ * to decide whether to recurse into an entry, which `listDirSorted`'s bare names cannot answer
+ * without a second, separately-unordered `stat` call per entry.
+ *
+ * @throws {ForgeError} `RUN-034` on any failure, including `path` not existing.
+ */
+export async function listDirEntriesSorted(path: AbsolutePath): Promise<readonly DirEntry[]> {
+  try {
+    // Same sanctioned wrapper as listDirSorted above — the unordered read never leaves this
+    // function without the sort immediately below.
+    // eslint-disable-next-line no-restricted-syntax -- see listDirSorted's comment above
+    const entries = await fsp.readdir(path, { withFileTypes: true });
+    return entries
+      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+      .sort((a, b) => byteCompare(a.name, b.name));
+  } catch (cause) {
+    throw new ForgeError('RUN-034', { operation: 'listDirEntriesSorted', path }, { cause });
+  }
+}

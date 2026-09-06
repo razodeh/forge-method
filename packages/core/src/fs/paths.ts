@@ -117,6 +117,40 @@ export class ProjectPaths {
   }
 
   /**
+   * Resolves `relative` against `base`/`realBase`, containment-checked (traversal, absolute shape, a
+   * symlink escaping either), but *not* deny-list-checked — `resolveWithin` and `resolveState` differ
+   * only in which base they contain to and whether the deny list applies, so both call this and get
+   * the POSIX-relative paths back rather than recomputing them (and needing an unjustified assertion
+   * that recomputation cannot fail the same check this function already made it pass).
+   *
+   * @throws {ForgeError} `CFG-003` if `relative` escapes `base` — by traversal, by being absolute
+   * (POSIX or Windows-shaped), or by a symlink whose target is outside `realBase`.
+   */
+  private resolveContained(
+    base: string,
+    realBase: string,
+    relative: string,
+  ): { resolved: string; relPosix: string; realRelPosix: string } {
+    if (looksAbsolute(relative)) {
+      throw new ForgeError('CFG-003', { path: relative, root: base });
+    }
+
+    const resolved = path.resolve(base, relative);
+    const relPosix = relativePosixWithin(base, resolved);
+    if (relPosix === undefined) {
+      throw new ForgeError('CFG-003', { path: relative, root: base });
+    }
+
+    const realResolved = realpathOfDeepestExistingAncestor(resolved);
+    const realRelPosix = relativePosixWithin(realBase, realResolved);
+    if (realRelPosix === undefined) {
+      throw new ForgeError('CFG-003', { path: relative, root: base });
+    }
+
+    return { resolved, relPosix, realRelPosix };
+  }
+
+  /**
    * Resolves `relative` to an absolute path inside this project, or throws.
    *
    * @throws {ForgeError} `CFG-003` if the path escapes the root — by traversal, by being absolute
@@ -124,29 +158,37 @@ export class ProjectPaths {
    * @throws {ForgeError} `CFG-004` if the path falls under `DENIED_PREFIXES`.
    */
   resolveWithin(relative: string): AbsolutePath {
-    if (looksAbsolute(relative)) {
-      throw new ForgeError('CFG-003', { path: relative, root: this.root });
-    }
+    const { resolved, relPosix, realRelPosix } = this.resolveContained(
+      this.root,
+      this.realRoot,
+      relative,
+    );
 
-    const resolved = path.resolve(this.root, relative);
-    const relPosix = relativePosixWithin(this.root, resolved);
-    if (relPosix === undefined) {
-      throw new ForgeError('CFG-003', { path: relative, root: this.root });
-    }
-
-    const realResolved = realpathOfDeepestExistingAncestor(resolved);
-    const realRelPosix = relativePosixWithin(this.realRoot, realResolved);
-    if (realRelPosix === undefined) {
-      throw new ForgeError('CFG-003', { path: relative, root: this.root });
-    }
-
-    // Checked against the *resolved* path, not the nominal `relPosix`: a symlink inside the project
-    // that points at a denied directory (`alias -> .git`) must not let `resolveWithin('alias/config')`
-    // slip past the deny list just because the literal segment typed by the caller was not "git".
+    // Checked against both the nominal and the real relative path: a symlink inside the project that
+    // points at a denied directory (`alias -> .git`) must not let `resolveWithin('alias/config')` slip
+    // past the deny list just because the literal segment typed by the caller was not "git".
     if (isDenied(relPosix) || isDenied(realRelPosix)) {
       throw new ForgeError('CFG-004', { path: relPosix });
     }
 
     return resolved as AbsolutePath;
+  }
+
+  /**
+   * Resolves `relative` to an absolute path inside `<root>/.forge/state/` — deliberately *not*
+   * behind `resolveWithin`'s deny list, which exists to keep ordinary artifact/content writes out of
+   * `.forge/state/` (§2.5's `CFG-004`) precisely because that directory is owned by the run's own
+   * internal writers instead: the event log, the project lock, and — per `18` §18.8/`09` §9.2's own
+   * stated cache location — `IdAllocator`'s `ids.json`. `CFG-004`'s own remedy text points here
+   * ("event-log entries through the run's own append-only writer"); this is that other route,
+   * scoped to `.forge/state/` alone rather than a bypass of containment for the whole project. See
+   * `SPEC-QUESTIONS.md` Q29.
+   *
+   * @throws {ForgeError} `CFG-003` if `relative` would escape `.forge/state/`.
+   */
+  resolveState(relative: string): AbsolutePath {
+    const stateRoot = path.join(this.root, '.forge', 'state');
+    const realStateRoot = path.join(this.realRoot, '.forge', 'state');
+    return this.resolveContained(stateRoot, realStateRoot, relative).resolved as AbsolutePath;
   }
 }
