@@ -57,6 +57,8 @@ unrecognised operator rather than ignoring it.
 
 **Depends on:** nothing (`@forge/core`'s `ForgeError` only).
 
+*(P1 is committed: `f9da688`.)*
+
 ---
 
 ## P2 — The five-layer resolver, `$extends`, and per-field provenance

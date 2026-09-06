@@ -1020,3 +1020,70 @@ input order gives an identical graph" was tested only with inputs that happened 
 order to affect. The recurring fix has been the same each time, too: replace "whichever came first" with
 a tie-break intrinsic to the data itself (a file path, a sorted id) wherever more than one candidate for
 the same role can legitimately exist.
+
+---
+
+## M2 P1 — the overlay merge engine
+
+**Rounds: 2 (one critic finding one blocking and one major, one accepted minor; one scoped verify
+confirming both fixes and finding one further major of the same kind). Outcome: WON.**
+
+First piece of M2 (`@forge/extensions`, `PLAN-M2.md`). `15` §15.2's own worked example gives one
+concrete case for `$append_guidance` (a `briefs` map, every value a prompt string) and states the
+general rule for arrays only ("arrays require an operator... silent array replacement is the single
+most confusing behaviour in every config system ever built") — everything else about how far
+`$append_guidance` generalises, and every non-array shape mismatch a merge could hit, was this piece's
+own design decision to make and defend.
+
+### Round 1 — one blocking, one major, both accidental-reachable and fixed; one accepted minor
+
+- **Blocking: `$append_guidance` silently corrupted non-prose sibling fields.** The first
+  implementation appended the guidance string to *every* string-valued sibling in the same object —
+  a mechanical reading of "every sibling string field" as the generalisation of the spec's one
+  `briefs` example. The critic constructed the exact counter-example `15` §15.2 itself shows two
+  lines below `briefs`: `tools: { exec: [...], network: 'allowlist' }`. `network` is a string, but an
+  enum value, not prose — appending guidance to it silently turned `allowlist` into
+  `"allowlist\n\nNever touch the artifactory host without a ticket."`, no error, no test catching it
+  (every existing test used a purely-string `briefs`-shaped map). Fixed by requiring the object
+  receiving `$append_guidance` to be genuinely homogeneous — every field, after merging, a string —
+  and refusing by name (`CFG-011`) when it is not, rather than guessing which strings were meant to
+  receive guidance and which were not.
+- **Major: a plain (non-operator) object overlay onto an array base silently discarded the array.**
+  `mergeValue` treated a base it couldn't confirm was a plain object as `{}` unconditionally, so
+  `applyOverlay({ skills: [...] }, { skills: { description: '...' } })` replaced the whole array with
+  an unrelated object and raised nothing — the mirror image of "arrays require an operator," just
+  approached from the *overlay* being a plain object rather than a bare array, which is the one shape
+  the original code already refused. Fixed by refusing this shape mismatch explicitly.
+- **Accepted, not fixed (minor): `$remove` matches "by value" via reference equality**, so an
+  object-shaped removal target without an `id` never matches a structurally-identical base item.
+  Left as documented residual risk: `15` §15.2's own examples only ever show `$remove` matching
+  primitives by value or `{id: ...}` objects by id — an id-less object target isn't a scenario the
+  spec actually gives a rule for, and inventing a deep-equality rule with no spec text to anchor it
+  would be exactly the kind of unrequested cleverness this project's own calibration notes keep
+  warning against.
+
+### Round 2 — scoped verify: both fixes confirmed, one further major of the same shape found and fixed
+
+A fresh agent hand-traced `15` §15.2's full worked YAML example end to end against the fixed code
+(every field merges as the spec's prose describes), confirmed the homogeneity check scopes to the
+correct *innermost* object under nested `$append_guidance` usage, confirmed the array-base refusal
+does not accidentally also catch a legitimate `{ $append: [...] }` directive (the operator-directive
+branch runs first), and then found what round 1 had not: **a *scalar* overlay onto an array base has
+the identical bug** — `applyOverlay({ hosts: ['a','b'] }, { hosts: 'oops' })` silently produced
+`{ hosts: 'oops' }`, the same silent-replacement failure as round 1's major finding, just from the
+third possible overlay shape (bare array, plain object, scalar) rather than the second. Round 1's fix
+addressed the plain-object case by name without generalising to "no non-operator shape may replace an
+array," which is what the spec's own rule actually says. Fixed the same way: refuse explicitly. One
+further minor noted and accepted: `$append_guidance` on an object with zero other fields silently
+no-ops (vacuously homogeneous) rather than signalling that the guidance had nowhere to attach — no
+existing data is corrupted, so left as accepted residual risk alongside the `$remove`-by-value gap.
+
+### Calibration note
+
+Round 1's own fix for "a non-operator overlay shape must not silently replace an array" only covered
+the ONE shape (plain object) the round-1 finding happened to arrive in, rather than the general rule
+`15` §15.2 actually states — a bare array, a plain object, and a scalar are all "not an array
+operator," and the rule applies to all three identically. Fixing a defect by pattern-matching its
+specific reported shape, rather than by re-deriving the rule the shape was an instance of, is a subtler
+version of the same lesson P12/P13/M1-P14 each recorded: a fix scoped to the counter-example that
+found it is not yet the same thing as a fix scoped to the property that was actually violated.
