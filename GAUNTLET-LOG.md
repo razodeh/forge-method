@@ -1221,3 +1221,65 @@ incomplete. Neither gap was found by the piece's own test suite because every te
 written from the same one-sided mental model — a different instance of this session's most frequent
 lesson: a test independently re-derived from the spec text catches what a test mirroring the
 implementation's own assumptions cannot.
+
+---
+
+## M2 P4 — skill packets: parsing and validation
+
+**Rounds: 2 (one critic finding two majors in the same function; one scoped verify confirming the fix
+and finding only accepted, narrow trade-offs). Outcome: WON.**
+
+Added two small, purely-additive exports to already-committed M1 code rather than duplicating their
+logic: `isExecutable` on `@forge/core/fs` (a script-executability check, POSIX-only by its own
+admission — Windows has no equivalent bit, recorded as `SPEC-QUESTIONS.md` Q33 alongside the piece's
+other real gap, the spec's un-numbered "hard cap" token ceiling), and re-exporting
+`splitFrontMatter`/`parseFrontMatterYaml` from `@forge/core/artifacts` (already-committed, already-
+reviewed M1 functions that turned out to be exactly what `SKILL.md`'s identical `---`-delimited format
+needed, with zero new parsing logic to write or review). `parseSkillPackage` deliberately does not
+validate its own front matter against the skill schema — schema validity is one of several things
+`validateSkill` itself checks, per `15` §15.4.5's own list, so a `SKILL.md` with a broken schema still
+parses successfully and gets its other checks (dead references, injection, secrets) run regardless.
+
+### Round 1 — two majors, both in the same function, both fixed
+
+- **Major: the dead-reference regex missed `15` §15.4.2's own worked example.** The first
+  implementation required a reference mention to look like a markdown link — `(references/…)` with the
+  parenthesis immediately preceding the path. `15` §15.4.2's own `SKILL.md` example references a file
+  from plain prose instead: `` (see `references/error-handling.md` for the full catalogue) `` — the
+  text between `(` and `references/` broke the regex, so a skill author following the spec's own
+  worked example verbatim would get a spurious "orphaned reference" finding for a file genuinely
+  referenced in the body. The dedicated test for this exact code path used carefully-link-shaped
+  wording that happened to avoid exposing the bug — passing by construction, not by exercising the
+  real spec text.
+- **Major, same root cause: the same strict regex also missed genuinely stale mentions in looser
+  prose**, meaning a file renamed away but still mentioned in body text (in a phrasing that isn't
+  markdown-link-shaped) would be invisible to "dead reference" detection — silently defeating the one
+  check this function exists for, in the opposite direction from the first finding.
+
+Both traced to the same design mistake: treating "referenced" as "is a markdown link" rather than "is
+mentioned," which `15` §15.4.2's own example shows is the actual, looser convention. Fixed by scanning
+the whole body for the bare `references/<path>` substring wherever it appears — in a link, in
+backticks, in plain prose — and stripping trailing sentence punctuation a real filename would never
+end in, rather than gating on link syntax at all.
+
+### Round 2 — scoped verify: fix confirmed, one free cleanup applied
+
+A fresh agent hand-traced the broadened regex against markdown links, trailing commas, bold-marker
+adjacency, and backtick-wrapped mentions, confirming all resolve to the correct bare filename, and
+confirmed the fix catches a renamed-away file's stale mention exactly as intended. Found one piece of
+dead code — the trailing-punctuation strip's character class named several delimiters (`)`, `` ` ``,
+`'`, `"`, `!`, `?`) the extraction regex's own charset can never actually produce at that position, so
+only `.` was ever really being stripped — and two narrow, accepted trade-offs (a mention directly
+abutting a hyphen/underscore with no whitespace can over-consume; the broadened match can, in
+principle, fire on an unrelated project's own "references/" mention in prose) that are the explicit,
+reasoned cost of fixing the two majors and not defects in their own right. The dead-code cleanup was
+folded in since it was free; the two trade-offs were left as documented, accepted scope, matching the
+piece's own reasoning for making the match broader in the first place.
+
+### Calibration note
+
+Both round-1 defects came from the same wrong premise — conflating "the spec's prose describes a
+reference" with "the reference must be markdown-link-shaped" — checked against a literal reading of
+`15` §15.4.2's own worked example rather than against a plausible-looking but self-invented convention.
+A test suite built from the same premise (as this piece's own was) cannot find a defect in the premise
+itself; only re-deriving the check from the spec's actual example text, as the critic did, surfaces it.

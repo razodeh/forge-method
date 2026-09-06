@@ -182,6 +182,8 @@ rule `15` §15.4.5 lists by name.
 
 **Depends on:** P1, P2.
 
+*(P1, P2, P3, P4 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`.)*
+
 ---
 
 ## P5 — MCP registry: parsing and grant validation
