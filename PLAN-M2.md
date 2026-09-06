@@ -300,6 +300,9 @@ of the other six pieces' overlay shapes that expands into ordinary, visible over
 
 **Depends on:** P1, P2, P3, P4, P5, P6.
 
+*(P1, P2, P3, P4, P5, P6, P7 are committed: `f9da688`, `44fd9db`, `868b35e`, `5b6c381`, `7705672`,
+`2f786a0`, `3cc6102`.)*
+
 ---
 
 ## P8 — The twelve compile-time invariants (I1–I12)

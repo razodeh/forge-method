@@ -1399,3 +1399,77 @@ easy-to-reach direction" lesson `GAUNTLET-LOG.md`'s own P5 entry named days earl
 type's own doc comment stated the intended precedence in plain English, and the code that was supposed
 to implement it got the `??` operands backwards — a one-token inversion invisible to a test suite that,
 like the implementation, never tried constructing a step where the two fields disagreed.
+
+## M2 P7 — style profile and presets: schema, apply, eject
+
+**Rounds: 2 (one critic finding three real defects across content, atomicity, and validation depth;
+one scoped verify confirming all three with no residual defects). Outcome: WON.**
+
+The largest single piece this milestone: a real schema for `15` §15.8's style profile, plus five named
+presets (`15` §15.9) authored as genuinely schema-valid overlay content spanning agent overlays, MCP
+config, workflow overlays, gate checks, and template overlays. Two real spec gaps were found and
+recorded before writing the registry: `roster:` turned out to live in `.forge/config.yaml` itself, not
+a separate overlay file (`15` §15.3.3's own worked example), which `SPEC-QUESTIONS.md` Q38 uses to
+scope what a preset's `files` can ever contain; and `AC15-8`'s literal "apply then resolve" round trip
+needs a whole-project overlay reader that doesn't exist until `PLAN-M2.md` P9 (Q39), so this piece
+verifies the narrower, real precondition it fully owns instead — `applyPreset`'s writes and
+`ejectPreset`'s own output can never disagree, by construction, since both funnel through one shared
+serialization function.
+
+### Round 1 — three real defects, one across content, one across atomicity, one across validation depth
+
+- **Major: the `regulated` preset's framework overlay targeted the wrong document with a fabricated
+  option id.** `{ options: { $remove: ['emerging'] } }` was meant to express "no emerging-maturity
+  technology," patched onto `repo-strategy` — but `repo-strategy`'s real options are the repo-layout
+  choices (`monorepo-single-package`, `monorepo-workspaces`, `polyrepo`, `meta-repo`); `'emerging'` is
+  exclusively a technology-catalog `maturity` field value, unrelated to `repo-strategy` entirely. The
+  content passed schema validation trivially (`frameworkOverlaySchema`'s `options` field only checks
+  for an array of non-empty strings, not that any of them name something real) while expressing
+  nothing true — exactly the kind of fabricated-but-schema-shaped content this piece's own Q38
+  discipline exists to prevent. Fixed by deleting the file outright: the fact now lives only in the
+  preset's own `posture` prose, matching how every other unschematised posture fact in the registry is
+  already handled.
+- **Major: `applyPreset` was not atomic across a multi-file preset.** `writeFileAtomic` only
+  guarantees single-file atomicity (temp-write + fsync + rename); nothing in the write loop rolled
+  back an earlier file if a later one failed. Verified with a real symlink escaping the project root:
+  the first file survived on disk after the second file's write correctly refused via
+  `resolveWithin`'s containment check — a real, silent violation of `15` §15.9's "applied atomically"
+  for exactly the presets most likely to have more than one file (`enterprise-rigor`, `regulated`).
+  Fixed by tracking every successfully-written path and best-effort deleting all of them
+  (`Promise.allSettled`, so a cleanup failure can never mask the original error) before rethrowing.
+- **Major: `validatePreset`'s template-overlay check validated field names, never field values.**
+  `checkTemplateRequiredFields` only checks that a required field's *key* is present; nothing checked
+  that its *value* is actually valid. A template overlay with every ADR field present by name but
+  every value garbage (`status: 'not-a-real-status'`, `schemaVersion: 'not-a-number'`, an invalid
+  `id`, a wrong-typed `superseded_by`) reported fully valid — the exact "never silently producing an
+  artifact that fails validation later" failure `15` §15.7 names as the whole point of this check.
+  Fixed by also running the real, already-committed per-type `@forge/schemas` zod schema against the
+  overlay's data, reporting its issues alongside the required-field-name findings.
+- **Free cleanup applied alongside the fixes:** `presetSchema` — the bundle's own manifest shape —
+  was exported but never actually used anywhere; wired into `validatePreset` as an initial bundle-shape
+  check, closing a real (if minor) inconsistency where an empty `files` array `presetSchema` itself
+  requires `.min(1)` for was previously accepted as `valid: true`.
+
+### Round 2 — scoped verify: all three fixes confirmed, no residual defects
+
+A fresh agent re-derived every fact cited in the fabricated-content fix directly from `specs/11`/`12`
+rather than trusting the fix's own comment, confirmed `regulated` now has exactly the two files it
+should, and checked all four *other* presets for the same class of mistake (a schema-valid but
+fabricated id) — found none. It traced `applyPresetDefinition`'s rollback logic through every file
+count (zero written, all-but-one written, last file failing) and confirmed `Promise.allSettled`
+genuinely cannot let a cleanup failure suppress the original error. It also independently constructed
+four new template-overlay probes the existing tests didn't cover (a malformed date, a wrong-typed
+array field, a plausible-typo enum value, and a cross-field `superRefine` inconsistency) and confirmed
+`validatePreset` caught every one.
+
+### Calibration note
+
+The first defect is a new instance of this session's oldest lesson, now showing up in *content*
+rather than *logic*: a schema can only ever check that a value has the right shape, never that it
+means the right thing — `$remove: ['emerging']` is exactly as well-formed as `$remove: ['meta-repo']`
+to `frameworkOverlaySchema`, and only reading the *target* document's own real option list (not just
+the schema validating the *overlay*) exposes that one of them refers to nothing. `registry.test.ts`'s
+own "every preset validates" assertion could not have caught this by construction, since fabricated
+content is schema-valid by definition — the gap only closes by re-deriving each preset's claimed facts
+from the base documents they patch, which is exactly what the fresh critic did and the builder's own
+authoring pass had no structural reason to do.
