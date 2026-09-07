@@ -1,0 +1,503 @@
+/**
+ * `06` §6.2's plan-compilation rule 1: expand every `fanout` node over its collection, using the item's
+ * own id in the expanded step id so resume stays stable across a re-compile. This piece stops at that —
+ * rules 2–6 (implicit dependencies from contract freeze/resource claims, gate-node insertion, cycle
+ * rejection, critical path) are `PLAN-M5.md` P11's own job, against the `StepNode[]` this module produces.
+ *
+ * `parallel`/`sequence` steps never become a `StepNode` of their own: `10` §10.1's own step-kind table
+ * describes them as "explicit grouping when dependencies alone are insufficient," and `06` §6.2's own
+ * closed `StepNode.kind` union has no `'parallel'`/`'sequence'` literal to give one anyway. A group's
+ * own job is *entirely* discharged by folding its grouping semantics into its children's `dependsOn`
+ * edges — a `sequence`'s children chain in array order (each depending on the previous, per
+ * `@forge/engine/workflow`'s own `SequenceStep` doc comment: "forces array-order execution among its own
+ * children"); a `parallel`'s children each independently inherit the group's own incoming dependency,
+ * with no ordering between siblings ("no ordering constraint *relative to each other*"). A dependency
+ * declared directly on a `parallel`/`sequence` step's own id (rather than on one of its children) is not
+ * resolved by this piece — nothing in `10` §10.1's own worked example exercises it, and rewriting such a
+ * reference into the real, expanded child id(s) it should mean is exactly the class of graph-wide
+ * dependency rewriting `06` §6.2's own rule 2/3 already assigns to P11, not rule 1's own narrower scope.
+ *
+ * A `fanout` is always treated as needing its own `id` (`missing-step-id` otherwise) — never itself
+ * nested, id-less, inside another fanout's own templated child. `10` §10.1's worked example never nests a
+ * fanout that way, and the id format `06` §6.2 gives (`${workflowId}:${stepId}[:${itemKey}]`) has no
+ * provision for the extra nesting level a truly general double-fanout-with-no-id would need anyway.
+ *
+ * @see specs/06 §6.2, §6.7, §6.8
+ * @see specs/10 §10.1
+ * @see PLAN-M5.md P10
+ */
+import { ForgeError } from '@forge/core/errors';
+
+import { evaluate, parseExpression, resolveTemplate } from '../expr/index.ts';
+import type { ExpressionContext } from '../expr/index.ts';
+import type { AgentStep, FanoutStep, Workflow, WorkflowStep } from '../workflow/index.ts';
+import {
+  toAgentId,
+  type CompileIssue,
+  type CompileResult,
+  type RetryableFailureClass,
+  type StepNode,
+  type StepNodeLimits,
+  type StepNodeOnFailure,
+  type StepNodeRetryPolicy,
+} from './types.ts';
+
+/** `06` §6.2's own id format, verbatim: `${workflowId}:${stepId}[:${itemKey}]` — the bracketed segment
+ * present only for a fanout-expanded item. The one function every later piece that needs to construct or
+ * recognise a compiled step id uses, so the format is never duplicated by hand. */
+export function compileStepId(workflowId: string, stepId: string, itemKey?: string): string {
+  return itemKey === undefined ? `${workflowId}:${stepId}` : `${workflowId}:${stepId}:${itemKey}`;
+}
+
+/** Guards the same class of pathological input `@forge/engine/workflow`'s own `MAX_TRAVERSAL_DEPTH`
+ * guards against, for the identical reason: `compilePlan`/`expandFanout` are public functions a caller
+ * could reach directly, without having run `validateWorkflow` first (which already rejects excessively
+ * deep nesting) — defense in depth, not a duplicate of that check, the same lesson `SPEC-QUESTIONS.md`
+ * Q71's own verify round just re-confirmed the hard way (never assume an earlier validation pass is the
+ * only path to a piece of code). Wide margin under `validateWorkflow`'s own 2000, since this walk also
+ * recurses through `parseExpression`/`evaluate`'s own call frames for every fanout it descends through. */
+const MAX_COMPILE_DEPTH = 500;
+
+/** `06` §6.8's own comment: "default 3 for agent steps, 1 for gates." Nothing in `06`/`10` states a
+ * default for the other six kinds; `1` (no automatic retry) is this piece's own choice for all of
+ * them — most represent either a one-shot mechanical action (`command`, `checkpoint`, `merge`,
+ * `subworkflow`) or a human-interaction point (`elicit`, `session`) where silently re-attempting has no
+ * obvious meaning the way re-running an agent turn does. */
+const AGENT_DEFAULT_MAX_ATTEMPTS = 3;
+const NON_AGENT_DEFAULT_MAX_ATTEMPTS = 1;
+
+/** No default numbers anywhere in `06`/`10` for either — this piece's own conservative, explicitly-
+ * placeholder choice, not a transcription of anything spec-given (contrast `AGENT_DEFAULT_MAX_ATTEMPTS`
+ * above, which *is* spec-given). `10` §10.1's own "limits within module ceilings" validation clause
+ * describes a real per-role/per-module ceiling system that is `@forge/agents`' own concern (M6,
+ * `SPEC-QUESTIONS.md` Q62) — these numbers exist so a compiled `StepNode` always has *some* usable
+ * value, not to anticipate what that real system will eventually decide. */
+const DEFAULT_LIMITS: StepNodeLimits = { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 2.0 };
+const DEFAULT_BACKOFF_MS: readonly [number, number] = [1000, 30_000];
+
+const RETRYABLE_CLASSES: ReadonlySet<string> = new Set<RetryableFailureClass>(['transient', 'tool-error', 'validation', 'test-failure', 'timeout']);
+const ON_FAILURE_VALUES = new Set<StepNodeOnFailure>(['block', 'continue', 'escalate', 'replan']);
+
+function issue(code: string, message: string, stepId?: string): CompileIssue {
+  return stepId === undefined ? { code, message } : { code, message, stepId };
+}
+
+/** `resolveTemplate` throws a real `ForgeError` (`CFG-014`/`CFG-015`, `SPEC-QUESTIONS.md` Q71) — a
+ * deliberate difference from this module's own "never throws, collect issues instead" convention,
+ * documented at `resolveTemplate`'s own definition: it runs at *execution* time against a single fully-
+ * resolved context, where there is no second problem to keep looking for. `compilePlan`/`expandFanout`
+ * are exactly the opposite shape (collect every issue across a whole tree of steps and fanout items), so
+ * every call site converts a caught `ForgeError` into an ordinary `CompileIssue` and keeps going with an
+ * empty-string placeholder — one bad template in one fanout item must not stop this piece from also
+ * reporting a real, independent problem in a sibling item or a different step. Anything that is not a
+ * `ForgeError` is rethrown, not swallowed: `resolveTemplate`'s own contract only documents these two
+ * codes, so anything else is a genuine bug in this file, not a reachable outcome of any template text. */
+function safeResolveTemplate(template: string, context: ExpressionContext, issues: CompileIssue[], stepId: string): string {
+  try {
+    return resolveTemplate(template, context);
+  } catch (cause) {
+    if (cause instanceof ForgeError) {
+      issues.push(issue('template-resolution-failed', cause.message, stepId));
+      return '';
+    }
+    throw cause;
+  }
+}
+
+function toResourceClaims(value: string | readonly string[] | undefined, context: ExpressionContext, issues: CompileIssue[], stepId: string): readonly string[] {
+  if (value === undefined) return [];
+  const list = typeof value === 'string' ? [value] : value;
+  return list.map((glob) => safeResolveTemplate(glob, context, issues, stepId));
+}
+
+/** `10` §10.1's own worked example writes every `dependsOn` entry bare — `[ freeze-contracts ]`,
+ * `[ "generate-tests:{{item.id}}" ]`, `[ "implement:{{item.id}}" ]` — never prefixed with the workflow's
+ * own id, even though a compiled `StepNode.id`/`dependsOn` always is (`06` §6.2's own `${workflowId}:
+ * ${stepId}[:${itemKey}]`). An author names a step (or a fanout's own per-item expansion) *within their
+ * own workflow*; qualifying with `env.workflowId` is this piece's own job, done once here rather than
+ * asking every call site to remember it. Always `env.workflowId`, never the current `baseId` a nested
+ * fanout/parallel/sequence happens to be compiling under: a dependency is a reference to *any* other node
+ * in the same workflow's own compiled graph, not scoped to whatever container the referencing step
+ * happens to sit inside (`@forge/engine/workflow`'s own `SequenceStep` doc comment: "a child may
+ * legitimately still depend on a step outside its own group"). */
+function qualifyDependsOn(raw: readonly string[] | undefined, context: ExpressionContext, env: CompileEnv, issues: CompileIssue[], stepId: string): readonly string[] {
+  return (raw ?? []).map((dep) => `${env.workflowId}:${safeResolveTemplate(dep, context, issues, stepId)}`);
+}
+
+function compileRetry(step: AgentStep | undefined, kind: WorkflowStep['kind'], issues: CompileIssue[], stepId: string): StepNodeRetryPolicy {
+  const defaultMaxAttempts = kind === 'agent' ? AGENT_DEFAULT_MAX_ATTEMPTS : NON_AGENT_DEFAULT_MAX_ATTEMPTS;
+  const authored = step?.retry;
+  const retryOn: RetryableFailureClass[] = [];
+  for (const candidate of authored?.retryOn ?? [...RETRYABLE_CLASSES]) {
+    if (RETRYABLE_CLASSES.has(candidate)) {
+      retryOn.push(candidate as RetryableFailureClass);
+    } else {
+      issues.push(issue('invalid-retry-on-value', `retryOn value "${candidate}" is not one of: ${[...RETRYABLE_CLASSES].join(', ')}.`, stepId));
+    }
+  }
+  return { maxAttempts: authored?.maxAttempts ?? defaultMaxAttempts, backoffMs: DEFAULT_BACKOFF_MS, retryOn };
+}
+
+function compileLimits(step: AgentStep | undefined): StepNodeLimits {
+  return {
+    maxTurns: step?.limits?.maxTurns ?? DEFAULT_LIMITS.maxTurns,
+    wallClockMs: DEFAULT_LIMITS.wallClockMs,
+    maxCostUsd: step?.limits?.maxCostUsd ?? DEFAULT_LIMITS.maxCostUsd,
+  };
+}
+
+/** The step's own `onFailure` (if a valid one of `06` §6.2's own four values) wins; otherwise the
+ * workflow's own `onFailure.default` (if valid); otherwise `'block'` — `06`'s own worked example uses
+ * exactly that value as its workflow-wide default, and "block" is the conservative reading of this
+ * milestone's repeated "never silently continue" theme (`06` §6.9's own budget-breach handling states the
+ * identical preference explicitly). A non-blank value that matches none of the four is a real,
+ * `invalid-on-failure-value` compile issue, never silently replaced — `@forge/engine/workflow`'s own P8
+ * left this exact validation as "a later piece's own concern to define and enforce," not something to
+ * leave unenforced now that this is that piece. */
+function compileOnFailure(
+  stepOnFailure: string | undefined,
+  workflowDefault: string | undefined,
+  issues: CompileIssue[],
+  stepId: string,
+): StepNodeOnFailure {
+  if (stepOnFailure !== undefined) {
+    if (ON_FAILURE_VALUES.has(stepOnFailure as StepNodeOnFailure)) return stepOnFailure as StepNodeOnFailure;
+    issues.push(issue('invalid-on-failure-value', `onFailure value "${stepOnFailure}" is not one of: block, continue, escalate, replan.`, stepId));
+  }
+  if (workflowDefault !== undefined) {
+    if (ON_FAILURE_VALUES.has(workflowDefault as StepNodeOnFailure)) return workflowDefault as StepNodeOnFailure;
+    issues.push(issue('invalid-on-failure-value', `workflow onFailure.default "${workflowDefault}" is not one of: block, continue, escalate, replan.`, stepId));
+  }
+  return 'block';
+}
+
+interface CompileEnv {
+  readonly workflowId: string;
+  readonly workflowOnFailureDefault: string | undefined;
+  readonly depth: number;
+}
+
+interface StepCompileOutcome {
+  readonly nodes: readonly StepNode[];
+  /** The compiled id(s) nothing further downstream in this same subtree should be considered "done"
+   * without — a `sequence`'s own next child, and (per this module's own top-of-file comment) nothing
+   * else, since a dependency on the *group's own* id is out of this piece's scope. */
+  readonly exitIds: readonly string[];
+  readonly issues: readonly CompileIssue[];
+  /** The compiled id of every `parallel`/`sequence` step reached in this subtree that declared its own
+   * `id` — never a real `StepNode.id` (these groups produce no node of their own), but a real, addressable
+   * id per `@forge/engine/workflow`'s own `validateStructure` (`collectAddressableSteps` treats a
+   * `parallel`/`sequence`'s own id as a first-class, cycle-checked graph node). A verify round found
+   * `checkPlanConsistency`'s own dangling-dependency check (below) initially had no way to tell "this id
+   * was never meant to exist" (a typo, or a fanout cross-reference whose itemKey scheme doesn't match its
+   * target) apart from "this id names a real group this piece intentionally never expands into its own
+   * node" — silently *rejecting* the second case outright, directly contradicting this module's own
+   * documented design (a dependency on a group's own id is meant to survive compilation, deferred to
+   * P11) and disagreeing with `validateStructure`, which already accepts the identical construct. Threaded
+   * up from wherever a group is actually reached, rather than re-derived from the original `Workflow` in
+   * a second pass, since re-deriving a fanout-nested group's own real compiled-position id would mean
+   * re-evaluating that fanout's own `over` expression a second time, redundantly and with its own chance
+   * of disagreeing with what the real compile pass already computed. */
+  readonly groupIds: readonly string[];
+}
+
+/** A `merge` step compiles as one ordinary leaf, like every other non-fanout kind — it never gets an
+ * `item` binding in its own `ExpressionContext` the way a fanout's per-item child does. A verify round
+ * confirmed this means `10` §10.1's own literal worked example does not compile verbatim: its `merge`
+ * step's own `dependsOn: ["review:{{item.id}}"]` cannot resolve `item.id` (there is no `item` in scope for
+ * a plain leaf), which `qualifyDependsOn`/`safeResolveTemplate` correctly turn into a clean, non-crashing
+ * `template-resolution-failed` issue rather than silently producing a broken id or a raw throw — but it
+ * does mean a real merge-over-a-fanout's-own-expanded-items dependency, as the spec's own example intends,
+ * cannot be expressed today. Giving `merge` its own per-item dependency *aggregation* (resolve
+ * `dependsOn` once per item in its own `over` collection, folding the results into one combined
+ * `dependsOn` array for the single compiled node — a different mechanism from fanout's own per-item
+ * *expansion* into N nodes, since `06` §6.2's own `StepNode` has no repeating-group shape for `merge` to
+ * expand into) is a real, separate feature with its own design questions P10's own Checks text never
+ * asked for; left undone deliberately rather than folded into this round's own fixes. */
+function buildLeafNode(
+  step: Exclude<WorkflowStep, { kind: 'fanout' | 'parallel' | 'sequence' }>,
+  compiledId: string,
+  env: CompileEnv,
+  context: ExpressionContext,
+  dependsOn: readonly string[],
+): StepCompileOutcome {
+  const issues: CompileIssue[] = [];
+  const agentStep = step.kind === 'agent' ? step : undefined;
+
+  const node: StepNode = {
+    id: compiledId,
+    kind: step.kind,
+    agent: agentStep !== undefined ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId)) : undefined,
+    brief: agentStep?.brief,
+    inputs: (agentStep?.inputs ?? []).map((ref) => safeResolveTemplate(ref, context, issues, compiledId)),
+    outputs: agentStep?.outputs ?? [],
+    dependsOn,
+    produces: toResourceClaims(agentStep?.produces, context, issues, compiledId),
+    consumes: [],
+    laneAffinity: step.kind === 'command' && step.inline === true ? 'inline' : undefined,
+    retry: compileRetry(agentStep, step.kind, issues, compiledId),
+    limits: compileLimits(agentStep),
+    autonomy: undefined,
+    idempotencyKey: compiledId,
+    onFailure: compileOnFailure(agentStep?.onFailure, env.workflowOnFailureDefault, issues, compiledId),
+    run: step.kind === 'command' ? safeResolveTemplate(step.run, context, issues, compiledId) : undefined,
+    gate: step.kind === 'gate' ? step.gate : undefined,
+    workflow: step.kind === 'subworkflow' ? step.workflow : undefined,
+    mergePolicy: step.kind === 'merge' ? step.policy : undefined,
+    questions: step.kind === 'elicit' ? step.questions : undefined,
+    sessionType: step.kind === 'session' ? step.sessionType : undefined,
+  };
+
+  return { nodes: [node], exitIds: [compiledId], issues, groupIds: [] };
+}
+
+function compileFanout(
+  step: FanoutStep,
+  baseId: string,
+  env: CompileEnv,
+  context: ExpressionContext,
+  inheritedDependsOn: readonly string[],
+): StepCompileOutcome {
+  if (step.id === undefined) {
+    return { nodes: [], exitIds: [], issues: [issue('missing-step-id', 'A fanout step must declare its own "id".')], groupIds: [] };
+  }
+  // Hoisted into a plain `string` binding rather than referencing `step.id` from inside the `forEach`
+  // callback below: TS does not carry the `=== undefined` narrowing above across a closure boundary, even
+  // though `step` itself is never reassigned.
+  const fanoutStepId = step.id;
+  const fanoutId = compileStepId(baseId, fanoutStepId);
+
+  const parsed = parseExpression(step.over);
+  if (!parsed.success) {
+    return { nodes: [], exitIds: [], issues: [issue('fanout-over-invalid-expression', `fanout "over" ("${step.over}") failed to parse: ${parsed.error.message}`, fanoutId)], groupIds: [] };
+  }
+  // A critic round found this call unwrapped: a syntactically ordinary, non-nested-looking flat `&&`/`||`
+  // chain in `over` parses cleanly (`parseExpression`'s own recursion guard never sees this shape) but
+  // still throws a real `ForgeError` (`CFG-016`) from `evaluate`'s own *separate* depth guard once the
+  // resulting left-deep AST is walked (`SPEC-QUESTIONS.md` Q71's own "two independent guards" design) —
+  // the identical class of gap `safeResolveTemplate` already exists to close for template placeholders,
+  // just reached through `over` instead.
+  let collection: unknown;
+  try {
+    collection = evaluate(parsed.expr, context);
+  } catch (cause) {
+    if (!(cause instanceof ForgeError)) throw cause;
+    return { nodes: [], exitIds: [], issues: [issue('fanout-over-evaluation-failed', `fanout "over" ("${step.over}") failed to evaluate: ${cause.message}`, fanoutId)], groupIds: [] };
+  }
+  if (!Array.isArray(collection)) {
+    return { nodes: [], exitIds: [], issues: [issue('fanout-over-not-array', `fanout "over" ("${step.over}") did not resolve to an array.`, fanoutId)], groupIds: [] };
+  }
+
+  const nodes: StepNode[] = [];
+  const exitIds: string[] = [];
+  const issues: CompileIssue[] = [];
+  const groupIds: string[] = [];
+
+  // `.forEach` silently skips a hole in a sparse array (`[a, , c]`) rather than visiting it as an
+  // `undefined`-valued item — a verify round confirmed this, but also confirmed there is no realistic path
+  // to it: `collection` here always comes from parsed YAML/JSON (which cannot represent a sparse array at
+  // all) or a caller hand-constructing an `ExpressionContext` in TypeScript with a deliberately sparse
+  // array literal, neither of which this piece needs to guard against.
+  collection.forEach((item: unknown, index) => {
+    const itemContext: ExpressionContext = { ...context, item };
+    // A bare positional index when itemKey is omitted (P8's own FanoutStep.itemKey is optional, and
+    // `10` §10.1's own "review"/"merge" fanouts never declare one) -- forfeits `06` §6.2's own "resume
+    // stays stable across a re-compile *of the same collection order*" guarantee for exactly this
+    // fanout, but guarantees uniqueness, which an omitted itemKey would otherwise not: every expanded
+    // item still needs a *distinct* compiled id regardless of whether the author gave this fanout a
+    // stable natural key to use for it.
+    const itemKey = step.itemKey !== undefined ? safeResolveTemplate(step.itemKey, itemContext, issues, fanoutId) : String(index);
+    const itemBaseId = compileStepId(baseId, fanoutStepId, itemKey);
+    const ownDependsOn = qualifyDependsOn(step.dependsOn, itemContext, env, issues, itemBaseId);
+    const combinedDependsOn = [...inheritedDependsOn, ...ownDependsOn];
+
+    const childOutcome = compileStepAtDepth(step.step, itemBaseId, false, { ...env, depth: env.depth + 1 }, itemContext, combinedDependsOn);
+    nodes.push(...childOutcome.nodes);
+    exitIds.push(...childOutcome.exitIds);
+    issues.push(...childOutcome.issues);
+    groupIds.push(...childOutcome.groupIds);
+  });
+
+  return { nodes, exitIds, issues, groupIds };
+}
+
+function compileStepAtDepth(
+  step: WorkflowStep,
+  baseId: string,
+  requiresOwnId: boolean,
+  env: CompileEnv,
+  context: ExpressionContext,
+  inheritedDependsOn: readonly string[],
+): StepCompileOutcome {
+  if (env.depth > MAX_COMPILE_DEPTH) {
+    return { nodes: [], exitIds: [], issues: [issue('excessive-compile-depth', `Workflow step nesting exceeds ${String(MAX_COMPILE_DEPTH)} levels; refusing to compile further.`)], groupIds: [] };
+  }
+
+  if (step.kind === 'fanout') {
+    return compileFanout(step, baseId, env, context, inheritedDependsOn);
+  }
+
+  if (step.kind === 'parallel' || step.kind === 'sequence') {
+    const nodes: StepNode[] = [];
+    const issues: CompileIssue[] = [];
+    let exitIds: readonly string[] = [];
+    // Recorded even though this group produces no StepNode of its own: `requiresOwnId` mirrors
+    // `@forge/engine/workflow`'s own `validateStructure`, which treats a `parallel`/`sequence`'s own id
+    // as a real, addressable position (`collectAddressableSteps`) -- something else in this same workflow
+    // is allowed to `dependsOn` it directly, per this module's own top-of-file comment, even though
+    // resolving *what that means* is explicitly left to P11. `checkPlanConsistency` (called from
+    // `compilePlan`) needs this list to tell that deferred, legitimate reference apart from a genuine typo.
+    const groupIds: string[] = requiresOwnId && step.id !== undefined ? [compileStepId(baseId, step.id)] : [];
+    // The group's own `dependsOn` (WorkflowStepBase gives every kind, including parallel/sequence
+    // themselves, one) composes with whatever this group's own caller already inherited -- easy to
+    // miss, since the group produces no StepNode of its own to visibly carry it.
+    const groupOwnDependsOn = qualifyDependsOn(step.dependsOn, context, env, issues, baseId);
+    let nextDependsOn: readonly string[] = [...inheritedDependsOn, ...groupOwnDependsOn];
+
+    for (const child of step.steps) {
+      const outcome = compileStepAtDepth(child, baseId, true, { ...env, depth: env.depth + 1 }, context, nextDependsOn);
+      nodes.push(...outcome.nodes);
+      issues.push(...outcome.issues);
+      groupIds.push(...outcome.groupIds);
+      if (step.kind === 'sequence') {
+        // Array-order chaining: each child depends on the previous child's own sinks, composed with
+        // (not replacing) whatever this child already declares for itself -- a sequence child "may
+        // legitimately still depend on a step outside its own group" (SequenceStep's own doc comment),
+        // so the chain-derived dependency is additive, never exclusive.
+        //
+        // A critic round found that a child compiling to zero nodes (an empty nested group, or a fanout
+        // whose "over" resolves to an empty array) has empty `exitIds` by construction -- unconditionally
+        // advancing the chain to that empty set silently erased everything accumulated so far, so the
+        // *next* sibling ended up depending on nothing at all instead of on whatever the sequence had
+        // already reached. A child that produced no nodes is transparent to the chain: it is skipped,
+        // never made into a dead end for what comes after it.
+        if (outcome.exitIds.length > 0) {
+          nextDependsOn = outcome.exitIds;
+          exitIds = outcome.exitIds;
+        }
+      } else {
+        // parallel: every child starts from the same incoming dependency, independent of its siblings;
+        // the group is not "done" until every child's own sinks are.
+        exitIds = [...exitIds, ...outcome.exitIds];
+      }
+    }
+    return { nodes, exitIds, issues, groupIds };
+  }
+
+  if (requiresOwnId && step.id === undefined) {
+    return { nodes: [], exitIds: [], issues: [issue('missing-step-id', `A "${step.kind}" step in this position must declare its own "id".`)], groupIds: [] };
+  }
+  const compiledId = requiresOwnId && step.id !== undefined ? compileStepId(baseId, step.id) : baseId;
+  const dependsOnIssues: CompileIssue[] = [];
+  const ownDependsOn = qualifyDependsOn(step.dependsOn, context, env, dependsOnIssues, compiledId);
+  const outcome = buildLeafNode(step, compiledId, env, context, [...inheritedDependsOn, ...ownDependsOn]);
+  return dependsOnIssues.length > 0 ? { ...outcome, issues: [...dependsOnIssues, ...outcome.issues] } : outcome;
+}
+
+/** `10` §10.1's own "fanout `over` resolves to an array" validation clause, actually enforced here (not
+ * merely checked for presence, the way `@forge/engine/workflow`'s own P8 already does — that piece checks
+ * `over` is present and non-blank "against a schema, not executed," deliberately deferring the real
+ * evaluation to this piece, which alone has `@forge/engine/expr` available to do it). Treats `step` as a
+ * *top-level* standalone entry point: its own id is required (`missing-step-id` otherwise), it starts
+ * with no inherited dependency of its own, and its compiled ids are `${workflowId}:${step.id}[:itemKey]`
+ * — exactly what `compilePlan` would produce for this same fanout *if it sat directly under
+ * `workflow.steps`*. For a fanout actually nested inside a `parallel`/`sequence`/another `fanout`, this
+ * function cannot reproduce what `compilePlan` would compute on its own (the real `baseId` prefix and
+ * recursion depth both depend on where the fanout actually sits, which this function — by design, for a
+ * caller with only the fanout object in hand — has no way to know); a caller in that position must
+ * compute and pass the correct prefix itself, or use `compilePlan` directly.
+ *
+ * `workflowOnFailureDefault` is optional and defaults to `undefined` (matching a fanout with no
+ * surrounding workflow to inherit one from) — but a caller who *does* have the enclosing workflow in hand
+ * and wants this function to compile a *top-level* fanout exactly the way `compilePlan` would must pass
+ * `workflow.onFailure?.default` through explicitly. A critic round found this defaulted silently to
+ * `undefined` unconditionally, so calling this function directly on a fanout that sits inside a workflow
+ * with its own `onFailure.default` produced a different compiled `onFailure` than `compilePlan` would for
+ * the exact same step. */
+export function expandFanout(step: FanoutStep, workflowId: string, context: ExpressionContext, workflowOnFailureDefault?: string): CompileResult {
+  const env: CompileEnv = { workflowId, workflowOnFailureDefault, depth: 0 };
+  const outcome = compileFanout(step, workflowId, env, context, []);
+  return outcome.issues.length > 0 ? { success: false, issues: outcome.issues } : { success: true, nodes: outcome.nodes };
+}
+
+/** A critic round found that neither this file nor `@forge/engine/workflow`'s own `validateStructure`
+ * (which only reasons about the *static, unexpanded* graph, confirmed by inspection of `checkNoCycles`'s
+ * own doc comment) ever checks a `dependsOn` value against the *real, expanded* set of compiled ids —
+ * `dependsOn: ['nonexistent']`, or a per-item cross-fanout reference whose `itemKey` scheme doesn't
+ * actually match the fanout it points at (`10` §10.1's own `review`/`merge` fanouts, which omit
+ * `itemKey`, expand to positional-index ids — a sibling fanout templating a reference against `item.id`
+ * instead silently produces a dangling, permanently-unsatisfiable dependency, not a wrong-but-honest one
+ * and not a caught error), compiled cleanly with `success: true` before this check existed. Two duplicate
+ * compiled ids (a `parallel`/`sequence` never folds its own children's ids together with anything that
+ * would make two same-named children in two different groups distinguishable, unlike a fanout's own
+ * itemKey/index suffix) had the identical silent-`success`-with-wrong-output problem. Both are checked
+ * here, once, against the *complete* compiled node list — `expandFanout`'s own narrower, standalone
+ * compile of a single fanout deliberately does not run this check, since a real per-item `dependsOn` may
+ * legitimately name a sibling step this function alone was never asked to compile (`generate-tests`'s own
+ * real cross-reference to `contracts-gate`, for instance) — only `compilePlan`, which sees the whole
+ * workflow at once, can tell a genuinely dangling reference apart from an out-of-scope one. Runs only
+ * when the tree walk itself found no issues: checking dependency resolution against an already-known-
+ * incomplete node list (a `fanout` that failed to expand at all, say) would produce confusing, cascading
+ * "dangling" noise on top of the more fundamental problem already reported.
+ *
+ * `groupIds` (a `parallel`/`sequence` step's own id, wherever one declared one — `StepCompileOutcome`'s
+ * own doc comment has the fuller reasoning) are treated as resolvable too, alongside real `StepNode` ids:
+ * a verify round found the first version of this check treated a dependency on a group's own bare id
+ * exactly like a typo, silently *regressing* behaviour this module's own top-of-file comment already
+ * documents as intentional (deferred to P11, not resolved here) and that `validateStructure` already
+ * accepts. Not folded into `seenIds`/duplicate-checking, though: a group's own id and a real compiled
+ * node's own id are different *kinds* of thing (one names an erased, never-instantiated position; the
+ * other names a real, schedulable node), and nothing here needs to detect a group id colliding with a
+ * node id — no evidence anywhere this can occur outside of a deliberately-contrived fixture, since a
+ * group and a leaf can never occupy the same id-producing position in the tree this module walks. */
+function checkPlanConsistency(nodes: readonly StepNode[], groupIds: readonly string[]): readonly CompileIssue[] {
+  const issues: CompileIssue[] = [];
+  const seenIds = new Set<string>();
+  const duplicateIds = new Set<string>();
+  for (const node of nodes) {
+    if (seenIds.has(node.id)) duplicateIds.add(node.id);
+    seenIds.add(node.id);
+  }
+  for (const id of duplicateIds) {
+    issues.push(issue('duplicate-compiled-step-id', `More than one compiled step has the id "${id}".`, id));
+  }
+  if (duplicateIds.size === 0) {
+    const resolvableIds = new Set([...seenIds, ...groupIds]);
+    for (const node of nodes) {
+      for (const dep of node.dependsOn) {
+        if (!resolvableIds.has(dep)) {
+          issues.push(issue('dangling-dependency', `Step "${node.id}" depends on "${dep}", which does not match any compiled step's own id.`, node.id));
+        }
+      }
+    }
+  }
+  return issues;
+}
+
+/** `06` §6.2's own plan-compilation rule 1, for a whole workflow's own `steps:` list — `workflow.
+ * onComplete`/`workflow.onFailure.escalations[].do` are deliberately not compiled here: both are
+ * conditionally-triggered subtrees outside the main DAG proper (one runs only once the whole run
+ * finishes, the other only on a specific failure match), not part of "the DAG" `06` §6.1's own execution-
+ * model diagram shows compilation producing — whichever later piece actually implements run-completion
+ * and failure-escalation behaviour compiles those subtrees against its own, narrower context at the point
+ * it needs to, the same "generic mechanism now, real content and remaining behaviour later" split
+ * `SPEC-QUESTIONS.md` Q62 already established for this milestone's own scope. */
+export function compilePlan(workflow: Workflow, context: ExpressionContext): CompileResult {
+  const env: CompileEnv = { workflowId: workflow.id, workflowOnFailureDefault: workflow.onFailure?.default, depth: 0 };
+  const nodes: StepNode[] = [];
+  const issues: CompileIssue[] = [];
+  const groupIds: string[] = [];
+
+  for (const step of workflow.steps) {
+    const outcome = compileStepAtDepth(step, workflow.id, true, env, context, []);
+    nodes.push(...outcome.nodes);
+    issues.push(...outcome.issues);
+    groupIds.push(...outcome.groupIds);
+  }
+
+  if (issues.length === 0) {
+    issues.push(...checkPlanConsistency(nodes, groupIds));
+  }
+
+  return issues.length > 0 ? { success: false, issues } : { success: true, nodes };
+}

@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./expr": "./src/expr/index.ts",
+    "./plan": "./src/plan/index.ts",
     "./workflow": "./src/workflow/index.ts"
   },
   "engines": {

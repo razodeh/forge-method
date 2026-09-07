@@ -4708,3 +4708,218 @@ except a small set of individually-documented, `noUncheckedIndexedAccess`-requir
 condition) — testing them would mean fabricating an input that cannot actually reach them; every branch
 *not* protected by such a bounds check (a literal `.` not followed by a digit, a bare trailing `-`) was
 confirmed reachable and given a real test instead of being waved through as the same exemption.
+
+---
+
+## Q72 — M5 P10's `@forge/engine` plan compiler: `06` §6.2's own `StepNode` interface is incomplete in at
+least three ways, and the piece with the highest BLOCKING-finding density of the milestone so far
+
+`06` §6.2 gives `StepNode` as one flat, illustrative TypeScript interface plus six plan-compilation rules;
+this piece (P10) implements only rule 1 (fanout expansion) against `@forge/engine/workflow`'s own,
+already-built `Workflow`/`WorkflowStep` types (P8). Several of `StepNode`'s own named field types
+(`AgentId`, `ArtifactRef`, `ResourceClaim`, `AutonomyLevel`) name concepts owned by packages this milestone
+cannot reach at all (`@forge/agents`, a real KB pack, `@forge/schemas`'s own config) — `Q62`'s own
+"minimal, locally-typed stand-in" pattern, already established for this exact class of gap, is reused
+rather than re-litigated.
+
+**1. `StepNodeKind` adds a ninth literal, `'checkpoint'`, beyond `06` §6.2's own eight.** `10` §10.1's own
+step-kind table describes `checkpoint` as real, scheduled work ("force a commit + event-log flush; a safe
+resume point"), not a grouping construct that could disappear the way `parallel`/`sequence` do (finding 2)
+— so the one given interface is incomplete relative to the fuller table it's compiled from, the same class
+of correction `Q70`'s design point 5 already made for `WorkflowExistenceOracle`.
+
+**2. `parallel`/`sequence` steps never produce a `StepNode` of their own — they're erased.** `06` §6.2's
+own `StepNode.kind` union has no literal for either anyway, and `@forge/engine/workflow`'s own
+`ParallelStep`/`SequenceStep` doc comments already state the exact semantics needed to fold a group
+entirely into its children's `dependsOn` edges: a `sequence`'s children chain in array order (each
+depending on the previous child's own compiled sink(s), additively — a child "may legitimately still
+depend on a step outside its own group"); a `parallel`'s children each independently inherit the group's
+own incoming dependency, with no ordering between siblings. A dependency declared directly on a
+`parallel`/`sequence`'s own *bare* id (rather than on one of its children) is deliberately not *resolved*
+into the real, expanded child id(s) it should mean by this piece — that rewrite is exactly the class of
+graph-wide dependency rewriting `06` §6.2's own rules 2/3 already assign to P11 — but (see the verify-round
+finding below) it must still be recognised as a legitimate, known id, not rejected outright.
+
+**3. `AgentId` is a branded string** (`toAgentId`, the same `unique symbol`-branding convention
+`@forge/vcs`'s own `LaneId` already uses), **`ArtifactRef`/`ResourceClaim` are plain string aliases** —
+`Q62`'s own "Conflict, part 2" resolution already settled `AgentId` explicitly ("a plain branded string
+type, no registry lookup"); `ArtifactRef`/`ResourceClaim` extend the identical reasoning to the two other
+`StepNode` field types this milestone cannot back with anything real (a `06` §6.7 "produces globs" claim
+and `10` §10.1's own `artifact:`/`kb:`/`diff:` reference mini-DSL are both carried through unresolved,
+exactly matching `@forge/engine/workflow`'s own `AgentStep.inputs?: readonly string[]` choice for the
+identical strings at the authoring level).
+
+**4. `StepNodeRetryPolicy`/`StepNodeLimits` are genuinely different, fuller types from `@forge/engine/
+workflow`'s own narrower `RetryPolicy`/`StepLimits`, not the same type reused.** `06` §6.8's own `RetryPolicy`
+interface (`maxAttempts`, `backoffMs: [number, number]`, a closed five-value `retryOn`, an optional
+`escalate`) is a strictly fuller shape than P8's own authoring-level one (`{ maxAttempts, retryOn: readonly
+string[] }`) — deliberately so, per P8's own doc comment calling the closed `retryOn` set "a later piece's
+own concern to define and enforce." This piece is that later piece: `compileRetry` narrows and validates
+every authored `retryOn` entry against the closed set (`invalid-retry-on-value` for anything else),
+defaults `retryOn` to the *full* closed set when omitted (not empty — `06` §6.8's own "Default handling"
+column frames these as broadly-applicable defaults, not something a step must opt into), defaults
+`maxAttempts` to `06` §6.8's own spec-given "3 for agent steps, 1 for gates," extended to `1` for the other
+six kinds this piece's own judgement call (most are one-shot mechanical actions or human-interaction
+points where silent re-attempting has no obvious meaning), and fills `backoffMs`/`StepNodeLimits`' three
+fields with this piece's own invented, explicitly-placeholder constants where nothing is spec-given —
+`10` §10.1's own "limits within module ceilings" validation clause describes a real per-role/per-module
+ceiling system that is `@forge/agents`' own concern (M6, `Q62`), not something this piece fakes with no
+real roster behind it.
+
+**5. `onFailure` resolves step's-own-value → workflow's-own-`onFailure.default` → `'block'`, with a
+non-blank, non-matching value at either level a real `invalid-on-failure-value` compile issue, never
+silently replaced.** The identical "P8 left this loose deliberately, this piece is the one that closes it"
+shape as finding 4, for `06` §6.2's own closed four-value `onFailure` set versus P8's own loose
+`AgentStep.onFailure?: string`/`WorkflowOnFailure.default: string`.
+
+**6. `autonomy` is always `undefined` and `consumes` is always `[]` on every M5-compiled `StepNode`** — no
+`WorkflowStep` kind has a field to source either from, and `10` §10.1's own worked example never shows
+either being authored. Left for whichever later piece actually gives an author a way to declare them,
+rather than inventing DSL surface with zero evidence of need.
+
+**7. `idempotencyKey` is always set equal to the compiled `id`.** `id`'s own stability guarantee (unchanged
+across a re-compile of the same workflow+context, this piece's own Checks text) already gives the one
+property `06` §6.2's own "used for resume" comment asks for; distinguishing "same position, different
+authored content — do not resume from stale state" is a real, separate resumability nuance with zero spec
+elaboration on what should invalidate a resume, deliberately left to P19/P20 (the pieces that actually
+design resume semantics) to compute differently later, without needing to change `StepNode`'s own shape
+when they do.
+
+**8. Every authored `dependsOn` entry, after its own `{{...}}` templates resolve, is qualified with
+`${workflowId}:` to match the compiled id format.** `10` §10.1's own worked example writes every
+`dependsOn` entry bare (`[ freeze-contracts ]`, `[ "generate-tests:{{item.id}}" ]`) — never prefixed with
+the workflow's own id, even though a compiled `StepNode.id` always is. Always `env.workflowId`, never the
+current `baseId` a nested fanout/parallel/sequence happens to be compiling under: a dependency names *any*
+other node in the same workflow's own compiled graph, not one scoped to whatever container the referencing
+step happens to sit inside.
+
+**9. A fanout-expanded item's id falls back to its positional array index when `itemKey` is omitted** — `10`
+§10.1's own `review`/`merge` fanouts both omit it. Forfeits `06` §6.2's own "resume stays stable across a
+re-compile *of the same collection order*" guarantee for exactly those fanouts, but guarantees the
+uniqueness an omitted `itemKey` would otherwise not, which matters more: every expanded item still needs a
+distinct compiled id regardless of whether the author gave this fanout a stable natural key.
+
+**10. `compilePlan` does not compile `workflow.onComplete` or `workflow.onFailure.escalations[].do` at
+all** — both are conditionally-triggered subtrees outside the main DAG proper (one runs only once the whole
+run finishes, the other only on a specific failure match), not part of "the DAG" `06` §6.1's own execution-
+model diagram shows compilation producing. Whichever later piece implements run-completion/escalation
+behaviour compiles those subtrees against its own, narrower context at the point it needs to — the
+identical "generic mechanism now, remaining behaviour later" split `Q62` already established for this
+milestone's own scope.
+
+**11. Six kind-specific fields (`run`/`gate`/`workflow`/`mergePolicy`/`questions`/`sessionType`) are added
+directly onto the shared `StepNode` interface, beyond `06` §6.2's own verbatim eleven fields.** Without
+them, a compiled `command`/`gate`/`subworkflow`/`merge`/`elicit`/`session` step would carry no way to
+actually run it at all — the identical "the one given interface promises less than the fuller table
+requires" gap finding 1 already names for `checkpoint`, closed the same way `06` §6.2's own `agent?`/
+`brief?` (both already kind-scoped to `'agent'` alone) already establish the pattern for, not a new one
+invented here.
+
+**12. `MAX_COMPILE_DEPTH = 500` guards the same class of pathological input `@forge/engine/workflow`'s own
+`MAX_TRAVERSAL_DEPTH` guards against, for the identical reason** — `compilePlan`/`expandFanout` are public
+functions a caller could reach without ever running `validateWorkflow` first. Defense in depth, not a
+duplicate check: `SPEC-QUESTIONS.md` Q71's own verify round already re-confirmed the underlying lesson
+("never assume an earlier validation pass is the only path to a piece of code") the hard way once this
+milestone; this piece applies it up front rather than waiting to be caught out by it too.
+
+### P10 critic round: 3 BLOCKING, 3 MAJOR
+
+The critic was asked to hunt specifically for any input where `compilePlan`/`expandFanout` still throws
+raw instead of returning a `CompileResult`, whether the `dependsOn`-qualification (finding 8) is applied
+consistently and never double-applied, whether a fanout's own per-item cross-reference can silently resolve
+to the *wrong* item's id, and to stress the `parallel`/`sequence` erasure logic (finding 2) for `exitIds`
+correctness across nested and mixed shapes.
+
+- **BLOCKING: a `command` step's own `run` text was never template-resolved at all** — every other
+  templated field (`agent`, `inputs`, `produces`, `dependsOn`, a fanout's own `itemKey`) went through the
+  `safeResolveTemplate` wrapper; `run` was copied through raw. `10` §10.1's own literal first worked-example
+  step (`prepare`, `run: "git switch -c {{vars.integration_branch}} || ..."`) compiled to the literal,
+  unresolved string, braces included — real shell text a lane would eventually execute, silently broken for
+  the very first step of the canonical example.
+- **BLOCKING: a fanout's `over` expression could throw a raw, uncaught `ForgeError` straight through both
+  `compilePlan` and `expandFanout`, contradicting this module's own "never throws" contract.** A flat,
+  non-nested-looking `&&`/`||` chain of 200+ terms in `over` parses cleanly (`Q71`'s own `parseAnd`/`parseOr`
+  are iterative) but blows `evaluate`'s own *separate* recursion guard once walked — the identical class of
+  gap `safeResolveTemplate` already existed to close for template placeholders, just reached through `over`
+  instead, and the one `evaluate(...)` call site in this file was the sole place still unwrapped.
+- **BLOCKING: a `dependsOn` value that matched no real compiled id — a plain typo, or a cross-fanout
+  reference whose `itemKey` scheme doesn't match the fanout it targets** (`10` §10.1's own `review`/`merge`
+  fanouts, which omit `itemKey` and fall back to positional ids per finding 9 — a sibling fanout templating
+  its own reference against `item.id` instead silently produces a dangling, permanently-unsatisfiable
+  dependency) **— compiled cleanly with `success: true` and no diagnostic at all.** Neither this piece nor
+  `@forge/engine/workflow`'s own `checkNoCycles` (which explicitly only reasons about the *static,
+  unexpanded* graph) ever checked a dependency against the real, expanded id set.
+- **MAJOR: two different steps could compile to the identical `StepNode.id`** (two sibling `parallel`
+  groups each with a child literally named the same id, or even two plain top-level steps sharing an id) —
+  silently producing two indistinguishable nodes, `success: true`, no diagnostic.
+- **MAJOR: inside a `sequence`, a child that compiled to zero nodes (an empty nested group, or a fanout
+  whose `over` resolved to an empty array) unconditionally replaced the accumulated dependency chain with
+  its own empty exit-id set** — silently erasing everything the sequence had already reached, so the
+  *next* sibling ended up depending on nothing instead of on whatever came before the empty step.
+- **MAJOR: `expandFanout` and `compilePlan` could disagree on the compiled `onFailure` for the identical
+  fanout step**, since `expandFanout` hardcoded `workflowOnFailureDefault: undefined` regardless of the real
+  enclosing workflow's own `onFailure.default` — directly contradicting this function's own doc comment,
+  which states the two agree.
+
+All six fixed: `run` now goes through `safeResolveTemplate` like every other field; the fanout `over`
+evaluation is wrapped in the identical try/catch-for-`ForgeError` shape `safeResolveTemplate` already uses;
+a new `checkPlanConsistency` pass, run once from `compilePlan` after the tree walk (only when the walk
+itself found zero issues, to avoid cascading noise on an already-incomplete node list), checks every
+compiled node's `dependsOn` against the real id set for both duplicates (`duplicate-compiled-step-id`) and
+dangling references (`dangling-dependency`) — `expandFanout`'s own narrower, standalone compile of a single
+fanout deliberately does not run this check, since a real per-item reference may legitimately name a
+sibling step that function alone was never asked to compile; the sequence-chaining logic now only advances
+the chain when a child's own exit-id set is non-empty, treating a zero-output child as transparent rather
+than a dead end; `expandFanout` gained a fourth, optional parameter (`workflowOnFailureDefault?: string`) a
+caller can pass to make it agree with what `compilePlan` would produce for the same fanout in its real
+workflow context.
+
+### P10 verify round: 1 new BLOCKING finding (a regression in round 1's own fix), fixed; 3 further
+findings documented, not fixed
+
+The verify pass was asked to specifically hunt for new bugs the six fixes above might themselves have
+introduced — this codebase's own recurring lesson, that a fix's own new code needs the same scrutiny as
+the bug it closed — and to re-derive whether `expandFanout`/`compilePlan` could disagree on any field
+besides `onFailure`.
+
+**New finding (BLOCKING): the new dangling-dependency check itself regressed finding 2's own documented
+design** — a dependency declared directly on a `parallel`/`sequence` step's own bare id, explicitly
+described in this module's own top-of-file comment as legitimate and deliberately unresolved (deferred to
+P11), was silently *rejected* as `dangling-dependency` by round 1's own fix, since a group produces no
+`StepNode` of its own for the check to recognise as real. Confirmed to also disagree with
+`@forge/engine/workflow`'s own `validateStructure`, which already accepts the identical construct
+(`collectAddressableSteps` treats a group's own id as a first-class, addressable, cycle-checked position).
+**Fixed** by threading a new `groupIds` list up through the compile walk alongside `nodes`/`exitIds`/
+`issues` — the compiled id of every `parallel`/`sequence` step reached that declared its own `id`, recorded
+even though it produces no node — and treating those ids as resolvable (alongside real node ids) for the
+dangling-dependency check specifically, while keeping them entirely out of duplicate-id checking (a
+group's own id and a real node's id are different kinds of thing; nothing found or fixed here needed them
+to collide-check against each other).
+
+**Finding, documented not fixed: `10` §10.1's own literal worked example does not compile verbatim even
+after every fix above**, because its `merge` step's own `dependsOn: ["review:{{item.id}}"]` expects an
+`item` binding a plain leaf step (which `merge` compiles as, `06` §6.2 giving it no fanout-shaped expansion
+of its own) never has. Fails safely and clearly (`template-resolution-failed`, not a crash or silently
+wrong id) — giving `merge` its own per-item dependency *aggregation* (resolve `dependsOn` once per item in
+its own `over` collection, folding the results into one combined array for the single compiled node — a
+different mechanism from fanout's own per-item *expansion* into N nodes) is a real, separate feature with
+its own design questions this piece's own Checks text never asked for.
+
+**Finding, documented not fixed: `expandFanout` and `compilePlan` can still disagree on the compiled id
+prefix and recursion depth for a fanout that is not top-level** (nested inside a `parallel`/`sequence`/
+another `fanout`) — inherent to `expandFanout`'s own signature, which has no parameter for "the real prefix/
+depth this fanout's actual position requires," and explicitly out of scope for the `onFailure`-specific fix
+above: `expandFanout`'s own doc comment now states plainly that it reproduces `compilePlan`'s output only
+for a *top-level* fanout, not an arbitrarily-nested one.
+
+**Finding, documented not fixed: `.forEach` silently skips a hole in a sparsely-populated `over` array**,
+visiting fewer items than the collection's own `.length`. No realistic path to it — parsed YAML/JSON cannot
+represent a sparse array at all, only a caller hand-constructing an `ExpressionContext` in TypeScript with a
+deliberately sparse literal could produce one.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (258 engine tests after these fixes' own
+new ones) all independently reconfirmed clean. 100% coverage on every file in `packages/engine/src/plan/`
+except two individually-documented `noUncheckedIndexedAccess`-adjacent rethrow branches (a non-`ForgeError`
+thrown from `resolveTemplate`/`evaluate`, both confirmed by inspection to never actually happen given
+either function's own real contract), matching the identical, already-established exemption `Q71`'s own
+`parse.ts` uses for the structurally identical shape.

@@ -5,4 +5,5 @@
  * @see PLAN-M5.md
  */
 export * from './expr/index.ts';
+export * from './plan/index.ts';
 export * from './workflow/index.ts';
