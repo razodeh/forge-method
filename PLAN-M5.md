@@ -540,6 +540,18 @@ length.
 
 **Depends on:** P10.
 
+*(P11 is committed: `9ae8e78`. See `SPEC-QUESTIONS.md` Q73 and its critic-round/verify-round addenda —
+rule 4's own "a gate depends on everything in its phase" turned out to be unbuildable as stated (`phase`
+names one of `10` §10.2's own ten lifecycle phases, with no field anywhere on this milestone's own
+`WorkflowStep`/`StepNode` to compute it from), documented as a deliberate gap rather than faked. The critic
+round's own six findings all turned out to be P10-piece bugs, only surfaced by this piece's first attempt
+to run that compiler's output through a full pipeline — fixed at the root there, recorded in `Q72`'s own
+addenda, not in this piece's own code. This piece's own two new mechanisms (Mermaid cycle rendering, bounded
+produces-glob overlap detection) needed a full verify round of their own; see `GAUNTLET-LOG.md`'s own entry
+for the fuller story, including a calibration note on a fix that was checked against a real, independent
+parser and still shipped wrong, because "does it parse" and "does it preserve what I meant" are different
+questions.)*
+
 ---
 
 ## P12 — Scheduler core: ready set, ordering, concurrency limits

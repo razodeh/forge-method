@@ -4132,3 +4132,103 @@ this argues for isn't "test the fix more" — the fix already had five dedicated
 to a piece of code with its own explicit, load-bearing doc comments about what it deliberately does and
 does not do needs those specific comments re-read and re-checked against, not just the shape of the bug
 being closed.
+
+---
+
+## M5 P11 — `@forge/engine`: run-plan pipeline — implicit dependencies, cycles, critical path (`06` §6.2
+rules 2–6, §6.6, §6.7)
+
+**Rounds: 2 (one critic finding 3 BLOCKING and 3 MAJOR issues — all six turning out to be bugs in the
+*previous* piece's own compiler, only surfaced here by this piece's first attempt to exercise it end to
+end — fixed at the root in that piece; one scoped verify finding 4 further issues native to this piece
+itself, one of them a real bug in the verify round's own first fix attempt, all fixed — no third round).
+Outcome: WON.**
+
+Chains P10's own compiler with the rest of `06` §6.2's plan-compilation rules: implicit dependencies from
+contract freeze and from overlapping resource claims, cycle rejection with a rendered Mermaid graph, and
+critical-path/cost computation — one public entry point, `compileRunPlan`, that everything downstream will
+eventually call. Rule 4's own "a gate depends on everything in its phase" turned out to be unbuildable as
+stated: "phase" names one of ten *lifecycle* phases with no field anywhere on this milestone's own compiled
+step type to compute it from — documented as a real, deliberate gap rather than faked, the same
+`no-capability-with-nothing-real-behind-it` standard this milestone already held itself to once for
+agent/role resolution.
+
+### Round 1 — critic: 3 BLOCKING, 3 MAJOR (all in the previous piece, not this one)
+
+The critic was asked to hunt for any input where the pipeline still throws raw instead of returning its
+documented result type, and to stress the exclusive/shared claim and critical-path logic against wider DAG
+shapes than the existing tests tried.
+
+Every one of the six findings — a command step's own shell text never template-resolved; a fanout's own
+collection expression able to throw a raw error through the pipeline's own documented-never-throws entry
+point; a dependency reference matching no real compiled id compiling silently with no diagnostic; two
+different steps compiling to the identical id; an empty sequence child silently erasing the dependency
+chain for everything after it; two entry points for the same fanout disagreeing on its own compiled
+failure-handling default — turned out to live in the *previous* piece's own compiler, not in any of this
+piece's own five files, surfaced only because this piece was the first to actually run that compiler's
+output through a full pipeline rather than testing it in isolation. All six fixed at the root inside that
+earlier piece (full detail recorded there); nothing in this piece's own code changed as a result.
+
+### Round 2 — scoped verify: 4 new findings (1 effectively BLOCKING, 2 MAJOR, 1 MINOR), all fixed — including
+a real bug in the round's own first fix attempt
+
+The verify pass was asked to check this piece's own two genuinely new design decisions — bounded glob-
+overlap detection, and Mermaid cycle rendering — against real, independent oracles rather than the checked-
+in test suite's own assertions.
+
+**New finding (effectively BLOCKING): the Mermaid cycle renderer produced syntactically invalid output for
+*every* cycle it ever rendered, not just ones with unusual characters** — wrapping a node id directly in a
+JSON-quoted string and using it as a bare edge endpoint is a shape the real Mermaid parser rejects
+unconditionally, confirmed by feeding the actual output through the real parser this monorepo already
+vendors. This defeated the whole cited purpose of the feature ("reject cycles with a rendered graph
+*showing* the cycle") in exactly the way an unbuilt version would have. **Fixed** by giving each distinct
+id its own always-valid synthetic node reference and carrying the real id as a bracketed label instead,
+with a cycle's own closing element reusing the identical synthetic id so the rendered result is a genuine
+closed loop, not two nodes that merely share a label.
+
+**That fix's own first version was itself wrong** — caught only because the verify round applied the exact
+same real-parser technique *more carefully* than the fix itself had. The first version escaped an embedded
+quote character the JSON way (`\"`), which does parse successfully, but only by accident: the real
+label lexer does not honour backslash-escaping at all, so it silently spliced the label at the raw quote
+byte into a different, wrong token sequence that happened to still be grammatically valid. "Does this
+parse" and "does this actually preserve the text I intended" turned out to be two different questions, and
+the first fix only asked the first one. **Fixed** by substituting an embedded quote with its HTML entity
+before any JSON-encoding happens at all, re-verified against the real parser across several adversarial
+quote placements this time, not just the one case that motivated the first attempt.
+
+**New finding (effectively BLOCKING despite not being a literal crash): the fix for a documented library
+limit did nothing for an undocumented one that turned out to matter much more.** `minimatch`'s own 64KiB
+"pattern too long" guard was already handled — but a `produces` glob built from a few thousand unmatched
+bracket characters, well under that limit, drives the same library into genuine quadratic-time blocking
+cost with no exception thrown at all for anything to catch: measured directly at multiple seconds for a
+few thousand characters, extrapolating to something like ten minutes of blocking work at just under the
+documented threshold. A pipeline that promises never to throw was silent on "or hang for ten minutes
+instead," which is at least as bad for a caller expecting either a prompt answer or something to catch.
+**Fixed** with a new, much smaller length cap applied before the underlying library is ever called at all,
+chosen with a wide margin under both this cost blowup and a second, independently-found stack overflow
+from deeply-nested extglob syntax at a small fraction of the documented 64KiB limit — rather than trying to
+detect either dangerous shape specifically, which would mean reimplementing a meaningful slice of the
+library's own parser just to decide whether it's safe to call.
+
+**New finding (MAJOR): the original catch-all also silently swallowed that same stack-overflow error,
+exactly the "does a broad catch also mask something unrelated" risk any bare `catch` carries.** **Fixed**
+by narrowing the catch to the one specifically expected error type, rethrowing anything else — the
+identical "catch the expected type, rethrow the rest, since anything else is a real bug" convention this
+codebase already uses elsewhere, now also here.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (312 engine tests after these fixes'
+own new ones) all independently reconfirmed clean.
+
+### Calibration note
+
+The Mermaid finding's own two-layer shape is the sharpest version yet of a lesson this log has circled
+all milestone: verifying a claim against a real, independent oracle is only as good as the property that
+oracle is actually asked about. The first fix *was* checked against the real parser — genuinely more
+rigorous than a plain assertion — and still shipped wrong, because "does the real parser accept this" and
+"does the real parser extract the exact text I meant" are different questions, and only the first got
+asked. The minimatch finding sharpens the companion lesson from this milestone's own expression-evaluator
+piece once more, from a new angle: a library's own documented defensive limit describes exactly the one
+failure mode its authors had in mind, not every way the same code path can go wrong — confirmed here by a
+real cost blowup at roughly 3% of the limit `minimatch` itself publishes, through a mechanism that limit
+was never built to guard against. Trust the real oracle, but ask it the exact question that matters; trust
+a dependency's own stated boundary, but only for the failure mode it actually names.
