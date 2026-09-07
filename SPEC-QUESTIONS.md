@@ -1752,3 +1752,95 @@ instead and is invisible to this check. This is a narrower instance of the same 
 exists for, and — like Q50's own cross-entry-in-one-file duplicate-id gap — is left to the KB linter
 (`08` §8.7, `PLAN-M3.md` P10)'s own project-wide integrity scan rather than reinvented here; documented
 in `writer.ts`'s own comment at the check site.
+
+## Q53 — P8's derived index: `hash`'s definition, which `links.kind` values this piece can actually
+populate, and `expand`'s exact set semantics
+
+`08` §8.5's own table gives each of the five derived-index tables' *column names* but not enough to
+implement three of them mechanically, found while building `rebuildIndex` against `KbTree` (P6) alone.
+
+**1. `entries.hash`** — no definition given anywhere. **Answer taken:** a SHA-256 hash of the entry's
+own front matter plus body (its full on-disk content, effectively), mirroring the same hashing pattern
+already established for `@forge/core/ids`'s `IdIndex.validityHash`/this milestone's own
+`KbIdIndex.validityHash` — a plain content fingerprint, not consulted internally by anything this piece
+builds (`rebuildIndex` always fully rebuilds, never diffs against a stored hash), stored for a future
+piece's own change-detection use.
+
+**2. `links.kind`: `related`, `supersedes`, `applies_to`, `derived_from`, `cites`.** Only the first
+three map to a field `kbEntrySchema`/`adrSchema`/`diagramSchema` (P6, M1) actually has today
+(`related`, `supersedes`, `applies_to` — plus `diagrams`, which this piece also links). No current
+schema has anything resembling `derived_from` or `cites`. **Answer taken:** `rebuildIndex` populates
+`links` for the four kinds it has real data for and leaves `derived_from`/`cites` unpopulated — not
+invented fields on `kbEntrySchema` (P6 is closed; adding fields there without a spec source would
+repeat the exact mistake this milestone's own discipline exists to avoid), and not fabricated link data
+with no source. A future piece with an actual source for either (code-derivation tracking; a citation
+extractor over body prose) populates them through this same table.
+
+**3. `symbols` and `usage` are both described as populated by subsystems that do not exist yet**
+("brownfield ingestion and... code-writing steps" for `symbols`; "which run/step" for `usage` — the
+engine/runtime layer, not yet built at all). **Answer taken:** both tables exist in the real schema (the
+two SQLite backends' own `CREATE TABLE` statements, and the JSON backend's own object shape) — `08`
+§8.5 says the derived index maintains five tables, and it does — but `KbIndexBackend`'s own interface
+(from `PLAN-M3.md`'s own draft) has no method touching either one, and `rebuildIndex` leaves both empty:
+`KbTree` carries no run/step or code-symbol data to populate them from. Not a narrowing this piece
+invented — the interface it was handed already excludes them.
+
+**4. `expand(ids, hops)`'s exact return-set semantics** — `PLAN-M3.md`'s own Check text states the two
+endpoints ("`hops: 0` returns `ids` unchanged"; "`hops: 1` returns exactly the entries linked to `ids`
+and nothing two hops away") but not explicitly whether `hops: 1`'s result *also* still contains the
+original `ids` themselves alongside what they link to. **Answer taken:** `expand` returns the full
+union — the original `ids` plus everything reachable within `hops` steps — matching what "expand [a
+set]" means literally and satisfying both stated endpoints (`hops: 0` is trivially the union at zero
+steps; `hops: 1`'s result is still, truthfully, "the entries linked to `ids`," just not *only* those).
+
+**Also, a refactor, not a design decision:** extracting a KB entry body's named section content
+(`## Statement`/`## Rationale`/etc.) was `writer.ts`'s own private logic (P7); `terms` (FTS5 over
+statement + rationale + title) needs the identical extraction. Moved to a shared
+`@forge/kb/schema` module (`body-sections.ts`) both P7's `KbWriter` and this piece's `rebuildIndex` call,
+rather than duplicating the heading-matching regex a second time — `KbWriter`'s own P7 tests are
+re-run unchanged after the move to confirm no behaviour changed.
+
+**Recommended resolution:** none of these four gaps needs a spec correction — `08` §8.5's own table is
+reasonably read as "the eventual full shape once every subsystem is built," and this piece honestly
+implements the slice of it `KbTree` alone can support, leaving the rest for whichever future piece
+actually has the missing data.
+
+**5. `KbIndexBackend.upsertEntry(row: EntryRow)` has no way to feed the `terms` table's own required
+content.** `08` §8.5's `terms` row is "FTS5 index over statement + rationale + title" — but `EntryRow`,
+per the same table's own `entries` column list (`id, type, section, title, path, status, confidence,
+updated, hash`), carries `title` but neither `statement` nor `rationale` text at all, and the interface
+has no second method (an `upsertTerms`, say) to supply them. **Answer taken:** `EntryRow` gains two
+required fields, `statement: string` and `rationale: string` — required (not optional) so every
+backend's own `upsertEntry` implementation can unconditionally feed `terms` without a branch for
+"this row doesn't have them," with `''` passed for a document kind that has no such body section at
+all (an ADR, a Diagram, a Runbook — `08` §8.3's Statement/Rationale sections are specific to the
+generic `knowledge`/`glossary` KB entry `kbEntrySchema` shapes, per Q53's point 3 same reasoning: an
+honest "not applicable" sentinel, not fabricated text). The same `''` sentinel is used for
+`section`/`confidence` on the same non-`kb-entry` document kinds, for the identical reason — `adrSchema`/
+`diagramSchema`/`runbookSchema` (M1) have neither field.
+
+**6. `PLAN-M3.md`'s own Check text asserts BM25/FTS5 for "the two SQLite backends," but the installed
+Node's own bundled `node:sqlite` does not actually include the FTS5 extension.** Verified directly,
+before writing the `node:sqlite` backend: `db.exec('CREATE VIRTUAL TABLE t USING fts5(...)')` against a
+real `node:sqlite` `DatabaseSync` (Node 22.14.0) throws `no such module: fts5`, while the identical
+statement against `better-sqlite3@13.0.3` succeeds and returns real BM25 scores — the two "SQLite
+backends" are not, in fact, equally capable, because Node's own build of SQLite omits an extension
+`better-sqlite3`'s build includes. This is a build-time compilation choice in Node itself, not
+something a caller can enable at runtime, and could in principle change in a future Node version, but
+is the real, current, verified state. **Answer taken:** the `node:sqlite` backend uses the identical
+deterministic term-overlap scoring the JSON fallback uses (a shared, pure JS function scoring against
+each row's own `title`/`statement`/`rationale` text, applied client-side after a plain `SELECT`), not
+real FTS5/BM25 — its `terms` table is a plain table, not a virtual FTS5 one. Only the `better-sqlite3`
+backend gets real BM25. The plan's own "BM25 for the two SQLite backends" line was wrong the moment it
+was checked against the real, installed `node:sqlite`, not a design choice — corrected here, in the
+same spirit as this milestone's other "verify against the real tool before trusting the plan" findings
+(Q45, Q48).
+
+**7. `rebuildIndex`'s own doc line ("clears and repopulates every table") names a capability
+`KbIndexBackend` has no method for.** With only `upsertEntry`/`upsertLinks`/`search`/`expand`/`close`,
+nothing in the interface can actually clear a table `rebuildIndex` is handed an already-open backend
+for. **Answer taken:** `KbIndexBackend` gains `clear(): void`, clearing every table (`entries`,
+`links`, `terms`, and the two tables this piece's own interface never populates, `symbols`/`usage` —
+clearing what it does not itself write is still correct, since a stale row from a *previous* rebuild,
+written by a future piece that does populate them, must not survive a rebuild it wasn't part of any
+more than a stale `entries` row would).

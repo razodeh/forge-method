@@ -36,9 +36,9 @@
     "branches": 94.81
   },
   "packages/kb": {
-    "lines": 99.63,
-    "statements": 99.34,
+    "lines": 99.76,
+    "statements": 99.58,
     "functions": 100,
-    "branches": 95.92
+    "branches": 96.45
   }
 }

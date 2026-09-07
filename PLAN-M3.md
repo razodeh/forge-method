@@ -428,14 +428,20 @@ established allocator pattern, reused by shape not by inheritance), `@forge/core
 **Mandate:** maintain the derived index `08` §8.5 names (`entries`, `links`, `terms`, `symbols`,
 `usage`) at `.forge/state/index.db`, fully rebuildable from the KB tree alone, on the three-tier
 backend `02` §2.1 mandates (`better-sqlite3` → `node:sqlite` if present → a pure JSON index), with one
-interface hiding which of the three is actually active from every caller.
+interface hiding which of the three is actually active from every caller. Four real gaps in `08`
+§8.5's own table — `hash`'s definition, which `links.kind` values `KbTree` alone can populate,
+`symbols`/`usage` having no current data source, and `expand`'s exact return-set semantics — found and
+closed before writing code; see `SPEC-QUESTIONS.md` Q53.
 
 **Spec:** `08` §8.5's table (the five tables' contents); `02` §2.1's "Local DB" and "Node API surface"
 rows (the exact three-tier fallback, and that it "MUST be rebuildable from event log" — here, from the
 KB tree, this package's own source of truth per `18` §18.1).
 
-**Surface:** `@forge/kb/index`
-- `interface KbIndexBackend { upsertEntry(row: EntryRow): void; upsertLinks(id: string, links: readonly LinkRow[]): void; search(query: string): readonly { id: string; score: number }[]; expand(ids: readonly string[], hops: number): readonly string[]; close(): void }` — one shape, three
+**Surface:** `@forge/kb/index` (two more real gaps in this exact interface, found building it — see
+`SPEC-QUESTIONS.md` Q53 points 5–6: `EntryRow` gained `statement`/`rationale` fields, since nothing else
+could feed `terms`' own required content; `KbIndexBackend` gained `clear(): void`, since nothing else
+could satisfy `rebuildIndex`'s own "clears and repopulates" line)
+- `interface KbIndexBackend { upsertEntry(row: EntryRow): void; upsertLinks(id: string, links: readonly LinkRow[]): void; search(query: string): readonly { id: string; score: number }[]; expand(ids: readonly string[], hops: number): readonly string[]; clear(): void; close(): void }` — one shape, three
   implementations (`SqliteBackend` via `better-sqlite3`, `NodeSqliteBackend` via `node:sqlite`,
   `JsonBackend` — a plain object written atomically), selected by `openKbIndex(paths): KbIndexBackend`
   probing availability in that exact order and never throwing for an unavailable native module.
@@ -448,10 +454,12 @@ KB tree, this package's own source of truth per `18` §18.1).
   milestone's own acceptance criterion: "KB round-trips/lints/indexes with identical index-rebuild
   query results") — asserted against all three backends, not just whichever one happens to be
   installed in CI.
-- `terms` search (BM25 via SQLite FTS5 for the two SQLite backends; a deterministic scored-substring/
-  term-overlap ranking for the JSON fallback — documented as an approximation, not BM25, since FTS5 has
-  no pure-JS equivalent) returns the same *top result* for a simple, unambiguous query regardless of
-  backend, even though exact scores differ.
+- `terms` search (real BM25 via SQLite FTS5 for `better-sqlite3` only — verified empirically that the
+  installed Node's own bundled `node:sqlite` has no FTS5 extension at all, `SPEC-QUESTIONS.md` Q53
+  point 6, contrary to this plan's own original assumption; `node:sqlite` and the JSON fallback both
+  use the identical deterministic scored term-overlap ranking instead, documented as an approximation,
+  not BM25) returns the same *top result* for a simple, unambiguous query regardless of backend, even
+  though exact scores differ.
 - `expand(ids, hops: 1)` returns exactly the entries linked to `ids` and nothing two hops away; `hops: 0`
   returns `ids` unchanged.
 - Deleting `.forge/state/index.db` (or the JSON file) and calling `rebuildIndex` again leaves the

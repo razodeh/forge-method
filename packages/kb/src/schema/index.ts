@@ -5,6 +5,12 @@
  * @see PLAN-M3.md P6
  */
 export {
+  KB_BODY_SECTIONS,
+  readKbBodySection,
+  sectionLineRange,
+  type KbBodySection,
+} from './body-sections.ts';
+export {
   kbEntrySchema,
   KB_ENTRY_TYPES,
   type KbEntry,

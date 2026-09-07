@@ -7,3 +7,4 @@
  */
 export * from './schema/index.ts';
 export * from './write/index.ts';
+export * from './db/index.ts';

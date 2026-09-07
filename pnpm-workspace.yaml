@@ -6,4 +6,11 @@ packages:
 # specs/02 §2.7 requires FORGE's own postinstall to be a no-op for npx friendliness. Dependencies get
 # the same treatment by default: nothing runs an install script unless it is listed here and the
 # reason is recorded.
-onlyBuiltDependencies: []
+#
+# better-sqlite3 (02 §2.1's own "Local DB" row, PLAN-M3.md P8): an optionalDependency of @forge/kb.
+# Its own install script fetches a prebuilt native binary for the host platform (or compiles one if
+# none exists) — without it in this list, pnpm blocks that script and the package installs with no
+# working binary at all, silently defeating the "optional, falls back gracefully" design this piece
+# depends on (02 §2.7: "on failure fall back to node:sqlite ... else a JSON-file index").
+onlyBuiltDependencies:
+  - better-sqlite3

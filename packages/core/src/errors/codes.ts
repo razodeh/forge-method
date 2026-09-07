@@ -271,6 +271,17 @@ export const ERROR_CODES = {
       `More than one KB entry claims id ${show(d.entryId)}: refusing to guess which one to propose against.`,
     remedy: 'Fix the duplicate id by hand — rename or supersede one of the two conflicting entries.',
   },
+  // `02` §2.1: `openKbIndex`'s own "never throws for an unavailable native module" is scoped to
+  // exactly that — a genuine filesystem obstruction (a plain file sitting where `.forge/state/`
+  // should be a directory, or no write permission) is a real environment problem no backend, SQLite
+  // or JSON, can work around, and deserves a clear remedy rather than a raw ENOENT/EEXIST/EACCES.
+  'KB-012': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; issue: string }) =>
+      `Cannot prepare the KB index storage location at ${show(d.path)}: ${show(d.issue)}.`,
+    remedy: 'Remove or fix whatever is blocking that path, or check the directory’s permissions.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

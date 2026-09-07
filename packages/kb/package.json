@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./write": "./src/write/index.ts"
+    "./write": "./src/write/index.ts",
+    "./index": "./src/db/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -19,5 +20,8 @@
     "@forge/diagrams": "workspace:*",
     "@forge/schemas": "workspace:*",
     "yaml": "2.9.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "13.0.3"
   }
 }

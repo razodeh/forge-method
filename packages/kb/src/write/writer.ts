@@ -27,6 +27,7 @@ import { ForgeError } from '@forge/core';
 import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import * as YAML from 'yaml';
 
+import { KB_BODY_SECTIONS, sectionLineRange, type KbBodySection } from '../schema/body-sections.ts';
 import { kbEntrySchema, type KbEntry, type KbSource } from '../schema/kb-entry.ts';
 import { sectionIdToken } from '../schema/sections.ts';
 import { DEFAULT_KB_ROOT, parseKbTree } from '../schema/tree.ts';
@@ -63,10 +64,12 @@ function enqueueForProject<T>(root: string, operation: () => Promise<T>): Promis
  * brand-new topic, so the caller supplies it (`SPEC-QUESTIONS.md` Q52, point 1). */
 export type KbEntryInput = Omit<KbEntry, 'id' | 'created' | 'updated'> & { readonly path: string };
 
-/** `08` §8.3's own four fixed body sections — the only granularity `KbProposal` targets
- * (`SPEC-QUESTIONS.md` Q52, point 3). */
-export const KB_PROPOSAL_FIELDS = ['statement', 'rationale', 'implications', 'verification'] as const;
-export type KbProposalField = (typeof KB_PROPOSAL_FIELDS)[number];
+/** `08` §8.3's own four fixed body sections (`@forge/kb/schema`'s `KB_BODY_SECTIONS`) — the only
+ * granularity `KbProposal` targets (`SPEC-QUESTIONS.md` Q52, point 3). Kept under this piece's own
+ * established public names (P7) rather than renamed when P8 needed the same extraction logic and the
+ * underlying type moved to a shared module — see `SPEC-QUESTIONS.md` Q53. */
+export const KB_PROPOSAL_FIELDS = KB_BODY_SECTIONS;
+export type KbProposalField = KbBodySection;
 
 /**
  * A structured, single-field change to an existing KB entry — not a raw text diff (`SPEC-QUESTIONS.md`
@@ -88,34 +91,6 @@ export type KbProposalOutcome =
   | { readonly status: 'applied'; readonly proposal: KbProposal; readonly diff: string }
   | { readonly status: 'conflict'; readonly proposal: KbProposal; readonly currentValue: string };
 
-const SECTION_HEADINGS: Record<KbProposalField, string> = {
-  statement: 'Statement',
-  rationale: 'Rationale',
-  implications: 'Implications',
-  verification: 'Verification',
-};
-
-const NEXT_HEADING_PATTERN = /^ {0,3}##\s+/;
-
-function headingPatternFor(field: KbProposalField): RegExp {
-  return new RegExp(`^ {0,3}##\\s+${SECTION_HEADINGS[field]}\\s*$`);
-}
-
-function sectionLineRange(
-  lines: readonly string[],
-  field: KbProposalField,
-): { readonly contentStart: number; readonly contentEnd: number } | undefined {
-  const headingIndex = lines.findIndex((line) => headingPatternFor(field).test(line));
-  if (headingIndex === -1) return undefined;
-
-  // `.findIndex` on the sliced remainder, not a manual indexed loop: its own callback receives each
-  // line directly, with no `noUncheckedIndexedAccess` fallback to defend against an index that is
-  // always in range by construction.
-  const rest = lines.slice(headingIndex + 1);
-  const nextHeadingOffset = rest.findIndex((line) => NEXT_HEADING_PATTERN.test(line));
-  const contentEnd = nextHeadingOffset === -1 ? lines.length : headingIndex + 1 + nextHeadingOffset;
-  return { contentStart: headingIndex + 1, contentEnd };
-}
 
 /**
  * Replaces a body section's content with `newValue`, leaving its heading line, every other section,
