@@ -3212,3 +3212,107 @@ do. The second, smaller lesson: a fix for one bug can introduce a second one in 
 fixes" lesson this log has now named for a fourth distinct piece this milestone, worth stating plainly at
 this point rather than as a fresh surprise each time: **any new helper function a fix introduces is new
 surface area, not a footnote, and needs the same adversarial pass as the rest of the file.**
+
+## M5 P3 — `@forge/vcs`: lane commit conventions (`06` §6.4, `18` §18.3, `20` §20.9)
+
+**Rounds: 2 (one critic finding 3 BLOCKING and 1 MAJOR issue, all fixed; one scoped verify confirming
+all four fixes cleanly and finding zero new issues, while disclosing an incidental process slip of its
+own accord). Outcome: WON.**
+
+The third piece of `@forge/vcs`, and structurally the smallest: `06` §6.4 step 3's entire normative text
+is one sentence naming a format (`forge(<story>): …` plus three trailers), leaving almost everything
+about *how* to build it — the `Co-Authored-By` email shape, whether staging is automatic, error handling
+— as an unrecorded design decision (`SPEC-QUESTIONS.md` Q65). Small surface, but a load-bearing one:
+these commits are both the permanent audit trail (`20` §20.9: "every artifact write with the run and
+agent that produced it") and the data a not-yet-built merge queue (P5) will mechanically parse
+`Forge-Step`/`Forge-Run` back out of — so the critic was pointed specifically at whether this piece's own
+five free-text inputs could corrupt or forge that structure, not just at git-plumbing correctness.
+
+### Round 1 — critic: 3 BLOCKING, 1 MAJOR
+
+The critic was asked to hunt for trailer injection/message corruption, command-argument safety,
+partial-failure behaviour, the `Co-Authored-By` trailer's own correctness, and — pointedly — whether
+each shipped test would still pass if the implementation it claims to guard were subtly broken, by
+constructing adversarial input against real git rather than reasoning about it in the abstract.
+
+- **BLOCKING: zero sanitization of any of `formatCommitMessage`'s five inputs let a bare newline forge a
+  second trailer that git's own real parser (`git interpret-trailers --parse`) accepted as equally
+  legitimate to the genuine one.** Reproduced concretely: a `stepId` of `"real-step\nForge-Step:
+  FORGED-VIA-STEPID"` committed cleanly and `git log --format=%(trailers:key=Forge-Step,valueonly)`
+  reported two values — the second, forged one is what any "resolve a repeated key by taking the last
+  occurrence" consumer would read as canonical. `stepId` is explicitly the least-trusted of the five
+  fields (it flows from a workflow YAML file a project can overlay), and `subject` — the field most
+  likely to carry LLM-generated freeform text — opens a related, distinct corruption via an embedded
+  `\n\n`: a second, fake trailer-shaped paragraph that git's real parser correctly ignores (not the final
+  paragraph) but that permanently pollutes the human-readable audit record regardless, and would fool a
+  naive first-match line scan either way.
+- **BLOCKING (one bullet, two findings): two shipped tests were provably weaker than their own names and
+  comments claimed.** The "stages and commits everything... new, modified and deleted files alike" test
+  never actually deleted a file — the critic mutated the staging call and reran the untouched suite,
+  which still passed all 6 tests. The "round-trips byte-for-byte... proving the merge queue will actually
+  be able to read them" test used only `.toContain(...)` checks, confirmed to still pass unchanged even
+  on the poisoned message from the finding above — proving byte-preservation, not the mechanical
+  parseability its own comment claimed.
+- **MAJOR: `agentRole` is reused as both the display name and the email local-part of the
+  `Co-Authored-By` trailer, with no shape validation at all** — a space, an empty string, and an
+  already-email-shaped value each produced a trailer git's parser accepts as well-formed (it doesn't
+  validate the "Name <email>" sub-grammar) but that defeats the trailer's actual co-author-crediting
+  purpose.
+
+No findings on command-argument safety (a field beginning with `-` was confirmed, empirically, to commit
+as literal text — `execa`'s argv-array invocation has no shell to reinterpret it through), partial-failure
+behaviour (a failed signed commit, and a failed `git add -A` on an unreadable file in both orderings, both
+leave a cleanly retriable state), or TypeScript/lint discipline.
+
+**All three findings were fixed at the one point where this data is still structured**, rather than
+patched at the git layer: a new `assertSingleLine` guard rejects any `\n`/`\r` in `scope`/`subject`/
+`stepId`/`runId` before interpolation (throws `VcsError`, code `VCS-INVALID-COMMIT-FIELD`); a stricter
+`assertValidAgentRole` guard (pattern `/^[a-z][a-z0-9-]*$/`, matching this spec pack's own agent-role-id
+convention) subsumes the same newline rejection for `agentRole` specifically while also closing the MAJOR
+finding (code `VCS-INVALID-AGENT-ROLE`); the weakened tests were rewritten to assert what they claimed —
+an actual file deletion checked via exact `git show --name-status` output, and the round-trip test now
+piping the commit body through real `git interpret-trailers --parse` and asserting the exact trailer
+array, which fails on a forged fourth line rather than merely `.toContain`-ing the real three.
+
+### Round 2 — scoped verify: 4 of 4 confirmed PASS, 0 new findings
+
+Every fix was independently re-derived against real git with fresh inputs, not the shipped tests' own:
+newline-poisoned strings for all four guarded fields, confirmed to throw with zero git side effects
+(worktree `HEAD` and `git status` both unchanged after a rejected call) while ordinary shapes already
+used elsewhere in this codebase (a four-segment colon `stepId` matching `06` §6.2's own
+`${workflowId}:${stepId}[:${itemKey}]` format) still passed cleanly; a live mutation of the staging call,
+confirmed the new deletion assertion is the one test that fails against it; a hand-forged duplicate-
+trailer message fed through the shipped `git interpret-trailers --parse` assertion shape, confirmed it
+fails on poisoned input the old `.toContain` checks would have passed; and the exact three named
+`agentRole` values re-tested, plus the new pattern cross-checked against the *entire* `specs/05` §5.2 role
+roster (all 28 ids) with none rejected. A fresh read of the new code, `tsc`, and `eslint` all surfaced
+nothing further; coverage on the real suite is 100% on all four metrics, so the new guard branches are
+exercised by shipped tests, not scratch-only ones.
+
+One correction surfaced along the way: the critic's own illustrative repro for the test-quality finding
+(`git add -A` → `git add .`) turns out not to actually weaken deletion-staging on this git version — git
+has staged deletions under a bare `add .` since 2.0 — so the *specific* mutation was a wash, even though
+the finding's real claim (the old test never exercised a deletion at all) was independently correct
+regardless, and the verify round's own mutation (`--ignore-removal`) is what genuinely reproduces a
+broken-deletion scenario. The verify agent also disclosed, unprompted, that a `git diff` command scoped
+to check `package.json` incidentally also printed this file's own then-pending `SPEC-QUESTIONS.md` diff,
+which it had been asked not to read — content identical to what its own task prompt already stated
+directly, with no prior verdict visible either way, so no bias resulted, but recorded here for the same
+reason every other process wrinkle in this log gets recorded rather than quietly smoothed over.
+
+### Calibration note
+
+Every prior piece this milestone broke on a git-tool or OS/filesystem quirk (locale-dependent messages,
+symlink canonicalisation, an undocumented argument-parser behaviour) — bugs that look fine on paper and
+only surface against the real system. This piece's own BLOCKING finding is a different animal entirely:
+plain, textbook unsanitized-input-reaches-a-structured-format injection, the same shape of bug as SQL or
+log injection, here landing in a git trailer instead of a query string. The same "actually construct the
+scenario against the real consumer, don't reason about it" discipline caught it just as reliably — proof
+the discipline generalises across bug *families*, not just the ones already seen this milestone — but
+it's worth naming the pattern explicitly for what's coming: **any function that assembles a structured,
+delimited text format (trailers, headers, template strings) from caller-supplied fields needs an explicit
+check for input shapes that could corrupt that structure, treated with the same seriousness as injection
+elsewhere.** Two upcoming pieces in this same milestone are exactly this class of risk by nature — P8
+(workflow DSL: YAML parsing) and P9 (the sandboxed expression evaluator) both take externally-authored
+text as their primary input — and their own critic rounds should be pointed at this specific question
+from the start, not left to discover it the way this piece's round 1 did.

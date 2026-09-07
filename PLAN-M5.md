@@ -139,6 +139,10 @@ use.
 
 **Depends on:** P2.
 
+*(P3 is committed: `a3a7057`. See `SPEC-QUESTIONS.md` Q65 and its critic-round/verify-round addenda —
+3 blocking findings this round, the sharpest a trailer-injection vulnerability via an unsanitized
+newline; see `GAUNTLET-LOG.md`'s own entry for the fuller story.)*
+
 ---
 
 ## P4 — Write-policy enforcement: claims and shared mutable paths
