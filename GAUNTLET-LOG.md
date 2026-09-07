@@ -3106,3 +3106,109 @@ mechanism is new surface area deserving its own scrutiny — not a footnote to t
 correct answer here needed neither mechanism: recognising that the underlying property (has this repo
 committed anything) has a locale-independent, environment-independent signal (exit code and stderr
 emptiness) available all along made both fragile mechanisms unnecessary rather than merely fixed.
+
+## M5 P2 — `@forge/vcs`: lane worktree lifecycle (`06` §6.4, `18` §18.2/§18.3, `20` §20.2/§20.10)
+
+**Rounds: 2 (one critic finding 3 BLOCKING and 3 MAJOR issues plus 3 MINOR, all fixed; one macOS
+symlink-resolution bug found and fixed independently, between rounds, by the builder's own testing; one
+scoped verify confirming all 9 original findings cleanly and finding 1 new MINOR issue in the
+independently-found fix — closed locally, no third round). Outcome: WON.**
+
+The second piece of `@forge/vcs`, building the create/remove lifecycle for the per-step git worktrees
+("lanes") the whole parallel-execution model depends on. This piece sits directly upstream of M5's own
+defining criterion — a worktree or branch this package's own bookkeeping cannot recover from after a
+crash is exactly the kind of gap that only bites during the one scenario (a kill mid-operation) that
+matters most and is hardest to test for, which is why the critic round below was asked specifically to
+construct and run adversarial scenarios against real git rather than reason about them abstractly.
+
+### Round 1 — critic: 3 BLOCKING, 3 MAJOR, 3 MINOR
+
+Every finding below was independently reproduced against real git by the critic, not merely reasoned
+about — including two genuinely surprising git behaviours neither the builder nor a cursory read of the
+git manual would have predicted. Full findings, each with its own repro and fix, are in
+`SPEC-QUESTIONS.md`'s own P2 (Q64) critic-round addendum.
+
+- **BLOCKING: `removeLaneWorktree`'s own two git calls were non-atomic, and a process killed between
+  them left an orphaned branch invisible and unrecoverable through every path in the module** — not a
+  retried creation (git's own "branch already exists" refusal fires forever), not a retried removal (the
+  old code's own unconditional first call failed on a path already gone, so the branch-delete step was
+  never reached), not the orphan-discovery function (a branch with no worktree is invisible to `git
+  worktree list`). The exact interruption point this milestone's own required crash-resume CI test would
+  hit, in the package that exists specifically to make crash-resume possible.
+- **BLOCKING: a flag-shaped `integrationBase` value (e.g. `-q`) was silently consumed by `git worktree
+  add` as its own `--quiet` flag rather than being used or rejected as a revision** — the created lane
+  silently ended up checked out at `HEAD` instead of the caller's intended base, with no error at all.
+  The critic found, empirically, that the conventional `--` mitigation does not fix this for this
+  specific git subcommand — a real, non-obvious git quirk, not a simple oversight.
+- **BLOCKING: two different, realistic step ids colliding under the (then bare, human-readable-only)
+  slugifier were only protected by git's own collision refusal while the first lane was still alive** —
+  once it completed and was cleaned up, creating a colliding second lane silently succeeded, completely
+  indistinguishable from the first.
+- **MAJOR: a locked worktree could not be removed** — the module never issued the documented `-f -f`
+  double-force override.
+- **MAJOR: the repository's own main worktree could be misreported as an orphaned lane** if a human
+  happened to check out a matching-namespace branch directly in it — `git worktree list --porcelain`
+  carries no explicit marker distinguishing the main worktree from a linked one.
+- **MAJOR: the removal function was not idempotent**, and every failure in the package collapsing to one
+  generic error code left no structural way for a caller to tell "already cleaned up" apart from a real
+  failure — subsumed by the first finding's own fix.
+- Three MINOR findings (unbounded slug length; a bare Windows-reserved device name possible as the final
+  path segment; a hand-duplicated id-format string with nothing keeping it in sync with the one function
+  that already builds it correctly) — the first two closed as a side effect of the collision-resistance
+  fix below, the third via a new shared formatting helper.
+
+**The fix for all three BLOCKING findings and both length/reserved-name MINOR findings turned out to be
+one design change each, not three or five separate patches**: `removeLaneWorktree` now checks live git
+state immediately before each of its two steps, running only the one still needed — genuinely idempotent
+regardless of where a prior attempt was interrupted; `integrationBase` is now resolved to a concrete
+commit sha via `git rev-parse --verify` *before* it ever reaches `worktree add`, so a value that would
+have been misinterpreted as a flag now fails closed at resolution instead; `slugifyStepId` now appends an
+8-hex-character hash of the *full* step id, computed via `node:crypto`'s `createHash` (confirmed not
+banned by this repo's own randomness-source lint rule, which is scoped to true randomness, not
+deterministic hashing), which both makes two different inputs collide only if they also collide on the
+hash and — because the suffix is never omitted — makes the final path segment structurally incapable of
+ever being a bare Windows-reserved word.
+
+### Between rounds — a bug the builder found and fixed on their own, before any verify round
+
+Writing tests for the round-1 fixes surfaced a real bug the critic round did not: plain `path.resolve()`
+is not sufficient to compare a locally-computed worktree path against what `git worktree list
+--porcelain` reports, because macOS's `os.tmpdir()` is itself a symlink (`/var` → `/private/var`) and git
+canonicalises the path it's given before reporting it back — the identical class of bug `PLAN-M4.md` P4's
+own C2 check already hit once, for a different check, earlier in this same codebase's own history. Fixed
+immediately, with a shared `resolveCwd` helper applied everywhere a worktree path is computed or compared,
+before either affected fix was ever sent to a critic.
+
+### Round 2 — scoped verify: 9 of 9 confirmed; 1 new MINOR finding
+
+Every fix was independently re-derived against real git, including deliberately combining fixes the
+individual patches did not anticipate together — a worktree that is both locked *and* has had its
+directory deleted out from under git; two step ids that collide on their full 40-character truncated
+readable prefix (confirmed the hash, computed over the *untruncated* original before the cap is applied,
+still keeps them distinct); the main-worktree exclusion and orphan-discovery both proven correct in every
+direction of a symlinked-vs-already-resolved `cwd` mismatch. All nine round-1 findings held exactly as
+claimed, including independently reproducing both of the `integrationBase` finding's own empirical
+claims (the `--` separator genuinely does not help; `rev-parse --verify` genuinely fails closed for both
+a flag-shaped and a bogus ref) rather than trusting the builder's own prior reproduction of them.
+
+**New finding: the independently-found symlink fix's own `resolveCwd` helper was not itself wrapped in
+this file's own `wrapGitFailure` convention**, leaking a plain Node `ENOENT`/`EACCES` error (no
+structured code or remedy) from the two functions that call it, for a nonexistent `cwd` — the one
+remaining place in the file that quietly didn't honour its own stated guarantee that every function
+rejects only a real, structured `VcsError`. **Fixed** by wrapping it like every other fallible operation
+in the module, with two new tests pinning the corrected behaviour.
+
+### Calibration note
+
+This piece is the clearest demonstration yet, this milestone, of the value of *actually running* an
+adversarial scenario against the real system rather than reasoning about it from documentation or
+intuition — both BLOCKING findings 2 and 3, and the independently-found symlink bug, are exactly the
+shape of bug that looks fine on paper and only breaks under a specific, real, empirically-discoverable
+condition (a git subcommand's own undocumented argument-parsing quirk; a filesystem's own symlink
+structure on one specific OS). No amount of re-reading the code or the git manual would have found any of
+these — what did was constructing the actual scenario and watching what real git and real Node actually
+do. The second, smaller lesson: a fix for one bug can introduce a second one in code the fix itself adds
+(`resolveCwd` not being wrapped) — the same "a fix's own new code needs the same scrutiny as the bug it
+fixes" lesson this log has now named for a fourth distinct piece this milestone, worth stating plainly at
+this point rather than as a fresh surprise each time: **any new helper function a fix introduces is new
+surface area, not a footnote, and needs the same adversarial pass as the rest of the file.**

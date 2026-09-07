@@ -110,6 +110,10 @@ own bookkeeping, proving it doesn't rely on an in-memory registry that a crash w
 
 **Depends on:** P1.
 
+*(P2 is committed: `7cc7194`. See `SPEC-QUESTIONS.md` Q64 and its critic-round/verify-round addenda —
+3 blocking findings this round, plus a macOS symlink-resolution bug the builder found and fixed
+independently between rounds; see `GAUNTLET-LOG.md`'s own entry for the fuller story.)*
+
 ---
 
 ## P3 — Lane commit conventions
