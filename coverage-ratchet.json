@@ -40,5 +40,11 @@
     "statements": 99.64,
     "functions": 100,
     "branches": 96.89
+  },
+  "packages/adapter-kit": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 100
   }
 }

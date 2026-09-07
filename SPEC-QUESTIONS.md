@@ -2123,3 +2123,220 @@ reference by the same critic round's point 4) should also be checked for existen
 Q44), explicitly out of this package's scope, and `explains`' own real id-space is not stated precisely
 enough anywhere in the spec pack to add a check against it without guessing at a rule the spec itself
 does not give.
+
+## Q57 — `02` §2.2's own dependency graph names `adapter-kit ← schemas, telemetry`, but `@forge/telemetry`
+is not built until M5, one milestone after `@forge/adapter-kit`
+
+**Conflict.** `02` §2.2: `adapter-kit ← schemas, telemetry`. `specs/22`'s own M5 Build line is where
+`@forge/telemetry` (event log, ...) is first built — M4, this milestone, comes before it. Nothing in
+`07` §7.2/§7.6 or `15` §15.6 (M4's own spec sources) actually *names* a telemetry call directly, but
+`20` §20.5 point 2 ("Strip control tokens... removed and logged as `InjectionAttemptBlocked`. This is
+done in the adapter layer, at the boundary") and `20` §20.9 ("every tool-ceiling escalation... every
+policy violation, blocked injection... shown") both describe adapter-kit-layer behaviour in terms of
+"logged," which is exactly what a `@forge/telemetry` dependency would be for. This is the identical
+shape of gap Q43 (M3) hit with `@forge/cli` not existing until M6 — a real build-order conflict, not a
+spec silence.
+
+**Answer taken (proceeding):** nothing in this milestone's own Surface imports or calls
+`@forge/telemetry`. Every place `20`'s prose says "logged," the corresponding function
+(`stripControlTokens` foremost) returns the structured fact as data (`stripped: readonly
+ParsedControlToken[]`) instead of writing a log entry itself — the caller decides where it goes, the
+same "caller supplies the capability this package cannot reach" shape already used repeatedly in
+`@forge/kb` (P7's `appendKbEvent`, P9's injected `now`, P10's injected `runCheck`). Once `@forge/
+telemetry` exists (M5), whichever piece owns wiring the engine to adapters is where a real
+`InjectionAttemptBlocked` log line gets written, using the exact data this milestone's own functions
+already return — nothing about `@forge/adapter-kit`'s own public surface is expected to change shape
+at that point, the same "M6 becomes a thin wrapper" relationship Q43 already established for `@forge/kb`
+and the future CLI.
+
+**Recommended resolution:** either state `02` §2.2's dependency line as `adapter-kit ← schemas`
+(dropping `telemetry`, if no piece of `07`/`15` genuinely needs to call into it directly) or move
+`@forge/telemetry` earlier than M5 in `specs/22`'s own build order — the current pairing describes a
+dependency the build order itself cannot satisfy when adapter-kit is actually built.
+
+## Q58 — Twelve of `07` §7.2's own named types have no field-level shape anywhere in the spec pack;
+`ToolGrant.exec`'s pattern syntax and `wrapUntrustedContent`'s anti-spoofing design are likewise unstated
+
+`07` §7.2 references `PreflightContext`, `PreflightResult`, `ModelInfo`, `ResumeRequest`,
+`AssetContext`, `InstalledAsset`, `StructuredRequest<T>`, `ResolvedSkill`, `SessionContext`,
+`SkillProvisioning`, `GrantedMcpServer`, `McpProvisioning`, `ForgeControlToken` and `ParsedControlToken`
+by name, in method signatures, without ever giving one of them a field list — unlike every other
+interface in the same section (`AdapterCapabilities`, `SessionRequest`, `AdapterEvent`, `SessionResult`,
+`ToolGrant`), which are given complete, literal TypeScript. A `grep -rn` for each name across the whole
+`specs/` tree confirms none is elaborated anywhere else either. Designed here, from what the surrounding
+prose says each one is *for*, not invented freely:
+
+1. **`PreflightContext`** — `{ projectRoot: string; env: Readonly<Record<string, string>> }`. `env` is
+   passed explicitly, not read from `process.env` ambiently inside the adapter, matching
+   `SessionRequest.env`'s own already-explicit shape and this project's own determinism stance
+   (no ambient-state reads where an explicit value can be threaded through instead).
+2. **`PreflightResult`** — `{ ok: boolean; version?: string; issues: readonly PreflightIssue[] }`,
+   `PreflightIssue = { code: string; message: string; remedy: string }` — the same
+   `code`/`message`/`remedy` shape `ForgeError` already uses everywhere else in this codebase, reused
+   here since preflight can find more than one real problem at once (not installed *and* wrong version).
+3. **`ModelInfo`** — `{ id: string; displayName: string; contextWindowTokens?: number }`. "For tier
+   mapping validation" needs at minimum a stable `id` to compare against a project's own tier config;
+   the other two fields are what a `forge doctor`-style report would show a human, per `07` §7.2's own
+   `displayName` precedent on `PlatformAdapter` itself.
+4. **`ResumeRequest`** — `{ prompt: string; limits: SessionRequest['limits']; abortSignal: AbortSignal }`
+   — a resume is a new instruction to continue with, not a full new session; reuses `SessionRequest`'s
+   own `limits` shape rather than inventing a second one.
+5. **`AssetContext`/`InstalledAsset`** — `{ projectRoot: string; agents: readonly { id: string;
+   displayName: string }[] }` / `{ path: string; kind: string }` — "write platform-native assets (agent
+   files, commands)" needs to know the project root and which agent roles exist to write files for;
+   `InstalledAsset` reports what actually landed, for `forge doctor` to reconcile against.
+6. **`StructuredRequest<T>`** — `{ prompt: string; outputSchema: JSONSchema; model?: string }`. `T`
+   exists on the *method* (`structured<T>(req): Promise<T>`) for the caller's own return-type inference,
+   not encoded redundantly into the request shape itself — there is nothing in `07`'s own one-line
+   description ("one-shot structured completion for cheap utility tasks") implying the request needs
+   anything beyond what already produces `outputSchema?` on `SessionRequest`.
+7. **`ResolvedSkill`** — `{ id: string; summary: string; body: string; appliesTo: readonly string[] }` —
+   the two pieces `15` §15.6's own provisioning-strategy table names directly ("front-matter summaries";
+   "bodies... up to budget") plus `appliesTo`, needed to pick which bodies fit a step's own file claim
+   under the `skills: none` degradation strategy in that same table.
+8. **`SessionContext`** — `{ runId: string; stepId: string; cwd: string }` — the identity a skill/MCP
+   provisioning call needs to scope its own materialised files "to the lane worktree" (`15` §15.6),
+   mirroring the three fields `SessionRequest` already carries for the identical purpose.
+9. **`SkillProvisioning`** — `{ strategy: 'native' | 'inline' | 'bodies-injected'; provisionedSkillIds:
+   readonly string[] }` — reports which of `15` §15.6's three named strategies was actually used and
+   which skills it covered, the two facts C15 (skill scoping) needs to assert against.
+10. **`GrantedMcpServer`** — a `transport`-discriminated shape mirroring `@forge/extensions/mcp`'s own
+    `McpServer` (`id`, `transport: 'stdio'|'http'|'sse'`, connection fields) plus `grantedTools: readonly
+    string[] | '*'` — deliberately *not* imported from `@forge/extensions` (`02` §2.2's own graph gives
+    `adapter-kit ← schemas, telemetry` only, no `extensions` edge; `extensions ← core, schemas` is the
+    graph's only edge touching that package, and it does not point at `adapter-kit`), so this is a
+    structurally-similar, independently-defined type a future engine piece converts into, not shares.
+11. **`McpProvisioning`** — `{ loadedServerIds: readonly string[] }` — the one fact C16 (MCP grant
+    fidelity) needs: which granted servers actually loaded, so a caller can compare against what it
+    asked for.
+12. **`ForgeControlToken`/`ParsedControlToken`** — the closed set transcribed verbatim from every token
+    name `05` §5.4 point 4, §5.5 and §15.4.3 actually name in worked examples: `FORGE_REQUEST_CONTEXT`,
+    `FORGE_ASK`, `FORGE_ASSUME`, `FORGE_HANDOFF`, `FORGE_REQUEST_CHANGE`, `FORGE_CONFLICT`,
+    `FORGE_LOAD_SKILL`. No eighth token is named anywhere in the spec pack; none invented.
+13. **`ToolGrant.exec` pattern syntax** — a single-trailing-`*`-wildcard prefix match (`"pnpm test*"`
+    matches any command starting `"pnpm test"`; a pattern with no `*` must match exactly), not a full
+    glob engine — `07` §7.2's own two worked examples (`"pnpm test*"`, `"git diff*"`) are both exactly
+    this shape and neither needs more; a full glob library is a dependency this milestone has no other
+    reason to add (`02` §2.1's own "minimal dependency surface" stance).
+14. **`wrapUntrustedContent`'s anti-spoofing design** — fixed open/close marker strings; before
+    embedding, any literal occurrence of either marker *inside* the untrusted content itself is defanged
+    by inserting a zero-width character (`U+200B`) into the middle of the matched text, so it can never
+    be byte-identical to the real boundary the wrapper itself emits — a nested "close" the untrusted
+    content tries to forge is left visibly present as inert text, not treated as a real boundary.
+15. **`normalizeAdapterEvent` cannot throw `ForgeError` at all — found while building, not before.**
+    `02` §2.2's own graph gives `adapter-kit ← schemas, telemetry`, no `core` edge; `ForgeError` is
+    defined in `@forge/core/errors`, structurally unreachable from a package that cannot depend on
+    `core` — the identical position-in-the-graph reason `@forge/schemas` itself never throws. Every
+    future adapter package (`adapter-claude-code`, `adapter-codemachine`, `adapter-generic`) has the
+    *same* `['adapter-kit', 'schemas', 'telemetry']` row — no `core` either — so this is not
+    `adapter-kit`'s own peculiarity, it is every package below `@forge/engine`/`@forge/agents` (the
+    first two graph rows that include `core`). `normalizeAdapterEvent` returns a discriminated result
+    (`{ok:true, event} | {ok:false, issue}`) instead of throwing; a real, user-facing `ForgeError` gets
+    constructed later, by whichever `core`-having package first receives the failure.
+16. **`FORGE_ASK`/`FORGE_ASSUME`'s own payload grammar — only two of the seven tokens get a literal
+    worked example anywhere in the spec pack** (`FORGE_REQUEST_CONTEXT: <kb-id|query>`,
+    `FORGE_HANDOFF: <role> <reason>`); `05` §5.5 describes `FORGE_ASK`'s payload only as "a specific
+    question and options" (plural) and `FORGE_ASSUME`'s only as "confidence, impact and how to
+    validate it" — three-plus sub-fields with no shown syntax for packing them onto one line. Resolved
+    with one consistent, documented convention across every multi-field token: sub-fields are
+    pipe-delimited, in the exact order the prose lists them, with a trailing comma-separated list where
+    the prose itself says "options" (plural): `FORGE_ASK: <question> | <option>, <option>, ...`;
+    `FORGE_ASSUME: <text> | <low|medium|high> | <impact> | <how to validate it>`. Single-field tokens
+    (`FORGE_CONFLICT`, `FORGE_LOAD_SKILL`) need no delimiter at all. `FORGE_REQUEST_CHANGE` (no worked
+    example given either) is modelled on its own closest sibling, `FORGE_HANDOFF`'s space-separated
+    `<target> <reason>` shape, both being "name a thing, then say why."
+
+**Recommended resolution:** give the twelve types real field lists directly in `07` §7.2 (they sit right
+next to seven others that already have them), state `ToolGrant.exec`'s pattern language explicitly
+rather than leaving it to two examples, give `wrapUntrustedContent`'s own delimiter scheme a worked
+example the way `20` §20.5's own numbered list describes the *policy* but not the *mechanism*, give
+`FORGE_ASK`/`FORGE_ASSUME`/`FORGE_REQUEST_CHANGE` the same literal one-line worked example their four
+siblings already have, and state explicitly, next to `02` §2.2's own graph, which packages are expected
+to construct a real `ForgeError` from a lower package's own structured failure data (point 15) — the
+graph already implies this by which rows include `core`, but nowhere says so in words.
+
+**Critic-round addendum: two real blocking gaps in `normalizeAdapterEvent`, a real dangling-exports bug,
+and two real numeric-strictness gaps — all fixed; two considered tradeoffs recorded, not fixed.** A
+gauntlet critic found `normalizeAdapterEvent`'s own "never throws" claim (point 15, above) was only ever
+justified against `ForgeError` specifically — a raw object with a throwing property getter, or a `Proxy`
+with a throwing `get`/`ownKeys` trap, made `adapterEventSchema.safeParse` itself throw a plain, uncaught
+`Error` straight out of the function, defeating the "safely validate untrusted adapter output" purpose
+the function exists for in the first place (adversarial getters are an entirely ordinary shape for a real
+SDK wrapper object to have, not a contrived curiosity). **Fixed** by wrapping the whole function body in
+a `try`/`catch`, converting any thrown value into the same `{ok:false, issue}` shape every other failure
+already produces. Separately, the critic found `tool.call.input`/`control.payload` — `unknown` per `07`
+§7.2's own literal text, a *required* field whose value may be anything, never marked optional — were
+`ok: true`-accepted with the key missing entirely: `normalizeAdapterEvent({type:'tool.call', id, name})`
+(no `input` key at all) validated successfully. The root cause is a genuine Zod limitation, not a
+modelling mistake: `z.unknown()` accepts `undefined` as a valid value, and Zod's own per-key object-shape
+validation cannot distinguish "key absent" from "key present with value `undefined`" for any schema that
+already accepts `undefined` — both produce an identical `data[key] === undefined` by the time any
+validator (including a `.superRefine`) can inspect it, since Zod's own output-construction step assigns
+`output[key] = undefined` even for a key that was never present in the input. **Fixed** by checking own-
+key presence directly against the *raw* input, before Zod is invoked at all, for exactly the two fields
+this affects (a small, explicit lookup table, not a general schema-introspection mechanism — proportionate
+to a two-field gap, not invented infrastructure for a larger one that does not exist). The critic also
+found `packages/adapter-kit/package.json`'s own `exports` map had three dangling entries (`./grants`,
+`./control-tokens`, `./conformance`) pointing at files for P2/P3/P4, none of which existed yet — neither
+`tsc` nor `eslint` catches a `package.json` `exports` target against the filesystem, so this was a real,
+silently-shipped defect (`node --experimental-strip-types -e "import('@forge/adapter-kit/grants')"`
+genuinely threw `ERR_MODULE_NOT_FOUND`). **Fixed** by removing the three entries now (to be added back
+one at a time as P2/P3/P4 are actually built, the same incremental pattern `@forge/kb`'s own
+`package.json` already used across P6–P10) and by adding a test asserting every declared subpath
+resolves — which, it turned out on inspection, is not a new invention at all: `@forge/core/test/
+errors.test.ts` already has the identical check ("declares every exports subpath as a file that exists"),
+built during M1 for the identical reason. `adapter-kit`'s own version mirrors that file's exact
+structure rather than reinventing it. Last, the critic found an internal inconsistency across the
+numeric fields in `adapterEventSchema`: `retry.attempt`/`maxRetries` were `.int().nonnegative()`, but
+`usage.inputTokens`/`outputTokens`/`cacheReadTokens`, `tool.result.bytes` and `retry.delayMs` were only
+`.nonnegative()` — equally count-like fields with a weaker constraint, concretely letting `Infinity`
+through as a "valid" token count or delay (`.nonnegative()` alone does not exclude it; `.int()` does,
+since `Number.isInteger(Infinity) === false`). **Fixed** by adding `.int()` to every genuinely-integral
+count field for consistency (which incidentally also closes the `Infinity` gap for all of them), and
+`.finite()` explicitly to `usage.costUsd` (the one field that is legitimately fractional, so `.int()`
+itself isn't the right fix there).
+
+Two further findings were considered and left **unfixed**, as genuine tradeoffs rather than oversights:
+(1) `normalizeAdapterEvent`'s returned event is a shallow copy — a value nested inside `meta`/`input`/
+`payload` is the *same* object reference the raw input holds, so a caller that mutates a nested object
+inside `raw` after normalizing will see that mutation reflected in the already-"normalized" result,
+despite `AdapterEvent`'s own `readonly`/`Readonly<>` markers reading like a stronger guarantee than TS's
+`readonly` (always shallow, compile-time-only) actually provides. A deep clone was rejected: these fields
+can be arbitrarily large, this function sits on a potentially high-frequency live event stream, and an
+unbounded per-event deep-clone cost to guard against a caller-discipline issue is a worse trade than
+documenting the limitation honestly — now done, directly in the function's own doc comment. (2) a
+`.strict()` object schema accepts a value reachable only via the prototype chain (`Object.create(realShape
+ObjectAsPrototype)`, zero own keys) as if it had every field as a real own-property — genuine, but the
+critic's own report calls it low-likelihood (no real adapter output, from `JSON.parse` or equivalent,
+is ever shaped this way) and fixing it would mean replacing `.strict()`'s whole extra-key-detection
+approach with an own-keys-only pre-check across every field, not just the two already singled out above
+— disproportionate to a threat no real adapter can actually produce.
+
+**Verify-round addendum: all critic-round fixes confirmed independently (including a genuine
+one-level-deeper adversarial probe of the never-throws fix); two further real gaps found and fixed, both
+inside the critic round's own new code.** A verify pass re-derived every fix above with its own
+adversarial scripts and confirmed them all — notably going one level past the critic's own repros for
+the never-throws fix (a getter nested inside `meta`, a `Proxy` with a throwing `has`/
+`getOwnPropertyDescriptor` trap, non-Error thrown values including `Symbol`s) and separately confirming
+`session.started.meta` (`z.record()`, not `z.unknown()`) already correctly rejects a missing key on its
+own, with no pre-check needed — `z.record()`, unlike `z.unknown()`, does not accept `undefined` as a
+value, so this was never a third instance of the same bug. It found two further real gaps, both inside
+the code the critic round itself just added: first, `describeThrown` — the fallback the outer `catch`
+calls to turn an arbitrary thrown `cause` into a string — was itself unprotected. Both halves of `cause
+instanceof Error ? cause.message : String(cause)` can throw for a sufficiently adversarial `cause`:
+`instanceof` triggers a `Proxy`'s own `getPrototypeOf` trap, and `String()` triggers a poisoned
+`toString`/`Symbol.toPrimitive` — concretely, a thrown value whose own `toString` itself throws, or a
+single self-referential `Proxy` thrown as its own cause, re-escaped past the outer `catch` entirely,
+defeating the exact guarantee this whole round of fixes exists to provide (the self-referential-proxy
+form was adversarial enough that generic error-reporting code merely *displaying* the escaped exception
+re-triggered the trap a second time). **Fixed** by wrapping `describeThrown`'s own body in a `try`/
+`catch`, falling back to a static, un-throwable string. Second: `REQUIRED_UNKNOWN_KEY_BY_TYPE` (the
+lookup table the required-unknown-key fix added) was a plain object indexed by an attacker-controlled
+`type` string — `REQUIRED_UNKNOWN_KEY_BY_TYPE['constructor']`, `['toString']`, `['__proto__']` and
+similar all resolve to an *inherited* `Object.prototype` member instead of `undefined`, which is not
+caught by a bare `=== undefined` check, and would leak a function value into
+`NormalizeAdapterEventIssue.path` — silently violating its own declared `path: string` contract at
+runtime (confirmed: `JSON.stringify` on such an issue drops the `path` key entirely, since a function
+value is not JSON-serialisable). **Fixed** by switching the lookup table from a plain object to a
+`Map`, which has no prototype-chain lookup ambiguity at all: `.get('constructor')` is `undefined` unless
+a key literally named `'constructor'` was ever `.set()` on that exact instance.
