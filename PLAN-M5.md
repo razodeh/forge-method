@@ -377,22 +377,43 @@ line/column, not just a field path).
 **Surface:** `@forge/engine/workflow`
 - `Workflow`, `WorkflowStep`, every `kind` variant (`agent | command | gate | elicit | session | fanout
   | merge | subworkflow | checkpoint | parallel | sequence`) as a discriminated union matching `10`
-  §10.1's own fields per kind.
+  §10.1's own fields per kind. Five kinds (`elicit`, `session`, `checkpoint`, `parallel`, `sequence`)
+  have zero worked example anywhere in the spec pack — their own field shapes are this piece's own
+  design; see `SPEC-QUESTIONS.md` Q70's own twelve design points, the largest single write-up this
+  milestone.
 - `parseWorkflow(yamlText): ParseResult` — a discriminated result carrying source positions on every
-  error, via the `yaml` package's own CST, not a bare `JSON.parse`-shaped failure.
-- `WorkflowExistenceOracle` — a caller-supplied `{ agentExists, gateExists, artifactTypeExists,
-  workflowExists }` interface; `validateWorkflow(workflow, oracle): readonly ValidationIssue[]` checks
-  referential integrity against it without needing a real registry to exist.
-- `validateStructure(workflow): readonly ValidationIssue[]` — unique step ids, static-`dependsOn` cycle
+  error, via the `yaml` package's own CST (including schema-shape violations, not just top-level YAML
+  syntax errors — a zod issue's own JSON path is resolved back to a real line/column), not a bare
+  `JSON.parse`-shaped failure. Never throws, including on pathologically deep input (a `RangeError`-
+  specific recovery path, `SPEC-QUESTIONS.md` Q70 design point 12) — confirmed the real entry point
+  isn't reachable this way for any real YAML text, but hardened unconditionally regardless, since the
+  underlying zod schema objects are also exported directly.
+- `WorkflowExistenceOracle` — a caller-supplied `{ agentExists, briefExists, gateExists,
+  artifactTypeExists, workflowExists }` interface (`briefExists` is a fifth method not in this plan's
+  own original four-method text — `10` §10.1's own "Validation" subsection prose names five referenced
+  things, not four); `validateWorkflow(workflow, oracle): readonly ValidationIssue[]` checks referential
+  integrity against it (including `workflow.requires.gates_passed`/`.artifacts`, not just per-step
+  fields) without needing a real registry to exist.
+- `validateStructure(workflow): readonly ValidationIssue[]` — unique step ids (including a step with no
+  `id` at all, a `missing-step-id` issue not in this plan's own original text), static-`dependsOn` cycle
   detection (fanout/templated deps are `@forge/engine`'s own plan-compiler's job, P10/P11 — this is the
-  *declared*, unexpanded graph only), well-formed `produces` glob syntax.
+  *declared*, unexpanded graph only), well-formed `produces` glob syntax. Both this and
+  `validateWorkflow` guard against pathologically deep/wide input (`MAX_TRAVERSAL_DEPTH`), reporting a
+  clean issue rather than crashing.
 
 **Checks:** `10` §10.1's own worked example parses cleanly with zero validation issues given an oracle
-that says everything it references exists; a duplicate step id, a static dependency cycle, a malformed
-glob, and a `gateEvidence` naming a nonexistent gate each produce a distinct, correctly-located issue;
-a parse error on genuinely malformed YAML cites the real source line.
+that says everything it references exists (the example's own text needed one correction to actually be
+valid YAML — `SPEC-QUESTIONS.md` Q70 design point 1); a duplicate step id, a static dependency cycle, a
+malformed glob, and a `gateEvidence` naming a nonexistent gate each produce a distinct, correctly-located
+issue; a parse error on genuinely malformed YAML cites the real source line.
 
 **Depends on:** nothing new (first `engine` piece).
+
+*(P8 is committed: `3365253`. See `SPEC-QUESTIONS.md` Q70 and its critic-round/between-rounds/verify-round addenda —
+the largest piece this milestone by design surface, and the piece that found a genuine bug in the spec's
+own worked-example text; see `GAUNTLET-LOG.md`'s own entry for the fuller story, including a calibration
+note on a depth guard whose own first version, on firing, produced two thousand fabricated cycle reports
+instead of the one honest "too deep to check" issue it existed to guarantee.)*
 
 ---
 
