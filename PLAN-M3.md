@@ -526,6 +526,8 @@ composition recorded for the run record — rather than `08` §8.5's own shorter
 
 **Depends on:** P8 (`KbIndexBackend`), P6 (`KbTree`).
 
+*(P9 is committed: `bca22ea`.)*
+
 ---
 
 ## P10 — The KB linter and verification

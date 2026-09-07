@@ -2282,3 +2282,96 @@ input actually work? — is exactly what the critic did that the builder had not
 specific code path. The lesson compounds: verifying a library's *capability* (does FTS5 exist at all)
 and verifying *this code's own usage of it* (does this exact query construction survive contact with
 real input) are two different checks, and passing the first is no evidence about the second.
+
+## M3 P9 — Retrieval, graph expansion, and context packing
+
+**Rounds: 2 (one critic finding three major and one minor, all real; one scoped verify confirming all
+four fixes and finding one further real gap, fixed locally, no third round). Outcome: WON.**
+
+Before writing code, one real gap in `05` §5.4's own seven-item pinned-core list was found and closed —
+the plan draft omitted "active constraints" entirely — and two more were found while actually building
+against `KbTree`/`KbIndexBackend` alone: `adrIndex`'s natural source (`08` §8.2's `decisions/index.md`)
+is generated and out of `parseKbTree`'s own scope, and nothing named where "active constraints" data
+comes from either — both resolved by computing them directly from `tree.entries` instead of depending
+on a file no piece in this milestone produces (`SPEC-QUESTIONS.md` Q54). Building also found
+`adrSchema`/`runbookSchema` (M1) carry no `body` field at all — front matter only — so a declared-input
+ADR or runbook had no way to surface its own substantive prose into a pack; `body: string` was added to
+the `adr`/`runbook` `KbParsedEntry` variants, populated from `ArtifactDocument`'s own parsed body.
+
+### Round 1 — critic: three major, one minor
+
+- **Major: `declaredInputIds` was never deduplicated.** Passing the same id twice produced two
+  identical `declaredInputs` entries, double-charged that document's token cost against the budget
+  (silently starving smaller, lower-ranked `retrieved` candidates that would otherwise have fit), and
+  left `manifest.ids` (with the duplicate) disagreeing with `manifest.tokenCounts`'s own key count
+  (which cannot hold a duplicate key at all) — a real, plausible caller mistake (an upstream step
+  merging several perspectives' input lists without deduplicating first), not a contrived one.
+- **Major: `budgetTokens: NaN` silently disabled the entire token budget.** Every comparison against
+  `NaN` is `false` in JS, so the retrieval loop's own `usedTokens + tokens > budgetTokens` check never
+  breaks and every candidate is admitted regardless of size — the *dangerous* failure direction
+  (unbounded inclusion), unlike a negative budget, which the critic's own probing found already failed
+  safe (an empty `retrieved`).
+- **Major (flagged as a policy question, not a clear-cut bug): a large, top-ranked candidate can block
+  every smaller, lower-ranked candidate that would otherwise fit,** since the retrieval loop `break`s on
+  the first candidate that doesn't fit rather than skipping it and trying smaller ones. The critic
+  demonstrated a real case (a ~1000-token top-ranked candidate blocking a ~2-token, lower-ranked one, at
+  a budget that fits the second but not the first) and asked which reading of "drop the lowest-ranked
+  entries first" was intended.
+- **Minor (latent, not reachable via any built-in backend today): the final sort comparator had no
+  guard against a `NaN` score** a hypothetical future `KbIndexBackend` could return, which would defeat
+  the sort's own determinism guarantee.
+
+**Fixes:** `declaredInputIds` is now deduplicated via `[...new Set(...)]`, preserving first-occurrence
+order, before anything else in `buildContextPack` runs. A `NaN` `budgetTokens` is now rejected outright
+with a new error code (`KB-014`) before any other work happens, matching this piece's own existing
+`KB-013` precedent that a caller mistake gets a named, actionable error rather than silent misbehaviour
+— its remedy deliberately does *not* say "non-negative," since a negative budget is genuinely accepted,
+not rejected. A non-finite backend search score is now normalized to `0` at the one place scores enter
+`rankedCandidates`'s own `scoreById` map — the same score already given to a graph-expansion-only
+candidate — keeping the sort a genuine total order regardless of what a backend returns. The
+budget-drop policy question was investigated against `SPEC-QUESTIONS.md` Q54's own point 4, which had
+already recorded this exact behaviour as the deliberate, reasoned interpretation *before any of this
+piece's code existed* ("the first candidate that would exceed `budgetTokens` stops inclusion entirely")
+— so it was left **unchanged**, with the code comment strengthened to name the reasoning explicitly (a
+rank-ordered-prefix reading is the literal one; the alternative can keep a lower-ranked entry while
+dropping a higher-ranked one, the opposite of what "lowest-ranked first" asks for) and a new regression
+test locking in the critic's own exact scenario, so the behaviour now reads as chosen, not overlooked.
+
+### Round 2 — scoped verify: all four confirmed, one further real gap found and fixed
+
+Verify independently re-derived and confirmed all four fixes with its own adversarial scripts (a
+15-element scrambled-duplicate id list; an arithmetic-derived `NaN` via `0/0` and `Infinity - Infinity`,
+not just the literal; mixed `NaN`/`Infinity`/`-Infinity` backend scores) rather than only re-running the
+existing tests, and confirmed the prefix-drop regression test genuinely exercises the scenario it
+claims to. It found one further real gap: `pinnedCoreOverrides` is typed `Partial<PinnedCore>`, and
+even though `glossary`/`constraints`/`adrIndex`/`codingStandards` are all *required* `string` fields on
+`PinnedCore` itself, `Partial` still permits a caller to write `{ glossary: undefined }` explicitly (an
+optional property's value type always accepts `undefined`, independent of the required-ness of the
+non-optional version). `computePinnedCore`'s own plain `{ ...computed, ...overrides }` spread let that
+explicit `undefined` clobber the real computed value, so `pinnedCore.glossary` could be genuinely
+`undefined` at runtime despite its required-`string` type — surfacing as a raw, un-actionable
+`TypeError` deep inside `estimateTokens` rather than this package's own `ForgeError` discipline. **Fixed**
+by re-assigning those four keys to `override ?? computed` after spreading `overrides`, so the final
+write is always a definite `string` — this also had to be reworked once for `exactOptionalPropertyTypes`
+(the repo's own strict tsconfig setting), which turned an initial explicit-field-assignment fix into a
+compile error of its own, since writing a literal `undefined` to an optional-but-not-`| undefined`-typed
+property is exactly what that setting forbids. Verify also flagged, correctly, that `KB-014`'s own
+remedy said "non-negative token budget" when a negative budget is in fact accepted — **fixed** by
+naming exactly the one condition actually rejected (`NaN`).
+
+### Calibration note
+
+Three of this round's four real findings share one shape: a value that is well-typed *in isolation*
+(a `string[]` of ids, a `number` budget, a `Partial<PinnedCore>` override) stops being safe the moment
+a caller can put an adversarial-but-legal value inside it — a repeated id, `NaN`, an explicit
+`undefined` on a required field via `Partial`'s own optional-property semantics. None of these are
+exotic: a duplicate id from an unguarded merge, a `NaN` from an upstream division, an `undefined`
+spread from a partially-built config object are all ordinary bugs one level up the call stack, not
+adversarial inputs a real caller would need to construct deliberately. The fourth finding (the
+budget-drop policy) is the opposite shape and worth naming for contrast: the critic's repro was correct
+and the code's behaviour was exactly as built, but the *documented reasoning* for why it was built that
+way did not yet exist at the point of criticism — it existed one file over, in `SPEC-QUESTIONS.md` Q54,
+written before the code was. The fix there was not a code change but making that existing reasoning
+visible at the point someone would next doubt it — a reminder that "already decided" and "discoverable
+by the next reader standing at the exact line in question" are not the same thing, and a critic
+re-deriving a decision from scratch each time is a genuine, avoidable cost worth returning to.
