@@ -381,6 +381,18 @@ export const ERROR_CODES = {
       `Filesystem operation "${show(d.operation)}" failed for ${show(d.path)}.`,
     remedy: 'Check the underlying cause (permissions, disk space, a locked file) and retry.',
   },
+  // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
+  // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
+  // throw): `detectCycles` throws this for the one input shape no realistic compiled plan gets remotely
+  // close to (`06` §6.2's own worked example is 9 nodes), and `compileRunPlan` — the pipeline orchestrator
+  // that actually promises never to throw — catches it and folds it into an ordinary `CompileIssue`.
+  'RUN-035': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { maxDepth: number }) =>
+      `Cycle detection exceeded ${show(d.maxDepth)} levels of dependency chaining; refusing to search further.`,
+    remedy: 'Split the workflow into smaller stages, or reduce how many steps chain through dependsOn in a single run plan.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

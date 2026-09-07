@@ -4923,3 +4923,199 @@ except two individually-documented `noUncheckedIndexedAccess`-adjacent rethrow b
 thrown from `resolveTemplate`/`evaluate`, both confirmed by inspection to never actually happen given
 either function's own real contract), matching the identical, already-established exemption `Q71`'s own
 `parse.ts` uses for the structurally identical shape.
+
+---
+
+## Q73 — M5 P11's `@forge/engine` run-plan pipeline: `06` §6.2 rule 4's own "phase" concept has no
+representation anywhere in this milestone's own types, plus a real library's own defensive limits turning
+out not to bound what they look like they bound
+
+`06` §6.2's own plan-compilation rules 2–6, against the `StepNode[]` P10's own `compilePlan` already
+produces (`Q72`). Four of the five (rules 2, 3, 5, 6) are fully built here; rule 4 is deliberately only
+half-built — see finding 1.
+
+**1. Rule 4 ("insert gate nodes at their declared positions; a gate depends on everything in its phase")
+splits into a part P10 already fully satisfies and a part this milestone cannot build at all.** "Insert
+gate nodes at their declared positions" is already true of every `gate`-kind `StepNode`: it compiles like
+any other leaf, using whatever `dependsOn` its own author declared at its own YAML position (`10` §10.1's
+own worked example: `contracts-gate` explicitly depends on `freeze-contracts`) — nothing new for this
+piece to add. "A gate depends on everything in its phase" is a different, *automatic* dependency-insertion
+this piece genuinely cannot build: `phase` names one of `10` §10.2's own ten *lifecycle* phases (Intake,
+Plan, Design, ...) — a run-level concept potentially spanning many separate workflow invocations — and
+appears on neither `@forge/engine/workflow`'s own `WorkflowStep` nor this package's own `StepNode`. There
+is no field on either type recording which lifecycle phase a given step belongs to for this piece to group
+steps by and insert edges from. Building a fake, partial stand-in (declaration order within one workflow's
+own `steps:` list as a phase-boundary proxy, say, or a phase field nothing authors) would be exactly the
+"faking a capability with no real mechanism behind it" shape `Q62` already ruled out once for this
+milestone's own agent/role-resolution scoping ("a step dispatcher that fakes role-awareness with no real
+roster behind it would be worse than one that visibly has none") — left undone, documented at `run-plan.
+ts`'s own top-of-file comment, for whichever later piece actually threads the ten-phase lifecycle through a
+real run.
+
+**2. `insertContractDependencies` (rule 2) matches "consumes an `InterfaceContract`" by *type name only*,
+parsing just enough of `10` §10.1's own `artifact:TypeName(...)`/`kb:glob`/`diff:lane` reference mini-DSL
+to recognise the `artifact:InterfaceContract(` prefix — never the parenthesised identifier after it.** The
+worked example's own one real `InterfaceContract` input (`artifact:InterfaceContract(*)`) is always the
+wildcard form; nothing anywhere shows referencing one *specific* contract instance, so there is no more
+specific matching to build against. Many-to-many: every producer becomes an ancestor of every consumer,
+never of itself, never duplicating an edge already present.
+
+**3. "Exclusive" vs "shared" claim overlap (rule 3) is read off `StepNode.laneAffinity`** — the one field
+already carrying that exact word in `06` §6.2's own interface — treating `undefined`/`'inline'` as
+`'shared'` (only ever serialises, never rejects — the conservative default for a field nothing in the
+authored `WorkflowStep` DSL can currently set to `'exclusive'` at all, `Q72`). Overlap detection itself is
+a deliberately bounded approximation, the same "use the real library's own real behaviour, don't invent an
+idealised alternative" choice P8 already made for `minimatch.makeRe()`'s own glob-validity leniency:
+identical globs, and a literal path falling under a wildcard, both via `minimatch` tried in both argument
+orders; a genuine wildcard-vs-wildcard overlap with no subset relationship (`"src/*.ts"` vs `"src/a*.ts"`)
+is not detected — full symbolic glob-intersection has no existing library support anywhere in this
+monorepo and nothing asks for it. A rejected pair (both `'exclusive'`, overlapping) produces a specific,
+actionable `ambiguous-exclusive-claim` issue naming both step ids and both globs, per this piece's own
+Checks text ("not a generic 'ambiguous' string").
+
+**4. `detectCycles` (rule 5) is the one function in this piece that deliberately throws** (`ForgeError
+('RUN-035')`, a new code) **rather than returning a discriminated result, unlike every other public
+function in `@forge/engine/plan`.** A lower-level utility, not the pipeline's own outward-facing promise:
+`compileRunPlan` is the piece that actually makes the "never throws" promise for the full pipeline, and is
+the one place that catches this specific error and folds it into an ordinary `CompileIssue` — the identical
+split `Q71`'s own `resolveTemplate`/`safeResolveTemplate` boundary already established (a function that
+runs against a single, self-contained input throws; the orchestrator collecting results across many calls
+catches and converts). Iterative DFS with an explicit stack, never real recursion, for the same reason
+`@forge/engine/workflow`'s own `MAX_TRAVERSAL_DEPTH` already exists — confirmed empirically that a
+recursive version blows the real call stack past a few thousand levels of chained `dependsOn`.
+
+**5. `computeCriticalPath` (rule 6) is Kahn's-algorithm topological order plus a DP pass for the longest
+(by summed `limits.maxCostUsd`, not step count — this piece's own Checks text: "proven by cost, not just
+length") root-to-sink chain.** Deliberately tolerant of being handed a cyclic or dangling-reference graph
+directly, not merely because a well-formed caller always runs `detectCycles` first: Kahn's algorithm
+naturally excludes any node that never reaches in-degree zero (a real cycle, or a `dependsOn` naming no
+real node) from the returned topological order at all, the identical "excluded, not crashed" outcome for
+both cases, for the identical underlying reason — nothing to detect or special-case separately.
+
+**6. `compileRunPlan`'s own result type (`RunPlanResult`) is not bare `CompileResult`, despite `PLAN-M5.md`
+P11's own Surface text saying so** — the same "the plan's own bullet undersells what the return type needs
+to be" correction `Q70`/`Q71` each already made once for `ParseExpressionResult`/`CompileResult` itself:
+rule 6 explicitly asks for critical path and cost to be *shown*, which a caller can only do if the
+successful result actually carries them. `claims` (the overlap interval map) is exposed on success too,
+not just consumed internally and discarded — `06` §6.7 frames it as something *the scheduler* consults, not
+merely an implementation detail of compilation.
+
+### P11 critic round: 3 BLOCKING, 3 MAJOR
+
+The critic was asked to hunt for any input where the pipeline still throws raw instead of returning its
+documented result type, whether a claim-overlap or contract-freeze implicit edge could ever silently
+introduce a cycle undetected, and to stress the exclusive/shared and critical-path logic against wider,
+hand-verified DAG shapes.
+
+- **BLOCKING: a `command` step's own `run` text was never template-resolved at all** (a P10-piece bug,
+  found here because this piece's own end-to-end tests were the first to exercise the literal worked
+  example's own first step) — every other templated field went through a shared wrapper; `run` was copied
+  through raw, shipping `10` §10.1's own literal first worked-example step's shell text unresolved, braces
+  included.
+- **BLOCKING: a fanout's own `over` expression could throw a raw, uncaught error straight through
+  `compileRunPlan`'s own documented-never-throws entry point** — a flat, non-nested-looking `&&`/`||`
+  chain of 200+ terms parses cleanly but blows the expression evaluator's own separate depth guard once
+  walked (`Q71`'s own two-independent-guards design); the one call site in `compilePlan` itself still
+  unwrapped for exactly the failure mode `Q71` had already named.
+- **BLOCKING: a `dependsOn` value matching no real compiled id — a typo, or a cross-fanout reference whose
+  itemKey scheme doesn't match its target — compiled cleanly with no diagnostic at all**, a permanently-
+  unsatisfiable dependency shipped as if real. Fixed with a post-compilation consistency pass in
+  `compilePlan` itself (`checkPlanConsistency`), run once the whole tree walk finds no other issues.
+- **MAJOR: two different steps could compile to the identical id** with no diagnostic.
+- **MAJOR: inside a sequence, a child compiling to zero nodes (an empty group, or a fanout over an empty
+  collection) unconditionally erased the accumulated dependency chain for every sibling after it.**
+- **MAJOR: `expandFanout` and `compilePlan` could disagree on the compiled failure-handling default for
+  the identical fanout**, contradicting the standalone entry point's own doc comment.
+
+All six were P10-piece bugs, surfaced by this piece's own first attempt to actually exercise `compilePlan`'s
+output end to end rather than in isolation — fixed at the root inside `compile.ts` itself (full detail:
+`Q72`'s own critic-round/verify-round addenda), not inside any of this piece's own five files.
+
+### P11 verify round: 4 new findings (1 effectively BLOCKING, 2 MAJOR, 1 MINOR), all fixed — a fix that
+looked right and passed its own first verification turned out to be checking the wrong property
+
+The verify pass was asked to hunt specifically for anything the two P11-native design decisions
+(`globsOverlap`'s bounded approximation, `renderCycleAsMermaid`'s escaping) might still get wrong, and to
+verify claims against real, independent oracles rather than the checked-in test suite's own assertions —
+advice that mattered more than usual here.
+
+**New finding (effectively BLOCKING): `renderCycleAsMermaid` emitted syntactically invalid Mermaid for
+*every* cycle it ever rendered, not merely ones with unusual characters.** Wrapping each node id directly
+in `JSON.stringify` and using the bare quoted result as an edge endpoint (`"a" --> "b"`) is a shape
+Mermaid's own flowchart grammar rejects unconditionally, confirmed directly against the real parser
+(`mermaid`, vendored via `@forge/diagrams` — not a dependency this package's own tests can reach, so
+verified via a throwaway script, not a checked-in test). This directly defeated rule 5's entire cited
+purpose ("reject cycles with a rendered Mermaid graph *showing* the cycle") in exactly the way the original,
+now-fixed bug did — the builder's own first attempt at building this feature was never actually checked
+against a real parser at build time, only checked in by the verify round. **Fixed** by giving each distinct
+real id its own synthetic, always-valid node reference (`n0`, `n1`, ...) and carrying the real id as that
+node's own bracketed label instead (`n0["a"]`), reusing the identical synthetic id for a cycle's own
+wrap-around element so the rendered graph is a genuine closed loop back to one node, not two different-
+looking nodes sharing a label.
+
+**That fix's own first version was itself wrong, caught only by an *even more careful* application of the
+identical verification technique the fix was praised for using.** `escapeMermaidLabel` used
+`JSON.stringify` to escape a label's own embedded `"` into `\"` — which *parses* successfully (confirmed),
+but only because Mermaid's real label lexer does not honour backslash-escaping at all: it terminates a
+label at the first *raw* `"` byte regardless of a preceding backslash, so the parse only ever "succeeds" by
+accident, silently splicing the label into a differently-shaped, wrong token sequence rather than actually
+preserving the intended text. The first empirical check only asked "does this parse," not "does the
+resulting label actually contain what was intended" — the exact gap the verify round's own re-check closed.
+**Fixed** by replacing a literal `"` with its HTML entity (`&quot;`) *before* JSON-encoding the rest, so
+`JSON.stringify` never has an internal `"` of its own left to mis-escape — confirmed against the real
+parser across quotes adjacent to backslashes, multiple quotes, and quote-only strings. A related MINOR
+finding — an empty-string id renders an empty label (`[""]`), which Mermaid's lexer also rejects outright —
+is substituted with a placeholder; structurally impossible for any real compiled `StepNode.id` (`06` §6.2's
+own id format always contains at least one `:`), fixed anyway since the function is public and
+independently callable.
+
+**New finding (effectively BLOCKING, budgeted as such despite not being a literal crash):
+`globsOverlap`'s own fix for `minimatch`'s documented 64KiB "pattern too long" limit did nothing for a
+*different*, far more easily reached cost blowup the same library has, which throws no exception at all
+for the catch to catch.** A `produces` glob built from a few thousand unmatched `[` characters — comfortably
+under 64KiB — drives `minimatch`'s own internal bracket-class scanner into genuine O(n²) blocking time
+(measured directly: ~13 seconds at 8,000 characters, confirmed quadratic scaling), with no exception
+thrown at any point; extrapolating to just under the documented 64KiB limit itself puts the real cost at
+roughly ten minutes of blocking CPU time for one single comparison. `compileRunPlan`'s own "never throws"
+promise is silent on "or hangs for ten minutes instead," which is at least as bad for a caller expecting a
+prompt result or a catchable failure. **Fixed** with a new, much smaller length cap
+(`MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK = 256`) applied before ever calling `minimatch` at all — chosen well
+below where *either* this bracket-scan cost or a second, independently-discovered stack overflow from
+deeply-nested extglob groups (`RangeError`, reliably reachable past ~700 nested `+(`/`@(` groups, only
+~2100 characters) becomes measurable, rather than trying to detect either dangerous shape specifically
+(which would mean re-implementing a meaningful slice of `minimatch`'s own parser just to decide whether to
+call it) — a real `produces` glob names a project-relative file path pattern, not an adversarial string,
+and has no legitimate reason to approach even this conservative a bound.
+
+**New finding (MAJOR): the original bare `catch { return false }` also silently swallowed that same
+extglob-triggered `RangeError`**, exactly the "does this also mask a different, unrelated bug" risk a bare
+catch-all always carries — confirmed empirically reachable independent of the length-cap fix above.
+**Fixed** by narrowing the catch to `TypeError` specifically, rethrowing anything else — the same "catch
+the one expected type, rethrow anything else, since anything else is a genuine bug elsewhere" convention
+already established throughout this codebase (`Q71`'s own `safeResolveTemplate`, P9's own `parseExpression`).
+The length cap above is what actually keeps a real call away from the `RangeError`-inducing shape at all
+today; the narrowed catch is defense in depth against a future `minimatch` version needing less depth to
+overflow, not the primary fix.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (312 engine tests after these fixes' own
+new ones) all independently reconfirmed clean. 100% coverage on every touched file except a small,
+individually-documented set of `noUncheckedIndexedAccess`-adjacent and internal-invariant guards, each
+matching an already-established exemption category elsewhere in this milestone — including, now, the
+`globsOverlap` catch's own `RangeError`-rethrow branch, presently unreachable given its own length cap but
+kept as real, if currently unexercised, defense in depth rather than a bare `catch {}`.
+
+### Calibration note
+
+This piece's own verify round produced the sharpest version yet of a lesson this log has been circling all
+milestone: verifying a claim against a real, independent oracle is only as good as the *property* actually
+checked. The Mermaid fix's own first version was built and checked against the real parser — genuinely
+more rigorous than a plain unit-test assertion — and still shipped wrong, because "does the real parser
+accept this" and "does the real parser extract the label I actually intended" are two different questions,
+and only the first was asked. The second, independent finding in the very same file (the O(n²) bracket-scan
+cost with no exception to catch) sharpens the companion lesson from `Q71`'s own calibration note once more:
+a defensive limit a library documents (`minimatch`'s own 64KiB "pattern too long") describes exactly the
+one failure mode its authors named, not every way the same function can go wrong — confirmed here by a cost
+blowup at 3% of that documented threshold, via a mechanism the limit was never built to guard. Trusting a
+dependency's own documented boundary as the *complete* boundary, rather than an oracle's own literal
+pass/fail as the *complete* property being verified, are the same mistake pointed in two different
+directions.

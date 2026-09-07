@@ -174,3 +174,53 @@ export interface CompileIssue {
 export type CompileResult =
   | { readonly success: true; readonly nodes: readonly StepNode[] }
   | { readonly success: false; readonly issues: readonly CompileIssue[] };
+
+/** `06` §6.2's own rule 3, and `06` §6.7's own "the scheduler builds an interval map; overlapping claims
+ * are serialised": one pairwise overlap between two `produces` globs, one on each of two different
+ * `StepNode`s. Exposed as its own type (not folded away into a private detail of `buildClaimIntervalMap`)
+ * because `06` §6.7 frames the interval map as something *the scheduler* consults, not merely an internal
+ * detail of plan compilation — a later scheduler piece can reuse this list directly, before any lane
+ * exists to enforce it against real files (that enforcement, given a *real* completed lane, is `@forge/
+ * vcs`'s own concern, `SPEC-QUESTIONS.md` Q62's own sixth note). */
+export interface ClaimOverlap {
+  readonly stepIdA: string;
+  readonly stepIdB: string;
+  readonly globA: string;
+  readonly globB: string;
+}
+
+export interface ClaimIntervalMap {
+  readonly overlaps: readonly ClaimOverlap[];
+}
+
+/** `06` §6.2's own rule 5: "reject cycles with a rendered Mermaid graph showing the cycle." `cycle` is the
+ * closed loop in traversal order — its own first and last elements are the same id, matching `@forge/
+ * engine/workflow`'s own `checkNoCycles` convention for the identical concept, reused here rather than
+ * inventing an "implicitly closed, first id not repeated" convention that the two cycle-detectors in this
+ * codebase would then disagree about. */
+export interface CycleResult {
+  readonly cycle: readonly string[];
+}
+
+/** `06` §6.2's own rule 6: "compute critical path and estimated cost; show both before execution." `path`
+ * is a root-to-sink chain of compiled step ids in execution order; `estimatedCost` sums each node's own
+ * `limits.maxCostUsd` along that one path — the only cost estimate available pre-execution (`10` §10.1's
+ * own worked example shows exactly this field, `limits: { maxTurns: 25, maxCostUsd: 1.5 }`, as the
+ * declared per-step budget, not a measured one; no real cost-history mechanism exists yet to do better). */
+export interface CriticalPathResult {
+  readonly path: readonly string[];
+  readonly estimatedCost: number;
+}
+
+/** `compileRunPlan`'s own result — `PLAN-M5.md` P11's own Surface text abbreviates this to bare
+ * `CompileResult`, but `06` §6.2's own rule 6 explicitly asks for the critical path and estimated cost to
+ * be *shown*, which a caller can only do if the successful result actually carries them; the same
+ * "the plan's own bullet undersells what the return type needs to be" correction this package's own
+ * `ParseExpressionResult`/`CompileResult` (P9/P10) already made once each. `claims` is exposed on success
+ * too, not just used internally and discarded: `06` §6.7 frames the interval map as something the
+ * *scheduler* consults, not merely an implementation detail of compilation, so a caller building on top of
+ * `compileRunPlan` (the one entry point everything downstream — scheduler, gate evaluation, resume —
+ * actually calls, per this piece's own Surface text) never needs to re-derive it from `nodes` by hand. */
+export type RunPlanResult =
+  | { readonly success: true; readonly nodes: readonly StepNode[]; readonly criticalPath: CriticalPathResult; readonly claims: ClaimIntervalMap }
+  | { readonly success: false; readonly issues: readonly CompileIssue[] };
