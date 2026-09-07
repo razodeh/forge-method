@@ -248,6 +248,9 @@ this piece is what makes that later-milestone test possible, not what performs i
 
 **Depends on:** P1, P2, P3, P4 (must pass P4's own suite as its defining Check).
 
+*(P5 is committed: `3f6e14c`. See `SPEC-QUESTIONS.md` Q61 and its critic-round/verify-round addenda for
+the design decisions and the blocking regression the verify round found and closed.)*
+
 ---
 
 *(adapter-kit track (P1–P5) complete — `@forge/adapter-kit` and `@forge/testkit` both closed out; M4

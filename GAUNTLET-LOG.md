@@ -2868,3 +2868,134 @@ this piece's own concurrent-access guard — worth stating as a standing rule ra
 surprise: any fix for "never throws" or "never corrupts under X" should be re-attacked with the *retry*
 case (what happens on the next call after the guard has already fired once), not only the first-failure
 case, before the round is considered closed.
+
+## M4 P5 — `@forge/testkit`'s `FakePlatformAdapter` (`07` §7.2/§7.6, `15` §15.6, `20` §20.5)
+
+**Rounds: 2 (one critic finding 1 BLOCKING and 5 MAJOR issues plus 3 MINOR, all fixed or explicitly
+documented as an accepted limitation; one scoped verify confirming 6 of 9 cleanly and finding 2 of the
+remaining 3 only partially fixed — one of those partial fixes was itself a new BLOCKING regression, both
+closed locally, no third round). Outcome: WON.**
+
+The final piece of M4, and the one every other future FORGE package will test against instead of a real
+coding platform: a fully-scripted, in-memory `PlatformAdapter` that generically enforces
+`ToolGrant`/`limits`/`abortSignal`/capability degradation against whatever a caller scripts, rather than
+trusting each script author to hand-write a correctly-gated result. Passed all 16 of `@forge/adapter-kit`
+P4's own conformance checks on the first fully-corrected build (after fixing a missing model-validity
+check `FAKE_MODEL_ID` surfaced), directly demonstrating M4's own top-line acceptance criterion. Ten
+further design points were found and recorded (`SPEC-QUESTIONS.md` Q61) before/while building, none
+given a field-level shape anywhere in the spec pack: `SessionRequestMatcher` as a plain predicate rather
+than a matcher DSL; `FakeSessionScript`'s fields being semantic (`text`, `writeFiles`, `execAttempts`, …)
+so the adapter can enforce grants generically instead of trusting each script; `untrustedContent` routed
+through P3's `stripControlTokens` before being folded into emitted text — the first real exercise of
+M4's own #2 acceptance criterion; `provisionMcp` as a genuinely absent instance property (not a
+present-but-throwing method) when the adapter cannot provision MCP at all; the NDJSON replay format and
+`replayFromNdjson`'s deliberately-synchronous return signature; and, found necessary only while building,
+`skillVisibleText`/`mcpToolAttempts` plus the automatic control-token promotion from a script's own
+`text` entries (`05` §5.5's own literal described mechanism, reused rather than reinvented).
+
+### Round 1 — critic: 1 BLOCKING, 5 MAJOR, 3 MINOR
+
+The critic was asked whether this is a faithful, non-cheating `PlatformAdapter` and whether each Checks-
+section behaviour is actually correct and adequately tested — not just whether the code looks reasonable.
+Full findings, each with its own repro and fix, are in `SPEC-QUESTIONS.md`'s own P5 critic-round addendum.
+
+- **BLOCKING: `writeFiles` had no `cwd`-containment check at all.** A scripted `relativePath` of
+  `'../../escape-marker.txt'` was written two directories above the session's own `cwd`, reported
+  `result.ok:true`, and the one existing test that claimed to cover this never actually exercised
+  traversal — a plain-filename write checked against an unrelated, never-referenced directory, true by
+  construction regardless of any containment logic. Directly violates `20` §20.2 point 1.
+- **MAJOR: `abortSignal` was checked only inside the `script.text` loop** — every other phase (thinking,
+  untrustedContent, skillVisibleText, writeFiles, execAttempts, mcpToolAttempts) ignored it, including
+  *inside* a many-item loop: a 20-attempt `execAttempts` script aborted after the first attempt still
+  ran all 20.
+- **MAJOR: `resumeSession`/`runResumedScript` ignored `abortSignal` and `limits` entirely, and only ever
+  replayed `script.text`** — silently dropping writes, exec attempts, MCP attempts, untrusted-content
+  stripping, and control-token promotion for anything a resumed session's own matched script declared,
+  with no doc comment explaining the asymmetry with a fresh session.
+- **MAJOR: `startSession` called caller-supplied matcher predicates directly inside its own non-`async`
+  body** — a throwing matcher propagated as a synchronous exception rather than the promised
+  `Promise<SessionHandle>` rejection, the identical hazard the refusal paths a few lines away were
+  already careful to avoid via `Promise.reject`.
+- **MAJOR: `withCapabilities`'s own doc comment overclaimed** — "refuses... any request that needs a
+  capability it was configured without" was true for only 2 of ~17 flags; `structuredOutput:false` was
+  empirically demonstrated to leak a scripted `structured` payload through regardless.
+- **MAJOR: skill/MCP provisioning was scoped by `stepId` alone, ignoring `runId`** — a step id like
+  `"implement"` is naturally reused across runs, and a skill provisioned for one run's step leaked into
+  a different run's same-named step, violating `15` §15.6's own worktree isolation and C15's "not leaked
+  into other lanes."
+- Three further MINOR findings (`FAKE_MODEL_ID` missing from the package barrel; several `SessionRequest`
+  fields with no observable effect; `wallClockMs`/`maxCostUsd`/`usage.costUsd` never enforced/populated)
+  — the first fixed, the other two explicitly documented as accepted, currently-unneeded limitations
+  rather than built speculatively.
+
+A further bug, found independently while closing coverage gaps rather than by the critic: `doProvisionMcp`
+treated a server granting `'*'` (every tool) as granting *nothing at all* — the loop `continue`d past it
+with no fallback, leaving the granted-tools set empty. Fixed the same round, alongside the critic's own
+findings, once discovered.
+
+### Round 2 — scoped verify: 6 of 9 confirmed; 2 partially fixed, one of those a new BLOCKING regression
+
+The verify pass re-read the fixed code in full (not the summary of it), ran the real test suite,
+`tsc --noEmit`, and `eslint` itself, and wrote throwaway probe tests to empirically re-derive several
+fixes rather than trust the diff — cleaning up after itself and confirming via `git status` the tree was
+left exactly as found.
+
+**Finding 3 (resume phase parity) was only partially fixed, and the gap was a new BLOCKING regression:**
+routing `runResumedScript` through the full `writeFiles` phase — which it never executed at all before
+this piece's own critic round — combined with `resumeSession`'s own pre-existing "unrecognised sessionId
+falls back to harmless defaults" tolerance (`cwd: ''`) to reopen the round-1 BLOCKING finding through a
+different door. `resolveInsideCwd`'s containment check trusted its `cwd` argument; Node's `path.resolve`/
+`path.relative` silently treat `''` as `process.cwd()`, so the escape check could never fire. The verify
+pass reproduced this empirically — an ordinary prompt-only matcher (the style this package's own tests
+use throughout), resumed under an unrecognised sessionId, wrote a real file into the actual FORGE
+repository root, the process's own real working directory. **Fixed** by making `resolveInsideCwd` itself
+defensive rather than trusting its caller: it now requires `cwd` to be a genuine absolute path, refusing
+every write unconditionally otherwise — protecting any future caller that passes a bad `cwd`, not just
+this one call site. The same strengthened check also closed a related minor gap the verify pass flagged
+in the same finding: an absolute `relativePath` that happened to resolve *inside* `cwd` was previously
+accepted (leaking a non-relative string into `changedFiles`); now refused unconditionally regardless of
+where it points.
+
+**Finding 2 (abort checked at every phase) was also only partially fixed:** every phase boundary and
+every per-item loop's own in-loop check were genuinely fixed, but nothing checked `abortSignal`
+immediately *after* the last item of `writeFiles`/`execAttempts`/`mcpToolAttempts` (or after
+`skillVisibleText` when it was the last populated phase) — unlike the four other phases, each preceded
+by an unconditional check that still fires even when that phase is empty, these three had no such
+preceding check and nothing checked between them or after the last one. Reproduced for all four cases: a
+single-item script of each kind, aborted immediately after its only event, still reported
+`session.ended:'complete'`— exactly the shape most of this package's own fixtures use (one write, one
+exec attempt), not a contrived edge case. **Fixed** by adding the same unconditional check before each of
+the three phases and once more after the last one, the identical pattern already used everywhere else,
+now applied uniformly across all seven phases instead of four.
+
+The verify pass additionally found `runResumedScript` never emitted a streamed `usage` event at all
+(only `runScript` did), and that its own scripted-error return hardcoded flat, unscaled usage numbers
+regardless of how many turns actually ran — self-inconsistent within the same returned object and
+diverging from what a fresh session with the identical script reports. **Fixed** by restructuring
+`runResumedScript` to mirror `runScript` exactly: usage computed once, yielded as its own event, reused
+for both the error and complete returns.
+
+No other new findings. The verify pass independently confirmed the shared `runScriptPhases` correctly
+threads state back to both a fresh and a resumed caller with no cross-contamination on the same adapter
+instance, and confirmed findings 1, 4, 6, 7, 8, 9, and the wildcard fix hold exactly as shipped.
+
+### Calibration note
+
+The BLOCKING regression in finding 3 is the sharpest version yet of a pattern this log has now named
+three times this milestone (M4 P1, M4 P4, and — twice, within the same round — M4 P5 itself): *fixing
+one finding by newly exercising a code path that used to be dead reopens whatever that path's own
+prerequisites were quietly relying on.* `runResumedScript` never ran `writeFiles` before this round, so
+`resolveInsideCwd`'s trust in its `cwd` argument being real was never tested against `resumeSession`'s
+own pre-existing, permissive `cwd:''` fallback — a fallback that had been sitting in the code, untested
+against a real filesystem operation, since before this piece's own critic round even started. Neither
+half was new; only their combination, produced by fixing something else entirely, was. The generalisable
+lesson: when a fix makes a previously-unreachable code path reachable, the right question is not just
+"does the new path work," but "what did every *other* path already assume about inputs this one can now
+supply for the first time" — and a security-relevant helper (`resolveInsideCwd`) should validate its own
+preconditions rather than trust every call site to have already done so, exactly the same "defend at the
+function, not just at today's call sites" reasoning `@forge/core`'s own `ProjectPaths.resolveWithin`
+already uses in production. The abort-boundary gap is the same lesson at smaller scale: a fix applied
+uniformly to *most* instances of a pattern (four of seven phases) still leaves a gap shaped exactly like
+the original finding at the instances it missed, which is precisely why the verify round's own brief —
+"probe the refactor itself, not just re-confirm the claimed fixes" — is what caught it here rather than
+a third round.
