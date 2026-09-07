@@ -158,14 +158,24 @@ claims may run concurrently is `@forge/engine`'s job (P11), not this piece's.
 point 3, `20` §20.10 S1.
 
 **Surface:** `@forge/vcs/claims`
-- `diffLaneChanges(handle, baseSha): readonly string[]` — real git diff, not the step's own self-report.
-- `enforceClaim(handle, declaredGlobs, policy: 'strict' | 'warn'): ClaimEnforcementResult` — `strict`
-  reverts (checks out the pre-lane version of) every changed file outside `declaredGlobs`, failing the
-  step; `warn` keeps every file, returning the out-of-claim set for the caller to surface in review.
-- `applySharedPathStrategy(handle, { glob, strategy, command? }): Promise<void>` — `serialize` is a
-  caller-side concurrency concern (this function assumes exclusivity already held); `regenerate` runs
-  the configured command inside the lane after merge-adjacent state is in place; `append-only` installs
-  (or verifies) a `.gitattributes` merge driver for the glob.
+- `diffLaneChanges(handle, baseSha): readonly string[]` — every path that differs from `baseSha`,
+  committed or not (working tree and untracked state included, not just history) — real git, not the
+  step's own self-report.
+- `enforceClaim(handle, baseSha, declaredGlobs, policy: 'strict' | 'warn'): ClaimEnforcementResult` —
+  `strict` reverts (checks out the pre-lane version of, or removes outright if it did not exist at
+  `baseSha`) every changed file outside `declaredGlobs`; `warn` keeps every file. Neither throws for the
+  violation itself — both return a structured result naming what was out of claim and what was actually
+  reverted, for a caller to act on (deciding "the step failed" is `@forge/engine`'s call, not this
+  piece's — `SPEC-QUESTIONS.md` Q62). *(Corrected from the original draft here, which omitted `baseSha`
+  — diffing a lane's changes structurally requires knowing what to diff against, and nothing in a bare
+  `LaneHandle` carries that; caught before any code was written against the wrong shape.)*
+- `applySharedPathStrategy(handle, options: { glob, strategy: 'serialize' } | { glob, strategy:
+  'append-only' } | { glob, strategy: 'regenerate', command }): Promise<void>` — a discriminated union,
+  not a flat optional `command?`, so a `regenerate` call missing its command is a compile error, not a
+  runtime one. `serialize` is a caller-side concurrency concern (this function assumes exclusivity
+  already held); `regenerate` runs the configured command, through a real shell, inside the lane;
+  `append-only` installs (or verifies) git's own *built-in* `union` merge driver via a `.gitattributes`
+  line for the glob, not a hand-written driver script.
 
 **Checks:** an out-of-claim write is reverted in `strict` and left-but-flagged in `warn`, each proven
 against a real lane with a real extra file; `regenerate` actually invokes the configured command and
@@ -173,6 +183,12 @@ fails loudly (not silently) if it errors; `append-only`'s installed merge driver
 concurrent two-branch edit to the same file that merges without conflict.
 
 **Depends on:** P2, P3.
+
+*(P4 is committed: `b9fee96`. See `SPEC-QUESTIONS.md` Q66 and its critic-round/verify-round addenda —
+5 blocking findings this round, the sharpest a factually wrong assumption about git's own rename-detection
+default that this piece's own design writeup had made; a further finding in the verify round itself
+(a fix's own new code breaking against unrelated existing behaviour in the same file) closed with a
+design change, not a patch; see `GAUNTLET-LOG.md`'s own entry for the fuller story.)*
 
 ---
 

@@ -3316,3 +3316,114 @@ elsewhere.** Two upcoming pieces in this same milestone are exactly this class o
 (workflow DSL: YAML parsing) and P9 (the sandboxed expression evaluator) both take externally-authored
 text as their primary input — and their own critic rounds should be pointed at this specific question
 from the start, not left to discover it the way this piece's round 1 did.
+
+## M5 P4 — `@forge/vcs`: write-policy enforcement, claims and shared mutable paths (`06` §6.7, `18` §18.3,
+`20` §20.2 point 3, §20.10 S1)
+
+**Rounds: 2 (one critic finding 5 BLOCKING, 1 MAJOR, and 1 MINOR issue, all fixed; one scoped verify
+confirming all seven fixes cleanly and finding one further real gap — the first fix's own new code
+interacting badly with pre-existing behaviour elsewhere in the same file — fixed with a design change,
+not a patch, closed locally, no third round). Outcome: WON.**
+
+The fourth piece of `@forge/vcs`: the two post-execution write policies `06` §6.7 describes for a
+completed lane — diffing actual changes against a step's declared claim (`strict` reverts, `warn` flags),
+and three strategies for files many lanes unavoidably share. This piece's own critic round is the first
+this milestone whose worst finding was not a git-tool or OS quirk but the same class the piece's own
+calibration note (P3, above) flagged as coming: unsanitized-input-reaches-a-structured-operation, this
+time not text injection but a factually wrong assumption about git's own default behaviour, baked into
+this piece's own design-decision writeup and caught only because the critic tested it rather than trusting
+the doc comment that stated it.
+
+### Round 1 — critic: 5 BLOCKING, 1 MAJOR, 1 MINOR
+
+The critic was asked to hunt specifically for an S1 (path/scope-safety) violation, claim/glob-matching
+correctness, revert safety and atomicity under `strict`, and whether the `union` merge-driver design
+genuinely works — each by actually constructing the scenario against real git, the standing discipline for
+every piece this milestone. That framing is what surfaced every finding below as a concretely reproduced
+bug, including a factual error in this piece's own prior reasoning.
+
+- **BLOCKING: this piece's own design-point writeup claimed rename detection was "off by default" for
+  `git diff` — it is on by default for porcelain `git diff`**, confirmed empirically (`git mv` a file,
+  diff against base, get one line for the new path only). Left uncorrected: a step renaming an
+  out-of-claim file *into* a claimed directory bypassed enforcement completely (the old, violating path
+  never reported at all); a step renaming an in-claim file *out* of its claim caused the file to be
+  deleted outright (treated as a brand-new file with nothing to check out under its new name) —
+  destroying content the `strict` policy exists to protect, not merely failing to protect it.
+- **BLOCKING: `git diff --name-only`'s default path-quoting silently corrupted any filename with
+  non-ASCII bytes or special characters** into a C-quoted/escaped literal (confirmed via `xxd`: an
+  accented filename round-trips as `"caf\303\251.txt"`, quote marks and all) — breaking glob matching (a
+  legitimate in-claim file misclassified out-of-claim) and the "does this exist at base" check (a quoting
+  failure misattributed to "path doesn't exist," steering a modified file onto the destructive removal
+  branch instead of the restorative checkout one).
+- **BLOCKING: anything uncommitted in the lane worktree — including an untracked `.env` file, `20` §20.2
+  point 2's own deny-list entry — was completely invisible to claim enforcement**, which only ever
+  diffed committed history, with no documented or enforced precondition that the worktree be fully
+  committed first.
+- **BLOCKING: a claim of `src/**` did not match a dotfile anywhere under `src/`** (a wildcard-matching
+  library default, not a git quirk) — an entirely ordinary, entirely in-claim file like
+  `src/.eslintrc.json` was misclassified out-of-claim and deleted under `strict`.
+- **BLOCKING: a failure reverting one out-of-claim file silently aborted the loop**, leaving every file
+  after it in the list completely unattempted, with no signal to the caller about what remained in
+  violation.
+- **MAJOR: a failing `regenerate` command was wrapped in git-flavoured remedy text** ("ensure git is
+  installed and on PATH") for a failure that has nothing to do with git — the command is project config,
+  not a git operation.
+- **MINOR: `.gitattributes` idempotency used exact-string matching**, so incidental trailing whitespace
+  on an otherwise-identical hand-authored line caused a redundant near-duplicate append.
+
+Confirmed genuinely clean, with real attempts made to break each: S1 path-scope safety (a symlink baked
+into base pointing outside the repo, and a lane-introduced symlink replacing a base directory, both
+tested in both revert directions, even with `core.protectSymlinks` explicitly disabled); glob-shaped
+filenames reaching `git rm`/`git checkout` as pathspecs; the `union` merge driver's own correctness
+(replaying the shipped merge test *without* registering the attribute produces a real conflict, proving
+the existing test is genuinely discriminating); command-argument safety; TypeScript/lint discipline.
+
+Each blocking finding was fixed at its structural root, not patched around: `--no-renames` and `-z` added
+to the one `git diff` call already doing the real work; `{ dot: true }` added to the one `minimatch` call;
+the revert loop restructured to attempt every file and throw one aggregate error only once finished,
+naming both what failed and what succeeded.
+
+### Round 2 — scoped verify: 7 of 7 confirmed; 1 new MAJOR finding, fixed with a design change
+
+Every fix was independently re-derived with scenarios distinct from the shipped tests' own — a different
+rename pair; a CJK filename; all three shapes of uncommitted change tried separately; the
+"doesn't-over-match" direction of both the dotfile and gitattributes-whitespace fixes specifically probed,
+not just their own stated positive case; a four-file partial-failure scenario mixing both revert code
+paths with two independently-locked directories; a `regenerate` failure from a genuinely nonexistent
+binary. All seven held.
+
+**New finding: the uncommitted-changes fix's own new code — asserting a clean working tree before
+diffing — was broken by its interaction with unrelated, pre-existing behaviour in the same file.**
+`enforceClaim` deliberately leaves its own reverts uncommitted (a caller decides when to commit). Once
+diffing required a clean tree first, a *successful* revert made the lane "dirty" for every subsequent
+call — so retrying after fixing a partial-failure blocker, exactly the recovery path finding 5's own
+error message recommends ("inspect the lane worktree directly"), immediately hit an unrelated, misleading
+dirty-tree rejection instead. Confirmed empirically: revert one file successfully, diff again, rejects —
+even though the file's content now exactly matches base.
+
+**Fixed with a different design, not a patch on the broken one.** Diffing against a *single* ref (base
+alone, comparing against the live working tree and index — git's own one-argument-vs-two-argument `diff`
+distinction) plus `git ls-files --others --exclude-standard` for untracked files, unioned together,
+closes the original gap and the regression as the same property: a file already reverted to exactly its
+base content produces zero diff on the next call, with no retry-specific logic anywhere. Verified
+empirically before being coded, the same discipline as every other fix in this package. Two new tests pin
+it: uncommitted/untracked content is included (not rejected); a second `enforceClaim` call after a
+successful revert reports zero further violations instead of failing.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (112 tests, 100% coverage on every file
+in `packages/vcs/src/`) all independently reconfirmed clean.
+
+### Calibration note
+
+Every prior piece this milestone broke on a git-tool or OS/filesystem quirk, or (P3) a textbook injection
+bug. This piece adds a third, distinct lesson: **a fix for one finding can be structurally sound in
+isolation and still be wrong once it meets code elsewhere in the same file that nothing about the finding
+itself mentioned** — the dirty-tree assertion was, on its own terms, a perfectly correct implementation of
+"require a clean tree before diffing"; the defect only existed in the seam between it and `enforceClaim`'s
+own, independently-reasonable choice to leave reverts uncommitted. Neither piece of code was locally
+wrong. Testing the fix only against the finding that motivated it — as the shipped round-1 tests for
+finding 3 did — cannot catch this class of bug by construction; only exercising the *whole piece's* own
+realistic call patterns (here: call it again after using it once) can. Worth carrying forward explicitly:
+when a fix changes a *precondition* (what a function requires to be true before it runs) rather than just
+its internal logic, check it against every other operation in the same file that could change that
+precondition's truth value — not only against the scenario that revealed the gap in the first place.
