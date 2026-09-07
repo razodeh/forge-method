@@ -77,6 +77,9 @@ importers:
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@20.19.35)(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.35)(esbuild@0.27.7)(yaml@2.9.0))
       zod:
         specifier: 3.25.76
         version: 3.25.76

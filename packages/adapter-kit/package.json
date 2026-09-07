@@ -8,7 +8,8 @@
     "./types": "./src/types/index.ts",
     "./events": "./src/events/index.ts",
     "./grants": "./src/grants/index.ts",
-    "./control-tokens": "./src/control-tokens/index.ts"
+    "./control-tokens": "./src/control-tokens/index.ts",
+    "./conformance": "./src/conformance/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -18,6 +19,7 @@
   },
   "dependencies": {
     "@forge/schemas": "workspace:*",
+    "vitest": "4.1.11",
     "zod": "3.25.76"
   }
 }
