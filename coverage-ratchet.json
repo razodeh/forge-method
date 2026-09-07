@@ -1,7 +1,7 @@
 {
   "packages/core": {
     "lines": 99.83,
-    "statements": 99.68,
+    "statements": 99.69,
     "functions": 100,
     "branches": 99.04
   },
@@ -34,5 +34,11 @@
     "statements": 99.7,
     "functions": 100,
     "branches": 94.81
+  },
+  "packages/kb": {
+    "lines": 99.63,
+    "statements": 99.34,
+    "functions": 100,
+    "branches": 95.92
   }
 }

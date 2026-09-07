@@ -174,8 +174,9 @@ async function parseOneFile(
 }
 
 /** Every file under `kbRoot`, relative to it, sorted — depth-first, byte-order, mirroring
- * `@forge/core/ids/scan.ts`'s own `listArtifactFiles` walk. */
-async function listKbFiles(
+ * `@forge/core/ids/scan.ts`'s own `listArtifactFiles` walk. Exported for `@forge/kb/write`'s
+ * `KbIdAllocator`, which needs the same file set for its own, lighter-weight id scan (P7). */
+export async function listKbFiles(
   paths: ProjectPaths,
   kbRoot: string,
   relativeDir = '',

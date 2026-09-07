@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts"
+    "./schema": "./src/schema/index.ts",
+    "./write": "./src/write/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -16,6 +17,7 @@
   "dependencies": {
     "@forge/core": "workspace:*",
     "@forge/diagrams": "workspace:*",
-    "@forge/schemas": "workspace:*"
+    "@forge/schemas": "workspace:*",
+    "yaml": "2.9.0"
   }
 }

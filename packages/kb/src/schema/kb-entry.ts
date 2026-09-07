@@ -143,3 +143,7 @@ export const kbEntrySchema = z
   });
 
 export type KbEntry = z.infer<typeof kbEntrySchema>;
+
+/** One `sources` entry — `08` §8.3: "provenance is mandatory." Named separately so `@forge/kb/write`
+ * can reference the shape without reaching into `KbEntry['sources'][number]`. */
+export type KbSource = KbEntry['sources'][number];

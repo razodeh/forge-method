@@ -359,9 +359,11 @@ rebuilt).
 
 **Mandate:** allocate `KB-{SECTION}-{seq:04d}` ids centrally, monotonically, never reused (per
 section, mirroring `08` §8.6 exactly), and give every KB write one of exactly two paths — direct write
-(schema-valid, contradiction-checked, `updated` bumped, event appended) or proposal (a diff + rationale
-routed to the owning agent or a human) — with concurrent writes to the same entry serialised through
-one queue, rebasing the second onto the first.
+(schema-valid, `updated` bumped, event appended) or proposal (a structured single-field change +
+rationale, queued per target, rebased or conflict-escalated) — with concurrent writes to the same
+entry serialised through one queue, rebasing the second onto the first. Five real gaps in this plan's
+own first draft, none answerable from `08` §8.6 alone, were found and closed before writing code —
+see `SPEC-QUESTIONS.md` Q52 for all five and why each answer was taken.
 
 **Spec:** `08` §8.6 (both write paths, all four `KbWriter` invariants).
 
@@ -370,12 +372,32 @@ one queue, rebasing the second onto the first.
   reuse allocator) but keyed by KB section rather than `ArtifactTypeId`, since `08` §8.3's id scheme is
   explicitly outside that registry (`SPEC-QUESTIONS.md` Q18's own note, confirmed again at P6). Not a
   subclass or a fork of `IdAllocator` — a new, small class following the same established pattern
-  (scan real files as truth; queue every operation) for a genuinely different key space.
-- `interface KbProposal { targetId: string; diff: string; rationale: string; sources: readonly KbSource[] }`.
-- `class KbWriter { write(entry: KbEntryInput): Promise<KbEntry>; propose(proposal: KbProposal): Promise<KbProposal>; }` — `write` throws `ForgeError` (a new, low free `KB-0xx` slot, picked and recorded
-  in `SPEC-QUESTIONS.md` the same way P1 picks its own) for a schema-invalid entry or an entry with no
-  `sources`; `propose` never throws (queues instead) for a proposal targeting an entry another proposal
-  is already rebasing onto.
+  (scan real files as truth; queue every operation) for a genuinely different key space. Its own scan
+  counts an id as claimed straight from a file's raw `id` field (mirroring `countIdsFromFiles`'s own
+  "a schema-invalid document's id still counts as claimed" rule) — it does not reuse `parseKbTree`'s
+  full-validation results, since a document failing validation for an unrelated field must not read as
+  "this id is still free."
+- `interface KbEntryInput` — every `kbEntrySchema` field except `id`/`created`/`updated` (allocated/
+  clock-derived), plus `path: string` (Q52 point 1: the caller supplies the destination's relative
+  path under the KB root; `08` §8.2 gives no rule for naming a brand-new topic's file).
+- `KB_PROPOSAL_FIELDS = ['statement', 'rationale', 'implications', 'verification'] as const` — `08`
+  §8.3's own four fixed body sections.
+- `interface KbProposal { targetId: string; field: (typeof KB_PROPOSAL_FIELDS)[number]; baseValue:
+  string; proposedValue: string; rationale: string; sources: readonly KbSource[] }` (Q52 point 3: a
+  structured single-field change, not a raw text diff — rebasing is optimistic-concurrency-control on
+  that one field's current value, not a hand-rolled patch-application engine with no spec-given format
+  to build against).
+- `type KbProposalOutcome = { status: 'applied'; proposal: KbProposal; diff: string } | { status:
+  'conflict'; proposal: KbProposal; currentValue: string }` (Q52 point 4: corrected from the original
+  `Promise<KbProposal>`, which could not report which of the two actually happened).
+- `class KbWriter { write(entry: KbEntryInput): Promise<KbEntry>; propose(proposal: KbProposal):
+  Promise<KbProposalOutcome>; }` — `write` throws `ForgeError` (a new, low free `KB-0xx` slot, picked
+  and recorded in `SPEC-QUESTIONS.md` the same way P1 picks its own) for a schema-invalid entry or an
+  entry with no `sources`; `propose` never throws — a conflict is a normal, reported outcome, not an
+  error. Neither method performs contradiction detection (Q52 point 2: that is `08` §8.7's KB-linter
+  algorithm, P10, not yet built and not this piece's job standalone). Each successful operation appends
+  one line to its own small, KB-scoped event log at `.forge/state/kb-events.jsonl` (Q52 point 5: no
+  general, run-wide event-log implementation exists anywhere yet to hook into).
 
 **Checks:**
 - `write` on a schema-valid entry with real `sources` succeeds, bumps `updated` to the injected clock's
@@ -385,15 +407,17 @@ one queue, rebasing the second onto the first.
 - Two concurrent `write` calls targeting the same section allocate two distinct, contiguous ids — no
   race where both read the same "next" counter (same queuing discipline P1–P9 of M2 already
   established and tested for `@forge/extensions`' own writers).
-- Two concurrent `propose` calls against the *same target entry* result in the second being rebased
-  onto the first's diff, not silently overwriting it or throwing.
-- A statement-changing rebase conflict (the second proposal's diff no longer applies cleanly after the
-  first's changes) raises an explicit conflict escalation, not a best-effort auto-merge.
+- Two concurrent `propose` calls against the *same target entry*, targeting *different* fields, both
+  apply — the second is not blocked by the first touching an unrelated part of the entry.
+- Two concurrent `propose` calls against the same target and the same field: the first applies; the
+  second, still holding the pre-first `baseValue`, is reported as `status: 'conflict'` rather than
+  silently overwriting the first or throwing.
 - Determinism (R10): id allocation and `updated` timestamps derive only from the injected `Clock` and
   the real on-disk scan — no wall-clock read, no reliance on file iteration order.
 
-**Depends on:** P6 (`kbEntrySchema`), `@forge/core/ids` (the established allocator pattern, reused by
-shape not by inheritance), `@forge/core/clock`, `@forge/core/fs` (atomic writes).
+**Depends on:** P6 (`kbEntrySchema`, `parseKbTree`'s dispatch conventions), `@forge/core/ids` (the
+established allocator pattern, reused by shape not by inheritance), `@forge/core/clock`,
+`@forge/core/fs` (atomic writes, `resolveState` for the id cache and event log).
 
 ---
 

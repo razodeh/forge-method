@@ -46,3 +46,10 @@ const SECTION_ID_TOKENS: Record<KbSection, string> = {
 export function sectionIdToken(section: KbSection): string {
   return SECTION_ID_TOKENS[section];
 }
+
+/** The section whose own token is `token` (case-sensitive, as ids themselves are), or `undefined` if
+ * no registered section uses it — `@forge/kb/write`'s `KbIdAllocator` scan reads this back off a raw
+ * id's own embedded token. */
+export function sectionForIdToken(token: string): KbSection | undefined {
+  return KB_SECTIONS.find((section) => SECTION_ID_TOKENS[section] === token);
+}

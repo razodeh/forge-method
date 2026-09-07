@@ -77,6 +77,7 @@ const SAMPLE_DETAILS = {
   diagramId: 'DIAG-014',
   src: 'architecture/views/containers.mmd',
   generator: 'components-to-c4',
+  entryId: 'KB-ARCH-0007',
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -4,8 +4,14 @@
  *
  * @see PLAN-M3.md P6
  */
-export { kbEntrySchema, KB_ENTRY_TYPES, type KbEntry, type KbEntryType } from './kb-entry.ts';
-export { KB_SECTIONS, sectionIdToken, type KbSection } from './sections.ts';
+export {
+  kbEntrySchema,
+  KB_ENTRY_TYPES,
+  type KbEntry,
+  type KbEntryType,
+  type KbSource,
+} from './kb-entry.ts';
+export { KB_SECTIONS, sectionIdToken, sectionForIdToken, type KbSection } from './sections.ts';
 export {
   parseKbTree,
   DEFAULT_KB_ROOT,

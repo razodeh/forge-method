@@ -214,6 +214,63 @@ export const ERROR_CODES = {
     remedy:
       "Set the diagram's generator field to a real, registered generator name, or set generated: false.",
   },
+  // `08` §8.6: "Every write records sources. A write with no source is rejected" — one of
+  // `KbWriter`'s own four named invariants, given its own code (not folded into the generic
+  // schema-invalid case, KB-006) since the spec text calls it out as its own explicit rule.
+  'KB-004': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string }) =>
+      `Write to ${show(d.entryId)} has no sources: provenance is mandatory for every KB write.`,
+    remedy: 'Add at least one entry to `sources` naming the decision, human, or code it comes from.',
+  },
+  // `08` §8.6: "Schema-valid front matter or reject" — the general KbWriter invariant for every field
+  // other than sources (KB-004, its own code because the spec names it specifically).
+  'KB-006': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string; issues: string }) =>
+      `Write to ${show(d.entryId)} failed schema validation: ${show(d.issues)}.`,
+    remedy: 'Fix the field(s) named above so the entry matches the KB entry schema (08 §8.3).',
+  },
+  // `08` §8.6: a `KbProposal` naming a `targetId` no KB entry actually has — a typo, or a proposal
+  // authored before its target was ever written.
+  'KB-007': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string }) => `No KB entry with id ${show(d.entryId)} exists to propose against.`,
+    remedy: 'Check the target id is correct, or write the entry first.',
+  },
+  // `08` §8.3: a legitimate KB entry need not carry all four body sections (only `## Verification`
+  // is ever required, and only when `confidence: 'verified'`) — a proposal can genuinely name one
+  // that this particular entry never had.
+  'KB-008': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string; field: string }) =>
+      `${show(d.entryId)} has no "## ${show(d.field)}" section to propose a change against.`,
+    remedy: 'Choose a section the entry actually has, or write it into the entry first.',
+  },
+  // `08` §8.6's own write path is direct (not `propose`) precisely when the entry is brand new — a
+  // gauntlet critic found a first version of `KbWriter.write` silently overwrote an existing file at
+  // the same path, permanently destroying whatever entry was already there with no warning.
+  'KB-009': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string }) =>
+      `${show(d.entryId)} already exists: write() only creates a brand-new entry.`,
+    remedy: 'Choose a different destination path, or propose a change to the existing entry instead.',
+  },
+  // `08` §8.9: the KB is meant to be hand-editable — a gauntlet critic found a first version of
+  // `KbWriter.propose` silently picked whichever of several same-id files matched first, with no
+  // signal anything was ambiguous, when a copy-paste or a bad merge left two files claiming one id.
+  'KB-011': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string }) =>
+      `More than one KB entry claims id ${show(d.entryId)}: refusing to guess which one to propose against.`,
+    remedy: 'Fix the duplicate id by hand — rename or supersede one of the two conflicting entries.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

@@ -1658,3 +1658,97 @@ Two related scope decisions, made at the same time:
 **Recommended resolution:** state the full nine-entry `section`→id-abbreviation table once,
 normatively, in `08` §8.2 or §8.3 (the same fix Q50 asks for the collection-file shape) so the five
 uninvented entries here have a real source to defer to.
+
+## Q52 — P7's own `KbWriter`/`KbProposal` plan surface is under-specified in five separate ways, found
+only by actually trying to implement `08` §8.6 against it
+
+`08` §8.6 itself is three short paragraphs: two write paths, four `KbWriter` invariants ("schema-valid
+or reject," "ids allocated centrally, monotonically, never reused," "every write records sources,"
+"writes serialised; concurrent proposals to the same entry queued, the second rebased onto the first,
+with a conflict escalation if the statement changed"). `PLAN-M3.md`'s own P7 draft elaborated this into
+a `KbWriter`/`KbProposal` surface, but five real gaps surfaced only once actually building against it
+— none answerable by re-reading §8.6 again, since it gives no worked example of a proposal, a diff, or
+a rebase.
+
+**1. Where does a brand-new KB entry's file live?** `08` §8.2 names fixed, curated files per section
+(`architecture-spec.md`, `patterns.md`, ...) but states no rule for a genuinely new topic not already
+on that list. **Answer taken:** `KbEntryInput` (the input to `KbWriter.write`) includes an explicit
+`path` field (the destination's relative path under the KB root) that the caller supplies — `KbWriter`
+does not invent a slugging/naming convention with no spec source to derive one from.
+
+**2. "Checks contradictions" (§8.6's own words for the direct-write path) names §8.7's KB-linter
+algorithm, which does not exist until `PLAN-M3.md` P10.** `PLAN-M3.md`'s own P7 Checks list never
+actually tests a contradiction rejection, and P10 is not in P7's "Depends on" line (nor could it be —
+P10 is built after P7). **Answer taken:** `KbWriter.write` in this piece does not perform contradiction
+detection at all; the `08` §8.6 sentence is read as describing the *system's* eventual full behaviour
+once P10 exists, not a requirement this one piece must satisfy standalone. A future integration point
+(P10 calling into this writer, or this writer calling into P10's checker) is left for whichever piece
+actually wires the two together.
+
+**3. No spec-given format for `KbProposal.diff`, and the literal `diff: string` surface cannot support
+"rebase" or "conflict if the statement changed" without inventing a full patch-application engine no
+part of this codebase has any precedent for.** A generic multi-hunk unified-diff parser/applier is a
+large, novel, error-prone undertaking to hand-roll with zero spec-given examples to validate against,
+and a naive whole-file-fingerprint rebase check would conflict on *every* concurrent proposal pair
+regardless of whether they touch the same content (defeating "the second is rebased onto the first" as
+the normal, successful case). **Answer taken:** `KbProposal` is redesigned as a structured, single-
+field change rather than a raw text diff: `{ targetId, field: 'statement' | 'rationale' |
+'implications' | 'verification', baseValue, proposedValue, rationale, sources }` — `field` is one of
+`08` §8.3's own four fixed body sections, the only place the spec text itself specifically calls out a
+"statement changed" conflict for. Rebase is optimistic-concurrency-control on that one field's current
+value: if the target's current `field` content still equals `baseValue` when the proposal's turn comes,
+`proposedValue` is applied; if not (someone else's already-applied proposal changed it), that is the
+conflict, reported rather than force-merged. A rendered `diff` string (`- baseValue\n+ proposedValue`)
+is still produced for a human/audit reader, satisfying §8.6's own loose "a diff, rationale, and target"
+framing, but the field-level structure — not a parsed diff — is what the code actually reasons about.
+Proposals targeting an arbitrary front-matter field (not one of the four body sections) are out of
+scope for this piece — a real, but narrower, gap than a fully general multi-field diff engine, and one
+with no spec-given example to build the wider version against either.
+
+**4. `propose`'s own literal return type, `Promise<KbProposal>`, cannot report whether a proposal
+applied or conflicted** — the one distinction its own Check list requires observing. **Answer taken:**
+corrected to `Promise<KbProposalOutcome>`, a tagged union of `{ status: 'applied', proposal, diff }`
+and `{ status: 'conflict', proposal, currentValue }`.
+
+**5. No event-log implementation exists anywhere in the codebase yet** (`grep` for `EventLog`/
+`appendEvent`/`event.log` across `packages/*/src` finds only forward references — a governance flag
+name, a comment pointing at "the run's own append-only writer" — never a real writer). Building a
+general, run-wide, cross-subsystem event bus is a much larger piece than P7 (closer to the not-yet-
+built engine/runtime layer) and has no spec section describing its schema. **Answer taken:** `KbWriter`
+keeps its own small, KB-scoped append-only log at `.forge/state/kb-events.jsonl` (one JSON object per
+line: `{ at, kind: 'write' | 'propose-applied' | 'propose-conflict', entryId, section }`), via
+`ProjectPaths.resolveState` — satisfying "appends an event" for this piece's own writes without
+building infrastructure no spec page yet describes.
+
+**Recommended resolution:** a worked `KbProposal` example next to `08` §8.6 (even one sentence, one
+field, one before/after value) would settle (3) and (4) beyond any doubt; §8.6/§8.7 stating explicitly
+that write-time contradiction checking is optional until the linter exists would settle (2); a event-
+log schema section anywhere in the spec pack would settle (5).
+
+**Critic-round addendum: a "process-wide" queue was actually per-instance, and two sibling bugs in
+`replaceSectionValue`, fixed.** A gauntlet critic found `KbWriter`'s own first-draft doc comment
+claimed its serialisation queue was "process-wide" when it was really a private field on each
+`KbWriter` object — two independently-constructed writers against the same project raced for real
+(double-allocated ids, lost event-log lines). **Fixed** by a module-level queue keyed by the
+project's own resolved root path, shared by every instance; fixing this surfaced a second, related
+gap (each instance's own `KbIdAllocator` caching a now-stale view across sibling instances), fixed by
+forcing a fresh scan before every allocation. Separately, the critic found `replaceSectionValue`
+dropped the blank line before the next section's heading and that `doPropose`'s own unconditional
+trailing `\n` compounded into ever-more stray blank lines across repeated edits to any non-last
+section — and that the identical unconditional-`\n` bug existed a second time, in `doWrite`'s own
+file-creation template. Both **fixed** the same way: a shared `withTrailingNewline` helper that adds
+one only when the text doesn't already have one. Also fixed in the same round: `write()` silently
+overwrote an existing file at the same path (now `KB-009`); `propose()` silently picked the first of
+several files claiming the same id with no ambiguity signal (now `KB-011`, though see the verify-round
+addendum below for a residual gap in this check); a schema-validation failure burned the id
+`KbIdAllocator` had already allocated for it (now pre-validated against a placeholder id before ever
+allocating a real one).
+
+**Verify-round addendum: a narrower duplicate-id gap found in the KB-011 fix itself, documented rather
+than chased further.** `doPropose`'s duplicate check only scans `tree.entries` — files that fully pass
+`parseKbTree`'s own validation. A second file claiming the same id but *also* failing some unrelated
+check (e.g. filed under a directory that doesn't match its own `section` field) lands in `tree.errors`
+instead and is invisible to this check. This is a narrower instance of the same hazard KB-011 already
+exists for, and — like Q50's own cross-entry-in-one-file duplicate-id gap — is left to the KB linter
+(`08` §8.7, `PLAN-M3.md` P10)'s own project-wide integrity scan rather than reinvented here; documented
+in `writer.ts`'s own comment at the check site.

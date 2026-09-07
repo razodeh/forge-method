@@ -128,6 +128,9 @@ importers:
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/schemas:
     dependencies:
