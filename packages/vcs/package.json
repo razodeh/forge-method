@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./commit": "./src/commit.ts",
     "./errors": "./src/errors.ts",
     "./git": "./src/git.ts",
     "./lanes": "./src/lanes.ts"

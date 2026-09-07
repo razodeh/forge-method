@@ -3370,3 +3370,113 @@ for a nonexistent `cwd` — the one remaining place in the file that didn't hono
 tests (one per affected function) pin a nonexistent `cwd` now rejecting with a real `VcsError`.
 
 No other new findings.
+
+## Q65 — M5 P3's `@forge/vcs` lane commit conventions: two design points not given anywhere in the spec
+pack (the `Co-Authored-By` email shape; staging via `git add -A`)
+
+`06` §6.4 step 3's entire normative text is one sentence: "Agent commits inside the lane (conventional
+commits, `forge(<story>): …`, trailer `Forge-Step: <stepId>`, `Forge-Run: <runId>`, `Co-Authored-By:` the
+agent role)." Everything below is a design decision the builder had to make to turn that sentence into
+working code.
+
+**Design point 1: the `Co-Authored-By` trailer's email is `${agentRole}@agents.forge.invalid`.** A real
+`Co-Authored-By` trailer needs a "Name <email>" shape for git/GitHub tooling to recognise it as a trailer
+at all — `06` §6.4 step 3 names only "the agent role" as the value, not an email. `.invalid` is the RFC
+2606-reserved TLD this repo's own test identity already uses (`test/setup.ts`'s `test@forge.invalid`),
+for exactly the same reason: an address that cannot be mistaken for, or ever resolve to, a real person's
+inbox. A distinct `agents.` subdomain keeps this synthetic co-author identity visibly separate from that
+unrelated test-fixture identity, so a reader (or a future grep) never conflates "a commit made by the test
+harness" with "a commit made by an agent inside a real lane."
+
+**Design point 2: `commitInLane` stages via `git add -A` (new, modified and deleted files alike) rather
+than a caller-supplied, scoped file list.** `06` §6.4 step 3 says only "the agent commits inside the
+lane" — nothing about what gets staged first, or whether staging is the caller's own separate
+responsibility. Given each lane is a dedicated worktree branched fresh per step and owned by exactly one
+agent for that step's own duration (`06` §6.4 steps 1-2), everything present in the worktree at commit
+time is, by construction, that step's own output — there is no "someone else's unrelated change" a
+scoped `git add` would need to protect against the way there might be in a long-lived shared working
+tree. Unconditional `git add -A` is therefore both simpler and strictly equivalent in practice to any
+per-file list the caller could otherwise have assembled.
+
+### P3 critic round: 3 BLOCKING (two combined into one bullet below, both test-quality), 1 MAJOR
+
+The critic was asked to hunt specifically for trailer injection / message corruption, command-argument
+safety, partial-failure behaviour, the `Co-Authored-By` trailer's own correctness, and — pointedly —
+whether each test would still pass if the implementation it claims to guard were subtly broken, by
+actually constructing adversarial input and running it against real git rather than reasoning about it.
+That framing is what surfaced findings 1–3 as concretely reproduced, not theoretical.
+
+- **BLOCKING: `formatCommitMessage` performed zero sanitization of any of its five inputs, and an
+  embedded newline in `stepId`, `runId`, or `agentRole` injected a second trailer that git's own real
+  trailer parser (`git interpret-trailers --parse`, not a naive scanner) accepted as equally legitimate.**
+  Concretely reproduced: `stepId: 'real-step\nForge-Step: FORGED-VIA-STEPID'` committed via
+  `commitInLane` and confirmed via `git log --format=%(trailers:key=Forge-Step,valueonly)` to report
+  *two* `Forge-Step` values, with any "resolve a repeated key by taking the last occurrence" consumer
+  reading the forged one as canonical. `stepId` is explicitly the least-trusted of the five fields
+  (`lanes.ts`'s own `laneBranchName` comment: it "flows from a workflow YAML file `15` lets a project
+  overlay"), and `subject` — the field most likely to carry LLM-generated freeform text — produces a
+  related but distinct corruption: an embedded `\n\n` opens a second, blank-line-delimited fake
+  trailer-shaped paragraph that git's real parser correctly ignores (it isn't the final paragraph) but
+  that permanently pollutes the human-readable audit record (`20` §20.9) and would fool any naive
+  first-match line scan regardless. **Fixed** by rejecting (not stripping or escaping — silent mangling
+  could hide a real caller bug) any `\n`/`\r` in `scope`/`subject`/`stepId`/`runId` via a new
+  `assertSingleLine` guard, called at the top of `formatCommitMessage` before any interpolation; throws
+  `VcsError` (`VCS-INVALID-COMMIT-FIELD`).
+- **BLOCKING: two of the shipped tests were provably weaker than their own names/comments claimed.** The
+  "stages and commits everything... new, modified and deleted files alike" test never actually deleted a
+  file; mutating `git add -A` to `git add .` and rerunning the unmodified suite still passed all 6 tests.
+  Separately, the "round-trips byte-for-byte... proving the merge queue will actually be able to read
+  them" test used only `.toContain(...)` substring checks, which the critic confirmed still pass
+  unchanged even on the poisoned message from finding 1 above — the test proved byte-preservation, not
+  the mechanical-parseability its own comment claimed. **Fixed**: the first test now deletes a tracked
+  file and asserts the exact `git show --name-status` output (`A`/`M`/`D` per file, sorted) — a
+  regression that stops staging deletions specifically now fails visibly. The second test now feeds the
+  commit body through real `git interpret-trailers --parse` and asserts the exact three-line output,
+  proving both real mechanical parseability and the absence of any fourth, forged trailer line
+  (confirmed empirically: this exact assertion shape is what would have caught finding 1's own repro).
+- **MAJOR: `agentRole` is reused as both the display name and the email local-part of the
+  `Co-Authored-By` trailer, and nothing constrained its shape** — `agentRole: 'senior engineer'` (a
+  space) produced `Co-Authored-By: senior engineer <senior engineer@agents.forge.invalid>` (a raw space
+  in the email), an empty string produced an email with no local part, and an already-email-shaped value
+  produced a double-`@` address — git's trailer parser accepts all of these as well-formed regardless
+  (it doesn't validate the "Name <email>" sub-grammar), so this doesn't break git, but it defeats the
+  trailer's actual co-author-crediting purpose. **Fixed** with a new `assertValidAgentRole` guard
+  (pattern `/^[a-z][a-z0-9-]*$/`, matching this spec pack's own agent role id convention — `specs/05`
+  §5's role table: `architect`, `data-architect`, `reviewer`, …), strictly stronger than
+  `assertSingleLine` for this one field (it already rejects a newline too); throws `VcsError`
+  (`VCS-INVALID-AGENT-ROLE`).
+
+No findings on command-argument safety (a message/field beginning with `-` was verified, empirically,
+against real git to commit as literal text, never reinterpreted as a flag — `execa`'s argv-array
+invocation has no shell involved), partial-failure behaviour (a failed `sign: true` commit, and a failed
+`git add -A` on an unreadable file, both leave a cleanly retriable state — verified directly against real
+git in both file orderings for the second case), baseline `Co-Authored-By` correctness for ordinary
+input, or TypeScript/lint discipline.
+
+### P3 verify round: 4 of 4 findings confirmed PASS, no new findings
+
+Each of the three critic-round findings was independently re-derived against real git rather than
+trusted from the fix description: fresh poisoned strings (not the shipped test's own) for finding 1,
+confirmed to throw `VcsError` with zero git side effects (worktree HEAD and `git status` both unchanged
+after a rejected call); a live mutation of `commitInLane`'s staging call, confirmed the new deletion
+assertion is the one test that fails against it; a hand-forged duplicate-trailer message fed through the
+shipped `git interpret-trailers --parse` assertion shape, confirmed it fails on poisoned input the old
+`.toContain` checks would have passed; and the exact three named `agentRole` values re-tested, plus the
+new pattern cross-checked against the *entire* `specs/05` §5.2 role roster (all 28 ids) with none
+rejected. A useful correction surfaced along the way: the original critic's illustrative repro for
+finding 2 (`git add -A` → `git add .`) does not actually weaken deletion-staging on this git version
+(staged deletions under bare `add .` since git 2.0) — the finding's actual claim, that the old test never
+exercised a deletion at all, holds regardless, and the verify round's own mutation (`--ignore-removal`)
+is the one that genuinely reproduces a broken-deletion-staging scenario.
+
+A fresh, independent read of the new code (the two guard functions, the modified `formatCommitMessage`)
+found nothing else wrong; `tsc`/`eslint` both clean; coverage on the real (non-scratch) suite is 100% on
+all four metrics, so the new guard branches are exercised by shipped tests, not just the verifier's own
+scratch tests; no unwarranted scope creep in `commitInLane`, `CommitMessageOptions`, or the package's
+public exports; the two new error codes don't collide with the three already in use in this package.
+
+**Process note:** while diffing `package.json` in isolation, the verifier's own combined `git diff`
+invocation incidentally also printed this file's (`SPEC-QUESTIONS.md`) pending diff — which it had been
+asked not to read. It disclosed this itself rather than staying silent. No bias resulted: the content
+was identical to what the verify prompt already stated directly, and this file's own verify-round section
+was still marked `*(pending)*` at the time, so no prior verdict was visible either way.

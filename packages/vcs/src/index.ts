@@ -5,6 +5,7 @@
  * @see specs/06 §6.4-§6.7
  * @see PLAN-M5.md
  */
+export { commitInLane, formatCommitMessage, type CommitMessageOptions } from './commit.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';
 export {
   assertCleanWorkingTree,
