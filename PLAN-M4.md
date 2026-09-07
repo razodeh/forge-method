@@ -76,6 +76,8 @@ squeezed through before it becomes a typed `AdapterEvent` the rest of FORGE can 
 
 **Depends on:** nothing new (first piece).
 
+*(P1 is committed: `02edf73`.)*
+
 ---
 
 ## P2 — `ToolGrant` mapping helpers

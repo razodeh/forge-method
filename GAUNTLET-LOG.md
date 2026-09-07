@@ -2475,3 +2475,109 @@ field left out of a union, a variable used unreordered) — but the pattern acro
 single critic pass, suggests this class of bug is worth checking for as its own category the next time a
 "this should be symmetric/general" function gets written in this codebase, rather than re-discovering it
 one finding at a time.
+
+## M4 P1 — Core adapter types, control-token schemas, and `AdapterEvent` normalisation
+
+**Rounds: 2 (one critic finding two blocking, two major, three minor — six fixed, one considered
+tradeoff left unfixed; one scoped verify confirming all six and finding two further real gaps, both in
+the critic round's own new code, fixed locally, no third round). Outcome: WON.**
+
+Before writing code, sixteen real gaps in `07` §7.2's own interface were found and closed —
+`02` §2.2's own graph names `adapter-kit ← schemas, telemetry`, but `@forge/telemetry` does not exist
+until M5, one milestone after this one (the identical shape of gap `SPEC-QUESTIONS.md` Q43 already hit
+for `@forge/cli` in M3); twelve of `07` §7.2's own named types (`PreflightContext`, `PreflightResult`,
+`ModelInfo`, `ResumeRequest`, `AssetContext`, `InstalledAsset`, `StructuredRequest<T>`, `ResolvedSkill`,
+`SessionContext`, `SkillProvisioning`, `GrantedMcpServer`, `McpProvisioning`) are referenced by name in
+method signatures with no field-level shape given anywhere in the spec pack, unlike the seven sibling
+interfaces in the same section that are given complete literal TypeScript; `ToolGrant.exec`'s own
+pattern language ("command patterns, e.g. `\"pnpm test*\"`") and `wrapUntrustedContent`'s anti-spoofing
+design are described only by policy (`20` §20.5), never by mechanism; and `FORGE_ASK`/`FORGE_ASSUME`'s
+own multi-field payload grammar has no worked example anywhere, unlike their five sibling control
+tokens. All recorded in `SPEC-QUESTIONS.md` Q57/Q58, each with the reasoning that produced the field
+list actually built, not invented freely.
+
+### Round 1 — critic: two blocking, two major, three minor
+
+- **Blocking: `normalizeAdapterEvent`'s own "never throws" doc-comment claim did not hold.** The
+  function called `adapterEventSchema.safeParse(raw)` directly; a raw object with a throwing property
+  getter, or a `Proxy` with a throwing `get`/`ownKeys` trap, made `safeParse` itself throw a plain,
+  uncaught `Error` straight past the function's own `{ok:false}` path — defeating the exact "safely
+  validate untrusted adapter output" purpose the function exists for, against a threat model (a lazily-
+  computed property on a real SDK wrapper object) the critic correctly called entirely ordinary, not
+  contrived.
+- **Blocking: `tool.call.input`/`control.payload` were schema'd and typed optional, contradicting `07`
+  §7.2's own literal `unknown` (required, no `?`).** `normalizeAdapterEvent({type:'tool.call', id,
+  name})` — no `input` key at all — validated as fully `ok: true`. The root cause is a genuine Zod
+  limitation, not a modelling slip: `z.unknown()` accepts `undefined` as a valid value, so Zod's own
+  per-key object-shape validation cannot distinguish "key absent" from "key present with value
+  `undefined`" — both look identical by the time any validator can inspect them.
+- **Major: `package.json`'s own `exports` map had three dangling entries** (`./grants`,
+  `./control-tokens`, `./conformance`) pre-declared for P2/P3/P4 before those pieces existed — neither
+  `tsc` nor `eslint` catches an `exports` target against the filesystem, so this was a real, silently-
+  shipped defect (`node --experimental-strip-types -e "import('@forge/adapter-kit/grants')"` genuinely
+  threw `ERR_MODULE_NOT_FOUND`).
+- **Major (documentation, not a defect): `normalizeAdapterEvent`'s returned event is a shallow copy** —
+  a value nested inside `meta`/`input`/`payload` is the same object reference the raw input holds, which
+  `AdapterEvent`'s own `readonly`/`Readonly<>` markers read like a stronger guarantee against than TS's
+  `readonly` (always shallow, compile-time-only) actually provides.
+- **Minor: internal numeric-strictness inconsistency.** `retry.attempt`/`maxRetries` were
+  `.int().nonnegative()`; equally count-like sibling fields (`usage.inputTokens`/`outputTokens`/
+  `cacheReadTokens`, `tool.result.bytes`, `retry.delayMs`) were only `.nonnegative()`, concretely
+  letting `Infinity` through as a "valid" token count or delay.
+- **Minor (left unfixed): a `.strict()` schema accepts a value reachable only via the prototype chain**
+  (zero real own keys) as if every field were a genuine own-property — low-likelihood, since no real
+  adapter output (from `JSON.parse` or equivalent) is ever shaped this way.
+- **Minor (left unfixed): `StructuredRequest<T>`'s own phantom type parameter can't be inferred** and
+  silently degrades to `Promise<unknown>` if a caller forgets the explicit `<T>` — standard behaviour
+  for this well-established TS idiom, not a bug in this piece's own use of it.
+
+**Fixes:** `normalizeAdapterEvent`'s whole body is now wrapped in a `try`/`catch`, converting any thrown
+value into the same `{ok:false, issue}` shape every ordinary failure already produces. A new
+`missingRequiredUnknownKey` check runs before Zod at all, checking `input`/`payload`'s own-key presence
+directly against the raw input — the one place "was this key actually present" is still answerable, via
+a small, explicit two-entry lookup (proportionate to a two-field gap, not a general schema-introspection
+mechanism invented for a larger one that does not exist). The three dangling exports were removed (to
+be added back one at a time as P2/P3/P4 are actually built, mirroring `@forge/kb`'s own incremental
+`package.json` growth across P6–P10); a new test asserting every declared subpath resolves turned out,
+on inspection, to already exist verbatim in `@forge/core/test/errors.test.ts` — mirrored, not invented
+twice. `.int()` was added to every genuinely-integral count field (closing the `Infinity` gap for all of
+them at once, since `Number.isInteger(Infinity) === false`), and `.finite()` explicitly to `usage.
+costUsd` (the one field that stays legitimately fractional). The shallow-copy behaviour is now stated
+plainly in the function's own doc comment rather than fixed: a deep clone was considered and rejected,
+since these fields can be arbitrarily large and this function sits on a potentially high-frequency live
+event stream — an unbounded per-event clone cost to guard against a caller-discipline issue is a worse
+trade than honest documentation.
+
+### Round 2 — scoped verify: all six confirmed, two further real gaps found and fixed
+
+Verify went one level past the critic's own repros for the never-throws fix (a getter nested inside
+`meta`; a `Proxy` with a throwing `has`/`getOwnPropertyDescriptor` trap; non-`Error` thrown values
+including a `Symbol`) and confirmed all held, then found two further real gaps — both inside the code
+the critic round itself had just added, not anywhere pre-existing. First: `describeThrown`, the fallback
+the outer `catch` calls to turn an arbitrary thrown `cause` into a string, was itself unprotected — both
+halves of `cause instanceof Error ? cause.message : String(cause)` can throw for a sufficiently
+adversarial `cause` (`instanceof` triggers a `Proxy`'s own `getPrototypeOf` trap; `String()` triggers a
+poisoned `toString`), concretely demonstrated with a thrown value whose own `toString` itself throws and
+a single self-referential `Proxy` thrown as its own cause — the second form was adversarial enough that
+generic error-reporting code merely *displaying* the escaped exception re-triggered the trap again.
+Second: the required-unknown-key lookup table the critic round's own fix had just added was a plain
+object indexed by an attacker-controlled `type` string — `REQUIRED_UNKNOWN_KEY_BY_TYPE['constructor']`/
+`['toString']`/`['__proto__']` all resolve to an *inherited* `Object.prototype` member instead of
+`undefined`, not caught by a bare `=== undefined` check, silently violating `NormalizeAdapterEventIssue
+.path`'s own declared `string` contract at runtime (confirmed: `JSON.stringify` on such an issue drops
+the `path` key entirely, since a function value cannot be serialised). **Both fixed**: `describeThrown`
+now wraps its own body in a `try`/`catch` with a static, un-throwable fallback string; the lookup table
+is now a `Map`, which has no prototype-chain lookup ambiguity at all.
+
+### Calibration note
+
+Both of this round's verify-found gaps share one shape, and it is a genuinely new one for this
+milestone's own log so far: not a gap in the *original* piece, but a gap *inside the critic round's own
+fix* — new code, written under time pressure to close a specific named hole, that itself reopened a
+narrower version of the identical class of hole one layer down (a "never throws" fix whose own error-
+description helper could throw; a "handle an attacker-controlled string safely" fix whose own lookup
+mechanism was an attacker-controlled-string hazard). The lesson is not "fixes are risky" in some vague
+sense — it is specific: a fix for a *robustness* property (never throws, resist adversarial input)
+deserves the identical adversarial scrutiny the original bug got, applied to the fix's own new code,
+before considering the round closed. Writing the fix and immediately trusting it because it closes the
+originally-demonstrated repro is exactly the gap a second adversarial pass exists to catch — and did.
