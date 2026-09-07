@@ -263,15 +263,21 @@ guarantee"); `20` §20.4 (redaction control row); `20` §20.10 S3.
 **Surface:** `@forge/telemetry/events`
 - `ForgeEvent`, `EventType` (the full catalogue, one string-literal union) — typed exactly per `18`
   §18.4's table, grouped as the spec groups them.
-- `appendEvent(runId, event): Promise<void>` — assigns the next gapless `seq`, redacts the payload
-  (below), serialises, `fsync`s, then appends to `.forge/state/runs/<runId>/events.ndjson`. Never
-  resolves before the fsync completes — this is the one guarantee every later resume piece trusts
-  without re-checking.
-- `readEvents(runId): AsyncGenerator<ForgeEvent>` — streams the log back in order; a `seq` gap throws a
-  typed, actionable `TelemetryError` (the same `core`-unreachable local-error shape `@forge/vcs` P1
-  uses — `telemetry ← schemas` only, no `core` edge) naming the gap (`18` §18.4: "seq gaps indicate
-  corruption and trigger `forge doctor`" — this piece detects and reports the fact; `forge doctor`
-  itself is a later milestone).
+- `appendEvent(projectRoot, runId, event: NewForgeEvent, options?: AppendEventOptions): Promise<ForgeEvent>`
+  — takes an explicit `projectRoot`, not just `runId` as an earlier draft of this line showed (the same
+  "no implicit cwd" correction class as `@forge/vcs`'s own established convention); assigns the next
+  gapless `seq`, redacts the payload (below), serialises, `fsync`s, then appends to
+  `.forge/state/runs/<runId>/events.ndjson`. Never resolves before the fsync completes — this is the one
+  guarantee every later resume piece trusts without re-checking. Returns the fully-assigned event
+  (including its new `seq`), not `void` as an earlier draft of this line showed — a caller needs it to
+  use as a later event's own `causedBy` without a redundant read. `AppendEventOptions` carries
+  `redactPatterns`/`knownSecrets`, since this package has no config-loading machinery of its own to
+  source them from otherwise.
+- `readEvents(projectRoot, runId): AsyncGenerator<ForgeEvent>` — same explicit-`projectRoot` correction;
+  streams the log back in order; a `seq` gap throws a typed, actionable `TelemetryError` (the same
+  `core`-unreachable local-error shape `@forge/vcs` P1 uses — `telemetry ← schemas` only, no `core`
+  edge) naming the gap (`18` §18.4: "seq gaps indicate corruption and trigger `forge doctor`" — this
+  piece detects and reports the fact; `forge doctor` itself is a later milestone).
 - `redactPayload(payload, patterns: readonly RegExp[], knownSecrets: readonly string[] = []): unknown` —
   a pure function: recursively walks the payload, replacing any string matching a pattern or exactly
   equal to a known secret value. `knownSecrets` defaults empty since full `${secret:name}` resolution
@@ -289,6 +295,12 @@ successfully is durably present) — this is the piece the crash-resume capstone
 so it earns its own direct proof here.
 
 **Depends on:** nothing new.
+
+*(P6 is committed: `abcb29c`. See `SPEC-QUESTIONS.md` Q68 and its critic-round/between-rounds/verify-round addenda —
+sixteen findings across two rounds, more than any other single piece this milestone, concentrated in
+crash-mid-write recovery and in the failure-handling code's own failure paths; see `GAUNTLET-LOG.md`'s own
+entry for the fuller story, including a calibration note on a fix whose own doc comment had already named
+the exact gap that shipped anyway.)*
 
 ---
 

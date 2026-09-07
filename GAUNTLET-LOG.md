@@ -3538,3 +3538,141 @@ project of why "the fix's own new code needs the same adversarial scrutiny as th
 one-time check but a recursive one: a cleanup routine is itself an operation that can fail, and asking "is
 this new code's own new code correct" has to be asked again every time a fix introduces a new fallible
 call, not just once per gauntlet round.
+
+## M5 P6 — `@forge/telemetry`: event log (`18` §18.4, `18` §18.10, `20` §20.4, `20` §20.10 S3)
+
+**Rounds: 2 (one critic finding 3 BLOCKING, 4 MAJOR and 2 MINOR issues, all fixed or knowingly deferred; a
+self-caught bug fixed between rounds; one scoped verify confirming 7 of 8 fixes cleanly, finding the 8th
+only partially fixed — a new BLOCKING regression in that same fix's own new code — plus 3 further MAJOR
+and 4 further MINOR findings; all BLOCKING/MAJOR and one MINOR fixed locally, 3 MINOR knowingly deferred,
+no third round). Outcome: WON.**
+
+The first piece of a brand-new package — `@forge/telemetry`, scaffolded to match `@forge/vcs`'s own
+established conventions. `18` §18.4 gives the `ForgeEvent` shape and event catalogue verbatim but says
+almost nothing about actual runtime behaviour; this piece's own design filled nine gaps (`SPEC-QUESTIONS.md`
+Q68), the most consequential being the write-ahead-log discipline `18` §18.10's resumability guarantee
+rests on — an event is `fsync`'d before the side-effect it authorises is ever attempted. Two full gauntlet
+rounds, plus a self-caught bug in between, surfaced sixteen real findings across it — more than any other
+single piece this milestone — concentrated almost entirely in the two places a WAL is hardest to get
+right: crash-mid-write recovery, and what happens when the failure-handling code itself fails.
+
+### Round 1 — critic: 3 BLOCKING, 4 MAJOR, 2 MINOR
+
+The critic was asked to hunt specifically for whether the `fsync`-before-return guarantee is real rather
+than assumed, whether the redactor can be defeated by an adversarial payload shape, whether an
+unvalidated `runId` can escape the project root, and resilience to a process crashing mid-write — each by
+actually constructing the scenario against real files and real (or realistically mocked) failures.
+
+- **BLOCKING: a crash mid-write leaves a torn, no-trailing-newline final line on disk that corrupts every
+  event after it, not just the torn one.** Confirmed empirically with a hand-constructed file.
+- **BLOCKING: `appendFile` can succeed while the following `fsync` fails, silently promoting unconfirmed
+  bytes into history the caller was told never happened** — confirmed by monkey-patching
+  `FileHandle.prototype.sync` to fail once immediately after a real write lands. A direct violation of
+  `18` §18.10, the one guarantee every later resumability piece is specified to trust blindly.
+- **BLOCKING: an unvalidated `runId` containing `../` segments escapes `projectRoot` entirely** —
+  confirmed empirically, a direct `20` §20.2 S1 violation.
+- Four MAJOR findings, all in the redactor and the read-side corruption defenses: a caller-supplied
+  pattern carrying the `g`/`y` regex flag silently missed matches (confirmed `RegExp.prototype.test`'s
+  `lastIndex` statefulness alternates true/false across keys); a payload key literally named `__proto__`
+  was silently dropped entirely (plain bracket assignment invokes `Object.prototype`'s own special
+  setter); a `Date` (or any other non-plain object) was destroyed into `{}` by the object-rebuilding walk;
+  `parseEventLine`'s own shape check validated only `seq`, letting `{"seq":1}` produce an event with every
+  other field silently `undefined`.
+
+Every finding was fixed at its structural root: `splitCompleteLines` (read-side, drops an incomplete
+trailing line) plus `truncateTornTrailingWrite` (write-side, physically removes torn bytes before the
+next append can glue onto them); capturing `preWriteSize` via `handle.stat()` before the write, with a
+best-effort `handle.truncate(preWriteSize)` on any write-then-sync failure; `assertSafeRunId` (rejecting
+`/`, `\`, `.`, `..`), called from the one choke point every public function already routes through; a
+fresh `RegExp` per pattern test, sidestepping `lastIndex` state; `Object.defineProperty` instead of
+bracket assignment; a prototype-based `isPlainObject` check; extending `parseEventLine`'s shape check to
+validate `v`/`ts`/`runId`/`type` too, deliberately not `payload`.
+
+Two further findings were judged **MINOR** and, after checking every sibling package first, deliberately
+**not fixed within this piece**: `events.test.ts`'s temp directories are never cleaned up, and
+`package.json`'s `engines.node` (`>=20.10`) is looser than the monorepo root's (`>=20.19`). Both turned
+out to be pre-existing, repo-wide conventions — every other package pins the identical `engines.node`,
+and not one existing `@forge/vcs` test file cleans up its own `mkdtemp` output either — so fixing either
+only here would make this piece the one inconsistent outlier rather than resolve the actual pattern.
+
+### Between rounds — a bug the builder found and fixed on their own, before any verify round
+
+Writing a direct test for the `assertSafeRunId` fix surfaced a real bug the critic round did not:
+`readEvents` called `eventLogPath` *inline, inside* its own `try` block, so `assertSafeRunId`'s own throw
+was caught by the catch clause meant only for genuine read failures, and re-wrapped into a misleading
+`TELEMETRY-EVENT-LOG-READ-FAILED` error with a "check permissions" remedy — losing the specific,
+actionable code entirely. `determineLastSeq` already avoided this exact trap; `readEvents` just hadn't
+been written the same way. Fixed immediately, before either fix was ever sent to a verify pass.
+
+### Round 2 — scoped verify: 7 of 8 confirmed PASS, 1 partially fixed; 8 new findings (1 BLOCKING, 3
+MAJOR, 4 MINOR)
+
+Every fix was independently re-derived with scenarios distinct from round 1's own — a torn write that is
+the *entire* file; a torn fragment that is itself complete, valid JSON simply missing its trailing `\n`;
+nested and percent-encoded traversal lookalikes for `runId`; the sticky flag and an adversarial match-
+ordering for the regex fix; `__proto__` nested at depth 2; a `Date` inside an array rather than an object.
+Seven of eight held exactly as claimed.
+
+**New finding 1 (BLOCKING): the fsync-rollback fix was only partially effective — a double I/O fault (the
+fsync fails, and the best-effort rollback truncate also fails) leaves a fully well-formed, newline-
+terminated "phantom" line on disk that the torn-write recovery mechanism cannot catch, since it isn't
+torn at all.** Trusting the in-memory last-seq cache after that failed, unrolled-back attempt let the
+*next* successful append reuse the same seq number — two on-disk lines both claiming it, and the run's
+history becomes permanently unreadable past that point. The identical consequence class round 1's own
+fsync finding exists to prevent, surviving in exactly the sub-case that finding's own fix had already
+flagged as unresolved. **Fixed** by invalidating the per-run last-seq cache entry on any append failure
+(previously only ever set on success), forcing the next append for that run to re-derive the truth from
+disk rather than trust a value that might no longer match it — closing the collision by adopting whatever
+is durably readable on disk as the new baseline, the only principled choice once both the write's own
+confirmation and its rollback have failed.
+
+**New finding 2 (MAJOR): three write-path failures — `appendLineWithFsync`'s `mkdir`/`open`, and
+`truncateTornTrailingWrite`'s own `open` — leaked a bare Node `Error` instead of this module's own typed
+`TelemetryError`**, unlike every read-side failure, which was already wrapped. **Fixed** by wrapping each
+function's entire fallible body in one outer try/catch, without disturbing the existing inner rollback
+logic.
+
+**New finding 3 (MAJOR): `assertSafeRunId` accepted the empty string**, and `eventLogPath` then resolves
+it to `runs/events.ndjson` — one level shallower than every real run — silently sharing one file and one
+sequence counter across every caller that passes `''`. **Fixed** by rejecting the empty string alongside
+the existing checks.
+
+**New finding 4 (MAJOR): a circular-reference payload crashed `redactPayload` with an unhandled
+`RangeError`**, propagating out of `appendEvent` as a raw, non-`TelemetryError` rejection — a realistic
+shape given payloads are typed `unknown` and can be adapter/MCP-echoed live object graphs. **Fixed** by
+threading a per-recursion-path `ancestors` set through the redaction walk and throwing a new, typed error
+the moment a value already on the current path is seen again — deliberately not "surviving" the cycle
+with a placeholder, since the later `JSON.stringify` in `appendEvent` could never represent one anyway.
+
+**New finding 5 (MINOR, fixed): `parseEventLine` accepted any `number` for `seq`, including `1.5` or a
+negative value**, silently propagating a corrupted sequence forward through every later append. **Fixed**
+by tightening the check to a positive integer.
+
+Three further new findings were judged **MINOR** and deliberately **not fixed**: `redactValue` silently
+upgrades a caller-supplied `Object.create(null)` payload's prototype to `Object.prototype` in its output
+(zero observable effect, since the result is only ever consumed by an immediately-following
+`JSON.stringify`, which treats both identically); `parseEventLine` never validates `type` against the
+actual `EventType` union at runtime (a real design question about forward-compatibility with a newer
+writer's not-yet-known event types, not a one-line addition); `errorCode`/`errorMessage` have two further
+edge cases in branches their own doc comments already document as unreachable through this module's real
+usage.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (63 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.
+
+### Calibration note
+
+This piece's own round 2 recurs the exact lesson P5's calibration note already named — **a cleanup call
+that can itself fail is new surface area with the same failure mode as the bug it closes** — but sharpens
+it further: here, the cleanup-of-the-cleanup wasn't merely undiagnosed, it was already named in the
+original fix's own code comment ("if the truncate itself also fails, the original cause below is still
+what matters") and *still* shipped with a real, reachable data-corruption path behind it, because that
+comment reasoned correctly about what the *caller* would see and stopped there, never following through
+to what state the *fix* leaves on *disk*. The other four new findings (three MAJOR, one MINOR fixed) are
+each smaller instances of a second, related pattern this milestone keeps surfacing: a validation or
+wrapping convention applied carefully to most of a module's failure paths, but not carried all the way
+through to every one of them (the write side vs. the read side; `.`/`..` vs. `''`; every field but
+`payload` in one check vs. every field but `type`'s own union membership in another). Both patterns point
+at the same underlying discipline: when a fix establishes "every X in this module now does Y," the actual
+verification step is enumerating every X and checking each one did, not just the one the original bug
+report happened to name.
