@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { wrapGitFailure } from './git.ts';
+import { resolveRevision, wrapGitFailure } from './git.ts';
 
 declare const LANE_ID_BRAND: unique symbol;
 
@@ -105,22 +105,6 @@ function worktreePath(cwd: string, laneId: LaneId): string {
  * the same `VcsError` guarantee as everything else here, not a raw `ENOENT` from `node:fs`. */
 async function resolveCwd(cwd: string): Promise<string> {
   return wrapGitFailure(() => realpath(cwd), `resolving "${cwd}" to its real, symlink-free path`);
-}
-
-/** Resolves `ref` to a full commit sha via `git rev-parse --verify`, or rejects — never passes `ref`
- * through unresolved. Necessary, not defensive: a gauntlet critic round found that a value shaped like
- * a flag (e.g. `-q`) handed to `git worktree add` as its own trailing `<commit-ish>` argument is *not*
- * safely rejected — even the conventional `--` "everything after this is not an option" separator does
- * not help, confirmed empirically: `git worktree add -b <branch> <path> -- -q` silently created a
- * worktree checked out at `HEAD`, not at the (bogus) supplied ref, and printed no error at all. `git
- * rev-parse --verify <ref>`, by contrast, reliably fails closed for both a flag-shaped and a genuinely
- * invalid ref (also confirmed empirically) — resolving first makes the value handed to `worktree add`
- * always a plain hex sha, which cannot be mistaken for an option by any git subcommand. */
-async function resolveRevision(cwd: string, ref: string): Promise<string> {
-  return wrapGitFailure(async () => {
-    const { stdout } = await execa('git', ['rev-parse', '--verify', ref], { cwd });
-    return stdout.trim();
-  }, `resolving "${ref}" to a commit in "${cwd}"`);
 }
 
 /** `git worktree add -b <branch> <path> <resolved-integration-base>`, into `.forge/state/worktrees/

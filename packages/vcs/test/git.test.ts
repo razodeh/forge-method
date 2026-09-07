@@ -24,6 +24,7 @@ import {
   getDirtyFiles,
   isNoCommitsYetResult,
   resolveHeadShaOrUndefined,
+  resolveRevision,
   snapshotRepoState,
   wrapGitFailure,
 } from '../src/git.ts';
@@ -275,6 +276,33 @@ describe('resolveHeadShaOrUndefined', () => {
     await corruptHead(cwd);
 
     await expect(resolveHeadShaOrUndefined(cwd)).rejects.toBeInstanceOf(ExecaError);
+  });
+});
+
+describe('resolveRevision', () => {
+  it('resolves a branch name to its full commit sha', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    await commitAll(cwd, 'initial');
+    const { stdout: expectedSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd });
+
+    expect(await resolveRevision(cwd, 'HEAD')).toBe(expectedSha.trim());
+  });
+
+  it('rejects a flag-shaped ref with a VcsError rather than letting it reach a later git subcommand unresolved', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    await commitAll(cwd, 'initial');
+
+    await expect(resolveRevision(cwd, '-q')).rejects.toBeInstanceOf(VcsError);
+  });
+
+  it('rejects a genuinely nonexistent ref with a VcsError', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    await commitAll(cwd, 'initial');
+
+    await expect(resolveRevision(cwd, 'not-a-real-ref')).rejects.toBeInstanceOf(VcsError);
   });
 });
 

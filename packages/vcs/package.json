@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./claims": "./src/claims.ts",
     "./commit": "./src/commit.ts",
     "./errors": "./src/errors.ts",
     "./git": "./src/git.ts",
@@ -18,6 +19,7 @@
   },
   "dependencies": {
     "execa": "9.6.1",
+    "minimatch": "10.2.6",
     "simple-git": "3.36.0"
   }
 }

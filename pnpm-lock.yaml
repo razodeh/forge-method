@@ -170,6 +170,9 @@ importers:
       execa:
         specifier: 9.6.1
         version: 9.6.1
+      minimatch:
+        specifier: 10.2.6
+        version: 10.2.6
       simple-git:
         specifier: 3.36.0
         version: 3.36.0

@@ -30,6 +30,16 @@ function openGit(cwd: string): SimpleGit {
   return simpleGit(cwd);
 }
 
+/** A human-readable message from any thrown value, not only a real `Error` — `execa`/git failures always
+ * are one in practice, but nothing types-enforces that a `catch` block's value is. Exported (rather than
+ * kept inline in `wrapGitFailure` below) so a caller elsewhere in this package that builds its own error
+ * message from a non-git failure — `claims.ts`'s `regenerate` command execution, which deliberately does
+ * *not* route through `wrapGitFailure` itself (its failures are not git failures) — can reuse the exact
+ * same normalisation instead of duplicating it. */
+export function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 /** Wraps any non-`VcsError` failure from a git operation into one, preserving the original as `cause`
  * so no diagnostic detail is lost — just consistently reachable through one type. A `VcsError` thrown
  * from inside `operation` itself (a caller-visible, already-classified failure — none of this module's
@@ -41,7 +51,7 @@ export async function wrapGitFailure<T>(operation: () => Promise<T>, context: st
     return await operation();
   } catch (cause) {
     if (cause instanceof VcsError) throw cause;
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     throw new VcsError(
       {
         code: 'VCS-GIT-OPERATION-FAILED',
@@ -159,6 +169,26 @@ export async function resolveHeadShaOrUndefined(cwd: string): Promise<string | u
     if (!isNoCommitsYetResult(error)) throw error;
     return undefined;
   }
+}
+
+/** Resolves `ref` to a full commit sha via `git rev-parse --verify`, or rejects — never passes `ref`
+ * through to another git subcommand unresolved. Necessary, not defensive: a gauntlet critic round
+ * (`PLAN-M5.md` P2) found that a value shaped like a flag (e.g. `-q`) handed to `git worktree add` as
+ * its own trailing `<commit-ish>` argument is *not* safely rejected — even the conventional `--`
+ * "everything after this is not an option" separator does not help, confirmed empirically: `git
+ * worktree add -b <branch> <path> -- -q` silently created a worktree checked out at `HEAD`, not at the
+ * (bogus) supplied ref, and printed no error at all. `git rev-parse --verify <ref>`, by contrast,
+ * reliably fails closed for both a flag-shaped and a genuinely invalid ref (also confirmed
+ * empirically) — resolving first makes the value handed to any later git subcommand always a plain hex
+ * sha, which cannot be mistaken for an option by any git subcommand. Shared across every piece of this
+ * package that accepts a caller-supplied ref (lane creation's `integrationBase`; claim enforcement's
+ * `baseSha`), rather than reimplemented per call site, so this one property can't drift out of sync
+ * between them. */
+export async function resolveRevision(cwd: string, ref: string): Promise<string> {
+  return wrapGitFailure(async () => {
+    const { stdout } = await execa('git', ['rev-parse', '--verify', ref], { cwd });
+    return stdout.trim();
+  }, `resolving "${ref}" to a commit in "${cwd}"`);
 }
 
 /** The pre-run snapshot `20` §20.2 point 6 requires: the exact starting SHA and dirty-file list, so a

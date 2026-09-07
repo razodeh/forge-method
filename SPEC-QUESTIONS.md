@@ -3480,3 +3480,169 @@ invocation incidentally also printed this file's (`SPEC-QUESTIONS.md`) pending d
 asked not to read. It disclosed this itself rather than staying silent. No bias resulted: the content
 was identical to what the verify prompt already stated directly, and this file's own verify-round section
 was still marked `*(pending)*` at the time, so no prior verdict was visible either way.
+
+## Q66 — M5 P4's `@forge/vcs` write-policy enforcement: a `PLAN-M5.md` signature correction, plus six
+design points not given anywhere in the spec pack
+
+**Plan correction: `enforceClaim`'s own signature was missing `baseSha`.** `PLAN-M5.md` P4's original
+Surface text listed `enforceClaim(handle, declaredGlobs, policy): ClaimEnforcementResult` — but diffing a
+lane's actual changes against its claim structurally requires knowing what to diff *against*, and nothing
+in a bare `LaneHandle` (`laneId`/`path`/`branch`) carries that. The same class of mistake as P1's own plan
+text once naming `ForgeError` where only the local `VcsError` is reachable — caught this time before any
+code was written against the wrong shape, not after. Fixed in the plan text and the implementation alike:
+`enforceClaim(handle, baseSha, declaredGlobs, policy)`.
+
+**Design point 1: `diffLaneChanges` resolves `baseSha` via the same `resolveRevision` `lanes.ts`'s own
+`createLaneWorktree` already uses for `integrationBase`.** `06` §6.7 says nothing about *how* the diff is
+computed, only that "the actual changed file set is diffed against the claim." `resolveRevision` was
+relocated from `lanes.ts` (where it was private) to `git.ts` and exported, so both pieces share the one
+implementation of a real, load-bearing safety property — P2's own critic round already found that a
+flag-shaped value (e.g. `-q`) reaches a git subcommand as a bare positional argument unsafely for at
+least one subcommand (`worktree add`), so every later piece accepting a caller-supplied ref applies the
+same defense proactively now, rather than waiting for a critic to rediscover the identical class of bug a
+third time.
+
+**Design point 2: a rename is deliberately *not* detected as one** (`git diff`'s own default, no `-M`) —
+reported as a deletion of the old path plus an addition of the new one. For claim enforcement specifically
+this is the more correct behaviour, not merely the simpler one: a rename touches both paths, and a step
+renaming an out-of-claim file into an in-claim one (or vice versa) is exactly the kind of write claim
+enforcement exists to catch; collapsing the two into one entry could hide that.
+
+**Design point 3: `strict` reversion branches on whether the out-of-claim path existed at `baseSha` at
+all** — `git checkout <baseSha> -- <path>` for a genuinely new file (one the lane itself created) has
+nothing to check out, so a new file is instead removed outright (`git rm -f --`), while a modified or
+deleted pre-existing path is restored via checkout. Both git invocations were verified empirically against
+a real flag-shaped filename (`-weird.txt`) before being trusted: unlike `worktree add`'s own trailing
+commit-ish argument (P2's finding), `git checkout <rev> -- <path>` and `git rm -f -- <path>` both honour
+`--` correctly, confirmed directly rather than assumed from the fact that P2 found a *different*
+subcommand's `--` handling unsafe.
+
+**Design point 4: `enforceClaim` never throws for a policy violation itself, strict or warn alike** — it
+reverts (or doesn't) and returns a structured result. Nothing in this package knows what "the step" or
+"failing" mean (`Q62`'s own forward-dependency precedent): that decision belongs to `@forge/engine`, a
+caller this piece cannot reach. This function's job ends at the structured facts a future caller needs to
+make it.
+
+**Design point 5: `append-only` installs git's own *built-in* `union` merge driver** (`.gitattributes`:
+`<glob> merge=union`) rather than a hand-written external merge-driver command. `06` §6.7 only says "merge
+driver concatenates" — it does not mandate a custom one. Confirmed empirically before committing to this,
+in two shapes: two branches independently appending distinct lines to a file present at their shared
+ancestor merge cleanly with both additions and no conflict; the same holds even when `.gitattributes`
+itself is added independently by each branch after diverging, never present at the ancestor at all (the
+realistic shape this piece's own design produces, since `applySharedPathStrategy` never commits on the
+caller's behalf). `union` is already implemented, tested, and shipped as part of git itself for well over
+a decade — strictly safer than this package reinventing the actual three-way concatenation logic, and its
+quoting/portability, as an external command of its own.
+
+**Design point 6: `regenerate` runs the configured command through a real shell** (`execa(command, {
+shell: true })`), not `execa`'s own `execaCommand`/`parseCommandString` (plain whitespace splitting, no
+quoting or operator support — execa's own docs: "this should be avoided" for general use). `18` §18.3's
+own worked example (`"pnpm install --lockfile-only"`) is an ordinary case either approach would handle,
+but a `command:` config field is a natural place for a project to reach for `&&`, quoting, or a pipe, the
+same way npm `scripts`/docker-compose `command:`/GitHub Actions `run:` all do — confirmed empirically
+(`echo hello $FOO && echo done` with a real shell) that `shell: true` interprets exactly that, which a
+naive split cannot. The trust model here also differs from `commit.ts`'s own `subject` field (`Q65`):
+`command` is project-authored config, not LLM-generated freeform text, so real shell semantics are the
+correct choice, not an injection risk of the same shape.
+
+### P4 critic round: 5 BLOCKING, 1 MAJOR, 1 MINOR
+
+The critic was asked to hunt specifically for an `S1` (path/scope-safety) violation, claim/glob-matching
+correctness, revert safety and atomicity under `strict`, whether the `union` merge driver design genuinely
+works, and — as with every piece this milestone — to actually construct each scenario against real git
+rather than reason about it abstractly. That framing is what surfaced every finding below as a concretely
+reproduced bug, including one this piece's own design-point writeup above got factually wrong.
+
+- **BLOCKING: the design-point 2 writeup above claiming rename detection is "off by default" for `git
+  diff` was itself wrong** — porcelain `git diff` enables rename detection *by default*; confirmed
+  empirically (`git mv` a file, diff against base, get one line for the new path only). Left uncorrected,
+  a step renaming an out-of-claim file *into* a claimed directory bypassed claim enforcement completely
+  (the old, out-of-claim path never reported at all), and a step renaming an in-claim file *out* of its
+  claim caused `enforceClaim` to treat it as a brand-new file with nothing to check out under its new
+  name — deleting it outright, destroying content the `strict` policy exists to protect. **Fixed** with
+  `--no-renames` on the `git diff` invocation, restoring the delete-plus-add behaviour the original
+  (incorrect) doc comment merely assumed.
+- **BLOCKING: `git diff --name-only`'s default path-quoting (`core.quotePath`) silently corrupted any
+  filename containing non-ASCII bytes or special characters**, reported as a literal C-quoted/escaped
+  string (`"caf\303\251.txt"`, quote marks included) rather than the real filename — confirmed
+  empirically via `xxd`. This broke glob matching (a legitimate in-claim file misclassified out-of-claim)
+  and `existsAtRevision`'s own `cat-file -e` lookup (failing for a reason having nothing to do with
+  whether the file existed at base, steering a modified pre-existing file onto the destructive `git rm`
+  branch instead of the restorative `git checkout` one). **Fixed** with `-z` (raw, unquoted, NUL-separated
+  paths), confirmed empirically to survive the same accented filename byte-for-byte once split on `\0`.
+- **BLOCKING: `diffLaneChanges` diffed only `baseSha..HEAD`, so anything uncommitted in the lane worktree
+  — including an untracked `.env` file, `20` §20.2 point 2's own deny-list entry — was invisible to claim
+  enforcement entirely**, with no documented or enforced precondition that the worktree be fully
+  committed first. **Fixed** by asserting `assertCleanWorkingTree` (already built in `git.ts`, for exactly
+  this property) at the top of `diffLaneChanges`, so an incompletely-committed lane fails loudly instead
+  of silently under-reporting.
+- **BLOCKING: a claim of `src/**` did not match a dotfile anywhere under `src/`** (`minimatch`'s own
+  default excludes any path segment starting with `.` from a wildcard match) — a step creating an
+  entirely ordinary, entirely in-claim file like `src/.eslintrc.json` had it classified out-of-claim and
+  deleted under `strict`. **Fixed** by passing `{ dot: true }` to every `minimatch` call.
+- **BLOCKING: a failure reverting one out-of-claim file silently aborted the loop, leaving every
+  out-of-claim file *after* it in the list completely unattempted**, with no signal to the caller about
+  which files remained in violation. **Fixed** by attempting every file regardless of an earlier one's
+  failure, then throwing one aggregate `VcsError` (new code `VCS-CLAIM-REVERT-FAILED`) naming exactly
+  which files failed and which succeeded, only after the loop finishes — maximising how reverted the
+  worktree actually ends up rather than stopping at the first obstacle.
+- **MAJOR: a failing `regenerate` command was wrapped in `wrapGitFailure`'s generic, git-flavoured remedy
+  text** ("ensure git is installed and on PATH") for a failure that has nothing to do with git — the
+  configured command is project config (`18` §18.3's `execution.sharedMutablePaths`), not a git operation.
+  **Fixed** with a dedicated error path (new code `VCS-REGENERATE-COMMAND-FAILED`) naming the actual
+  command and its real failure text.
+- **MINOR: `.gitattributes` idempotency used exact-string matching**, so a hand-authored line with
+  incidental trailing whitespace caused a redundant near-duplicate append (functionally harmless — git
+  attributes are last-match-wins — but not truly idempotent). **Fixed** by trimming each existing line
+  before comparing.
+
+Confirmed genuinely clean, with real attempts made to break each: `S1` path-scope safety (a symlink baked
+into `baseSha` pointing outside the repo, and a lane-introduced symlink replacing a base directory, both
+tested in both revert directions — git safely unlinks the conflicting entry before writing the correct
+type in every case, even with `core.protectSymlinks` explicitly disabled); wildcard/glob-shaped filenames
+reaching `git rm -f --`/`git checkout <rev> --` (git's pathspec matcher prefers an exact literal match
+when one exists, which by construction it always does here); the `union` merge driver design itself
+(replaying the shipped merge test *without* registering the attribute produces a real conflict — so the
+existing test is a genuine, discriminating regression check, not false confidence); command-argument
+safety; TypeScript/lint discipline.
+
+### P4 verify round: 7 of 7 findings confirmed PASS; 1 new MAJOR finding, fixed with a design change
+
+Every one of the seven critic-round findings was independently re-derived with fresh scenarios, not the
+shipped tests' own: a different rename pair; a CJK filename and a filename with spaces/punctuation (not
+just one accented character); all three of staged/unstaged/untracked uncommitted-change shapes tried
+separately; the "too permissive" direction of the dotfile fix specifically probed (a root-level dotfile
+and one in an unrelated directory, confirmed still correctly flagged out-of-claim); a four-file partial-
+failure scenario deliberately mixing *both* revert branches (checkout and rm) with two independently-
+locked directories, confirming a second failure isn't swallowed by the first and `error.cause` carries the
+full structured per-file list; a `regenerate` failure from a genuinely nonexistent binary, not just a
+shell built-in's own exit code; a `.gitattributes` line with both leading *and* trailing whitespace, and
+the "doesn't over-match a genuinely different line" direction of that same fix. The `errorMessage`
+extraction in `git.ts` was independently confirmed behaviour-preserving for `wrapGitFailure` — byte-exact
+message text checked for both an `Error` cause and a non-Error one, not merely re-running the existing
+suite.
+
+**New finding (MAJOR): the finding-3 fix itself (asserting a clean working tree before diffing) was
+broken by an interaction with `enforceClaim`'s own, unrelated, pre-existing design.** `enforceClaim`
+deliberately leaves its reverts uncommitted (design point 4 above — a caller decides when/how to commit).
+Once `diffLaneChanges` started requiring a clean tree first, a *successful* revert made the lane "dirty"
+for every subsequent call — so retrying `enforceClaim`, or calling `diffLaneChanges` to re-inspect after
+fixing whatever caused a `VCS-CLAIM-REVERT-FAILED` (finding 5's own error message literally recommends
+this: "inspect the lane worktree directly"), immediately hit an unrelated, misleading `VCS-DIRTY-TREE`
+rejection instead. Confirmed empirically, minimal repro: revert one out-of-claim file successfully, call
+`diffLaneChanges` again — rejects, even though the file's content is now byte-identical to `baseSha`.
+
+**Fixed with a different design, not a patch on top of the broken one.** `diffLaneChanges` no longer
+asserts cleanliness at all — it now diffs `baseSha` against a *single* ref (git's own one-argument `diff`
+compares against the live working tree and index, not just another commit) plus `git ls-files --others
+--exclude-standard` for untracked files `git diff` never reports regardless of ref count, unioned
+together. This closes the original gap (uncommitted and untracked content is included, not silently
+ignored) *and* the regression the first fix introduced, as the same property: a file already reverted to
+exactly its `baseSha` content produces zero diff against that single ref, so it naturally stops appearing
+on a later call with no retry-specific logic anywhere — confirmed empirically before writing the code, the
+same discipline as every other fix this piece. Two new tests pin this directly: an uncommitted/untracked
+file (staged and fully-untracked cases, separately) is included; calling `enforceClaim` a second time
+after a successful revert reports zero further violations rather than rejecting.
+
+No other new findings — `tsc`, `eslint`, and the package's own test suite were all independently confirmed
+clean.
