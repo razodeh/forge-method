@@ -26,4 +26,25 @@ describe('FakePlatformAdapter metadata methods', () => {
     const adapter = new FakePlatformAdapter();
     await expect(adapter.installAssets()).resolves.toEqual([]);
   });
+
+  it('capabilities().interject is honestly false, and no SessionHandle ever provides a working interject', async () => {
+    const adapter = new FakePlatformAdapter();
+    const capabilities = await adapter.capabilities();
+    expect(capabilities.interject).toBe(false);
+
+    const handle = await adapter.startSession({
+      runId: 'r',
+      stepId: 's',
+      cwd: '',
+      systemPrompt: { mode: 'append', text: '' },
+      prompt: 'hello',
+      model: FAKE_MODEL_ID,
+      tools: { read: true, write: true, exec: false, network: 'none' },
+      permissionMode: 'auto',
+      limits: {},
+      env: {},
+      abortSignal: new AbortController().signal,
+    });
+    expect('interject' in handle).toBe(false);
+  });
 });

@@ -1,9 +1,17 @@
 /**
  * `FakePlatformAdapter` — a fully spec-compliant, in-memory `PlatformAdapter`: the one adapter every
  * other future FORGE package tests against instead of a real, costly, non-deterministic coding
- * platform. Implements every optional method of `07` §7.2's own interface (a fake with everything "on"
- * is what proves the interface itself is implementable end to end), and is expected to pass all 16 of
+ * platform. Implements every optional method of `PlatformAdapter` itself (a fake with everything else
+ * "on" is what proves the interface is implementable end to end), and is expected to pass all 16 of
  * `@forge/adapter-kit/conformance`'s own tests when constructed with its default (full) capabilities.
+ *
+ * The one capability this fake genuinely does not implement, even in the non-degraded default case, is
+ * `interject`: `SessionHandle.interject` is a live mid-session interrupt into a real model's turn, which
+ * has no meaningful analogue against pre-scripted, static data (`FakeSessionScript` is deliberately
+ * never a function of runtime input — Q61 point 2), and no consumer of this package needs it yet.
+ * `DEFAULT_CAPABILITIES.interject` is honestly `false` to match — `capabilities()` never claims a
+ * capability `SessionHandle` cannot back up — matching the same `interject: false` convention
+ * `@forge/adapter-kit/conformance`'s own minimal test fixtures already use.
  *
  * Known, deliberate limitations (accepted trade-offs, not oversights — a fresh critic round raised
  * both; recorded rather than silently left undocumented): `SessionRequest.systemPrompt`,
@@ -55,7 +63,9 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   streaming: true,
   partialText: true,
   sessionResume: true,
-  interject: true,
+  // Genuinely false, not a degraded default: SessionHandle.interject is never implemented (see this
+  // module's own doc comment) — capabilities() must never claim a capability nothing backs up.
+  interject: false,
   structuredOutput: true,
   toolAllowlist: true,
   permissionModes: ['manual', 'accept-edits', 'deny-unlisted', 'auto'],
