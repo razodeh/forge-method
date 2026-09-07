@@ -12,7 +12,7 @@ export {
   type ClaimEnforcementResult,
   type SharedPathStrategyOptions,
 } from './claims.ts';
-export { commitInLane, formatCommitMessage, type CommitMessageOptions } from './commit.ts';
+export { assertSingleLine, commitInLane, formatCommitMessage, type CommitMessageOptions } from './commit.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';
 export {
   assertCleanWorkingTree,
@@ -37,3 +37,17 @@ export {
   type LaneId,
   type ParsedWorktreeBlock,
 } from './lanes.ts';
+export {
+  conflictStatuses,
+  processMergeCandidate,
+  revertMerge,
+  type CheckResult,
+  type ConflictedFile,
+  type MergeCandidate,
+  type MergeConflictDescription,
+  type MergeConflictResolver,
+  type MergeOutcome,
+  type PostMergeCheck,
+  type PreMergeCheck,
+  type ProcessMergeCandidateOptions,
+} from './merge-queue.ts';

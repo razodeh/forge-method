@@ -32,7 +32,11 @@ export interface CommitMessageOptions {
  * permanent audit record (`20` §20.9). Rejecting the newline outright — rather than stripping or
  * escaping it — keeps the failure loud at the one point where this data is still structured, instead of
  * silently mangling content a caller might not notice. */
-function assertSingleLine(fieldName: string, value: string): void {
+/** Exported — not just used locally — so `merge-queue.ts` can apply the identical guarantee to the
+ * `stepId`/`runId` it tags a merge (and revert) commit message with. Those trailers carry exactly the
+ * same forgeable-newline risk this function was built for; reusing the one check keeps that property
+ * from drifting out of sync between the two call sites rather than being reimplemented at the second. */
+export function assertSingleLine(fieldName: string, value: string): void {
   if (value.includes('\n') || value.includes('\r')) {
     throw new VcsError({
       code: 'VCS-INVALID-COMMIT-FIELD',

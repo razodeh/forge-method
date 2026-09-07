@@ -9,7 +9,8 @@
     "./commit": "./src/commit.ts",
     "./errors": "./src/errors.ts",
     "./git": "./src/git.ts",
-    "./lanes": "./src/lanes.ts"
+    "./lanes": "./src/lanes.ts",
+    "./merge-queue": "./src/merge-queue.ts"
   },
   "engines": {
     "node": ">=20.10"

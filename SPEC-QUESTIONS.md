@@ -3646,3 +3646,205 @@ after a successful revert reports zero further violations rather than rejecting.
 
 No other new findings — `tsc`, `eslint`, and the package's own test suite were all independently confirmed
 clean.
+
+## Q67 — M5 P5's `@forge/vcs` merge queue: nine design points not given anywhere in the spec pack
+
+`06` §6.5's own text is a tight six-step recipe, but names only three things concretely (the rebase, the
+`--no-ff` merge tagged with the step id, the automatic revert) — everything about the actual TypeScript
+surface carrying that recipe was this piece's own design.
+
+**1. `MergeCandidate` carries `stepId`/`runId` explicitly, beyond the plan's original "lane handle +
+declared claim + conflict policy."** Both are needed to tag the merge (and, on failure, revert) commit —
+but neither is recoverable from `handle.branch` alone: `lanes.ts`'s own `slugifyStepId` is lossy by
+design (case/punctuation folded away), so the *original* `stepId` a merge commit needs to carry as its
+`Forge-Step` trailer cannot be re-derived from the branch name that contains only its slug.
+
+**2. `MergeOutcome` is a discriminated union of objects, each carrying its own real data** (`mergeCommitSha`,
+`checkResult`, `revertCommitSha` — whichever apply), not a bare string tag. Matches `ClaimEnforcementResult`'s
+own established shape (`Q66`): a caller needs the sha or the check result to actually act on an outcome,
+not just its name.
+
+**3. `agent` and `human` conflict policy collapse to one structural branch inside this piece: "call the
+caller-supplied resolver."** Which of the two a given call represents — spawning a merge-resolver step vs.
+surfacing a human modal and awaiting a real decision — is entirely a property of *how the caller
+implemented the resolver it passed in*, invisible to and no concern of this package. Only `abort` is
+structurally different (it never calls anything). The public `conflictPolicy` type still keeps all three
+literal values, matching `18` §18.3's own config vocabulary (`conflictPolicy: agent`), even though the
+internal control flow only branches two ways.
+
+**4. Conflict detection is structural, not exit-code-based.** A failed `git rebase` is not, by itself,
+proof of a content conflict — confirmed empirically that a rejecting `pre-rebase` hook also fails a
+rebase (exit 128) with zero unmerged paths. `git diff --name-only --diff-filter=U` (checked *after* a
+failed rebase) is the actual signal: non-empty means a real conflict, dispatched per policy; empty means
+a genuinely unexpected git failure, wrapped as a `VcsError` instead. The same "check the real state,
+don't infer from an exit code" discipline `git.ts`'s `isNoCommitsYetResult` already established, applied
+to a new scenario.
+
+**5. The "missing resolver" misconfiguration still cleans up the lane before throwing.** `conflictPolicy`
+being `agent`/`human` with no `conflictResolver` supplied is a caller programming error, not a normal
+outcome — but the lane worktree is still mid-rebase at that point, so `git rebase --abort` runs before the
+`VcsError` (code `VCS-MISSING-CONFLICT-RESOLVER`) is thrown, leaving the lane retriable rather than stuck.
+
+**6. The resolver's own responsibility ends at fixing file content; this piece handles staging and
+continuing the rebase** (`git add -A` then `git rebase --continue`) once a resolver reports `'resolved'`.
+Mirrors `commit.ts`'s own "stage everything" convention (`Q65`) for the same underlying reason: a
+caller-supplied component (there, an agent; here, a resolver) shouldn't need to know git's own staging
+mechanics to do its actual job.
+
+**7. The merge and revert commits reuse `commit.ts`'s own `Forge-Step`/`Forge-Run` trailer keys**, and its
+exported `assertSingleLine` guard against a newline forging a trailer (`Q65`'s own finding, applied here
+proactively rather than left for a critic to rediscover a third time — the same reasoning `Q66`'s design
+point 1 already gave for reusing `resolveRevision`). Keeping the same trailer vocabulary across every kind
+of FORGE-authored commit (agent lane commits, merge commits, revert commits) is what keeps the audit trail
+(`20` §20.9) uniformly parseable regardless of which piece produced a given commit.
+
+**8. A revert is `git revert -m 1 --no-commit <mergeSha>` plus a *separate* `git commit -m <message>`, not
+a single `git revert -m 1 <mergeSha>`.** `git revert`'s own `-m` flag means "mainline parent number" (which
+side of the merge counts as the branch being reverted onto), not "message" the way `git commit -m` does —
+a real, non-obvious git API overload, confirmed by reading git's own option semantics rather than assumed.
+Getting a custom, trailer-bearing revert commit message needs the two-step form; `git revert -m 1` alone
+would use git's own auto-generated message instead, with no `Forge-Step`/`Forge-Run` trailers at all.
+
+**9. `handle.branch` reaches `git merge`/`git rebase` directly, never through `resolveRevision` first** —
+a deliberate, reasoned exception to the "always resolve a caller-supplied ref before it reaches a git
+subcommand" rule this milestone has followed since `P2`'s own `integrationBase` finding. `handle.branch`
+is not caller-supplied text: it is always `lanes.ts`'s own `laneBranchName` output, structurally
+guaranteed to start with `forge/` and never flag-shaped (`slugifyStepId` never produces a leading `-`) —
+the identical "FORGE-generated, already ref-safe" trust `laneBranchName`'s own doc comment already
+established for `runId`. Resolving a value that is provably already safe would add a git round trip for
+no safety benefit.
+
+### P5 critic round: 3 BLOCKING, 4 MAJOR
+
+The critic was asked to hunt specifically for conflict-detection correctness, the revert's mainline-
+parent-number correctness, cleanup/retriability on every exit path, complete trailer-injection coverage,
+and the explicitly-untested "what if the caller violates 'one merge at a time'" race — each by actually
+constructing the scenario against real git. That framing surfaced all three blocking findings as
+concretely reproduced bugs, one of them (the third) via an actual constructed exploit, not a theoretical
+gap.
+
+- **BLOCKING: a *second*, independent conflict revealed only by `git rebase --continue` (ordinary for any
+  lane with more than one commit) was never routed through the conflict pipeline at all.** The original
+  `continueRebaseWithResolution` wrapped `--continue` in a bare `wrapGitFailure`, with none of
+  `attemptRebase`'s own "is this really a content conflict" logic — so a second conflict surfaced as an
+  opaque `VCS-GIT-OPERATION-FAILED`, the resolver was never told about it, and the rebase was left
+  genuinely in progress with no cleanup. Confirmed empirically with a real two-commit lane, each commit
+  independently conflicting with intervening integration history. **Fixed** by extracting the shared
+  "run a rebase step, structurally distinguish a real conflict from any other failure" logic
+  (`runRebaseStep`) that both starting a rebase and continuing one now go through, and restructuring
+  `processMergeCandidate`'s conflict handling from a single `if` into a `while` loop — every conflict,
+  first or subsequent, gets the identical policy dispatch.
+- **BLOCKING: a failed `git merge --no-ff` had no cleanup at all, and could wedge the entire queue, not
+  just the one candidate.** Every other failure path in this file already cleaned up after itself
+  (`abortRebase`); the merge step didn't. Confirmed empirically by constructing the exact race the file's
+  own doc comment says it trusts the caller not to create (integration's HEAD moves between this
+  candidate's rebase and its own merge step, via a conflicting concurrent change) — the resulting failed
+  merge left `MERGE_HEAD` behind, and a second, entirely unrelated candidate's own merge attempt against
+  the same `integrationPath` then failed immediately, blocked by the first candidate's own leftover state,
+  until a human ran `git merge --abort` manually. **Fixed** with a new `abortMerge` helper, called on any
+  merge-step failure before re-throwing — the queue now fails safely for a single candidate rather than
+  wedging for every candidate after it.
+- **BLOCKING: `candidate.handle.laneId` reached the merge/revert commit message with no `assertSingleLine`
+  validation, contradicting this piece's own stated completeness claim** — only `stepId`/`runId` were
+  checked. The design reasoning (a `LaneHandle` can only be produced by `lanes.ts`, whose branch
+  construction can't contain a newline since git's own ref-name rules would reject it) turned out to be
+  half the story: `LaneId`'s brand is a compile-time-only guard an ordinary `as LaneId` cast defeats, and
+  nothing stops a caller from reconstructing a `LaneHandle` directly (a realistic path, not a contrived
+  one — this package's own `listOrphanedWorktrees` exists specifically to support recovering handles
+  after a crash, `20` §20.10 S12). The critic constructed exactly that: a hand-built `LaneHandle` with a
+  newline-laden `laneId`, merged cleanly, producing a real commit with a second, forged-looking
+  `Forge-Step:` line injected into its subject — the exact injection class `Q65`'s `assertSingleLine`
+  exists to close. **Fixed** with one more `assertSingleLine('laneId', ...)` call alongside the existing
+  two — defense in depth instead of relying solely on the construction-path argument.
+
+- **MAJOR: `MergeConflictDescription`'s `diff` field carries almost no usable content for a delete/modify
+  or rename/rename conflict** — confirmed empirically that `git diff`'s own two-way renderer has no
+  useful unified-diff form for either shape and produces only a one-line placeholder
+  ("* Unmerged path <file>"), undermining `06` §6.5 step 2's "the conflicting hunks" requirement for
+  exactly those two conflict shapes (content and binary conflicts, the more common cases, do get real
+  diff content). **Fixed** by adding a new `conflictedFiles: readonly ConflictedFile[]` shape (replacing
+  the old bare `readonly string[]`) carrying each path's own porcelain XY status code (`git status
+  --porcelain=v1`) — `DU`/`UD`/`AA`/etc. — which is exactly the signal `diff` cannot provide for those
+  shapes, confirmed against a real delete/modify conflict.
+- **MAJOR (test quality): the "clean merge" test's own parent-count assertion didn't prove what its
+  comment claimed** — "two parents, not a fast-forward" was checked, but never *which* parent is which,
+  even though the whole revert mechanism's correctness rests on parent 1 being integration's own
+  pre-merge history, not the lane's. The critic verified the code itself is correct (including a
+  deliberate `-m 2` control that reproducibly corrupts integration's own prior content) — a real gap in
+  test coverage, not a live bug. **Fixed** by giving the test a real prior integration commit and
+  asserting parent 1 is specifically that commit's sha.
+- **MAJOR (test quality): no shipped test exercised any conflict shape beyond a single-file content
+  conflict** — delete/modify, binary, rename, and multi-file conflicts were all unexercised, which is
+  exactly the coverage gap that let the `diff`-content finding above ship unnoticed. **Fixed** with a
+  delete/modify test (pinning the new `DU` status code) and the multi-conflict-loop test (which doubles
+  as coverage for two independent, sequential single-file content conflicts).
+- **MAJOR (documentation): `PostMergeCheck`'s own doc comment didn't say what happens when a post-check
+  throws rather than returning `{ passed: false }`.** Confirmed the current behaviour (propagate
+  uncaught, preserving the "broken check" vs. "check correctly found something wrong" distinction) is
+  intentional and consistent with pre-checks — but for a *post*-check specifically, throwing leaves the
+  merge commit sitting unreverted on integration's own HEAD with no `MergeOutcome` returned to say so, a
+  consequence worth stating explicitly rather than leaving a caller to discover it. **Fixed** by
+  documenting it directly on the type.
+
+Confirmed genuinely clean, with real attempts made to break each: mainline-parent-number correctness
+(`-m 1`, verified with a real multi-commit integration history plus a deliberate `-m 2` control);
+history preservation and no force-push (grepped the file for `push` — zero occurrences); cleanup and
+retriability on the abort-policy, resolver-unresolved, and missing-resolver-misconfiguration paths, and on
+a pre-check failure (leaves the lane rebased-but-clean, a sane retry state); a throwing check propagating
+as a real, uncaught rejection rather than being silently collapsed into an ordinary failure; TypeScript/
+lint discipline.
+
+### P5 verify round: 7 of 7 findings confirmed PASS; 3 new findings (1 BLOCKING, 2 MAJOR), all fixed
+
+Every one of the seven critic-round findings was independently re-derived with scenarios distinct from the
+shipped tests' own: a 3-file, 3-commit multi-conflict lane (not the shipped 2-file one), with a mid-loop
+`'unresolved'` confirmed to unwind the *entire* rebase including an already-resolved earlier conflict, not
+just stop cleanly; the merge-step race reproduced via a different mechanism (inside the resolver callback,
+not a preCheck); the `laneId` exploit reproduced with a `\r`-only payload (not just `\n`) to exercise
+`assertSingleLine`'s own second branch for this field specifically, plus a structural proof that the check
+is genuinely unreachable through the legitimate `createLaneWorktree` API (git itself refuses a
+newline-laden `runId` as a ref name before any handle is ever produced); both delete/modify directions
+(`DU` and `UD`, the shipped test only covers one) plus `AA`/rename-rename cross-checked to confirm
+`conflictStatuses` never mismatches `conflictedFilePaths`; parent 2 (not just parent 1) confirmed correct
+too. All seven held.
+
+**New finding 1 (BLOCKING): `revertMerge`'s own `git revert -m 1 --no-commit` can itself conflict, and had
+no cleanup at all** — the identical bug class as the critic round's own finding 2 (failed merge wedges the
+queue), at a different call site the critic round's own scenario didn't happen to exercise. Confirmed
+empirically: candidate A merges, then while A's own post-merge checks are still running, a "concurrent"
+candidate B rebases onto (conflicting with, since it touches the same line), resolves, and merges *its
+own* change — the identical "one merge at a time" violation finding 2 already treats as realistic, just
+occurring one step later in the pipeline. When A's checks then fail and trigger a revert of A's own merge,
+that revert collides with B's later change: `REVERT_HEAD` left set, zero cleanup attempted, and a third,
+completely unrelated candidate then also failed to merge — compounding with new finding 2 below into a
+maximally confusing "no merge to abort" error for a totally innocent candidate. **Fixed** with a new
+`abortRevert` helper (`git revert --abort`), wrapping both of `revertMerge`'s own git calls in one
+try/catch (either can leave `REVERT_HEAD` set — confirmed empirically that `git revert --abort` cleans up
+either way) — mirroring `abortMerge`'s own fix exactly.
+
+**New finding 2 (MAJOR): `abortMerge`'s (and now `revertMerge`'s) own cleanup call could silently replace
+the original diagnostic with an unrelated "nothing to abort" error**, when the underlying failure never
+actually set `MERGE_HEAD`/`REVERT_HEAD` in the first place (confirmed empirically: an untracked file
+collision makes `git merge` refuse without ever setting `MERGE_HEAD`; a bogus sha makes `git revert` fail
+the same way for `REVERT_HEAD`) — so `wrapGitFailure`'s own generic error from the *cleanup* attempt threw
+first, before the intended, more informative `VcsError` about the *original* failure was ever constructed.
+**Fixed** by wrapping each cleanup attempt in its own inner try/catch: the original failure is always what
+gets thrown, and if cleanup also fails, that fact is appended to the message rather than either being
+silently discarded or replacing the more important diagnostic.
+
+**New finding 3 (MAJOR): a `conflictResolver` (or `describeConflict`'s own git calls) that itself throws —
+a realistic failure mode for what `06` §6.5 calls "spawn a merge-resolver step," a whole separate agent
+invocation that can crash or time out — left the lane worktree stuck mid-rebase, undocumented.** Every
+*documented* exit from the conflict-handling loop (abort-policy, missing-resolver, resolver-returns-
+unresolved) already called `abortRebase` first; a throwing resolver did not. Unlike `PostMergeCheck`'s own
+analogous "throw vs. fail" finding from the critic round (kept as documentation-only, since a merge commit
+left sitting on integration has real inspection value) — a rebase left mid-progress has no comparable
+value and actively blocks every further git operation on that lane worktree, so this one was a genuine
+behaviour fix, not just a doc comment: the resolver call is now wrapped, `abortRebase` runs (best-effort —
+its own failure here is swallowed rather than masking the more important original error, the identical
+reasoning as new finding 2) before the resolver's own thrown value is re-thrown exactly as received, never
+wrapped into a new `VcsError` that would lose its original type.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (130 tests at verify time, 134 after
+these three fixes' own new tests, 100% coverage on every file in `packages/vcs/src/`) all independently
+reconfirmed clean.
