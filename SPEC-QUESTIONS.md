@@ -3275,3 +3275,98 @@ original locale bug directly — the only git available on the verification mach
 has no NLS/gettext support at all — and said so plainly rather than assuming the fix worked; the
 structural (non-locale-dependent) redesign this round produced does not depend on that reproduction
 either way, since it does not read git's message text at all anymore.
+
+## Q64 — M5 P2's `@forge/vcs` lane worktree lifecycle: one design point (collision-resistant slugs, not
+given anywhere in the spec pack), its own critic-round and verify-round addenda, plus a symlink-resolution
+bug the builder found and fixed independently of either round
+
+**Design point: `slugifyStepId` always appends an 8-hex-character disambiguator, never a bare
+human-readable slug.** Not given anywhere in the spec pack — `06` §6.4's own branch-naming example
+(`forge/<runId>/<stepId-slug>`) shows no such suffix. Forced by the critic round's own finding 3 below:
+a lossy, human-readable-only slugification necessarily lets two different, realistic step ids collide
+(case/punctuation folding), and git's own "branch already exists" refusal — this piece's original,
+sole collision defence — only catches that while the *first* colliding lane is still alive. A short hash
+of the *full, original* `stepId` (computed via `node:crypto`'s `createHash`, confirmed not on this
+repo's own R10 randomness-ban list, which is scoped to `randomUUID`/`randomBytes`/etc. specifically, not
+deterministic hashing) makes two different inputs collide only if they also collide on the hash —
+astronomically unlikely for any realistic number of lanes — while keeping the same input's own slug
+perfectly deterministic. Two round-1 minor findings (unbounded slug length; a bare Windows-reserved
+device name like `con`/`nul` as the final path segment) turned out to close as a side effect of this same
+change, once the human-readable portion was also length-capped: the hash suffix is never omitted, so the
+final segment can never be *exactly* one of those reserved words, and the cap bounds the total length
+regardless of `stepId`'s own.
+
+### P2 critic round: 3 BLOCKING, 3 MAJOR, 3 MINOR
+
+The critic was asked to hunt specifically for collision/identity correctness, the S12 crash-recovery
+property, idempotency under partial failure, cross-platform correctness, and command-argument safety —
+and to actually construct and run every scenario against real git rather than reasoning about it in the
+abstract, which is what surfaced findings 1–3 as concretely reproduced bugs rather than theoretical
+concerns. Full findings, each with its own repro and fix, are in this same file's own P2 critic-round
+addendum text (below); summarised here:
+
+- **BLOCKING: `removeLaneWorktree`'s two git calls (`worktree remove`, `branch -D`) were non-atomic, and
+  a process killed between them left an orphaned branch nothing in the module could ever discover or
+  recover** — not a retried `createLaneWorktree` (git's own "branch already exists" refusal fires
+  forever against it), not a retried `removeLaneWorktree` itself (the old unconditional `worktree
+  remove` call failed first, on a path already gone, so `branch -D` was never reached), not
+  `listOrphanedWorktrees` (a branch with no worktree is invisible to `git worktree list`). Exactly the
+  interruption point `06` §6.10's own required crash-resume CI test would hit.
+- **BLOCKING: `options.integrationBase` reached `git worktree add` as a bare positional argument; a
+  flag-shaped value (e.g. `-q`) was silently consumed as `--quiet` rather than erroring**, and the
+  created lane ended up silently checked out at `HEAD` instead of the intended base — confirmed
+  empirically, including that the conventional `--` "not an option" separator does *not* fix it for this
+  specific git subcommand (also confirmed empirically: `git worktree add -b b p -- -q` still silently
+  defaults to `HEAD`).
+- **BLOCKING: two different, realistic step ids colliding under `slugifyStepId` were only protected by
+  git's own branch-exists refusal while the first lane was still alive** — sequentially (the more
+  realistic case: complete a lane, remove it, then create a colliding one), the second creation silently
+  succeeded with an indistinguishable `laneId`/branch/path.
+- **MAJOR: a *locked* worktree could not be removed at all** — `git worktree remove --force` fails on
+  one; the module never issued the documented `-f -f` override or an unlock.
+- **MAJOR: the repository's own main worktree could be misreported as an orphaned lane** by
+  `listOrphanedWorktrees`, if a human happened to check out a `forge/`-namespaced branch directly in it
+  — `git worktree list --porcelain` carries no explicit "this is the main worktree" marker to filter on
+  instead.
+- **MAJOR: `removeLaneWorktree` was not idempotent**, and because every failure in this package
+  collapses to one generic `VCS-GIT-OPERATION-FAILED` code, a caller had no structural way to
+  distinguish "already cleaned up" from a real failure without locale-fragile message matching —
+  subsumed entirely by finding 1's own fix (a second call on an already-gone lane is now a silent no-op).
+- Three MINOR findings (unbounded slug length; a bare Windows-reserved device name possible as the final
+  path segment — both closed as a side effect of the collision-resistance fix above; `parseLaneWorktrees`
+  hand-deriving the `laneId` string format instead of reusing the one function that already builds it —
+  fixed via a new shared `formatLaneId` helper both the forward and reverse paths now route through).
+
+### An independently-found bug, between the critic and verify rounds: macOS symlink resolution
+
+While writing tests for the round-1 fixes (not itself a critic or verify finding), the builder found that
+plain `path.resolve()` is not sufficient to compare a locally-computed worktree path against what `git
+worktree list --porcelain` reports: on macOS, `os.tmpdir()` itself resolves through a symlink (`/var` →
+`/private/var`), and git canonicalises the path it is given internally before reporting it back — the
+identical class of bug `PLAN-M4.md` P4's own C2 check already hit once, for a different check, in this
+same codebase. This silently broke both the finding-1 fix (the worktree-still-registered check believed
+a worktree already gone, skipping real cleanup) and the finding-5 fix (the main-worktree exclusion). Fixed
+with a `resolveCwd` helper (`node:fs/promises`'s `realpath`) applied wherever a worktree path is computed
+or compared, before either round-1 finding above was ever sent to a critic — closed the same session it
+was found, with no separate gauntlet round of its own.
+
+### P2 verify round: 9 of 9 confirmed cleanly; 1 new MINOR finding
+
+Every fix was independently re-derived against real git, including combinations the individual fixes
+did not individually anticipate (a worktree that is both locked *and* has had its directory deleted out
+from under git; two ids that collide on their full 40-character truncated readable prefix, confirmed
+still producing distinct slugs since the hash is computed over the *untruncated* original; the
+main-worktree exclusion and lane discovery both proven correct in every direction of symlinked-vs-resolved
+`cwd` mismatch). All nine round-1 findings confirmed cleanly, including independently reproducing both of
+finding 2's own empirical claims (the `--` separator genuinely does not help; `rev-parse --verify`
+genuinely does fail closed for both a flag-shaped and a bogus ref) rather than trusting the builder's own
+prior reproduction.
+
+**New finding (MINOR): `resolveCwd` itself was not wrapped in `wrapGitFailure`**, leaking a plain Node
+`ENOENT`/`EACCES` `Error` (no `.code`, no `.remedy`) from `createLaneWorktree` and `listOrphanedWorktrees`
+for a nonexistent `cwd` — the one remaining place in the file that didn't honour its own stated guarantee
+("every function rejects only `VcsError`"), introduced by the same independently-found symlink fix.
+**Fixed** by wrapping the `realpath` call like every other fallible operation in this module; two new
+tests (one per affected function) pin a nonexistent `cwd` now rejecting with a real `VcsError`.
+
+No other new findings.

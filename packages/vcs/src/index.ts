@@ -16,3 +16,14 @@ export {
   wrapGitFailure,
   type RepoSnapshot,
 } from './git.ts';
+export {
+  createLaneWorktree,
+  laneBranchName,
+  listOrphanedWorktrees,
+  parseWorktreeBlocks,
+  removeLaneWorktree,
+  slugifyStepId,
+  type LaneHandle,
+  type LaneId,
+  type ParsedWorktreeBlock,
+} from './lanes.ts';
