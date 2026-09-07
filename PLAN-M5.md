@@ -318,18 +318,31 @@ concern, the rest belongs to whichever package owns that projection); `06` §6.9
 **Surface:** `@forge/telemetry/ledger`
 - `LedgerEntry` — the abridged row shape from `18` §18.5 (`runId, stepId, agent, model, platform,
   inputTokens, outputTokens, cacheReadTokens, costUsd, estimated, durationMs, ts`).
+- `UsageRecordedPayload` — a `UsageRecorded` event's own payload shape (everything a `LedgerEntry` needs
+  beyond what `ForgeEvent`'s own envelope already carries: `runId`/`stepId`/`agentId`/`ts`), not named in
+  the plan's own original text — `18` §18.4 gives the event catalogue no payload shape at all.
 - `projectLedger(events: AsyncIterable<ForgeEvent>): Promise<readonly LedgerEntry[]>` — a pure
   projection, per `18` §18.4's own "if a value cannot be derived from the log, it does not exist" —
-  the ledger is *derived*, never independently written.
+  the ledger is *derived*, never independently written. Throws a `TelemetryError` for a `UsageRecorded`
+  event missing/blank `stepId`/`agentId` or carrying a malformed payload (validated as a finite,
+  non-negative number for each numeric field — not just `typeof x === 'number'`, which a critic round
+  found accepts `NaN`/`Infinity`/negative values).
 - `attributedSpend(entries, stepId): number` — sums every entry attributed to a step across all its
   retries, the `20` §20.8 "reports $6, not $2" rule made concrete.
-- `checkBudget({ spent, cap }): 'ok' | 'warning' | 'breached'` — the pure decision function; the three
-  enforcement *levels* (step/run/period) are each just this function called with a different `spent`/
-  `cap` pair, wired in by `@forge/engine`'s own budget piece (P17), which owns the actual admission
-  decision and pause/finish-lanes/abort response.
-- `detectRunaway(entries, stepId): boolean` — token consumption growing monotonically across retries
-  with no accompanying file change or artifact (`20` §20.8's runaway-detection requirement); a pure
-  function over ledger entries plus the retry's own outcome, no new event type needed.
+- `checkBudget({ spent, cap, warningThreshold? }): 'ok' | 'warning' | 'breached'` — the pure decision
+  function; the three enforcement *levels* (step/run/period) are each just this function called with a
+  different `spent`/`cap` pair, wired in by `@forge/engine`'s own budget piece (P17), which owns the
+  actual admission decision and pause/finish-lanes/abort response. `warningThreshold` (default `0.8`,
+  not in the plan's own original signature) and the whole `'warning'` tier are this piece's own design —
+  only the breach boundary is spec-given. Validates `spent`/`cap`/`warningThreshold` and throws rather
+  than risk silently misclassifying a budget that is actually blown as `'ok'`.
+- `RetryAttempt` (`{ totalTokens, progressed }`) — a bespoke type, not `LedgerEntry` reused; see
+  `SPEC-QUESTIONS.md` Q69 design point 4 for why, including the acknowledged gap that nothing yet
+  bridges `LedgerEntry[]` to `RetryAttempt[]`.
+- `detectRunaway(attempts: readonly RetryAttempt[]): boolean` — not `detectRunaway(entries, stepId)` as
+  the plan's own original signature showed: token consumption growing monotonically across retries with
+  no accompanying file change or artifact (`20` §20.8's runaway-detection requirement) needs a per-attempt
+  progress signal `LedgerEntry` (matching `18` §18.5's own fixed DB schema) has no column for.
 
 **Checks:** a synthetic event stream with three retries of one step projects a ledger whose
 `attributedSpend` sums all three, not the last one alone; `checkBudget` at exactly the cap boundary
@@ -338,6 +351,13 @@ constructed monotonic-growth-no-progress sequence and does not fire on a monoton
 one (the same shape, different outcome — the discriminator is the point of the test).
 
 **Depends on:** P6.
+
+*(P7 is committed: `039c997`. See `SPEC-QUESTIONS.md` Q69 and its critic-round/verify-round addenda — one root cause
+(a bare `typeof x === 'number'` accepting `NaN`/`Infinity`/negative values) reached a budget-safety
+decision from three independent angles at once, the sharpest single-root-cause finding this milestone; see
+`GAUNTLET-LOG.md`'s own entry for the fuller story and its calibration note on searching for a validation
+gap by *property* across every applicable field, not just by the one call site a bug report happened to
+name.)*
 
 ---
 

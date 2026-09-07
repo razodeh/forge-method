@@ -3676,3 +3676,104 @@ through to every one of them (the write side vs. the read side; `.`/`..` vs. `''
 at the same underlying discipline: when a fix establishes "every X in this module now does Y," the actual
 verification step is enumerating every X and checking each one did, not just the one the original bug
 report happened to name.
+
+## M5 P7 — `@forge/telemetry`: cost ledger and budget projections (`06` §6.9, `18` §18.4, `18` §18.5,
+`20` §20.8, `20` §20.10 S9)
+
+**Rounds: 2 (one critic finding 1 BLOCKING and 2 MAJOR issues — all one root cause reached from three
+different angles — plus 2 MINOR, all fixed; one scoped verify confirming all five fixes cleanly and
+finding 2 further MINOR findings in the same root-cause family, fixed locally, no third round). Outcome:
+WON.**
+
+The second piece of `@forge/telemetry`: four pure functions (`projectLedger`, `attributedSpend`,
+`checkBudget`, `detectRunaway`) built on top of P6's own event log, with almost nothing pinned by the spec
+beyond the general shape of the requirement (`SPEC-QUESTIONS.md` Q69's own six design points). The
+critic's own review is the sharpest example yet this milestone of one root cause manifesting three times
+across a small, pure-function-only piece with no filesystem I/O of its own at all — proof that "no disk,
+no fsync, no crash-recovery" doesn't mean a piece is automatically low-risk.
+
+### Round 1 — critic: 1 BLOCKING, 2 MAJOR, 2 MINOR
+
+The critic was asked to assess this piece's own invented design choices (a `warningThreshold` tier, the
+bespoke `RetryAttempt` type, `detectRunaway`'s three numeric/semantic choices, `projectLedger`'s throw-vs-
+skip posture) on their own merits, and specifically to hunt for numeric edge cases — none of the four
+functions guarded against zero, negative, `NaN`, or `Infinity` inputs at the time — by constructing a real
+scenario for each rather than reasoning abstractly.
+
+- **BLOCKING: every numeric payload field was checked with a bare `typeof x === 'number'`, which accepts
+  `NaN`, `Infinity`, and negative values — confirmed empirically that this lets `checkBudget` silently
+  report `'ok'` for a run that has genuinely blown its budget, the exact failure mode `S9` exists to
+  prevent.** Two real mechanisms constructed: a negative `costUsd` (fully reachable through the real,
+  disk-backed pipeline — JSON round-trips a negative number losslessly) nets a step's `attributedSpend`
+  *below* what was actually spent; a `NaN` `costUsd` poisons the sum to `NaN`, and since every relational
+  comparison against `NaN` is `false`, both of `checkBudget`'s own boundary checks fail closed to the
+  friendliest verdict simultaneously — worse, a corrupted `cap` alone (no bad ledger data at all, e.g.
+  from a bad config parse) produces the identical silent, complete bypass.
+- Two MAJOR findings, the same root cause reached twice more: a single `NaN` sandwiched between two real,
+  *decreasing* token counts forced `detectRunaway` into a false-positive runaway report, since its own
+  monotonic-growth loop's "did this decrease" bail-out is `false` whenever either side is `NaN` (bounded
+  to false positives only, never a false negative masking a real runaway — still a wrong answer from
+  corrupt data); `checkBudget`'s own direct `spent`/`cap` inputs had the identical gap, notable because
+  `cap` specifically can originate straight from project config this package has no visibility into, with
+  no JSON round-trip or other boundary already guaranteeing it is sane by the time it arrives.
+
+Fixed at the shared structural root: a single `isFiniteNonNegativeNumber` helper (`typeof x === 'number'
+&& Number.isFinite(x) && x >= 0`), reused across `isUsageRecordedPayload`'s five numeric fields,
+`detectRunaway`'s own `totalTokens` (validated for every attempt up front, before the length or progress
+checks), and `checkBudget`'s `spent`/`cap` — the last of these now throwing a new, dedicated error rather
+than returning a value that could be misread as "financially fine." `checkBudget` also gained a
+`warningThreshold` range check `(0, 1]`, closed for the same "silently produces a wrong-feeling but not
+unsafe result" reason.
+
+Two MINOR findings, both the same "empty string is technically valid but semantically useless" root cause:
+`toLedgerEntry` treated only `=== undefined` as missing `stepId`/`agentId`, not `=== ''`; the malformed-
+event error message didn't name the failing event's own `seq`, only its `runId` — a real diagnosability
+gap given `projectLedger` takes an arbitrary `AsyncIterable`, not a per-run one, so a caller aggregating
+across many events would otherwise have no way to locate which one failed. Both fixed.
+
+The critic also raised, explicitly framed as its own opinion rather than a bug: whether `projectLedger`'s
+all-or-nothing throw (discarding every already-collected entry when one malformed event is hit) is the
+right call for a cost report aggregating across many runs, where one bad historical event blanks the
+entire result. **Considered and not changed** — softening this would be a deliberate posture change away
+from this package's own established "corruption is fatal, `forge doctor` investigates" convention used
+everywhere else (`readEvents`'s own seq-gap/shape-check throws), not a fix, and deserves its own
+deliberate design pass rather than being folded into this round.
+
+### Round 2 — scoped verify: 5 of 5 confirmed; 2 new MINOR findings, fixed locally
+
+Every fix was independently re-derived with scenarios distinct from round 1's own: `-0` for every numeric
+field (confirmed to behave as `0`, correctly accepted, not a bypass); a numeric-looking string rejected on
+the `typeof` check before ever reaching the finiteness check; `-Infinity` (round 1 only tried `+Infinity`);
+`spent` and `cap` simultaneously `NaN` (confirmed one clear error, naming both values, not a confusing
+double-throw); a 2-length `attempts` array with the bad value at either index, confirming validation
+genuinely runs before *both* of `detectRunaway`'s own short-circuits, not just the length-based one. All
+five held exactly as claimed.
+
+**New finding 1 (MINOR): a whitespace-only `stepId`/`agentId` (`'   '`) was not rejected** — the identical
+"meaningless for attribution" reasoning round 1's own `''` fix already applies extends to it directly, one
+case the round-1 fix didn't quite reach. **New finding 2 (MINOR): `model`/`platform` had no blank check
+at all — the same gap, one field family over**, pre-existing rather than introduced this round, but the
+same root cause exactly. **Fixed** with one shared `isNonBlankString` helper (`typeof x === 'string' &&
+x.trim() !== ''`), reused for all four identifier-shaped string fields this module has, replacing three
+near-duplicate bare-inequality checks with one.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (140 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.
+
+### Calibration note
+
+This piece adds a distinct lesson from P6's own two ("a cleanup call that can itself fail is new surface
+area"; "a convention applied to most but not all applicable places"): **the absence of filesystem I/O,
+`fsync`, or crash recovery does not make a piece low-risk — a small, pure-function-only piece can still
+carry a single root-cause defect that reaches a safety-critical decision (`S9`) from three independent
+angles at once.** Every one of round 1's three most serious findings — the payload-validation gap, the
+`detectRunaway` false positive, and the `checkBudget` direct-input gap — trace to the exact same one-line
+mistake (`typeof x === 'number'` treating `NaN`/`Infinity`/negative values as valid) reached through three
+different call paths the critic had to construct separately to find. And the pattern recursed one level
+further in round 2, at lower severity: the *fix* for one "empty string passes validation" gap
+(`stepId`/`agentId`) left the identical gap open in a sibling field family (`model`/`platform`) the round-1
+critic's own scenario simply didn't happen to probe. Two lessons compounding: a single validation
+primitive missing one property (finiteness, or non-blankness) is worth searching for by *property*, not
+just by *call site* — every numeric field in a module, not just the one the first bug report named — the
+same enumerate-every-X discipline P6's own calibration note already named, now demonstrated to apply
+identically to string validation, not just numeric.
