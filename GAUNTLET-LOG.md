@@ -2201,3 +2201,84 @@ correctly applied to one of two near-identical code paths, missed in the other �
 milestone (P4's CRLF handling, P6's `pathExists` check, now this), reinforcing that the right response,
 established by precedent, is to always ask "does this exact bug have a twin nearby" rather than
 declaring victory once the one named instance is fixed.
+
+## M3 P8 — SQLite index with a JSON fallback
+
+**Rounds: 2 (one critic finding one blocking and two other real defects; one scoped verify confirming
+all three and finding two further minor observations — one fixed locally, one a corrected comment, no
+third round). Outcome: WON.**
+
+Before writing code, seven real gaps in `08` §8.5's own five-column table were found and closed —
+`hash`'s definition, which `links.kind` values `KbTree` alone can populate, `symbols`/`usage` having no
+current data source, `expand`'s exact return-set semantics, `EntryRow` needing `statement`/`rationale`
+fields the spec's own column list omits, and — found only by actually trying `CREATE VIRTUAL TABLE ...
+USING fts5(...)` against the *real*, installed `node:sqlite` before writing the backend — that Node's
+own bundled SQLite has no FTS5 extension at all, contradicting this piece's own plan draft's assumption
+that both SQLite backends would get real BM25 (`SPEC-QUESTIONS.md` Q53). `KbIndexBackend` also gained a
+`clear()` method nothing in the original four-method interface could provide, closing a second gap in
+the same review pass.
+
+### Round 1 — critic: one blocking, two major
+
+- **Blocking: `SqliteBackend.search()` threw a real, uncaught SQLite error for ordinary query text.**
+  FTS5's own query syntax treats apostrophes, `+`, `-`, `:`, `%`, parentheses, and the bare words
+  `AND`/`OR`/`NOT` as operators, not literal text — the critic's own repro fed ten realistic,
+  non-adversarial queries ("what's next?", "C++ programming", "50% done") straight to `MATCH` and nine
+  threw `fts5: syntax error`, while the other two backends (no FTS5 syntax to speak of) never did for
+  the same input, breaking the "one interchangeable interface, three backends" premise this whole piece
+  is built on.
+- **Major: a `.forge/state/index.db` file created by one SQLite backend could not be safely reopened by
+  the other, and a doc comment falsely claimed a fix for this already existed.** `NodeSqliteBackend`'s
+  `terms` table is a plain table; `SqliteBackend`'s is an FTS5 virtual one. `CREATE TABLE IF NOT
+  EXISTS` silently no-ops against an existing table of the *other* shape, so every later
+  `upsertEntry`/`search` call against a mismatched file failed with an opaque `no such module: fts5` —
+  and `sqlite-common.ts`'s own doc comment already claimed "(or, for better-sqlite3, also
+  drops-and-recreates on a shape mismatch)," a capability that did not exist anywhere in the code.
+- **Minor: `openKbIndex`'s own directory-creation step could throw a raw, unhelpful filesystem error**
+  (a plain file sitting where `.forge/state/` should be a directory; a permissions problem) rather than
+  an actionable one — not a "module unavailable, fall back" case the existing chain was built for.
+
+**Fixes:** `SqliteBackend.search()` now tokenises the query the identical way `scoreByTermOverlap`
+already does (reusing a newly-exported `termsOf`), quotes each token as its own FTS5 string literal,
+and joins with `OR` — every special character becomes inert text rather than an operator, and an
+all-punctuation or empty query returns `[]` immediately rather than querying at all. `sqlite-common.ts`
+gained a real `reconcileTermsTableShape()`, reading `sqlite_master`'s own `sql` column (the one place
+SQLite itself records `CREATE VIRTUAL TABLE` vs `CREATE TABLE` — `type` is `'table'` for both) and
+dropping a mismatched `terms` table before recreating it correctly — genuinely fixing the direction
+`better-sqlite3` (which has the FTS5 module) can heal, and verified empirically that the *reverse*
+direction cannot self-heal at all (`node:sqlite`'s own `DROP TABLE` on an FTS5 table itself throws `no
+such module: fts5`, since dropping a virtual table needs its module registered, not only reading or
+writing it) — so `NodeSqliteBackend` construction simply throws cleanly in that case, letting
+`openKbIndex`'s own pre-existing try/catch fall through to `JsonBackend` instead of fabricating a
+recovery this environment genuinely cannot perform. `openKbIndex`'s `mkdirSync` call is now wrapped in
+its own try/catch, raising a new `ForgeError` (`KB-012`) naming the real path and OS error rather than
+letting a raw `ENOENT`/`EEXIST`/`EACCES` propagate.
+
+### Round 2 — scoped verify: all three confirmed, two further observations
+
+Verify reproduced each original defect directly (real FTS5 syntax errors against a live connection; a
+raw `no such module: fts5` from a genuinely mismatched file; raw `EEXIST`/`EACCES` from an obstructed
+directory) before confirming every fix, then judged the self-heals-in-one-direction-only resolution for
+finding 2 independently sound — inspecting a file's shape *before* picking a backend would not change
+the outcome, since `node:sqlite` fundamentally cannot operate on an FTS5 table either way. It found two
+further, smaller things: `better-sqlite3`'s own successful self-heal (dropping a stale plain table)
+silently discarded real derived data (already-indexed entries' search rows) with no warning, unlike the
+JSON-fallback branch's own `console.warn` for a similar "reduced guarantees" situation — **fixed** by
+adding the identical warning. And `toSafeFts5Query`'s internal-quote-doubling was flagged as
+unreachable today, since `termsOf`'s own tokeniser already strips every `"` before a token exists to
+double — **not fixed** (kept as deliberate defence-in-depth against a future change to `termsOf`'s own
+tokenisation silently reopening the exact injection shape this function exists to close), with the doc
+comment corrected to say so honestly rather than implying it fires today.
+
+### Calibration note
+
+This piece's blocking defect is the sixth instance this milestone of "a plan-time assumption is wrong
+the moment it meets a real, concrete artifact" (Q45, Q46, Q47, Q48 in P5, and now this) — but the
+*direction* is new: this time the wrong assumption was in the critic-found *defect* itself, not a
+plan-time claim the builder later corrected. The builder's own pre-build empirical check (does
+`node:sqlite` really have FTS5? — verified no, before writing the backend) caught one real gap; the
+*same discipline applied one level deeper* — does an *unescaped* FTS5 query against *real* adversarial
+input actually work? — is exactly what the critic did that the builder had not yet done for this
+specific code path. The lesson compounds: verifying a library's *capability* (does FTS5 exist at all)
+and verifying *this code's own usage of it* (does this exact query construction survive contact with
+real input) are two different checks, and passing the first is no evidence about the second.

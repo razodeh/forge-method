@@ -471,6 +471,8 @@ could satisfy `rebuildIndex`'s own "clears and repopulates" line)
 **Depends on:** P6 (`KbTree`), `@forge/core/fs` (JSON backend's atomic writes). `better-sqlite3` and,
 conditionally, `node:sqlite` are new to this package only (`@forge/extensions` never needed a DB).
 
+*(P8 is committed: `1abcd6c`.)*
+
 ---
 
 ## P9 — Retrieval, graph expansion, and context packing
