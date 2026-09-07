@@ -2375,3 +2375,103 @@ written before the code was. The fix there was not a code change but making that
 visible at the point someone would next doubt it — a reminder that "already decided" and "discoverable
 by the next reader standing at the exact line in question" are not the same thing, and a critic
 re-deriving a decision from scratch each time is a genuine, avoidable cost worth returning to.
+
+## M3 P10 — The KB linter and staleness/verification
+
+**Rounds: 2 (one critic finding five real gaps, all fixed; one scoped verify confirming all five and
+finding one further real gap, fixed locally, no third round). Outcome: WON.**
+
+Before writing code, six real gaps in `08` §8.7's own rule table were found and closed —
+`components.md` has no on-disk shape anywhere in the spec pack (closed the same way `SPEC-QUESTIONS.md`
+Q50 closed the other four collection-file registers, this time modelled on `@forge/diagrams`' own
+`components-to-c4` generator input rather than invented from scratch); ADRs have no field linking them
+to the components/entries they concern (derived instead via the KB-entry-as-bridge mechanism: a KB
+entry's own `applies_to` plus a `sources` citation of the ADR); `checkContradictions`' own drafted
+signature (`KbEntry[]` alone) could not express the ADR-status rules `08` §8.7's own contradiction-
+detection paragraph asks the same function to cover (widened to take both `KbEntry[]` and `ADR[]`);
+`lintKb`'s drafted `diagramsBackend` parameter could not be satisfied by anything `KbTree` actually
+carries (dropped — `lintKb` only ever implements the two `diagram:*` rules `SPEC-QUESTIONS.md` Q44
+already assigned to this package); "referenced IDs exist" does not scope cleanly to `applies_to`'s wider
+tag space (narrowed to `related`/`supersedes` only, plus, once `components.md` existed, the one closed
+`component:` tag namespace it makes fully checkable); and "glossary drift" has no mechanical definition
+without inventing NLP (narrowed to backtick-quoted terms in `Capability`/`Epic` free-text fields, reusing
+the spec pack's own vocabulary-marking convention).
+
+### Round 1 — critic: five major
+
+- **Major: the KB-entry-as-bridge mechanism trusted non-`active` KB entries to establish real ADR
+  scope.** `adrScope` applied no `status` filter, unlike `checkAntonymTagConflicts`'s own identical
+  filter in the same feature — a single `deprecated`/`draft` entry citing an accepted ADR was enough to
+  silently satisfy "component has an owning ADR," and, separately, to trigger a false-positive
+  `kb:contradiction` between two genuinely-independent accepted ADRs whose only "overlap" ran through a
+  never-vetted entry.
+- **Major: `component.dependsOn` and a KB entry's own `component:`-tagged `applies_to` values were
+  never checked against `components.md`'s real component ids at all** — unlike `related`/`supersedes`
+  (legitimately out-of-tree-referencing, the whole reason `KB_TREE_ID_PATTERN` exists), `dependsOn`
+  names only ever the same self-contained register `components.md` itself defines, so there was no
+  "maybe it's external" ambiguity excusing the gap.
+- **Major: a cross-kind supersession status inconsistency was silently never checked.**
+  `checkSupersessionStatusConsistency` was called twice, once per kind, each with its own same-kind-only
+  lookup map — a KB entry legitimately naming an ADR id in its own `supersedes` (or vice versa) could
+  never be found in that map, when `checkSupersessionCycles`, in the very same feature, had already
+  unioned both kinds into one edge map for the identical reason.
+- **Major: a diagram's own `depicts`/`explains` references were invisible to orphan detection.**
+  `inboundLinkedIds` never consulted them, so a KB entry or ADR a diagram genuinely depicted or
+  explained — with no other inbound reference — still produced a false-positive `kb:orphan` warning.
+- **Major: a real R10 (determinism) violation, not just list order.** `checkAntonymTagConflicts` and
+  `checkAdrScopeConflicts` both iterate unordered pairs, and used whichever element happened to come
+  first in the input array as `entryId` and as the first name in the finding's own message — for a
+  genuinely symmetric relationship (neither entry in a mutual conflict is more "primary"), the identical
+  logical conflict produced different finding *content* depending on incidental array position, which
+  `KbTree.entries` gives no ordering guarantee for beyond `parseKbTree`'s own lexically-sorted walk.
+- **Minor: a repeated id in one `related`/`supersedes` field produced one duplicate finding per
+  repetition**, rather than one finding for the one real problem.
+
+**Fixes:** `adrScope` now filters to `status === 'active'` before trusting any KB entry's citation,
+closing both consumers in one place. A new `checkComponentReferences` function (reusing the existing
+`kb:dangling-ref` rule id, since it is the identical "referenced id exists" rule, just scoped to the one
+namespace `components.md` makes fully closed) checks both `dependsOn` and `component:`-tagged
+`applies_to` values — skipped entirely, not "everything is dangling," when no `components.md` exists at
+all, since there is then no registry to call anything wrong against.
+`checkSupersessionStatusConsistency` is now called once over the combined `[...kbEntries, ...adrs]` set,
+matching `checkSupersessionCycles`'s own precedent. `inboundLinkedIds` now also takes `diagrams` and
+includes every id in each one's own `depicts`/`explains`. The determinism gap is fixed two ways: a new
+`canonicalPair` helper reorders every symmetric pair by `id` (plain `<`, never `localeCompare`) before
+it is used for reporting, and a new `sortFindings` helper — sorting by `(ruleId, entryId, message)` — is
+now applied to the return value of *every* exported check in the module (`checkContradictions`,
+`lintKb`, `verifyKb`), closing the weaker list-order half of the same class of gap everywhere at once,
+not only in the two functions the critic's own repro happened to demonstrate it in. The duplicate-id
+finding is fixed by deduplicating the id list before checking it.
+
+### Round 2 — scoped verify: all five confirmed, one further real gap found and fixed
+
+Verify independently re-derived and confirmed all five fixes with its own adversarial scripts — notably,
+for the determinism fix, a *three*-entry symmetric conflict (not just the critic's original two) checked
+across all six permutations of the input array, byte-identical every time. It found one further real
+gap: `checkDanglingRefs` never validated a KB entry's own `sources[].ref` (`kind: 'decision'`) against
+the tree's real ids, even though `adrScope`/`inboundLinkedIds` (this same round's own points 1 and 4)
+already treat that exact field as a genuine reference relationship — a typo'd or since-deleted ADR id in
+`sources` silently produced no diagnostic of its own, only a downstream, unexplained "no owning ADR"
+finding once component coverage failed to find the citation that was never actually there. **Fixed** by
+checking every `kind: 'decision'` source's `ref` the same way `related`/`supersedes` already are, in the
+same function, against the same known-id set. The verify pass separately raised, but did not require
+fixing, whether a `Diagram`'s own `explains` should get the identical treatment — left **unfixed**,
+since (unlike `sources`, whose meaning as "this entry's own decision citation" is unambiguous) `explains`
+has no id-space precise enough anywhere in the spec pack to check against without inventing a rule the
+spec itself does not give.
+
+### Calibration note
+
+Four of this round's five critic-round findings share one precise shape, worth naming because it
+recurred four times independently rather than once: a check that is *symmetric* or *cross-cutting* by
+its own nature (an ADR-to-KB-entry bridge that should not care which side cites which; a supersession
+consistency check that should not care which kind supersedes which; an inbound-link computation that
+should not care which field a reference arrives through; a pair-conflict report that should not care
+which array position either party started at) was implemented as though it were *directional* or
+*single-source* instead — filtering, mapping, or iterating in a way that quietly assumed one specific
+shape of input rather than the general one the check's own name and purpose promised. Each individual
+instance was a small, one-line-ish omission (a missing filter, a call made twice instead of once, a
+field left out of a union, a variable used unreordered) — but the pattern across all four, found in one
+single critic pass, suggests this class of bug is worth checking for as its own category the next time a
+"this should be symmetric/general" function gets written in this codebase, rather than re-discovering it
+one finding at a time.

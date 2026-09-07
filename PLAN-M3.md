@@ -608,4 +608,6 @@ threshold... post-merge check") has no Check in this piece and is not built here
 hooks (git, post-merge) it needs do not exist before a later milestone, and nothing in this piece's own
 Surface claims to provide it.
 
+*(P10 is committed: `cc94daa`.)*
+
 *(kb track (P6–P10) complete — `@forge/kb` and `@forge/diagrams` both closed out; M3 done.)*
