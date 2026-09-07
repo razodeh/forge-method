@@ -16,4 +16,14 @@ export {
   type ForgeEvent,
   type NewForgeEvent,
 } from './events.ts';
+export {
+  attributedSpend,
+  checkBudget,
+  detectRunaway,
+  projectLedger,
+  type BudgetCheckInput,
+  type LedgerEntry,
+  type RetryAttempt,
+  type UsageRecordedPayload,
+} from './ledger.ts';
 export { redactPayload } from './redact.ts';

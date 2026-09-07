@@ -4108,3 +4108,146 @@ exactly the kind of synthetic-input-only gap the existing doc comments already s
 
 No other new findings; `tsc`, `eslint`, and the full package suite (63 tests after these fixes' own new
 ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.
+
+---
+
+## Q69 — M5 P7's `@forge/telemetry` cost ledger: six design points not given anywhere in the spec pack
+
+`18` §18.4's own catalogue names `UsageRecorded`/`BudgetWarning`/`BudgetBreached` but gives no payload
+shape for any of them (confirmed: grepping all of `specs/` for these three names finds only the bare
+catalogue-table row, nowhere else). `20` §20.8's prose states the retry-attribution and runaway-detection
+*requirements* in general terms but pins no concrete numbers or types. All of the below is this piece's
+own design.
+
+**1. `UsageRecordedPayload` (`model`, `platform`, `inputTokens`, `outputTokens`, `cacheReadTokens`,
+`costUsd`, `estimated`, `durationMs`) is a `UsageRecorded` event's own payload shape** — everything a
+`LedgerEntry` needs beyond what `ForgeEvent`'s own envelope (`runId`, `stepId`, `agentId`, `ts`) already
+carries. `agent`/`stepId` therefore come from the envelope, not the payload — matching how every other
+event type in the catalogue already separates "who/what this concerns" (envelope) from "what happened"
+(payload).
+
+**2. `projectLedger` throws for a `UsageRecorded` event missing `stepId`/`agentId` or carrying a
+malformed payload, discarding every entry already collected in the same call, rather than skipping the
+bad one or returning a partial result.** Mirrors `readEvents`'s own "corruption is fatal" stance
+(`parseEventLine`'s shape check) rather than inventing a softer failure mode for this one function — `18`
+§18.4's immutability rule means a bad historical event has no in-place repair path either way, so silently
+under-reporting by skipping it risks the identical "$6 not $2" under-reporting `20` §20.8's retry-
+attribution rule exists to prevent, just for a different reason (a dropped row, not a dropped retry).
+
+**3. `checkBudget`'s `warningThreshold` (default `0.8`, fraction of `cap`) is an invented tier** — the
+spec only pins the breach boundary itself ("at exactly the cap, `breached`, not `ok`"). The parameter
+exists so a project can tune it, the same "caller decides the actual policy value" shape `redactPayload`'s
+`knownSecrets` already uses.
+
+**4. `RetryAttempt` (`{ totalTokens, progressed }`) is a bespoke type, not `LedgerEntry` reused** — `18`
+§18.5's own DB schema has no "did this attempt make progress" column, and none should be added just for
+this one check. `totalTokens` is a single, caller-pre-summed number rather than separate token-kind
+fields, since the function only cares about one growing quantity. `progressed` is derived by the caller
+from the run's own existing `Artifact*`/`KbWritten` events (`18` §18.4) — per this piece's own mandate,
+"no new event type needed," so this isn't one either. This leaves a real, acknowledged gap: nothing in
+this package yet bridges `LedgerEntry[]` (what `projectLedger` returns) to `RetryAttempt[]` (what
+`detectRunaway` needs) — a caller holding the former has to independently correlate retry boundaries and
+progress signals from the raw event stream to build the latter. Deliberately left unbuilt: the caller who
+can actually assemble this data (`@forge/engine`, wiring `checkBudget`/`detectRunaway` into real admission
+control, `PLAN-M5.md` P17) doesn't exist yet, the same forward-dependency shape `SPEC-QUESTIONS.md` Q62
+uses throughout this milestone.
+
+**5. `detectRunaway` requires at least 3 attempts, strictly-increasing `totalTokens` at every consecutive
+pair, and treats progress *anywhere* in the given window as suppressing the signal entirely** — three
+more invented numbers/semantics with no spec citation behind the specific choices. Three attempts (not
+two) because a single retry costing more than the first attempt is ordinary variance, not yet a suspected
+loop; *strictly* increasing (not non-decreasing) because a flat repeat isn't "growing" per the spec's own
+wording; suppressing on *any* progress in the window (not just the latest attempt) because a caller that
+wants the check to "reset" after a progressing attempt achieves that by only passing attempts since the
+last one that progressed — this function does no windowing of its own.
+
+**6. Both `checkBudget` and `detectRunaway` validate their own numeric inputs (finite, non-negative),
+throwing rather than silently miscomputing — added during the critic/verify rounds below, not part of
+the original design.** Recorded here rather than folded silently into point 3/5 above since it changes
+the *contract*, not just the internals: both functions can now reject a call, which the original design
+write-up didn't anticipate.
+
+### P7 critic round: 1 BLOCKING, 2 MAJOR
+
+The critic was asked to independently assess this piece's own invented design choices (`warningThreshold`,
+`RetryAttempt`'s shape, `detectRunaway`'s three numeric/semantic choices, `projectLedger`'s throw-vs-skip
+decision) on their merits, and to specifically hunt for numeric edge cases none of the four functions
+guarded against at the time (zero/negative/`NaN`/`Infinity` inputs) — constructing a real scenario for
+each rather than reasoning abstractly.
+
+- **BLOCKING: `isUsageRecordedPayload`'s numeric field checks were `typeof x === 'number'` only, which
+  accepts `NaN`, `Infinity`, and negative values — confirmed empirically that this makes `checkBudget`
+  silently report `'ok'` for a run that has genuinely blown its budget, exactly the failure mode `S9`
+  exists to prevent.** Two real mechanisms, both constructed: a negative `costUsd` (fully reachable
+  through the real disk-backed pipeline — JSON round-trips a negative number losslessly) nets
+  `attributedSpend` *below* what was actually spent (two events, `+$20` and `-$15`, net to `$5` against a
+  `$10` cap → `'ok'`); a `NaN` `costUsd` poisons the sum to `NaN`, and since every relational comparison
+  against `NaN` is `false`, `checkBudget({ spent: NaN, cap: 10 })` → `'ok'` — worse, a corrupted `cap`
+  (e.g. from a bad config parse) alone produces the identical silent bypass with no bad ledger data
+  involved at all. **Fixed** with a new `isFiniteNonNegativeNumber` helper (`typeof x === 'number' &&
+  Number.isFinite(x) && x >= 0`), reused for every numeric field in `isUsageRecordedPayload`.
+- **MAJOR: the same root cause reached `detectRunaway` — a single `NaN` sandwiched between two real,
+  *decreasing* values (`500, NaN, 100`) forced a false-positive runaway report**, since the monotonic-
+  growth loop's own "did this decrease" bail-out (`current <= previous`) is `false` whenever either side
+  is `NaN`, silently skipping the comparison that would have correctly returned `false`. Bounded in one
+  direction (confirmed: `NaN` can only ever suppress a legitimate "not increasing" bail-out, never
+  introduce one, so this produces false positives — a spurious halt — never a false negative that masks a
+  real runaway) but still a real, wrong answer from corrupt rather than real data. **Fixed** by extending
+  `isFiniteNonNegativeNumber` validation to `detectRunaway`'s own `totalTokens` input too, validated for
+  *every* attempt up front — before the length check or the progress check — so a bad value throws
+  immediately rather than reaching the comparison loop at all.
+- **MAJOR: the same root cause again, extended to `checkBudget`'s own `spent`/`cap` inputs directly** —
+  unlike a typical internal helper, `cap` specifically can originate straight from project config this
+  package has no visibility into, with no JSON round-trip or other boundary already guaranteeing it is a
+  sane number by the time it reaches this function. **Fixed** by validating `spent`/`cap` the same way,
+  and separately validating `warningThreshold` is in `(0, 1]` (outside that range either makes `'warning'`
+  permanently unreachable, silently, or makes it fire on nearly every non-zero spend) — both throwing a
+  new `TELEMETRY-BUDGET-INVALID-INPUT` error rather than returning a value that could be misread as
+  "financially fine."
+
+Two MINOR findings, both closed at the same "empty string is technically a valid string but semantically
+useless" root cause already established for `stepId`/`agentId`: `toLedgerEntry` treated only
+`=== undefined` as missing, not `=== ''`, even though the stated rationale ("meaningless for a ledger
+whose entire point is attributing spend") applies equally to blank. **Fixed** by also rejecting `''`.
+Also fixed: the malformed-event error message now names the failing event's own `seq` (not just `runId`),
+so a caller aggregating across many events — a realistic shape given `projectLedger` takes an arbitrary
+`AsyncIterable`, not a per-run one — can actually locate which event failed.
+
+The critic's own review additionally raised, as an explicit **design opinion rather than a bug** (its own
+framing): whether `projectLedger`'s all-or-nothing throw (design point 2 above) is the right call for a
+`forge cost` report aggregating across many runs, where one bad historical event blanks the entire report.
+Considered and **not changed**: softening this to a partial-result shape would be a deliberate posture
+change away from this package's established "corruption is fatal, `forge doctor` investigates" convention
+used everywhere else (`readEvents`'s own seq-gap/shape-check throws), not a bug fix — exactly the kind of
+decision that deserves its own deliberate design pass rather than being folded into a fix-the-findings
+round. The `RetryAttempt`/`LedgerEntry` bridge gap (design point 4) was likewise confirmed as an accurately
+-identified, deliberate scope boundary, not a defect.
+
+### Between rounds — none; the verify round below found two further, adjacent findings the critic round
+did not
+
+### P7 verify round: 5 of 5 items confirmed PASS; 2 new MINOR findings, fixed locally
+
+Every one of the five critic-round fixes was independently re-derived with scenarios distinct from the
+shipped tests: `-0` for every numeric field (confirmed to behave as `0`, not rejected); a numeric-looking
+string (`'5'`) rejected on the `typeof` check before ever reaching the finiteness check; `-Infinity`
+(the shipped tests only tried `+Infinity`); both `spent` and `cap` simultaneously `NaN` (confirmed the
+`spent`/`cap` check fires once, with a message naming both values, not a confusing double-throw); a
+2-length `attempts` array with the bad value at *either* index, confirming `detectRunaway`'s validation
+loop genuinely runs before both the length-based *and* the progress-based short-circuit, not just one of
+them. All five held exactly as claimed.
+
+**New finding 1 (MINOR): a whitespace-only `stepId`/`agentId` (`'   '`) was not rejected** — `'   '.trim()
+=== ''`, so the "meaningless for attribution" reasoning the critic round's own `''` fix already applies
+extends to it directly, one case further than what was explicitly claimed fixed. **Fixed** by checking
+`.trim() !== ''` rather than bare inequality with `''`.
+
+**New finding 2 (MINOR): `model`/`platform` had no blank check at all — the identical gap, one field
+family over.** Pre-existing (not introduced by this round), outside the stated scope of the critic
+round's own five items, but the same root cause exactly. **Fixed** with a single shared `isNonBlankString`
+helper (`typeof x === 'string' && x.trim() !== ''`), reused for all four identifier-shaped string fields
+this module has (`model`, `platform`, `stepId`, `agentId`) — closing both new findings and the original
+`stepId`/`agentId` fix with one function instead of three separate near-duplicate checks.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (140 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.
