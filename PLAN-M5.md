@@ -492,6 +492,16 @@ ids are stable — compiling the same workflow against the same context twice pr
 
 **Depends on:** P8, P9.
 
+*(P10 is committed: `5215030`. See `SPEC-QUESTIONS.md` Q72 and its critic-round/verify-round addenda —
+`06` §6.2's own one illustrative `StepNode` interface turned out to be incomplete against the fuller spec
+text it's compiled from in three separate ways (missing the `checkpoint` kind, missing every non-agent
+kind's own way to carry its real runtime data, naming three field types this milestone has no real package
+behind); the highest BLOCKING-finding density of the milestone so far — three in the critic round, a
+fourth in the verify round when that very round's own fix regressed an already-documented design decision
+made earlier in the same file. See `GAUNTLET-LOG.md`'s own entry for the fuller story, including a
+calibration note on why "test the fix more" wasn't the right lesson this time — the fix needed the file's
+own existing doc comments re-checked against, not just the bug report that motivated it.)*
+
 ---
 
 ## P11 — Plan compilation: implicit dependencies, cycle detection, critical path

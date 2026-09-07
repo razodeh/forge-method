@@ -4021,3 +4021,114 @@ was ever involved, while the critic round's own single BLOCKING finding was a fa
 nested-looking chain defeating a nesting-shaped depth guard — that self-testing during the build had no
 particular reason to go looking for. Self-testing and a fresh critic keep finding different bug shapes, not
 overlapping ones; neither substitutes for the other.
+
+---
+
+## M5 P10 — `@forge/engine`: plan compiler, fanout expansion (`06` §6.2, §6.7, §6.8)
+
+**Rounds: 2 (one critic finding 3 BLOCKING and 3 MAJOR issues, all fixed; one scoped verify confirming
+almost everything held, but finding a new BLOCKING regression in round 1's own fix, fixed, plus 3 further
+findings documented as deliberate scope limits, not fixed — no third round). Outcome: WON.**
+
+Compiles a validated workflow (`@forge/engine/workflow`, P8) into a flat array of `StepNode`s per `06`
+§6.2's own plan-compilation rule 1 (fanout expansion; rules 2–6 are explicitly P11's job). `06` §6.2's own
+one illustrative `StepNode` interface turned out to be incomplete in at least three separate ways once
+actually implemented against — missing the `checkpoint` kind, missing every non-`agent` kind's own way to
+carry its real runtime data at all, and naming three field types (`AgentId`, `ArtifactRef`, `ResourceClaim`)
+this milestone has no real package behind — each resolved via `Q72`'s own dozen design points, mostly by
+extending precedent this milestone had already set for the identical class of gap elsewhere. The highest
+BLOCKING-finding density of the milestone so far: three in round 1 alone, plus a fourth in round 2 — this
+time, notably, a regression the round-1 fix's own new code introduced into the *previous* bug's own
+documented, intentional design.
+
+### Round 1 — critic: 3 BLOCKING, 3 MAJOR
+
+The critic was asked to hunt for any input where the compiler still throws raw instead of returning its
+documented result type, whether a fanout's own per-item cross-reference could resolve to the wrong item's
+id, and to stress the `parallel`/`sequence`-erasure logic (both groups fold entirely into their children's
+`dependsOn` edges, producing no `StepNode` of their own) across nested and mixed shapes.
+
+- **BLOCKING: a `command` step's own `run` text was never template-resolved at all** — every other
+  templated field went through a shared `safeResolveTemplate` wrapper; `run` was copied through raw. The
+  spec's own literal first worked-example step (`git switch -c {{vars.integration_branch}} || ...`)
+  compiled to that exact unresolved string, braces included — real shell text a lane would eventually run.
+- **BLOCKING: a fanout's own `over` expression could throw a raw, uncaught error straight through the
+  compiler's public entry points**, contradicting its own "never throws" contract. A flat, non-nested-
+  looking `&&`/`||` chain of 200+ terms parses cleanly but blows the expression evaluator's own *separate*
+  depth guard once walked (`Q71`'s own two-independent-guards design) — the one call site in this file
+  still unwrapped for exactly the failure mode `Q71` had already gone to the trouble of naming.
+- **BLOCKING: a `dependsOn` value matching no real compiled id — a plain typo, or a cross-fanout reference
+  whose per-item key scheme doesn't match the fanout it targets** (the spec's own `review`/`merge` fanouts
+  both omit that key and fall back to positional ids, exactly the shape a sibling fanout's own `item.id`-
+  keyed reference would silently miss) **— compiled cleanly with no diagnostic at all**, a permanently-
+  unsatisfiable dependency shipped as if it were a real one. Nothing anywhere in the pipeline — this piece
+  or the earlier structural-validation piece, which only reasons about the *static, unexpanded* graph —
+  ever checked a dependency against the real, expanded id set.
+- **MAJOR: two different steps could compile to the identical id** with no diagnostic, silently producing
+  two indistinguishable nodes downstream.
+- **MAJOR: inside a sequence, a child that compiled to zero nodes (an empty nested group, or a fanout over
+  an empty collection) unconditionally erased the accumulated dependency chain for every sibling after it**,
+  rather than being skipped as the transparent no-op it actually was.
+- **MAJOR: two different entry points for compiling the identical fanout — one standalone, one via the
+  full-workflow compiler — could disagree on the compiled failure-handling default**, directly contradicting
+  the standalone entry point's own doc comment, which claimed the two always agree.
+
+Fixed at the root: the missing template resolution now goes through the same shared wrapper as everything
+else; the unwrapped evaluation call gained the identical try/catch shape that wrapper already uses; a new,
+single post-compilation consistency pass — run once, only when the tree walk itself found no other
+problems, specifically to avoid cascading noise on top of an already-incomplete result — checks every
+compiled node's own dependencies against the real id set for both duplicates and dangling references; the
+sequence-chaining logic now only advances when a child actually produced something, treating a zero-output
+child as transparent; the standalone entry point gained an optional parameter so a caller with the real
+enclosing workflow in hand can make it agree with the full compiler.
+
+### Round 2 — scoped verify: 1 new BLOCKING regression in round 1's own fix, fixed; 3 further findings
+documented, not fixed
+
+The verify pass was asked specifically to hunt for new bugs round 1's own six fixes might have introduced —
+this log's own recurring lesson, that a fix's new code deserves the same scrutiny as the bug it closed.
+
+**New finding (BLOCKING): the new dangling-dependency check itself regressed a documented, intentional
+design from earlier in the very same piece.** A dependency declared directly on a `parallel`/`sequence`
+group's own bare id — explicitly documented elsewhere in this piece as legitimate, deliberately left
+unresolved and handed to a later piece rather than rejected — got silently caught and rejected as
+"dangling" by round 1's own new check, since a group produces no compiled node of its own for the check to
+recognise as real. Independently confirmed this also disagreed with the earlier structural-validation
+piece, which already accepts the identical construct as a real, addressable position. **Fixed** by
+threading a list of "known group ids" up through the compile walk alongside the real compiled nodes —
+recorded even though a group produces no node of its own — and treating those as resolvable for the
+dangling-dependency check specifically, while keeping them out of duplicate-id checking entirely (a
+group's own id and a real node's id are different kinds of thing that were never at risk of needing to be
+compared against each other).
+
+Three further findings were judged real but out of scope, and documented rather than fixed: the spec's own
+literal worked example still doesn't compile verbatim even after every other fix, because its `merge` step
+expects a per-item binding that only a fanout provides and `merge` was never given its own version of —
+fails safely with a clear, located issue rather than a crash or silently wrong output, and building the
+real feature (per-item dependency *aggregation* for a step that stays a single compiled node, a different
+mechanism from fanout's own per-item *expansion* into many) is a separate feature with its own design
+questions nobody had asked this piece to build yet; the standalone fanout-compilation entry point can still
+disagree with the full compiler on the compiled id prefix and recursion depth for a fanout that isn't
+top-level, inherent to that entry point's own signature and now stated plainly in its own doc comment
+rather than silently assumed away; and a maximally theoretical gap in how a sparse JavaScript array would
+be walked, with no realistic path to ever occurring given every real input source in this pipeline.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (258 engine tests after these fixes' own
+new ones) all independently reconfirmed clean.
+
+### Calibration note
+
+This piece's own round 2 sharpens something round 1 of nearly every piece this milestone has already
+demonstrated once, into a nastier variant: a fix's own new code is not just new surface area with the
+*same general class* of failure mode as the bug it closed (the lesson this log named repeatedly for P6 and
+P8) — here, the fix for one bug directly undid a *specific, already-documented design decision* made
+earlier in the very same piece, for a reason that only became visible once the new code was checked against
+that earlier decision specifically, not just against the bug report that motivated it. The dangling-
+dependency check was built, tested, and locally verified against exactly the scenarios its own bug report
+named (a typo, a mismatched cross-fanout reference) — and every one of those passed — while the one case
+it silently broke was a scenario documented *elsewhere* in the same file, never in the check's own
+immediate vicinity, and therefore never in view while writing or testing the fix. The concrete discipline
+this argues for isn't "test the fix more" — the fix already had five dedicated tests — it's that a change
+to a piece of code with its own explicit, load-bearing doc comments about what it deliberately does and
+does not do needs those specific comments re-read and re-checked against, not just the shape of the bug
+being closed.
