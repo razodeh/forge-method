@@ -282,6 +282,29 @@ export const ERROR_CODES = {
       `Cannot prepare the KB index storage location at ${show(d.path)}: ${show(d.issue)}.`,
     remedy: 'Remove or fix whatever is blocking that path, or check the directory’s permissions.',
   },
+  // `05` §5.4 point 2: "Declared inputs: full text of artifacts the step declares as inputs" — a
+  // step naming an id that does not resolve to a real, indexable KB document is a real caller
+  // mistake (unlike a stale search/graph-expansion hit, which this piece skips silently instead),
+  // and the pack cannot honestly claim to include "full text" it does not actually have.
+  'KB-013': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string }) =>
+      `Declared input ${show(d.entryId)} does not exist in the KB tree.`,
+    remedy: 'Fix the id, or write the entry first if it genuinely does not exist yet.',
+  },
+  // `05` §5.4: a gauntlet critic found `NaN` silently defeats the token budget entirely — every
+  // comparison against `NaN` is `false`, so `usedTokens + tokens > budgetTokens` never breaks the
+  // retrieval loop and every candidate gets admitted regardless of size. A negative budget already
+  // fails safe (an empty `retrieved`); only `NaN` fails unsafe, so only `NaN` is rejected here.
+  'KB-014': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { budgetTokens: number }) => `budgetTokens is ${show(d.budgetTokens)}, not a real number.`,
+    // Deliberately doesn't say "non-negative" — a negative budget is accepted (it just yields an
+    // empty `retrieved`, failing safe); only NaN itself is rejected, so the remedy names exactly that.
+    remedy: 'Pass a budget that is a real number, not NaN (Infinity is fine and means "no limit").',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

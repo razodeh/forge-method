@@ -490,11 +490,17 @@ composition recorded for the run record — rather than `08` §8.5's own shorter
 - `estimateTokens(text: string): number` — a documented, deterministic, dependency-free approximation
   (character-length-based; exact ratio is an implementation choice recorded in `SPEC-QUESTIONS.md` when
   this piece is built) — no tokenizer library is named anywhere in the spec pack for this purpose.
-- `interface PackRequest { declaredInputIds: readonly string[]; briefText: string; budgetTokens: number; pinnedCoreOverrides?: Partial<PinnedCore> }`, `interface PinnedCore { projectIdentity?: string; level?: string; glossary: string; adrIndex: string; stageGoal?: string; codingStandards: string }`
-  — `glossary`, `adrIndex` and `codingStandards` are fetched from the KB tree itself (they are KB
-  entries: `glossary.md`, the generated ADR index, `engineering/standards.md`); `projectIdentity`,
-  `level` and `stageGoal` are not KB data (config and run-state, owned by packages this one cannot
-  depend on) and are accepted only via `pinnedCoreOverrides`, defaulting to omitted when not supplied.
+- `interface PackRequest { declaredInputIds: readonly string[]; briefText: string; budgetTokens: number; pinnedCoreOverrides?: Partial<PinnedCore> }`, `interface PinnedCore { projectIdentity?: string; level?: string; glossary: string; constraints: string; adrIndex: string; stageGoal?: string; codingStandards: string }`
+  — corrected to all seven of `05` §5.4's own pinned-core items (the original draft omitted
+  `constraints` entirely — `SPEC-QUESTIONS.md` Q54). `glossary`, `constraints`, `adrIndex` and
+  `codingStandards` are all computed from `tree.entries` itself, not read from a file:
+  `glossary`/`codingStandards` are one real `kb-entry`'s own body text (`glossary.md`,
+  `engineering/standards.md`); `adrIndex`/`constraints` are computed one-line-per-entry summaries
+  (every ADR; every `active`-status `constraints`-section entry) rather than read from `08` §8.2's own
+  `decisions/index.md`, which is generated and out of scope for `parseKbTree` (Q51) — no piece in this
+  milestone produces it yet (Q54). `projectIdentity`, `level` and `stageGoal` are not KB data (config
+  and run-state, owned by packages this one cannot depend on) and are accepted only via
+  `pinnedCoreOverrides`, defaulting to omitted when not supplied.
 - `interface ContextPack { pinnedCore: PinnedCore; declaredInputs: readonly { id: string; content: string }[]; retrieved: readonly { id: string; content: string; score: number }[]; manifest: { ids: readonly string[]; tokenCounts: Record<string, number> } }`.
 - `buildContextPack(request: PackRequest, backend: KbIndexBackend, tree: KbTree): ContextPack`.
 

@@ -1844,3 +1844,108 @@ for. **Answer taken:** `KbIndexBackend` gains `clear(): void`, clearing every ta
 clearing what it does not itself write is still correct, since a stale row from a *previous* rebuild,
 written by a future piece that does populate them, must not survive a rebuild it wasn't part of any
 more than a stale `entries` row would).
+
+## Q54 — P9's `PinnedCore` is missing one of `05` §5.4's own seven pinned-core items, and three of its
+remaining fields have no buildable data source as originally drafted
+
+`05` §5.4 point 1 names pinned core as: "project identity, level, glossary, active constraints, ADR
+index (one-line each), current stage goal, coding standards" — seven items. `PLAN-M3.md`'s own P9
+draft named six, omitting "active constraints" entirely. Building the other six against `KbTree`
+(P6)/`KbIndexBackend` (P8) alone — `buildContextPack`'s own drafted signature takes no `ProjectPaths`
+and cannot read arbitrary files — found two more real gaps: `adrIndex`'s natural source, `08` §8.2's
+`decisions/index.md`, is explicitly "generated" and out of scope for `parseKbTree` (`SPEC-QUESTIONS.md`
+Q51) — no piece in this milestone produces it — and nothing else names where "active constraints" data
+comes from either.
+
+**Answer taken (proceeding):**
+1. `PinnedCore` gains a `constraints: string` field, closing the omission.
+2. `adrIndex` and `constraints` are both *computed* directly from `tree.entries`, not read from a
+   generated file that does not exist: `adrIndex` is one line per `kind: 'adr'` entry
+   (`{id}: {title} ({status})`, sorted by id — the identical "one-line each" `05` §5.4 itself asks
+   for), and `constraints` is one line per `kind: 'kb-entry'` entry whose `section` is `'constraints'`
+   and `status` is `'active'` (`{id}: {title}`, sorted by id) — this is the actual source data a
+   future "regenerate `index.md`" piece would use anyway, computed fresh rather than depending on a
+   stale or absent artifact.
+3. `glossary` and `codingStandards` are each one real `kb-entry`'s own body text — `glossary.md`
+   (`type: glossary`, per `SPEC-QUESTIONS.md` Q51) and `engineering/standards.md` respectively, found
+   by path within `tree.entries`. `projectIdentity`/`level`/`stageGoal` remain override-only (config
+   and run-state this package cannot depend on) exactly as `PLAN-M3.md` already specified.
+4. The merge of lexical search hits (P8's `backend.search`) and 1-hop graph-expansion candidates
+   (P8's `backend.expand`, called only on `declaredInputIds` — "not of every retrieved entry," per
+   this piece's own Check) into one ranked `retrieved` list is not fully specified by either `05`
+   §5.4 or `08` §8.5: a graph-expansion-only candidate (not already a lexical hit) is assigned score
+   `0` — below every real lexical hit, since `08` §8.5 places lexical (step 2) before graph expansion
+   (step 3) — and the combined list is sorted by score descending, ties broken by more-recent
+   `updated` first (`08` §8.5's own "filtered by... recency" for graph expansion), then by `id` (byte
+   order, never `localeCompare`) for full determinism. The budget cut is a simple sequential cutoff in
+   this sorted order, not a knapsack optimisation: the first candidate that would exceed
+   `budgetTokens` stops inclusion entirely, matching "drops the lowest-ranked retrieved entries first."
+5. `manifest.ids`/`manifest.tokenCounts` cover `declaredInputs` and `retrieved` only — real,
+   individually-addressable KB ids. `pinnedCore`'s own four KB-derived fields are aggregated summaries
+   (an ADR index line, a filtered constraints list) with no single id of their own in the output
+   shape, so they are not represented as manifest entries.
+
+**Recommended resolution:** state all seven pinned-core items in one place (`05` §5.4 and `08` §8.2's
+own layout table already imply `constraints/`'s four files are the "active constraints" source, but
+neither says so explicitly), and give `decisions/index.md`'s own generation a real owner somewhere in
+the build plan so a future piece does not rediscover the same "no such file exists yet" gap for the
+one piece that actually needs to write it.
+
+**Critic-round addendum: a duplicate-id budget bug, a `NaN`-budget bug, and a latent `NaN`-score sort
+risk, fixed; the budget-drop policy itself confirmed, not changed.** A gauntlet critic found
+`buildContextPack` never deduplicated `request.declaredInputIds` — passing the same id twice produced
+two identical `declaredInputs` entries, double-charged the token budget for one document's content,
+and left `manifest.ids` (length 2) disagreeing with `manifest.tokenCounts`'s own key count (1, since a
+plain object cannot hold a duplicate key). **Fixed** by deduplicating `declaredInputIds` via
+`[...new Set(...)]` (preserving first-occurrence order) before anything else in the function runs. The
+critic also found `budgetTokens: NaN` silently disabled the entire budget: every comparison against
+`NaN` is `false` in JS, so the retrieval loop's own `usedTokens + tokens > budgetTokens` check never
+breaks and every candidate is admitted regardless of size — the one direction ("fails unsafe: unbounded
+inclusion") worse than a negative budget's own already-safe "fails to empty." **Fixed** by rejecting a
+`NaN` budget explicitly (new code `KB-013`'s sibling, `KB-014`) rather than letting it silently
+misbehave — matching this piece's own existing stance that a caller mistake gets a named, actionable
+error rather than quiet wrong output. Separately, the critic found `rankedCandidates`'s own sort
+comparator has no guard against a `NaN` score, which no built-in `KbIndexBackend` produces today
+(verified: `scoreByTermOverlap` only ever returns a positive integer count, and real BM25 is always a
+finite number) but which the interface itself does not forbid from a future backend — **fixed**
+defensively by normalizing a non-finite `search()` score to `0` (the same score already given to a
+graph-expansion-only candidate) at the one place scores enter `scoreById`, so the sort's own three-way
+tie-break stays a genuine, deterministic total order regardless of what a backend returns. Finally, the
+critic separately flagged (as "major, but the classification hinges on which reading of the spec text
+is intended") that a large, top-ranked candidate blocks every smaller, lower-ranked candidate that
+would otherwise fit, since the retrieval loop `break`s on the first candidate that doesn't fit rather
+than skipping it and trying smaller ones. This is not a new gap: it is exactly this Q's own point 4,
+above, stated before any of this piece's code existed ("the first candidate that would exceed
+`budgetTokens` stops inclusion entirely, matching 'drops the lowest-ranked retrieved entries first'").
+Re-examined against the critic's own adversarial case and left **unchanged**: keeping the retrieved set
+as a rank-ordered prefix of `candidates` is the literal reading of "drop the lowest-ranked entries
+first," and the alternative (skip an oversized entry, keep trying smaller lower-ranked ones) can end up
+keeping a lower-ranked entry while dropping a higher-ranked one — the opposite of what the spec text
+asks for. `build-context-pack.ts`'s own comment at the loop was strengthened to name this reasoning
+explicitly, and a new regression test (`build-context-pack.test.ts`) now locks in the exact scenario
+the critic used to demonstrate it, so the behaviour reads as chosen, not overlooked.
+
+**Verify-round addendum: all four critic-round fixes confirmed independently; one new gap found and
+fixed, one remedy string corrected for accuracy.** A verify pass re-derived each of the four fixes
+above from first principles (its own adversarial scripts, not just re-running the existing tests) and
+confirmed all four hold: deduplication preserves first-occurrence order against a 15-element scrambled
+list touching every fixture id; `KB-014` fires for both a literal `NaN` and an arithmetic-derived one
+(`0/0`, `Infinity - Infinity`), and does *not* fire for a negative or `Infinity` budget (both still
+"fail safe/fine," matching the earlier round's own finding); the prefix-drop regression test genuinely
+exercises a real oversized-but-top-ranked candidate blocking a real smaller-but-lower-ranked one;
+mixed `NaN`/`Infinity`/`-Infinity` backend scores all normalize to `0` and sort deterministically. It
+also found one new gap: `pinnedCoreOverrides` is typed `Partial<PinnedCore>`, which — despite
+`glossary`/`constraints`/`adrIndex`/`codingStandards` all being *required* `string` fields on
+`PinnedCore` itself — still permits a caller to write e.g. `{ glossary: undefined }` explicitly (TS's
+`Partial` makes a field optional, and an optional field always accepts `undefined`). `pinned-core.ts`'s
+own `{ ...computed, ...overrides }` spread let that explicit `undefined` clobber the real computed
+value, so `pinnedCore.glossary` could be genuinely `undefined` at runtime despite its required-`string`
+type — which then threw a raw, un-actionable `TypeError` inside `estimateTokens` rather than this
+package's own `ForgeError` discipline. **Fixed** by a small `definedOr` helper that keeps the computed
+value whenever the override for that specific field is `undefined` (present-but-`undefined`, or simply
+absent) — applied only to the four required-`string` fields; `projectIdentity`/`level`/`stageGoal`
+need no such guard since `PinnedCore` already types those three optional, so `undefined` is a
+legitimate value for them regardless of where it came from. Separately, the verify pass noted `KB-014`'s
+own remedy said "non-negative token budget," which oversells what the check actually enforces (a
+negative budget is accepted, not rejected) — **fixed** by rewording the remedy to name exactly the one
+condition that is rejected (`NaN`).

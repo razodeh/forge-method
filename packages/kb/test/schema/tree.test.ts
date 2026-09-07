@@ -50,6 +50,15 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     if (adr?.kind === 'adr') expect(adr.value.id).toBe('ADR-0001');
   });
 
+  it('also carries the ADR/runbook body text: adrSchema/runbookSchema themselves have no body field', async () => {
+    const paths = new ProjectPaths(FIXTURE_ROOT);
+    const tree = await parseKbTree(paths);
+    const adr = tree.entries.find((entry) => entry.kind === 'adr');
+    const runbook = tree.entries.find((entry) => entry.kind === 'runbook');
+    if (adr?.kind === 'adr') expect(adr.body).toContain('## Context');
+    if (runbook?.kind === 'runbook') expect(runbook.body).toContain('## Symptoms');
+  });
+
   it('parses the diagram sidecar via the existing diagramSchema', async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
@@ -83,12 +92,14 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     );
   });
 
-  it('parses the generic knowledge entry and the glossary entry via kbEntrySchema', async () => {
+  it('parses every generic knowledge entry and the glossary entry via kbEntrySchema', async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const kbEntries = tree.entries.filter((entry) => entry.kind === 'kb-entry');
     expect(kbEntries.map((entry) => entry.path).sort()).toEqual([
       'architecture/architecture-spec.md',
+      'constraints/technical.md',
+      'engineering/standards.md',
       'glossary.md',
     ]);
   });

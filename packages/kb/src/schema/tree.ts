@@ -52,9 +52,9 @@ export interface KbParseError {
 }
 
 export type KbParsedEntry =
-  | { readonly path: string; readonly kind: 'adr'; readonly value: ADR }
+  | { readonly path: string; readonly kind: 'adr'; readonly value: ADR; readonly body: string }
   | { readonly path: string; readonly kind: 'diagram'; readonly value: Diagram }
-  | { readonly path: string; readonly kind: 'runbook'; readonly value: Runbook }
+  | { readonly path: string; readonly kind: 'runbook'; readonly value: Runbook; readonly body: string }
   | { readonly path: string; readonly kind: 'risks-file'; readonly value: RisksFile }
   | { readonly path: string; readonly kind: 'assumptions-file'; readonly value: AssumptionsFile }
   | { readonly path: string; readonly kind: 'open-questions-file'; readonly value: OpenQuestionsFile }
@@ -128,9 +128,17 @@ async function parseOneFile(
 
   switch (kind) {
     case 'adr':
-      return { path: relativePath, kind: 'adr', value: adrSchema.parse(frontMatter) };
+      // `body` carries the ADR's real Context/Decision/Consequences prose — a P9 gauntlet round
+      // found `adrSchema` itself has no body field at all (front matter only), so a declared-input
+      // ADR had no way to surface its own substantive content into a context pack without this.
+      return { path: relativePath, kind: 'adr', value: adrSchema.parse(frontMatter), body: doc.body };
     case 'runbook':
-      return { path: relativePath, kind: 'runbook', value: runbookSchema.parse(frontMatter) };
+      return {
+        path: relativePath,
+        kind: 'runbook',
+        value: runbookSchema.parse(frontMatter),
+        body: doc.body,
+      };
     case 'risks-file':
       return { path: relativePath, kind: 'risks-file', value: risksFileSchema.parse(frontMatter) };
     case 'assumptions-file':
