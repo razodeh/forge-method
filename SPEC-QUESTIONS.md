@@ -4251,3 +4251,217 @@ this module has (`model`, `platform`, `stepId`, `agentId`) — closing both new 
 
 No other new findings; `tsc`, `eslint`, and the full package suite (140 tests after these fixes' own new
 ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.
+
+---
+
+## Q70 — M5 P8's `@forge/engine` workflow DSL: a spec-text YAML bug, and a dozen design points not given
+anywhere in the spec pack
+
+`10` §10.1 gives one worked example (a full workflow YAML document) and an eleven-kind "Step kinds" table
+with a one-line semantic each. Six kinds (`agent`, `command`, `gate`, `fanout`, `merge`, `subworkflow`)
+have concrete fields in the worked example; five (`elicit`, `session`, `checkpoint`, `parallel`,
+`sequence`) have none anywhere in the spec pack (confirmed: grepping every spec file for `kind: elicit`/
+`kind: session`/`kind: checkpoint`/`kind: parallel`/`kind: sequence` finds nothing beyond the table row
+and one bare prose mention of `kind: session` in `16` §16.6). This is the largest design surface of any
+piece this milestone.
+
+**1. The spec's own worked example is not valid YAML as literally written.** Three `inputs:` lines embed
+`{{item.id}}` unquoted inside a flow sequence (`inputs: [ artifact:Story({{item.id}}), artifact:TestPlan
+]`). Confirmed empirically: a real, spec-compliant YAML parser treats the unquoted `{{` as an attempt to
+open a *nested flow mapping*, colliding with the surrounding flow sequence, and fails with "Missing , or :
+between flow sequence items." Quoting just the affected token (`"artifact:Story({{item.id}})"`) parses
+cleanly. Treated as a spec-text imprecision, not a defect in this piece: the test fixture transcribes the
+worked example with this one correction, documented inline as to why.
+
+**2. `StepKind`'s eleven literals are transcribed independently, not imported from `@forge/extensions/
+workflows`'s own, narrower `StepKind`** (`PLAN-M2.md` P6, built before this piece existed, for its own
+overlay-guardrail purposes). `engine ← extensions` is an allowed edge, but reaching into a package whose
+own doc comment calls its copy a deliberately minimal stand-in for this fuller shape landing here would be
+an odd dependency for this piece's own foundational type to carry. Two independent, spec-derived
+transcriptions of the same closed table — the same trade `VcsError`/`TelemetryError` already make
+(`SPEC-QUESTIONS.md` Q62).
+
+**3. `id` is optional at the *type* level on every step kind, with "is `id` required here" pushed entirely
+to `validateStructure`.** A `fanout`'s own singular `step` (id synthesized later, at plan-compilation
+time, `06` §6.2's own `${workflowId}:${stepId}[:${itemKey}]` shape) genuinely never has one in the YAML;
+`onComplete`'s own steps and an `onFailure` escalation's own `do` step are shown with none in the one
+worked example either. One recursive `WorkflowStep` union usable in every position, rather than several
+near-duplicate unions differing only in whether `id` is required, with the actual "required here, not
+there" rule expressed once, in `validateStructure`, as `collectAddressableSteps`'s own root-by-root
+`collect` flag (`workflow.steps` and `parallel`/`sequence` children: `true`; a `fanout`'s own child,
+`onComplete`'s own steps, an escalation's own `do`: `false` for the step itself, but still walked
+*through* to reach anything individually-addressable nested one level further in — see finding 8 below for
+why the walk-through matters).
+
+**4. `checkStepsHaveIds` is a new, unplanned check**: any step `collectAddressableSteps` reaches with no
+`id` at all is now a `missing-step-id` issue, not silently accepted. Nothing could ever `dependsOn` such a
+step or name it in an issue's own `stepId` — the same "meaningless value silently accepted" shape this
+milestone has repeatedly treated as worth catching (Q69's own blank-string findings), encountered here as
+a missing value rather than a blank one.
+
+**5. `WorkflowExistenceOracle` gains a fifth method, `briefExists`, beyond the plan's own original four**
+(`agentExists`, `gateExists`, `artifactTypeExists`, `workflowExists`). `10` §10.1's own "Validation"
+subsection prose says "referenced agents, briefs, gates, artifacts and workflows exist" — five things — so
+the plan's own four-method interface was itself incomplete relative to the spec text it cites, the same
+class of correction as `Q66`'s `baseSha` addition to `enforceClaim`.
+
+**6. `elicit`/`session`/`checkpoint`/`parallel`/`sequence`'s own field shapes are entirely this piece's own
+design**, each documented individually in `types.ts`: `elicit` gets a `questions: readonly { name, prompt
+}[]` array (`18` §18.4's own `ElicitationRequested`/`ElicitationAnswered` events confirm "structured
+questions" is a real, named concept elsewhere, not just prose); `session` gets a plain `sessionType:
+string`, not `16` §16.2's own closed ten-value union — `@forge/sessions` is a sibling `engine` cannot
+reach, per `specs/02` §2.2's own graph, not a forward dependency this piece can wait out, the same reason
+`AgentStep.mode`/`onFailure` stay plain strings too; `checkpoint` gets no fields at all beyond the shared
+base (the table's own one-line description is already a complete field list of zero); `parallel`/
+`sequence` wrap real, individually-addressable child steps (`.min(1)` — an empty group is exactly as inert
+as a workflow with zero steps, which the top-level schema already rejects the same way).
+
+**7. `minimatch.makeRe()` is confirmed empirically to be extremely lenient** — unbalanced brackets/parens
+are treated as literal characters, not syntax errors; only the empty string is rejected. "Well-formed"
+`produces` glob-checking means exactly what `minimatch` (the same library `@forge/vcs`'s own claim
+enforcement already matches globs with) will actually accept, not a stricter, independently-invented
+grammar this piece would have to keep in sync with it by hand.
+
+**8. `childFrames` returns `{ step, collect }` pairs, not bare steps** — separating "does this get counted
+as an addressable position" from "does the walk descend into it," letting `walkWithDepthGuard` share one
+traversal between `walkAllSteps` (collects everything, `() => true`) and `collectAddressableSteps`
+(collects only `collect: true` positions, `(collect) => collect`) while both still walk *through* every
+`fanout`/`onComplete`/escalation-`do` root or child, regardless of whether that specific step itself counts
+as addressable. This was not the original design — see the critic-round and verify-round entries below for
+the two real bugs that shape went through before landing here.
+
+**9. `parseDocument(yamlText, { lineCounter, merge: true })`** — `merge: true` resolves YAML merge keys
+(`<<: *anchor`), confirmed empirically that without it a merge key is left as a literal `"<<"` object key,
+failing with a confusing "invalid discriminator" error that gives no hint the real cause is an unsupported
+YAML feature rather than a malformed workflow. `10` §10.1's own worked example is fairly repetitive across
+its five `agent`/`fanout` steps, a natural reach for merge keys once an author discovers plain anchors
+work.
+
+**10. `resolvePosition`/`zodIssueToParseIssue` resolve a zod issue's own JSON path back to a real source
+line/column via the `yaml` package's own CST** (`doc.getIn(path, true)`, then `LineCounter.linePos`), not
+just a bare field-path string — `02` §2.1's own "source-position retention" requirement, taken seriously
+for schema-shape violations too, not only top-level YAML syntax errors. Returns no position (not `line: 0`
+or similar) when the violated field is entirely *missing* from the document, since there is no source text
+of its own to point to and falling back to the parent would attribute the error to the wrong line.
+
+**11. `MAX_TRAVERSAL_DEPTH = 2000` guards every recursive walk in `validate.ts`, converted from real
+recursion to an iterative explicit stack.** Confirmed empirically that a naive recursive version throws a
+raw `RangeError` past a few thousand levels of nested `fanout`/`parallel`/`sequence` or a several-
+thousand-step-long `dependsOn` chain, contradicting this file's own "never throws" contract — a
+`parseWorkflow`-bypassing, hand-built `Workflow` object is the realistic trigger, not real YAML text (see
+finding 12). No realistic workflow — the spec's own one worked example has 9 steps and 2 levels of nesting
+— comes remotely close to 2000.
+
+**12. `parseWorkflow`'s own call into `workflowSchema.safeParse` is wrapped in a `try`/`catch` for
+`RangeError` specifically, converted into a `ParseIssue`, and extracted into an exported
+`parseValueAgainstSchema`.** Confirmed empirically, repeatedly, and from multiple angles (block-style and
+flow-style nesting, with and without the extra per-node fields a real workflow step schema carries, up to
+~1200 nesting levels) that no real YAML text reaches this branch through `parseWorkflow` — the `yaml`
+package's own composer consistently hits *its own*, lower stack limit first for this schema's specific
+shape, and reports a clean, positioned issue instead. Handled anyway, unconditionally, rather than resting
+on that empirical margin holding forever: `workflowSchema`/`workflowStepSchema` are also exported directly
+from this package's own public barrel, reachable by a caller who bypasses `parseWorkflow` entirely.
+
+### P8 critic round: 3 MAJOR, 2 MINOR
+
+The critic was asked to check the zod schema against the hand-written types for genuine semantic drift
+(not just "does it compile"), stress-test the recursive schema/validators with oddly-nested structures,
+verify `resolvePosition`'s line/column resolution at real depths by manually checking source text, and
+specifically hunt for adversarial YAML (anchors, merge keys, extreme nesting, empty groups) — each by
+actually constructing and running the scenario.
+
+- **MAJOR: `collectAddressableSteps` never descended into a `fanout` step's own child at all**, so a real
+  duplicate id or a real cycle *entirely inside* a `parallel`/`sequence` nested inside a `fanout`'s
+  template went completely undetected — even though the identical nesting depth was already correctly
+  reached by this file's other checks. A real, always-triggering defect, not a premature check waiting on
+  plan-compilation-time expansion: the bug reproduces identically for every item the fanout expands to.
+  **Fixed** with the `childFrames`/`collect`-flag design (finding 8 above) — see "between rounds" below for
+  a real bug in the *first* attempt at this fix, caught by the builder's own new test before ever reaching
+  the verify round.
+- **MAJOR: `validateWorkflow` never checked `workflow.requires.gates_passed`/`workflow.requires.artifacts`
+  against the oracle**, despite the oracle already having the exact methods needed and despite this being
+  the one field the spec's own single worked example populates specifically to exercise referential
+  checking. **Fixed** by checking both arrays before walking steps.
+- **MAJOR: deeply-nested input threw an uncaught `RangeError`** — finding 11/12 above are this finding's
+  own fix, in full.
+- **MINOR: `parallel`/`sequence` accepted an empty `steps: []`**, exactly as inert as a workflow with zero
+  steps. **Fixed** with `.min(1)` on both schemas (finding 6 above).
+- **MINOR: YAML merge keys were silently unsupported**, failing with a confusing, misattributed error.
+  **Fixed** with `merge: true` (finding 9 above).
+
+Confirmed genuinely clean, with real attempts made to break each: ~24 targeted malformed/edge-case
+constructions across every step kind (blank required strings, `retry.maxAttempts` ≤0, `limits.maxCostUsd`
+negative vs. zero, empty `elicit.questions`, wrong-typed `WorkflowInput.required`, non-string `vars`
+values, invalid `cardinality` values, extra fields under every `.strict()` schema) — no drift found between
+`schema.ts` and `types.ts`; `resolvePosition` at five genuinely different real depths, manually line-
+counted, all correct including the no-position case; cycle-path accuracy for disjoint cycles and a
+diamond-into-cycle graph; anchors/aliases, a UTF-8 BOM, nested duplicate keys, tab indentation all handled
+sanely.
+
+### Between rounds — a bug the builder found and fixed on their own, before any verify round
+
+Writing a direct test for the `collectAddressableSteps` fanout-descent fix (finding 1 of the critic round)
+surfaced a real bug in the fix's own first attempt: it reused a single "walk and collect" function for both
+"collect everything" (`walkAllSteps`) and "collect only individually-addressable positions"
+(`collectAddressableSteps`) without actually distinguishing the two, so a fanout's own immediate templated
+child — which should never need an `id` — got incorrectly collected and flagged by the brand-new
+`missing-step-id` check (finding 4). Caught by the test `'does not report a fanout's own templated child
+for missing an id'` failing immediately. **Fixed** by introducing the `{ step, collect }` pair design
+(finding 8 above) before this fix was ever sent to a verify pass — the same "a fix's own new code needs the
+same scrutiny as the bug it closes" lesson this log has now named for several distinct pieces.
+
+A second, unrelated bug was caught the same way, in a *test*, not the source: the first version of the
+"reports an excessive-dependency-depth issue... on an extremely long dependsOn chain" test pointed
+`dependsOn` *backward* (step *i* depends on step *i-1*), which — because the top-level "start a DFS from
+every unvisited step" loop processes steps in array order — meant each step's own single dependency was
+already marked `'done'` by the time its own DFS started, so the real call stack never actually grew deep
+regardless of chain length. **Fixed** by pointing the chain *forward* instead (step *i* depends on step
+*i+1*), forcing one genuinely deep cascade from the first step.
+
+### P8 verify round: 6 of 7 items confirmed PASS, 1 partially fixed; 1 new MAJOR finding, 2 new MINOR,
+all fixed
+
+Every item was independently re-derived with scenarios distinct from the critic round's own: fanout→
+`sequence` (not `parallel`) with a duplicate id; triple-nested fanout→fanout→fanout; `parallel`→`fanout`→
+`parallel` (three levels, mixed kinds) with a duplicate at the innermost level; the exact boundary of
+`MAX_TRAVERSAL_DEPTH` (2000 → no trigger, 2001 → exactly one); `vi.spyOn(workflowSchema, 'safeParse')`
+confirmed to genuinely intercept the real internal call, two independent ways, via a random-nonce message
+threaded through to the resulting `ParseIssue`; merge keys nested inside a fanout's own child, and a
+multi-source merge (`<<: [*a, *b]`) with an explicit override — all held.
+
+**The one item only partially confirmed — deep-nesting `RangeError` handling (finding 11/12) — surfaced
+new finding 1 (MAJOR): `checkNoCycles`'s depth guard, on firing, `break`-ed out of the current DFS without
+resetting the `'visiting'` state of the steps still on its own abandoned stack.** Confirmed empirically,
+through the real `parseWorkflow` YAML-text entry point, with a completely ordinary (not pathologically
+nested) flat list of a few thousand steps closing into one ring: `validateStructure` returned one correct
+`excessive-dependency-depth` issue plus **2000 fabricated `dependency-cycle` issues**, every one of them
+non-closing (its own first and last step didn't match) — because a *later*, fresh DFS root, finding a
+stale-`'visiting'` step left behind by the abandoned walk, had no way to tell "genuinely on my own current
+path" from "abandoned mid-walk by an earlier pass," and `stack.findIndex` returning `-1` for that
+not-really-on-the-stack step was silently treated as "start the cycle from the beginning of the stack"
+rather than the sign of a broken invariant it actually was. **Fixed** by returning immediately with a
+single `excessive-dependency-depth` issue the moment the guard fires, discarding whatever was already
+found in that call, rather than continuing with corrupted state — a caller already has to treat that code
+as "this result is incomplete," so mixing in issues ranging from merely incomplete to actively fabricated
+is strictly worse than reporting none of them. The now-provably-dead `cycleStartIndex === -1` fallback was
+then simplified away rather than left as unexercised insurance, confirmed by the coverage tool itself
+(the branch went from present-but-untested to genuinely unreachable after the fix).
+
+**New finding 2 (MINOR): `collectAddressableSteps` never reached `onComplete`/an escalation's own `do`
+step's subtree at all**, so a duplicate id or cycle nested inside a `parallel`/`sequence` that happened to
+*be* one of those root steps went undetected — the identical bug class as the critic round's own fanout
+finding, one level up. **Fixed** by rooting `onComplete`/escalation-`do` steps with `collect: false` (they
+still need no `id` of their own, matching the one worked example) rather than excluding them from the walk
+entirely — `childFrames` already walks *through* a `collect: false` root exactly the same way it does a
+`fanout`'s own child.
+
+**New finding 3 (MINOR): `missing-step-id` issues carried no distinguishing information at all** — several
+simultaneously-offending steps produced byte-for-byte identical issue objects, giving a caller no way to
+tell "N real problems" from an accidental duplicate. **Fixed** by naming the offending step's own `kind` in
+the message, the one piece of information an id-less step actually has.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (63 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/engine/src/` except four individually-documented,
+`noUncheckedIndexedAccess`-required branches in `validate.ts` proven unreachable by construction — testing
+them would mean fabricating an internal state that cannot actually occur) all independently reconfirmed
+clean.

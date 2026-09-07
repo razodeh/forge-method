@@ -111,6 +111,18 @@ importers:
         specifier: 11.17.2
         version: 11.17.2
 
+  packages/engine:
+    dependencies:
+      minimatch:
+        specifier: 10.2.6
+        version: 10.2.6
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+
   packages/extensions:
     dependencies:
       '@forge/core':
