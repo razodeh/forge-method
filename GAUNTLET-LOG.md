@@ -2122,3 +2122,82 @@ sibling schemas' own established contract rather than judging it in isolation. T
 finding repeats this milestone's now-familiar "fixing the named case doesn't guarantee the sibling
 case is also fixed" pattern (`pathExists` closes "missing" but not "wrong type") — the same shape as
 P4's CRLF fix landing in one function and not its sibling, found again here one milestone piece later.
+
+## M3 P7 — KB id allocation and `KbWriter`
+
+**Rounds: 2 (one critic finding one blocking and three major defects, plus one minor one; one scoped
+verify confirming all five fixed under real, scaled-up reproduction and finding one further, narrower
+gap in the KB-011 fix itself — documented rather than chased with a third round). Outcome: WON.**
+
+Before any code was written, five real gaps in this piece's own plan draft were found and closed —
+`08` §8.6 is three short paragraphs with no worked `KbProposal` example, no event-log schema, and no
+acknowledgment that "checks contradictions" names an algorithm (§8.7's KB linter) that does not exist
+until P10 — recorded as `SPEC-QUESTIONS.md` Q52 before building against a known-incomplete surface.
+
+### Round 1 — critic: one blocking, three major, one minor
+
+- **Blocking: the "process-wide" queue this piece's own doc comment claimed was actually a private
+  field on each `KbWriter` instance.** Two independently-constructed writers against the same project
+  raced for real — the critic's own repro (8 concurrent `write()` calls split across two writer
+  instances, 16 writes total) produced only 8 unique ids (every one double-allocated) and only 8 of 16
+  event-log lines survived a lost read-modify-write race on `.forge/state/kb-events.jsonl`.
+- **Major: `replaceSectionValue` silently dropped the blank line separating an edited section from the
+  next heading**, and `doPropose`'s own unconditional trailing `\n` compounded into one extra stray
+  blank line at the end of the file on every single repeated edit to any non-last section — the
+  ordinary, primary way a real KB entry gets edited over its life, not a rare corner case.
+- **Major: `propose()`'s target lookup silently picked whichever of several same-id files matched
+  first (alphabetically), with no signal anything was ambiguous** — reproduced by hand-authoring a
+  decoy file reusing an existing entry's id, sorting before it; the proposal silently applied to the
+  wrong file.
+- **Major: `write()` silently overwrote an existing file at the same `path`**, permanently destroying
+  whatever entry was already there with zero warning, and orphaning an event-log line for an id whose
+  file no longer existed.
+- **Minor: a schema-validation failure still permanently burned the id `KbIdAllocator` had already
+  allocated for it**, since allocation happened before validation — every typo in an unrelated field
+  (`owner: ''`) retired a real id for nothing.
+
+**Fixes:** the queue became a module-level `Map` keyed by the project's own resolved root path, shared
+by every `KbWriter` instance rather than a per-instance field — fixing this surfaced a second, related
+gap (each instance's own `KbIdAllocator` caching a now-stale view of the world the moment a *sibling*
+instance wrote something in between), closed by forcing a fresh scan immediately before every
+allocation. `replaceSectionValue` now re-inserts exactly one blank line before a following heading, and
+a new `withTrailingNewline` helper appends a trailing newline only when the text doesn't already have
+one — used in `doPropose`'s final write *and*, found while fixing the first instance, `doWrite`'s own
+file-creation template, which had the identical unconditional-`\n` bug a second time. `doPropose` now
+throws `KB-011` when more than one file claims the same target id, rather than picking one. `doWrite`
+now checks `pathExists` on the target and throws `KB-009` rather than overwriting. The id-burn gap is
+closed by validating a placeholder-id candidate (the real section's own real token, so the id/section
+check still passes) *before* ever calling the allocator — and, since the only way the real id could
+ever differ from the placeholder's is in digits no check is sensitive to, the second, post-allocation
+validation was removed entirely rather than kept as an untested, provably-unreachable branch.
+
+### Round 2 — scoped verify: all five confirmed under scaled-up reproduction, one narrower gap found
+
+Verify reproduced the *original* defect shape for all five first (temporarily re-introducing each one
+by hand, confirming the old symptom returned, then restoring the fix) before confirming each fix holds
+— then scaled every scenario well beyond the shipped tests: 4 writer instances × 40 concurrent
+`write()` calls (40/40 unique contiguous ids, 40/40 event-log lines, zero collisions, versus 11/40 and
+13/40 when either half of the fix was reverted in isolation — confirming both sub-causes are real and
+independent); 5–8 rounds of repeated edits to a *middle* section of a 4-section body, diffing full file
+content after every round (no accumulation, no leakage into untouched sections); adversarial inputs
+built specifically to try to break the "no second validation needed" reasoning (arrays containing the
+literal placeholder id, `confidence: verified` with real Verification content, cross-section writes) —
+none broke it. It then found one further, narrower instance of the KB-011 hazard: the duplicate-id
+check only scans documents that fully pass `parseKbTree`'s own validation, so a second file claiming
+the same id but *also* failing an unrelated check (e.g. filed under the wrong directory) is invisible
+to it. **Documented, not fixed** — the same "defer to the KB linter's own project-wide integrity scan"
+shape already used for Q50's collection-file duplicate-id gap, recorded in `writer.ts`'s own comment at
+the check site and in `SPEC-QUESTIONS.md` Q52's verify-round addendum.
+
+### Calibration note
+
+This piece's blocking defect is the sharpest instance yet, this milestone, of a doc comment asserting a
+guarantee the code did not actually provide — "process-wide" when the mechanism was per-instance — and
+it was caught only because the critic actually constructed the scenario the claim implied should be
+safe (two real instances, real concurrency) rather than trusting the claim or the single-instance tests
+already in place. The blank-line/trailing-newline defect recurring a second time, verbatim, in the
+sibling function (`doWrite` alongside `doPropose`) is now the third time this exact shape — a fix
+correctly applied to one of two near-identical code paths, missed in the other — has appeared in this
+milestone (P4's CRLF handling, P6's `pathExists` check, now this), reinforcing that the right response,
+established by precedent, is to always ask "does this exact bug have a twin nearby" rather than
+declaring victory once the one named instance is fixed.

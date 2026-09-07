@@ -419,6 +419,8 @@ see `SPEC-QUESTIONS.md` Q52 for all five and why each answer was taken.
 established allocator pattern, reused by shape not by inheritance), `@forge/core/clock`,
 `@forge/core/fs` (atomic writes, `resolveState` for the id cache and event log).
 
+*(P7 is committed: `01d7a83`.)*
+
 ---
 
 ## P8 — SQLite index with a JSON fallback
