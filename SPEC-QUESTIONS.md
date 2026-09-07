@@ -3076,3 +3076,202 @@ mechanism speculatively — `FakeSessionScript` is deliberately never a function
 reopening that same design decision; add it if a future consumer's own test needs it. A new
 `adapter-metadata.test.ts` case pins `capabilities().interject === false` and
 `SessionHandle.interject === undefined` together, so the two can never again silently disagree.
+
+## Q62 — M5 scoping: `02` §2.2 declares `engine ← core, kb, agents, adapter-kit, vcs, telemetry, schemas,
+methods, extensions`, but `agents` and `methods` are M6 packages that do not exist yet — the identical
+shape of conflict Q43 (M3/CLI) and Q57 (M4/telemetry) already resolved, now with two forward edges at
+once, plus three further scoping decisions M5's own build order forces
+
+**Conflict, part 1 — forward dependency.** `specs/22` M5's own Build line lists `@forge/vcs`,
+`@forge/telemetry`, `@forge/engine`; M6's Build line is where `@forge/agents` (registry, prompt
+compilation, handoff records) and `@forge/methods` (framework execution, rubric scoring) are first
+built. `02` §2.2 nonetheless declares both as permitted `engine` imports. Structurally identical to Q43
+(M3 built before `@forge/cli`) and Q57 (M4 built before `@forge/telemetry`) — a real build-order
+conflict the dependency table's own graph-of-the-finished-system shape doesn't distinguish from a
+same-milestone dependency.
+
+**Answer taken (proceeding), following Q43/Q57's own precedent exactly:** nothing in M5's own Surface
+imports or calls `@forge/agents`, `@forge/methods`, `@forge/extensions`, or `@forge/kb`. `engine`'s own
+`package.json` declares only what M5 actually consumes (`core`, `adapter-kit`, `vcs`, `telemetry`,
+`schemas`) — the boundary graph in `tools/eslint-plugin-forge-boundaries/src/graph.mjs` keeps the *full*
+edge list `02` §2.2 states (a permitted-but-currently-unused edge is not a violation; the boundary lint
+only forbids imports outside the permitted set), so no graph edit is needed and no future edit will be
+needed when M6 wires the real packages in. Concretely, everywhere `06`/`10`'s prose assumes a real agent,
+a real KB pack, or real extension-resolved content exists, M5's own engine code takes a minimal, locally-
+typed stand-in instead (detailed below) — the same "caller supplies the capability this package cannot
+reach yet" shape Q43 established for `@forge/kb`'s own future CLI caller and Q57 established for
+`@forge/adapter-kit`'s own future telemetry caller. When M6 exists, wiring the real packages in is
+expected to be additive (new imports, no shape change to what M5 already ships), the same "M6 becomes a
+thin wrapper" relationship both precedents already established.
+
+**Conflict, part 2 — "do not build: real agents beyond stubs" needs a concrete shape.** `06` §6.2's own
+`StepNode.kind` includes `'agent'`, with `agent?: AgentId` and `brief?: string` (a template ref) —
+running an agent step means *something* must turn that into a `PlatformAdapter.startSession(...)` call,
+but `06`/`10` both describe agent identity and prompt compilation (persona, the nine prompt blocks,
+separation-of-duties enforcement) as `05`'s own content, itself `@forge/agents`' job (M6).
+
+**Answer taken:** `@forge/engine`'s own step-execution dispatch (piece 15 below) treats `agent`/`brief`
+as opaque strings for M5's purposes: `AgentId` is a plain branded string type (no registry lookup,
+no persona/prompt-block compilation), and `brief` resolution for M5's own fixtures is a direct
+string-template substitution (the same expression evaluator piece 9 already builds, reused rather than
+inventing a second templating mechanism) — not the real, agent-role-aware compiler `05`/`06` describe.
+The resulting string becomes `SessionRequest.prompt` directly. `05`/`06`'s own separation-of-duties
+enforcement (test-writer ≠ implementer, reviewer ≠ implementer) is `@forge/agents`' own concern (which
+*role* an agent id resolves to) — M5's dispatch has no concept of "role" at all, only "run this prompt
+in a lane with these tools granted," so there is nothing yet to separate. This is deferred wholesale to
+M6, not partially built now: a step dispatcher that fakes role-awareness with no real roster behind it
+would be worse than one that visibly has none.
+
+**Conflict, part 3 — workflow/gate *content* vs. the *mechanism* that runs it.** `10` §10.5's built-in
+workflow roster (`build-stage`, `plan-stage`, ...) and `10` §10.3's gate catalogue (`G-Design`,
+`G-Verify`, their specific `checks.deterministic` entries like `spec:validate`/`kb:lint`) are named
+`@forge/templates` content in M6's own Build line ("the ten lifecycle workflows, all gates and checks"),
+not M5's.
+
+**Answer taken:** M5 builds the *generic* mechanism only — a workflow YAML parser/validator that accepts
+*any* spec-conforming workflow definition (piece 8), a gate evaluator that runs *any* gate definition's
+declared `checks.deterministic`/`checks.advisory` commands generically, with no built-in knowledge of
+what `spec:validate` or `kb:lint` mean (piece 14) — and every one of M5's own tests supplies locally-
+defined fixture workflows and fixture gates (a trivial `checks: [{id: 'always-pass', run: 'true', ...}]`
+style gate, an `echo`-based agent-stand-in step), the same "test-local fixture, not real production
+content" shape M4 P4's own conformance suite used for its `ConformanceOptions` fixtures (`SPEC-QUESTIONS.md`
+Q60 point 1). Real workflow/gate content is wired in once `@forge/templates` ships (M6); nothing about
+the parser/evaluator's own public surface is expected to change shape at that point.
+
+**Conflict, part 4 — `21` §21.2's E2/E3 fixtures literally require `forge plan stage` and
+`forge run build --stage mvp`, both `@forge/cli` (M6) commands running real `build-stage` content
+(M6 `@forge/templates`) — neither exists in M5.** M5's own exit test nonetheless names
+`--grep "E3 crash-resume"` verbatim.
+
+**Answer taken:** M5 builds and claims a *scoped, engine-level* E3 — piece 20's own crash-resume test
+exercises `@forge/engine`'s programmatic API directly (no CLI), against a locally-defined fixture
+workflow (multi-lane, fanout, a merge step, a gate step) run against `@forge/testkit`'s
+`FakePlatformAdapter` (M4) for every `agent` step, proving the *mechanism* — event-log replay, resume-
+vs-reroll per step, lane worktree rollback, re-entry into the scheduler — survives a kill at randomised
+points with identical final state. This is E3's own defining claim ("resume completes; final state
+identical to an uninterrupted run; no duplicated commits, artifacts or ledger entries") made true at the
+engine layer. The *literal*, full-fidelity E2/E3 (through the real `forge` CLI, against real `build-stage`
+content, with real agents) is necessarily a later milestone's own claim, once `@forge/cli` and
+`@forge/templates` both exist — this is recorded here so that milestone's own plan re-derives E2/E3
+rather than assuming M5 already fully discharged it.
+
+**A fifth, smaller scoping note — tracing spans.** `06` §6.11 describes OTel-shaped spans into
+`trace.ndjson`, but M5's own Build line for `@forge/telemetry` names only "event log... redaction at
+write time, projections, cost ledger" — spans are not listed. `06` §6.11 itself frames OTLP forwarding as
+opt-in and off by default, and nothing in M5's acceptance criteria or exit tests requires trace spans to
+exist. **Deferred**, not built: `@forge/telemetry`'s M5 scope is the event log (piece 6) and the cost
+ledger (piece 7) only; tracing is added when a consumer (the TUI's lane detail, per `06` §6.11 — M9) or
+an explicit later milestone line actually needs it.
+
+**A sixth note — where claim tracking for scheduling lives vs. where claim enforcement lives.** `06`
+§6.7's own text splits across two different moments: "the scheduler builds an interval map; overlapping
+claims are serialised" (a *scheduling-time* decision, before a step ever runs) versus "at lane completion,
+the actual changed file set is diffed against the claim... out-of-claim writes are reverted/flagged" (a
+*post-execution* policy check, after a lane's session ends). **Answer taken:** the interval map and
+overlap-based serialisation live in `@forge/engine`'s plan-compilation piece (11) — they are a pure
+function of the *declared* plan, needed before any lane exists to diff against. The actual diff-vs-claim
+enforcement (real git changes vs. the declaration, revert or flag) lives in `@forge/vcs`'s own piece (4)
+— it needs a real completed lane worktree to operate on, which is `@forge/vcs`'s own domain, not
+`@forge/engine`'s. `@forge/engine`'s step dispatcher (piece 15) calls `@forge/vcs`'s enforcement function
+once a lane's session ends, before handing the lane to the merge queue.
+
+**Recommended resolution (for `02`/`22` themselves):** either restate `engine`'s own dependency line as
+`engine ← core, adapter-kit, vcs, telemetry, schemas` for M5 specifically (with `kb, agents, methods,
+extensions` added as a *note* saying "wired in once M6 ships," mirroring how this file already documents
+the gap) or reorder `specs/22` so a package's own Build line never lists a dependency milestones later
+than itself without saying so explicitly. Either would let a future implementer skip re-deriving this
+resolution from first principles the way this entry had to.
+
+## Q63 — M5 P1's `@forge/vcs` git primitives: two design points not given anywhere in the spec pack, plus
+its own critic-round and verify-round addenda (the verify round's own second finding forced a full
+redesign of how "no commits yet" is detected, not just a fix)
+
+1. **`VcsError`, not `ForgeError`.** `02` §2.2's own graph: `vcs ← schemas` only, no `core` edge — the
+   identical position-in-the-graph reason `@forge/adapter-kit`/`@forge/testkit` never throw the real
+   `ForgeError` either (`SPEC-QUESTIONS.md` Q58 point 15). `VcsError` (`errors.ts`) carries the same
+   three load-bearing fields (`code`, `message`, `remedy`) as `ForgeError` so a later wrap by
+   `@forge/engine` (which has both `core` and `vcs`) can be lossless, but is not itself registry-backed
+   (no closed `code` union, no `severity`/`docsUrl`/`exitCode`) — building a second, parallel registry
+   just for this package's own handful of codes would be exactly the kind of premature infrastructure
+   `02` §2.6's own registry design exists to avoid duplicating piecemeal.
+2. **"No commits yet" is detected structurally (`git rev-parse --verify -q HEAD`'s own exit code and
+   `stderr` emptiness), never by matching git's own message text.** Not the first design tried — see
+   the verify-round addendum below for what was tried first and why it was replaced, not merely patched.
+
+### P1 critic round: 2 blocking, 2 major, 4 minor
+
+- **BLOCKING: every exported function leaked a raw, non-`VcsError` exception for realistic failures**
+  (a nonexistent directory, a permission-denied directory, a bare repository, a corrupted `.git`) —
+  contradicting each function's own doc comment, which claimed `VcsError` only. **Fixed** with a
+  `wrapGitFailure(operation, context)` helper applied at every git-call site, converting any caught
+  non-`VcsError` into one while preserving the original as `cause`.
+- **BLOCKING: two tests asserted only a message-regex match while their own names claimed to verify
+  `VcsError`-ness and the remedy, and no test anywhere checked `.code`.** A future edit that swapped two
+  code constants or blanked a remedy would have passed every test unchanged. **Fixed**: every test
+  expecting a `VcsError` now asserts `toBeInstanceOf(VcsError)` and `toMatchObject({code, remedy})`.
+- **MAJOR: `isNoCommitsYetError` (the original, message-matching version) depended on hardcoded English
+  git output with no locale-pinning on the subprocess** — an NLS-enabled git under a non-English
+  `LANG`/`LC_ALL` would emit a translated message this check would silently fail to recognise,
+  misclassifying an ordinary "no commits yet" repository as a genuine failure. **Superseded**, not
+  merely fixed — see the verify-round addendum.
+- **MAJOR: `getDirtyFiles`'s "every changed path" doc comment overclaimed** — a change inside a
+  submodule's own working tree is reported only as the submodule's own gitlink path, never the file(s)
+  that actually changed (git treats a submodule as opaque to the superproject's own `git status` by
+  design). Not a safety gap (the tree is still correctly flagged dirty). **Fixed** by correcting the doc
+  comment to name this, and the pre-existing rename-shows-only-new-path behaviour, as two explicit,
+  accepted, safety-neutral limitations rather than silently overclaiming completeness.
+- Four MINOR findings (renamed files reported by new path only; `snapshotRepoState`'s two sequential git
+  calls not being atomic — explicitly out of this piece's own scope, a later single-supervisor/
+  project-lock design's job; a `PATH`-mutation test using a bare `process.env` assignment plus
+  `try/finally` instead of this codebase's own `vi.stubEnv()` convention; missing tests for deletion/
+  staged-deletion/rename/merge-conflict dirty states, though the pre-fix implementation already handled
+  all four correctly) — the first three fixed, the last closed with four new test cases.
+
+### P1 verify round: 6 of 8 confirmed cleanly; 2 new BLOCKING findings, the second forcing a full
+redesign rather than a patch
+
+Finding 1 (raw exceptions) was marked only **partially** fixed: `snapshotRepoState` still called
+`openGit(cwd)` — which throws *synchronously* for a nonexistent or non-directory `cwd` — before any
+`wrapGitFailure` boundary existed, for the one function whose own new test coverage happened to exercise
+only the bare-repository case. **Fixed** by constructing `openGit(cwd)` lazily, inside the wrapped
+closure, rather than hoisting it above the wrap boundary.
+
+A **new** finding, independent of the original eight: the locale-pin attempted for the (now superseded)
+message-matching check — `simple-git`'s own `.env('LC_ALL','C').env('LANGUAGE','C')` — turned out not to
+merge with the inherited environment at all, in *either* its name/value or object form, contrary to what
+its own doc comment claimed: whatever was set via `.env()` became the *entire* environment handed to
+every spawned git subprocess, dropping `PATH`, `HOME`, and this repo's own git test-isolation variables
+(`GIT_CONFIG_GLOBAL` foremost). Verified three ways by the verify pass: reading `simple-git`'s own
+bundled source, direct spawn-argument interception, and a black-box test stubbing `GIT_CONFIG_GLOBAL` to
+a malformed file and confirming the real `openGit()`-mediated call never saw it. The bug was masked on
+the original dev machine only by a POSIX `execvp` fallback search path that finds `git` even with no
+`PATH` at all — a fallback Windows does not have. The first attempted fix — explicitly spreading
+`process.env` into the `.env()` call — traded that bug for a different one: `simple-git`'s own
+unsafe-operations guard rejected the spawn outright, because the ambient dev machine's own shell
+environment happened to have `GIT_EDITOR` set, and the guard treats any explicitly-configured `GIT_EDITOR`
+as a suspicious override regardless of whether the caller meant to set it or was merely passing through
+whatever was already there.
+
+**Fixed at the root, not patched a second time**: the entire locale-pinning approach was replaced.
+`isNoCommitsYetResult` (superseding `isNoCommitsYetError`) now decides structurally — `git rev-parse
+--verify -q HEAD`'s own exit code and `stderr` emptiness, confirmed empirically to be 1/empty for "no
+commits yet" and a different code (128, in practice) with real `stderr` output for a genuinely corrupted
+repository — never by matching message text, so it needs no pinned locale, no `simple-git` `env()` call,
+and no `process.env` propagation of any kind. `openGit` reverts to a plain, unmodified `simpleGit(cwd)`.
+`resolveHeadShaOrUndefined` was simplified from an injectable-thunk design (originally built that way
+specifically to make its own re-throw branch testable without a real corrupted repository, back when
+constructing one seemed impractical) to a direct `execa`-based implementation bound to `cwd`, once
+proving the structural check out empirically showed a real corrupted-repository fixture is in fact easy
+and reliable to construct — removing indirection that a design constraint, once resolved, no longer
+justified.
+
+No other new findings. The verify pass independently reproduced all 8 original findings' fixes (6
+CONFIRMED outright: the doc-comment corrections, the test-quality upgrades, the `vi.stubEnv` switch, and
+the four new dirty-state tests) and separately rebuilt a real submodule fixture to confirm the accepted-
+limitation doc comment is accurate, endorsing the decision not to add a dedicated submodule test as
+proportionate given the fixture ceremony (`git submodule add` needing `-c protocol.file.allow=always`
+for a local-path submodule) relative to a documented, non-safety limitation. It could not reproduce the
+original locale bug directly — the only git available on the verification machine (Apple's system git)
+has no NLS/gettext support at all — and said so plainly rather than assuming the fix worked; the
+structural (non-locale-dependent) redesign this round produced does not depend on that reproduction
+either way, since it does not read git's message text at all anymore.
