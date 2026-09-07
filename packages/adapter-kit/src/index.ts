@@ -7,3 +7,4 @@
  */
 export * from './types/index.ts';
 export * from './events/index.ts';
+export * from './grants/index.ts';
