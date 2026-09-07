@@ -73,6 +73,10 @@ missing, verified by temporarily shadowing `PATH` in the test, not by mocking `e
 
 **Depends on:** nothing new (first piece).
 
+*(P1 is committed: `72180d7`. See `SPEC-QUESTIONS.md` Q63 and its critic-round/verify-round addenda —
+the verify round's own second finding forced a full redesign of the "no commits yet" detection mechanism,
+not just a patch; see `GAUNTLET-LOG.md`'s own calibration note for the fuller story.)*
+
 ---
 
 ## P2 — Lane worktree lifecycle

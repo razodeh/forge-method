@@ -2999,3 +2999,110 @@ uniformly to *most* instances of a pattern (four of seven phases) still leaves a
 the original finding at the instances it missed, which is precisely why the verify round's own brief —
 "probe the refactor itself, not just re-confirm the claimed fixes" — is what caught it here rather than
 a third round.
+
+## M5 P1 — `@forge/vcs`: git primitives, dirty-tree protection, pre-run snapshot (`06` §6.4, `20` §20.2)
+
+**Rounds: 2 (one critic finding 2 BLOCKING and 2 MAJOR issues plus 4 MINOR, all fixed or explicitly
+documented as an accepted limitation; one scoped verify confirming 6 of 8 cleanly, finding one partially
+fixed, and finding one new BLOCKING issue whose own first fix attempt introduced a second BLOCKING issue
+before the whole mechanism was redesigned at the root — both closed locally, no third round). Outcome:
+WON.**
+
+The first piece of `@forge/vcs` and the first piece of M5, "the largest milestone" (`specs/22`). Also the
+first piece of this milestone to hit the forward-dependency scoping this milestone's own `SPEC-QUESTIONS.md`
+Q62 records: `vcs`'s own error handling cannot reach the real `ForgeError` registry (`02` §2.2's graph:
+`vcs ← schemas` only), so a local `VcsError` — shaped the same, not registry-backed — carries the load
+until `@forge/engine` (which has both `core` and `vcs`) wraps one into the real thing.
+
+### Round 1 — critic: 2 BLOCKING, 2 MAJOR, 4 MINOR
+
+The critic was asked to hunt specifically for gaps in dirty-tree detection completeness (staged/
+unstaged/untracked/nested-directory/deletion/rename/conflict), cross-platform and locale concerns, and
+whether every documented "throws `VcsError`" claim was actually true. Full findings, each with its own
+repro and fix, are in `SPEC-QUESTIONS.md`'s own P1 (Q63) critic-round addendum.
+
+- **BLOCKING: every exported function leaked a raw, non-`VcsError` exception for realistic failures** —
+  a nonexistent directory, a permission-denied directory, a bare repository, a corrupted `.git` — each
+  reproduced directly against the real, unmodified functions, contradicting every one of their own doc
+  comments' claim to throw only `VcsError`.
+- **BLOCKING: two tests asserted only a message-regex match while their own names claimed to verify
+  `VcsError`-ness and the remedy, and no test anywhere checked `.code`** — the field a caller actually
+  dispatches on. A future edit swapping two error codes would have passed unnoticed.
+- **MAJOR: the original "no commits yet" detector matched hardcoded English git output with no
+  locale-pinning on the subprocess** — an NLS-enabled git under a non-English locale would silently
+  misclassify an ordinary, ubiquitous repository state as a genuine failure. (This finding's own fix is
+  the subject of the whole verify round below — not because the fix was wrong in intent, but because
+  what it took to actually close it correctly turned out to be a different, larger story than "add a
+  locale pin.")
+- **MAJOR: a doc comment claimed "every changed path" for dirty-file detection**, but a change inside a
+  submodule's own working tree is reported only as the submodule's own gitlink path — not a safety gap
+  (the tree is still correctly flagged dirty), but an overclaim.
+- Four MINOR findings (renamed files reported by new path only; a non-atomic two-call snapshot,
+  explicitly out of this piece's own scope; a `process.env`-mutating test not using this codebase's own
+  `vi.stubEnv()` convention; no tests for deletion/staged-deletion/rename/merge-conflict dirty states,
+  though the pre-fix code already handled all four correctly) — three fixed, the fourth closed with new
+  tests confirming the pre-existing correct behaviour.
+
+### Round 2 — scoped verify: 6 of 8 confirmed; 1 partial, 1 new BLOCKING finding whose first fix attempt
+introduced a second BLOCKING finding
+
+**Finding "every function leaks raw exceptions" was only partially fixed**: `snapshotRepoState` still
+called `openGit(cwd)` — which throws synchronously for a nonexistent or non-directory `cwd` — before any
+`wrapGitFailure` boundary existed, surviving specifically because this function's own new test coverage
+happened to exercise only the bare-repository case, not the nonexistent-directory one the sibling
+functions' tests already covered. **Fixed** by constructing `openGit(cwd)` lazily, inside the wrapped
+closure, instead of hoisting it above the wrap boundary — the same "a fix applied to most call sites
+still leaves a gap at the one it missed" shape this log has now named several times this milestone.
+
+**A new finding, worse than it first appeared**: the locale-pin built for the (then-current) message-
+matching "no commits yet" check — `simple-git`'s own `.env('LC_ALL','C').env('LANGUAGE','C')` — does not
+merge with the inherited environment in *either* of its call forms, despite its own doc comment claiming
+otherwise: whatever is set via `.env()` becomes the *entire* spawned environment, silently dropping
+`PATH`, `HOME`, and this repo's own git test-isolation variables. Verified three independent ways by the
+verify pass (reading `simple-git`'s own source, direct spawn-argument interception, and a black-box test
+proving a stubbed `GIT_CONFIG_GLOBAL` was never actually seen by the child process) — and the bug was
+invisible on the original dev machine only because of a POSIX fallback executable-search path that finds
+`git` even with no `PATH` at all, a fallback Windows does not have. **The first attempted fix made it
+worse, not better**: explicitly spreading `process.env` into the `.env()` call traded the missing-`PATH`
+bug for a *different* failure — `simple-git`'s own unsafe-operations guard rejected the spawn outright,
+because the ambient dev machine's shell environment happened to have `GIT_EDITOR` set, and the guard
+treats any explicitly-configured `GIT_EDITOR` as suspicious regardless of whether it was deliberately set
+or merely passed through.
+
+**Fixed by redesigning the mechanism at its root, not by patching the environment handling a second
+time.** The entire locale-dependent approach was replaced with a structural one: "no commits yet" is now
+recognised from `git rev-parse --verify -q HEAD`'s own exit code and empty `stderr` — confirmed
+empirically (exit 1, empty `stderr` for an unborn `HEAD`; exit 128 with real `stderr` for a genuinely
+corrupted repository) — which needs no pinned locale, no `simple-git` `env()` call, and no `process.env`
+propagation at all, closing both the original locale-fragility finding and the two new environment bugs
+with one change. `resolveHeadShaOrUndefined` was simplified alongside it: its original injectable-thunk
+design existed specifically to make its own re-throw branch testable without a real corrupted repository
+(believed impractical to construct at the time); once the structural redesign made constructing one
+trivial and reliable, the indirection was removed rather than kept as unnecessary ceremony.
+
+No other new findings. The verify pass independently confirmed the remaining six original findings hold
+exactly as fixed, and separately rebuilt a real submodule fixture to confirm the accepted-limitation doc
+comment is accurate — endorsing the decision not to add a dedicated submodule test as proportionate,
+given the fixture ceremony a local-path submodule needs relative to a documented, non-safety limitation.
+It could not reproduce the original locale bug directly (the only git available on the verification
+machine has no NLS/gettext support), and said so plainly rather than assuming success — moot for the
+shipped fix regardless, since the structural redesign no longer reads git's message text at all.
+
+### Calibration note
+
+The clearest lesson this piece adds to the milestone: **a fix for a locale/environment-fragility finding
+needs the same adversarial scrutiny as the fragility itself, and "it works on my machine" is exactly the
+blind spot a fix for a machine-specific bug is most likely to share with the bug it's fixing.** The
+original "no commits yet" check failed only under a non-English locale; its first fix (an explicit
+environment override) failed only in the *absence* of a POSIX fallback search path or the *presence* of
+an ambient `GIT_EDITOR` — three different bugs, each invisible on whatever single machine last tested it,
+each real on some other machine or platform. No amount of re-testing the *same* fix on the *same* machine
+would have found any of this; what did was the verify round's own discipline of reading the dependency's
+actual source rather than trusting its doc comment, and reproducing the mechanism through independent
+means (spawn-argument interception, a black-box environment-stubbing test) rather than a single black-box
+assertion. The deeper generalisable point: when a fix for one fragility (locale) requires reaching for a
+*second* mechanism (environment propagation) that the piece did not previously need at all, that second
+mechanism is new surface area deserving its own scrutiny — not a footnote to the first fix. The eventual
+correct answer here needed neither mechanism: recognising that the underlying property (has this repo
+committed anything) has a locale-independent, environment-independent signal (exit code and stderr
+emptiness) available all along made both fragile mechanisms unnecessary rather than merely fixed.
