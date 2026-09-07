@@ -2340,3 +2340,62 @@ runtime (confirmed: `JSON.stringify` on such an issue drops the `path` key entir
 value is not JSON-serialisable). **Fixed** by switching the lookup table from a plain object to a
 `Map`, which has no prototype-chain lookup ambiguity at all: `.get('constructor')` is `undefined` unless
 a key literally named `'constructor'` was ever `.set()` on that exact instance.
+
+**P2 critic-round addendum: `describeGrant` was not injective, and `isHostAllowed` was needlessly
+case-sensitive — both fixed.** A gauntlet critic found `describeGrant`'s own hand-joined
+`` `[${list.join(', ')}]` `` formatting for `exec`/`allowlistHosts`/`extra` was not injective: `exec:
+['a', 'b']` and `exec: ['a, b']` (one pattern that happens to contain the literal text `", "`) rendered
+as the byte-identical `exec:[a, b]`, despite being genuinely different grants (the second allows the
+single command `"a, b"`, the first does not) — a real defect for a string whose whole purpose (`20`
+§20.9) is to be a trustworthy audit/security log line. The same unescaped join let a crafted pattern's
+own text masquerade as a *different* field boundary (a pattern ending `"] network:full extra:["` made
+the rendered line contain the literal substring `"network:full"` even when the real `network` field was
+`'none'`). **Fixed** by `JSON.stringify`-encoding each list-valued field instead of hand-joining it —
+distinct string arrays always serialise to distinct JSON text (every element's own quotes/backslashes
+are escaped), so two different grants can no longer collide, and a crafted pattern's embedded quote is
+now itself escaped rather than able to counterfeit a field boundary. Separately, the critic found
+`isHostAllowed`'s exact-string host comparison meant an allowlist entry spelled `'API.example.com'`
+would silently, permanently deny the DNS-identical host `'api.example.com'` — real DNS hostnames are
+themselves case-insensitive (RFC 4343), so two spellings differing only in case name the same real-world
+host. **Fixed** by comparing both sides via `.toLowerCase()` (never `.toLocaleLowerCase()`/
+`localeCompare`, matching R10) — a deliberate widening, but only along the one dimension (letter case)
+that does not change which real host is being named, so it grants nothing beyond what the allowlist
+entry already represented in reality. The critic also named several real test-quality gaps (no
+case-sensitivity or regex-metacharacter test for `isExecAllowed`; no case-sensitivity or substring/
+superstring near-miss test for `isHostAllowed`) — none were shipped bugs (`isExecAllowed`'s own
+case-sensitivity is correct as-is and stays unchanged, since a shell command is not case-insensitive the
+way a DNS hostname is), but each was exactly the kind of gap that would let a future regression toward
+"allow too much" land undetected; closed with new tests for both.
+
+**P2 verify-round addendum: both critic-round fixes held under independent adversarial re-testing; one
+new minor documentation/test gap found and closed.** A fresh verify-pass reviewer confirmed
+`describeGrant`'s injectivity fix empirically (not just by reasoning): `JSON.stringify` on a string array
+is provably injective because `JSON.parse` is a left inverse of it (a collision would mean two distinct
+arrays parse back to the same value, a contradiction), confirmed by fuzzing quote/backslash/comma-space/
+fake-field-boundary content across ~2000 random cases plus targeted edge cases (empty arrays, empty-string
+elements, duplicate elements, 59-vs-60-element arrays, astral/lone-surrogate content) with zero collisions
+among genuinely different grants. (One collision is pre-existing and intentional, not a counterexample:
+`exec: false` and `exec: []` both render `exec:none`, matching their identical fail-closed behavior — this
+predates the injectivity fix and was already covered by an existing test.) The `isHostAllowed` fix was
+confirmed to use `.toLowerCase()` exclusively (`grep` for `toLocaleLowerCase`/`toLocaleUpperCase` across
+the whole package: zero matches) and to avoid the Turkish-I problem by construction, verified behaviorally
+(`'İ'.toLowerCase()` produces the Unicode-default two-code-unit result, not a Turkish-locale single
+character) since flipping the process locale mid-test isn't feasible; the widening was confirmed narrow
+(exact post-lowercase equality only, never `.includes()`/`.startsWith()` — substring/superstring near-miss
+hosts stay denied). Both sets of new tests were confirmed to be real regression tests (each would fail
+against the pre-fix code or a plausible naive alternative fix), not just present-but-vacuous.
+
+The verify pass's own short fresh-look surfaced one new, minor, non-blocking finding: `matchesExecPattern`
+(`packages/adapter-kit/src/grants/exec.ts`) treats a pattern that is exactly `"*"` as an empty prefix,
+so `exec: ['*']` grants unrestricted exec — a correct, intended degenerate case of "trailing `*` = prefix
+wildcard" (not a bypass; not a shipped bug), but one neither the code's docstring nor any test made
+explicit, in a module whose entire purpose is drawing a security boundary. **Fixed** by documenting the
+degenerate case directly in `matchesExecPattern`'s doc comment and adding a regression test asserting
+`exec: ['*']` allows arbitrary commands — closing the only gap between "this is what the code does" and
+"this is what an adapter author reading the docstring would expect," without changing behavior.
+
+No new findings beyond this one; the verify pass reported it could not construct any two structurally- or
+behaviorally-different `ToolGrant` values that produce the same `describeGrant()` output, and found no
+other consumers of `describeGrant`/`isHostAllowed`/`isExecAllowed` anywhere in the repo yet (P2's helpers
+are not called by any other package until a concrete adapter is built in M7/M11), so there is no
+integration-level risk from either fix today.

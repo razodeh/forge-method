@@ -2581,3 +2581,76 @@ sense — it is specific: a fix for a *robustness* property (never throws, resis
 deserves the identical adversarial scrutiny the original bug got, applied to the fix's own new code,
 before considering the round closed. Writing the fix and immediately trusting it because it closes the
 originally-demonstrated repro is exactly the gap a second adversarial pass exists to catch — and did.
+
+*(P1 is committed: `02edf73`.)*
+
+## M4 P2 — `ToolGrant` mapping helpers
+
+**Rounds: 2 (one critic finding one major and one minor defect, both fixed, plus named test-quality
+gaps closed; one scoped verify confirming both fixes under independent adversarial fuzzing and finding
+one further minor documentation/test gap, fixed locally, no third round). Outcome: WON.**
+
+### Round 1 — critic: one major, one minor, plus test-quality gaps
+
+- **Major: `describeGrant` was not injective.** Its list-valued fields (`exec`, `allowlistHosts`,
+  `extra`) were rendered via hand-joined `` `[${list.join(', ')}]` `` formatting, so `exec: ['a', 'b']`
+  and `exec: ['a, b']` (one pattern containing the literal text `", "`) both rendered as the
+  byte-identical `exec:[a, b]`, despite being genuinely different grants — a real defect for a string
+  whose whole purpose (`20` §20.9) is to be a trustworthy audit/security log line. The same unescaped
+  join let a crafted pattern's own text masquerade as a *different* field boundary (a pattern ending
+  `"] network:full extra:["` made the rendered line contain the literal substring `"network:full"` even
+  when the real `network` field was `'none'`).
+- **Minor: `isHostAllowed` was needlessly case-sensitive.** An allowlist entry spelled
+  `'API.example.com'` would silently, permanently deny the DNS-identical host `'api.example.com'` — real
+  DNS hostnames are themselves case-insensitive (RFC 4343).
+- **Test-quality gaps (not bugs):** no case-sensitivity or regex-metacharacter test existed for
+  `isExecAllowed` (its own case-sensitive, plain-string-matching behaviour was correct but unasserted);
+  no case-sensitivity or substring/superstring near-miss test existed for `isHostAllowed`.
+
+**Fixes:** every list-valued field in `describeGrant` is now rendered via `JSON.stringify(list)` instead
+of hand-joining — distinct string arrays always serialise to distinct JSON text, so two different grants
+can no longer collide, and a crafted pattern's embedded quote is now itself escaped rather than able to
+counterfeit a field boundary. `isHostAllowed` now compares both sides via `.toLowerCase()` (never
+`.toLocaleLowerCase()`/`localeCompare`, matching R10) — a deliberate widening, but only along the one
+dimension (letter case) that does not change which real host is being named. New tests close both named
+gaps; `isExecAllowed` itself was not changed (a shell command is not case-insensitive the way a DNS
+hostname is).
+
+### Round 2 — scoped verify: both confirmed under adversarial fuzzing; one further minor gap found
+
+`describeGrant`'s injectivity was confirmed empirically, not just by re-reading the fix: `JSON.stringify`
+on a string array is provably injective because `JSON.parse` is a left inverse of it (a collision would
+mean two distinct arrays parse back to the same value, a contradiction), and this held across ~2000
+randomly fuzzed cases plus targeted edge cases (embedded quotes/backslashes, fake-field-boundary text,
+empty arrays, empty-string elements, duplicate elements, 59-vs-60-element arrays, astral/lone-surrogate
+content) with zero collisions among behaviourally-different grants. One collision remains and is not a
+counterexample: `exec: false` and `exec: []` both still render `exec:none`, matching their identical
+fail-closed behaviour — pre-existing, intentional, and already covered by an existing test.
+`isHostAllowed`'s fix was confirmed to use `.toLowerCase()` exclusively (zero matches for
+`toLocaleLowerCase`/`toLocaleUpperCase` anywhere in the package) and to avoid the Turkish-I problem by
+construction, confirmed behaviourally (`'İ'.toLowerCase()` produces the Unicode-default two-code-unit
+result, not a Turkish-locale single character) since flipping the process locale mid-test isn't
+feasible; the widening was confirmed narrow (exact post-lowercase equality only — substring/superstring
+near-miss hosts stay denied).
+
+One further minor, non-blocking gap surfaced from the verify pass's own short fresh look:
+**`matchesExecPattern` treats a pattern that is exactly `"*"` as an empty prefix, so `exec: ['*']` grants
+unrestricted exec** — correct, intended behaviour (the natural degenerate case of "trailing `*` = prefix
+wildcard," not a bypass), but neither the doc comment nor any test made it explicit, in a module whose
+entire purpose is drawing a security boundary. **Fixed** by documenting the degenerate case directly in
+`matchesExecPattern`'s own doc comment and adding a regression test asserting `exec: ['*']` allows
+arbitrary commands, closing the gap between what the code does and what an adapter author reading the
+docstring would expect, without changing behaviour.
+
+### Calibration note
+
+Both of this piece's real critic-round defects were in code that reads, at a glance, like the least
+interesting part of the piece — a hand-joined string format, an `===` comparison — exactly the kind of
+code a reviewer's eye slides past because nothing about it looks like logic. Neither defect was a "wrong
+answer" in the ordinary sense; both were a missing property the surrounding spec context actually
+demands of a security-relevant string or comparison (injectivity for an audit line; the right equivalence
+relation for the domain being compared, DNS-case-insensitivity for a hostname). Type-checking and
+ordinary example-based tests do not surface either on their own unless someone thinks to ask "could two
+different inputs produce the same output" or "is this the domain's own notion of equality" — worth
+asking explicitly, going into P3/P4, of any function whose output becomes a log line, an audit entry, or
+a comparison against an externally-supplied identifier.

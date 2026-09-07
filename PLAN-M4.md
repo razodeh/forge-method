@@ -108,6 +108,8 @@ reimplementing exec-pattern matching or network-allowlist checks itself.
 
 **Depends on:** P1 (`ToolGrant`).
 
+*(P2 is committed: `d8e49a1`.)*
+
 ---
 
 ## P3 — Control tokens: parsing, and untrusted-content wrapping/stripping
