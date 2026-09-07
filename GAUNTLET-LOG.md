@@ -3903,3 +3903,121 @@ underlying mechanism — several different *root* categories feeding one shared 
 recur in. Both point at the same discipline restated once more: a fix that changes what a shared,
 reused traversal collects or how it recovers from failure has to be checked against *every* caller of
 that traversal, not just the one call site the original bug report named.
+
+---
+
+## M5 P9 — `@forge/engine`: sandboxed expression evaluator (`10` §10.1, `10` §10.3)
+
+**Rounds: 2 (three bugs self-caught and fixed before any critic was ever involved; one critic finding 1
+BLOCKING, 3 MAJOR and 3 MINOR issues, 4 fixed and 2 knowingly deferred as documented limitations; one
+scoped verify confirming every round-1 fix held under harder scenarios, plus 1 new MAJOR finding, fixed,
+and 1 new MINOR, documented as a further limitation — no third round). Outcome: WON.**
+
+`10` §10.1's own "Expressions" subsection is one paragraph naming features — dotted paths, six comparison
+operators, `&&`/`||`/`!`, `in`, `length(...)` — with zero worked expression examples beyond the two real
+consumer strings this piece had to actually parse (`10` §10.3's `"errors > 0"` and `"failures.test-failure
+> 2"`). The entire grammar, precedence, and literal-type rules are this build's own invention (`Q71`).
+Building a hand-written lexer/parser/evaluator from that little turned out to be the highest self-caught-
+bug-density piece of the milestone: a precedence bug (`!a == b` parsing as the non-conventional `!(a ==
+b)` instead of `(!a) == b`) and two independent prototype-pollution holes (a plain-object keyword table in
+the lexer, a bare bracket access in the evaluator's own path resolver) were all found and fixed by the
+builder's own dedicated tests *before* a critic was ever dispatched. The critic round then still found the
+most severe single finding of the whole milestone so far — a documented "never throws" contract that was
+false via a failure mode with no visual resemblance to "adversarial input" at all.
+
+### Round 1 — critic: 1 BLOCKING, 3 MAJOR, 3 MINOR
+
+The critic was asked to verify the "never throws" contract by actually constructing and running
+adversarial input rather than reading the code, check the grammar's precedence against convention, and
+specifically try to break the template-placeholder substitution with adversarial template text.
+
+- **BLOCKING: the "never throws" contract was false, two independent ways.** Deeply nested parens/`!`/
+  `length(...)` crashed the *parser* with a raw `RangeError` past roughly 1500 levels — visibly
+  adversarial-shaped, at least. Worse: a flat, ordinary-looking `&&`/`||` chain (`a && a && a && ...`)
+  parsed cleanly — the parser's own loops for repeated `&&`/`||` are iterative, not recursive — but still
+  built a left-deep AST that crashed the *evaluator's* own recursive walk past roughly 5000 terms, a shape
+  a workflow author extending an existing condition one `&&` at a time would never suspect. **Fixed** with
+  two independent depth guards, `MAX_EXPRESSION_DEPTH` in the parser and a separate `MAX_EVALUATION_DEPTH`
+  in the evaluator — structurally necessary as two guards, not one, since parentheses contribute zero AST
+  depth at all (confirmed in round 2) and the flat-chain shape defeats the parser's guard by construction.
+- **MAJOR: `resolveTemplate`'s regex-based placeholder extraction was genuinely quadratic** on adversarial
+  input (measured: doubling a repeated-`{{`-with-no-close input consistently ~4×'d the run time).
+- **MAJOR: a placeholder missing its closing `}}` was silently left as literal, unchanged text** — the
+  single most likely authoring typo for this feature, shipping downstream with no signal at all.
+- **MAJOR: `!x > N` is silently, deterministically wrong for every value of `x`** — an unavoidable algebraic
+  consequence of the *correct*, conventional `!`-binds-tighter-than-comparison precedence (`!x` becomes a
+  real boolean, which the numeric comparison then coerces to `0`/`1`). **Documented, not fixed**: the
+  precedence itself is exactly what every mainstream language with both operators does, and "fixing" it to
+  avoid this one misuse would reintroduce the non-conventional reading the builder's own pre-critic test
+  was written specifically to reject.
+- **MINOR: `}}` inside a placeholder's own string literal** (`{{"a}}b" == "a}}b"}}`, a valid expression)
+  **broke extraction**, the regex's non-greedy capture stopping at the wrong `}}`.
+- **MINOR: no negative number literal was expressible anywhere.** **Fixed** — a cheap, unambiguous lexer
+  addition (`-` immediately followed by a digit; there is no subtraction operator to be ambiguous with).
+- **MINOR: `length(...)` returns `undefined` for any wrong-shaped operand**, indistinguishable from "the
+  path inside it doesn't exist." **Documented, not fixed**: telling the two apart would need a bespoke
+  sentinel this piece already argued against for the identical reason elsewhere in its own design (`Q71`).
+
+The three placeholder-extraction findings shared one root cause and were fixed together, per the critic's
+own suggested design: a hand-written, single-pass, string-literal-aware scanner replacing the regex
+entirely — tracks quote state while scanning for the closing `}}`, so a quoted `}}` is never mistaken for
+the real delimiter, and throws a clean, typed error the moment an unclosed `{{` runs off the end of the
+template rather than passing anything through silently. Confirmed empirically linear afterward: 20,000
+back-to-back placeholders resolve in low tens of milliseconds.
+
+### Round 2 — scoped verify: everything from round 1 reconfirmed; 1 new MAJOR finding, fixed; 1 new MINOR,
+documented
+
+The verify pass re-derived the grammar directly from the parser's own source rather than trusting round
+1's description, re-probed both depth guards at their exact boundary across pure and deliberately-mixed
+`&&`/`||` shapes, re-confirmed the template scanner's linearity under harder adversarial input than its
+own existing test, and read the evaluator's comparison logic end to end looking for anything round 1
+hadn't been asked to check.
+
+**New finding (MAJOR): `compareOrdering` silently read `null`, an array, or a boolean as a number,
+inconsistent with `==`'s own strict equality.** Its bare `Number(x)` fallback was not, as its own prior doc
+comment claimed, "`NaN` for anything non-numeric" — `Number(null)`, `Number([])`, and `Number([5])` are
+`0`, `0`, and `5`, not `NaN` — so `a <= 0`/`a >= 0` were silently `true` for `a: null` while `a == 0` for
+the identical value was correctly `false`, with no signal either way. Realistic, not contrived: the
+evaluator's own path-resolution design already establishes that a real context field legitimately uses
+`null`, not `undefined`, for "no value," so a numeric field read as `null` is exactly what a `failOn`/
+`when` expression comparing it with `<=`/`>=` would see in practice. **Fixed** with a `toOrderableNumber`
+helper that gates on `typeof value === 'number' | 'string'` before ever calling `Number()` — the same
+narrow-the-type-before-coercing shape `P7`'s own `isFiniteNonNegativeNumber`/`isNonBlankString` already
+established this milestone — leaving the existing, load-bearing numeric-string coercion (`"5" > 3` still
+orders correctly) completely untouched.
+
+**New finding (MINOR): neither the lexer's nor the template scanner's string-literal handling supports
+backslash-escaping**, so a string literal can never contain a literal copy of its own quote character.
+**Documented, not fixed**: it fails safely and clearly either way — confirmed the two scanners stay exactly
+consistent with each other about where a string ends, so this never causes silent corruption or a
+`}}`-boundary mismatch, only a slightly-less-specific error message — a workaround exists (use the other
+quote character) for the near-totality of realistic cases, and nothing in the spec's own one paragraph
+suggests any real expression ever needs an embedded quote at all.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (194 engine tests after these fixes'
+own new ones) all independently reconfirmed clean. 100% coverage on every file in `packages/engine/src/
+expr/` except a small set of individually-documented, bounds-checked `noUncheckedIndexedAccess` branches
+proven unreachable by construction — every branch *not* protected by such a bounds check (a literal `.`
+not followed by a digit, a bare trailing `-`) was confirmed genuinely reachable and given a real test
+instead of being waved through as the same exemption.
+
+### Calibration note
+
+The verify round's own finding is the third time this exact bug *class* — a coercion or type-check that is
+quietly more permissive than the code's own comment assumed — has surfaced this milestone, and the first
+time it survived past a full critic round to be caught only on the second pass: `P7`'s `isUsageRecordedPayload`
+accepted `NaN`/`Infinity`/negative numbers under a typeof-only check; this piece's own `compareOrdering` had
+an explicit, confident doc comment ("this is exactly `Number(x)` producing `NaN`") that was simply wrong for
+two of the four non-string JS types it silently accepted, having apparently been verified against a couple
+of examples rather than exhaustively against every type `unknown` actually admits. The lesson isn't "add
+more tests" in the abstract — this piece had substantial coverage and a real critic pass before this slipped
+through — it's that a coercion function's own comment claiming empirical confirmation deserves the same
+adversarial-enumeration treatment as anything else claiming a security or sandbox property: walk every
+distinct JS type the input's own static type admits, not just the ones that come to mind first. Separately,
+this piece re-confirms a pattern from earlier in the milestone from the opposite direction: three real bugs
+(a precedence error, two prototype-pollution holes) were caught by the builder's own tests before a critic
+was ever involved, while the critic round's own single BLOCKING finding was a failure mode — a flat, non-
+nested-looking chain defeating a nesting-shaped depth guard — that self-testing during the build had no
+particular reason to go looking for. Self-testing and a fresh critic keep finding different bug shapes, not
+overlapping ones; neither substitutes for the other.

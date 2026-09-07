@@ -451,6 +451,17 @@ it lives in `engine`, not `adapter-kit`.
 
 **Depends on:** nothing new.
 
+*(P9 is committed: `cf30218`. See `SPEC-QUESTIONS.md` Q71 and its critic-round/verify-round addenda —
+`10` §10.1's entire "Expressions" subsection is one paragraph with zero worked expression examples beyond
+the two real consumer strings this piece had to parse, so the grammar, precedence, and literal-type rules
+are this piece's own invention. Highest self-caught-bug density of the milestone so far (a precedence bug
+and two prototype-pollution holes, all fixed before any critic was involved) alongside the critic round's
+own most severe finding of the milestone — a documented "never throws" contract that was false via a flat,
+non-nested-looking `&&`/`||` chain defeating the parser's own depth guard and crashing the evaluator
+instead; see `GAUNTLET-LOG.md`'s own entry for the fuller story, including a verify-round finding on a
+numeric-ordering helper whose own doc comment's "confirmed empirically" claim turned out to be wrong for
+`null` and arrays.)*
+
 ---
 
 ## P10 — Plan compilation: DAG construction and fanout expansion
