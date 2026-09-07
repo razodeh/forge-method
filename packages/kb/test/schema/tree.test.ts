@@ -75,13 +75,14 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     if (runbook?.kind === 'runbook') expect(runbook.value.id).toBe('RUN-001');
   });
 
-  it('parses all four collection files, each with more than one entry', async () => {
+  it('parses all five collection files, each with more than one entry', async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const risks = tree.entries.find((entry) => entry.kind === 'risks-file');
     const assumptions = tree.entries.find((entry) => entry.kind === 'assumptions-file');
     const openQuestions = tree.entries.find((entry) => entry.kind === 'open-questions-file');
     const environments = tree.entries.find((entry) => entry.kind === 'environments-file');
+    const components = tree.entries.find((entry) => entry.kind === 'components-file');
     expect(risks?.kind === 'risks-file' && risks.value.risks.length).toBe(2);
     expect(assumptions?.kind === 'assumptions-file' && assumptions.value.assumptions.length).toBe(2);
     expect(
@@ -90,6 +91,7 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     expect(environments?.kind === 'environments-file' && environments.value.environments.length).toBe(
       2,
     );
+    expect(components?.kind === 'components-file' && components.value.components.length).toBe(2);
   });
 
   it('parses every generic knowledge entry and the glossary entry via kbEntrySchema', async () => {

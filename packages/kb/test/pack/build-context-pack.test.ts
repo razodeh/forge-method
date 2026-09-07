@@ -310,14 +310,18 @@ describe('buildContextPack — input validation', () => {
   it('deduplicates a caller-supplied declaredInputIds list, keeping first-occurrence order, so the budget and manifest never double-count one document', async () => {
     const tree = await realTree();
     const backend = realBackend(tree);
+    // KB-GLOSS-0001 has no related/supersedes/diagrams/applies_to links in either direction, so graph
+    // expansion contributes nothing here — the test stays about deduplication alone, not retrieval.
     const pack = buildContextPack(
-      { declaredInputIds: ['RUN-001', 'RUN-001'], briefText: '', budgetTokens: 100_000 },
+      { declaredInputIds: ['KB-GLOSS-0001', 'KB-GLOSS-0001'], briefText: '', budgetTokens: 100_000 },
       backend,
       tree,
     );
-    expect(pack.declaredInputs).toEqual([{ id: 'RUN-001', content: pack.declaredInputs[0]?.content }]);
-    expect(pack.manifest.ids).toEqual(['RUN-001']);
-    expect(Object.keys(pack.manifest.tokenCounts)).toEqual(['RUN-001']);
+    expect(pack.declaredInputs).toEqual([
+      { id: 'KB-GLOSS-0001', content: pack.declaredInputs[0]?.content },
+    ]);
+    expect(pack.manifest.ids).toEqual(['KB-GLOSS-0001']);
+    expect(Object.keys(pack.manifest.tokenCounts)).toEqual(['KB-GLOSS-0001']);
   });
 
   it('throws KB-014 for a NaN budgetTokens, rather than silently admitting every candidate regardless of size', async () => {

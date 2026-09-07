@@ -8,7 +8,8 @@
     "./schema": "./src/schema/index.ts",
     "./write": "./src/write/index.ts",
     "./index": "./src/db/index.ts",
-    "./pack": "./src/pack/index.ts"
+    "./pack": "./src/pack/index.ts",
+    "./lint": "./src/lint/index.ts"
   },
   "engines": {
     "node": ">=20.10"

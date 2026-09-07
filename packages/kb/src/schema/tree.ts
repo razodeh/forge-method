@@ -34,6 +34,7 @@ import {
   type Runbook,
 } from '@forge/schemas';
 
+import { componentsFileSchema, type ComponentsFile } from './components-file.ts';
 import { kbEntrySchema, type KbEntry } from './kb-entry.ts';
 import { KB_SECTIONS, type KbSection } from './sections.ts';
 
@@ -59,6 +60,7 @@ export type KbParsedEntry =
   | { readonly path: string; readonly kind: 'assumptions-file'; readonly value: AssumptionsFile }
   | { readonly path: string; readonly kind: 'open-questions-file'; readonly value: OpenQuestionsFile }
   | { readonly path: string; readonly kind: 'environments-file'; readonly value: EnvironmentsFile }
+  | { readonly path: string; readonly kind: 'components-file'; readonly value: ComponentsFile }
   | { readonly path: string; readonly kind: 'kb-entry'; readonly value: KbEntry };
 
 export interface KbTree {
@@ -85,6 +87,7 @@ type FileKind =
   | 'assumptions-file'
   | 'open-questions-file'
   | 'environments-file'
+  | 'components-file'
   | 'kb-entry'
   | 'skip';
 
@@ -105,6 +108,7 @@ function classifyFile(relativePath: string): FileKind {
   if (relativePath === 'assumptions.md') return 'assumptions-file';
   if (relativePath === 'open-questions.md') return 'open-questions-file';
   if (relativePath === 'delivery/environments.md') return 'environments-file';
+  if (relativePath === 'architecture/components.md') return 'components-file';
   return 'kb-entry';
 }
 
@@ -158,6 +162,12 @@ async function parseOneFile(
         path: relativePath,
         kind: 'environments-file',
         value: environmentsFileSchema.parse(frontMatter),
+      };
+    case 'components-file':
+      return {
+        path: relativePath,
+        kind: 'components-file',
+        value: componentsFileSchema.parse(frontMatter),
       };
     case 'kb-entry': {
       // Cast, not a runtime check: `ArtifactDocument.frontMatter`'s getter (`parseFrontMatterYaml`)

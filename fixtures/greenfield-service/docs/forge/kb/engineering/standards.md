@@ -14,7 +14,7 @@ updated: 2026-01-05
 review_by: 2026-04-05
 supersedes: []
 superseded_by: null
-related: []
+related: [ KB-CON-0001 ]
 diagrams: []
 tags: [ standards ]
 applies_to: []

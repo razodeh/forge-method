@@ -137,7 +137,10 @@ function indexEntry(entry: KbParsedEntry, backend: KbIndexBackend): void {
     case 'assumptions-file':
     case 'open-questions-file':
     case 'environments-file':
+    case 'components-file':
       // Not indexed by this piece — see this file's own doc comment and SPEC-QUESTIONS.md Q53.
+      // `components-file` (P10, SPEC-QUESTIONS.md Q56) joins the same group for the same reason: many
+      // ids, not one, and `KbParsedEntry`'s own shape for it has no per-sub-entry id to index against.
       return;
   }
 }

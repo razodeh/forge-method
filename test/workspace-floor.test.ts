@@ -30,7 +30,15 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
  * beyond both the collection globs and this walk simultaneously, which is precisely the shared blind
  * spot the set-equality assertion exists to rule out.
  */
-const IGNORED_PATHS = new Set(['tools/lint-fixture/.fixtures']);
+// `packages/kb/test/lint/factories.ts` (PLAN-M3.md P10): shared, schema-validated `KbEntry`/`ADR`/
+// `Component`/... builder functions, imported by four real `*.test.ts` files in the same directory —
+// genuinely test-only code (it constructs adversarial/minimal fixtures, nothing else ever imports it),
+// just structured as a plain importable module rather than a runnable suite, so `TEST_FILE`'s own
+// `.test.`/`.spec.` naming heuristic — a proxy for "this is test code," not the actual invariant this
+// walk enforces — never recognises it. Listed individually, the same as this set's one other entry,
+// rather than exempting `test/` directories wholesale, which would blind this check to a real stray
+// production file hiding there instead.
+const IGNORED_PATHS = new Set(['tools/lint-fixture/.fixtures', 'packages/kb/test/lint/factories.ts']);
 
 /**
  * Directories skipped only at the repository root, mirroring `vitest.config.ts`'s root-anchored
@@ -241,10 +249,13 @@ describe('production source lives where the coverage globs look', () => {
       } else if (
         SOURCE_FILE.test(entry.name) &&
         !TEST_FILE.test(entry.name) &&
-        !entry.name.includes('.config.')
+        !entry.name.includes('.config.') &&
+        !IGNORED_PATHS.has(`${packageRelative}/${next}`)
       ) {
         // Test files are not production source and carry no coverage floor of their own, so a
-        // package's `test/` directory is a legitimate sibling of `src/`.
+        // package's `test/` directory is a legitimate sibling of `src/`. `IGNORED_PATHS` is checked
+        // here too (previously only the directory branch above did), for the same reason it exists at
+        // all: a real exception, named individually, not a wildcard.
         strays.push(next);
       }
     }

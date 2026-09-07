@@ -17,7 +17,7 @@ verified: 2026-01-05
 review_by: 2026-04-05
 supersedes: []
 superseded_by: null
-related: []
+related: [ RUN-001 ]
 diagrams: [ DIAG-001 ]
 tags: [ architecture, data ]
 applies_to: [ component:api, component:db ]

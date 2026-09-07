@@ -11,6 +11,12 @@ export {
   type KbBodySection,
 } from './body-sections.ts';
 export {
+  componentSchema,
+  componentsFileSchema,
+  type Component,
+  type ComponentsFile,
+} from './components-file.ts';
+export {
   kbEntrySchema,
   KB_ENTRY_TYPES,
   type KbEntry,

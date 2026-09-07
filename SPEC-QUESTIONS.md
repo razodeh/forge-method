@@ -1949,3 +1949,177 @@ legitimate value for them regardless of where it came from. Separately, the veri
 own remedy said "non-negative token budget," which oversells what the check actually enforces (a
 negative budget is accepted, not rejected) — **fixed** by rewording the remedy to name exactly the one
 condition that is rejected (`NaN`).
+
+## Q56 — P10's own plan draft has six real gaps: `components.md` has no on-disk shape anywhere in the
+spec pack, ADRs have no field linking them to the components/entries they concern, `checkContradictions`'
+own drafted signature cannot express the ADR-status rules it is asked to implement, `lintKb`'s drafted
+`diagramsBackend` parameter cannot actually be satisfied by data `KbTree` carries, "referenced IDs
+exist" does not scope cleanly to `applies_to`, and "glossary drift" has no mechanical definition
+
+`08` §8.7's own rule table and `§8.2`'s directory layout describe every one of these checks, but building
+`lintKb` against `KbTree` (P6) and `KbIndexBackend` (P8) alone — the only inputs this piece's own plan
+draft names — found six real gaps, all discovered before writing the check they'd block, the same
+"correct `PLAN-M3.md` before/while building rather than build against a known-wrong draft" discipline
+already used throughout this milestone.
+
+1. **`components.md`'s on-disk shape.** `08` §8.2's directory table describes it only in prose
+   ("component inventory: responsibility, owner, deps, failure modes"); `18` §18.7's own 21-type
+   registry never registers a `Component` type at all — this is the identical shape of gap `SPEC-
+   QUESTIONS.md` Q29/Q50 already closed for `risks.md`/`assumptions.md`/`open-questions.md`/
+   `environments.md`, just never surfaced until this piece needed to enumerate components
+   deterministically. `@forge/diagrams`' own `components-to-c4` generator (`PLAN-M3.md` P3) already
+   settled the minimal shape one real, load-bearing consumer needs: `ComponentsToC4Input.components`
+   is `{ id: string; label: string; dependsOn: readonly string[] }[]`. `components.md` gets a real
+   schema matching those exact field names, extended with the two directory-table words that
+   generator doesn't need (`responsibility`, `owner`) and one more the ADR-coverage/failure-mode intent
+   implies (`failureModes: readonly string[]`) — defined locally in `@forge/kb/schema` (not
+   `@forge/schemas`), since `Component` is not one of the 21 registered types and `KbEntry` itself
+   already sets this precedent (a KB-specific type living in `@forge/kb`, not `@forge/schemas`).
+   `id` is `component:<slug>` (the same tag format `applies_to`/`depicts` already use everywhere in
+   this fixture), not a new `CMP-###` numbering scheme, so a component id is directly usable
+   everywhere else that space is already referenced — no second id system, no mapping layer.
+2. **"Every component in `components.md` has ≥1 owning ADR" needs a link `adrSchema` (M1) has no field
+   for.** ADRs carry no `applies_to`, no `components`, nothing that names which components a decision
+   concerns — `blast_radius: string[]` is free text with no tag-namespace convention, and adding a new
+   field to a battle-tested M1 schema for one P10 check is a much bigger change than this rule needs.
+   The fixture already models the actual bridge in practice: `KB-ARCH-0001` (a `kb-entry`) has both
+   `applies_to: [component:api, component:db]` *and* `sources: [{ kind: 'decision', ref: 'ADR-0001' }]`
+   — a KB entry is what actually connects a component to the ADR that decided about it. **A component
+   has an owning ADR** when some KB entry names that component in its own `applies_to` *and* cites that
+   ADR in its own `sources` (`kind: 'decision'`) — reusing two fields that already exist and are
+   already populated this way in the real fixture, rather than inventing a third.
+3. **The same KB-entry-as-bridge mechanism resolves two more rules for free, once accepted:** "two
+   `accepted` ADRs in the same `category` + `applies_to` scope" (an ADR's own derived "scope" is the
+   union of `applies_to` across every KB entry whose `sources` cites it) and "`confidence: low` entries
+   used as inputs to accepted ADRs" (an ADR's own `related: string[]` — already a generic, unconstrained
+   id list — names ids the ADR draws upon; a `related` id that resolves to a real `kb-entry` with
+   `confidence: 'low'` is exactly that rule, with `related`'s own existing "this decision relates to X"
+   meaning, no new field).
+4. **`checkContradictions(entries: readonly KbEntry[])`'s own drafted signature cannot express the
+   ADR-status rules `08` §8.7's own contradiction-detection paragraph asks the same function to cover**
+   ("conflicting ADR statuses"; "two ADRs both `accepted`... without a supersession link") — `ADR` is
+   not a `KbEntry`. Widened to `checkContradictions(kbEntries: readonly KbEntry[], adrs: readonly
+   ADR[]): readonly KbFinding[]`, taking the two typed slices the two halves of the same check actually
+   need, matching how every other multi-kind piece in this milestone (`rebuildIndex`, `buildContextPack`)
+   already takes specific typed slices rather than one generic union.
+5. **`lintKb`'s drafted `diagramsBackend: { validateDiagrams: typeof validateDiagrams }` parameter
+   cannot be satisfied by anything `KbTree` actually carries.** `validateDiagrams` needs each diagram's
+   real `.mmd` source text (`DiagramToValidate.actualSource`); `KbParsedEntry`'s `diagram`-kind value is
+   the sidecar YAML alone (`source: architecture/views/containers.mmd`, a *path*, never read into the
+   tree by `parseKbTree`) — there is no source text anywhere in `lintKb`'s own drafted inputs to hand
+   `validateDiagrams`, and requiring `lintKb`'s own caller to read every `.mmd` file from disk just to
+   call a "pure function over an already-parsed tree" breaks the same purity every other piece this
+   milestone has kept (`buildContextPack` takes a tree, never touches the filesystem itself). **Answer
+   taken:** `lintKb` drops the `diagramsBackend` parameter and becomes fully synchronous — it implements
+   only the two `diagram:*` checks `SPEC-QUESTIONS.md` Q44 already assigned to `@forge/kb`
+   (`diagram:required`, `diagram:adr-coverage`), computed directly from `tree.entries`. A caller wanting
+   `08` §8.7's *full* `diagram:*` battery composes `validateDiagrams`'s own separately-computed
+   `findings` (mapped `DiagramFinding → KbFinding`) alongside `lintKb`'s return value — the identical
+   composition shape `PLAN-M3.md` P10's own Checks already describe for the LLM-semantic-contradiction
+   case ("a caller composes one extra warning-severity `KbFinding` alongside `checkContradictions`' own
+   output").
+6. **"Referenced IDs exist (`related`, `supersedes`, `applies_to`)" does not scope cleanly across all
+   three fields the way the table row groups them.** `related`/`supersedes` are unambiguously KB-tree
+   cross-references (a `kb-entry` or `ADR` id) and are checked as such. `applies_to` is a different tag
+   namespace entirely — `08` §8.11.7's own `diagram:refs` describes it as resolving to "a real
+   component, datastore, entity or actor," a wider space than `components.md` alone models (no
+   `datastore:`/`entity:`/`actor:` registry exists anywhere in this milestone). `lintKb` does **not**
+   treat `applies_to` as a hard "id must exist" gate under this rule — that would mean inventing
+   registries this milestone has no other reason to build. Its only real check against `applies_to` is
+   the narrower, already-modelled one in points 2–3 above (component coverage via the KB-entry bridge).
+7. **"Glossary drift: terms used in specs but absent from glossary" has no mechanical definition
+   anywhere in the spec pack** — free-text NLP term-extraction is out of scope for a deterministic
+   linter, and `lintKb`'s own inputs (`tree`, `capabilities`, `epics`) don't carry the full prose of
+   `docs/forge/specs/` regardless. Narrowed to the one mechanical, zero-heuristic reading available:
+   every backtick-quoted `` `term` `` occurrence in a `Capability`'s `statement`/`acceptance_summary` or
+   an `Epic`'s `goal` (`specArtifacts`' own free-text fields) that has no case-insensitive match among
+   `glossary.md`'s own defined terms is flagged — reusing the spec pack's *own* convention throughout
+   this document for marking a word as vocabulary (backticks), rather than inventing a term-detection
+   heuristic with no textual signal behind it.
+8. **`diagram:required` ("taxonomy coverage per `08` §8.11.3 for the current level and gate") needs the
+   project's own `level`, which lives in `.forge/config.yaml` — a file `lintKb`'s own drafted inputs
+   (`tree`, `specArtifacts`, `now`) have no path to, and `08` §8.11.3's own taxonomy table has 17 rows,
+   most gated on conditions no KB schema captures at all** ("when DDD is adopted," "every entity with
+   >2 states," "every cross-boundary flow ≥2 hops" — none of these are fields anywhere in this
+   milestone's schemas). **Answer taken:** `lintKb` gains one more caller-supplied parameter, `level:
+   string` (the same "caller already has this, package doesn't go get it itself" shape `now` already
+   uses) and implements only the two rows the taxonomy table itself makes fully mechanical — "System
+   context" and "Container / deployable decomposition," both gated `L2+` at `G-Design` and both naming
+   an exact, canonical `Lives in` path (`architecture/views/context.mmd`, `architecture/views/
+   containers.mmd`) the check can look for directly among `tree.entries`' own diagram `source` values.
+   The other 15 rows are not implemented — each depends on project content no schema in this milestone
+   models (a threat model's existence, an entity's state count, a flow's hop count), and inventing
+   fields to make them checkable is a much larger change than this piece's own scope.
+
+**Recommended resolution:** register `Component` as `18` §18.7's 22nd type with a real on-disk shape
+(closing this the same way Q50 closed the other four registers); give `adrSchema` an explicit field for
+"components/entries this decision concerns" rather than leaving every consumer to reconstruct it via a
+KB-entry bridge; and state plainly, next to `08` §8.7's own rule table, which package implements each
+rule and what data it actually has to work with — the same clarification Q44 already gave for the three
+`diagram:*` rules, needed here for the KB-only rules too.
+
+**Critic-round addendum: five real gaps found and fixed — a missing `status: active` filter on the
+KB-entry bridge, an unchecked `component:` namespace, a cross-kind blind spot, a missed inbound-link
+source, and a genuine R10 (determinism) violation.** A gauntlet critic found `adrScope` (`kb-links.ts`)
+applied no `status` filter to the KB entries it scans, unlike `checkAntonymTagConflicts`'s own identical
+`status === 'active'` filter in the same feature — a single `deprecated` or `draft` KB entry citing an
+accepted ADR was enough to silently satisfy "has an owning ADR" for whatever component it named, and,
+separately, to trigger a false-positive `kb:contradiction` between two genuinely-independent accepted
+ADRs whose only "overlap" ran through a never-vetted entry. **Fixed** by adding the identical filter to
+`adrScope` itself, closing both call sites (`checkComponentCoverage`, `checkAdrScopeConflicts`) in one
+place. Separately, the critic found `component.dependsOn` — unlike `related`/`supersedes`, which
+legitimately reference ids outside this package's own visibility — names only ever the *same*
+self-contained register `components.md` itself defines, so a `dependsOn` id naming a component that does
+not exist in that same file was never checked at all; the narrower but identical gap exists for a KB
+entry's own `applies_to` `component:`-prefixed tags. **Fixed** by a new check (`checkComponentReferences`,
+reusing the existing `kb:dangling-ref` rule id, since it is the identical "referenced id exists" rule,
+just scoped to the one namespace `components.md` now makes fully closed and checkable) — skipped
+entirely, not "everything is dangling," when no `components.md` exists in the tree at all, since there is
+then no registry to call anything wrong against. Third, `checkSupersessionStatusConsistency` was called
+twice, once per kind (`kbEntries`, then `adrs`, separately) — since `supersedes` is a generic id list on
+both schemas, a KB entry legitimately naming an ADR id there (or vice versa) was silently never checked,
+because the same-kind-only `byId` map never had the other kind's ids in it. **Fixed** by calling it once
+over the combined `[...kbEntries, ...adrs]` set, matching `checkSupersessionCycles`'s own pre-existing
+cross-kind union for the identical reason. Fourth, `inboundLinkedIds` (orphan detection) never consulted
+a `Diagram`'s own `depicts`/`explains` fields, both unrestricted id lists that can legitimately name a
+KB entry or ADR — an entry a diagram genuinely explains or depicts, with no other inbound reference, was
+still flagged `kb:orphan` despite a real reference existing. **Fixed** by including both fields. Fifth,
+and most significant: `checkAntonymTagConflicts` and `checkAdrScopeConflicts` both iterate unordered
+pairs from an array, and used whichever element happened to come first in that array as `entryId` and
+as the first name in the finding's own message — for a genuinely symmetric relationship (two entries in
+conflict with each other, neither more "primary" than the other), this meant the exact same logical
+conflict produced different finding *content*, not just different list order, depending on incidental
+input-array position — a real R10 violation, since `KbTree.entries` carries no ordering guarantee for
+any caller other than `parseKbTree`'s own lexically-sorted walk. **Fixed** two ways: a `canonicalPair`
+helper reorders every such pair by `id` (never `localeCompare`) before it is used for reporting, and a
+new `sortFindings` helper (`types.ts`) — sorting by `(ruleId, entryId, message)` — is now applied to the
+return value of every exported check in this module (`checkContradictions`, `lintKb`, `verifyKb`),
+closing the weaker, list-order half of the same class of gap everywhere at once, not only in the two
+functions the critic's own repro happened to demonstrate it in. A sixth, minor finding — a repeated id
+in the same `related`/`supersedes` field produced one duplicate `kb:dangling-ref` finding per repetition
+— was also fixed, by deduplicating the id list before checking it. Two further observations (a
+whitespace-padded near-match to a real id silently treated as out-of-tree rather than flagged broken; a
+KB entry naming itself in its own `related` field going unflagged) were considered and deliberately left
+unfixed — the critic's own report calls both "narrow" and "not obviously wrong per spec," and neither
+has a clear rule-table home to attach a fix to without inventing scope beyond what `08` §8.7 actually
+asks for.
+
+**Verify-round addendum: all six critic-round fixes confirmed independently, including with a
+three-entry (not just two) symmetric-conflict scenario across every permutation for the determinism
+fix; one further real gap found and fixed.** A verify pass re-derived each of the six fixes above with
+its own adversarial scripts — notably, for the determinism fix, a three-entry antonym-tag conflict and
+a three-ADR scope-overlap conflict, each checked across all six permutations of the input array, byte-
+identical every time — and confirmed all six hold exactly as described. It also found one further real
+gap: `checkDanglingRefs` never validated a KB entry's own `sources[].ref` (`kind: 'decision'`) against
+the tree's real ids, even though `adrScope`/`inboundLinkedIds` (this same critic round's own points 1
+and 4) already treat that exact field as a genuine reference relationship. A typo'd or since-deleted ADR
+id in `sources` silently produced no diagnostic of its own — only a downstream, unexplained "no owning
+ADR" finding once `checkComponentCoverage` failed to find the (nonexistent) citation. **Fixed** by
+checking every `kind: 'decision'` source's `ref` the same way `related`/`supersedes` already are, in the
+same function, against the same known-id set. The verify pass separately raised, but explicitly declined
+to require fixing, whether a `Diagram`'s own `explains`/`depicts` ids (used identically as a genuine
+reference by the same critic round's point 4) should also be checked for existence — left **unfixed**:
+`depicts` is `diagram:refs`' own namespace (component/datastore/entity/actor tags, `SPEC-QUESTIONS.md`
+Q44), explicitly out of this package's scope, and `explains`' own real id-space is not stated precisely
+enough anywhere in the spec pack to add a check against it without guessing at a rule the spec itself
+does not give.

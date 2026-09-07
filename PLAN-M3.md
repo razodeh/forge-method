@@ -543,29 +543,49 @@ and `review_by` staleness) as a second, related function.
 **Spec:** `08` §8.7 (the full rule table plus the contradiction-detection implementation paragraph),
 §8.8 (staleness and drift — the code-drift half is explicitly narrowed, see Depends-on).
 
-**Surface:** `@forge/kb/lint`
+**Surface:** `@forge/kb/lint` — corrected against six real gaps found building against `KbTree`/
+`KbIndexBackend` alone, `SPEC-QUESTIONS.md` Q56.
 - `interface KbFinding { ruleId: string; severity: 'error' | 'warn'; message: string; entryId?: string }`.
-- `lintKb(tree: KbTree, specArtifacts: { capabilities: readonly Capability[]; epics: readonly Epic[] }, diagramsBackend: { validateDiagrams: typeof validateDiagrams }, now: Date): readonly KbFinding[]` —
-  the `SPEC-QUESTIONS.md` Q43 entry point M3's own exit-test-equivalent Check calls; returns the exact
-  finding set a future `--json` CLI flag (M6) would print, `[]` when clean.
-- `checkContradictions(entries: readonly KbEntry[]): readonly KbFinding[]` — the curated antonym-pair
-  table (`08` §8.7's three named examples, seeded and extensible) plus the two ADR-status rules;
-  exported separately so a later, optional LLM-backed semantic pass (no adapter exists until M7) can
-  be composed alongside it as pure additional warnings without touching this function.
+- `interface Component { id: string; label: string; responsibility: string; owner: string; dependsOn: readonly string[]; failureModes: readonly string[] }`,
+  `componentsFileSchema`/`ComponentsFile` (`components: readonly Component[]`) — `architecture/
+  components.md`'s own on-disk shape, defined in `@forge/kb/schema` (not `@forge/schemas`: `Component`
+  is not one of `18` §18.7's 21 registered types, matching `KbEntry` itself already living outside
+  `@forge/schemas`). `id` is `component:<slug>`, the same tag format `applies_to`/`depicts` already
+  use, matching `@forge/diagrams`' own `ComponentsToC4Input.components` field names (`id`/`label`/
+  `dependsOn`) exactly where they overlap (Q56 point 1). Wired into `parseKbTree` as a sixth
+  `collection: true` file kind.
+- `lintKb(tree: KbTree, specArtifacts: { capabilities: readonly Capability[]; epics: readonly Epic[] }, level: string, now: Date): readonly KbFinding[]` —
+  synchronous, no `diagramsBackend` parameter (Q56 point 5: nothing in `KbTree` can satisfy
+  `validateDiagrams`'s own need for real `.mmd` source text). `level` is caller-supplied (Q56 point 8:
+  `.forge/config.yaml` is not a file this package reads), used only by the two structurally-checkable
+  `diagram:required` rows this piece implements. Implements every `08` §8.7 rule this package owns per
+  `SPEC-QUESTIONS.md` Q44/Q56, including `diagram:required`/`diagram:adr-coverage` computed directly
+  from `tree.entries`. The `SPEC-QUESTIONS.md` Q43 entry point M3's own exit-test-equivalent Check
+  calls; returns the exact finding set a future `--json` CLI flag (M6) would print, `[]` when clean. A
+  caller wanting `08` §8.7's *full* `diagram:*` battery (syntax, refs, orphan-nodes, complexity,
+  label-quality, caption, drift, transclusion, staleness) composes `validateDiagrams`'s own
+  separately-computed findings alongside this function's return value.
+- `checkContradictions(kbEntries: readonly KbEntry[], adrs: readonly ADR[]): readonly KbFinding[]` —
+  widened from a single `KbEntry[]` parameter to the two typed slices the two halves of this one check
+  actually need (Q56 point 4): the curated antonym-pair table (`08` §8.7's three named examples,
+  seeded and extensible) over `kbEntries`, plus the two ADR-status rules over `adrs`. Exported
+  separately so a later, optional LLM-backed semantic pass (no adapter exists until M7) can be
+  composed alongside it as pure additional warnings without touching this function.
 - `verifyKb(tree: KbTree, runCheck: (command: string) => Promise<boolean>, now: Date): Promise<readonly KbFinding[]>` — runs every `confidence: verified` entry's `Verification` command through the
   injected `runCheck` (never shells out itself — keeps this package's own dependency surface clean) and
   flags a failing or now-past-`review_by` entry as `needs-review`.
 
 **Checks:**
-- `fixtures/greenfield-service` (P6's base fixture, extended here) lints clean (`lintKb` returns `[]`)
-  — the milestone's own exit-test target, asserted directly per Q43.
+- `fixtures/greenfield-service` (P6's base fixture, extended here with `architecture/components.md`)
+  lints clean (`lintKb` returns `[]`) — the milestone's own exit-test target, asserted directly per Q43.
 - A dangling `related` id, a supersession cycle (A supersedes B supersedes A), and two `active` entries
   in the same section with an antonym-pair tag conflict on the same `applies_to` each produce their own
   named finding — one fixture case per rule, not one combined fixture.
-- Two `accepted` ADRs in the same `category` + `applies_to` scope with no supersession link between
-  them is flagged; adding a `supersedes` link between them clears the finding.
-- A component in `components.md` with zero owning ADRs is flagged at error severity; one with ≥1 is
-  clean.
+- Two `accepted` ADRs in the same `category` with an overlapping derived `applies_to` scope (via the
+  KB-entry-`sources` bridge, Q56 point 3) and no supersession link between them is flagged; adding a
+  `supersedes` link between them clears the finding.
+- A component in `components.md` with zero owning ADRs (via the same bridge, Q56 point 2) is flagged
+  at error severity; one with ≥1 is clean.
 - `diagram:required`/`diagram:adr-coverage` (built here, not in `@forge/diagrams`) correctly flag a
   structural ADR (`category: architecture`, no `diagrams` entry) and a missing taxonomy-required
   diagram for the fixture's own configured level.
@@ -578,12 +598,14 @@ and `review_by` staleness) as a second, related function.
 - Determinism (R10): `lintKb` and `verifyKb` produce identically-ordered output across repeated runs
   over the same tree and the same injected `now`.
 
-**Depends on:** P6, P7 (id/section data), P8 (orphan-entry detection needs the `links` table), P2 and
-P4 (`@forge/diagrams`' own findings, composed in), `@forge/core/artifacts` (reading `Capability`/`Epic`
-spec artifacts for CAP-coverage — outside the KB tree proper, inside `docs/forge/specs/`). Code-drift
-detection (`08` §8.8's "re-checked when the component's files change beyond a threshold... post-merge
-check") is narrowed per a build-time `SPEC-QUESTIONS.md` entry to a pure function taking a caller-
-supplied changed-file list, since the actual git/post-merge wiring needs orchestration hooks this
-package has no dependency path to and that do not exist before later milestones.
+**Depends on:** P6, P7 (id/section data). Orphan-entry detection re-derives the same "which fields
+produce which link" logic P8's own `rebuildIndex` already established, computed locally and directly
+from `tree.entries` — `lintKb` does not take a `KbIndexBackend` parameter or otherwise depend on a live
+index. `Capability`/`Epic` (`@forge/schemas` types only) are caller-supplied, already-parsed data —
+`@forge/kb` gains no new dependency on `@forge/core/artifacts` or any `docs/forge/specs/` scanning of
+its own. Code-drift detection (`08` §8.8's "re-checked when the component's files change beyond a
+threshold... post-merge check") has no Check in this piece and is not built here: the orchestration
+hooks (git, post-merge) it needs do not exist before a later milestone, and nothing in this piece's own
+Surface claims to provide it.
 
 *(kb track (P6–P10) complete — `@forge/kb` and `@forge/diagrams` both closed out; M3 done.)*
