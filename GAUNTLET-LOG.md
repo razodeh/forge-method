@@ -3427,3 +3427,114 @@ realistic call patterns (here: call it again after using it once) can. Worth car
 when a fix changes a *precondition* (what a function requires to be true before it runs) rather than just
 its internal logic, check it against every other operation in the same file that could change that
 precondition's truth value — not only against the scenario that revealed the gap in the first place.
+
+## M5 P5 — `@forge/vcs`: merge queue (`06` §6.5, `20` §20.2 point 4)
+
+**Rounds: 2 (one critic finding 3 BLOCKING and 4 MAJOR issues, all fixed; one scoped verify confirming all
+seven fixes cleanly and finding three further real gaps — 1 BLOCKING, 2 MAJOR, the same "missing cleanup"
+bug class recurring at a call site the critic round's own scenario didn't happen to exercise, plus a
+cleanup-masks-diagnostic gap the new cleanup calls themselves introduced — all closed locally, no third
+round). Outcome: WON.**
+
+The fifth piece of `@forge/vcs`, and the largest single piece of the milestone so far by a wide margin: the
+full six-step pipeline `06` §6.5 describes — rebase, dispatch on conflict, pre-merge checks, `--no-ff`
+merge tagged with the step id, post-merge checks, automatic history-preserving revert. Two full gauntlet
+rounds surfaced ten real findings across it (three of them found only in round 2, in code round 1's own
+fixes had just added) — more than any other piece this milestone, proportionate to being the most complex.
+
+### Round 1 — critic: 3 BLOCKING, 4 MAJOR
+
+The critic was asked to hunt specifically for conflict-detection correctness, the revert's mainline-
+parent-number correctness, cleanup and retriability on every exit path, complete trailer-injection
+coverage, and — pointedly — the exact "what if the caller violates 'one merge at a time'" race this
+piece's own design commentary named as a trusted-but-unenforced caller obligation. That last instruction is
+what turned an documented, accepted risk into a concretely constructed and fixed bug.
+
+- **BLOCKING: a *second*, independent conflict revealed only by `git rebase --continue` — ordinary for
+  any lane with more than one commit — was never routed through the conflict pipeline at all**, surfacing
+  instead as an opaque generic git-failure error with the resolver never even told about it, and the
+  rebase left genuinely in progress with no cleanup.
+- **BLOCKING: a failed `git merge --no-ff` had no cleanup, and could wedge the entire queue for every
+  future candidate, not just the failing one** — confirmed by constructing the exact race the piece's own
+  doc comment names as a trusted caller obligation (integration's HEAD moving between this candidate's
+  rebase and its own merge step): the failed merge left `MERGE_HEAD` behind, and a second, entirely
+  unrelated candidate's own merge attempt against the same integration worktree then failed immediately,
+  blocked by the first candidate's leftover state, until a human intervened manually.
+- **BLOCKING: `candidate.handle.laneId` reached the merge/revert commit message with no injection
+  validation**, contradicting this piece's own stated completeness claim (only `stepId`/`runId` were
+  checked). The design reasoning for why this seemed safe — a `LaneHandle` can only be produced by
+  `lanes.ts`, whose branch construction can't contain a newline since git's own ref-name rules would
+  reject it — turned out to be half the story: the `LaneId` brand is a compile-time-only guard an ordinary
+  cast defeats, and this package's own `listOrphanedWorktrees` exists specifically to let a caller
+  reconstruct a handle after a crash, not only ever get one fresh. The critic constructed the exploit
+  directly: a hand-built handle with a newline-laden `laneId` merged cleanly, injecting a forged-looking
+  second `Forge-Step:` line into the resulting commit's own subject.
+- Four MAJOR findings: the conflict description's own `diff` field carrying almost no usable content for
+  a delete/modify or rename/rename conflict (git's own two-way diff renderer has no useful form for
+  either shape); a test asserting "2 parents" without ever checking *which* parent is which, even though
+  the revert mechanism's entire correctness depends on it; zero test coverage of any conflict shape beyond
+  a single-file content conflict (the exact gap that let the `diff`-content finding ship unnoticed); and
+  `PostMergeCheck`'s own doc comment not documenting that a throwing (not merely failing) post-check
+  leaves the merge commit sitting unreverted with no outcome returned to say so.
+
+Every blocking finding was fixed at its structural root: a shared `runRebaseStep` helper (starting a
+rebase and continuing one after a resolution now share the identical "is this really a content conflict"
+logic) plus restructuring the conflict dispatch from a single `if` into a `while` loop, so every conflict —
+first or subsequent — gets the same policy dispatch; a new `abortMerge` cleanup call on any merge-step
+failure; one more `assertSingleLine` call for `laneId`, matching the two already in place for `stepId`/
+`runId`.
+
+### Round 2 — scoped verify: 7 of 7 confirmed; 3 new findings (1 BLOCKING, 2 MAJOR), all fixed
+
+Every fix was independently re-derived with scenarios distinct from round 1's own: a 3-file, 3-commit
+multi-conflict lane; the merge-step race reproduced via a different mechanism (inside the resolver
+callback rather than a pre-check); the `laneId` exploit reproduced with a bare-`\r` payload, plus a
+structural proof (not just an empirical one) that the new check is genuinely unreachable through the
+legitimate API, since git itself already refuses a newline-laden `runId` as a ref name before any handle
+can ever be produced. All seven held.
+
+**New finding 1 (BLOCKING): `revertMerge`'s own revert can itself conflict, and had no cleanup at all** —
+the identical bug class as round 1's own merge-step finding, recurring at a different call site that
+round's own scenario didn't happen to exercise. Confirmed empirically: a revert triggered by a failing
+post-merge check can itself collide with a *third* candidate's changes, landed while the first candidate's
+checks were still running — the same "one merge at a time" violation already named as a live risk, just
+surfacing one pipeline step later than round 1 happened to probe. Left `REVERT_HEAD` set, no cleanup,
+queue wedged for every subsequent candidate — directly falsifying `abortMerge`'s own doc comment, which
+claimed every other failure path in the file already cleaned up after itself. **Fixed** with a new
+`abortRevert` helper, mirroring `abortMerge` exactly.
+
+**New finding 2 (MAJOR): the new cleanup calls could themselves silently replace the original diagnostic
+with an unrelated "nothing to abort" error**, whenever the underlying failure never actually set
+`MERGE_HEAD`/`REVERT_HEAD` in the first place (confirmed empirically for both: an untracked file collision
+makes `git merge` refuse without ever setting `MERGE_HEAD`; a bogus sha makes `git revert` fail the same
+way for `REVERT_HEAD`) — the cleanup attempt's own generic error threw first, before the intended, far
+more informative error about the real failure was ever built. **Fixed** by wrapping each cleanup attempt
+in its own inner try/catch: the original failure is always what gets thrown; a cleanup failure is folded
+into its message, never left to replace it.
+
+**New finding 3 (MAJOR): a `conflictResolver` that itself throws — realistic for what `06` §6.5 calls
+"spawn a merge-resolver step," a whole separate agent invocation that can crash or time out — left the
+lane worktree stuck mid-rebase, undocumented**, unlike every *documented* exit from the same loop, which
+already cleaned up first. Deliberately fixed differently from the closely analogous `PostMergeCheck`
+finding in round 1 (kept as documentation-only there, since a merge commit left on integration has real
+inspection value): a rebase left mid-progress has no comparable value and actively blocks further git
+operations on that worktree, so this one is a genuine behaviour fix — the resolver call is now wrapped,
+`abortRebase` runs best-effort, and the resolver's own thrown value is re-thrown exactly as received.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (134 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/vcs/src/`) all independently reconfirmed clean.
+
+### Calibration note
+
+This piece's own verify round adds a fourth distinct lesson to the ones already named this milestone,
+sharper than P4's own "check a fix's precondition against the rest of the file": **the fix for a "missing
+cleanup" finding is itself new surface area with the exact same failure mode the original finding had —
+a cleanup call that can itself fail, and now needs its own cleanup-of-the-cleanup reasoning.** Round 1
+fixed one missing-cleanup bug (`abortMerge`); round 2 found the *identical* bug shape at a second call
+site (`revertMerge`) the first fix's own tests never exercised, *and* found that the first fix's own new
+cleanup call could itself fail in a way that actively made diagnosis worse, not merely incomplete. Three
+compounding findings from one root cause, across two rounds, is the sharpest demonstration yet in this
+project of why "the fix's own new code needs the same adversarial scrutiny as the bug it closes" is not a
+one-time check but a recursive one: a cleanup routine is itself an operation that can fail, and asking "is
+this new code's own new code correct" has to be asked again every time a fix introduces a new fallible
+call, not just once per gauntlet round.

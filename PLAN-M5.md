@@ -201,29 +201,50 @@ post-merge failure. "Spawn a merge-resolver step" (the `agent` policy's own real
 agents`/`@forge/engine` content per Q62 part 2 — this piece accepts a caller-supplied async resolver
 function instead, the same "capability this package cannot reach yet" shape Q62 uses throughout.
 
-**Spec:** `06` §6.5 (verbatim, all six steps); `06` §6.8's `MergeReverted`/diagnostician-scheduling
-mention (the diagnostician scheduling itself is `@forge/engine`'s job — this piece only needs to *report*
-a post-merge failure precisely enough for a caller to act on it); `20` §20.2 point 4 (never force-push,
-never rewrite published history).
+**Spec:** `06` §6.5 (verbatim, all six steps — the `MergeReverted`/diagnostician-scheduling mention is
+step 5's own text, not a separate §6.8 citation as an earlier draft of this line said; the diagnostician
+scheduling itself is `@forge/engine`'s job — this piece only needs to *report* a post-merge failure
+precisely enough for a caller to act on it); `20` §20.2 point 4 (never force-push, never rewrite
+published history).
 
 **Surface:** `@forge/vcs/merge-queue`
-- `MergeCandidate` — lane handle + declared claim + conflict policy.
-- `MergeConflictResolver = (conflict: MergeConflictDescription) => Promise<'resolved' | 'unresolved'>`.
+- `MergeCandidate` — lane handle, `stepId`/`runId` (needed to tag the merge/revert commit; not
+  recoverable from `handle.branch` alone since `slugifyStepId` is lossy), declared claim (forwarded into
+  `MergeConflictDescription` as resolver context, not used by this piece's own control flow), conflict
+  policy.
+- `MergeConflictResolver = (conflict: MergeConflictDescription) => Promise<'resolved' | 'unresolved'>` —
+  `agent` and `human` policy both just mean "call this"; only `abort` is structurally different.
+- `MergeConflictDescription` — `conflictedFiles: readonly ConflictedFile[]` (path + porcelain XY status
+  code, not a bare path list — `diff` alone has no useful content for a delete/modify or rename/rename
+  conflict), `diff`, `worktreePath`, `declaredClaim`, `laneId`.
 - `PreMergeCheck` / `PostMergeCheck = (worktreeOrIntegrationPath: string) => Promise<CheckResult>` —
-  caller-supplied; this package has no opinion on what "typecheck" or "full test" means.
+  caller-supplied, run in order, stop at the first failure; this package has no opinion on what
+  "typecheck" or "full test" means. A throwing check propagates uncaught, not collapsed into an ordinary
+  failure.
 - `processMergeCandidate(candidate, { integrationPath, conflictResolver, preChecks, postChecks }):
   Promise<MergeOutcome>` — serial by construction (one call at a time; the caller owns queueing order).
-  `MergeOutcome` is a discriminated result: `clean` | `conflict-resolved` | `conflict-unresolved` |
-  `pre-check-failed` | `post-check-failed-reverted`.
+  `MergeOutcome` is a discriminated union of objects, each carrying real data (`mergeCommitSha`,
+  `checkResult`, `revertCommitSha`), not bare string tags: `clean` | `conflict-resolved` |
+  `conflict-unresolved` | `pre-check-failed` | `post-check-failed-reverted`. Every failure exit — a
+  conflict resolved to abort, a missing resolver, a failed merge, a failed revert, a throwing resolver —
+  cleans up (aborts the rebase or merge/revert in progress) before returning or throwing, so nothing ever
+  wedges the queue for a later, unrelated candidate.
 
 **Checks:** a clean merge (no conflict) succeeds and is tagged; a real conflicting pair of lanes routes
-through the resolver and merges once resolved; an unresolved conflict under `abort` fails the candidate
+through the resolver and merges once resolved, including a *second*, independent conflict revealed only
+by continuing after the first is resolved; an unresolved conflict under `abort` fails the candidate
 without touching integration; a post-merge check failure triggers an automatic revert that leaves
 integration at its exact pre-merge SHA, proven by comparing tree hashes, not just "no error thrown";
 `git log` on integration after a revert shows both the merge and the revert commits, never a rewritten
 history.
 
 **Depends on:** P2, P3, P4.
+
+*(P5 is committed: `85de709`. See `SPEC-QUESTIONS.md` Q67 and its critic-round/verify-round addenda — the
+largest piece this milestone by finding count: 3 blocking + 4 major in the critic round, then a further
+1 blocking + 2 major in the verify round, all in the same "a failure path needs cleanup, and a cleanup
+call is itself fallible" family; see `GAUNTLET-LOG.md`'s own entry for the fuller story, including a
+calibration note on why that family needed two full rounds to fully surface.)*
 
 ---
 
