@@ -479,6 +479,44 @@ export const ERROR_CODES = {
     message: (d: { id: string }) => `No preset registered with id ${show(d.id)}.`,
     remedy: 'Run `forge preset list` to see the available preset ids.',
   },
+  // `10` §10.1's own `{{...}}` template substitution (`PLAN-M5.md` P9's own `resolveTemplate`, built on
+  // the sandboxed expression evaluator). No spec page numbers a code for a malformed placeholder; the
+  // next free `CFG-*` slot, matching P1/P2/P7's own precedent above for exactly this situation (a
+  // reference that does not resolve — here, a template expression rather than an overlay/preset id).
+  'CFG-014': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { template: string; placeholder: string; parseError: string }) =>
+      `Template ${show(d.template)} has an invalid expression in placeholder "{{${show(d.placeholder)}}}": ${show(d.parseError)}.`,
+    remedy: 'Fix the expression syntax inside the template placeholder.',
+  },
+  // Same template-substitution feature as `CFG-014`, the other real failure mode: the placeholder's own
+  // expression parses fine but does not produce a directly-substitutable value — either nothing at all
+  // (`10` §10.1's own "typed 'undefined path' outcome" for a missing path) or a non-primitive (an object
+  // or array a path expression resolved to) — surfaced here rather than silently substituting the
+  // literal text "undefined"/"null"/"[object Object]" into what becomes a real branch name, file path,
+  // or shell argument downstream.
+  'CFG-015': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { template: string; placeholder: string }) =>
+      `Template ${show(d.template)}'s placeholder "{{${show(d.placeholder)}}}" did not resolve to a string, number, or boolean.`,
+    remedy: 'Check the placeholder path against the context actually supplied at this point in the run, and correct it or the context.',
+  },
+  // `10` §10.1's sandboxed expression language (`PLAN-M5.md` P9's own `evaluate`). No spec page numbers
+  // a code for this; next free `CFG-*` slot after `CFG-015`. Confirmed empirically that an AST built
+  // from a perfectly ordinary, non-nested-looking flat `&&`/`||` chain (which parses cleanly — parsing
+  // it is iterative, not recursive) still recurses deeply enough at *evaluation* time to blow the real
+  // call stack with a raw `RangeError`, contradicting this language's own sandboxed-and-safe premise;
+  // this is `evaluate`'s own equivalent of the depth guard `parseExpression` already applies at parse
+  // time, for the one failure mode a parse-time guard alone cannot catch.
+  'CFG-016': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { maxDepth: number }) =>
+      `Expression evaluation nests more than ${show(d.maxDepth)} levels deep; refusing to evaluate further.`,
+    remedy: 'Split the expression into smaller pieces, or reduce how many terms are combined with && or || in one condition.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

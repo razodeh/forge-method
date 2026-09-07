@@ -4465,3 +4465,246 @@ ones, 100% coverage on every file in `packages/engine/src/` except four individu
 `noUncheckedIndexedAccess`-required branches in `validate.ts` proven unreachable by construction — testing
 them would mean fabricating an internal state that cannot actually occur) all independently reconfirmed
 clean.
+
+---
+
+## Q71 — M5 P9's `@forge/engine` sandboxed expression evaluator: an entire grammar invented from one
+paragraph, plus a "never throws" contract that was briefly false
+
+`10` §10.1's own "Expressions" subsection is one paragraph naming features — dotted paths, `==`/`!=`/`<`/
+`<=`/`>`/`>=`, `&&`/`||`/`!`, `in`, `length(...)`, the seven fixed context helpers — with **zero worked
+expression examples** beyond the two real consumer strings this piece's own Checks text names (`10` §10.3's
+`"errors > 0"`/`"undefined_refs > 0"` gate `failOn` examples, `"failures.test-failure > 2"` an escalation's
+own `when`). No precedence, no associativity, no literal-type rules, no evidence of array literals,
+negative numbers, or nested calls anywhere in the spec pack. This piece's entire grammar is this build's
+own invention, constrained only by those two real strings and the general "tiny, sandboxed, no `eval`"
+mandate.
+
+**1. Precedence climb, lowest to highest: `||`, `&&`, comparison/`in` (one non-chaining level — nothing in
+the spec pack suggests `a > b > c` chaining is a real need), unary `!`, then a primary** (literal, path,
+`length(...)`, or a parenthesised sub-expression). `!` binds *tighter* than a comparison — `!a == b` parses
+as `(!a) == b` — matching the "unary `!` applies to the single next operand" convention every mainstream
+language with both a `!` and comparison operators uses (JS, C, Python's own `not`). An earlier version of
+this grammar had `!` bind *looser* (`!(a == b)` for the identical text) and shipped that way briefly during
+this piece's own build, before the builder's own new test, written specifically to encode the conventional
+reading, caught the mismatch — fixed before any critic was ever involved. An author who wants the looser
+reading can still get it, explicitly, with parens.
+
+**2. Dotted-path identifiers allow a hyphen mid-segment, never leading** — `failures.test-failure` (`10`
+§10.3's own worked example) is the one real path segment the spec pack shows, and it needs the hyphen; a
+*leading* hyphen is reserved for a negative number literal instead (finding 11), and there is no real path
+anywhere in the spec pack that starts with one.
+
+**3. `==`/`!=` use strict `===`/`!==`, not JS's own loose equality.** `0 == false` and `"" == 0` are both
+`true` under `==`; a workflow author writing a `failOn`/`when` expression almost certainly means "these two
+values are the same," not "these two values are loose-equal under JS's own coercion rules" — the same
+footgun-avoidance reasoning `checkBudget`'s own numeric validation (`Q69`) and this piece's own strict
+context-path resolution (finding 5) both already apply elsewhere this milestone.
+
+**4. `<`/`<=`/`>`/`>=` go through a dedicated `compareOrdering` helper, not raw `<`/`>` on two `unknown`
+values.** Two strings compare lexicographically; anything else is compared as a number (`Number(x)`
+coercion, so a numeric-looking string like `"5"` orders correctly against a real number); a `NaN` outcome
+on either side means "not orderable," surfaced as `undefined` from the helper and treated as `false` by
+every comparison built on it — never a thrown error, and never JS's own more surprising abstract-relational-
+comparison quirks (`[] < [1]`, mixed string/number comparisons that silently go numeric mid-expression).
+
+**5. A missing or unresolved path — at any depth, including the root helper name itself — resolves to
+plain JS `undefined`, not a bespoke sentinel.** `PLAN-M5.md` P9's own Checks text asks for "a typed
+'undefined path' outcome, not a thrown JS error," and JS's own `undefined` already *is* that outcome,
+safely, everywhere this piece uses it. A distinct sentinel would only earn its own complexity if a context
+could contain a *genuine*, deliberately-stored `undefined` distinguishable from "not present" — but every
+real context this piece is fed comes from parsed YAML/JSON (`item`/`stage`/`run`/etc.), neither of which
+has any way to represent `undefined` as a stored value at all (only `null`), so that ambiguity cannot
+actually arise.
+
+**6. `in` checks array or string membership; the right-hand side is always a context path, never an
+array-literal expression** — nothing in the spec pack's one paragraph suggests array-literal syntax
+(`x in [1, 2, 3]`) is a real need, and adding it would be pure surface area against zero evidence.
+
+**7. `length(...)` is a keyword-prefixed unary call, not postfix `.length`** (`length(item.tags)`, not
+`item.tags.length` — the latter would silently and wrongly resolve as an ordinary, always-`undefined` path
+segment, since a real workflow context has no live JS array to hang a `.length` property off of at all).
+Returns `undefined`, not `0`, for a non-string/array operand — deliberately distinguishing "unresolved"
+from "genuinely empty" at the `evaluate()` level, even though a comparison built on top of it (`length(...)
+> 0`) collapses both outcomes to the same safe `false` anyway (finding 4).
+
+**8. `resolveTemplate` throws a real `ForgeError`, unlike `parseWorkflow`/`validateStructure`'s own
+discriminated-result convention.** Those two run at *design* time, collecting every issue at once for a
+human to fix before a run ever starts; `resolveTemplate` runs at *execution* time, substituting directly
+into what becomes a real git branch name, file path, or shell argument — silently producing the literal
+text `"undefined"`/`"null"`/`"[object Object]"` there would be a genuine correctness hazard, not a design-
+time issue worth collecting alongside others. `engine ← core` is a real, available edge (unlike `@forge/
+vcs`/`@forge/telemetry`'s own local `VcsError`/`TelemetryError`, `Q62`), so this uses real, registered
+codes — `CFG-014` (placeholder expression fails to parse), `CFG-015` (placeholder resolves to a non-
+substitutable value: `undefined`, `null`, an object, or an array) — rather than inventing a local error
+type this package has no structural need for.
+
+**9. Two independent prototype-pollution fixes, the second and third instance of this exact bug class
+found this milestone** (the first was `redact.ts`'s own `__proto__` finding, `Q69`). `lex.ts`'s own
+`KEYWORDS` lookup table is a `Map`, not a plain object: a plain-object table indexed by a name read
+straight from *source text* — `{ in: ..., length: ... }['constructor']`, `[...]['__proto__']` — silently
+returns an *inherited* `Object.prototype` value instead of `undefined`, corrupting the resulting token's
+own `kind` into something that is not a real `TokenKind` at all. `evaluate.ts`'s own `resolvePath` gates
+every read with `Object.hasOwn(current, segment)` rather than a bare `current[segment]`, for the identical
+reason one level later: a context field genuinely named `constructor`/`toString`/`__proto__` is unusual but
+not implausible for arbitrary caller-supplied JSON/YAML, and a bare bracket access would return a live JS
+function reference instead of treating the name as simply absent. Both found by the builder's own dedicated
+sandbox-escape tests, before any critic was ever involved.
+
+**10. Two independent depth guards, not one shared counter — `MAX_EXPRESSION_DEPTH = 200` in `parse.ts`,
+`MAX_EVALUATION_DEPTH = 200` in `evaluate.ts`.** Confirmed empirically that nested `(((...)))`/`!!!!...`/
+`length(length(...))` blow the real call stack with a raw `RangeError` well within a single YAML scalar's
+realistic size (~1500 levels) — the parser's own guard, via `ParserState.enterRecursion()`/`exitRecursion()`
+called once at the top of `parseUnary` and `parsePrimary`'s own `length`/`(...)` branches (the only two real
+recursion sources; `parseAnd`/`parseComparison`/`parseOr` are themselves iterative for repeated `&&`/`||`/
+chained-looking comparisons). But a perfectly ordinary, *non-nested-looking* flat chain — `a && a && a &&
+...` — parses cleanly through those same iterative loops without ever tripping the parser's own guard, and
+still builds a left-deep `Expr` tree that blows `evaluate`'s own separate recursive walk at depths the
+parser's guard structurally cannot see (parsing never recurses for this shape at all). `evaluate`'s own
+guard is threaded as an explicit depth parameter through an internal `evaluateAtDepth`, throwing
+`ForgeError('CFG-016', { maxDepth })` rather than a raw `RangeError` — the same registered-code convention
+finding 8 already established, for the identical "no return value here could look like anything but a
+crash-shaped bug to a caller" reasoning. Both limits chosen with a wide safety margin under their own
+empirical crash thresholds; no real `failOn`/`when` expression anywhere in the spec pack nests even once.
+
+**11. Negative number literals, added after the critic round (see MINOR finding 6 below) via an
+unambiguous top-level lexer dispatch**: `-` followed immediately by a digit is always a negative-number
+literal, never "unary minus on a path" — there is no subtraction or unary-minus operator anywhere in this
+grammar, and `isIdentifierPart`'s own restriction (finding 2) already rules out a leading hyphen starting a
+path segment, so no real input is ambiguous between the two readings. A bare `-` not immediately followed
+by a digit (`- 5` with a space, `-item`, or a trailing `-` with nothing after it) is simply not a number
+literal and falls through to the ordinary "unexpected character" rejection, unchanged from before this
+addition — this piece deliberately does not add a general, whitespace-tolerant unary-minus operator, only
+the one literal shape the critic's own finding named as a real, low-risk gap.
+
+**12. Two critic-round findings deliberately left as documented trade-offs, not code fixes** — see the
+MAJOR/MINOR findings 4 and 7 below for the reasoning in each case; nothing in this piece's own source
+changed for either.
+
+### P9 critic round: 1 BLOCKING, 3 MAJOR, 3 MINOR
+
+The critic was asked to verify `parseExpression`'s own documented "never throws" contract by actually
+constructing and running adversarial input (not just reading the code), check the grammar's precedence
+against convention, and specifically try to break `resolveTemplate`'s placeholder extraction with
+adversarial template text.
+
+- **BLOCKING: the "never throws" contract was false, via two independent, non-obvious vectors.** Deeply
+  nested parens/`!`/`length(...)` crash the *parser* with a raw `RangeError` past roughly 1500 levels — an
+  "obviously adversarial" shape, but still a real, uncaught crash contradicting the file's own explicit
+  claim. More seriously: a flat, *non-nested-looking* `&&`/`||` chain parses cleanly (finding 10 explains
+  why) but crashes the *evaluator* past roughly 5000 terms — a shape with no visual resemblance to
+  "adversarial nesting" at all, making it the more dangerous of the two: a workflow author extending an
+  existing condition one more `&&` at a time would see nothing alarming in the source text itself. **Fixed**
+  with the two independent depth guards (finding 10 above), each verified empirically post-fix to fail
+  cleanly with a named, typed error at exactly the shape that used to crash, while an ordinary expression
+  still parses and evaluates unchanged.
+- **MAJOR: `resolveTemplate`'s placeholder extraction (`/\{\{(.*?)\}\}/g` + `.replace`) was genuinely
+  quadratic on adversarial input** — measured directly: doubling a `'{{'.repeat(n)`-shaped input
+  consistently ~4×'d the run time, textbook O(n²), plausible from corrupted template text or KB content
+  interpolated into a brief on what is documented (finding 8) to be a live run's own critical path.
+- **MAJOR: a placeholder missing its closing `}}` was silently left as literal, unchanged text** — `.replace`
+  simply never matches when there is nothing to match — exactly the "silent literal text ships downstream"
+  hazard finding 8's own reasoning exists to prevent, for what is probably the single most likely authoring
+  typo for this whole feature.
+- **MAJOR: `!x > N` is silently, deterministically wrong for every value of `x`** — an algebraic consequence
+  of finding 1's own correct, conventional precedence: `!x` evaluates to a real boolean, which the numeric
+  side of `compareOrdering` (finding 4) then coerces to `0`/`1` before comparing, so `!x > N` is `false` for
+  every `x` whenever `N ≥ 1`, regardless of what `x` actually is. **Left as a documented limitation, not a
+  code fix**: the precedence itself is exactly the conventional, expected reading (finding 1), and every
+  mainstream language with both a `!` operator and numeric comparison has the identical trap available to an
+  author who writes `!x > N` instead of the `!(x > N)` they probably meant — fixing the *precedence* to avoid
+  this one misuse would just reintroduce the non-conventional reading finding 1's own test was written
+  specifically to reject. A future lint/authoring-time warning for exactly this shape (`!` immediately
+  followed by a numeric comparison) is a reasonable follow-up, not something this piece's own grammar or
+  evaluator should silently work around.
+- **MINOR: `}}` appearing inside a placeholder's own string literal** (`{{"a}}b" == "a}}b"}}`, a perfectly
+  valid, sandboxed expression) **truncated the regex's own non-greedy capture at the wrong `}}`**,
+  misreporting a valid expression as a syntax error.
+- **MINOR: no negative numeric literal was expressible anywhere** (`-5` failed to lex as anything but an
+  "unexpected character"). **Fixed** — finding 11 above, a cheap, unambiguous, low-risk addition that closes
+  a real total-inability gap rather than a mere edge case.
+- **MINOR: `length(...)` returns `undefined` for *any* wrong-shaped operand**, indistinguishable from "the
+  path inside it doesn't exist at all." **Left as a documented, accepted trade-off, not a code fix**: telling
+  the two apart would need either a second, distinct "wrong type" outcome (a bigger redesign of `evaluate`'s
+  own return shape for one call kind) or a bespoke sentinel finding 5 already argued against for the
+  identical reason — no real context this piece is fed can actually produce both a genuinely-present
+  wrong-typed value and a genuinely-missing path in a way a caller would need to tell apart differently than
+  "not the length I expected."
+
+The three findings rooted in the same cause (`resolveTemplate`'s naive regex: the two MAJOR findings above
+plus the MINOR string-literal finding) were fixed together, per the critic's own explicit suggested design,
+with a hand-written, single-pass, string-literal-aware character scanner: it finds each `{{`, scans forward
+tracking `"`/`'`-quote state so a `}}` inside a quoted string is never mistaken for the closing delimiter,
+extracts the inner source text on finding the real closing `}}`, and throws `CFG-014` for a clear
+"unterminated placeholder" reason if the scan reaches the end of the template with an open `{{` still
+unclosed — never silent passthrough. Single monotonic pass, no backtracking, no restart from an earlier
+position — confirmed empirically linear: resolving a template built from 20,000 back-to-back placeholders
+completes in low tens of milliseconds.
+
+### P9 verify round: everything from round 1 reconfirmed clean; 1 new MAJOR finding, fixed; 1 new MINOR,
+documented as an accepted limitation
+
+The verify pass was asked to re-derive the grammar directly from `parse.ts` rather than trust round 1's own
+description, re-probe both depth guards at their exact boundary across every distinct triggering shape
+(including deliberately mixed `&&`/`||` chains, to check whether the two operators share the guard
+uniformly), independently re-confirm the template scanner's linearity under harder adversarial shapes than
+its own existing test, and specifically hunt for anything unrelated to round 1's own five fixes by reading
+`resolvePath`/`compareOrdering` end to end.
+
+- **MAJOR: `compareOrdering` silently read `null`, an array, or a boolean as a number, inconsistently with
+  `==`'s own strict equality.** The function's own bare `Number(x)` fallback was not, as its prior doc
+  comment claimed, "`NaN` for anything non-numeric": `Number(null)`, `Number([])`, and `Number([5])` are
+  `0`, `0`, and `5` respectively, not `NaN` — so `a <= 0`/`a >= 0` were both silently `true` for `a: null`,
+  while `a == 0` for the identical value was correctly `false` one line of code away, with no error or
+  signal either way. Realistic, not contrived: `resolvePath`'s own doc comment already establishes that a
+  real context field legitimately uses `null` (not `undefined`) for "no value" (parsed JSON/YAML has no
+  other way to represent it) — so a numeric-typed field read as `null` is exactly the shape a `failOn`/
+  `when` gate expression comparing it with `<=`/`>=` would actually see in practice, and would have
+  silently treated as "exactly zero" rather than "not orderable." **Fixed** with a new `toOrderableNumber`
+  helper gating on `typeof value === 'number' | 'string'` *before* ever calling `Number()` — the same
+  "narrow the type first, then coerce" shape `isFiniteNonNegativeNumber`/`isNonBlankString` already
+  established for this milestone's own numeric/string validation (`Q69`) — so `null`/a `boolean`/an
+  object/array now correctly join a genuinely missing path as "not orderable," while the existing, load-
+  bearing "coerce a numeric-looking string against a number" behavior (finding 4 above) is untouched.
+- **MINOR: neither the lexer's string-literal scanner nor `resolveTemplate`'s own placeholder scanner
+  supports backslash-escaping**, so a double-quoted string literal can never contain a literal `"` (nor a
+  single-quoted one a literal `'`) — an odd number of one quote character inside a placeholder consumes the
+  rest of the template as one unterminated string, reported as a `CFG-014` "missing closing `}}`" rather
+  than the more specific "unterminated string" the lexer itself would report standalone. **Left as a
+  documented limitation, not a code fix**: it fails safely and clearly either way (never silent corruption
+  or a `}}`-boundary mismatch — the verify round confirmed `template.ts`'s own quote-tracking stays exactly
+  consistent with `lex.ts`'s own string-scanning throughout, which is the property that actually matters),
+  a workaround exists for the near-totality of realistic cases (pick the other quote character, unless a
+  single literal genuinely needs both), and `10` §10.1's own paragraph gives zero evidence any real
+  `failOn`/`when`/template expression ever needs an embedded quote at all. Adding escape sequences now,
+  against no concrete evidence of need, would be exactly the kind of speculative grammar surface this
+  piece has otherwise avoided throughout (findings 6, 11), and would have to be threaded through both
+  scanners at once to avoid reintroducing the very "two scanners silently disagree about where a string
+  ends" hazard finding 8/round-1's own MINOR finding already closed once for `}}` specifically.
+
+Every item from round 1 was independently re-derived with harder or differently-shaped scenarios and held
+exactly as claimed: both depth guards at their precise boundary (200 succeeds, 201 fails) across nested
+parens/`!`/`length(...)` and interleaved mixtures of all three for the parser; the evaluator's own separate
+guard at its precise chain-length boundary for pure `&&` chains, pure `||` chains, *and* worst-case mixed
+`&&`/`||` chains built through normal precedence, all tripping the identical guard (a naively-alternating
+single-atom mixed chain needs roughly double the atom count to build the same tree depth, confirmed by
+hand-deriving the AST shape, not a different or weaker guard); short-circuiting confirmed to correctly
+prevent the guard from firing on a subtree that never actually gets walked; hand-built 5000-deep `not`/
+`length` ASTs (bypassing the parser entirely) independently trip the evaluator's own guard, confirming real
+defense-in-depth rather than something merely inherited from the parser never producing such a tree;
+parentheses confirmed to contribute zero AST depth (fully erased at parse time), so the two guards address
+structurally disjoint failure modes and cannot substitute for each other; the template scanner held under
+adjacent/nested/quad-brace placeholders, mismatched quote characters, and up to 200,000-character inputs
+with no evidence of non-linear growth; negative literals confirmed correct inside `in`/`length(...)`/nested
+parens, with every `-`-adjacency case (`a-5`, `5-a`, `- -5`, `item-5.5`) failing or lexing exactly as
+designed; the prototype-pollution fixes held against a wider set of `Object.prototype` member names
+(`propertyIsEnumerable`, `isPrototypeOf`, `__defineGetter__`, etc.) and against `Object.create(null)` used
+as the context root itself.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (194 engine tests after these fixes' own
+new ones) all independently reconfirmed clean. 100% coverage on every file in `packages/engine/src/expr/`
+except a small set of individually-documented, `noUncheckedIndexedAccess`-required branches in `lex.ts`/
+`parse.ts`/`template.ts`, each proven unreachable by construction (gated by a bounds check in the identical
+condition) — testing them would mean fabricating an input that cannot actually reach them; every branch
+*not* protected by such a bounds check (a literal `.` not followed by a digit, a bare trailing `-`) was
+confirmed reachable and given a real test instead of being waved through as the same exemption.

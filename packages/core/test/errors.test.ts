@@ -79,6 +79,10 @@ const SAMPLE_DETAILS = {
   generator: 'components-to-c4',
   entryId: 'KB-ARCH-0007',
   budgetTokens: 5000,
+  template: 'forge/integration/{{stageId}}',
+  placeholder: 'stageId',
+  parseError: 'Unexpected token "&&".',
+  maxDepth: 200,
 } satisfies Record<string, unknown> as never;
 
 /**

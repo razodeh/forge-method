@@ -113,6 +113,9 @@ importers:
 
   packages/engine:
     dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
       minimatch:
         specifier: 10.2.6
         version: 10.2.6

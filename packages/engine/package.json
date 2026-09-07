@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./expr": "./src/expr/index.ts",
     "./workflow": "./src/workflow/index.ts"
   },
   "engines": {
@@ -14,6 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@forge/core": "workspace:*",
     "minimatch": "10.2.6",
     "yaml": "2.9.0",
     "zod": "3.25.76"
