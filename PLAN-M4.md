@@ -150,6 +150,10 @@ every future untrusted-content consumer (MCP results, fetched pages) calls.
 
 **Depends on:** P1 (`ForgeControlToken`, `ParsedControlToken`).
 
+*(P3 is committed: `f749b7b`. `wrapUntrustedContent`'s return type changed from `string` to
+`{ wrapped, stripped, unknownLines }` during the gauntlet loop — see `SPEC-QUESTIONS.md` Q59's
+critic-round and verify-round addenda.)*
+
 ---
 
 ## P4 — Adapter conformance suite (`07` §7.6, C1–C16)
