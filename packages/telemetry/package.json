@@ -1,0 +1,18 @@
+{
+  "name": "@forge/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./errors": "./src/errors.ts",
+    "./events": "./src/events.ts",
+    "./redact": "./src/redact.ts"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

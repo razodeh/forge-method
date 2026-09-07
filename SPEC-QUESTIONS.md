@@ -3848,3 +3848,263 @@ wrapped into a new `VcsError` that would lose its original type.
 No other new findings; `tsc`, `eslint`, and the full package suite (130 tests at verify time, 134 after
 these three fixes' own new tests, 100% coverage on every file in `packages/vcs/src/`) all independently
 reconfirmed clean.
+
+## Q68 — M5 P6's `@forge/telemetry` event log: a new package, and nine design points not given anywhere
+in the spec pack
+
+The first piece of `@forge/telemetry` — a brand-new package, scaffolded to match `@forge/vcs`'s own
+established conventions (`package.json`/`tsconfig.json` shape, per-file subpath exports, a local
+`TelemetryError` mirroring `VcsError` for the identical `telemetry ← schemas`-only, no-`core`-edge reason,
+`SPEC-QUESTIONS.md` Q62). `18` §18.4's own text gives the `ForgeEvent` shape and event catalogue verbatim,
+but almost nothing about the actual function signatures or their runtime behaviour — all of the below is
+this piece's own design.
+
+**1. `appendEvent`/`readEvents` take an explicit `projectRoot` parameter**, not just `runId` as the plan's
+own original signature showed. Matches `@forge/vcs`'s own established, proven convention (every function
+there takes an explicit `cwd`, never `process.cwd()` implicitly) — an implicit cwd would make every test
+either mutate global process state via `process.chdir()` or be unsafe to run in parallel. The same
+correction class as `Q66`'s own `baseSha` addition to `enforceClaim`.
+
+**2. `appendEvent` returns the fully-assigned `ForgeEvent`, not `Promise<void>`** as the plan's own text
+said — a caller needs the assigned `seq` for no reason more exotic than using it as a *later* event's own
+`causedBy`, and returning nothing would force a separate, redundant read to get it. Matches the
+established "return structured facts a caller needs" shape (`ClaimEnforcementResult`, `MergeOutcome`).
+
+**3. `appendEvent` takes an explicit `AppendEventOptions` (`redactPatterns`/`knownSecrets`)** — the plan's
+own signature didn't show how redaction config reaches this function at all, and this package has no
+config-loading machinery of its own to fall back on (no `@forge/schemas` dependency yet, matching P1's own
+precedent of not adding one until a piece actually needs it) — the caller must supply it explicitly, the
+same forward-dependency shape Q62 uses throughout.
+
+**4. `ts` is caller-supplied, never generated internally via the wall clock.** `18` §18.4's own
+`ForgeEvent.ts` field is required, and `appendEvent`'s own job description (`assigns the next gapless
+seq...`) never claims to assign `ts` — reading `Date` directly inside a shared library is exactly what
+this project's own determinism discipline (an injected clock, never an ambient global — this repo's own
+R10 lint rule) exists to avoid; a future `@forge/engine` caller supplies it from its own clock.
+
+**5. `redactPayload` matches patterns against payload *key names*, not value content.** `18` §18.3's own
+worked example patterns (`api[_-]?key`, `authorization`) are words you'd expect to see as a field name,
+not appear literally inside a real secret value (a real key like `sk-abc123` doesn't contain the substring
+"authorization") — the spec text alone is ambiguous between the two readings, resolved by which one makes
+the spec's own example actually make sense. `knownSecrets`, by contrast, is unambiguously value-content
+matching (a known secret is a value, not a key), by exact equality — both real, independent requirements
+kept as two separate checks.
+
+**6. A caller-supplied pattern's own `g`/`y` flag is defused before matching**, via constructing a fresh
+`RegExp` per test rather than calling `.test()` on the caller's own pattern object repeatedly. Confirmed
+empirically, and a genuine, non-hypothetical risk for a redaction function specifically: repeated
+`RegExp.prototype.test` calls on a global-flagged pattern are stateful (`lastIndex` advances between
+calls), silently alternating `true`/`false` for the *same* matching key across the multiple keys one real
+payload walk tests a single pattern against — a missed redaction, not a cosmetic bug, if left unhandled.
+
+**7. Gapless, monotonic `seq` under real concurrency is enforced by a per-`(projectRoot, runId)` promise
+queue** (`enqueueForRun`), each call chained onto the previous one's own settlement — resilience to a
+prior failure is structural, not incidental: the value stored in the queue map is always already
+"settled-safe" (never rejects) by construction, so a later call's own `operation` always runs regardless
+of an earlier one's outcome, with no separate wrapping step needed once that invariant is established.
+
+**8. The last-seq lookup is cached in memory per process lifetime, but never trusted across a process
+boundary.** Every append within one process after the first for a given run reuses the cached value in
+O(1) rather than re-reading the whole file each time (an O(n²) total cost otherwise, for n events in one
+run) — but the *first* call for a given run in a fresh process (the realistic shape of a crash-resume)
+always reads the file to find the true last seq, since nothing in memory could know it yet. `appendEvent`
+reuses `readEvents`'s own `parseEventLine` shape-check for that one read rather than duplicating it, so
+the two "is this a well-formed event" checks cannot drift apart.
+
+**9. The per-run cache key is NUL-separated (`` `${projectRoot}\0${runId}` ``), not a plain concatenation
+or space-join.** Self-caught before any review round, on the observation that a filesystem path can
+ordinarily contain a space (`/Users/Jane Doe/project`), which would let two genuinely different
+`(projectRoot, runId)` pairs collide on an identical cache key under a naive join — e.g. `projectRoot: "/a
+b", runId: "c"` and `projectRoot: "/a", runId: "b c"` both concatenate to `"/a b c"`. A collision here
+would corrupt both the per-run serialisation queue and the last-seq cache: two unrelated runs would share
+one sequence counter, silently gapping or duplicating `seq` for one of them the moment both appended
+around the same time. NUL cannot appear in a valid path or a realistic run id, so it cannot collide the
+same way — confirmed with a direct test constructing exactly the pair above.
+
+The `fsync`-before-return guarantee (`18` §18.10, "the piece the crash-resume capstone will trust
+blindly") is proven directly, not assumed: a real child process appends one event, signals success on
+stdout, then hangs (never exits gracefully, which could itself flush state a missing `fsync` would
+otherwise leave pending) until the parent sends `SIGKILL` immediately upon seeing that signal — the parent
+then re-reads the file and confirms the event survived. `test/workspace-floor.test.ts`'s own
+`IGNORED_PATHS` mechanism — already used once, for `packages/kb/test/lint/factories.ts` — was extended for
+this fixture file, since it cannot be named `*.test.ts` without vitest's own collection glob trying to run
+it directly as a suite (it has no `describe`/`it` blocks and ends in a deliberately never-resolving
+interval).
+
+### P6 critic round: 3 BLOCKING, 4 MAJOR, 2 MINOR
+
+The critic was asked to hunt specifically for whether the `fsync`-before-return guarantee (`18` §18.10) is
+real rather than assumed, whether `redactPayload` can be defeated by an adversarial payload shape, whether
+an unvalidated `runId` can escape the project root (`20` §20.2 S1), and resilience to a process crashing
+mid-write — each by actually constructing the scenario against real files and real (or realistically
+mocked) failures, not by reasoning about the code in the abstract.
+
+- **BLOCKING: a crash mid-write (a write that starts but whose own promise never resolves) leaves a torn,
+  no-trailing-newline final line on disk that corrupts every event after it, not just the torn one.**
+  Confirmed empirically with a hand-constructed file: naively treating the dangling fragment as a real
+  line either fails to parse it as JSON or, worse, lets the next append glue its own line directly onto
+  it with no separator. **Fixed** with `splitCompleteLines` (drops an incomplete trailing segment on
+  read, used by both `readEvents` and `determineLastSeq`) and `truncateTornTrailingWrite` (physically
+  removes the torn bytes from disk before the next append for that run can ever glue onto them, called
+  from `determineLastSeq`).
+- **BLOCKING: `appendFile` can succeed while the following `fsync` fails, silently promoting bytes into
+  confirmed history that the caller was actually told never happened.** Confirmed empirically by
+  monkey-patching `FileHandle.prototype.sync` to fail once immediately after a real write lands — the
+  bytes were visible to a subsequent read even though `appendEvent` correctly rejected. This is a direct
+  violation of `18` §18.10, the one guarantee every later resumability piece is specified to trust
+  blindly. **Fixed** by capturing `preWriteSize` via `handle.stat()` before the write, and best-effort
+  `handle.truncate(preWriteSize)` on any failure in the write-then-sync sequence — confirmed empirically
+  that `.stat()`/`.truncate()` correctly capture and roll back a real append.
+- **BLOCKING: `runId` reached file-path construction with no validation, letting a `runId` containing
+  `../` segments escape `projectRoot` entirely** — confirmed empirically
+  (`eventLogPath(root, '../../../../ESCAPED-dir')` resolves outside `root`), a direct `20` §20.2 S1
+  violation. **Fixed** with `assertSafeRunId` (rejects `/`, `\`, `.`, `..`), called from `eventLogPath`,
+  the single choke point every public function in this module already routes through.
+
+- **MAJOR: a caller-supplied redaction pattern carrying the `g` (or `y`) flag silently missed matches.**
+  `RegExp.prototype.test` is stateful across repeated calls on the same `g`/`y`-flagged instance
+  (`lastIndex` advances between calls) — confirmed empirically that the identical matching key
+  alternates `true`/`false` across the multiple keys one real payload walk tests a single pattern
+  against, a missed redaction, not a cosmetic bug. **Fixed** by constructing a fresh `RegExp` from the
+  caller's own `source`/`flags` per test, sidestepping `lastIndex` state entirely.
+- **MAJOR: a payload key literally named `__proto__` was silently dropped, value and all, with no
+  error.** Confirmed empirically that plain bracket assignment (`result[key] = value`) for
+  `key === '__proto__'` invokes `Object.prototype`'s own special setter instead of creating a normal own
+  property — and that `JSON.parse` produces a real, own, enumerable `__proto__` property for exactly
+  this shape of input, making it a realistic payload for an adapter/MCP-echoed-JSON caller (`20` §20.5),
+  not a contrived one. **Fixed** with `Object.defineProperty`, which always creates a normal own
+  property regardless of the key's name.
+- **MAJOR: a `Date` (or any other non-plain object — a `RegExp`, a `Map`, a class instance) was silently
+  collapsed to `{}`.** The redactor's own object check (`typeof value === 'object' && value !== null &&
+  !Array.isArray(value)`) is too loose: it also accepts a `Date`, which has no *own* enumerable
+  properties for `Object.entries` to walk, so rebuilding it key-by-key destroyed it. Confirmed
+  empirically that `Object.getPrototypeOf(new Date())` differs from `Object.prototype`, while every
+  plain object literal and everything `JSON.parse` produces shares it. **Fixed** with a prototype-based
+  `isPlainObject` check; a non-plain object now passes through unchanged, by reference, the same as any
+  other opaque leaf value.
+- **MAJOR: `parseEventLine`'s own shape check validated only `seq`**, so a line like `{"seq":1}` produced
+  a `ForgeEvent` with every other field — `v`, `ts`, `runId`, `type` — silently `undefined`, defeating
+  the entire point of a shape check as a corruption defense. **Fixed** by extending the check to also
+  validate `v === 1` and that `ts`/`runId`/`type` are the right primitive types — deliberately *not*
+  requiring `payload` to be present, since a legitimate caller-supplied `undefined` payload is omitted
+  entirely by `JSON.stringify`, not serialised as a present-but-invalid key.
+
+Confirmed genuinely clean, with real attempts made to break each: gapless, monotonic `seq` assignment
+under real concurrency (25 parallel `appendEvent` calls for one run, and two runs appending concurrently
+without cross-contaminating each other's sequence); the in-memory last-seq cache correctly trusted within
+a process but never across one (a deleted file does not reset it); a permission-denied read/write failure
+surfacing as a structured `TelemetryError` rather than a raw `ENOENT`/`EACCES`; a failed append not
+wedging the per-run queue for a later, successful one; TypeScript/lint discipline.
+
+Two further findings were judged **MINOR** and, after investigation, deliberately **not fixed within this
+piece**: (1) `events.test.ts`'s temp directories (`mkdtemp` under `os.tmpdir()`) are never cleaned up; (2)
+`packages/telemetry/package.json`'s `engines.node` (`>=20.10`) is looser than the monorepo root's
+(`>=20.19`). Checking every sibling package before acting on either: **all nine other packages in the
+repo pin the identical `>=20.10`, and not one existing `@forge/vcs` test file (`commit`/`git`/`lanes`/
+`merge-queue`/`claims`) cleans up its own `mkdtemp` output either** — both are pre-existing, repo-wide
+conventions, not something specific to this piece. Fixing either only in `@forge/telemetry` would make it
+the one inconsistent outlier rather than resolve the actual pattern; both are left as-is, better addressed
+later as one deliberate, repo-wide pass across every package at once.
+
+### Between rounds — a bug the builder found and fixed on their own, before any verify round
+
+Writing a direct test for the `assertSafeRunId` fix (confirming `readEvents`, not just `appendEvent`,
+rejects an unsafe `runId`) surfaced a real bug the critic round did not: `readEvents` called
+`eventLogPath(projectRoot, runId)` *inline, inside* its own `try` block, so `assertSafeRunId`'s own throw
+was caught by the `catch` clause meant only for genuine read failures, and re-wrapped into a generic
+`TELEMETRY-EVENT-LOG-READ-FAILED` error carrying a misleading "check permissions" remedy — losing the
+specific, actionable `TELEMETRY-INVALID-RUN-ID` code entirely. `determineLastSeq` already avoided this
+exact trap (it resolves the path on its own line, before the `try`) — `readEvents` just hadn't been
+written the same way. **Fixed** by moving the `eventLogPath` call in `readEvents` outside the `try`,
+matching `determineLastSeq`'s own existing shape, before this fix was ever sent to a verify pass.
+
+### P6 verify round: 7 of 8 confirmed PASS, 1 partially fixed; 8 new findings (1 BLOCKING, 3 MAJOR, 4
+MINOR) — 5 fixed, 3 deliberately deferred
+
+Every one of the eight critic-round-and-between-rounds fixes was independently re-derived with scenarios
+distinct from the shipped tests' own: a torn write that is the *entire* file (no prior good line at all);
+a torn write whose dangling fragment is itself complete, valid JSON simply missing its own trailing `\n`
+(proving the mechanism keys strictly on the newline, not on JSON-validity); nested traversal, percent-
+encoded lookalikes, and whitespace-padded `.`/`..` variants for the `runId` check; the sticky (`y`) flag
+and an adversarial match-ordering for the regex-statefulness fix (not just `g`); `__proto__` nested at
+depth 2 and holding a primitive rather than an object; a `Date` nested inside an array rather than an
+object, plus `Map`/`Set`/`RegExp`/class-instance values; every field of `parseEventLine`'s shape check
+swept for both "missing" and "wrong type," plus confirming a harmless extra field is still accepted. Seven
+of the eight held exactly as claimed.
+
+**The eighth — the fsync-failure rollback — was only partially fixed, surfacing new finding 1 below
+(BLOCKING): a double I/O fault (the `fsync` fails, and the best-effort rollback `truncate` also fails)
+leaves a fully well-formed, newline-terminated "phantom" line on disk for that `seq` — one the torn-write
+recovery mechanism cannot catch, since it isn't torn at all.** Trusting the in-memory last-seq cache
+after that failed, unrolled-back attempt let the *next* successful append reuse the same `seq` number,
+producing two on-disk lines both claiming it — `readEvents` then throws a seq-gap error and the run's
+history becomes unreadable past that point, permanently, until a human intervenes. This is the identical
+consequence class `18` §18.10's own guarantee exists to prevent, surviving in exactly the sub-case the
+original fix's own code comment already flagged as unresolved ("if the truncate itself also fails, the
+original cause below is still what matters" — true for what the *caller* sees, but not for what state the
+*disk* is left in). **Fixed** by invalidating the per-run last-seq cache entry on any append failure
+(rather than only ever setting it on success, as before): the next append for that run is thereby forced
+to re-derive the truth from disk instead of trusting a value that might no longer match it. Confirmed this
+closes the collision (the phantom's own well-formed content is adopted as the new last-seq baseline, and
+the next real append correctly continues past it) and that the run's full history stays cleanly readable
+afterward — accepting an event whose durability was genuinely ambiguous is the correct trade-off here,
+not a compromise: once both the write-confirmation and its own rollback have failed, "which of the two
+ambiguous outcomes do we settle on" is the only choice left, and settling on whatever is durably readable
+keeps every future event for the run readable too, where settling on the cache does not.
+
+**New finding 2 (MAJOR): three failure paths in the write side of this module leaked a bare Node `Error`
+instead of this module's own typed `TelemetryError`** — `appendLineWithFsync`'s `fsp.mkdir`/`fsp.open`,
+and `truncateTornTrailingWrite`'s own `fsp.open`, all confirmed via real `chmod`-induced `EACCES`. Every
+*read*-side failure in this module was already wrapped this way; the write side silently wasn't, and
+`errors.ts`'s own doc comment specifically documents `@forge/engine` as catching `TelemetryError` (not a
+generic `Error`) to re-wrap it — a leaked raw error would not go through that path. **Fixed** by wrapping
+both functions' entire fallible bodies in one outer try/catch each, converting any failure into a new
+`TELEMETRY-EVENT-LOG-WRITE-FAILED` error, without disturbing the existing inner rollback logic (whose own
+rethrown cause is exactly what the new outer catch now wraps).
+
+**New finding 3 (MAJOR): `assertSafeRunId` accepted the empty string**, and `eventLogPath(root, '')`
+resolves — via `path.join`'s own empty-segment collapsing — to `runs/events.ndjson`, one level shallower
+than every real run, silently sharing one file (and one sequence counter) across every caller that
+happens to pass `''`. Not a `projectRoot` escape (so a different defect than the original `..`-traversal
+fix), but the identical *class* of problem the traversal check exists to prevent: an invalid `runId`
+corrupting run isolation rather than failing loudly. **Fixed** by rejecting the empty string alongside the
+existing checks.
+
+**New finding 4 (MAJOR): a circular-reference payload (`obj.self = obj`, or two mutually-referencing
+objects) crashed `redactPayload` with an unhandled `RangeError: Maximum call stack size exceeded`**,
+which then propagated out of `appendEvent` as a raw, non-`TelemetryError` rejection — a realistic payload
+shape given payloads are typed `unknown` and this module's own threat-model comment already names
+"adapter/MCP-echoed JSON" (a live object graph, not necessarily pre-sanitised) as a real input source
+(`20` §20.5). Recognised that `appendEvent`'s own later `JSON.stringify` could never represent a cycle
+either way, so "surviving" one by inserting a placeholder would only mask the real problem — the correct
+fix is failing fast with a clear, typed error rather than a cryptic stack overflow. **Fixed** by
+threading a per-recursion-path `ancestors` set through `redactValue` (extended, not shared, at each
+descent — two independent fields legitimately pointing at one shared object is not a cycle and must not
+be rejected as one, confirmed with a dedicated test) and throwing a new `TELEMETRY-PAYLOAD-CIRCULAR`
+error the moment a value already on the current path is seen again.
+
+**New finding 5 (MINOR, fixed): `parseEventLine` accepted any `number` for `seq`, including `1.5`, `0`,
+or a negative value**, silently propagating a corrupted sequence value forward through every later
+append (confirmed: seeding a hand-crafted `seq: 1.5` line produces a next real append of `seq: 2.5`, with
+no error, on the trusted write path — `readEvents`'s own seq-gap check never sees it happen). **Fixed** by
+tightening the check to `Number.isInteger(seq) && seq >= 1`, alongside the type checks the critic round's
+own finding already added there.
+
+Three further new findings were judged **MINOR** and, after investigation, deliberately **not fixed**:
+(6) `redactValue` always rebuilds a plain object via a literal `{}`, silently upgrading a caller-supplied
+`Object.create(null)` input's own `null` prototype to `Object.prototype` in the output — confirmed zero
+observable effect on this module's actual behaviour, since the redacted value is only ever consumed by an
+immediately-following `JSON.stringify` in `appendEvent`, which treats both prototypes identically, and
+`JSON.parse` itself never produces a null-prototype object in the first place; (7) `parseEventLine` never
+validates `type` against the actual `EventType` literal union at runtime, so a hand-corrupted line with an
+invented type string round-trips unchanged — `EventType` is compile-time-only by construction, and
+deciding whether a *future*, newer writer's not-yet-known event type should be tolerated (forward
+compatibility) or rejected (strict corruption detection) is a real design question of its own, not a
+one-line addition to this check; (8) `errorCode`/`errorMessage`'s already-documented-as-unreachable
+fallback branches have two further edge cases (`errorCode({code: undefined})` stringifies to the literal
+text `"undefined"`; `errorMessage` on a duck-typed non-`Error` object returns `"[object Object]"`) that
+don't affect this module's own real usage (`errorCode` is only ever compared against `'ENOENT'`) and are
+exactly the kind of synthetic-input-only gap the existing doc comments already scope these helpers around.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (63 tests after these fixes' own new
+ones, 100% coverage on every file in `packages/telemetry/src/`) all independently reconfirmed clean.

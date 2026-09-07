@@ -38,7 +38,19 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // walk enforces — never recognises it. Listed individually, the same as this set's one other entry,
 // rather than exempting `test/` directories wholesale, which would blind this check to a real stray
 // production file hiding there instead.
-const IGNORED_PATHS = new Set(['tools/lint-fixture/.fixtures', 'packages/kb/test/lint/factories.ts']);
+// `packages/telemetry/test/fixtures/append-and-hang.ts` (PLAN-M5.md P6): a standalone fixture *process*
+// `events.test.ts` spawns via `child_process` (with `--experimental-strip-types`, this repository's own
+// no-build-step convention) to prove the event log's `fsync`-before-return guarantee against a real
+// `SIGKILL`, not merely "no error was thrown." It cannot be named `*.test.ts`/`*.spec.ts` without
+// vitest's own collection glob trying to run it directly as a suite — it has no `describe`/`it` blocks,
+// awaits at the top level, and ends in a deliberately never-resolving `setInterval`, so that attempt
+// would hang the whole run. Genuinely test-only for the same reason as the `kb` entry above; listed
+// individually for the same reason too.
+const IGNORED_PATHS = new Set([
+  'tools/lint-fixture/.fixtures',
+  'packages/kb/test/lint/factories.ts',
+  'packages/telemetry/test/fixtures/append-and-hang.ts',
+]);
 
 /**
  * Directories skipped only at the repository root, mirroring `vitest.config.ts`'s root-anchored
