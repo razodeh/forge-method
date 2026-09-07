@@ -2539,3 +2539,280 @@ by adding `unknownLines: readonly string[]` to `WrapUntrustedContentResult`, pop
 No other new findings; the verify pass separately load-tested both functions (50,000-line input, `source`
 consisting entirely of a lone `\r`, `text`/`source` fully consumed by stripping) with no crash or
 incorrect output in any case.
+
+## Q60 — P4's conformance suite: `07` §7.6 states what each of C1–C16 asserts, not how to elicit or
+observe the behaviour through `PlatformAdapter`'s own opaque-string surface; `ConformanceOptions`'
+shape and several per-test observation mechanisms designed here
+
+`07` §7.6's table (`SPEC-QUESTIONS.md` context: reproduced in full in `PLAN-M4.md` P4) gives one
+sentence per test — "A file written by the session appears in the given cwd only," "`exec:["echo *"]`
+permits `echo hi`, blocks `rm -rf`" — but `SessionRequest.prompt` is a free-text string and
+`AdapterEvent`'s own fields (`tool.call.input: unknown`, `AssetContext`, etc.) are deliberately opaque
+where the platform being adapted has no fixed shape (Q58 points 1–11 already made this same call for
+`PlatformAdapter`'s other under-specified types). A generic, adapter-agnostic suite cannot itself supply
+a natural-language prompt that reliably elicits a specific behaviour from an arbitrary adapter — a
+scripted fake adapter and a real platform need different literal text for the same effect, exactly as
+`PLAN-M4.md` P4's own Surface section already anticipated ("`options` carries... any fixture inputs a
+specific test needs"). Resolved as follows, decided while building, not before (nothing here was
+resolvable from the table text alone):
+
+1. **`ConformanceOptions`'s shape** — one fixture field per distinct behaviour the table's 16 rows
+   need elicited, each a plain string/value (never a function), paired with a small set of *fixed,
+   suite-owned constants* (`CONFORMANCE_WRITE_FILE_RELATIVE_PATH`, `CONFORMANCE_WRITE_FILE_CONTENT`,
+   `CONFORMANCE_ENV_PROBE_VAR_NAME`, `CONFORMANCE_EXEC_ALLOWED_COMMAND`,
+   `CONFORMANCE_EXEC_DENIED_COMMAND`, `CONFORMANCE_EXEC_CANARY_RELATIVE_PATH`) so a caller's fixture
+   prompt has something concrete to reference ("create a file named
+   `CONFORMANCE_WRITE_FILE_RELATIVE_PATH` containing `CONFORMANCE_WRITE_FILE_CONTENT`") without the
+   suite needing to invent a path/value *and* pass it back out through a callback. `execAllowedCommand`/
+   `execDeniedCommand` are the spec table's own literal worked example (`"echo hi"`, `"rm -rf"`), not
+   invented. Four fixtures (`structured`, `resume`, `mcp`, `skill`) are optional, each gating a
+   capability-conditional test (point 4, below).
+2. **How C2/C3/C12/C14 (all "did a file actually get written, and only where expected") observe the
+   outcome** — the real filesystem, via `node:fs`, checked directly against the scratch directory
+   `createScratchDir()` returns — never `SessionResult.changedFiles` (C14 exists specifically to check
+   *that* field's own accuracy, so using it to verify C2/C3/C12 would make those tests circular against
+   the one thing C14 is supposed to catch if it's wrong).
+3. **How C4 (exec allowlist) observes "blocks `rm -rf`" without inspecting `tool.call.input`'s opaque
+   shape** — a canary file (`CONFORMANCE_EXEC_CANARY_RELATIVE_PATH`) is written into the scratch cwd
+   *before* the session starts; "denied" is asserted as "the canary file still exists afterward," not by
+   trying to correlate an opaque `tool.call` to a specific shell command string (no field of
+   `AdapterEvent`'s `tool.call` variant names the command in a typed way — `input: unknown` is exactly
+   the kind of adapter-specific shape `07` §7.2 leaves unspecified, Q58 point 6's identical reasoning for
+   `JSONSchema`). "Permits `echo hi`" is asserted more weakly, as "at least one `tool.result` event
+   reports `ok: true`" — proving the allowlist isn't rejecting everything, not proving *specifically*
+   that the echo call is the one that succeeded (the same opacity problem, one level down, with no
+   stronger observable available).
+4. **Capability-gated tests skip, not fail, when the adapter honestly reports it lacks the capability
+   or doesn't implement the optional method** — C8 (`structuredOutput`), C9 (`sessionResume`), C15
+   (`provisionSkills` present), C16 (`provisionMcp` present) each check `capabilities()`/method presence
+   first and call vitest's own `it.skip`/equivalent with a clear reason if inapplicable, never silently
+   omitted and never counted as a pass. This is the only reading consistent with `AdapterCapabilities`
+   itself declaring these as optional per-platform capabilities in the first place — failing an adapter
+   for correctly reporting a capability it does not have would contradict `07` §7.2's own optional-method
+   design (`provisionSkills?`, `provisionMcp?`, `structured?`) and `AdapterCapabilities.sessionResume`
+   existing as a boolean specifically so callers can branch on it.
+5. **C5's "no orphan child processes remain" has no observable mechanism through `PlatformAdapter`'s own
+   interface** — nothing in `07` §7.2 exposes OS-level process introspection, and inventing an
+   adapter-specific hook for it now would be scope creep this milestone's own interface doesn't call
+   for (a real adapter's process-management is `07` §7.3's concern, M7). Approximated instead by the
+   strongest proxy the existing interface *does* expose: after `abortSignal` fires, `events`'s own
+   `AsyncIterable` must actually complete (not hang) and `result()` must resolve, both within the
+   5-second budget the table states. A real adapter that leaks a child process after claiming the
+   session ended would, in the overwhelming majority of real implementations, also be the one whose
+   stream/promise never cleanly settles — not a proof of the literal process-table claim, but the best
+   available signal from this interface alone; recorded here so it reads as a deliberate scope
+   boundary, not an oversight.
+6. **C14 needs a real git repository to run `git status --porcelain` against** — `SessionRequest.cwd`'s
+   own doc comment calls it a "lane worktree" (always a real git repo in normal FORGE operation), but
+   `createScratchDir()` returns a bare empty directory. The suite runs `git init` itself (via
+   `node:child_process`, not a `@forge/core` helper — `02` §2.2's graph gives `adapter-kit ← schemas,
+   telemetry`, no `core` edge, the identical reason `adapter-kit` cannot construct a real `ForgeError`,
+   Q58 point 15) before C14's own session starts, scoped to that one test's own scratch dir.
+7. **C8's "output validates against a supplied schema" cannot mean real JSON Schema keyword
+   validation** — `JSONSchema` is deliberately opaque (Q58 point 6: "nothing in this milestone's own
+   Surface inspects a schema's internal structure... a future structured-output validator's job, likely
+   a real library"). `ConformanceOptions.structured` therefore supplies both the schema (passed through
+   to `SessionRequest.outputSchema` unexamined) *and* a caller-provided `isValid(value: unknown):
+   boolean` predicate the suite calls directly — avoiding both a new JSON-Schema-validator dependency
+   (`02` §2.1's minimal-dependency-surface stance) and building a second, competing schema interpreter
+   inside this package.
+8. **`runAdapterConformanceSuite` needs `vitest`'s own test-registration globals at runtime, not only
+   for this package's own tests** — a real, not just dev, dependency (`PLAN-M4.md` P4's own Surface
+   section already anticipated this). Consequently `@forge/adapter-kit/conformance` is deliberately
+   *not* re-exported from the package's bare `.` entry the way `types`/`events`/`grants`/
+   `control-tokens` all are (each prior piece was) — the one piece that pulls in a test framework should
+   not be transitively loaded by a consumer who imports `@forge/adapter-kit` for, say, `ToolGrant` alone.
+9. **C13's own "ambient secret" setup cannot live in this package's production code at all — found
+   while building, not anticipated in the initial design.** The first draft had the suite itself set a
+   random value into `process.env` (via `node:crypto`'s `randomUUID`) before starting the probe session.
+   Both are unconditionally banned in every `src/**` file by this repo's own R10 lint rules
+   (`no-restricted-imports` on `node:crypto`'s random exports and all of `node:process`, no per-package
+   exemption — only `*.test.ts`/harness files are exempted) and `tsc`/`eslint` caught it immediately.
+   Reconsidering the actual threat model made this an easy call, not a workaround: the "random" part was
+   never load-bearing (C13 tests a cooperative-but-possibly-buggy adapter, not an adversary who could
+   guess a value), so nothing was lost by moving the whole setup to the caller. **Resolved** by adding
+   `ConformanceOptions.secretProbe: { value: string; prompt: string }` — a *required* fixture (C13 is
+   safety-critical, unlike the genuinely optional capability-gated fixtures) the caller populates from
+   their own `*.test.ts` file, which the same lint rules exempt; the suite only ever reads `value` and
+   checks for its absence in observed output, touching neither `process.env` nor `node:crypto` itself.
+10. **C12's own "no cross-talk" check cannot use a real directory listing either, for the identical
+    no-`core`-edge reason as point 6's `git` helper** — `node:fs`/`node:fs/promises`'s `readdir` and
+    siblings are also unconditionally banned by name in `src/**` (`no-restricted-imports`, "directory
+    listings are unordered; sort explicitly via `@forge/core/fs` `listDirSorted`"), and `adapter-kit`
+    cannot reach that helper. **Resolved** by narrowing C12's own filesystem assertion to existence and
+    content of the one expected marker file in each of the three concurrent scratch directories — proof
+    each session's own write landed in its own `cwd`, not a sibling's — rather than a full listing that
+    would additionally catch a stray extra file bleeding in from another session; recorded as a known,
+    accepted narrowing of the check's own strength, not a silent gap.
+
+**Recommended resolution:** none of this is resolvable from the spec table alone — a future revision of
+`07` §7.6 could usefully state, next to each row, which `PlatformAdapter` field or event carries the
+observable proof (the table currently states outcomes, not the mechanism a conformance implementation
+reads them through), the same gap Q58 already named for the interface's own under-specified types.
+
+**P4 critic-round addendum: thirteen real findings (5 MAJOR, 3 MODERATE, 5 MINOR), all fixed or
+explicitly documented as an accepted, inherent limitation.** A gauntlet critic reviewed all 16 checks,
+the shared infrastructure (`context.ts`, `helpers.ts`, `git.ts`), and the test suite's own compliant/
+non-compliant stub adapters, adversarially: for each check, could a broken adapter slip past it?
+
+*MAJOR:*
+1. **C13 (safety-critical) missed real leak channels** — only `finalText`/`text`/`thinking`/
+   `tool.result.summary` were searched; `SessionResult.error.message`, `session.started.meta`,
+   `retry.reason`, and the `unknown`-typed `tool.call.input`/`control.payload`/`result.structured` were
+   not, and the real filesystem was never checked at all (unlike every other cwd-touching check here).
+   **Fixed**: every `AdapterEvent` variant's own text-bearing field is now inspected (via a
+   `safeStringify` helper for the `unknown`-typed ones — `JSON.stringify` genuinely can throw or return
+   `undefined` at runtime despite TS's own lib signature claiming otherwise, both handled), plus
+   `result.error.message`/`result.structured`, plus the filesystem: `git status --porcelain` (already
+   built for C14, reused here since `readdir` is unconditionally banned in this package's own production
+   code) finds changed paths, each read and searched.
+2. **`makeHandle` (the shared test-infrastructure `SessionHandle` builder in `suite.test.ts`) raced
+   silently under concurrent `events`/`result()` draining** (e.g. `Promise.all([collectEvents(handle),
+   handle.result()])`) — a spent generator's `.next()` always returns `{done:true, value:undefined}`
+   after the first such call, so a second concurrent drainer could clobber the already-captured
+   `SessionResult` back to `undefined`, throwing a confusing "produced no SessionResult" for a session
+   that genuinely completed. Not currently exploitable (every real check drains sequentially) but a real
+   bug in shared infrastructure every one of the 16 checks depends on, with an incorrect doc-comment
+   claim and zero concurrent-access test coverage. **Fixed**: concurrent use is now detected and
+   rejected with an immediate, clear error rather than silently corrupting state — `AsyncIterable` was
+   never a safe-for-concurrent-multi-consumption contract to begin with, so this is the proportionate
+   fix, not an attempt to build (and separately have to trust) a general fan-out scheduler.
+3. **Capability-gated tests (C8/C9/C15/C16) conflated "adapter doesn't support this" with "fixture
+   wasn't wired up" in one skip condition** — for C16 specifically (safety-critical), an adapter that
+   genuinely implements `provisionMcp` (with a real grant-fidelity bug) but whose conformance run simply
+   omitted the `mcp` fixture was silently *skipped*, never failed, undermining `07` §7.6's own "MUST be
+   rejected at load time" for exactly the adapters that need catching. **Fixed** by removing the
+   fixture-absence clause from all four skip conditions — each `checkC*` function already throws its own
+   clear "no such-and-such fixture was supplied" error when its precondition isn't met (built during the
+   original piece, for the fails-closed test files' own direct-call needs), so once the capability check
+   alone says "run," a missing fixture now surfaces as a real, loud test failure instead of a silent skip.
+4. **C4's "permits echo hi" accepted *any* successful `tool.result` anywhere in the stream**, never
+   correlated to the specific allowed command (unlike C16, which correlates `tool.call.name` to
+   `tool.result.ok` by id) — an adapter that never attempts `echo hi` at all but happens to emit one
+   unrelated successful call would pass. Compounded by zero dedicated test coverage of a broken C4 case
+   anywhere. No field of `AdapterEvent`'s `tool.call` variant names the command in a typed way, so this
+   correlation gap is not closable without new `PlatformAdapter` surface this milestone's own interface
+   (already built and reviewed) does not provide — **documented explicitly** as a known, accepted
+   trade-off rather than silently left. The "blocks rm -rf" half has no such gap (the canary file's
+   survival is direct, unambiguous proof) and now has its own dedicated fails-closed stub test (an
+   adapter that ignores the exec grant and deletes the canary anyway).
+5. **C15's `provisioning.strategy` was fetched but never asserted against anything** — `SkillProvisioning
+   .strategy` exists specifically, per its own doc comment (Q58 point 9), as one of "the two facts C15
+   needs to assert against," and the row's own text ("the declared degradation strategy is applied when
+   `skills !== 'native'`") was entirely unverified. **Fixed** by cross-checking `provisioning.strategy`
+   against `15` §15.6's own literal mapping (`skills:'native'` → `strategy:'native'`; `'inline'` →
+   `'inline'`; `'none'` → `'bodies-injected'`, its own words: "inject the highest-priority skills'
+   bodies up to budget").
+
+*MODERATE:*
+6. **C2 (safety-critical): a marker "file" could be a symlink pointing entirely outside `cwd`** —
+   `existsSync`/`readFile` both follow symlinks, so a compliant-looking marker whose *real* location is
+   elsewhere would pass. **Fixed** by resolving both the marker path and `cwd` itself via `realpath`
+   (both sides — a scratch directory's own raw path can itself traverse a symlink, e.g. macOS's `/tmp`
+   → `/private/tmp`, so resolving only one side would produce false failures for legitimate writes)
+   before checking containment.
+7. **C16's "ungranted servers absent" is verified only via `provisionMcp`'s own self-report**, called
+   before `startSession` even runs — `15` §15.6's own `mcp:true` strategy row separately prescribes
+   verifying the loaded-server list "from the session's init metadata," which nothing here cross-checks
+   (no typed field of `session.started` gives a generic place to read that from — the same opacity
+   trade-off already accepted for C4/C5). **Documented explicitly** in the check's own comment rather
+   than silently assumed covered.
+8. **`git.ts`'s porcelain parser mis-handled rename lines** — `git mv old.txt new.txt` produces
+   `R  old.txt -> new.txt`, and the original `line.slice(3)` returned the whole glued string rather than
+   `new.txt`. Currently unreachable through the suite's own fixture flow (nothing ever renames), but a
+   real bug in safety-critical-adjacent (C13, C14) supporting code, with zero dedicated test coverage of
+   `git.ts` at all before this round. **Fixed** by detecting the `" -> "` separator and taking the
+   current (post-rename) path; a new `git.test.ts` now covers `initGitRepo`/`gitStatusPaths` directly,
+   including a genuine rename (which requires a real prior commit — git only rename-detects relative to
+   some known state; two states neither of which was ever staged/committed just looks like an unrelated
+   delete-and-add, a fact this round's own first attempt at the regression test got wrong before being
+   corrected).
+
+*MINOR (each either fixed or explicitly documented as accepted):*
+9. **C6 trusted the `reason:'limit'` label alone** — an adapter could run every turn it wanted and just
+   report the label accurately. **Fixed** by also cross-checking `result.usage.turns` (the one
+   independently observable count this interface exposes) does not exceed the granted `maxTurns`.
+10. **C11's `result.error`-only surfacing path never verifies "non-retryable"** — `SessionResult.error`
+    (`07` §7.2's own literal shape) has no `retryable` field at all, so this half of the row is
+    unverifiable for that path by construction, not by a gap in the check. **Documented** in place.
+11. **C15's "does not leak into the user's global config" clause has no filesystem check** — no generic,
+    adapter-agnostic path to real global state (e.g. `~/.claude/skills/`) exists for this suite to
+    inspect; the existing "second unprovisioned session" check is a behavioural proxy, not a direct one.
+    **Documented** in place.
+12. **The compliant stub's own C4 "echo" side was hardcoded `ok:true`**, not routed through the real
+    `isExecAllowed` grant-checker the way the "rm -rf" side already was — low materiality
+    (`isExecAllowed`'s allow branch is separately unit-tested elsewhere), but worth naming since the
+    critic was specifically asked whether the compliant stub might be "cheating." **Fixed** by routing
+    both sides through the real checker.
+13. **Fails-closed proof coverage gaps**: of the five safety-critical checks, only C2/C5/C16 had a
+    dedicated broken-stub proof; C13 had an adequate substitute (a real leak-detection test); **C14 had
+    none at all**. **Fixed** by adding a `changedFilesBroken` stub variant (writes the real file
+    correctly, to the real `cwd`, but misreports `changedFiles` as empty regardless — a realistic
+    "correct write, buggy bookkeeping" bug shape, distinct from the existing `writeBroken` variant) and
+    its own fails-closed proof test.
+
+Two hidden test bugs were also found and fixed while adding coverage for the above (not separately
+critic-findings, but recorded for completeness): `secrets.test.ts`'s original test used the fake
+`'/tmp/unused'` scratch-dir path already used elsewhere in this piece's test files — harmless everywhere
+else, but `checkC13NoSecretLeak` now unconditionally calls `initGitRepo` on its own `cwd`, so that fake
+path made `initGitRepo` itself fail with `ENOENT` — and because the test's own assertion was a bare
+`.rejects.toThrow()` with no message check, it kept passing throughout, for the wrong reason entirely,
+until this round's own coverage work surfaced it by tightening the assertion to check the actual failure
+message. Every `secrets.test.ts` fixture now uses a real, created scratch directory.
+
+**P4 verify-round addendum: 12 of 13 critic-round fixes confirmed cleanly; the 13th (C13's filesystem
+leak-check) was only partially fixed, and the verify pass's own fresh look found the exact same root
+cause behind it also affected C14 in the opposite direction — both fixed.** A fresh verify-pass reviewer
+independently confirmed findings 2–13 hold exactly as claimed, including two genuinely adversarial
+checks: (a) racing `Promise.all([collectEvents(handle), handle.result()])` against a live session
+deterministically produces the new `"drained concurrently"` error rather than either silent corruption
+or the old confusing message, in both possible orderings; (b) an independent, from-scratch git repo
+(not reusing any shipped test helper) confirms both that a real committed-then-renamed file produces
+the glued porcelain line `gitStatusPaths` now correctly un-glues, and — separately — that an
+*uncommitted* rename produces no `R` line at all, confirming `git.test.ts`'s own stated reason for
+needing a real commit first is genuinely true, not merely asserted.
+
+Finding 1 (C13's filesystem leak-check) was marked only **partially** fixed: the verify pass found the
+new `gitStatusPaths`-based mechanism had a real gap of its own — `git status --porcelain`'s own default
+`--untracked-files=normal` mode collapses a brand-new untracked *directory* into a single `?? dir/`
+line, never individually listing files inside it. Concretely, a secret written to `logs/debug.txt` in a
+`cwd` where `logs/` did not previously exist was never read (git only ever reported `logs/` itself;
+`readFile` on that throws `EISDIR`, correctly caught and skipped by the existing "not a plain readable
+file" branch — but the real file one level down was never separately named at all), so
+`checkC13NoSecretLeak` silently resolved despite a real leak on disk.
+
+The verify pass's own short fresh look then found the identical root cause cuts the *other* way for
+C14, a **second** safety-critical case: a fully compliant adapter that writes to, and accurately
+self-reports, a file inside a directory it just created (e.g. `newmodule/index.ts`) was **wrongly
+rejected** by `checkC14DeterminismOfReporting` — the adapter's own accurate `['newmodule/index.ts']`
+never matched git's collapsed `['newmodule/']`. This is a realistic pattern (agents routinely create a
+new module directory, a `logs/` or `.cache/` directory, and so on), not a contrived one.
+
+**Fixed**, once, at the root: `gitStatusPaths` (`git.ts`) now passes `--untracked-files=all`, which
+makes git recurse into and individually list files inside any new directory rather than collapsing it —
+closing the C13 false-negative and the C14 false-positive with the same one-line change, since both
+checks share this one function. A new `git.test.ts` case proves the fix directly (a file inside a fresh
+subdirectory is now reported by its own path, not the collapsed directory line); new integration-level
+cases in `secrets.test.ts` and `filesystem.test.ts` prove each of the two real check functions now
+behaves correctly for the exact scenario the verify pass demonstrated (the secret-in-a-new-directory
+case now correctly rejects; the compliant-write-in-a-new-directory case now correctly resolves).
+
+The verify pass's fresh look also found one further minor issue, inside the very fix MAJOR 2 (the
+`makeHandle` concurrent-drain guard) had just shipped: `result()`'s own `draining ??= drainFully()`
+memoization does not reset on rejection, so if a `result()` call itself lost a concurrent-drain race, it
+stayed permanently rejected with the identical stale error on every later, purely-sequential retry —
+even though the generator had, by then, fully drained via the other side and a correct `SessionResult`
+was already captured and sitting unreachable in the closure. Confirmed not currently reachable by any
+real check in this suite (every one drains strictly sequentially) and scoped to this test-infrastructure
+file only, never shipped `src/**` production code — but the identical "a fix for a robustness property
+deserves the same adversarial scrutiny as the original bug, applied to the fix's own new code" lesson
+M4 P1's own calibration note already named. **Fixed** by resetting `draining` to `undefined` in a
+`catch` around the `await`, so a later retry re-attempts draining (and, since `pumpInFlight` already
+resets correctly and `generatorDone` may already be true by then, resolves immediately with the correct,
+already-captured result) instead of staying wedged.
+
+No other new findings; the verify pass separately confirmed C5's own weaker (conditional, not
+unconditional) ended-event check is a deliberate, correct reading of `07` §7.6's own C5 row (which,
+unlike C1/C6, states no ended-event requirement at all), not an oversight, and that `git.ts`'s own
+narrow-parser scope (no quote-escaping, no filenames literally containing `" -> "`) is already
+explicitly self-disclaimed in its own doc comment.

@@ -192,6 +192,9 @@ assertable safety-critical marking in the suite's own output, not folded anonymo
 **Depends on:** P1 (`PlatformAdapter` and every referenced type), P3 (`ParsedControlToken`, for C10's
 own expected-shape assertion).
 
+*(P4 is committed: `ee821dc`. See `SPEC-QUESTIONS.md` Q60 and its critic-round/verify-round addenda for
+the observation-mechanism design decisions each check needed.)*
+
 ---
 
 ## P5 — `@forge/testkit`: `FakePlatformAdapter`

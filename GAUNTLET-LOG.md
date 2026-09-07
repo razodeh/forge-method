@@ -2746,3 +2746,125 @@ instance of "scrutinize your own fix": whenever a fix adds a new field to a func
 check every *other* function in the same module that already calls it — a caller written before the field
 existed has no reason to know to forward it, and won't fail any test that doesn't specifically look for
 the new field's absence.
+
+*(P3 is committed: `f749b7b`. `wrapUntrustedContent`'s return type changed from `string` to
+`{ wrapped, stripped, unknownLines }` during the gauntlet loop.)*
+
+## M4 P4 — Adapter conformance suite (`07` §7.6, C1–C16)
+
+**Rounds: 2 (one critic finding 13 real issues — 5 MAJOR, 3 MODERATE, 5 MINOR — across the check logic
+and its test infrastructure, all fixed or explicitly documented as an accepted, inherent limitation; one
+scoped verify confirming 12 of 13 cleanly and finding the 13th only partially fixed, whose own root
+cause also silently affected a second safety-critical check in the opposite direction — both fixed
+locally, no third round). Outcome: WON.**
+
+The largest single piece this milestone by file count (11 production files, 9 test files; `vitest` added
+as a real, not dev, dependency, since `runAdapterConformanceSuite` needs its test-registration globals at
+runtime — deliberately not re-exported from the package's bare `.` entry, so a consumer wanting only e.g.
+`ToolGrant` never transitively loads a test framework). Nine further spec-interpretation gaps were found
+and recorded (`SPEC-QUESTIONS.md` Q60) before/while building: `ConformanceOptions`'s own shape (one
+caller-supplied fixture per behaviour C1–C16 needs elicited, since a generic suite cannot itself write a
+prompt that reliably elicits a specific effect from an arbitrary adapter); which of several plausible
+observation mechanisms each check reads its own proof through, for every row where `07` §7.6 states an
+outcome but not how a generic implementation confirms it (C2/C3/C12/C14 check the real filesystem, never
+`SessionResult.changedFiles` alone, to avoid being circular against the one thing C14 itself checks; C4's
+"blocks rm -rf" reads a canary file's survival; C5's "no orphan child processes" has no observable
+mechanism through this interface at all, approximated by clean stream/promise settlement instead); C13's
+own "ambient secret" setup had to move entirely into the calling test file, since `@forge/adapter-kit`'s
+production code cannot touch `process.env` or `node:crypto` under this repo's own R10 rules with no
+per-package exemption (the first design draft tried to do this in `src/**` and both `tsc`/`eslint` caught
+it immediately); C12's "no cross-talk" check is narrowed to existence-and-content rather than a full
+directory listing, since `readdir` is banned by the identical R10 rule and this package cannot reach
+`@forge/core/fs`'s sorted alternative.
+
+### Round 1 — critic: 5 MAJOR, 3 MODERATE, 5 MINOR
+
+The critic's own central question for all 16 checks: does this actually verify its own table row, or
+could a broken adapter slip past it? Selected highlights (the full list, with every finding's own repro
+and fix, is in `SPEC-QUESTIONS.md`'s own P4 critic-round addendum):
+
+- **MAJOR, safety-critical: C13 missed real leak channels.** Only `finalText`/`text`/`thinking`/
+  `tool.result.summary` were searched — `SessionResult.error.message`, `session.started.meta`,
+  `retry.reason`, and the `unknown`-typed `tool.call.input`/`control.payload`/`result.structured` were
+  not, and the real filesystem was never checked at all, unlike every other cwd-touching check in this
+  piece.
+- **MAJOR: a shared test-infrastructure helper (`makeHandle` in `suite.test.ts`) raced silently** —
+  concurrently draining `events` and `result()` (a plausible real usage pattern, not a contrived one)
+  could silently clobber an already-captured `SessionResult` back to `undefined`, contradicting the
+  function's own doc-comment claim, with zero concurrent-access test coverage anywhere.
+- **MAJOR: the four capability-gated checks (C8/C9/C15/C16) conflated "adapter doesn't support this"
+  with "fixture wasn't wired up,"** silently *skipping* C16 — safety-critical — when a real bug existed
+  in a real implementation but its own conformance run simply forgot to pass a fixture.
+- **MAJOR: C4's "permits echo hi" accepted any successful `tool.result` anywhere in the stream**,
+  uncorrelated to the specific command, with zero dedicated test coverage of a broken C4 case at all.
+- **MAJOR: C15's own `provisioning.strategy` was fetched but never asserted against anything**, leaving
+  the row's own "the declared degradation strategy is applied" clause entirely unverified.
+- **MODERATE, safety-critical: C2 didn't detect a symlink escape** — a marker "file" could be a symlink
+  to somewhere entirely outside `cwd`, since `existsSync`/`readFile` both follow symlinks.
+- **MODERATE: `git.ts`'s porcelain parser mishandled rename lines**, returning the glued
+  `"old.txt -> new.txt"` instead of just the current path — a real bug in safety-critical-adjacent (C13,
+  C14) supporting code that had zero dedicated test coverage before this round.
+- Five further MINOR findings (C6 trusting a label with no independent count to cross-check; C11's
+  `result.error`-only path unable to verify "non-retryable" — a genuine `SessionResult.error` interface
+  gap, not a fixable gap in the check; C15's "global config" clause having no filesystem check possible;
+  the compliant stub's own C4 "echo" side being hardcoded rather than routed through the real grant
+  checker; C14 having zero dedicated fails-closed proof despite being safety-critical) — each fixed
+  where fixable, or explicitly documented as an accepted, inherent limitation where not, never silently
+  left unaddressed either way.
+
+Two hidden test bugs were also found and fixed while closing out the above: a coverage-driven fix
+(`helpers.ts`'s `withTimeout`) turned out to have a provably-dead defensive branch — `clearTimeout`
+actually accepts `undefined` directly per Node's own type signature, so the `if (timeoutId !==
+undefined)` guard was pure dead code, removed rather than covered by an artificial test (the same
+"consolidate the unreachable branch" precedent M4 P3 already established); and `secrets.test.ts`'s own
+original test used the same fake `'/tmp/unused'` scratch-dir path used safely elsewhere in this piece —
+except `checkC13NoSecretLeak` calls `initGitRepo` unconditionally, so that fake path made setup itself
+fail with `ENOENT`, and a bare `.rejects.toThrow()` with no message check kept the test green throughout,
+for entirely the wrong reason, until this round's own coverage work surfaced it.
+
+### Round 2 — scoped verify: 12 of 13 confirmed; the 13th partially fixed, its root cause found to also
+silently break a second safety-critical check, both fixed
+
+Every fix was independently re-derived and re-tested, not merely re-read: the concurrent-drain guard was
+proven with a byte-for-byte copy of the private `makeHandle` raced via `Promise.all` in both possible
+orderings; the capability-gate fix was proven with a real `vitest` CLI run showing C8/C9/C15/C16 as
+*failed*, not skipped, when a capable-but-fixture-less adapter was given to the real
+`registerCapabilityGatedTests`; the rename-parsing fix was proven against an independent, from-scratch
+git repository, including confirming the fix's own stated precondition (an uncommitted rename produces no
+`R` line at all) is genuinely true and not merely asserted.
+
+One finding — C13's filesystem leak-check — was only **partially** fixed: `git status --porcelain`'s own
+default untracked-files mode collapses a brand-new directory into one `?? dir/` line, never individually
+listing files inside it, so a secret written to `logs/debug.txt` in a `cwd` where `logs/` didn't
+previously exist was never read at all. The verify pass's own short fresh look then found the identical
+root cause cuts the *other* way for **C14, a second safety-critical case**: a fully compliant adapter
+that writes to, and accurately self-reports, a file inside a directory it just created was *wrongly
+rejected*, since its own accurate report never matched git's collapsed one-line summary. **Fixed once, at
+the shared root** (`gitStatusPaths` gained `--untracked-files=all`), closing both the C13 false-negative
+and the C14 false-positive with the same one-line change, since both checks call this one function —
+plus a direct `git.ts` regression test and two new integration-level tests proving each real check
+function now behaves correctly for the exact scenario found.
+
+The verify pass's own fresh look additionally found one further issue inside round 1's own concurrent-
+drain fix: `result()`'s `draining` memoization didn't reset on rejection, so a `result()` call that lost
+a concurrent-drain race stayed permanently rejected on every later, purely-sequential retry, even after
+the generator fully drained via the other side and a correct result was already captured. Confirmed
+unreachable by any real check (every one drains sequentially) and scoped to test-infrastructure only —
+fixed anyway, by resetting `draining` in a `catch` around the await.
+
+### Calibration note
+
+Two things worth naming from this round specifically, both bigger versions of patterns this log has
+already named once each this milestone. First: the C13/C14 shared-root bug is the *M4 P3 calibration
+note's own lesson* (a fix's new code needs the same scrutiny as the original bug) operating across
+*files*, not within one — `gitStatusPaths` was written and reviewed for C14 alone (P4 round 1's own
+critic never flagged it beyond the rename-line bug), and only reusing it for a *second* purpose in this
+same round revealed a gap neither individual use, alone, would have surfaced; a shared low-level helper
+is exactly where this is most likely to hide, because each caller's own test suite only ever proves the
+helper adequate for *that* caller's own fixtures. Second: the `result()` memoization gap is the *M4 P1
+calibration note's own lesson* (a robustness fix needs the identical adversarial scrutiny as the bug it
+fixed, applied to the fix's own new code) recurring a third time this milestone, now specifically inside
+this piece's own concurrent-access guard — worth stating as a standing rule rather than a recurring
+surprise: any fix for "never throws" or "never corrupts under X" should be re-attacked with the *retry*
+case (what happens on the next call after the guard has already fired once), not only the first-failure
+case, before the round is considered closed.
