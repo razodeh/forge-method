@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./types": "./src/types/index.ts",
     "./events": "./src/events/index.ts",
-    "./grants": "./src/grants/index.ts"
+    "./grants": "./src/grants/index.ts",
+    "./control-tokens": "./src/control-tokens/index.ts"
   },
   "engines": {
     "node": ">=20.10"
