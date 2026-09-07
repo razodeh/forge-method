@@ -2816,3 +2816,233 @@ unconditional) ended-event check is a deliberate, correct reading of `07` §7.6'
 unlike C1/C6, states no ended-event requirement at all), not an oversight, and that `git.ts`'s own
 narrow-parser scope (no quote-escaping, no filenames literally containing `" -> "`) is already
 explicitly self-disclaimed in its own doc comment.
+
+## Q61 — P5's `FakeSessionScript`/`SessionRequestMatcher`/failure-injection/NDJSON shapes: `PLAN-M4.md`
+names the four capabilities by one line each ("scripted responses, capability degradation simulation,
+failure injection, and NDJSON replay"), none given a field-level design anywhere
+
+None of `FakeSessionScript`, `SessionRequestMatcher`, `injectFailure`'s own failure semantics, or the
+NDJSON file format `replayFromNdjson` reads are named with a shape anywhere in the spec pack or
+`PLAN-M4.md`'s own P5 section — only the four capability names and `07` §7.2/§7.6 (the interface and
+suite this piece must satisfy) are given. Designed here, from what each capability is *for*:
+
+1. **`SessionRequestMatcher = (request: SessionRequest) => boolean`** — a plain predicate, not a
+   structured matcher object (`{prompt?, model?, ...}`). `07` §7.2's own `SessionRequest` has enough
+   fields that a structured matcher DSL would eventually need to cover most of them anyway (prompt
+   substring vs. exact vs. regex; stepId; model; ...) — a predicate is strictly more expressive, is what
+   `injectFailure` and `FakeSessionScript` registration both need identically, and needs no DSL this
+   package would have to invent and maintain. `02` §2.1's own "prefer the boring option" stance.
+2. **`FakeSessionScript`'s own fields are semantic (`text`, `writeFiles`, `execAttempts`,
+   `untrustedContent`, ...), not raw `AdapterEvent[]`** — so the adapter can *generically* enforce
+   `ToolGrant`/`limits`/`abortSignal` against every script the same way, rather than trusting each
+   script author to hand-write a correctly-gated `tool.result.ok` themselves (the same "generic
+   enforcement, not per-fixture trust" reasoning M4 P4's own compliant stub already established for
+   exec). Concretely: `writeFiles` entries are only actually written if `tools.write`; each
+   `execAttempts` entry is checked via `isExecAllowed` (`@forge/adapter-kit/grants`, P2) before being
+   claimed as successful; `text` entries double as the turn count `limits.maxTurns` caps (one text event
+   = one turn, truncating the script and ending `reason:'limit'` if exceeded); `abortSignal.aborted` is
+   checked between every emitted event regardless of script content, ending `reason:'aborted'`
+   immediately when true. None of this needs to be, or should be, re-specified per script.
+3. **`untrustedContent` is a single string, run through `stripControlTokens` (P3) before being folded
+   into the emitted text** — this is specifically what `PLAN-M4.md` P5's own Checks section names
+   ("control tokens inside a *scripted* untrusted-content input are stripped before the session's own
+   text events are emitted... M4's own #2 acceptance criterion"). A live `FORGE_*` token embedded in it
+   is defanged before ever becoming part of "the agent's own words," proving the M4-wide guarantee this
+   milestone exists to establish, on the one adapter every other future package will actually run
+   against.
+4. **`requiresMcpServer?: string`** — the one additional field needed for the Checks section's own
+   `mcp:false, toolProxy:false` degradation scenario ("a session requiring a granted MCP server: refused
+   with a precise message naming the server"): nothing in `SessionRequest` itself says a session *needs*
+   MCP access, so the script has to say so for the fake to have anything to refuse against.
+5. **`endReason` is script-specified only for `'complete'`/`'error'`; `'limit'`/`'aborted'` are always
+   adapter-derived, never script-specified** — a script cannot claim a limit or an abort happened; those
+   two are the two reasons this whole piece's own generic enforcement (point 2) computes independently,
+   and letting a script override them would let a badly-written script silently defeat the very
+   enforcement this design exists to make automatic.
+6. **`provisionMcp` is a genuinely absent (`undefined`) instance property, not a present-but-throwing
+   method, exactly when `capabilities.mcp === false && capabilities.toolProxy === false`** — `07` §7.2's
+   own interface already marks `provisionMcp?` optional for precisely this "some adapters cannot do this
+   at all" case, and `PLAN-M4.md` P4's own C16 (`SPEC-QUESTIONS.md` Q60) already gates on
+   `adapter.provisionMcp === undefined` to decide skip-vs-run — assigning the method conditionally as an
+   instance field in the constructor (rather than a class-prototype method that always exists) is what
+   makes a degraded `withCapabilities({mcp:false, toolProxy:false})` instance correctly *skip* C16
+   through P4's own existing logic, rather than needing new adapter-specific carve-outs in P4 itself.
+   `provisionSkills` stays unconditionally present regardless of the `skills` value — all three
+   `skills` values (`'native'|'inline'|'none'`) are strategies this adapter can genuinely implement, per
+   `15` §15.6's own table, not an "unsupported at all" case the way `mcp:false,toolProxy:false` is.
+7. **NDJSON format: one JSON-serialised `AdapterEvent` per line, each validated through
+   `normalizeAdapterEvent` (P1) on read — no separate `SessionResult` line.** `SessionResult` is instead
+   *derived* from the replayed events themselves, the same computation a real consumer already has to be
+   able to do from a live stream: `finalText` from concatenated `text` events, `usage` from the last
+   `usage` event, `changedFiles` from `file.changed` events, `controlTokens` from re-parsing `control`
+   events' own payloads, `ok`/`error` from whether an `error` event or a non-`'complete'` `session.ended`
+   appears. This keeps the file format to exactly what "NDJSON" conventionally means (a stream of
+   homogeneous records) and needs no second, parallel schema invented just for this piece's own replay
+   path.
+8. **`replayFromNdjson(path): SessionHandle` is genuinely synchronous in its own return** (matching
+   `PLAN-M4.md`'s own literal signature, unlike `startSession`'s `Promise<SessionHandle>`) — the actual
+   file read is deferred into the handle's own lazily-consumed `events` generator, the identical
+   "construct the handle immediately, do the real work only once actually consumed" shape
+   `FakePlatformAdapter`'s own `startSession` already uses internally.
+9. **`skillVisibleText`/`mcpToolAttempts` — two further `FakeSessionScript` fields, found necessary
+   while building, not anticipated in the initial design** — `PLAN-M4.md` P4's own conformance suite
+   (C15, C16) needs *some* generic way to prove a session sees a skill/tool only when it was actually
+   provisioned for that step, and neither is expressible with the fields point 2 already lists. Rather
+   than making a script a function of runtime provisioning state (reopening the exact static-vs-dynamic
+   question point 2 already closed against), both are more fields in the same "semantic field, generic
+   gating" shape the rest of `FakeSessionScript` already uses: `skillVisibleText` is emitted as an
+   additional text event only if `provisionSkills` was called for the request's own `stepId` before the
+   session started; `mcpToolAttempts` entries are checked against whatever the most recent
+   `provisionMcp` call for that `stepId` actually granted, the identical "claim success only if actually
+   authorised" gating `execAttempts` already gives `tools.exec`.
+10. **Control tokens inside a script's own `text` entries are parsed automatically, via `07` §7.2's own
+    described mechanism (`parseControlTokens`, P3), rather than needing a dedicated script field at
+    all** — `05` §5.5's own closing line describes exactly this: "structured control tokens (`FORGE_*`)
+    are parsed out of agent output by the adapter layer." A script's `text` entry that happens to be
+    `FORGE_*`-token-shaped is therefore automatically promoted to a real `control` event and a
+    `ParsedControlToken` in the final result — the same mechanism (not a special case of it) that also
+    correctly finds nothing in `untrustedContent` once it has already been stripped, since stripped text
+    cannot itself still be token-shaped.
+
+**Recommended resolution:** none of this is resolvable from `PLAN-M4.md`'s own one-line-per-capability
+Surface section alone — a future revision could usefully give `FakeSessionScript` the same field-level
+treatment `07` §7.2 gives every one of its own named interfaces, the identical gap Q58/Q60 already named
+for this milestone's other pieces.
+
+**P5 critic-round addendum, most severe first:**
+
+*BLOCKING:*
+1. **`writeFiles` had no `cwd`-containment check at all** — a scripted `relativePath` of
+   `'../../escape-marker.txt'` was written two directories above the session's own `cwd`, with
+   `result.ok:true` and no signal anything was wrong, directly violating `20` §20.2 point 1's "every
+   write... must land inside the project root or the lane's worktree." The existing "never writes
+   anywhere outside cwd" test did not actually exercise traversal (it wrote a plain filename and checked
+   an unrelated, never-referenced directory stayed empty — true by construction regardless of any
+   containment logic). **Fixed** with a new `resolveInsideCwd(cwd, relativePath)` helper (plain lexical
+   `path.resolve`/`path.relative`, not a symlink-following `realpath` walk — the "attacker" here is a
+   script authored within the same test process, not a hostile filesystem; that stronger defence is
+   `@forge/core`'s own job, a dependency this package deliberately does not have per the graph in Q16)
+   gating every scripted write; two new `scripting.test.ts` cases (`..` traversal, an absolute path)
+   pin it.
+
+*MAJOR:*
+2. **`abortSignal` was checked only inside the `script.text` loop** — every other phase (thinking,
+   untrustedContent, skillVisibleText, writeFiles, execAttempts, mcpToolAttempts) ignored it entirely,
+   including *inside* a many-item loop (a 20-attempt `execAttempts` script aborted after the first
+   attempt still ran all 20). **Fixed** by extracting a shared `runScriptPhases` generator with a
+   `bailIfAborted()` helper checked before every phase transition and at the top of every per-item loop
+   body; eight new `abort-and-limits.test.ts` cases pin each phase individually. (The verify round found
+   this fix itself was incomplete for the *last* item of a many-item phase — see its own addendum below.)
+3. **`resumeSession`/`runResumedScript` ignored `abortSignal` entirely, ignored `limits` entirely, and
+   only ever replayed `script.text`** — dropping `writeFiles`, `execAttempts`, `mcpToolAttempts`,
+   `untrustedContent`, and control-token promotion for a resumed script's own text, with no doc comment
+   explaining the asymmetry. **Fixed** by routing `runResumedScript` through the same shared
+   `runScriptPhases` `runScript` uses, via a new `RememberedSessionContext` (the original session's own
+   `runId`/`stepId`/`cwd`/`tools`, captured in `startSession` and looked up by `sessionId` in
+   `resumeSession`, since `ResumeRequest` itself deliberately carries none of that — Q58 point 4); eight
+   new `resume.test.ts` cases pin the parity. (The verify round found this fix itself opened a new,
+   blocking-severity hole — see its own addendum below.)
+4. **`startSession` invoked caller-supplied `SessionRequestMatcher` predicates directly inside its own
+   non-`async` body** (via `.find`/`.findIndex`) — a throwing matcher propagated as a synchronous
+   exception rather than the `Promise<SessionHandle>` rejection the method's own type signature promises,
+   the identical "non-`async` function, bare `throw`" hazard the `resumeSession`/`requiresMcpServer`
+   refusal paths were already careful to avoid via `Promise.reject`, just not extended to the
+   matcher-dispatch code a few lines away. **Fixed** by wrapping the matcher-dispatch portion of
+   `startSession` in a `try/catch` that normalises any caught value (not just `Error` instances) into a
+   rejected promise; three new `failure-injection.test.ts` cases (a throwing `.script()` matcher, a
+   throwing `.injectFailure()` matcher, a matcher that throws a non-`Error` value) pin it.
+5. **`withCapabilities`'s own doc comment claimed to "refuse... any request that needs a capability it
+   was configured without," but only `sessionResume` and `mcp`/`toolProxy` were actually enforced** —
+   `structuredOutput:false` was empirically demonstrated to leak a scripted `structured` payload through
+   regardless. **Fixed**, proportionately: `structuredOutput` now gates whether `script.structured`
+   appears in the result at all (a real platform without JSON-mode support just returns plain text, not
+   a refusal); `fileEditing`/`bash` are additionally ANDed into the existing `tools.write`/`tools.exec`
+   grant checks, since both map onto existing script/request surface with no new mechanism needed. The
+   remaining ~15 capability flags were deliberately left unenforced — no consumer needs them yet and this
+   fake has no script vocabulary for e.g. an "interject attempt" or "subagent spawn attempt" to refuse —
+   and the doc comment was rewritten to say so explicitly rather than overclaim. Four new
+   `capabilities.test.ts` cases pin the three now-enforced flags.
+6. **Skill/MCP provisioning was scoped by `stepId` alone, ignoring `runId`** — a step id like
+   `"implement"` is naturally reused across different runs, and a skill provisioned for one run's step
+   leaked into a different run's same-named step, violating `15` §15.6's own worktree-isolation boundary
+   and C15's "not leaked into other lanes" (`07` §7.6, Q60 point 5). **Fixed** by re-keying provisioning
+   as `Map<runId, Map<stepId, StepProvisioning>>` via new `getProvisioning`/`setProvisioning` helpers,
+   used consistently by `provisionSkills`, `doProvisionMcp`, and `runScriptPhases`'s own lookups; two new
+   `provisioning.test.ts` cases (same run/step reused across two different runIds) pin the isolation.
+
+*MINOR (each either fixed or explicitly documented as accepted):*
+7. **`FAKE_MODEL_ID` was not re-exported from `index.ts`** — an external consumer importing only
+   through the package barrel could not obtain the exact model id `startSession` requires without
+   hardcoding the string. **Fixed**: added to the barrel's re-export list.
+8. **Several `SessionRequest` fields (`systemPrompt`, `permissionMode`, `attachments`,
+   `tools.network`, `tools.read`) have no observable effect** — no script field models a platform
+   reacting to them. **Documented** in the top-of-file doc comment as a deliberate limitation (no
+   consumer needs them yet); not fixed, since inventing a mechanism speculatively would be scope this
+   milestone's own plan does not call for.
+9. **`SessionLimits.wallClockMs`/`maxCostUsd` are accepted but never enforced, and
+   `SessionResult.usage.costUsd` is never populated** despite `costReporting:'per-turn'` being the
+   default capability — this package has no injectable clock. **Documented**, not fixed, for the same
+   reason as point 8.
+
+**An additional bug, found independently while closing coverage gaps (not a critic finding):**
+`doProvisionMcp` treated a server with `grantedTools: '*'` as granting *nothing* — the loop `continue`d
+past it with no fallback, leaving the granted-tools set empty, the exact opposite of what `'*'` means.
+**Fixed** by changing `StepProvisioning.grantedMcpTools` to `ReadonlySet<string> | true` (`true` meaning
+every tool granted), computed via a `sawWildcard` flag so a `'*'` server dominates regardless of order or
+mixing with an explicit-list server in the same `provisionMcp` call; new `provisioning.test.ts` cases
+pin both the wildcard alone and mixed with an explicit list.
+
+**P5 verify-round addendum: findings 1, 4, 6, 7, 8, 9 and the wildcard fix confirmed cleanly as shipped;
+findings 2 and 3 were each only *partially* fixed, and finding 3's own gap was blocking-severity — a
+regression the fix for finding 3 itself introduced, not present before it.**
+
+Finding 3 (resume phase parity) was marked only **partially** fixed: the verify pass found that routing
+`runResumedScript` through the full `writeFiles` phase — which it never executed at all before this
+piece's own critic round — combined with `resumeSession`'s own pre-existing "unrecognised sessionId
+falls back to harmless defaults" tolerance (`cwd: ''`) to reopen finding 1's own vulnerability through a
+different door. `resolveInsideCwd`'s containment check computed `path.resolve('', relativePath)` and
+`path.relative('', resolved)` — Node's `path` module silently treats `''` as `process.cwd()` in both, so
+the "does this escape cwd" check could never fire; every `relativePath` trivially "resolved inside"
+`process.cwd()`. Reproduced empirically by the verify pass: registering an ordinary prompt-only matcher
+(the style used throughout this package's own tests) with a `writeFiles` entry, then calling
+`resumeSession('never-started-id', { prompt: <that prompt>, ... })`, wrote a real file into the actual
+FORGE repository root — the process's own real working directory — with `result.ok:true`. **Fixed** by
+making `resolveInsideCwd` itself defensive rather than trusting its `cwd` argument: it now requires `cwd`
+to be a genuine absolute path (not merely non-empty), refusing every write unconditionally otherwise —
+protecting any future caller that might pass a bad `cwd`, not just this one call site. A new
+`resume.test.ts` case reproduces the exact scenario and pins the fix, with a `finally`-block safety-net
+cleanup given what the test is specifically proving. The same strengthened check also closes a related,
+separately-flagged minor gap: an absolute `relativePath` that happened to resolve *inside* `cwd` was
+previously accepted (leaking a non-relative string into `changedFiles`, and violating
+`ScriptedFileWrite.relativePath`'s own "relative to cwd" contract) — now refused unconditionally,
+regardless of where it points; a new `scripting.test.ts` case pins it.
+
+Finding 2 (abort checked at every phase) was marked only **partially** fixed: the verify pass found that
+while every phase boundary and every per-item loop's *own* in-loop check were genuinely fixed, nothing
+checked `abortSignal` immediately *after* the last item of `writeFiles`/`execAttempts`/`mcpToolAttempts`
+(or after `skillVisibleText` when it was the last populated phase) — unlike `text`/`thinking`/
+`untrustedContent`/`skillVisibleText`, each of which is preceded by an unconditional check that still
+fires even when that phase itself is empty, `writeFiles`/`execAttempts`/`mcpToolAttempts` had no such
+preceding check, and nothing checked between them or after the last one. Reproduced empirically for all
+four phases: a single-item script of each kind, aborted immediately after its only/last event, still
+reported `session.ended:'complete'`/`ok:true` — exactly the shape most of this package's own fixtures
+use (a script with one write, one exec attempt, or one MCP call), not a contrived edge case. **Fixed** by
+adding the same unconditional `bailIfAborted()` check before `writeFiles`, before `execAttempts`, before
+`mcpToolAttempts`, and once more after the `mcpToolAttempts` loop — the phase-boundary pattern already
+used everywhere else, now applied uniformly to all seven phases rather than four of them. Four new
+`abort-and-limits.test.ts` cases (one per phase) pin it.
+
+The verify pass also found `runResumedScript` never emitted a streamed `usage` event at all (only
+`runScript` did), and — independently — that its scripted-`endReason:'error'` return hardcoded flat,
+unscaled usage numbers (`{inputTokens:10, outputTokens:5}` regardless of `turns`), self-inconsistent
+within the same returned object and diverging from what a fresh session with the identical script
+reports. **Fixed** by restructuring `runResumedScript` to mirror `runScript` exactly: usage is computed
+once (scaled by `Math.max(turnsRun, 1)`), yielded as its own event, and reused for both the error and
+complete returns. New `resume.test.ts`/`end-reason.test.ts` cases pin the streamed event and the scaled,
+self-consistent numbers respectively.
+
+No other new findings. The verify pass independently confirmed the shared `runScriptPhases` correctly
+threads `turnsRun`/`finalText`/`controlTokens`/`changedFiles` back to both callers with no
+cross-contamination between a fresh and a resumed session on the same adapter instance, and separately
+ran the full local verification sequence itself (`tsc --noEmit`, `eslint`, the real test suite) rather
+than only reading the diff.

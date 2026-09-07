@@ -159,6 +159,12 @@ importers:
 
   packages/templates: {}
 
+  packages/testkit:
+    dependencies:
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+
   tools/eslint-plugin-forge-boundaries: {}
 
   tools/lint-fixture: {}
