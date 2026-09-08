@@ -849,6 +849,9 @@ versioning).
 
 **Depends on:** `@forge/telemetry` (M5, already built), `@forge/core` (config/paths).
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q100. Built alongside the coordinator's concurrent
+`@forge/agents` A2/A3 (roster-independent, per its own explicit go-ahead).
+
 ---
 
 ## C2 — `forge init`, the greenfield wizard's non-interactive path

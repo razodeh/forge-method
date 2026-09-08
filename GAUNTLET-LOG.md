@@ -5546,3 +5546,58 @@ alongside the fixes above.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (231 files, 5171 tests, plus the boundaries-coverage
 config's own 64) all clean after every fix.
+
+---
+
+## M6 C1 — `@forge/cli` entry point, global flags, and output modes (`03` §3.1, §3.2, §3.5)
+
+**Rounds: 1 (fresh critic finding one real bug and two real gaps, all fixed; no separate verify round
+run). Outcome: WON.**
+
+`@forge/cli`'s first piece: `resolveEntryContext` (Node-version floor, the upward `.forge/config.yaml`
+walk with the `.forge-root` stop marker, the three not-a-project/is-a-project branches, non-TTY
+refusal), `parseGlobalFlags` (every row of `03` §3.2's global-flags table), and the four-mode output
+layer (`resolveOutputMode`, `formatStreamLine`, `formatJsonEvent`) every later command piece renders
+through. Built alongside the coordinator's concurrent `@forge/agents` A2/A3 work (roster-independent,
+per its own explicit go-ahead) — see `SPEC-QUESTIONS.md` Q100 for the full design record.
+
+### Round 1 — fresh critic (no context on plan/log): one real bug, two real gaps, all fixed
+
+1. **HIGH.** `isEmptyDir` counted `.git` itself as directory content, so the ordinary `mkdir proj &&
+   cd proj && git init && npx forge-method` precondition — a directory whose only entry is `.git` —
+   misclassified as `adopt-or-init` (offering to adopt a brownfield codebase that does not exist)
+   instead of `03` §3.1's literal "dir is empty ... → Init wizard". **Fixed**: `.git` is now excluded
+   from the emptiness check; a new test proves a bare `git init` with nothing else still resolves to
+   `init-wizard`.
+2. **MEDIUM.** `--concurrency=`/`--budget=`/`--seed=` (the empty-value form of a forgotten argument)
+   silently parsed to `0` via `Number('')` instead of raising `USR-002` — a real, easy-to-hit typo
+   silently becoming a semantically different value. **Fixed**: int/float flags now validate shape
+   with a regex before coercing, rejecting the empty string and non-decimal forms (hex, exponential)
+   alike.
+3. **MEDIUM.** A forgotten argument on a string-valued flag (`--project --verbose status`) silently
+   consumed the next real flag as its own value — `--verbose` never took effect, with no error raised.
+   **Fixed**: `next()` now rejects a flag-shaped token (checked against every real spelling from `03`
+   §3.2's own table) as a missing value, raising `USR-002` instead.
+
+The critic also flagged the `.forge-root` stop marker as spec-named but entirely untested — fixed by
+adding a two-level fixture (`marker-parent/.forge/config.yaml` as a real project root,
+`marker-parent/blocked/.forge-root` as the marker) proving the upward walk stops at the marker rather
+than reaching the ancestor project, from both the marker's own directory and a subdirectory nested
+below it.
+
+One self-caught defect, found while staging the commit rather than by the critic: a fixture directory
+built to represent "has existing code and git" used a real `.git` subdirectory — git categorically
+refuses to track anything literally named `.git` at any path (confirmed directly: `git add` on a
+nested `.git` path stages nothing and errors on neither), so the fixture would have silently lost its
+`.git` marker on commit and only kept passing locally because of leftover, untracked files from the
+session that built it. Replaced with a dynamically-built temp directory, the same pattern already used
+for the bare-`git-init` case above.
+
+The Node-version `exit(5)` is proven with a real child-process spawn
+(`test/entry/node-version.subprocess.test.ts`), not a mocked version check — an exit code is only
+genuinely observable that way, since calling `process.exit` in-process would kill the test runner
+itself. Two new error codes were added to the shared registry for this piece: `ENV-005` (unsupported
+Node version) and `USR-002` (invalid global-flag value).
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (47 new tests in `packages/cli/test/`, 5171+
+tests overall) all clean after every fix.

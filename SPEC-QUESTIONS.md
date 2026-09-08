@@ -7414,3 +7414,53 @@ need to keep renegotiating where the dividing line between them falls.
 `tsc`, `eslint`, `prettier`, and the full-repo suite (76 tests across both roster content files, covering
 the complete 28-role roster plus `base-engineer`) all clean; see `GAUNTLET-LOG.md`'s own M6 A3 entry for
 the critic round.
+
+## Q100 — M6 C1's `@forge/cli` entry point: `resolveEntryContext`'s two-argument surface, the injected-vs-ambient
+`EntryEnv` split, and the Node-version-guard/subprocess-test design
+
+**Why `resolveEntryContext` takes an optional third `env` parameter the `PLAN-M6.md` C1 surface text
+doesn't name.** The documented surface is `resolveEntryContext(cwd: string, argv: readonly string[]):
+EntryResolution`, but `03` §3.1 step 1 (Node version) and step 4 (non-TTY refusal) both need ambient
+facts — `process.version`, `process.stdin.isTTY`, `process.stdout.isTTY` — that a two-argument pure
+function has no other way to receive. Reading them directly inside the function would violate this
+project's own determinism discipline (`@forge/telemetry`'s `NewForgeEvent` doc comment: "an injected
+clock, not an ambient global"), and would also make the function untestable for the unsupported-version
+and non-TTY branches without actually running under an old Node or a non-TTY shell. The resolution: a
+third `env: EntryEnv` parameter that defaults to the real `process` (`realEntryEnv()`), so
+`resolveEntryContext(cwd, argv)` — the exact two-argument call the surface names — remains the common
+form and behaves identically to a hand-written two-argument function for every real caller; only tests
+(and a future subprocess wrapper) ever pass a third argument. One test (`'uses the real process ...
+when no env is injected'`) exists specifically to exercise `realEntryEnv()` itself, since every other
+test in the file injects `env` and would otherwise leave that one small function permanently uncovered.
+
+**Why the Node-version `exit(5)` is not inside `resolveEntryContext` at all.** `PLAN-M6.md` C1's own
+Checks text calls for "a real subprocess-level test, not a mocked version check" for the exit-5 case.
+`resolveEntryContext` is pure and returns a value (`{ kind: 'unsupported-node-version', ... }`); it
+never calls `process.exit` itself, because a pure function that can terminate the process is not
+testable in-process at all (calling `process.exit` from inside a vitest worker kills the test runner,
+not just "the CLI"). The actual `exit(5)` + printed message is a thin caller's job, demonstrated here by
+`test/entry/fixtures/node-version-guard.ts` — a small, real, non-test-suite-collected script (`node
+--experimental-strip-types`, this repository's own no-build-step convention, matching
+`@forge/telemetry/test/fixtures/append-and-hang.ts`'s established precedent) spawned as a genuine child
+process by `node-version.subprocess.test.ts`. This satisfies "real subprocess-level test" literally:
+an exit code is a process-level fact, only observable by actually spawning a process and reading what
+it did.
+
+**Why `parseGlobalFlags` is hand-written rather than pulled from a CLI-argument library.** No such
+library exists anywhere in this workspace's dependency tree yet. `03` §3.2's global-flags table is a
+small, fixed, already-fully-specified set (16 flags, few with real ambiguity), shared verbatim by every
+command regardless of that command's own argument shape (a later piece's own job) — pulling in a new
+runtime dependency for parsing sixteen fixed flags is exactly the premature-abstraction this project's
+own build discipline avoids. If a real per-command argument grammar (subcommand-specific flags,
+positional argument validation) turns out to need more than `positionals: readonly string[]` can offer
+once C2+ builds real commands, that decision belongs there, with real command shapes to design against
+— not guessed at here.
+
+**Two new error codes.** `ENV-005` (unsupported Node version) and `USR-002` (invalid global-flag value)
+were added to `@forge/core/errors`' shared registry — the next free numbers in each prefix
+(`ENV-004`→`ENV-005`; `USR-001`→`USR-002`), confirmed by grepping the registry directly rather than
+assumed, the same discipline `GATE-102`/`CFG-501`-`CFG-509`'s own reservation comments establish
+elsewhere in that file.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (47 new tests in `packages/cli/test/`) all clean
+after every fix; see `GAUNTLET-LOG.md`'s own M6 C1 entry for the critic round.
