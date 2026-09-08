@@ -5470,3 +5470,41 @@ an item for A2/A3 to resolve once real content exists to judge it against.
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (5066 tests, plus the
 boundaries-coverage config's own 64) all clean.
+
+---
+
+## M6 A2 — `@forge/agents` roster content: Direction & product / Architecture & design (`05` §5.2)
+
+**Rounds: 1 (fresh critic finding three real issues, all fixed; no separate verify round run).
+Outcome: WON.**
+
+The 11 real agent-definition YAML files for the roster's first two subsections, plus `base-engineer`
+(required for `architect`'s own literal `extends: base-engineer` field to resolve — not itself a
+roster row; see `SPEC-QUESTIONS.md` Q98 for the full design record, including the real, now-confirmed
+data point on A1's own open `extends`-inheritance tension).
+
+### Round 1 — fresh critic: three real issues, all fixed
+
+1. `domain-modeler`/`integration-architect` both originally claimed exclusive `file_ownership`/
+   `kb_write` over paths that were strict subpaths of (or, for `integration-architect`'s own
+   `file_ownership`, byte-identical to) `architect`'s own spec-verbatim exclusive claims — a real
+   violation of `05` §5.9's own no-overlap validator rule (this schema has no `shared` flag to declare
+   a deliberate overlap). **Fixed** by having both specialists propose into `architect`'s own owned
+   namespaces (`kb_propose`, non-exclusive `file_ownership: []`) instead of exclusively claiming a
+   subset of them — architect's own claim, pinned byte-for-byte to the worked example, could not be
+   narrowed.
+2. `ux`/`domain-modeler`/`security` all misused the `HandoffRecord` output type as a stand-in for
+   role-specific documents (a UX spec, a context map, a threat model) that aren't inter-agent handoffs
+   at all. **Fixed** by giving each its own properly-named type (`UXSpec`, `ContextMap`, `ThreatModel`
+   — the last already independently referenced by `G-Design`'s own evidence block, `SPEC-QUESTIONS.md`
+   Q91), matching the pattern every other file in this piece already used.
+3. `pm` claimed exclusive write ownership of `product/prd/**` with no `PRD`-typed output ever writing
+   there, despite the PRD being its own headline artifact per both its `mandate` and the roster
+   table's own Owns/Outputs columns. **Fixed** by adding the missing `PRD` output.
+
+Two new regression tests (`no two agents both marked exclusive claim overlapping file_ownership globs`,
+`no two agents' kb_write globs overlap`) lock the first fix in with a real, minimal prefix-based
+overlap check.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (230 files, 5132 tests, plus the boundaries-coverage
+config's own 64) all clean after every fix.
