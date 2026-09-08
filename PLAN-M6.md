@@ -297,6 +297,9 @@ data files under `@forge/catalog`'s own package, one file per named technology/s
 
 **Depends on:** C1.
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q89. Required a real C1 schema extension
+(`CatalogKind` gains `'stack' | 'feature-flags' | 'secrets'`, see Q87) found while starting this piece.
+
 ---
 
 ## C3 — Catalog content, part 2: datastores, messaging, stream/batch, API styles, ORM, auth

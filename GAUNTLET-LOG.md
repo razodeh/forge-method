@@ -5086,3 +5086,57 @@ chains in any of the 20 files. Two real, concrete content bugs, both fixed:
 No other findings. `tsc`, `eslint`, and the full-repo suite (3749 tests, one unrelated pre-existing flake in
 `packages/engine/test/e2e/crash-resume.test.ts` — a randomised-SIGKILL-timing test, confirmed to pass
 cleanly in isolation and untouched by this piece) all clean, plus the coverage ratchet and boundaries check.
+
+---
+
+## M6 C2 — `@forge/catalog` content, part 1: languages, frameworks, frontend, mobile, stacks (`12` §12.2)
+
+**Rounds: 1 (fresh critic given the full 56-file batch, not a sample, finding zero completeness/technical-
+accuracy issues but three real content-quality bug classes plus one modeling seam, all fixed). Outcome:
+WON.**
+
+56 real `catalog/<kind>/<id>.entry.yaml` files for `12` §12.2's own scope-table rows 1-5, plus two content
+tests -- see `SPEC-QUESTIONS.md` Q89 for the full design record, including a real C1 schema extension
+(`CatalogKind` gains `stack`/`feature-flags`/`secrets`, Q87) found and fixed before any content was
+written.
+
+### Round 1 — fresh critic (full batch, not sampled): completeness/accuracy clean, three real content bugs
+
+The critic independently re-derived the spec's own scope table and cross-checked all 56 shipped files
+against it directly (not trusting this piece's own completeness test), confirming an exact 56/56 match with
+no gaps or extras, and read all 56 files for technical accuracy, finding nothing confidently wrong. A
+scripted near-duplicate scan surfaced a pattern too widespread to sample around, so the critic read the
+full batch rather than a subset. Three real, distinct bug classes found, all fixed:
+
+1. **Hygiene-rule-spirit violations that passed the mechanical regex**: `aspnet-core`/`axum-actix`/`csharp`
+   named a specific benchmark suite or used "top-tier"/"leading" as a superlative synonym-swap;
+   `fastify` asserted an unqualified throughput advantage. **Fixed** by rewording to describe mechanism,
+   not comparative performance.
+2. **24 exact-duplicate and 15 near-duplicate list items across 33 of 56 files** — traced to this piece's
+   own second-pass fix-up (adding a missing second `fits_when`/`avoid_when` item to clear the "at least two
+   real conditions" floor), where a meaningful fraction of hand-composed "new" second items were, by
+   copy-paste error, restatements of the item already there. Satisfied the test's mechanical `length >= 2`
+   check without satisfying its real intent. **Fixed** with genuinely distinct replacement text for every
+   flagged pair, verified via both an exact-duplicate scan and a Jaccard-similarity near-duplicate scan
+   across every list field in all 56 files.
+3. **The apostrophe-escaping needed for those replacement strings introduced 10 real YAML syntax errors**
+   (unescaped `'` inside single-quoted scalars) — caught immediately by re-running the loader against all
+   56 files before any test run, fixed by converting to double-quoted style.
+
+Also documented (not restructured): a real, non-blocking modeling seam the critic raised independently —
+`pairs_with` means "compatible peer" for an atomic entry but "constituent part" for a `kind: 'stack'` entry,
+a distinction the eventual selection engine (C5) must not ignore. Recorded directly in
+`CatalogEntry.pairs_with`'s own doc comment.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3749 tests, plus the boundaries-
+coverage config's own 64) all clean after every fix. One unrelated, known-flaky test
+(`packages/engine/test/e2e/crash-resume.test.ts`) failed once and passed cleanly on immediate re-run.
+
+### Calibration note
+
+The real lesson here isn't in the catalog code (C1, already reviewed) but in this piece's own authoring
+process: writing 56 real, distinct entries at volume, by hand, in large batches is exactly the condition
+under which copy-paste duplication creeps in silently past a mechanical count check. A `length >= 2`
+assertion proves *presence*, not *distinctness* — any future piece authoring list content at this scale
+should pair a count floor with an explicit duplicate/near-duplicate scan, the same lesson this piece's own
+fix now demonstrates rather than merely states.
