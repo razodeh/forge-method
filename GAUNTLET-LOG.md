@@ -5140,3 +5140,41 @@ under which copy-paste duplication creeps in silently past a mechanical count ch
 assertion proves *presence*, not *distinctness* — any future piece authoring list content at this scale
 should pair a count floor with an explicit duplicate/near-duplicate scan, the same lesson this piece's own
 fix now demonstrates rather than merely states.
+
+---
+
+## M6 C3 — `@forge/catalog` content, part 2: datastores, messaging, stream/batch, API styles, ORM, auth
+(`12` §12.2)
+
+**Rounds: 1 (fresh critic finding zero completeness gaps and confirming the distinctness-lesson claim
+independently, one real content bug fixed). Outcome: WON.**
+
+68 real `catalog/<kind>/<id>.entry.yaml` files for `12` §12.2's own scope-table rows 6-11 -- see
+`SPEC-QUESTIONS.md` Q90 for the full design record, including how this piece deliberately applied C2's own
+two lessons (Q89) from the start rather than needing a second-pass fix: genuinely distinct 2-item lists
+authored up front, and a full self-check (parse/count/duplicate/hygiene) before any critic round, which
+caught and fixed one mojibake typo, two superlative violations, and five dangling references on its own.
+
+Also generalized `c2-hygiene.test.ts` into `test/content/catalog-hygiene.test.ts` -- one hygiene test for
+the whole shipped catalog, not one copy per piece -- and added a permanent exact/near-duplicate list-item
+regression test to it (Jaccard similarity, threshold 0.4), making Q89's own calibration-note lesson a real,
+enforced check rather than a one-time hand fix.
+
+### Round 1 — fresh critic: completeness/distinctness independently re-verified, one real licence-accuracy
+bug found
+
+The critic independently re-derived all six rows' item lists from the spec text (68/68 match, no gaps),
+independently re-ran both the dangling-reference and near-duplicate checks (at a stricter 0.25 similarity
+threshold to stress-test the shipped 0.4 one) and confirmed this piece's own "genuinely distinct from the
+start" claim held up, not just by trusting the automated test. One real, concrete finding:
+`datastore/cockroachdb.entry.yaml`'s own licence line was accurate for CockroachDB's pre-November-2024
+licensing but stale for current releases (moved to a proprietary "CockroachDB Software License" with no
+automatic Apache-2.0 conversion). **Fixed**, along with the same stale fact echoed in
+`datastore/yugabytedb.entry.yaml`'s own comparative claim. Also softened one borderline (not clearly
+violating, per the critic) unqualified comparative-performance phrase in
+`datastore/cassandra-scylladb.entry.yaml` to describe the real architectural mechanism instead.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (4151 tests, plus the boundaries-
+coverage config's own 64) all clean after the fix. The known-flaky `crash-resume.test.ts` (real randomised
+`SIGKILL` test, unrelated to this piece) failed and passed cleanly on isolated re-run twice across this
+session's full-suite runs.

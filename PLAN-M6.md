@@ -314,6 +314,10 @@ styles, ORM/data access, and Auth rows.
 
 **Checks:** identical shape to C2's, against this piece's own six rows.
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q90. Generalized C2's own hygiene test into
+`test/content/catalog-hygiene.test.ts` (one whole-catalog test, not one per piece) and added a permanent
+exact/near-duplicate list-item regression test to it, closing the gap Q89 found.
+
 **Depends on:** C1.
 
 ---
@@ -333,7 +337,9 @@ gap was found there first; see `SPEC-QUESTIONS.md` Q87.
 
 **Checks:** identical shape to C2/C3's, against this piece's own remaining rows; plus a final,
 whole-catalog completeness test (every row of `12` §12.2's own full table has real coverage, run once
-here since this is the last content piece).
+here since this is the last content piece). The hygiene test already checks the whole catalog generically
+(`test/content/catalog-hygiene.test.ts`, generalized during C3 — see `SPEC-QUESTIONS.md` Q90) and needs no
+new copy here, only this piece's own ids removed from its `KNOWN_FUTURE_IDS` allowlist.
 
 **Depends on:** C1.
 
