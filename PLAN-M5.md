@@ -627,6 +627,20 @@ the quiet period elapses, verified with an injected clock, not real wall-clock s
 
 **Depends on:** P12.
 
+*(P13 is committed: `8c59010`. See `SPEC-QUESTIONS.md` Q75 and its critic-round/verify-round addenda — the
+one change to the already-committed P12 `Scheduler` this piece required was making its `limits` field
+mutable, with a new `setLimits` method, so a caller can feed a dynamically-changing ceiling in between
+ticks. The critic round found and fixed 1 BLOCKING (a doc comment's own "nothing depends on `now` being
+monotonic" claim was empirically false — a later call with a smaller `now` than an earlier one silently
+regressed the ceiling), 2 MAJOR (a signal halving a cached ceiling value that goes stale without an
+intervening tick; a non-finite clock reading able to permanently corrupt the state with no self-healing),
+and 1 MINOR issue. The verify round then found a NEW BLOCKING bug inside round 1's own fix — a signal's own
+recorded timestamp could itself drift backward across two signals, silently inflating a later tick's own
+restoration math and, in the sharpest repro, fully erasing an active backpressure state back to unrestricted
+concurrency after only two signals and one ordinary tick — fixed locally, no third round. See
+`GAUNTLET-LOG.md`'s own entry for the fuller story and its calibration note on why "does this fix resolve
+its own finding" and "did this fix move the same problem to an adjacent field" are different questions.)*
+
 ---
 
 ## P14 — Gate evaluation

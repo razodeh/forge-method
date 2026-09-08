@@ -4324,3 +4324,74 @@ the self-caught tie-break bugs earlier in the same piece sits one general patter
 being correct in the context it was built for does not make it correct in a new context that reuses it
 under a different operation or a different value space — each reuse earns its own fresh check, not an
 inherited assumption that fixing something once means it stays fixed everywhere the same shape recurs.
+
+---
+
+## M5 P13 — `@forge/engine`: backpressure state machine (`06` §6.3)
+
+**Rounds: 2 (one critic finding 1 BLOCKING, 2 MAJOR, and 1 MINOR, all fixed; one scoped verify finding a
+NEW BLOCKING bug inside round 1's own fix, fixed locally, no third round). Outcome: WON.**
+
+A small, self-contained pure state machine: halve effective concurrency on a rate-limit signal (floor 1),
+restore it additively once a quiet period elapses. Required one change to the previous piece's own
+`Scheduler`: its `limits` field became mutable, with a new `setLimits` method, so a caller can feed a
+dynamically-changing ceiling into an already-constructed scheduler between ticks without losing its own
+accumulated status/running state. The two modules stay mutually unaware of each other otherwise.
+
+### Round 1 — critic: 1 BLOCKING, 2 MAJOR, 1 MINOR, all fixed
+
+**BLOCKING: a doc comment's own claim that "nothing depends on `now` being monotonic" was empirically
+false** — a later call receiving a smaller `now` than an earlier one (real wall-clock sources aren't
+actually guaranteed monotonic) silently regressed the ceiling. **Fixed** by clamping the shared restoration
+helper to never return less than the current ceiling.
+
+**MAJOR: a rate-limit signal halved a cached ceiling value that goes stale the moment no tick call happens
+in between** — a real gap, since an adapter's own rate-limit callback is naturally a different code path
+than the scheduler's own per-tick cadence. **Fixed** by routing both functions through one shared "ceiling
+as of now" computation.
+
+**MAJOR: a single non-finite clock reading could permanently corrupt the state with no self-healing** —
+confirmed to flow all the way through to the scheduler's own admission logic, silently zeroing all
+concurrency for the rest of the run. **Fixed** with guards treating a non-finite input as no signal at all,
+plus a matching guard on the one other numeric input this state ever takes at construction.
+
+**MINOR:** the same construction-time input was also unvalidated for zero/negative values, folded into the
+fix above.
+
+Two tests were also strengthened for not proving what they claimed (one never exercised a limit change
+against already-running work; one had exactly enough nodes that "correctly capped" and "nothing left to
+admit anyway" were indistinguishable).
+
+### Round 2 — scoped verify: 1 NEW BLOCKING, inside round 1's own fix
+
+**New finding (BLOCKING): the fix for the "stale cached ceiling" bug introduced a different bug in an
+adjacent field it touched in passing.** The round-1 fix routed a signal's own halving through a shared
+helper that also recorded when the signal happened — but nothing stopped that recorded time itself from
+moving backward across two signals, even though the *computed ceiling value* was already correctly
+protected from doing so. A dragged-backward anchor doesn't show up in the signal's own result; it silently
+inflates every *later* call's own elapsed-time math, since elapsed time is measured from that anchor.
+Confirmed capable of fabricating a large amount of fictitious restoration from one ordinary tick, and in a
+minimal repro, of fully erasing an active backpressure state back to unrestricted concurrency after only
+two signals and one tick — the sharpest possible violation of this piece's entire purpose: the exact
+situation backpressure exists to handle (repeated rate-limit signals) could silently turn concurrency back
+up to full, with zero trace that anything had happened. **Fixed** by clamping the recorded signal time
+itself to never move backward, independent of the already-fixed clamp on the ceiling value it produces.
+
+A related test-quality finding: the round-1 test written specifically to cover the BLOCKING fix's own
+regression scenario would still pass with that fix's underlying clamp reverted, because a *different*
+guard already, independently, covered that exact scenario — the clamp's real, narrower purpose covers a
+scenario nothing had a test for yet. Fixed by correcting the existing test's own attribution and adding a
+new test aimed precisely at the scenario the clamp actually protects.
+
+No other new findings; the full package suite (402 engine tests after these fixes' own new ones, 3097
+full-repo) reconfirmed clean, 100% coverage on every touched file.
+
+### Calibration note
+
+A clean, small-scale illustration of a pattern this milestone keeps finding at larger scale: a fix aimed
+precisely at a real, confirmed bug can be completely correct for the scenario that motivated it and still
+leave a new opening in a field it touches only in passing. Neither the round that wrote the fix nor a first
+read of it would surface this — it took a second, independently-adversarial pass explicitly re-deriving
+correctness from scratch, not just confirming the stated fix worked, to find it. Checking "does this fix
+resolve its own finding" and checking "did this fix move the same class of problem somewhere adjacent" are
+different questions, and the second one has to be asked on purpose.
