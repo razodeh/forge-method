@@ -19,7 +19,7 @@ import type { InitOptions } from './types.ts';
  * has no source for: `03` §3.3's own worked flag example always passes `--level` explicitly rather
  * than relying on auto-proposal, and inventing a heuristic from `--modules`/`--idea-file` content
  * would be guessing, not deriving. Conservative defaults (0/false) are used instead of a fabricated
- * heuristic — a real, documented simplification, not a hidden one. See `SPEC-QUESTIONS.md` Q101.
+ * heuristic — a real, documented simplification, not a hidden one. See `SPEC-QUESTIONS.md` Q103.
  */
 function defaultSignals(): LevelSignals {
   return {

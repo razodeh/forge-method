@@ -19,7 +19,7 @@ export interface InitOptions {
   readonly repoUrl?: string;
   /** `--idea-file`: a path to free-text product-idea content, read verbatim. `03` §3.3 step 2 also
    * names an optional URL attachment form; no real fetch-and-summarise pipeline exists anywhere in
-   * this codebase yet (a real gap, not a stub this piece invents) — see `SPEC-QUESTIONS.md` Q101. */
+   * this codebase yet (a real gap, not a stub this piece invents) — see `SPEC-QUESTIONS.md` Q103. */
   readonly ideaFile?: string;
   readonly mode?: 'guided' | 'express';
   /** An explicit override for `03` §3.3 step 4. Omitted, `runInit` calls `@forge/methods/level`'s own
@@ -53,7 +53,7 @@ export interface InitOptions {
  * determinism/boundary discipline: `@forge/cli` has no way to discover which platforms are installed
  * without a concrete `PlatformAdapter` (`07` §7.1's own "nothing above `@forge/adapter-kit` may
  * reference Claude Code, CodeMachine..." rule), and none exists in this codebase yet (a real,
- * documented gap — see `SPEC-QUESTIONS.md` Q101). A real caller supplies whatever adapters it has
+ * documented gap — see `SPEC-QUESTIONS.md` Q103). A real caller supplies whatever adapters it has
  * once one exists; tests supply `@forge/testkit`'s `FakeAdapter`. */
 export interface RunInitDeps {
   readonly candidateAdapters: readonly PlatformAdapter[];
@@ -66,7 +66,7 @@ export interface RunInitDeps {
    * `import.meta.resolve('@forge/templates/...')` reads it directly), `modules/` is a bare workspace
    * directory with no publishing/distribution mechanism of its own yet — a real, open gap a future
    * installer piece has to solve, not one this piece can paper over with a guessed default. See
-   * `SPEC-QUESTIONS.md` Q101. */
+   * `SPEC-QUESTIONS.md` Q103. */
   readonly modulesDir: string;
 }
 
@@ -91,5 +91,5 @@ export type InitResult =
    * switch to `upgrade` semantics" — real `upgrade` semantics are `@forge/cli` C7's own surface
    * (`runUpgrade`), not yet built (`PLAN-M6.md` orders C7 well after C2). `runInit` detects the
    * existing project and stops here rather than either silently re-writing over it or fabricating an
-   * upgrade this piece has no real implementation for — see `SPEC-QUESTIONS.md` Q101. */
+   * upgrade this piece has no real implementation for — see `SPEC-QUESTIONS.md` Q103. */
   | { readonly kind: 'already-initialized'; readonly projectRoot: string };

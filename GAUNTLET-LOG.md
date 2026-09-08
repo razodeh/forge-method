@@ -5702,3 +5702,71 @@ empty-array "(none)" rendering path (`forbiddenActions`/`definitionOfDone`/`skil
 to use empty arrays.
 
 `tsc`, `eslint`, and the `packages/agents` suite (115 tests) all clean after every fix.
+
+---
+
+## M6 C2 — `forge init`, the greenfield wizard's non-interactive path (`03` §3.3)
+
+**Rounds: 1 (fresh critic finding one real HIGH bug and several real MEDIUM/LOW gaps, all fixed; no
+separate verify round run). Outcome: WON.**
+
+`@forge/cli`'s second piece: `parseInitFlags` (`03` §3.3's own worked non-interactive flag line) and
+`runInit` (Node-version-checked by C1's own entry point; level resolution via `@forge/methods`'
+`proposeLevel` or an explicit `--level` override; platform selection via real `preflight()` calls
+against injected `PlatformAdapter` candidates, never a probe by name — no concrete adapter exists in
+this codebase yet; the real documented file tree; a real preset applied via
+`@forge/extensions/presets`; the `forge:generated` header with a real content hash on every regenerable
+file; idempotency detection). Built alongside the coordinator's concurrent `@forge/agents` A4/A5
+(context assembly, prompt compilation) — see `SPEC-QUESTIONS.md` Q103 for the full design record,
+including two real, documented forward gaps this piece stands in for rather than fakes (real prompt
+compilation, not yet built when this piece started but landing concurrently via A5; a real
+`forge upgrade`, `@forge/cli` C7, not yet built at all).
+
+### Round 1 — fresh critic (no context on plan/log): one real HIGH bug, several real gaps, all fixed
+
+1. **HIGH.** `.forge/config.yaml` — the sole idempotency marker `isAlreadyInitialized` checks for —
+   was written *first*, before any of the later steps that can genuinely throw (agent `extends`
+   resolution, preset validation, a platform's own `installAssets`). A failure partway through left a
+   half-initialized project every subsequent `runInit` call then silently, permanently treated as
+   fully, successfully initialized, with no error and no diff — directly defeating `03` §3.3's own
+   idempotency rule. **Fixed**: `config.yaml` is now written last, after every other write has already
+   succeeded; every other file `writeInitTree` writes is safe to overwrite on a retry
+   (`writeFileAtomic`'s own unconditional-overwrite semantics), so a retry after a partial failure
+   safely resumes rather than colliding with the previous attempt's partial output.
+2. **HIGH.** `--overlay` was parsed, typed onto `InitOptions`, and even asserted to round-trip through
+   the spec's own worked flag line — but nothing downstream ever read it. No real overlay-bundle
+   installer (npm/git-URL fetch, the capability-request-screen confirmation `03` §3.3 step 10
+   requires) exists anywhere in this codebase. **Fixed**: `runInit` now refuses loudly (`USR-002`,
+   before any write) rather than silently discarding the flag and looking like it worked.
+3. **MEDIUM.** `--fallback-platform` naming an unknown id silently resolved to `null`, inconsistent
+   with `--platform`'s own `ENV-004` for the identical situation. **Fixed**: `selectPlatform` now
+   throws `ENV-004` for an unknown fallback id too.
+4. **MEDIUM.** `--idea-file`'s own doc comment claimed its content was "read verbatim," but nothing
+   ever opened the file — only its path string reached `FORGE.md`. **Fixed**: the file is now read
+   (relative to the real invocation cwd, matching the worked example's own `.`/`./idea.md` pairing,
+   both relative to the same shell cwd) and its real content copied into the project at
+   `<kb>/idea.md`; an unreadable path now raises a real `ENV-004` instead of silently doing nothing.
+5. **MEDIUM.** `--kb-root` only remapped `paths.kb`; `DEFAULT_CONFIG.paths.kb` is `'docs/forge/kb'` —
+   a *subdirectory* of the spec's own stated default (`'docs/forge'`) — so running the worked example's
+   own literal `--kb-root docs/forge` collided the KB directory with `paths.specs`/`plans`/`sessions`/
+   `reports`, which stayed nested one level inside it. **Fixed**: `--kb-root` now rebases all five
+   `paths.*` entries under it, each keeping its own `DEFAULT_CONFIG`-given subdirectory name — the
+   omitted-flag default and the worked example now produce the identical directory shape, differing
+   only in where it's rooted.
+6. **LOW/MEDIUM.** `InstalledAsset.path` (adapter-kit's own type) carries no relative-vs-absolute
+   contract, while every other `WrittenFile.path` in `InitResult` is project-root-relative — an
+   absolute path from a real adapter would have looked inconsistent with no normalization. **Fixed**:
+   normalized to project-relative before being recorded, with a real test exercising both an absolute
+   and an already-relative `InstalledAsset.path`.
+7. **LOW.** A latent basename-collision risk in the workflow/framework/check/artifact-template
+   flattening (`.forge/<kind>/path.basename(relPath)`), true today only because every real index
+   entry's basename happens to be unique, with nothing enforcing it. **Fixed**: `readIndexed` now
+   throws, naming both colliding source paths, the moment a future addition ever collides.
+
+Also fixed post-critic, while staging the commit: a real numbering collision in the code's own
+`SPEC-QUESTIONS.md` cross-references (`Q101`, claimed concurrently by the coordinator's own A4/A5 work
+landing at the same time) — corrected to `Q103` throughout before commit.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (124 tests in `packages/cli/test/`, run against
+real `@forge/templates` content and a real, schema-valid fixture agent roster) all clean after every
+fix.

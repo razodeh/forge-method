@@ -7,7 +7,7 @@
  * Of these, only `fm-core` ships as real content anywhere in this codebase today — the other four are
  * named in the spec's own worked example but have no real `modules/fm-web/` (etc.) directory to
  * install, so a request for one that does not exist on disk is dropped rather than recorded as
- * installed content that was never actually written. See `SPEC-QUESTIONS.md` Q101.
+ * installed content that was never actually written. See `SPEC-QUESTIONS.md` Q103.
  */
 import path from 'node:path';
 

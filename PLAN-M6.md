@@ -892,6 +892,11 @@ idempotency/regenerated-file-header rule).
 **Depends on:** C1, A2/A3 (roster content), T1-T5 (template content), `@forge/methods/level` (M3),
 `@forge/adapter-kit` (M4, already built), `@forge/extensions/presets` (M2 P7, already built).
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q103. Two real forward gaps stood in for rather than faked
+(prompt compilation not yet landed when this piece started, real content written instead of a fabricated
+compiled asset; real `upgrade` semantics not yet built at all, `already-initialized` returned instead of
+either blocking or re-implementing C7 early) — both documented, neither silently papered over.
+
 ---
 
 ## C3 — Lifecycle and discovery commands

@@ -32,7 +32,7 @@ function slugify(name: string): string {
  * `kbRoot` (each keeping its own `DEFAULT_CONFIG`-given subdirectory name) is the one reading under
  * which the default (`kbRoot` omitted) and the worked example (`kbRoot` given) produce the *same*
  * directory shape, differing only in where that shape is rooted — the only self-consistent
- * interpretation of "KB root" as a single flag governing all five. See `SPEC-QUESTIONS.md` Q101.
+ * interpretation of "KB root" as a single flag governing all five. See `SPEC-QUESTIONS.md` Q103.
  */
 function buildPaths(kbRoot: string | undefined): ForgeConfig['paths'] {
   if (kbRoot === undefined) return DEFAULT_CONFIG.paths;

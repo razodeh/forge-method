@@ -7560,3 +7560,50 @@ first release as under-documented relative to A4's own much more explicit deviat
 A fresh critic round also found the original `renderHouseStyleBlock` silently dropped
 `StyleProfile.artifact_conventions` and `.doc_length` — fixed to render both, so block [9] surfaces the
 whole document `15` §15.8 defines, not a partial subset. See `GAUNTLET-LOG.md`'s own M6 A5 entry.
+
+## Q103 — M6 C2's `@forge/cli` `forge init`: two real forward gaps stood in for rather than faked, three
+non-obvious file-tree/flag decisions, and a real cross-session numbering collision
+
+**Two real forward gaps, both stood in for, neither faked.** (1) `.forge/agents/`'s own "compiled
+platform-native agent assets" (`03` §3.3's own file-tree comment) needs real prompt compilation
+(`@forge/agents` A5's own nine-block compiler) — not built when this piece's design started, though it
+landed concurrently via the coordinator's own A4/A5 work by the time this piece finished. Rather than
+either blocking on that landing or re-deriving prompt compilation inside `@forge/cli` (a real boundary
+violation — prompt compilation belongs to `@forge/agents`, not its own consumer), this piece writes
+each real roster agent's own *resolved* (post-`extends`) `AgentDefinition` as YAML instead — real,
+correct, useful content, just not a platform-compiled prompt. A future piece can swap this for a real
+`compilePrompt` call once `@forge/cli` has a reason to depend on that specific surface; nothing here
+needs to change for that swap beyond the one write path. (2) `03` §3.3's own idempotency rule requires
+detecting a second `init` on an existing project and switching to real `upgrade` semantics
+(`keep-mine`/`take-theirs`/`merge`/`show-diff`) — `@forge/cli` C7's own `runUpgrade`, ordered well after
+C2 in `PLAN-M6.md` and not built at all yet. `runInit` detects the existing project and returns
+`{ kind: 'already-initialized' }` rather than either performing a real upgrade it cannot yet do or
+silently re-writing over a project that might carry real hand-edits.
+
+**Three non-obvious decisions, each documented in the code itself, not just here.** (1) `--kb-root`
+rebases all five `paths.*` config entries, not only `paths.kb` — `DEFAULT_CONFIG.paths.kb` is
+`'docs/forge/kb'`, a subdirectory of the spec's own stated `--kb-root` default (`'docs/forge'`), so
+reading the flag as "override `paths.kb` alone" would collide the KB directory with
+`paths.specs`/`plans`/`sessions`/`reports` the moment `03` §3.3's own worked example
+(`--kb-root docs/forge`) is run literally — see `buildPaths`'s own doc comment in `config.ts`. (2)
+`PlatformAdapter` candidates are always *injected* (`RunInitDeps.candidateAdapters`), never discovered
+by name — no concrete adapter (Claude Code, CodeMachine, or otherwise) exists anywhere in this codebase
+yet, and `07` §7.1's own boundary rule ("nothing above `@forge/adapter-kit` may reference Claude Code,
+CodeMachine... by name") forbids `@forge/cli` from probing for one by name even once one exists; a real
+future caller supplies whatever adapters it has, `@forge/testkit`'s `FakePlatformAdapter` stands in for
+tests. (3) `--overlay` (org overlay bundles by path/npm package/git URL, with a capability-request-
+screen confirmation) is refused outright rather than silently accepted-and-ignored: no real
+overlay-bundle installer exists anywhere in this codebase, and a silently-ignored explicit user request
+is a worse failure mode than a loud, immediate `USR-002`.
+
+**A real cross-session numbering collision, caught and fixed before commit.** This piece's own code
+comments were first written citing `SPEC-QUESTIONS.md` Q101 — the next free number at design time — but
+the coordinator's own concurrent A4/A5 work claimed Q101 and Q102 for real content by the time this
+piece was ready to commit. Caught by re-checking the file's own tail immediately before staging (the
+same discipline every prior M6 piece in this log already uses precisely to catch this); every `Q101`
+reference in `packages/cli/src/init/` was corrected to `Q103` before the commit landed, so no stale
+cross-reference survived into the shipped code.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (124 tests in `packages/cli/test/init/`, run
+against real `@forge/templates` content and a real, schema-valid fixture agent roster — never mocked)
+all clean after every fix; see `GAUNTLET-LOG.md`'s own M6 C2 entry for the critic round.

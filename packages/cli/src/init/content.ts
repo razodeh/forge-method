@@ -98,7 +98,7 @@ export async function readSkillFiles(): Promise<readonly ContentFile[]> {
 
 /** Every real roster agent (`modules/<module>/agents/<id>.agent.yaml`), resolved through its own
  * `extends` chain — `.forge/agents/`'s own real content, standing in for real prompt compilation
- * (`@forge/agents` A5, not yet built) until that piece exists. See `SPEC-QUESTIONS.md` Q101. */
+ * (`@forge/agents` A5, not yet built) until that piece exists. See `SPEC-QUESTIONS.md` Q103. */
 export async function readResolvedAgents(
   modulesDir: string,
 ): Promise<

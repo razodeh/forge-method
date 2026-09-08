@@ -60,7 +60,7 @@ export async function runInit(
   }
   // No real overlay-bundle installer exists anywhere in this codebase yet (no npm/git-URL fetch, no
   // capability-request-screen confirmation `03` §3.3 step 10 requires) — refusing loudly here is the
-  // one thing that keeps `--overlay` from *looking* like it worked. See `SPEC-QUESTIONS.md` Q101.
+  // one thing that keeps `--overlay` from *looking* like it worked. See `SPEC-QUESTIONS.md` Q103.
   if (options.overlay !== undefined && options.overlay.length > 0) {
     throw new ForgeError('USR-002', { flag: '--overlay', value: options.overlay.join(',') });
   }

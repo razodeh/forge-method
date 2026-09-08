@@ -8,7 +8,7 @@
  * YAML syntax error, not a no-op. The header text is preserved verbatim; only the comment delimiter
  * is adapted per file type (`#` for YAML, `<!-- -->` for Markdown), the minimum change that keeps the
  * header meaningful in every regenerable file this piece actually writes rather than only the subset
- * that happens to be Markdown. See `SPEC-QUESTIONS.md` Q101.
+ * that happens to be Markdown. See `SPEC-QUESTIONS.md` Q103.
  */
 const HEADER_TEXT = (version: string, hash: string): string =>
   `forge:generated v=${version} hash=${hash} — edits will be overwritten; use overrides/`;
