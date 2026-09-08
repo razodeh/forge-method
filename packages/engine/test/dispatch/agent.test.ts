@@ -20,6 +20,7 @@ import { readEvents } from '@forge/telemetry/events';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
+import { runAgentWork } from '../../src/dispatch/steps.ts';
 import { toAgentId } from '../../src/plan/index.ts';
 import { createTestContext, node, readFileInRepo } from './helpers.ts';
 
@@ -178,6 +179,7 @@ describe('runAgentStep', () => {
       'StepStarted',
       'LaneCreated',
       'SessionStarted',
+      'SessionEvent',
       'SessionEnded',
       'LaneCommitted',
       'LaneCommitted',
@@ -210,6 +212,7 @@ describe('runAgentStep', () => {
       'StepStarted',
       'LaneCreated',
       'SessionStarted',
+      'SessionEvent',
       'SessionEnded',
       'LaneCommitted',
       'LaneReady',
@@ -218,7 +221,7 @@ describe('runAgentStep', () => {
     // seq is monotonic and gapless (18 §18.4's own rule) -- readEvents itself already refuses a gap, so
     // reaching this line at all already proves it; asserting it explicitly documents the property this
     // test relies on, not just leaves it implicit in "did not throw".
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("StepStarted survives (fsync'd) even when the adapter session itself fails to even start -- proven by injecting a failure between the event write and the session start", async () => {
@@ -333,6 +336,7 @@ describe('runAgentStep', () => {
       'StepStarted',
       'LaneCreated',
       'SessionStarted',
+      'SessionEvent',
       'SessionEnded',
       'LaneReady',
       'StepSucceeded',
@@ -372,6 +376,47 @@ describe('runAgentStep', () => {
     const outcome = await executeStep(stepNode, ctx);
 
     expect(outcome.status).toBe('succeeded');
+    expect(capturedPrompt).toBe('');
+  });
+
+  it('runAgentWork also defaults the resume-path prompt to an empty string for a node with no brief of its own', async () => {
+    // The identical default the fresh-session path (buildSessionRequest, exercised above) already
+    // proves -- covered separately here because runAgentWork's own resume branch builds its
+    // ResumeRequest independently, not by delegating to buildSessionRequest.
+    const projectRoot = await createTempRepo('agent-resume-no-brief');
+    const adapter = new FakePlatformAdapter();
+    let capturedPrompt: string | undefined;
+    adapter.resumeSession = (sessionId, request) => {
+      capturedPrompt = request.prompt;
+      return Promise.resolve({
+        sessionId,
+        events: (async function* () {
+          // No events to yield -- this test only inspects the resumed ResumeRequest's own prompt.
+        })(),
+        stop: () => Promise.resolve(),
+        result: () =>
+          Promise.resolve({
+            sessionId,
+            ok: true,
+            finalText: 'resumed',
+            usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+            durationMs: 0,
+            changedFiles: [],
+            controlTokens: [],
+          }),
+      });
+    };
+    const ctx = createTestContext({ projectRoot, adapter });
+    const lane = { laneId: 'lane-resume-no-brief', path: projectRoot, branch: 'main' };
+    // No `brief` field at all.
+    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer') });
+
+    const work = await runAgentWork(stepNode, ctx, lane, 'HEAD', {
+      kind: 'resume',
+      sessionId: 'session-x',
+    });
+
+    expect(work.failure).toBeUndefined();
     expect(capturedPrompt).toBe('');
   });
 

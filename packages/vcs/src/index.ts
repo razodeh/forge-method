@@ -12,7 +12,12 @@ export {
   type ClaimEnforcementResult,
   type SharedPathStrategyOptions,
 } from './claims.ts';
-export { assertSingleLine, commitInLane, formatCommitMessage, type CommitMessageOptions } from './commit.ts';
+export {
+  assertSingleLine,
+  commitInLane,
+  formatCommitMessage,
+  type CommitMessageOptions,
+} from './commit.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';
 export {
   assertCleanWorkingTree,
@@ -32,6 +37,7 @@ export {
   listOrphanedWorktrees,
   parseWorktreeBlocks,
   removeLaneWorktree,
+  resetLaneWorktree,
   slugifyStepId,
   type LaneHandle,
   type LaneId,

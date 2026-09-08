@@ -40,6 +40,9 @@ describe('reconstructRunState', () => {
       unresolvedStepIds: [],
       laneStatuses: new Map(),
       spentUsd: 0,
+      sessionIds: new Map(),
+      laneOrigins: new Map(),
+      artifactPaths: new Set(),
     });
   });
 
@@ -88,11 +91,22 @@ describe('reconstructRunState', () => {
       event({ type: 'RunStarted' }),
       event({ type: 'StepScheduled', stepId: 'wf:a' }),
       event({ type: 'StepStarted', stepId: 'wf:a' }),
-      event({ type: 'LaneCreated', laneId: 'lane-a' }),
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:a',
+        laneId: 'lane-a',
+        payload: { baseSha: 'base123' },
+      }),
       event({ type: 'SessionStarted', stepId: 'wf:a', laneId: 'lane-a' }),
+      event({
+        type: 'SessionEvent',
+        stepId: 'wf:a',
+        laneId: 'lane-a',
+        payload: { sessionId: 'session-9' },
+      }),
       event({ type: 'SessionEnded', stepId: 'wf:a', laneId: 'lane-a', payload: { ok: true } }),
       event({ type: 'LaneCommitted', laneId: 'lane-a' }),
-      event({ type: 'ArtifactCreated', payload: { artifactId: 'story:1' } }),
+      event({ type: 'ArtifactCreated', payload: { path: 'docs/story-1.md' } }),
       event({ type: 'KbWritten' }),
       event({ type: 'GateEvaluated', payload: { gateId: 'G-Test' } }),
       event({ type: 'GateApproved', payload: { gateId: 'G-Test' } }),
@@ -115,6 +129,9 @@ describe('reconstructRunState', () => {
     expect(state.laneStatuses.get('lane-a')).toBe('removed');
     expect(state.spentUsd).toBe(2.5);
     expect(state.unresolvedStepIds).toEqual([]);
+    expect(state.sessionIds.get('wf:a')).toBe('session-9');
+    expect(state.laneOrigins.get('lane-a')).toEqual({ stepId: 'wf:a', baseSha: 'base123' });
+    expect(state.artifactPaths).toEqual(new Set(['docs/story-1.md']));
   });
 
   it('RunAborted cascades to every step still scheduled, running, or escalated -- not to one already succeeded/failed/skipped', async () => {
@@ -253,4 +270,71 @@ describe('reconstructRunState', () => {
       expect(state.laneStatuses.size).toBe(0);
     },
   );
+
+  it('SessionEvent records the adapter session id for the step, taking the most recent one across retries', async () => {
+    const events = [
+      event({
+        type: 'SessionEvent',
+        stepId: 'wf:a',
+        laneId: 'lane-a',
+        payload: { sessionId: 'session-1' },
+      }),
+      event({
+        type: 'SessionEvent',
+        stepId: 'wf:a',
+        laneId: 'lane-a',
+        payload: { sessionId: 'session-2' },
+      }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.sessionIds.get('wf:a')).toBe('session-2');
+  });
+
+  it('a SessionEvent with no stepId, or a malformed/missing sessionId payload, leaves sessionIds untouched', async () => {
+    const events = [
+      event({ type: 'SessionEvent', payload: { sessionId: 'orphan' } }),
+      event({ type: 'SessionEvent', stepId: 'wf:a', payload: { sessionId: 42 } }),
+      event({ type: 'SessionEvent', stepId: 'wf:b', payload: undefined }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.sessionIds.size).toBe(0);
+  });
+
+  it('LaneCreated records the lane origin (owning step + base sha) when the payload carries a real baseSha', async () => {
+    const events = [
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:a',
+        laneId: 'lane-a',
+        payload: { baseSha: 'deadbeef' },
+      }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.laneOrigins.get('lane-a')).toEqual({ stepId: 'wf:a', baseSha: 'deadbeef' });
+  });
+
+  it('LaneCreated with no stepId or a malformed/missing baseSha leaves laneOrigins untouched for that lane, without throwing', async () => {
+    const events = [
+      event({ type: 'LaneCreated', laneId: 'lane-a', payload: { baseSha: 'deadbeef' } }),
+      event({ type: 'LaneCreated', stepId: 'wf:a', laneId: 'lane-b', payload: {} }),
+      event({ type: 'LaneCreated', stepId: 'wf:a', laneId: 'lane-c', payload: undefined }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.laneOrigins.size).toBe(0);
+    // The lane's own status is still recorded even when its origin cannot be -- one malformed/missing
+    // field never suppresses every other real effect the same event legitimately has.
+    expect(state.laneStatuses.get('lane-a')).toBe('created');
+  });
+
+  it('ArtifactCreated/ArtifactUpdated each record the artifact path, deduplicated across repeats', async () => {
+    const events = [
+      event({ type: 'ArtifactCreated', payload: { path: 'docs/story-014.md' } }),
+      event({ type: 'ArtifactUpdated', payload: { path: 'docs/story-014.md' } }),
+      event({ type: 'ArtifactUpdated', payload: { path: 'docs/adr-002.md' } }),
+      event({ type: 'ArtifactCreated', payload: { path: 42 } }),
+      event({ type: 'ArtifactCreated', payload: undefined }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.artifactPaths).toEqual(new Set(['docs/story-014.md', 'docs/adr-002.md']));
+  });
 });

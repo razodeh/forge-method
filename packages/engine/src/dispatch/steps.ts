@@ -120,7 +120,7 @@ function buildCommitMessage(node: StepNode, ctx: ExecuteStepContext, subject: st
  * non-inline `runCommandStep`, since both need the identical create/commit/enforce sequence and differ
  * only in *what actually produces the changes* (an adapter session vs a shell command) — parameterised via
  * `runWork`, not duplicated. */
-async function runLaneLifecycle(
+export async function runLaneLifecycle(
   node: StepNode,
   ctx: ExecuteStepContext,
   startedAt: number,
@@ -139,20 +139,43 @@ async function runLaneLifecycle(
     readonly detail: StepOutcomeDetail;
     readonly failure?: StepFailureInfo;
   }>,
+  /** `@forge/engine/resume` (P19)'s own "roll the lane worktree back... and re-run" path reuses this
+   * exact create/commit/enforce sequence against a lane that already exists (rolled back in place by
+   * `rollbackLaneToBase`, never recreated — `06` §6.10 step 2's own resume is explicitly *not* a second
+   * `git worktree add`), with `baseSha` fixed at the lane's own original divergence point (`LaneCreated`'s
+   * own `payload.baseSha`, `laneOrigins` in `RunState`) rather than re-resolved against
+   * `ctx.integrationBase`, which may have moved on since — re-resolving it here would silently widen or
+   * narrow the claim-enforcement diff window below against a base the lane was never actually built from.
+   * `undefined` (every existing caller in this module) means "create a fresh lane," this function's own
+   * original and only behaviour before P19. */
+  existing?: { readonly lane: LaneHandle; readonly baseSha: string },
 ): Promise<StepOutcome> {
-  const baseShaResult = await runVcsStep(node.id, () =>
-    ctx.vcs.resolveRevision(ctx.integrationBase),
-  );
-  if (!baseShaResult.ok)
-    return failed(node.id, startedAt, ctx.now(), emptyDetail, baseShaResult.failure);
-  const baseSha = baseShaResult.value;
+  let lane: LaneHandle;
+  let baseSha: string;
+  if (existing === undefined) {
+    const baseShaResult = await runVcsStep(node.id, () =>
+      ctx.vcs.resolveRevision(ctx.integrationBase),
+    );
+    if (!baseShaResult.ok)
+      return failed(node.id, startedAt, ctx.now(), emptyDetail, baseShaResult.failure);
 
-  const laneResult = await runVcsStep(node.id, () =>
-    ctx.vcs.createLane(node.id, ctx.integrationBase),
-  );
-  if (!laneResult.ok) return failed(node.id, startedAt, ctx.now(), emptyDetail, laneResult.failure);
-  const lane = laneResult.value;
-  await ctx.telemetry.emit({ type: 'LaneCreated', stepId: node.id, laneId: lane.laneId });
+    const laneResult = await runVcsStep(node.id, () =>
+      ctx.vcs.createLane(node.id, ctx.integrationBase),
+    );
+    if (!laneResult.ok)
+      return failed(node.id, startedAt, ctx.now(), emptyDetail, laneResult.failure);
+    lane = laneResult.value;
+    baseSha = baseShaResult.value;
+    await ctx.telemetry.emit({
+      type: 'LaneCreated',
+      stepId: node.id,
+      laneId: lane.laneId,
+      payload: { baseSha },
+    });
+  } else {
+    lane = existing.lane;
+    baseSha = existing.baseSha;
+  }
 
   const work = await runWork(lane, baseSha);
 
@@ -232,6 +255,110 @@ function buildSessionRequest(
   };
 }
 
+/** Acquires an agent session for `lane` — either a fresh one (`source.kind === 'start'`) or a resumed
+ * one against an existing `sessionId` (`source.kind === 'resume'`, `@forge/engine/resume` P19's own
+ * "resume the adapter session if supported and still valid" path) — then folds its result into the
+ * `runLaneLifecycle`-shaped `{changed, commitSubject, detail, failure?}` `runWork` contract, identically
+ * for both: a resumed session still gets committed and claim-enforced exactly like a fresh one, since
+ * nothing about *how* the session was acquired changes what `06` §6.4 step 3 onward does with its
+ * result. Factored out of `runAgentStep` (previously its own inline closure) specifically so P19 can
+ * reuse this exact acquire/commit/enforce sequence for a resumed step rather than a second, drifting
+ * copy of it — the identical "one implementation, not two that could disagree" reasoning
+ * `runScriptPhases` already gives inside `@forge/testkit`'s own fake adapter for the analogous fresh-vs-
+ * resumed split at that layer. */
+export async function runAgentWork(
+  node: StepNode,
+  ctx: ExecuteStepContext,
+  lane: LaneHandle,
+  baseSha: string,
+  source: { readonly kind: 'start' } | { readonly kind: 'resume'; readonly sessionId: string },
+): Promise<{
+  readonly changed: boolean;
+  readonly commitSubject: string;
+  readonly detail: StepOutcomeDetail;
+  readonly failure?: StepFailureInfo;
+}> {
+  await ctx.telemetry.emit({
+    type: 'SessionStarted',
+    stepId: node.id,
+    laneId: lane.laneId,
+    agentId: node.agent,
+  });
+  const abortController = new AbortController();
+  let session;
+  try {
+    const handle =
+      source.kind === 'start'
+        ? await ctx.adapter.startSession(
+            buildSessionRequest(node, ctx, lane.path, abortController.signal),
+          )
+        : await ctx.adapter.resumeSession(source.sessionId, {
+            prompt: node.brief ?? '',
+            limits: {
+              maxTurns: node.limits.maxTurns,
+              wallClockMs: node.limits.wallClockMs,
+              maxCostUsd: node.limits.maxCostUsd,
+            },
+            abortSignal: abortController.signal,
+          });
+    // The one real, registered event this whole build's own P19 research found no producer of anywhere:
+    // the adapter's own session id, needed by a later resume to even attempt `resumeSession` at all
+    // (`@forge/engine/resume`'s own `RunState.sessionIds`). Emitted here -- after a handle is actually
+    // acquired, before `handle.result()` is awaited -- so it is durable (`18` §18.10's write-before-effect
+    // discipline) even if the session itself crashes mid-stream before ever producing a result.
+    await ctx.telemetry.emit({
+      type: 'SessionEvent',
+      stepId: node.id,
+      laneId: lane.laneId,
+      agentId: node.agent,
+      payload: { sessionId: handle.sessionId },
+    });
+    session = await handle.result();
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    await ctx.telemetry.emit({
+      type: 'AdapterError',
+      stepId: node.id,
+      laneId: lane.laneId,
+      agentId: node.agent,
+      payload: { message },
+    });
+    // A crash can land here after real tool-use writes already reached the lane worktree (a
+    // session dropped mid-stream, not just one that never started) -- checked for real via
+    // hasChanges rather than assumed false, so those writes still get committed and claim-enforced
+    // instead of being silently left uncommitted and lost once the lane is eventually cleaned up.
+    return {
+      changed: await ctx.vcs.hasChanges(lane, baseSha),
+      commitSubject: 'partial work before an adapter session crash',
+      detail: { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      failure: { source: 'adapter', message },
+    };
+  }
+  await ctx.telemetry.emit({
+    type: 'SessionEnded',
+    stepId: node.id,
+    laneId: lane.laneId,
+    agentId: node.agent,
+    payload: { ok: session.ok },
+  });
+
+  const detail: StepOutcomeDetail = { kind: 'agent', session };
+  if (!session.ok) {
+    const message = session.error?.message ?? 'Session ended without success.';
+    return {
+      changed: session.changedFiles.length > 0,
+      commitSubject: session.finalText.slice(0, 72),
+      detail,
+      failure: { source: 'adapter', code: session.error?.code, message },
+    };
+  }
+  return {
+    changed: session.changedFiles.length > 0,
+    commitSubject: session.finalText.slice(0, 72) || node.id,
+    detail,
+  };
+}
+
 export async function runAgentStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   const startedAt = ctx.now();
   await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
@@ -248,64 +375,7 @@ export async function runAgentStep(node: StepNode, ctx: ExecuteStepContext): Pro
     ctx,
     startedAt,
     { kind: 'agent', session: EMPTY_SESSION_RESULT },
-    async (lane, baseSha) => {
-      await ctx.telemetry.emit({
-        type: 'SessionStarted',
-        stepId: node.id,
-        laneId: lane.laneId,
-        agentId: node.agent,
-      });
-      const abortController = new AbortController();
-      let session;
-      try {
-        const handle = await ctx.adapter.startSession(
-          buildSessionRequest(node, ctx, lane.path, abortController.signal),
-        );
-        session = await handle.result();
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        await ctx.telemetry.emit({
-          type: 'AdapterError',
-          stepId: node.id,
-          laneId: lane.laneId,
-          agentId: node.agent,
-          payload: { message },
-        });
-        // A crash can land here after real tool-use writes already reached the lane worktree (a
-        // session dropped mid-stream, not just one that never started) -- checked for real via
-        // hasChanges rather than assumed false, so those writes still get committed and claim-enforced
-        // instead of being silently left uncommitted and lost once the lane is eventually cleaned up.
-        return {
-          changed: await ctx.vcs.hasChanges(lane, baseSha),
-          commitSubject: 'partial work before an adapter session crash',
-          detail: { kind: 'agent', session: EMPTY_SESSION_RESULT },
-          failure: { source: 'adapter', message },
-        };
-      }
-      await ctx.telemetry.emit({
-        type: 'SessionEnded',
-        stepId: node.id,
-        laneId: lane.laneId,
-        agentId: node.agent,
-        payload: { ok: session.ok },
-      });
-
-      const detail: StepOutcomeDetail = { kind: 'agent', session };
-      if (!session.ok) {
-        const message = session.error?.message ?? 'Session ended without success.';
-        return {
-          changed: session.changedFiles.length > 0,
-          commitSubject: session.finalText.slice(0, 72),
-          detail,
-          failure: { source: 'adapter', code: session.error?.code, message },
-        };
-      }
-      return {
-        changed: session.changedFiles.length > 0,
-        commitSubject: session.finalText.slice(0, 72) || node.id,
-        detail,
-      };
-    },
+    (lane, baseSha) => runAgentWork(node, ctx, lane, baseSha, { kind: 'start' }),
   );
 }
 

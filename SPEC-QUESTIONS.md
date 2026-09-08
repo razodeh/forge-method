@@ -6181,3 +6181,144 @@ real findings a critic round exists to catch, but the second is the more instruc
 build's own discipline: a doc comment asserting "this is tested" is itself a claim that needs verifying,
 not a substitute for checking whether the test actually exists and actually proves what the comment says
 it does.
+
+## Q81 — M5 P19's `@forge/engine/resume` orchestration: `06` §6.10 steps 2-4 — resume-vs-reroll, orphaned-
+worktree reclamation, and artifact reconciliation, the milestone's own defining criterion, built on top of
+three retroactive touches to already-committed P15/P18 code and one new `@forge/vcs` primitive
+
+`06` §6.10 steps 2-4 is deliberately terse relative to how much real invention it requires: "resume the
+adapter session if supported and still valid, else roll the lane worktree back to its last FORGE commit
+(or lane base) and re-run from the step's own `idempotencyKey`; re-validate every artifact produced so
+far... ; re-enter the scheduler loop." Every one of those clauses turned out to need either a genuinely new
+mechanism (nothing in `@forge/vcs` could roll a worktree back at all) or a retroactive extension to an
+already-committed piece (P15's dispatch layer never logged the adapter's own session id anywhere, so a
+resume would have nothing to resume *with*).
+
+1. **`SessionEvent` retroactive fix (P15, already-committed `steps.ts`).** A real, registered `EventType`
+   with a no-op reducer case in P18's own `reconstructRunState` but no producer anywhere in the codebase
+   (confirmed via grep before starting). `runAgentStep`'s own inline session-acquisition closure was
+   refactored out into a new, exported `runAgentWork(node, ctx, lane, baseSha, source)` — parameterised
+   over `source: {kind:'start'} | {kind:'resume', sessionId}` so the identical acquire → commit → claim-
+   enforce sequence serves both a fresh session and (P19's own need) a resumed one, rather than a second,
+   drifting copy of that sequence living in `@forge/engine/resume`. `SessionEvent` is now emitted right
+   after a handle is acquired, before `handle.result()` is awaited — durable (`18` §18.10's write-before-
+   effect discipline) even if the session itself crashes before ever producing a result. This changed the
+   exact `18` §18.4 event sequence three already-committed `agent.test.ts` tests assert byte-for-byte;
+   updated all three (a `SessionEvent` inserted between `SessionStarted`/`SessionEnded`, `seq` extended by
+   one) rather than loosening the assertions.
+2. **`LaneCreated.payload.baseSha` retroactive fix (P15, `runLaneLifecycle`).** `@forge/vcs`'s own
+   `LaneHandle` has no commit-sha field at all, and P19's own claim-enforcement-after-resume needs the
+   *original* base a lane's own branch diverged from — re-resolving `ctx.integrationBase` fresh at resume
+   time would silently use wherever integration has since advanced to, not this lane's own actual base,
+   corrupting the claim diff. `runLaneLifecycle` now also accepts an optional `existing: {lane, baseSha}`
+   param (skip `createLane`, reuse a caller-supplied lane and its own recorded base) — P19's own reroll
+   path is the first real caller.
+3. **`RunState` extended (P18, already-committed `types.ts`/`reconstruct.ts`) with three new fields**:
+   `sessionIds` (stepId → latest `SessionEvent.payload.sessionId`), `laneOrigins` (laneId →
+   `{stepId, baseSha}`, from `LaneCreated`'s new payload), `artifactPaths` (from `ArtifactCreated`/
+   `ArtifactUpdated`'s own invented `payload.path` — no real producer of either event exists anywhere yet,
+   confirmed via grep; this field is directly testable now against hand-built events regardless, matching
+   this whole piece's own "a genuine, already-satisfiable dependency, not a forward reference" standing).
+   All three are additive, each with its own dedicated leniency tests (missing/malformed field → the field
+   is simply absent, never a thrown error, matching the reducer's own already-established discipline).
+4. **`resetLaneWorktree` (new, `@forge/vcs`)**: `git reset --hard <resolved-target>` + `git clean -fd`,
+   scoped to `handle.path` alone — confirmed via `resolveRevision`'s own reuse that a flag-shaped target
+   is rejected rather than silently misinterpreted, the identical defence `createLaneWorktree` already
+   applies to `integrationBase`. `git clean -fd` runs as its own second step, not merged into the reset:
+   `reset --hard` alone only rewinds *tracked* content, and a crash mid-session can leave real, never-
+   staged files behind that only `clean` removes.
+5. **`rollbackLaneToBase(handle, lastKnownGoodCommit)`'s own target, for the real `resumeRun` call, is
+   always `'HEAD'` resolved *inside the lane's own worktree*** — not a separately-tracked "last known good
+   commit" value. `06` §6.10's own "its last FORGE commit (or lane base)" is exactly what a lane's own
+   current `HEAD` already is: a lane that never committed has `HEAD` still at its own base (`git worktree
+   add` checks it out there), one that did has `HEAD` at that last real commit. No new per-lane state
+   needed to get this right — confirmed directly against a critic-round finding (design point 8 below).
+6. **`decideResumeStrategy(sessionId, capabilities)` is a pure function**, deliberately: whether a session
+   is even worth *attempting* to resume is knowable from `capabilities.sessionResume` and the presence of
+   a remembered `sessionId` alone. "Still valid" cannot be predicted without actually attempting it
+   (`PlatformAdapter` has no separate probe method) — genuine validity is confirmed empirically by
+   `resumeAgentStep`'s own attempt-then-fallback (design point 8).
+7. **`revalidateArtifacts(runState, projectRoot): readonly ReconciliationIssue[]` is synchronous**,
+   matching the plan's own literal signature (no `Promise<>`, unlike every other surface function here) —
+   every dependency it needs (`ProjectPaths.resolveWithin`, `ArtifactDocument.parse`, `validateArtifact`)
+   is itself synchronous; `node:fs`'s `readFileSync` closes the one gap. "Hand-edit mismatch" (`06` §6.10's
+   own phrase) is read as "this artifact currently fails `validateArtifact`," not a genuine byte-level
+   content diff — nothing in `@forge/core/artifacts` has any hash/checksum/diff mechanism to diff against
+   (confirmed via grep), and a later milestone that adds real content-hashing can widen this without
+   changing the signature.
+8. **`resumeRun`'s own scope, narrowed deliberately**: full resume-vs-reroll execution is built only for
+   `agent`-kind unresolved steps. A `command`-kind step, one with no compiled `StepNode` in the caller-
+   supplied `ResumeContext.steps` (a genuine "the plan's own bullet undersells the signature" addition —
+   `RunState` alone cannot turn a bare stepId back into a real `StepNode`), or one with no recorded lane
+   origin, all reset to `'scheduled'` instead, letting the ordinary scheduler loop re-run them via a fresh
+   lane the normal way rather than this piece inventing a second, narrower re-run path duplicating the one
+   that already exists.
+
+### Round 1 — fresh critic: 2 MAJOR, both fixed (one fix itself introduced a third, also fixed same round)
+
+**MAJOR: stale lane worktree collision on the `'scheduled'` fallback.** `runCommandStep`'s own non-inline
+path creates a real lane exactly like an agent step does — so a `command`-kind (or no-node, or no-origin)
+unresolved step that already reached its own `LaneCreated` before crashing left a real worktree/branch
+behind that the fallback path never cleaned up. The *next* scheduled run of that step calls `ctx.vcs.
+createLane` again, which derives the identical `laneId`/branch/path deterministically from `(runId,
+stepId)` — colliding with git's own "branch/worktree already exists" refusal. **Fixed** via a new
+`removeStaleLaneIfAny` helper, called whenever `resumeOneStep` returns `undefined`, removing any lane
+`RunState.laneStatuses` shows was ever created for that step id before resetting it to `'scheduled'` (and
+updating the returned `RunState.laneStatuses` to `'removed'` to match). **While testing this fix**, a
+second, real, previously-latent bug surfaced: the lane path was recomputed from `ctx.projectRoot` directly
+via `path.join`, never resolved through `realpath` first — but every one of `@forge/vcs`'s own worktree
+functions do resolve `cwd` through `realpath` before computing or comparing any worktree path (`lanes.ts`'s
+own `resolveCwd` doc comment: `os.tmpdir()` is itself a symlink on macOS, confirmed empirically in a prior
+gauntlet round). The mismatch silently made `removeLaneWorktree`'s own internal `isRegisteredWorktree`
+check miss the real worktree, skipping `git worktree remove` while `git branch -D` still ran — failing with
+"cannot delete branch checked out at..." since the worktree was, genuinely, still there. **Fixed** by
+resolving `ctx.projectRoot` through `realpath` before computing any lane path.
+
+**MAJOR: `decideResumeStrategy`'s own doc comment claimed a runtime fallback existed that didn't.** The
+comment said "genuine validity is confirmed empirically, at execution time, by `resumeRun` itself
+attempting the resume and falling back to a reroll on failure" — aspirational, not real: a `'resume-
+session'` attempt that failed was reported straight through as a failed step, with no actual fallback,
+contradicting both `06` §6.10's own "if supported and still valid, else roll back... and re-run" language
+and the comment's own claim. **Fixed** via a new `resumeAgentStep` that attempts the resume first and, if
+that attempt's own `StepOutcome.status` is not `'succeeded'`, falls back to the identical fresh-reroll path
+a `'reroll'` verdict would have taken from the start. A resumed session that runs to completion but the
+underlying task itself genuinely fails also takes this same retry — indistinguishable from this layer, and
+not a new problem: `@forge/engine/failures`' own retry machinery already treats more than one `SessionStarted`/`SessionEnded` pair for the identical step across attempts as ordinary, expected history.
+
+### Round 2 — scoped verify: 1 MAJOR found in the Round-1 fix itself, fixed
+
+**MAJOR: the fallback's own rollback target was resolved at the wrong time.** The Round-1 fix for the
+second finding rolled back to a *freshly re-resolved* `'HEAD'`, resolved only *after* the failed resume
+attempt had already run — but `runAgentWork`'s own already-documented behaviour commits real partial writes
+even on a failed attempt ("a crash can land here after real tool-use writes already reached the lane
+worktree... those writes still get committed"). A failed resume attempt that wrote and committed anything
+had therefore already advanced `HEAD` by the time the rollback ran, making `rollbackLaneToBase(lane,
+'HEAD')` a no-op against exactly the stale content the fallback exists to discard — the "fresh" reroll would
+silently inherit it. **Fixed** by capturing the lane's `HEAD` via `resolveRevision` *before* the resume
+attempt is ever made, and rolling back to that captured value instead. Confirmed destructively both ways: a
+regression test reproducing the exact scenario (a resumed session that writes and gets committed, then
+fails) passes with the fix and genuinely fails without it — the first version of this same test did *not*
+catch the bug, because the test's own declared `produces` claim left the partial file out-of-claim, so
+claim enforcement alone stripped it regardless of the rollback timing; widening `produces` to cover it was
+what made the regression test actually load-bearing.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3346 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file except two already-documented, provably-unreachable defensive branches (a `noUncheckedIndexedAccess`-required `?? node.id` guard in `buildCommitMessage`, pre-existing; a `String(cause)`
+fallback in `revalidateArtifacts`'s own `describeArtifactFailure` for a non-`Error` throw no real call path
+here can actually produce).
+
+### Calibration note
+
+This piece's own Round-2 finding is a sharper version of a pattern this build has now hit more than once:
+a fix that is locally correct in isolation (roll back to `HEAD` — true, `HEAD` really is the right target
+*in general*) can still be wrong once *timing* is accounted for, if the very attempt the fix exists to
+recover from can itself mutate the value being resolved. The lesson generalises past this one bug: whenever
+a fallback recomputes a "current state" value *after* an attempt that might have changed that state, the
+right question is not "is this value correct" but "correct as of when" — and the fix here (capture before,
+not after) is the general shape of the answer, not a one-off patch. Separately: the verify round's own
+discovery that the *first* version of its own regression test didn't actually reproduce the bug (claim
+enforcement masked it) is itself worth naming as a reusable check — a regression test for "X survived when
+it shouldn't have" is only as strong as its own guarantee that nothing *else* in the pipeline would also
+have removed X for an unrelated reason; proving that requires the same destructive on/off test this build
+already applies to the *fix*, applied once more to the *test* itself.

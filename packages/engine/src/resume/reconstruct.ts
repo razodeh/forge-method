@@ -23,6 +23,9 @@ interface Accumulator {
   readonly stepStatuses: Map<string, StepReconstructedStatus>;
   readonly laneStatuses: Map<string, LaneReconstructedStatus>;
   spentUsd: number;
+  readonly sessionIds: Map<string, string>;
+  readonly laneOrigins: Map<string, { readonly stepId: string; readonly baseSha: string }>;
+  readonly artifactPaths: Set<string>;
 }
 
 function isFiniteNonNegativeNumber(value: unknown): value is number {
@@ -53,6 +56,12 @@ function extractCostUsd(payload: unknown): number {
   if (typeof payload !== 'object' || payload === null) return 0;
   const value = (payload as Record<string, unknown>)['costUsd'];
   return isFiniteNonNegativeNumber(value) ? value : 0;
+}
+
+function extractStringField(payload: unknown, field: string): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)[field];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
 /** `RunAborted` cascades: every step not already in one of the three terminal-or-skipped statuses
@@ -140,7 +149,19 @@ function applyEvent(acc: Accumulator, event: ForgeEvent): Accumulator {
       return acc;
 
     case 'LaneCreated':
-      if (event.laneId !== undefined) acc.laneStatuses.set(event.laneId, 'created');
+      if (event.laneId !== undefined) {
+        acc.laneStatuses.set(event.laneId, 'created');
+        // Malformed/missing baseSha leaves this lane simply absent from laneOrigins rather than
+        // recorded with a bogus baseSha -- the identical "a corrupted single event should not make the
+        // whole reconstruction impossible, nor should it fabricate a value nothing actually supplied"
+        // leniency extractPlanRef/extractCostUsd already take, applied here to a field (unlike those
+        // two) with no safe fallback value to default to at all.
+        const stepId = event.stepId;
+        const baseSha = extractStringField(event.payload, 'baseSha');
+        if (stepId !== undefined && baseSha !== undefined) {
+          acc.laneOrigins.set(event.laneId, { stepId, baseSha });
+        }
+      }
       return acc;
     case 'LaneCommitted':
       if (event.laneId !== undefined) acc.laneStatuses.set(event.laneId, 'committed');
@@ -159,15 +180,27 @@ function applyEvent(acc: Accumulator, event: ForgeEvent): Accumulator {
       acc.spentUsd += extractCostUsd(event.payload);
       return acc;
 
+    case 'SessionEvent':
+      // "Most recent wins," not "first": see RunState.sessionIds' own doc comment.
+      if (event.stepId !== undefined) {
+        const sessionId = extractStringField(event.payload, 'sessionId');
+        if (sessionId !== undefined) acc.sessionIds.set(event.stepId, sessionId);
+      }
+      return acc;
+
+    case 'ArtifactCreated':
+    case 'ArtifactUpdated': {
+      const artifactPath = extractStringField(event.payload, 'path');
+      if (artifactPath !== undefined) acc.artifactPaths.add(artifactPath);
+      return acc;
+    }
+
     // Real, registered event types with no dedicated RunState field of their own -- see this function's
     // own doc comment for why each still needs its own named case.
     case 'SessionStarted':
-    case 'SessionEvent':
     case 'SessionEnded':
     case 'AdapterError':
     case 'AdapterRetry':
-    case 'ArtifactCreated':
-    case 'ArtifactUpdated':
     case 'ArtifactValidated':
     case 'ArtifactRejected':
     case 'KbWritten':
@@ -213,6 +246,9 @@ export async function reconstructRunState(events: AsyncIterable<ForgeEvent>): Pr
     stepStatuses: new Map(),
     laneStatuses: new Map(),
     spentUsd: 0,
+    sessionIds: new Map(),
+    laneOrigins: new Map(),
+    artifactPaths: new Set(),
   };
 
   for await (const event of events) {
@@ -239,6 +275,9 @@ export async function reconstructRunState(events: AsyncIterable<ForgeEvent>): Pr
     unresolvedStepIds,
     laneStatuses: acc.laneStatuses,
     spentUsd: acc.spentUsd,
+    sessionIds: acc.sessionIds,
+    laneOrigins: acc.laneOrigins,
+    artifactPaths: acc.artifactPaths,
   };
 }
 

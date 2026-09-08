@@ -74,4 +74,53 @@ export interface RunState {
   readonly unresolvedStepIds: readonly string[];
   readonly laneStatuses: ReadonlyMap<string, LaneReconstructedStatus>;
   readonly spentUsd: number;
+  /** stepId → the adapter's own session id, from `SessionEvent`'s own `payload.sessionId` (`@forge/engine/
+   * dispatch`'s `runAgentWork`, P19) — the one thing `06` §6.10 step 2 needs to even attempt
+   * `decideResumeStrategy`'s `'resume-session'` branch at all. "Whichever `SessionEvent` happened most
+   * recently for this step" (the same "most recent transition wins" shape every other per-key `RunState`
+   * map already uses), not "the first" — a step can legitimately acquire more than one session across its
+   * own retry history (P16), and only the *latest* one is ever a live candidate to resume. `undefined`
+   * for a step whose session never reached the point of an acquired handle at all (P19's own
+   * `decideResumeStrategy` already treats a missing sessionId as "reroll," so no separate tri-state is
+   * needed here). */
+  readonly sessionIds: ReadonlyMap<string, string>;
+  /** laneId → the lane's own origin: the step it was created for, and the exact commit it branched from
+   * (`LaneCreated`'s own `payload.baseSha`, added alongside `SessionEvent` for the identical P19 need).
+   * `@forge/engine/resume`'s own `resumeRun` (P19) needs both to reuse an existing lane correctly: which
+   * step's own unresolved `StepStarted` a given lane belongs to (to find it at all), and the exact base
+   * to keep enforcing claims against after a resume — re-resolving `ctx.integrationBase` fresh at resume
+   * time would silently use whatever integration has advanced to since, not the base this lane's own
+   * work was actually diffed against the first time. */
+  readonly laneOrigins: ReadonlyMap<string, { readonly stepId: string; readonly baseSha: string }>;
+  /** Every real, on-disk artifact path a resumed run has produced so far — from `ArtifactCreated`/
+   * `ArtifactUpdated`'s own invented `payload.path` (project-root-relative, `@forge/core`'s own
+   * `ProjectPaths.resolveWithin` shape), the identical "spec gives no payload shape, this piece invents
+   * one and documents it" situation `RunPlanned.payload.planRef` already resolved once (`types.ts`'s own
+   * doc comment above). No real production emitter of either event exists yet (`Q62`: real artifact
+   * content is M6 scope) — this field exists so `@forge/engine/resume`'s own `revalidateArtifacts` (P19)
+   * has something real to re-validate against once one does, and is directly testable now against
+   * hand-built events, the same "a genuine, already-satisfiable dependency, not a forward reference"
+   * standing this whole piece's own Depends-on list already claims for `@forge/core`. */
+  readonly artifactPaths: ReadonlySet<string>;
+}
+
+/** `06` §6.10 step 3's own "re-validate every artifact produced so far... surfacing a hand-edit mismatch
+ * as a reconciliation prompt — the prompt *content* is produced here, presentation is a later
+ * milestone's TUI/CLI concern" — `revalidateArtifacts`' own return shape, one entry per artifact this
+ * milestone's own `@forge/core` validator (M1) can already tell is wrong. `06` §6.10's own text says
+ * "hand-edit mismatch," which would ideally mean "the file's live content disagrees with what FORGE
+ * itself last wrote" — a real content-diff, requiring some remembered prior version to diff against.
+ * Nothing in this codebase remembers one (confirmed directly: no hash/checksum/diff mechanism exists
+ * anywhere under `@forge/core/artifacts`, and `ArtifactCreated`/`ArtifactUpdated` carry no such value
+ * either) — so for this milestone's own real, buildable scope, "mismatch" is read as "this artifact
+ * currently fails `validateArtifact`" (schema-invalid front matter, an unregistered `type`, a missing
+ * required section, or the file being gone/unreadable entirely) rather than a genuine byte-level diff.
+ * A later milestone that adds real content-hashing to the event log can widen this without changing
+ * `revalidateArtifacts`' own signature. */
+export interface ReconciliationIssue {
+  /** Project-root-relative, matching `RunState.artifactPaths`' own convention. */
+  readonly path: string;
+  /** A human-readable summary of what is wrong — `ForgeError.message`(s) joined, when the cause was a
+   * real validation failure; a fixed, honest sentence for "the file itself is gone." */
+  readonly reason: string;
 }

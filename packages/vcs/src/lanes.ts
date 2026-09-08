@@ -69,7 +69,10 @@ export function slugifyStepId(stepId: string): string {
     .slice(0, SLUG_MAX_READABLE_LENGTH)
     .replace(/-+$/g, '');
   const base = readable === '' ? 'step' : readable;
-  const disambiguator = createHash('sha256').update(stepId).digest('hex').slice(0, SLUG_HASH_LENGTH);
+  const disambiguator = createHash('sha256')
+    .update(stepId)
+    .digest('hex')
+    .slice(0, SLUG_HASH_LENGTH);
   return `${base}-${disambiguator}`;
 }
 
@@ -124,7 +127,8 @@ export async function createLaneWorktree(
   const resolvedBase = await resolveRevision(resolvedCwd, options.integrationBase);
 
   await wrapGitFailure(
-    () => execa('git', ['worktree', 'add', '-b', branch, target, resolvedBase], { cwd: resolvedCwd }),
+    () =>
+      execa('git', ['worktree', 'add', '-b', branch, target, resolvedBase], { cwd: resolvedCwd }),
     `creating lane worktree for "${options.stepId}" (run "${options.runId}")`,
   );
 
@@ -138,7 +142,9 @@ export async function createLaneWorktree(
 async function isRegisteredWorktree(cwd: string, targetPath: string): Promise<boolean> {
   const { stdout } = await execa('git', ['worktree', 'list', '--porcelain'], { cwd });
   const resolvedTarget = path.resolve(targetPath);
-  return extractWorktreePaths(stdout).some((worktreePathValue) => path.resolve(worktreePathValue) === resolvedTarget);
+  return extractWorktreePaths(stdout).some(
+    (worktreePathValue) => path.resolve(worktreePathValue) === resolvedTarget,
+  );
 }
 
 /** Whether `branch` currently exists — `git branch --list <branch>` reliably returns empty output
@@ -176,14 +182,24 @@ export async function removeLaneWorktree(
 ): Promise<void> {
   if (options.retain) return;
 
-  if (await wrapGitFailure(() => isRegisteredWorktree(cwd, handle.path), `checking worktree state at "${handle.path}"`)) {
+  if (
+    await wrapGitFailure(
+      () => isRegisteredWorktree(cwd, handle.path),
+      `checking worktree state at "${handle.path}"`,
+    )
+  ) {
     await wrapGitFailure(
       () => execa('git', ['worktree', 'remove', '-f', '-f', handle.path], { cwd }),
       `removing lane worktree at "${handle.path}"`,
     );
   }
 
-  if (await wrapGitFailure(() => branchExists(cwd, handle.branch), `checking whether branch "${handle.branch}" exists`)) {
+  if (
+    await wrapGitFailure(
+      () => branchExists(cwd, handle.branch),
+      `checking whether branch "${handle.branch}" exists`,
+    )
+  ) {
     await wrapGitFailure(
       () => execa('git', ['branch', '-D', handle.branch], { cwd }),
       `deleting lane branch "${handle.branch}"`,
@@ -222,7 +238,8 @@ export function parseWorktreeBlocks(porcelain: string): readonly ParsedWorktreeB
       const branchMatch = BRANCH_LINE.exec(line);
       if (branchMatch !== null) branchName = branchMatch[1];
     }
-    if (worktreePathValue !== undefined) blocks.push({ path: worktreePathValue, branch: branchName });
+    if (worktreePathValue !== undefined)
+      blocks.push({ path: worktreePathValue, branch: branchName });
   }
   return blocks;
 }
@@ -251,9 +268,38 @@ function parseLaneWorktrees(porcelain: string, mainWorktreePath: string): readon
     const runId = laneBranchMatch[1] as string;
     // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
     const slug = laneBranchMatch[2] as string;
-    handles.push({ laneId: formatLaneId(runId, slug), path: worktreePathValue, branch: branchName });
+    handles.push({
+      laneId: formatLaneId(runId, slug),
+      path: worktreePathValue,
+      branch: branchName,
+    });
   }
   return handles;
+}
+
+/** `06` §6.10 step 2's own "roll the lane worktree back to its last FORGE commit (or lane base)" —
+ * a real `git reset --hard <targetCommit>` plus `git clean -fd`, both scoped to `handle.path` alone
+ * (`cwd: handle.path`, never the main repository) — this can never touch the integration branch, only
+ * the disposable lane branch/worktree `handle` itself names, matching `20` §20.2 point 4's "never
+ * rewrites published history" (a lane branch is not published history; integration is). `targetCommit`
+ * is resolved via `resolveRevision` before being handed to `git reset`, not passed through raw — the
+ * identical flag-injection defence `createLaneWorktree` already applies to `integrationBase`, and for
+ * the identical reason: `resolveRevision`'s own doc comment confirms empirically that an unresolved,
+ * flag-shaped ref reaching a git subcommand as a trailing argument is not safely rejected by git itself.
+ * `git clean -fd` runs after the reset, not merged into one call: a crash mid-session can leave behind
+ * new, never-staged files a bare `reset --hard` does not remove (it only rewinds tracked content), and
+ * `06` §6.10 step 2's own "roll... back" is understood to mean a pristine lane worktree, not merely one
+ * whose tracked files match a prior commit. */
+export async function resetLaneWorktree(handle: LaneHandle, targetCommit: string): Promise<void> {
+  const resolved = await resolveRevision(handle.path, targetCommit);
+  await wrapGitFailure(
+    () => execa('git', ['reset', '--hard', resolved], { cwd: handle.path }),
+    `resetting lane worktree at "${handle.path}" to "${resolved}"`,
+  );
+  await wrapGitFailure(
+    () => execa('git', ['clean', '-fd'], { cwd: handle.path }),
+    `cleaning untracked files from lane worktree at "${handle.path}"`,
+  );
 }
 
 /** Every worktree `git` itself already knows about whose branch matches the `forge/<runId>/<slug>`
@@ -273,5 +319,7 @@ export async function listOrphanedWorktrees(
     () => execa('git', ['worktree', 'list', '--porcelain'], { cwd: resolvedCwd }),
     `listing worktrees for "${resolvedCwd}"`,
   );
-  return parseLaneWorktrees(stdout, resolvedCwd).filter((handle) => !knownLaneIds.has(handle.laneId));
+  return parseLaneWorktrees(stdout, resolvedCwd).filter(
+    (handle) => !knownLaneIds.has(handle.laneId),
+  );
 }

@@ -16,9 +16,11 @@ export {
 } from './facades.ts';
 export {
   runAgentStep,
+  runAgentWork,
   runCheckpointStep,
   runCommandStep,
   runGateStep,
+  runLaneLifecycle,
   runMergeStep,
 } from './steps.ts';
 export { runShellCommand, type ShellCommandResult } from './shell.ts';

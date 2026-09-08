@@ -15,6 +15,8 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 
+import { readFile, writeFile } from 'node:fs/promises';
+
 import { VcsError } from '../src/errors.ts';
 import {
   createLaneWorktree,
@@ -22,6 +24,7 @@ import {
   listOrphanedWorktrees,
   parseWorktreeBlocks,
   removeLaneWorktree,
+  resetLaneWorktree,
   slugifyStepId,
 } from '../src/lanes.ts';
 
@@ -45,12 +48,16 @@ describe('slugifyStepId', () => {
   });
 
   it('is deterministic — the same input always slugifies identically, byte for byte', () => {
-    const results = new Set(Array.from({ length: 5 }, () => slugifyStepId('Build-Stage:Implement:STORY-014')));
+    const results = new Set(
+      Array.from({ length: 5 }, () => slugifyStepId('Build-Stage:Implement:STORY-014')),
+    );
     expect(results.size).toBe(1);
   });
 
   it('replaces colons — an ordinary part of the real 06 §6.2 step id format — with hyphens in the readable prefix', () => {
-    expect(slugifyStepId('build-stage:implement:STORY-014')).toMatch(/^build-stage-implement-story-014-[0-9a-f]{8}$/);
+    expect(slugifyStepId('build-stage:implement:STORY-014')).toMatch(
+      /^build-stage-implement-story-014-[0-9a-f]{8}$/,
+    );
   });
 
   it('never returns a bare, un-suffixed string, even for input that folds to nothing', () => {
@@ -84,7 +91,7 @@ describe('slugifyStepId', () => {
 });
 
 describe('laneBranchName', () => {
-  it('matches the forge/<runId>/<stepId-slug> pattern, with the slug\'s own hash-suffixed shape', () => {
+  it("matches the forge/<runId>/<stepId-slug> pattern, with the slug's own hash-suffixed shape", () => {
     expect(laneBranchName('run_01H', 'implement:story-014')).toMatch(
       /^forge\/run_01H\/implement-story-014-[0-9a-f]{8}$/,
     );
@@ -162,12 +169,20 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
 
   it('two different step ids that collide on their readable slug prefix get two independent lanes, never one silently reused', async () => {
     const cwd = await createTempRepo();
-    const first = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'STORY-014', integrationBase: 'HEAD' });
+    const first = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'STORY-014',
+      integrationBase: 'HEAD',
+    });
     await removeLaneWorktree(cwd, first, { retain: false });
 
     // The realistic, more dangerous case a gauntlet critic round found: the *first* lane has already
     // completed and been cleaned up before the colliding second one is ever created.
-    const second = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'story:014', integrationBase: 'HEAD' });
+    const second = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'story:014',
+      integrationBase: 'HEAD',
+    });
 
     expect(second.laneId).not.toBe(first.laneId);
     expect(second.branch).not.toBe(first.branch);
@@ -176,7 +191,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
 
   it('retain: true leaves both the worktree and the branch in place', async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
 
     await removeLaneWorktree(cwd, handle, { retain: true });
 
@@ -186,7 +205,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
 
   it('removeLaneWorktree is idempotent — calling it a second time on an already-removed lane does not throw', async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
 
     await removeLaneWorktree(cwd, handle, { retain: false });
     await expect(removeLaneWorktree(cwd, handle, { retain: false })).resolves.toBeUndefined();
@@ -197,7 +220,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
     // between the worktree-remove and branch-delete steps of a *previous* removeLaneWorktree call.
     // Simulated directly here by removing the worktree out from under this package, bypassing it.
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await execa('git', ['worktree', 'remove', '--force', handle.path], { cwd });
     expect(await branchExistsInRepo(cwd, handle.branch)).toBe(true);
 
@@ -208,7 +235,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
 
   it('removes a locked worktree (a human may lock one while inspecting a failed lane, per 06 §6.4 step 4)', async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await execa('git', ['worktree', 'lock', handle.path, '--reason', 'inspecting'], { cwd });
 
     await removeLaneWorktree(cwd, handle, { retain: false });
@@ -221,7 +252,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
     const cwd = await createTempRepo();
     await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
 
-    const rejection = createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const rejection = createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await expect(rejection).rejects.toBeInstanceOf(VcsError);
     await expect(rejection).rejects.toMatchObject({ code: 'VCS-GIT-OPERATION-FAILED' });
   });
@@ -240,7 +275,11 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
     // A gauntlet verify round found resolveCwd's own realpath(cwd) call was not wrapped, leaking a
     // plain Node Error (no .code/.remedy) from exactly the two functions that call it.
     const cwd = path.join(await mkdtemp(path.join(tmpdir(), 'forge-vcs-lanes-')), 'does-not-exist');
-    const rejection = createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const rejection = createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await expect(rejection).rejects.toBeInstanceOf(VcsError);
   });
 
@@ -250,11 +289,102 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
     // `--quiet` (even behind a `--` separator) rather than erroring — the created lane ended up
     // checked out at HEAD instead of failing, with no signal anything was wrong. This must now fail.
     const cwd = await createTempRepo();
-    const rejection = createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: '-q' });
+    const rejection = createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: '-q',
+    });
     await expect(rejection).rejects.toBeInstanceOf(VcsError);
 
     // And no lane worktree/branch should exist as a side effect of the rejected attempt.
     expect(await listOrphanedWorktrees(cwd)).toEqual([]);
+  });
+});
+
+describe('resetLaneWorktree', () => {
+  it('discards uncommitted (tracked, modified) changes back to the target commit', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'README.md'), 'tracked but never committed\n');
+    // README.md doesn't exist yet at HEAD (createTempRepo's own init commit is empty) -- write it via a
+    // real commit first, so the reset below has a genuine "revert a real tracked-file edit" case, not
+    // just "discard a file git never knew about at all" (resetLaneWorktree's own second job, tested
+    // separately below via clean -fd).
+    await execa('git', ['add', 'README.md'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'add README'], { cwd: handle.path });
+    const { stdout: committedSha } = await execa('git', ['rev-parse', 'HEAD'], {
+      cwd: handle.path,
+    });
+    await writeFile(
+      path.join(handle.path, 'README.md'),
+      'edited after the commit, never committed\n',
+    );
+
+    await resetLaneWorktree(handle, committedSha.trim());
+
+    await expect(readFile(path.join(handle.path, 'README.md'), 'utf8')).resolves.toBe(
+      'tracked but never committed\n',
+    );
+  });
+
+  it('also removes untracked files (git clean -fd), not merely tracked-file edits', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const { stdout: headSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
+    await writeFile(
+      path.join(handle.path, 'never-staged.txt'),
+      'a file a crashed session never committed\n',
+    );
+
+    await resetLaneWorktree(handle, headSha.trim());
+
+    expect(existsSync(path.join(handle.path, 'never-staged.txt'))).toBe(false);
+  });
+
+  it('is scoped to the lane worktree alone -- never touches the main repository', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const { stdout: headSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
+    await writeFile(path.join(handle.path, 'lane-only.txt'), 'in the lane, not the main repo\n');
+    await writeFile(path.join(cwd, 'main-repo-untracked.txt'), 'must survive the lane reset\n');
+
+    await resetLaneWorktree(handle, headSha.trim());
+
+    expect(existsSync(path.join(cwd, 'main-repo-untracked.txt'))).toBe(true);
+  });
+
+  it('rejects a flag-shaped targetCommit rather than silently misinterpreting it as an option', async () => {
+    // The identical flag-injection defence createLaneWorktree's own integrationBase already gets --
+    // resolveRevision rejects a value shaped like "-q" instead of letting it reach `git reset` raw.
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await expect(resetLaneWorktree(handle, '-q')).rejects.toBeInstanceOf(VcsError);
+  });
+
+  it('rejects with a VcsError, not a raw execa error, for a targetCommit that does not resolve to anything', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await expect(resetLaneWorktree(handle, 'not-a-real-ref')).rejects.toBeInstanceOf(VcsError);
   });
 });
 
@@ -275,7 +405,9 @@ describe('listOrphanedWorktrees', () => {
     // would simply lose). Bypassing createLaneWorktree entirely is what actually proves that.
     const cwd = await createTempRepo();
     const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
-    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/a-00000000', target, 'HEAD'], { cwd });
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/a-00000000', target, 'HEAD'], {
+      cwd,
+    });
 
     const orphans = await listOrphanedWorktrees(cwd);
     expect(orphans).toHaveLength(1);
@@ -283,7 +415,7 @@ describe('listOrphanedWorktrees', () => {
     expect(orphans[0]?.laneId).toBe('run-1-a-00000000');
   });
 
-  it('excludes a worktree whose branch is not in the forge/ namespace — a human\'s own worktree', async () => {
+  it("excludes a worktree whose branch is not in the forge/ namespace — a human's own worktree", async () => {
     const cwd = await createTempRepo();
     const target = path.join(cwd, 'human-worktree');
     await execa('git', ['worktree', 'add', '-b', 'my-feature-branch', target, 'HEAD'], { cwd });
@@ -311,7 +443,11 @@ describe('listOrphanedWorktrees', () => {
 
   it('excludes a lane already present in the caller-supplied knownLaneIds set', async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
 
     expect(await listOrphanedWorktrees(cwd, new Set([handle.laneId]))).toEqual([]);
     expect(await listOrphanedWorktrees(cwd)).toHaveLength(1);
