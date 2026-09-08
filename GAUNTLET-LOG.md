@@ -4655,3 +4655,70 @@ round was asked to adversarially construct new cases rather than only re-confirm
 Both rounds' own fixes are honest about being bounded approximations rather than claiming completeness — the
 right stance for a function whose own correctness is fundamentally a heuristic trade-off, not a provable
 property.
+
+---
+
+## M5 P17 — `@forge/engine/budget`: admission control and breach response (`06` §6.9, `20` §20.8)
+
+**Rounds: 2 (one critic finding 2 MAJOR — one a real bug, one an architectural question — both addressed;
+one scoped verify confirming the fix and the design decision, surfacing one MINOR documentation gap, closed
+without a code change; no third round). Outcome: WON.**
+
+`canAdmit(node, budgetState): boolean`, `onBudgetBreach(level, state): BreachResponse` — `06` §6.9's three
+budget levels and `20` §20.8's own enforcement-points table made real: admission control before a step ever
+launches, not detection after the fact. Design points recorded in full in `SPEC-QUESTIONS.md` Q79:
+`BudgetState`'s own "plus live spend" bullet turned out to be two more real fields (`runSpentUsd`,
+`dailySpentUsd`), `onBudgetBreach`'s own three-parameter bullet collapsed to two once cross-checked against
+the spec table (only the run level actually names a configurable policy), and `BreachResponse` is a
+discriminated union so `pause`/`finish-lanes`/`fail-step`/`refuse-new-run` are genuinely distinguished at
+the type level. Required one small, well-justified change to the previous piece's own already-committed
+`Scheduler` (P12): a new, optional `canAdmit` constructor parameter, defaulting to always-admit, wired into
+`next()`'s own admission loop after the existing checks — the identical "two mutually unaware modules"
+seam `setLimits` already established for `@forge/engine/backpressure`.
+
+### Round 1 — critic: 2 MAJOR, both addressed
+
+**MAJOR: the period (daily) budget check did not project the candidate step's own cost forward, unlike the
+run-level check right beside it.** The run-level check correctly compared `runSpentUsd + node.limits.
+maxCostUsd` against `perRunUsd` — genuine admission control. The period check only compared *current*
+`dailySpentUsd` against `dailyUsd`, with no equivalent term — a step whose own cost alone would blow through
+the daily cap was still admitted, the breach only caught later, exactly the "detection after the fact" this
+function's own header disclaims. A real asymmetry between two structurally parallel checks that no existing
+test caught. **Fixed** by projecting forward here too; a new test proves the specific previously-broken
+scenario is now refused.
+
+**MAJOR, architectural: the period check runs unconditionally on every `canAdmit` call, not only "a new
+run's very first admission"** (the spec's own literal wording) — meaning once the day's aggregate spend
+crosses `dailyUsd` (possibly driven by unrelated concurrent runs), every future admission of an already
+in-flight run is also refused, not just brand-new ones. The spec pack is genuinely silent on which scope is
+intended. **Resolved, not silently decided either way**: kept the check unconditional — the more
+conservative reading, consistent with `20` §20.8's own "silent continuation past a budget is never
+acceptable" — and explicitly documented as a reasoned default, naming the real gap this leaves
+(`onBudgetBreach('period', ...)`'s own response has no dedicated shape for an in-flight run hit mid-run).
+
+### Round 2 — scoped verify: fix CONFIRMED-CORRECT, decision CONFIRMED-SOUND, 1 MINOR documentation gap
+closed
+
+The forward-projection fix was independently reproduced across nine adversarial cases (exact boundary,
+just-under-boundary, both-checks-refuse and only-one-refuses combinations, `Infinity`/`NaN`/very-large-finite
+inputs) with no remaining issue found. The "keep it unconditional" decision was independently re-derived and
+confirmed sound, including confirming no stuck-forever state exists (the very next call after the day resets
+succeeds automatically). One MINOR gap surfaced: `canAdmit`'s own bare `boolean` return cannot tell a caller
+*which* check refused a given call. **Addressed by documentation, not a signature change** — `PLAN-M5.md`'s
+own literal signature is a bare boolean, and every value a caller would need to reconstruct the distinction
+is already a public field on `BudgetState` it constructed itself.
+
+No other new findings; `tsc`, `eslint`, `prettier`, and the full-repo suite (3285 tests) all independently
+reconfirmed clean after the fix, including boundaries, the coverage ratchet, and the pre-existing `Scheduler`
+suite passing unchanged (confirming the new optional `canAdmit` parameter's default is a true no-op).
+
+### Calibration note
+
+The forward-projection asymmetry is the sharpest example yet in this build of a bug hiding in plain sight
+*because* of how parallel the two checks look: they sit three lines apart, visibly mirroring each other in
+shape, and the missing term in the second one reads as easy to miss specifically because the surrounding
+code looks so consistent — confirm each structurally-similar check individually, don't trust that visual
+symmetry means the logic is symmetric too. The second finding is a different kind of result: not a bug, but
+a real scope question the spec pack does not answer, resolved by picking the more conservative reading and
+recording why, rather than guessing silently or blocking the piece on an ambiguity nothing in the spec
+actually settles.

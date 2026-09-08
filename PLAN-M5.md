@@ -841,6 +841,24 @@ tracking never double- or under-counts a multi-attempt step.
 
 **Depends on:** P12 (engine), P7 (telemetry).
 
+*(P17 is committed: `1cde256`. See `SPEC-QUESTIONS.md` Q79 and its critic-round/verify-round addenda — a
+fresh critic round found a real bug: the period (daily) budget check did not project the candidate step's
+own cost forward the way the run-level check right beside it already did, so a step whose own cost alone
+would blow through the daily cap was admitted anyway, the breach only caught later — exactly the
+"detection after the fact" this piece exists to prevent. Fixed by mirroring the run-level check's own
+projection. The critic round also surfaced a genuine, spec-silent architectural question: should a period
+breach also gate an already in-flight run's own future admissions, or only new run launches, since `06`
+§6.9/`20` §20.8 only ever say "new runs refused"? Resolved with a documented, conservative default (keep
+the check unconditional, favouring "cost is a safety property" over "an already-running run gets a pass")
+rather than decided silently either way — a scoped verify round independently confirmed both the fix and
+the reasoning, and closed one further MINOR gap (a caller cannot tell which of the two checks refused a
+given call) via documentation rather than a signature change. Required one small, well-justified change to
+the previous piece's own already-committed `Scheduler` (P12): a new, optional `canAdmit` constructor
+parameter defaulting to always-admit, matching the identical "two mutually unaware modules" seam `setLimits`
+already established for `@forge/engine/backpressure`. See `GAUNTLET-LOG.md`'s own entry for the fuller story
+and its calibration note on why the bug was easy to miss precisely because the two checks looked so
+parallel.)*
+
 ---
 
 ## P18 — Resumability: run-state reconstruction
