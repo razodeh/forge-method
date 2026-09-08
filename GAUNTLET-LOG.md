@@ -5178,3 +5178,33 @@ No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (4151 te
 coverage config's own 64) all clean after the fix. The known-flaky `crash-resume.test.ts` (real randomised
 `SIGKILL` test, unrelated to this piece) failed and passed cleanly on isolated re-run twice across this
 session's full-suite runs.
+
+---
+
+## M6 T2 — `@forge/templates`: the 10 built-in gates (`10` §10.3)
+
+**Rounds: 1 (fresh critic finding zero issues; no verify round run). Outcome: WON.**
+
+All 10 gate YAML files, `GATE_INDEX`, and `test/gates.test.ts` (a repo-root cross-package round-trip
+suite against the real `evaluateGate`, M5 P14 — needed because `@forge/templates` and `@forge/engine`
+have no dependency edge in either direction, the identical reason T1's `test/workflows.test.ts` lives at
+the repo root). See `SPEC-QUESTIONS.md` Q91 for `G-Integration`'s own unstated phase resolution and a
+pre-existing, out-of-scope `ArchitectureSpec`/`ThreatModel` artifact-registry gap surfaced (not
+introduced) by shipping `G-Design` verbatim.
+
+### Round 1 — fresh critic: zero findings
+
+The critic cross-checked every gate's deterministic checks against `10` §10.3's own "Fails on" catalogue
+column (1:1 match, no gate with zero checks, no duplicate check ids), every `phase:` value against `10`
+§10.2's phase table, confirmed `G-Design.gate.yaml` byte-for-byte structurally identical to the spec's own
+worked example (independently re-verified via its own YAML deep-equality check), confirmed `G-Deliver`
+alone sets `autonomyOverride: alwaysHuman` (gate rule 5) with no other gate hardcoding it, confirmed every
+advisory check's `agent: critic` is a real `05` §5.2 role that never authors the phase deliverable it
+would be reviewing (separation-of-duties respected), and found every `failOn` expression semantically
+plausible against its own check's likely JSON output (`coverage < 80` independently grounded against
+`02`'s own `GATE-102` error-code example, not an invented number). `test/gates.test.ts`'s own round-trip
+tests were confirmed non-tautological — the failing-check scenario supplies a real, field-appropriate JSON
+payload per gate, genuinely exercising each gate's own distinct `failOn`.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (209 files, 4186 tests, plus the
+boundaries-coverage config's own 64) all clean.
