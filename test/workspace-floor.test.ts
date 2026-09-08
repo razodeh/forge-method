@@ -61,6 +61,10 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // `repo-strategy` YAML fixture string, imported by `test/schema/load.test.ts` and `test/score/*.test.ts`
 // — the identical "shared, importable module, not a runnable suite" shape as the `kb`/`engine` entries
 // above, for the same reason unrecognised by `TEST_FILE`'s naming heuristic.
+// `packages/catalog/test/fixtures/postgresql.ts` (PLAN-M6.md C1): the shared verbatim `12` §12.2
+// `postgresql` YAML fixture string, imported by `test/schema/load.test.ts`,
+// `test/registry/registry.test.ts`, and `test/registry/validate.test.ts` — the identical shape as the
+// `methods` entry above, for the same reason.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
@@ -69,6 +73,7 @@ const IGNORED_PATHS = new Set([
   'packages/engine/test/e2e/fixture-workflow.ts',
   'packages/engine/test/e2e/fixtures/run-engine-child.ts',
   'packages/methods/test/fixtures/repo-strategy.ts',
+  'packages/catalog/test/fixtures/postgresql.ts',
 ]);
 
 /**

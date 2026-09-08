@@ -1,0 +1,21 @@
+{
+  "name": "@forge/catalog",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./registry": "./src/registry/index.ts"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "yaml": "2.9.0",
+    "zod": "3.25.76"
+  }
+}

@@ -6616,3 +6616,52 @@ phase-per-level mapping.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (3440 tests, plus the boundaries-coverage config's own
 64) are all clean.
+
+## Q86 — M6 C1's `@forge/catalog/{schema,registry}`: `12` §12.2's own catalog entry schema, registry, and
+hygiene validation — a second miscounted-enum correction, and a directory-load signature changed from the
+plan's own first draft to carry issues
+
+`catalogEntrySchema`/`loadCatalogEntry`/`CatalogRegistry`/`loadCatalogRegistry`/`validateEntry` implement
+`12` §12.2's own curated technology catalog: entries like the worked `postgresql` example, describing fit
+conditions and trade-offs, never benchmarks.
+
+1. **`PLAN-M6.md`'s own original C1 draft claimed the `kind` enum has 19 members; direct enumeration of
+   the spec's own comment before writing any schema code found 20**: `language | framework | datastore |
+   queue | stream | cache | search | ci | observability | infra | auth | payments | testing | frontend |
+   mobile | orm | api-style | cloud | container | iac`. This is the second miscounted-enum/signal-shape
+   correction this milestone has made before implementation (the first being M3's `LevelSignals`, Q85) —
+   both caught by directly re-deriving the fact from the spec's own literal text rather than trusting an
+   earlier paraphrase in this plan, the same discipline. `CatalogKind` and `catalogEntrySchema` both
+   declare the real 20-value list; a test enumerates and accepts all 20 explicitly, pinned so a future
+   miscount cannot silently regress.
+
+2. **`operational_burden`/`team_familiarity_weight`/`exit_cost`/`agent_friendliness` are declared
+   `'low'|'medium'|'high'`, a spec-silence resolution**: `12` §12.2's own worked example only ever shows
+   `medium`/`high` values for these four fields; `low` is this piece's own inferred third value completing
+   the obvious ordinal scale, recorded here rather than left an unstated guess.
+
+3. **`loadCatalogRegistry`'s own return type was changed from this plan's first-draft signature (a bare
+   `CatalogRegistry`) to `{ registry, issues }`, before any implementation code was written** — a directory
+   of many entries can have one malformed file, and silently dropping it with no signal would hide a real
+   authoring bug from whatever calls this (ultimately `@forge/cli`); this extends `@forge/methods`'s own
+   `loadFramework` (M1) "never throw, return issues" precedent from one document to a whole-directory load.
+   `CatalogRegistry` also gained a `hasId(id): boolean` method beyond the plan's first draft, needed
+   because `pairs_with`/`alternatives` name only an id, never a `(kind, id)` pair — `validateEntry` needs
+   an id-only lookup to check those references.
+
+4. **A fresh critic round found no logic bug in the schema, directory walk, registry, or hygiene-lexical
+   checks** (independently re-derived the 20-member `kind` enum from the spec text and confirmed it exact;
+   confirmed the performance-number regex correctly does not false-positive against the worked example's
+   own "millions of ops/sec" text, which carries no digit). It found two real, if minor, issues, both
+   fixed:
+   - `package.json` declared a `@forge/schemas` dependency that nothing in this piece actually imports —
+     removed; the boundary graph's own `catalog ← schemas` edge stays available for a later piece (C2+) if
+     one of them genuinely needs it, but a piece should only declare what it uses.
+   - `validateEntry`'s lexical hygiene scan covered `strengths`/`weaknesses`/`fits_when`/`avoid_when` but
+     not `notes_for_agents` — `12` §12.2's own hygiene sentence is a blanket rule about the entry's claims,
+     not scoped to any field subset, so a badly-authored entry could smuggle a banned superlative or
+     performance number into `notes_for_agents` undetected. **Fixed** by adding it to the scanned field
+     set, with a new regression test.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (3476 tests, plus the boundaries-coverage config's own
+64) are all clean.

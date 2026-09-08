@@ -1,0 +1,34 @@
+/** `12` §12.2's own worked example, transcribed verbatim. */
+export const POSTGRESQL = `
+id: postgresql
+kind: datastore
+name: PostgreSQL
+category: relational
+maturity: mature
+licence: PostgreSQL (permissive)
+managed_options: [ aws-rds, aws-aurora, gcp-cloudsql, azure-flexible, neon, supabase, crunchy ]
+strengths:
+  - "ACID with strong isolation options, including serializable"
+  - "Extremely broad feature surface: JSONB, full-text, GIS, partitioning, LISTEN/NOTIFY, SKIP LOCKED"
+  - "Operational knowledge is commodity; every cloud has a managed offering"
+weaknesses:
+  - "Horizontal write scaling requires extra machinery (Citus, sharding at app level)"
+  - "Connection-heavy workloads need a pooler (pgbouncer/pgcat)"
+  - "Long-running transactions and bloat require vacuum awareness"
+fits_when:
+  - "transactional invariants across entities"
+  - "ad-hoc and reporting queries expected"
+  - "team familiarity is a priority"
+avoid_when:
+  - "single-key access at millions of ops/sec with no relational needs"
+  - "petabyte-scale analytical scans (use a columnar store instead)"
+pairs_with: [ pgbouncer, flyway, prisma, sqlc, debezium, timescaledb ]
+alternatives: [ mysql, cockroachdb, yugabyte, dynamodb, mongodb, sqlite ]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Use a migration tool; never ALTER by hand in code"
+  - "Local dev via docker compose; tests via a template database or testcontainers"
+`;
