@@ -7740,3 +7740,81 @@ each for the identical "refuse loudly rather than silently no-op" reason).
 plus 3 new regression tests in `packages/core/test/artifacts/document.test.ts` for the `ArtifactDocument
 .set()` array-field fix) all clean after every fix; see `GAUNTLET-LOG.md`'s own M6 C3 entry for the
 critic round.
+
+---
+
+## Q107 — M6 C4's `@forge/cli` planning and execution commands: the in-process `forge run` design,
+`forge plan data/testing`'s own real gap, `forge merge --abort`'s refusal, and five new error codes
+
+**Why `forge run` executes in-process and blocking, rather than spawning a detached supervisor child
+process.** `03` §3.2.4 gives `forge run`/`forge pause`/`forge abort`/`forge status` no explicit process
+model at all. A detached-child-process design was considered and rejected: no concrete
+`PlatformAdapter` implementation exists anywhere in this codebase (the same gap `@forge/cli/init`'s own
+`RunInitDeps.candidateAdapters` already documents), and a real adapter session cannot be serialized
+across a process boundary regardless — there is nothing a spawned child could reconstruct one *from*.
+The real, honest alternative: `forge run` blocks in-process for the run's own full duration, and a
+new, from-scratch `.forge/state/lock.json` mechanism (`pid`/`host`/`runId`/`startedAt`, `CFG-002`'s own
+message already named this exact shape without anything having built it) is what lets a *separate*
+`forge status`/`forge pause`/`forge abort` invocation, in a separate terminal, observe and signal it.
+The direct consequence: `SIGTERM` (pause) and `SIGKILL` (abort) both terminate the process outright —
+`@forge/engine`'s own scheduler loop (M5) has no interruption hook a signal handler could ask it to
+stop *between* batches gracefully, so there is no cooperative mid-batch pause in this milestone. Real
+either way: the event log (`18` §18.4) is durable regardless of which signal killed the process, so
+`forge resume` picks up from wherever it left off — proven directly with a real, genuinely `SIGKILL`'d
+child process in `resume.test.ts`, not simulated.
+
+**Why `forge plan data` and `forge plan testing` are real `USR-003` refusals.** `03` §3.2.3 names nine
+plan phases (`product`/`architecture`/`data`/`init`/`testing`/`delivery`/`stages`/`stage`/`replan`),
+each meant to dispatch to a real `10` §10.5 workflow via `forge run`. `10` §10.5's own 20-workflow
+table has no distinct `data` or `testing` workflow id: `shape-solution` (the `architecture` phase's own
+workflow) already covers "domain/data model" in its own Purpose column, and nothing in the table names
+a standalone test-strategy-planning workflow (`verify-stage` is stage-level *verification*, not
+test-strategy *planning*). Refused rather than guessed at — the identical discipline `SPEC-QUESTIONS.md`
+Q106 already established for `forge adopt`/`forge discover`'s own real gaps.
+
+**Why `forge merge --abort` is a real `USR-003` refusal, not implemented.** `03` §3.2.4 lists it
+alongside `--lane`/`--all` with no further detail on what "abort" means for a command that (unlike
+`forge abort [runId]`, a real, unrelated command a few rows above in the same table) is not itself
+killing a process — a merge already has its own real abort-on-conflict/abort-on-failure policy inside
+`processMergeCandidate` (`@forge/vcs`), applied automatically per candidate, not as a separate manual
+step a flag would drive. No spec text describes a second, manual abort mechanism this command could
+wrap, so none was invented.
+
+**How `RunEngineContext.model` is resolved with no tier/role system built anywhere yet.** `@forge/
+engine/dispatch`'s own doc comment already names the gap: "`07` §7.2's own 'resolved from tier'... M5
+has no tier/role system at all... supplied by whoever constructs `ctx`." `buildRunEngineContext`
+resolves it by calling the real, injected adapter's own `listModels()` and taking the first result — a
+real, adapter-validated model id, never a bare tier label (`'balanced'`) passed straight through, which
+an early draft of this piece did by mistake before its own test suite caught `startSession` rejecting
+it outright against a real `FakePlatformAdapter`. An adapter reporting zero models throws the new
+`RUN-052`.
+
+**A real bug found and fixed before the critic round, worth recording because it is the kind of thing
+this discipline exists to catch.** `merge.ts`'s own `laneCandidate` initially built `handle.branch` as
+the bare `laneId` — but `@forge/vcs`'s own `lanes.ts` names two genuinely different strings for the
+same lane: `laneId` (`<runId>-<slug>`, the worktree directory name) and the real git branch name
+(`forge/<runId>/<slug>`, from that module's own `laneBranchName`). Since `candidate.handle.branch` is
+exactly what `processMergeCandidate` reaches with real `git merge`/`git rebase` calls, every real
+`forge merge` invocation would have targeted a branch that never exists. Found by reading `@forge/vcs`'s
+own real conventions directly, before writing this piece's own tests, not by the critic round.
+
+**Five new error codes**, all distinguishing situations `RUN-045`/`ENV-004` were briefly (mis)used for
+before a fresh critic round caught the conflation, in each case the identical "the message renders
+nonsensically for this situation" signature: `RUN-048` (no active run to resume/stop/inspect — distinct
+from `CFG-002`'s "someone *else* holds it," this is "no *one* holds it"), `RUN-049` (a signal was sent
+but the process survived), `RUN-050` (`forge gate check/waive <id>` names an unregistered gate — a bare
+CLI invocation with no step in scope, distinct from `RUN-040`'s "a step inside a running workflow names
+an unregistered gate"), `RUN-051` (`forge merge --lane <id>` names a lane this run's own reconstructed
+state has no record of), `RUN-052` (see above), `RUN-053` (`forge run <workflow>` names a workflow with
+no real file on disk — distinct from `RUN-045`'s "a real file that failed to parse or compile," a
+genuinely different situation the critic caught this piece's own first draft conflating), `RUN-054`
+(`forge resume <runId>` names a run with no real manifest — the identical conflation, one call site
+over), and `RUN-055` (a real `git worktree` failure that is not a missing-binary spawn error — distinct
+from `ENV-004`'s "install the tool," which the critic caught this piece's own first draft reporting for
+*any* `git worktree add` failure at all, actively misleading for e.g. a real branch/path collision or
+resource exhaustion under heavy parallel load).
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (77 new tests in `packages/cli/test/commands/run/`,
+run against real git repositories, real spawned-and-`SIGKILL`'d child processes, and a real
+`FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix; see
+`GAUNTLET-LOG.md`'s own M6 C4 entry for the critic round.

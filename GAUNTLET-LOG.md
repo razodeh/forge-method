@@ -5939,3 +5939,113 @@ assertions against the real edges/findings produced.
 `tsc`, `eslint`, `prettier`, and the full-repo suite (70 new tests in `packages/cli/test/commands/`,
 run against real `@forge/kb`/`@forge/core/artifacts`/`@forge/diagrams`/`@forge/methods` content, never
 mocked) all clean after every fix.
+
+---
+
+## M6 C4 — `@forge/cli` planning and execution commands (`03` §3.2.3, §3.2.4)
+
+**Rounds: 1 (fresh critic finding one real HIGH bug, two real MEDIUM-HIGH/MEDIUM bugs, two real LOW
+bugs, and one real test-coverage gap, all fixed; no separate verify round run). Outcome: WON.**
+
+`@forge/cli`'s fourth piece, and the largest of the four: `forge run <workflow> [--dry-run]`, `forge
+resume [runId]`, `forge pause`/`forge abort [runId]`, `forge status`/`forge lanes`/`forge logs`, `forge
+gate <list|check|approve|reject|waive>`, `forge merge <--lane|--all|--abort>`, and `forge plan <phase>`
+— the first real caller of `@forge/engine`'s own public `runEngine`/`resumeRun` entry points (M5)
+outside its own test suite, and the first piece to build real, from-scratch process-supervision state
+(`.forge/state/lock.json`) that nothing in M1-M5 needed. Built solo per the coordinator's own explicit
+recommendation (full `@forge/agents` A1-A7 already complete, C5 depends on this piece's own `runEngine`
+integration existing first, and the tight coupling across `run`/`resume`/`status`/`lanes`/`logs`
+reading and mutating one shared process/lock/event-log mechanism made it a poor split candidate). See
+`SPEC-QUESTIONS.md` Q107 for the full design record — the in-process/blocking `forge run` design, the
+`forge plan data/testing` and `forge merge --abort` refusals, the `model`-resolution mechanism, and all
+five new error codes.
+
+### One real bug found and fixed before the critic round, while researching `@forge/vcs`'s own real
+lane-branch-naming convention directly (not caught by the critic)
+
+`merge.ts`'s `laneCandidate` built the real `MergeCandidateLike.handle.branch` as the bare `laneId`
+(`<runId>-<slug>`) — but `@forge/vcs`'s own `lanes.ts` names the real git branch differently
+(`forge/<runId>/<slug>`, via that module's own `laneBranchName`). Since `candidate.handle.branch` is
+exactly what `processMergeCandidate` reaches with real `git merge`/`git rebase` calls, every real
+`forge merge` invocation would have targeted a branch that never existed. **Fixed** before this piece's
+own tests were written: `laneBranchName(ctx.runId, origin.stepId)` from `@forge/vcs`, and
+`ctx.paths.resolveState(...)` in place of raw string concatenation for the worktree path.
+
+### Round 1 — fresh critic (no context on plan/log): one real HIGH bug, two real MEDIUM(-HIGH) bugs,
+two real LOW bugs, one real test-coverage gap, all fixed
+
+1. **HIGH.** `RUN-045` ("runEngine's own workflow source failed to parse or compile") was reused for
+   two genuinely different situations: `run.ts`'s `readWorkflowSource` threw it when the workflow
+   *file simply did not exist*, and `resume.ts`'s `readManifest` threw it when the *manifest file* was
+   missing — both rendering a nonsensical message (e.g. "...failed to parse or compile: no real
+   manifest for run X — it was never started..."). The exact "reused an error code for a genuinely
+   different situation" class this discipline exists to catch, caught by the critic in two call sites
+   a first read-through had missed. **Fixed**: two new codes, `RUN-053` (no such workflow file) and
+   `RUN-054` (no such run manifest), each with its own accurate message; the affected tests renamed
+   and retargeted at the correct code.
+2. **MEDIUM-HIGH.** `acquireRunLock` had a real TOCTOU race: `readRunLock` (check) and
+   `writeFileAtomic` (write) were two separate, unlinked steps, so two `forge run`/`forge resume`
+   invocations starting within the same instant could both observe "no live lock," both pass the
+   check, and the second's write would silently clobber the first — both processes then believing
+   they alone held the project lock, defeating `CFG-002`'s entire purpose. **Fixed**: the only real
+   write is now a single `open(path, 'wx')` exclusive-create call (atomic at the OS level); every other
+   path (a live lock; a stale one) only ever decides whether to loop and retry that exclusive create,
+   never writes on its own — a live lock discovered on a *later* iteration (because a *different*
+   process's own exclusive create won a race this one lost) still correctly throws `CFG-002` rather
+   than silently double-acquiring. A new concurrency regression test (`Promise.allSettled` on two
+   simultaneous `acquireRunLock` calls) proves exactly one of two simultaneous callers may ever
+   actually hold the lock, the identical shape `SPEC-QUESTIONS.md` Q106's own `IdAllocator` regression
+   test already established for the identical class of bug in a different piece.
+3. **MEDIUM.** `ensureIntegrationWorktree` reported the identical `ENV-004` ("Required tool not found
+   on PATH: git worktree" / "Install the tool...") for *any* `git worktree add` failure at all — not
+   just a genuine missing-binary spawn error, but a bad base ref, a path/branch collision, disk-full,
+   or real resource exhaustion under heavy parallel test load, actively misleading a caller into
+   reinstalling a `git` that is plainly already working. This is also the direct mechanism behind an
+   intermittent `resume.test.ts` failure under the full-repo suite's own heavy parallel load, which the
+   critic was specifically asked to look at. **Fixed**: `runGitOrThrow` now distinguishes a genuine
+   spawn-level `ENOENT` (still `ENV-004`) from every other real git failure (`RUN-055`, carrying the
+   real underlying message via `@forge/core`'s own `renderCause`) — new tests force both a real
+   non-ENOENT failure (a branch already checked out at a different real worktree path) and a real
+   `ENOENT` one (`PATH` emptied for the call) and confirm each lands on its own correct code.
+4. **MEDIUM.** `stopLockedProcess` had a narrow, real race: between its own `isProcessAlive` check and
+   the subsequent `process.kill(pid, signal)` call, the target process could exit on its own, and
+   `process.kill` then throws a raw, unwrapped `ESRCH` instead of the clean `ForgeError` this same
+   function already throws one line earlier for the "already dead" case. **Fixed**: the signal send is
+   now wrapped, treating a genuine `ESRCH` there as "already gone, nothing left to do" — the exact
+   outcome this function exists to bring about either way — rather than a crash.
+5. **LOW.** `loadGateRegistry`'s own `catch { return registry }` silently converted *any* failure
+   listing the checks directory into "zero gates registered" — not just the ordinary "directory does
+   not exist yet" case its one covered test exercised, but also a permission error or a `resolveWithin`
+   rejection for a bad/denied `checksRoot`, hiding a real misconfiguration behind a result
+   indistinguishable from "no gates yet." **Fixed**: narrowed to check the real, nested Node `ENOENT`
+   on `error.cause` specifically (`listDirEntriesSorted` always wraps its own failure as `RUN-034`),
+   re-throwing anything else.
+6. **Test-coverage gap.** The critic flagged that `resolveModel` — the one genuinely new piece of logic
+   in `context.ts` (deriving `RunEngineContext.model` from the real adapter's own `listModels()` rather
+   than a hardcoded value) — had no assertion coverage at all: no test checked `ctx.model` itself, and
+   no test exercised the `RUN-052` "adapter reports zero models" path. **Fixed**: both added; the
+   coverage-ratchet run afterward caught two further genuinely untested branches in the same file
+   (explicit numeric `concurrency`, not just `'auto'`) closed the same way.
+
+Two of this piece's own tests were also found, independently of the critic, to be testing the wrong
+code path entirely — the identical class of mistake `SPEC-QUESTIONS.md` Q107 calls out by name: a
+fixture workflow missing a required `description` field failed to *parse*, not merely to *compile*, so
+a test named "fails to compile" was silently exercising the parse-failure branch instead, and
+`dryRunWorkflow`'s own real contract (only a parse failure throws; a compile failure returns a
+failed-plan value for the caller to report) made a second such test assert a thrown error that never
+actually happened. Both fixed: the fixture corrected to genuinely reach the compile stage, and the
+`dryRunWorkflow` test rewritten to assert its real, documented return shape instead of a throw.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (77 new tests in `packages/cli/test/commands/run/`,
+run against real git repositories, real spawned-and-`SIGKILL`'d child processes, and a real
+`FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix.
+
+**Observed, not this piece's own defect:** the full-repo suite intermittently fails one of two
+pre-existing, unrelated tests under extreme parallel load — `packages/engine/test/e2e/crash-resume.test.ts`
+(engine's own E3 capstone, untouched by this piece) or this piece's own `resume.test.ts` before fix #3
+above — both real, genuinely `SIGKILL`-driven subprocess tests sensitive to system resource contention
+at 272-file parallelism, not reproducible in isolation or smaller combined runs. Also observed:
+`packages/agents/src/context/resolve-context-request.ts`, `packages/agents/src/handoff/emit-handoff.ts`,
+and `packages/engine/src/interaction/dispatch-agent-step.ts` are already below the coverage floor on
+`main`, confirmed via a clean-stash baseline run before this piece's own changes — pre-existing, outside
+`@forge/cli`'s own scope, flagged to the coordinator rather than fixed here.
