@@ -4991,3 +4991,31 @@ exception pattern four earlier pieces' own shared fixtures already use.
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3418 tests, plus the boundaries-
 coverage config's own 64) all clean.
+
+---
+
+## M6 M3 — `@forge/methods/level`: scale-adaptive level selection and the phase mapping (`01` §1.9, `10`
+§10.2)
+
+**Rounds: 1 (fresh critic finding zero logic bugs, one real test-coverage gap, fixed; no separate verify
+round run). Outcome: WON.**
+
+`proposeLevel`/`phasesForLevel` — see `SPEC-QUESTIONS.md` Q85 for the full design record, including a
+drafting error in this plan's own earlier `LevelSignals` shape caught and corrected before any
+implementation code was written.
+
+### Round 1 — fresh critic: `phasesForLevel` confirmed exact, `proposeLevel` confirmed reasonable, one
+real coverage gap
+
+The critic independently re-derived `phasesForLevel`'s own phase sets against `10` §10.2's literal
+level-mapping sentence and found them exact, and independently stress-tested `proposeLevel` against the
+L0-L4 table's own two clearest worked descriptions (a brownfield bug fix always resolves `L0`; a greenfield
+scenario always resolves at least `L3`) with no misclassification and no logic bug found. The one real
+finding: the priority order between competing signals in different decision branches (`greenfield`
+together with `hasPersistentState`, a single capability together with `hasPersistentState`/
+`hasExternalIntegrations`) was asserted for only one pairing (`regulatory` + `greenfield`) even though the
+code comments already describe that ordering as load-bearing. **Fixed** by adding explicit cross-branch-
+priority tests for every such pairing.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3440 tests, plus the boundaries-
+coverage config's own 64) all clean.

@@ -192,24 +192,30 @@ against criteria with evidence per cell → produce a ranked recommendation with
   the other), so this is a second, independent declaration of the same five-value union, not a shared
   import — the same small, unavoidable duplication this plan's own M1 already accepts for its
   expression evaluator, for the identical boundary reason.
-- `interface LevelSignals { readonly greenfield: boolean; readonly estimatedStories: number; readonly multiTeam: boolean; readonly regulatoryScope: boolean; readonly multiService: boolean }`
-  (signals `forge discover`'s own intake answers realistically supply — the exact field set is this
-  piece's own invented shape, `01` §1.9 gives the table but not a derivation algorithm, so this is a
-  genuine spec-silence resolution to record in `SPEC-QUESTIONS.md`, not a guess left unrecorded).
+- `interface LevelSignals { readonly greenfield: boolean; readonly userFacingCapabilities: number; readonly deployableUnits: number; readonly hasPersistentState: boolean; readonly hasExternalIntegrations: boolean; readonly regulatory: boolean; readonly multiRuntime: boolean }`
+  — `01` §1.9 names this exact seven-signal set verbatim ("greenfield vs brownfield, number of
+  user-facing capabilities, number of deployable units, presence of persistent state, presence of
+  external integrations, regulatory flags, and whether more than one runtime/language is involved"), an
+  earlier draft of this plan invented a different, wrong shape before that sentence was reread closely —
+  corrected here before implementation. `01` §1.9 gives the L0-L4 table and this signal list but not a
+  derivation algorithm from one to the other, so the actual decision rules are this piece's own invented
+  resolution of that spec silence, recorded in `SPEC-QUESTIONS.md`, not a guess left unrecorded.
 - `proposeLevel(signals: LevelSignals): { readonly level: ProjectLevel; readonly reasoning: string }` —
   pure, deterministic; `reasoning` names which signal(s) drove the choice (`03` §3.3: "reasoning shown").
 - `phasesForLevel(level: ProjectLevel): readonly LifecyclePhase[]` — `10` §10.2's own level-mapping
   paragraph, made real: L0 → `{P6,P7}`; L1 adds `{P5 light, P8}`; L2 adds `{P2 delta, P3 delta, P9}`;
-  L3/L4 run everything; L4 adds `G-Integration` and the domain-decomposition step.
+  L3/L4 run everything; L4 adds `G-Integration` and the domain-decomposition step (neither is its own
+  lifecycle phase, so `phasesForLevel` itself returns the same phase set for L3 and L4).
 
 **Checks:**
-- A greenfield, single-team, non-regulated, small-story-count signal set proposes `L0`-`L1`; a
-  multi-service or regulatory signal proposes `L4` regardless of story count (`01` §1.9's own "Platform"
-  row wording).
+- A greenfield signal proposes `L3`; a regulatory, multi-runtime, or multi-deployable-unit signal
+  proposes `L4` regardless of every other signal (`01` §1.9's own "Platform" row wording).
 - `phasesForLevel` matches `10` §10.2's own literal level-mapping paragraph phase-for-phase.
 - Determinism (R10).
 
 **Depends on:** nothing beyond `@forge/core`. No `@forge/extensions` edge — see above.
+
+**Status:** done — see `SPEC-QUESTIONS.md` Q85.
 
 ---
 
@@ -221,18 +227,30 @@ against criteria with evidence per cell → produce a ranked recommendation with
 `(kind, id)`.
 
 **Spec:** `12` §12.2 (the full worked `postgresql` example, verbatim schema; the `kind` enum's own
-19-member list).
+20-member list — an earlier draft of this plan miscounted this as 19; re-verified by direct enumeration
+of the spec's own comment before implementation, corrected here).
 
 **Surface:** `@forge/catalog/schema`
-- `catalogEntrySchema` (zod) — every field of the worked example: `id`, `kind` (the closed 19-value
+- `catalogEntrySchema` (zod) — every field of the worked example: `id`, `kind` (the closed 20-value
   enum), `name`, `category`, `maturity` (`'emerging'|'growing'|'mature'|'legacy'|'declining'`),
   `licence`, `managed_options`, `strengths`, `weaknesses`, `fits_when`, `avoid_when`, `pairs_with`,
   `alternatives`, `operational_burden`, `team_familiarity_weight`, `exit_cost`, `agent_friendliness`,
-  `notes_for_agents`.
-- `class CatalogRegistry { get(kind: string, id: string): CatalogEntry | undefined; byKind(kind: string): readonly CatalogEntry[]; all(): readonly CatalogEntry[] }`
-- `loadCatalogRegistry(dir: string): CatalogRegistry` — reads every `catalog/<kind>/<id>.entry.yaml`. A
-  plain `string`, not `@forge/core/fs`'s own `AbsolutePath` — `02` §2.2's own boundary graph gives
-  `@forge/catalog` no `core` edge at all (`catalog ← schemas` only, confirmed directly against
+  `notes_for_agents`. The four burden/weight/cost/friendliness fields are `'low'|'medium'|'high'` — `12`
+  §12.2's own worked example only ever shows `medium`/`high` values; `low` is this piece's own inferred
+  third value completing the obvious ordinal scale, a spec-silence resolution recorded in
+  `SPEC-QUESTIONS.md`, not a silent guess.
+- `class CatalogRegistry { get(kind: string, id: string): CatalogEntry | undefined; hasId(id: string): boolean; byKind(kind: string): readonly CatalogEntry[]; all(): readonly CatalogEntry[] }`
+  — `hasId` is an addition beyond this plan's own first draft, needed because `pairs_with`/
+  `alternatives` name only an id, never a `(kind, id)` pair (see `validateEntry` below).
+- `loadCatalogRegistry(dir: string): { registry: CatalogRegistry; issues: readonly CatalogLoadIssue[] }`
+  — reads every `<dir>/<kind>/<id>.entry.yaml`. Changed from this plan's own first-draft signature
+  (a bare `CatalogRegistry` return) to a result carrying load issues alongside the registry: a directory
+  of many entries can have one malformed file, and silently dropping it with no signal would hide a real
+  authoring bug from whatever calls this (ultimately `@forge/cli`) — the same "never throw, return
+  issues" precedent `@forge/methods`'s own `loadFramework` (M1) already established, extended here to a
+  whole-directory load rather than one document. A plain `string` parameter, not `@forge/core/fs`'s own
+  `AbsolutePath` — `02` §2.2's own boundary graph gives `@forge/catalog` no `core` edge at all
+  (`catalog ← schemas` only, confirmed directly against
   `tools/eslint-plugin-forge-boundaries/src/graph.mjs`), so this package cannot use `@forge/core`'s
   path-containment machinery; the caller (ultimately `@forge/cli`, which does have a `core` edge) is
   responsible for handing this function an already-safe, already-resolved directory.
