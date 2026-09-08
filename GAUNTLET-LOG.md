@@ -4232,3 +4232,95 @@ failure mode its authors had in mind, not every way the same code path can go wr
 real cost blowup at roughly 3% of the limit `minimatch` itself publishes, through a mechanism that limit
 was never built to guard against. Trust the real oracle, but ask it the exact question that matters; trust
 a dependency's own stated boundary, but only for the failure mode it actually names.
+
+---
+
+## M5 P12 — `@forge/engine`: scheduler core — ready set, ordering, concurrency limits (`06` §6.3)
+
+**Rounds: 2 (one critic finding 1 BLOCKING native to this piece plus 1 MAJOR and 1 MINOR in a sibling P11
+file; one scoped verify finding 1 BLOCKING, 2 MAJOR, and 2 MINOR, all fixed — one fix needing a second,
+self-caught correction one layer deeper before it ever ran a test. No third round). Outcome: WON.**
+
+Wraps `06` §6.3's ready-set computation, four-level ordering tiebreak (plus an unnamed fifth,
+lexicographic level underneath it, closing a gap `Array.prototype.sort`'s own comparator contract leaves
+open for a genuine hash collision), and three concurrency-limit classes into one stateful `Scheduler`
+exposing a single `next()` call per tick. Rule 4's own tiebreak hash is FNV-1a — small, well-known, and
+pure, per this whole milestone's own determinism mandate (`21` §21.1: "a flaky scheduler test means the
+scheduler is non-deterministic, which is a bug in the scheduler").
+
+Before either round, three of this piece's own four rule-isolation tests were self-caught and fixed: a
+wrong belief, held since the previous piece and written into two files' worth of doc comments, that
+`computeCriticalPath`'s own tie-break for a genuine cost tie was plain declaration order. It is not —
+topological *depth* wins outright, and declaration order only breaks a tie among nodes already at the same
+depth — caught by re-deriving the algorithm's real behaviour before ever dispatching a critic, then
+independently re-confirmed by the critic round itself.
+
+### Round 1 — critic: 1 BLOCKING (native), 1 MAJOR + 1 MINOR (both bugs in the previous piece)
+
+**BLOCKING: two different `StepNode`s sharing the same `id`, handed to `Scheduler`'s constructor, silently
+corrupt live concurrency and claim-conflict tracking** — a `Map` keeping only the last-declared duplicate
+means the *other* one's agent and claims vanish from every future tick's own safety check with no error at
+all. **Fixed** with eager constructor-time validation, throwing a new, specific error on the first
+duplicate id found.
+
+**MAJOR (a bug in the previous piece, independently reconfirmed here): `computeCriticalPath`'s own tie-
+break was mis-documented as pure declaration order**, the identical inaccuracy this piece's own build had
+already caught and fixed hours earlier (see above) — the critic round finding the same thing independently
+confirmed it as real, not imagined.
+
+**MINOR (a bug in the previous piece): a `NaN`-costed node silently "wins" the critical path forever once
+visited first**, since any comparison against `NaN` is `false`. **Fixed** with a small helper treating a
+non-finite cost as `0` rather than propagating it — soon exported for reuse (see round 2).
+
+### Round 2 — scoped verify: 1 BLOCKING, 2 MAJOR, 2 MINOR, all fixed — one fix needing its own second,
+self-caught correction
+
+**BLOCKING: this piece's own cost-ordering rule had no `NaN` guard of its own** — the identical class of
+bug round 1 had just fixed one file over, for the identical field, with no equivalent guard ever added
+here. Confirmed through the real, public scheduler API: a `NaN`-costed ready node made the scheduler pick
+the *most* expensive node instead of the cheapest, differently depending purely on input order. **Fixed**
+by reusing round 1's own helper instead of writing a second, independent guard — except reuse alone wasn't
+enough: that helper deliberately still lets `Infinity` pass through untouched, and two same-signed infinite
+costs subtracted from each other is itself `NaN`, the identical sort-breaking failure through a rarer
+trigger. Caught while writing this fix's own regression test, before any test run — **fixed** by comparing
+directly instead of subtracting.
+
+**MAJOR: the previous piece's own 256-character length cap on glob-overlap checking (chosen to bound a
+real, measured quadratic-time cost blowup in the underlying matching library) rejects real, ordinary file
+paths with no pathological content at all** — a deeply-nested, descriptively-named generated-file path can
+clear 256 characters while containing none of the actual dangerous character at all. **Fixed** by
+re-deriving the guard from the real cost driver (how many of that one character a string contains, not its
+overall length) and raising the length cap itself, kept independently since it guards a separate,
+character-independent danger the new guard cannot substitute for.
+
+**MAJOR: the concurrency-limit check has no `NaN` guard on the limit values themselves** — every other
+degenerate limit value already fails safe (denies) on its own; `NaN` was the one exception, silently
+disabling an entire limit axis. Confirmed for all three limit classes through the real scheduler API, e.g.
+an exclusive, limit-one agent silently admitting 50 concurrent steps. **Fixed** by joining `NaN` to the
+same fail-safe direction every other degenerate value already takes.
+
+**MINOR: the scheduler's own global running-count was derived inconsistently from the other three
+counters**, letting a caller's own bug (marking an unrecognized id running) inflate it against a phantom
+entry. **Fixed** by deriving all four counters the same way.
+
+**MINOR: the round-1 `NaN` fix treated `Infinity` the same as `NaN`, which is a different, worse kind of
+wrong** — `NaN` carries no ordering information, so zero is a neutral stand-in, but `Infinity` does carry
+real ordering information, and silently reporting it as the *cheapest* option inverts the intent rather
+than neutralising it. **Fixed** by narrowing the guard to `NaN` specifically — which is what surfaced the
+subtraction-based-comparator finding above.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (371 engine tests after these fixes' own
+new ones, 3066 full-repo) all independently reconfirmed clean.
+
+### Calibration note
+
+The sharpest lesson of this piece: a correct fix for a `NaN`-class bug, built by directly reusing an
+already-correct helper from a sibling file, still wasn't enough — because the reuse went through a
+subtraction-based comparator, and subtraction has its own separate non-finite failure mode that a
+`NaN`-only guard does nothing to prevent, and that the guard's own deliberately-preserved `Infinity`
+handling actively re-opens. Neither subagent round caught this second layer; it surfaced only while writing
+the fix's own regression test, one level past where either round stopped looking. Underneath both this and
+the self-caught tie-break bugs earlier in the same piece sits one general pattern: a helper or a belief
+being correct in the context it was built for does not make it correct in a new context that reuses it
+under a different operation or a different value space — each reuse earns its own fresh check, not an
+inherited assumption that fixing something once means it stays fixed everywhere the same shape recurs.

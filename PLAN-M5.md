@@ -587,6 +587,20 @@ tests, not one that happens to exercise all four incidentally).
 
 **Depends on:** P11.
 
+*(P12 is committed: `2e2a04c`. See `SPEC-QUESTIONS.md` Q74 and its critic-round/verify-round addenda —
+before either round, three of this piece's own four rule-isolation tests were self-caught and fixed, all
+traced to one wrong belief (held since P11, written into two files' worth of doc comments) about
+`computeCriticalPath`'s own tie-break for a genuine cost tie: it is topological *depth* first, not plain
+declaration order, corrected in both places. The critic round found one BLOCKING bug native to this piece
+(duplicate `StepNode` ids silently defeating live concurrency/claim tracking, closed with a new `RUN-036`)
+plus two bugs in P11's own `critical-path.ts`; the verify round found this piece's own cost-ordering rule
+had no `NaN` guard of its own despite `critical-path.ts` just having learned that exact lesson one file
+over — fixed by reusing that fix's own helper, except the reuse alone wasn't enough (a subtraction-based
+comparator still produces `NaN` from `Infinity - Infinity`), caught and fixed one layer deeper while
+writing that fix's own regression test, before any test run. See `GAUNTLET-LOG.md`'s own entry for the
+fuller story and its calibration note on why a helper correct in the context it was built for does not
+stay correct across every context that reuses it.)*
+
 ---
 
 ## P13 — Backpressure
