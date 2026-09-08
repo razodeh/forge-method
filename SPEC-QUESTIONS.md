@@ -7325,3 +7325,44 @@ own *overlay* schema, M2 P3, which validates a partial document layered on top o
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (5066 tests, plus the boundaries-coverage config's own
 64) are all clean after every fix.
+
+## Q98 — M6 A2's `@forge/agents` roster content: `base-engineer` ships as a twelfth file outside A2's own
+stated eleven, and the real empirical answer to the `extends` design tension Q97's own `resolveExtends`
+left open
+
+**Why `base-engineer` exists.** `05` §5.3's own literal worked `architect` example writes `extends:
+base-engineer` — a real field this piece must reproduce verbatim (`PLAN-M6.md` A2's own Check: "`architect`
+matches `05` §5.3's own literal worked example exactly"). `resolveExtends` (Q97, A1) throws for an
+`extends` target absent from the registry, so `architect.agent.yaml` cannot resolve at all — and A1's own
+Check ("`resolveExtends` correctly layers a child's own fields over `base-engineer`'s") cannot be
+exercised against real content — unless a real `base-engineer.agent.yaml` also ships. It is not itself a
+`05` §5.2 roster row, so `modules/fm-core/agents/` ships twelve files, not A2's own stated eleven; recorded
+here rather than silently expanding the count with no explanation. Every field `agentDefinitionSchema`
+requires is real, proportionate content (a generic "implement the story, follow standards" mandate,
+`git_commit: lane`, `parallel_safety.exclusive: false` since multiple engineer lanes run concurrently) —
+not placeholder values, since a schema-required field left synthetic would defeat A1's own Check the moment
+a real `resolveExtends('architect', ...)` call actually exercises it.
+
+**The `extends` design tension, resolved empirically.** `resolveExtends`'s own doc comment (Q97) named a
+real, deliberately-unresolved tension: `agentDefinitionSchema` marks only `extends`/`kb_propose`/
+`frameworks`/`skills`/`mcp`/`ceiling` optional, so a child's own inheritance-on-omission can only ever be
+exercised for that small field set — every required field (`tools`/`limits`/`parallel_safety`/`gates`/
+`prompt`, arguably the fields a real `base-engineer` scheme most wants to share) must always be fully
+redeclared by the child, degenerating the merge to "child always wins because it's always present" for
+those fields. Built against real content (`architect.agent.yaml` itself, the one shipped agent that
+actually declares `extends`): `architect` redeclares every required field on its own (a faithful
+reproduction of `05` §5.3's own worked example, which itself declares every field), so in this one real
+instance the merge never gets to exercise partial inheritance on a required field at all — confirming the
+tension is real, not hypothetical, on the very first real document that uses `extends`. Left unresolved
+here, deliberately: A2's own scope is roster *content*, not an `agentDefinitionSchema` redesign (a
+"partial child" schema variant, mirroring `@forge/extensions`' own base/overlay split, is the kind of
+change Q97 already flagged as needing more real data first) — this entry is the second, confirming data
+point Q97 asked for, not the fix. A3's own `backend`/`frontend`/`mobile` (real engineer-tier children
+extending `base-engineer` for a *shared* implementation baseline, unlike `architect`'s own one-off,
+fully-redeclared use) is the next, more representative data point — whether they choose to omit fields
+and actually inherit them, or redeclare everything the way `architect` does, is itself part of A3's own
+real content decision, recorded there rather than presumed here.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (45 new tests in `packages/agents/test/content/
+a2-roster.test.ts`, covering all eleven A2 roster agents plus `base-engineer`) all clean; see
+`GAUNTLET-LOG.md`'s own M6 A2 entry for the critic round.

@@ -68,6 +68,12 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // `packages/agents/test/fixtures/architect.ts` (PLAN-M6.md A1): the shared verbatim `05` §5.3
 // `architect` YAML fixture string, imported by `test/schema/load.test.ts`,
 // `test/registry/registry.test.ts`, and `test/registry/resolve-extends.test.ts` — the identical shape.
+// `packages/cli/test/entry/fixtures/node-version-guard.ts` (PLAN-M6.md C1): a standalone fixture
+// *process* `test/entry/node-version.subprocess.test.ts` spawns via `child_process` (with
+// `--experimental-strip-types`, this repository's own no-build-step convention) to prove `03` §3.1's
+// exit(5) as a real, observable process exit code rather than a mocked function call — the identical
+// "genuinely test-only, unrecognised by `TEST_FILE`'s naming heuristic" shape `append-and-hang.ts`
+// above is already listed for, and for the same reason.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
@@ -78,6 +84,7 @@ const IGNORED_PATHS = new Set([
   'packages/methods/test/fixtures/repo-strategy.ts',
   'packages/catalog/test/fixtures/postgresql.ts',
   'packages/agents/test/fixtures/architect.ts',
+  'packages/cli/test/entry/fixtures/node-version-guard.ts',
 ]);
 
 /**

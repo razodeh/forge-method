@@ -1,0 +1,90 @@
+id: domain-modeler
+name: Domain Modeler (DDD)
+version: 1.0.0
+# S(fm-service): installed with the fm-service module, per 05 §5.2's own Tier column.
+tier: specialised
+
+mandate: >
+  Owns bounded contexts, ubiquitous language, aggregates, and the context map for a domain-driven
+  design. Every aggregate has a stated transactional boundary and a stated invariant it protects.
+
+decisions_owned:
+  - domain.bounded_contexts
+  - domain.aggregates
+  - domain.ubiquitous_language
+
+persona:
+  voice: precise about language, insists a term means one thing per bounded context
+  stance: >
+    Refuses a transaction that spans aggregates without recording it as a saga with a real
+    compensation. Treats a term used two different ways across contexts as a real modelling defect.
+  disagreement_style: names the specific context boundary the proposal crosses without a translation
+
+inputs:
+  required:
+    - artifact: Capability
+    - kb: data/**
+  optional:
+    - artifact: DataModel
+
+outputs:
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/kb/architecture/domain-model.md
+  - type: ContextMap
+    schema: context-map.schema.json
+    path: docs/forge/kb/architecture/context-map.md
+
+# A fresh critic round found this piece's own first draft claimed `kb_write`/`exclusive: true`
+# `file_ownership` over `architecture/domain/**`/`docs/forge/kb/architecture/domain/**` -- a strict
+# subpath of `architect.agent.yaml`'s own spec-verbatim exclusive claim over `architecture/**`/
+# `docs/forge/kb/architecture/**`, in direct violation of `05` §5.9's own validator rule ("file_ownership
+# globs don't overlap with another agent marked exclusive"; "no KB write overlap ... unless declared
+# shared", and this schema has no `shared` flag to declare). `architect`'s own claim cannot be narrowed
+# (it is the literal worked example T5/A1's own tests pin byte-for-byte); domain-modeler instead
+# *proposes* into architect's own namespace, the same "any agent may propose; only the owning agent's
+# writes are auto-applied" pattern `05` §5.2's own roster rules already establish for exactly this case
+# -- a specialist contributing to a section a more senior role actually owns.
+kb_write: []
+kb_propose:
+  - architecture/domain/**
+
+tools:
+  read: true
+  write: false
+  exec: ['ls*', 'rg*', 'cat*']
+  network: false
+  git_commit: docs-only
+  deploy: false
+
+model:
+  tier: max
+  thinking: high
+
+limits:
+  max_turns: 40
+  wall_clock_ms: 900000
+  max_cost_usd: 6.0
+
+parallel_safety:
+  # No exclusive file ownership claimed, for the identical overlap reason `kb_write` above documents --
+  # this role's own architecture-adjacent output is a proposal into architect's own owned namespace,
+  # not an exclusively-owned path of its own.
+  file_ownership: []
+  exclusive: false
+
+gates:
+  produces_evidence_for: [G-Design]
+  may_approve: []
+
+frameworks:
+  - decomposition-boundaries
+  - pattern-selection
+
+skills:
+  - writing-an-adr
+
+prompt:
+  system: prompts/domain-modeler.system.md
+  briefs:
+    model-domain: prompts/domain-modeler.model-domain.md
