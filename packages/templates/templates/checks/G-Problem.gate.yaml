@@ -1,0 +1,32 @@
+id: G-Problem
+name: Problem gate
+phase: P1
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: metrics:defined
+      run: 'forge spec validate --rule metrics-defined --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: user:identified
+      run: 'forge spec validate --rule user-identified --json'
+      failOn: 'errors > 0'
+    - id: scope:constraints
+      run: 'forge spec validate --rule scope-contradicts-constraints --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: problem-framing-review
+      agent: critic
+      brief: briefs/critique-problem-framing.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: Vision
+  - artifact: Assumption(*)
+onReject:
+  action: replan
+  target: P1

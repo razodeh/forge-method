@@ -6885,3 +6885,45 @@ processing (10), API styles (8), ORM/data access (11), and Auth (10) — `12` §
 64) are all clean after every fix. One unrelated, known-flaky test
 (`packages/engine/test/e2e/crash-resume.test.ts`) failed twice across this session's two full-suite runs
 and passed cleanly both times on immediate isolated re-run — confirmed not a regression from this piece.
+
+## Q91 — M6 T2's `@forge/templates` gate content: `G-Integration`'s own unstated phase assignment, and a
+pre-existing, out-of-scope spec/registry gap surfaced (not introduced) by shipping `G-Design` verbatim
+
+**`G-Integration`'s phase.** `10` §10.3's own ten-row gate catalogue has no dedicated phase-table row for
+`G-Integration` the way the other nine gates each have one via `10` §10.2's own "Exit gate" column — it is
+introduced only in §10.2's own level-mapping sentence: "L3/L4 run everything, L4 adds `G-Integration` and a
+domain decomposition step in P3." Two readings are possible: `G-Integration` is *itself* a P3 exit gate
+(alongside `G-Design`), or it is a phase-less, cross-cutting gate evaluated continuously against whatever
+integration surface exists at L4, unrelated to P3's own domain-decomposition addition beyond sharing one
+sentence. Resolved in favour of the first reading — `phase: P3` — for two reasons: (1) `GateDefinition`
+(`@forge/engine/gates/types.ts`) does not read `phase` at all (`evaluateGate` never consults it), so this
+is a content-only, non-load-bearing choice with no mechanism behaviour riding on it either way; (2) the
+gate's own catalogue "fails on" text (cross-service contract tests, version skew, migration order) is
+squarely architecture/interface-surface content, the same territory P3/`G-Design` already covers, making
+"an L4-only addition to the same phase" the more literal reading of the spec's own sentence than inventing
+an unstated eleventh phase-adjacent category. Recorded in a comment directly in
+`packages/templates/templates/checks/G-Integration.gate.yaml` so a future reader does not mistake this for
+an unexamined default.
+
+**A genuine, pre-existing spec/registry gap, surfaced but not fixed here.** `G-Design`'s own `evidence`
+block, shipped verbatim per T2's own Mandate ("`G-Design` matches `10` §10.3's own literal worked example
+exactly"), names `artifact: ArchitectureSpec` and `artifact: ThreatModel`. Neither id appears in `18`
+§18.7's own 21-member artifact-type registry that `@forge/schemas`' `ArtifactTypeId` and
+`@forge/templates`' own independently-declared `TemplateArtifactTypeId` (`SPEC-QUESTIONS.md` Q28) both
+transcribe — confirmed by grep: `ArchitectureSpec` and `ThreatModel` appear only in `05`, `10`, and `11`'s
+own prose (`11` §11.2's own F-ARCH-\* frameworks produce a `ThreatModel` by name), never in the registry
+table itself. This is not a T2-introduced error — it is the spec pack's own pre-existing internal
+inconsistency, first made visible in shipped content by this piece because T2 is the first piece to ship
+`G-Design`'s own `evidence` block as real content rather than leaving it implicit. Left unresolved
+deliberately, not silently: fixing it for real means adding two new artifact types across `@forge/schemas`
+(M1, already committed), `@forge/templates`' `TemplateArtifactTypeId`/`TEMPLATE_INDEX` (also already
+committed), and two new stub templates — a real, cross-piece registry change well outside a gate-content
+piece's own Mandate, and one that would need its own critic round on M1's own already-shipped, already-
+gauntlet-passed work. `evaluateGate` itself never reads `evidence` (confirmed against `GateDefinition`'s
+own doc comment — evidence is one of the fields this piece's own generic type deliberately omits), so
+nothing in the mechanism this piece's own Checks actually exercise is affected; a future piece that does
+build the real `evidence`-checking mechanism, or a future artifact-registry revision, is the right place to
+resolve this, not T2.
+
+`tsc`, `eslint`, and the full-repo suite (79 new tests across `test/gates.test.ts`/`test/workflows.test.ts`'s
+own gate-adjacent additions) all clean; see `GAUNTLET-LOG.md`'s own M6 T2 entry for the critic round.

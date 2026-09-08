@@ -97,6 +97,36 @@ export const WORKFLOW_INDEX: Readonly<Record<WorkflowId, string>> = {
   replan: 'templates/workflows/replan.workflow.yaml',
 };
 
+/** `10` §10.3's own ten-row gate catalogue, transcribed independently for the identical "this package
+ * has no `@forge/engine` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above already document. */
+export type GateId =
+  | 'G-Problem'
+  | 'G-Product'
+  | 'G-Design'
+  | 'G-Foundation'
+  | 'G-Ready'
+  | 'G-Verify'
+  | 'G-Stable'
+  | 'G-Integration'
+  | 'G-Deliver'
+  | 'G-Operate';
+
+/** Resolves a gate id to its `.gate.yaml` file, as a path relative to this package's own root — the
+ * identical "caller resolves against wherever `@forge/templates` is actually installed" contract
+ * `WORKFLOW_INDEX`/`TEMPLATE_INDEX` already document. */
+export const GATE_INDEX: Readonly<Record<GateId, string>> = {
+  'G-Problem': 'templates/checks/G-Problem.gate.yaml',
+  'G-Product': 'templates/checks/G-Product.gate.yaml',
+  'G-Design': 'templates/checks/G-Design.gate.yaml',
+  'G-Foundation': 'templates/checks/G-Foundation.gate.yaml',
+  'G-Ready': 'templates/checks/G-Ready.gate.yaml',
+  'G-Verify': 'templates/checks/G-Verify.gate.yaml',
+  'G-Stable': 'templates/checks/G-Stable.gate.yaml',
+  'G-Integration': 'templates/checks/G-Integration.gate.yaml',
+  'G-Deliver': 'templates/checks/G-Deliver.gate.yaml',
+  'G-Operate': 'templates/checks/G-Operate.gate.yaml',
+};
+
 export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = {
   Vision: 'templates/artifacts/Vision.md',
   Capability: 'templates/artifacts/Capability.md',
