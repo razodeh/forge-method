@@ -137,6 +137,28 @@ describe('T3+T4: all 43 decision frameworks (11-14) all load cleanly', () => {
     expect(total).toBeCloseTo(1.0, 6);
   });
 
+  // `frameworkSchema` (packages/methods/src/schema/schema.ts) types `produces.adr_category` as a bare
+  // non-empty string, with no cross-check against `@forge/schemas`' own `adrSchema.category` enum
+  // (`architecture | data | delivery | ops | process | product | security`, `08` §8.4) -- nothing
+  // stops a framework file from naming a category that isn't real ADR content. Caught here rather than
+  // left implicit: a first draft of several T4 frameworks used `testing`/`operations`, neither a real
+  // enum value (the real value for the latter is `ops`; for testing/debugging/review content, the
+  // closest real category is `process`) -- an ADR written from either would fail `adrSchema.safeParse`
+  // at real write time. Fixed directly in the framework files; this test locks the fix in.
+  it.each(ALL_FRAMEWORK_IDS)("%s's produces.adr_category is a real 08 §8.4 ADR category", (id) => {
+    const REAL_ADR_CATEGORIES = new Set([
+      'product',
+      'architecture',
+      'data',
+      'delivery',
+      'ops',
+      'security',
+      'process',
+    ]);
+    const raw = parseYaml(readFrameworkSource(id)) as { produces: { adr_category: string } };
+    expect(REAL_ADR_CATEGORIES.has(raw.produces.adr_category)).toBe(true);
+  });
+
   it("repo-strategy matches 11 §11.0's own literal worked example exactly", () => {
     const worked = `
 id: repo-strategy

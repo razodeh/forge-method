@@ -8,7 +8,7 @@ name: Cost model
 # installed; a project that does install `finops` can override this via the ordinary agent-override
 # mechanism (`03` §3.2.8), not by editing this shipped default.
 owner_agent: sre
-produces: { adr_category: operations, kb_section: ops/cost-model.md }
+produces: { adr_category: ops, kb_section: ops/cost-model.md }
 inputs:
   required: [kb:constraints/**]
 # 14 §14.8's own F-OPS-3 is a fixed lightweight output shape (estimated monthly cost per environment,

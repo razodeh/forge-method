@@ -1,7 +1,7 @@
 id: review-boundaries
 name: What review is not allowed to be
 owner_agent: reviewer
-produces: { adr_category: testing, kb_section: engineering/review.md }
+produces: { adr_category: process, kb_section: engineering/review.md }
 inputs:
   required: [kb:constraints/**]
 # 13 §13.3's own F-REVIEW-2 is a fixed set of boundary rules (advisory to gates only, a reviewer may

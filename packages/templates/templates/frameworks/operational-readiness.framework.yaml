@@ -1,7 +1,7 @@
 id: operational-readiness
 name: Operational readiness
 owner_agent: sre
-produces: { adr_category: operations, kb_section: ops/operational-readiness.md }
+produces: { adr_category: ops, kb_section: ops/operational-readiness.md }
 inputs:
   required: [kb:constraints/**, kb:ops/observability.md]
 # 14 §14.7's own F-OPS-2 is the fixed twelve-item checklist G-Operate enforces (deploy+rollback

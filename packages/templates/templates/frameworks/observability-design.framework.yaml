@@ -1,7 +1,7 @@
 id: observability-design
 name: Observability design
 owner_agent: sre
-produces: { adr_category: operations, kb_section: ops/observability.md }
+produces: { adr_category: ops, kb_section: ops/observability.md }
 inputs:
   required: [kb:constraints/**, artifact:NFR(*)]
 questions:

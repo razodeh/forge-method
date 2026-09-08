@@ -1,7 +1,7 @@
 id: rca-loop
 name: The autonomous RCA loop
 owner_agent: diagnostician
-produces: { adr_category: testing, kb_section: engineering/debugging.md }
+produces: { adr_category: process, kb_section: engineering/debugging.md }
 inputs:
   required: [kb:constraints/**, artifact:Defect]
 # 13 §13.2's own F-DEBUG-1 is a strict ten-state state machine (INTAKE -> REPRODUCE -> ISOLATE ->

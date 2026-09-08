@@ -1,7 +1,7 @@
 id: rca-loop-bounds-escalation
 name: RCA loop bounds and escalation
 owner_agent: diagnostician
-produces: { adr_category: testing, kb_section: engineering/debugging.md }
+produces: { adr_category: process, kb_section: engineering/debugging.md }
 inputs:
   required: [kb:constraints/**]
 # 13 §13.2's own F-DEBUG-2 is a fixed bound table (reproduction attempts 5, hypothesis rounds 3, fix

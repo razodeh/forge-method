@@ -1,7 +1,7 @@
 id: flake-control
 name: Flake control policy
 owner_agent: test-architect
-produces: { adr_category: testing, kb_section: engineering/testing.md }
+produces: { adr_category: process, kb_section: engineering/testing.md }
 inputs:
   required: [kb:constraints/**]
 # 13 §13.1's own F-TEST-6 is a fixed policy (retry-once-to-classify, quarantine above 2%/20 runs,

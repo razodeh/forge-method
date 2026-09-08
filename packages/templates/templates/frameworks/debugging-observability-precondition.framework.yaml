@@ -1,7 +1,7 @@
 id: debugging-observability-precondition
 name: Observability as a debugging precondition
 owner_agent: diagnostician
-produces: { adr_category: testing, kb_section: engineering/debugging.md }
+produces: { adr_category: process, kb_section: engineering/debugging.md }
 inputs:
   required: [kb:constraints/**]
 # 13 §13.2's own F-DEBUG-3 is a fixed checklist (correlation/trace ids, an enumerated error taxonomy,

@@ -1,7 +1,7 @@
 id: test-oracle-design
 name: Test oracle design
 owner_agent: test-architect
-produces: { adr_category: testing, kb_section: engineering/testing.md }
+produces: { adr_category: process, kb_section: engineering/testing.md }
 inputs:
   required: [kb:constraints/**, artifact:Story(*)]
 questions:
