@@ -323,10 +323,10 @@ styles, ORM/data access, and Auth rows.
 Observability, Testing, Feature flags & config, Secrets).
 
 **Surface:** `catalog/ci/*.entry.yaml`, `catalog/container/*.entry.yaml`, `catalog/iac/*.entry.yaml`,
-`catalog/observability/*.entry.yaml`, `catalog/testing/*.entry.yaml`, plus the two rows the `kind` enum
-doesn't name a dedicated top-level category for (feature flags, secrets — decide the closest-fit `kind`
-value or record a schema extension, whichever the enum's own 19 members actually support once checked
-against C1's real list).
+`catalog/observability/*.entry.yaml`, `catalog/testing/*.entry.yaml`, `catalog/feature-flags/*.entry.yaml`,
+`catalog/secrets/*.entry.yaml` — the schema extension this note originally deferred (`feature-flags`,
+`secrets`, alongside `stack` for C2's own row) was decided and shipped in C2 already, once the identical
+gap was found there first; see `SPEC-QUESTIONS.md` Q87.
 
 **Checks:** identical shape to C2/C3's, against this piece's own remaining rows; plus a final,
 whole-catalog completeness test (every row of `12` §12.2's own full table has real coverage, run once

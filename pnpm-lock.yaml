@@ -14,6 +14,9 @@ importers:
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
+      '@forge/engine':
+        specifier: workspace:*
+        version: link:packages/engine
       '@forge/schemas':
         specifier: workspace:*
         version: link:packages/schemas

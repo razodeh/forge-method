@@ -1,0 +1,34 @@
+id: initialize-project
+name: Project Initialization
+version: 1.0.0
+description: >-
+  Repo strategy, build system, scaffold, VCS conventions, and CI skeleton for a greenfield project
+  (10 §10.2 P4).
+levels: [L2, L3, L4]
+requires:
+  gates_passed: [G-Design]
+steps:
+  - id: decide-repo-strategy
+    kind: agent
+    agent: platform
+    brief: briefs/decide-repo-strategy.md
+    outputs: [{ type: ADR }]
+
+  - id: scaffold-project
+    kind: agent
+    agent: platform
+    brief: briefs/scaffold-project.md
+    dependsOn: [decide-repo-strategy]
+    produces: ['**/*']
+
+  - id: scaffold-ci
+    kind: agent
+    agent: sre
+    brief: briefs/scaffold-ci.md
+    dependsOn: [scaffold-project]
+    produces: ['.github/**', 'ci/**']
+
+  - id: foundation-gate
+    kind: gate
+    gate: G-Foundation
+    dependsOn: [scaffold-ci]

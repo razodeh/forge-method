@@ -1,0 +1,40 @@
+id: intake
+name: Intake
+version: 1.0.0
+description: Turns a raw idea into a level selection, constraints, and a glossary seed (10 §10.2 P0).
+levels: [L0, L1, L2, L3, L4]
+steps:
+  - id: elicit-idea
+    kind: elicit
+    questions:
+      - name: ideaSummary
+        prompt: 'In one or two sentences, what are we building?'
+      - name: greenfield
+        prompt: 'Is this a new project (greenfield) or a change to an existing one (brownfield)?'
+
+  - id: propose-level
+    kind: agent
+    agent: analyst
+    brief: briefs/propose-level.md
+    dependsOn: [elicit-idea]
+    inputs: ['kb:constraints/**']
+    outputs: [{ type: HandoffRecord, subtype: level-proposal }]
+
+  - id: confirm-level
+    kind: elicit
+    dependsOn: [propose-level]
+    questions:
+      - name: levelConfirmed
+        prompt: 'The proposed scale level and reasoning are shown above -- confirm or override.'
+
+  - id: seed-glossary
+    kind: agent
+    agent: analyst
+    brief: briefs/seed-glossary.md
+    dependsOn: [confirm-level]
+    outputs: [{ type: Assumption, cardinality: many }]
+
+onComplete:
+  - kind: command
+    run: 'forge kb sync'
+    inline: true

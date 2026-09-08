@@ -6665,3 +6665,93 @@ conditions and trade-offs, never benchmarks.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (3476 tests, plus the boundaries-coverage config's own
 64) are all clean.
+
+## Q87 — M6 C2's `@forge/catalog` content: `12` §12.2's own "Catalog scope" table needs three `kind`
+values (`stack`, `feature-flags`, `secrets`) the closed 20-member enum in C1 does not name — a real
+schema extension to already-committed C1 code, found while starting C2, fixed before authoring any entry
+
+Before writing any catalog content file, cross-checked every one of `12` §12.2's own "Catalog scope (v1
+minimum coverage)" table's 19 rows against C1's own `CatalogKind` enum (the 20 values transcribed directly
+from that section's `kind:` comment, per Q86). Three rows have no matching value at all:
+
+- **"Stacks (as compositions)"** — 9 required items (MERN/MEAN, T3, .NET stack, JVM+React, Django+HTMX,
+  Rails+Hotwire, LAMP, Serverless-first, Phoenix LiveView), needed for this piece (C2).
+- **"Feature flags & config"** and **"Secrets"** — the same gap C4's own plan text already anticipated
+  ("the two rows the kind enum doesn't name a dedicated top-level category for... decide the closest-fit
+  kind value or record a schema extension"), resolved now rather than deferred, since it is the identical
+  root cause as the `stack` gap and cheaper to fix once.
+
+Misclassifying any of these under an unrelated existing kind (`framework` for a stack composition, `infra`
+for a secrets manager) would make the entry's own `kind` field a false statement about what it is —
+`CatalogRegistry.byKind('stack')` should return stacks, not an arbitrary subset of frameworks. The `kind:`
+comment's own 20-value enum is the closed, exhaustive contract `12` §12.2 states in prose, but the same
+section's own scope table is the concrete, load-bearing content requirement — where the two disagree, the
+content requirement wins, because refusing to classify required content honestly is a worse outcome than a
+three-value, narrowly-justified enum extension.
+
+**Fixed** by adding exactly `'stack' | 'feature-flags' | 'secrets'` to `CatalogKind`
+(`packages/catalog/src/schema/types.ts`) and `CATALOG_KINDS`
+(`packages/catalog/src/schema/schema.ts`) — no other kind, no speculative future category — with the
+reasoning recorded directly in `CatalogKind`'s own doc comment so a future reader of C1 understands why the
+enum is 23 values, not the 20 the spec's own comment names, without needing to rediscover this. C1's own
+existing "accepts every declared kind value" test was extended to cover the three new values by name,
+kept as one list rather than folded silently into the loop, so a future kind addition still shows up as an
+explicit diff. `tsc`, `eslint`, and `packages/catalog`'s own full test suite (32 tests) all re-confirmed
+clean after the change, before any C2 content was written.
+
+## Q88 — M6 T1's `@forge/templates` workflow content: `10` §10.5's own workflow table is 20 rows, not the
+"ten" `22` §22's own build-plan paraphrase names, and `build-stage.workflow.yaml` inherits an already-known
+M5 compile-time gap directly from `10` §10.1's own literal worked example
+
+**Count.** `specs/22-build-plan-and-milestones.md`'s own T1 scope line paraphrases `10` §10.5 loosely as
+"the built-in lifecycle workflows" with no number, but an earlier draft of `PLAN-M6.md`'s own T1 section
+said "19." Recounted directly against `10` §10.5's own table text before writing any workflow content:
+it lists exactly 20 rows (intake, discover, define-product, shape-solution, initialize-project, plan-
+stages, plan-stage, build-stage, implement-story, quick-fix, verify-stage, debug, harden, refactor,
+deliver-stage, operate, adopt, migrate, retro, replan). Shipping all 20 is the correct reading — a
+built-in-lifecycle-workflow catalogue missing a row the spec's own table names would be a real content
+gap, not a harmless rounding difference — so `PLAN-M6.md` T1 was corrected to "20" before authoring any
+workflow file, and `packages/templates/src/index.ts`'s own `WORKFLOW_INDEX` names all 20.
+
+**The `build-stage` compile gap.** `10` §10.1's own worked `build-stage` example is the spec's literal,
+authoritative content for that one workflow — `packages/templates/templates/workflows/build-stage.
+workflow.yaml` reproduces it as closely as `parseWorkflow` allows (three flow-sequence entries the spec's
+own fenced block leaves unquoted, e.g. `artifact:Story({{item.id}})` inside `[ ... ]`, are quoted; this
+exact correction is already documented independently by `@forge/engine/workflow`'s own P8 test suite —
+an unquoted `{{...}}` inside a YAML flow sequence is invalid syntax, not a template placeholder, so it is
+a parse-level fix, not a content deviation). Once quoted, the file parses cleanly and structurally matches
+the worked example (`test/workflows.test.ts`'s own byte-for-byte-equivalence test asserts this).
+
+It does not, however, *compile* cleanly: its `merge` step's own `dependsOn: [ "review:{{item.id}}" ]` is
+the exact construct `packages/engine/src/plan/compile.ts`'s own doc comment already names as a known,
+deliberately-deferred M5 gap (recorded there against Q71) — a `merge`/plain step is never given an `item`
+binding in its own `ExpressionContext`, so it cannot resolve a `dependsOn` templated against a sibling
+fanout's own per-item ids. This is not a defect in the shipped template content: the content is a faithful
+transcription of the spec's own worked example, and the gap is in the engine `compile.ts` already
+documents as out of scope for the piece that built it. Confirmed to generalise beyond `merge` specifically:
+`harden.workflow.yaml`'s own first draft depended on a `fanout` step's bare group id from a plain `gate`
+step outside that fanout (`dependsOn: [ fix-findings ]`), which fails for the same underlying reason —
+`compilePlan`'s own `groupIds` resolvable-reference set only ever collects a `parallel`/`sequence` group's
+own id, never a `fanout`'s, so *no* step outside a fanout can depend on "all of that fanout's own
+instances" today, by any spelling.
+
+**Resolution, without touching the engine.** T1's own scope is workflow *content*, not `@forge/engine`
+compiler changes — reopening `compile.ts` to add fanout-aggregate dependency resolution is a real, separate
+feature with its own design questions (already flagged as such in `compile.ts`'s own doc comment), not a
+one-line fix appropriate to fold into a content piece. Two different responses, matched to what each
+workflow actually needs:
+
+- `build-stage.workflow.yaml` is left exactly as `10` §10.1 specifies, including the construct that does
+  not compile today — rewriting the spec's own literal worked example to dodge an engine limitation would
+  make the shipped file a *worse*, not better, transcription of that section. `test/workflows.test.ts`
+  documents this explicitly: `build-stage` is excluded from the generic "all 20 compile" `it.each` (with a
+  comment explaining why) and given its own dedicated test asserting the *exact* known failure shape
+  (`template-resolution-failed` at `build-stage:merge`, nothing else) — so a future, real fix to
+  `compile.ts`'s own fanout-aggregate gap will fail this test loudly (a signal to move `build-stage` back
+  into the general compile check), rather than the gap silently regressing unnoticed.
+- `harden.workflow.yaml`, which has no equivalent to "faithfully transcribe the spec's own literal
+  example" pinning it to a fanout (`10` §10.5's own harden row is a one-line purpose description, not a
+  worked step sequence), was restructured to avoid the gap entirely: `fix-findings` is one ordinary agent
+  step handling the whole `run.findings` collection in a single turn (`inputs: [ "artifact:Defect(*)" ]`),
+  matching the pattern most of the other 19 workflows already use for collection-level work, rather than a
+  fanout no downstream step could actually depend on correctly.

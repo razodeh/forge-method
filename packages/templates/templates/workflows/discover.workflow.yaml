@@ -1,0 +1,24 @@
+id: discover
+name: Discovery
+version: 1.0.0
+description: Frames the problem, users, competitive landscape, and success metrics (10 §10.2 P1).
+levels: [L2, L3, L4]
+steps:
+  - id: frame-problem
+    kind: agent
+    agent: analyst
+    brief: briefs/frame-problem.md
+    inputs: ['kb:constraints/**']
+    outputs: [{ type: Assumption, cardinality: many }]
+
+  - id: define-metrics
+    kind: agent
+    agent: pm
+    brief: briefs/define-success-metrics.md
+    dependsOn: [frame-problem]
+    outputs: [{ type: NFR, cardinality: many }]
+
+  - id: problem-gate
+    kind: gate
+    gate: G-Problem
+    dependsOn: [define-metrics]

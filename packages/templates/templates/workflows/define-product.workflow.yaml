@@ -1,0 +1,32 @@
+id: define-product
+name: Product Definition
+version: 1.0.0
+description: Vision, PRD, capabilities, NFRs, and UX spec (10 §10.2 P2).
+levels: [L2, L3, L4]
+requires:
+  gates_passed: [G-Problem]
+steps:
+  - id: write-vision
+    kind: agent
+    agent: pm
+    brief: briefs/write-vision.md
+    outputs: [{ type: Vision }]
+
+  - id: write-prd
+    kind: agent
+    agent: po
+    brief: briefs/write-prd.md
+    dependsOn: [write-vision]
+    outputs: [{ type: Capability, cardinality: many }, { type: NFR, cardinality: many }]
+
+  - id: write-ux-spec
+    kind: agent
+    agent: ux
+    brief: briefs/write-ux-spec.md
+    dependsOn: [write-prd]
+    outputs: [{ type: HandoffRecord, subtype: ux-spec }]
+
+  - id: product-gate
+    kind: gate
+    gate: G-Product
+    dependsOn: [write-ux-spec]

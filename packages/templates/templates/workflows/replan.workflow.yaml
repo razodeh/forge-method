@@ -1,0 +1,34 @@
+id: replan
+name: Replan
+version: 1.0.0
+description: A change proposal, its impact analysis, and re-derivation of affected downstream artifacts.
+levels: [L0, L1, L2, L3, L4]
+inputs:
+  - name: changeSummary
+    type: string
+    required: true
+steps:
+  - id: propose-change
+    kind: agent
+    agent: pm
+    brief: briefs/propose-change.md
+    outputs: [{ type: HandoffRecord, subtype: change-proposal }]
+
+  - id: impact-analysis
+    kind: agent
+    agent: architect
+    brief: briefs/change-impact-analysis.md
+    dependsOn: [propose-change]
+    outputs: [{ type: HandoffRecord, subtype: impact-analysis }]
+
+  - id: approve-change
+    kind: elicit
+    dependsOn: [impact-analysis]
+    questions:
+      - name: changeApproved
+        prompt: 'The change proposal and its impact analysis are shown above -- approve or reject?'
+
+  - id: re-derive
+    kind: command
+    run: 'forge spec re-derive --json'
+    dependsOn: [approve-change]

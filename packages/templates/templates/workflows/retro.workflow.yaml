@@ -1,0 +1,17 @@
+id: retro
+name: Retrospective
+version: 1.0.0
+description: A structured retrospective with knowledge-body write-back.
+levels: [L0, L1, L2, L3, L4]
+steps:
+  - id: run-retro
+    kind: agent
+    agent: em
+    brief: briefs/run-retro.md
+    outputs: [{ type: SessionRecord, subtype: retrospective }]
+
+  - id: write-back-kb
+    kind: command
+    run: 'forge kb sync'
+    inline: true
+    dependsOn: [run-retro]

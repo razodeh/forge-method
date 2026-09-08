@@ -1,0 +1,23 @@
+id: adopt
+name: Adopt (Brownfield Ingestion)
+version: 1.0.0
+description: Ingests an existing codebase (17) -- inventory, reverse-derived specs, gap analysis.
+levels: [L0, L1, L2, L3, L4]
+steps:
+  - id: inventory-codebase
+    kind: command
+    run: 'forge adopt inventory --json'
+
+  - id: reverse-derive-specs
+    kind: agent
+    agent: architect
+    brief: briefs/reverse-derive-specs.md
+    dependsOn: [inventory-codebase]
+    outputs: [{ type: ADR, cardinality: many }, { type: DataModel }]
+
+  - id: gap-analysis
+    kind: agent
+    agent: analyst
+    brief: briefs/adoption-gap-analysis.md
+    dependsOn: [reverse-derive-specs]
+    outputs: [{ type: HandoffRecord, subtype: adoption-gap-analysis }]

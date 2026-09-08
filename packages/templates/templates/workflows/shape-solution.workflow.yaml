@@ -1,0 +1,41 @@
+id: shape-solution
+name: Solution Shaping
+version: 1.0.0
+description: Architecture, ADRs, domain and data model, tech selection, and threat model (10 §10.2 P3).
+levels: [L2, L3, L4]
+requires:
+  gates_passed: [G-Product]
+  artifacts: [Capability]
+steps:
+  - id: select-architecture
+    kind: agent
+    agent: architect
+    brief: briefs/select-architecture-style.md
+    inputs: ['artifact:Capability(*)', 'kb:constraints/**']
+    outputs: [{ type: ADR, cardinality: many }]
+
+  - id: model-data
+    kind: agent
+    agent: data-architect
+    brief: briefs/model-data.md
+    dependsOn: [select-architecture]
+    outputs: [{ type: DataModel }]
+
+  - id: select-stack
+    kind: agent
+    agent: architect
+    brief: briefs/select-tech-stack.md
+    dependsOn: [model-data]
+    outputs: [{ type: ADR, cardinality: many }]
+
+  - id: threat-model
+    kind: agent
+    agent: security
+    brief: briefs/threat-model.md
+    dependsOn: [select-stack]
+    outputs: [{ type: HandoffRecord, subtype: threat-model }]
+
+  - id: design-gate
+    kind: gate
+    gate: G-Design
+    dependsOn: [threat-model]

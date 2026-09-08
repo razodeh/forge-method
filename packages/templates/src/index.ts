@@ -43,6 +43,60 @@ export type TemplateArtifactTypeId =
  * installed, since this package does not know its own filesystem location at the point this module
  * evaluates.
  */
+/** `10` §10.5's own 20-row "Built-in workflows" table, transcribed independently for the identical
+ * "this package has no `@forge/engine` edge" reason `TemplateArtifactTypeId` above already documents —
+ * `specs/22` M6's own Build line says "the ten lifecycle workflows," but `10` §10.5's own table names
+ * twenty (`PLAN-M6.md` T1, `SPEC-QUESTIONS.md` Q88: shipping all twenty is the correct reading, "ten
+ * lifecycle workflows" is `22`'s own loose paraphrase of the ten `10` §10.2 phases, not a literal
+ * subset instruction). */
+export type WorkflowId =
+  | 'intake'
+  | 'discover'
+  | 'define-product'
+  | 'shape-solution'
+  | 'initialize-project'
+  | 'plan-stages'
+  | 'plan-stage'
+  | 'build-stage'
+  | 'implement-story'
+  | 'quick-fix'
+  | 'verify-stage'
+  | 'debug'
+  | 'harden'
+  | 'refactor'
+  | 'deliver-stage'
+  | 'operate'
+  | 'adopt'
+  | 'migrate'
+  | 'retro'
+  | 'replan';
+
+/** Resolves a workflow id to its `.workflow.yaml` file, as a path relative to this package's own root
+ * — the identical "caller resolves against wherever `@forge/templates` is actually installed" contract
+ * `TEMPLATE_INDEX` below already documents. */
+export const WORKFLOW_INDEX: Readonly<Record<WorkflowId, string>> = {
+  intake: 'templates/workflows/intake.workflow.yaml',
+  discover: 'templates/workflows/discover.workflow.yaml',
+  'define-product': 'templates/workflows/define-product.workflow.yaml',
+  'shape-solution': 'templates/workflows/shape-solution.workflow.yaml',
+  'initialize-project': 'templates/workflows/initialize-project.workflow.yaml',
+  'plan-stages': 'templates/workflows/plan-stages.workflow.yaml',
+  'plan-stage': 'templates/workflows/plan-stage.workflow.yaml',
+  'build-stage': 'templates/workflows/build-stage.workflow.yaml',
+  'implement-story': 'templates/workflows/implement-story.workflow.yaml',
+  'quick-fix': 'templates/workflows/quick-fix.workflow.yaml',
+  'verify-stage': 'templates/workflows/verify-stage.workflow.yaml',
+  debug: 'templates/workflows/debug.workflow.yaml',
+  harden: 'templates/workflows/harden.workflow.yaml',
+  refactor: 'templates/workflows/refactor.workflow.yaml',
+  'deliver-stage': 'templates/workflows/deliver-stage.workflow.yaml',
+  operate: 'templates/workflows/operate.workflow.yaml',
+  adopt: 'templates/workflows/adopt.workflow.yaml',
+  migrate: 'templates/workflows/migrate.workflow.yaml',
+  retro: 'templates/workflows/retro.workflow.yaml',
+  replan: 'templates/workflows/replan.workflow.yaml',
+};
+
 export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = {
   Vision: 'templates/artifacts/Vision.md',
   Capability: 'templates/artifacts/Capability.md',

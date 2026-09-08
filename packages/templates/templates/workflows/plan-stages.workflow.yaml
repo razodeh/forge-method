@@ -1,0 +1,21 @@
+id: plan-stages
+name: Stage Planning
+version: 1.0.0
+description: Decomposes the product into independently deployable, demonstrable stages (10 §10.4).
+levels: [L2, L3, L4]
+requires:
+  gates_passed: [G-Product]
+  artifacts: [Capability]
+steps:
+  - id: decompose-stages
+    kind: agent
+    agent: pm
+    brief: briefs/decompose-stages.md
+    inputs: ['artifact:Capability(*)']
+    outputs: [{ type: HandoffRecord, subtype: stage-plan }]
+
+  - id: review-stages
+    kind: agent
+    agent: em
+    brief: briefs/review-stage-plan.md
+    dependsOn: [decompose-stages]

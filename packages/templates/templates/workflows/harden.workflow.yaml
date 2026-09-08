@@ -1,0 +1,38 @@
+id: harden
+name: Harden
+version: 1.0.0
+description: A dedicated security, performance, and reliability pass against staged NFRs (10 §10.2 P8).
+levels: [L2, L3, L4]
+steps:
+  - id: security-pass
+    kind: agent
+    agent: security
+    brief: briefs/security-hardening-pass.md
+    outputs: [{ type: Defect, cardinality: many }]
+
+  - id: performance-pass
+    kind: agent
+    agent: sre
+    brief: briefs/performance-hardening-pass.md
+    dependsOn: [security-pass]
+    outputs: [{ type: Defect, cardinality: many }]
+
+  - id: fix-findings
+    # A single agent step handling every finding, not a "fanout over run.findings" -- compile.ts's own
+    # documented limitation (SPEC-QUESTIONS.md Q71/Q88) means no step outside a fanout can depend on
+    # "all of that fanout's own instances": a fanout's own id is never added to compilePlan's own
+    # resolvable groupIds set the way a parallel/sequence group's id is, so a downstream gate step has
+    # no way to express "wait for every fix-findings item" if fix-findings were a fanout. Handling the
+    # whole findings collection inside one step's own agent turn (matching most of the other 19
+    # workflows' own pattern for collection-level work) sidesteps the gap entirely rather than working
+    # around an engine limitation from template content.
+    kind: agent
+    agent: backend
+    brief: briefs/fix-defect.md
+    dependsOn: [performance-pass]
+    inputs: ['artifact:Defect(*)']
+
+  - id: stable-gate
+    kind: gate
+    gate: G-Stable
+    dependsOn: [fix-findings]
