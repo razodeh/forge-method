@@ -5240,3 +5240,45 @@ Verification column) — all exact matches.
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (210 files, 4246 tests, plus the
 boundaries-coverage config's own 64) all clean.
+
+---
+
+## M6 T4 — `@forge/templates`: the 29 data/technology/testing/debugging/delivery/operations frameworks
+(`12`-`14`)
+
+**Rounds: 1 (fresh critic finding one real bug plus two content nits, all fixed; no separate verify
+round run). Outcome: WON.**
+
+The remaining 29 F-DATA/F-TECH/F-TEST/F-DEBUG/F-REVIEW/F-DELIVER/F-OPS framework files, completing the
+full 43-member `FRAMEWORK_INDEX` (14 from T3 + 29 here) and `test/frameworks.test.ts`'s own coverage.
+See `SPEC-QUESTIONS.md` Q92 for the F-DATA-2/F-DATA-3 `requires:`-field gap (`frameworkSchema` has no
+framework-to-framework ordering field) and the F-TECH-1/F-DELIVER-3 catalog-delegation convention this
+piece establishes and applies consistently to both.
+
+### Round 1 — fresh critic: one real bug, two content nits, all fixed
+
+1. `test/frameworks.test.ts`'s own new "43 F-* ids" whole-set completeness test (T4's own Checks text)
+   was tautological — it asserted two independently-built 43-length lists each had length 43, with no
+   cross-check tying either list's *content* to the other, so a silently-dropped framework alongside a
+   stray duplicate elsewhere could both still leave each list at length 43 and the test green. **Fixed**
+   by replacing it with a real `F-* -> FrameworkId` mapping, checked in both directions against
+   `FRAMEWORK_INDEX`'s own real keys (every mapped id resolves to a real key; every real key is covered
+   by some mapping; no two F-* ids map to the same `FrameworkId`).
+2. `stack-selection.framework.yaml`'s own `primary_language_count` question reused
+   `repo-strategy.framework.yaml`'s own `config.concurrency` `default_from` verbatim — semantically
+   about headcount/lane concurrency, not language count, and unrelated to `12` §12.3's own actual fixed
+   default (1, 2 max at L3). **Fixed** by removing the mismatched `default_from` and stating the real
+   fixed default in the question text instead.
+3. `cost-model.framework.yaml`'s `owner_agent: sre` sits in real tension with `05` §5.2's own explicit
+   "Cost model" listing under `finops` (Cost Engineer) — defensible (`finops` is optional-tier and `14`'s
+   own section-level owner line names no override for cost modelling), but left implicit. **Fixed** by
+   documenting the reasoning directly in the file's own comment.
+
+No other findings — every `rules[].if` expression across all 29 files hand-verified against
+`@forge/methods/expr.ts`'s own bounded grammar, every `eliminate`/`prefer` reference resolved, every
+criteria block hand-summed to 1.0, the F-DATA-2/F-DATA-3 ordering gap and F-TECH-1/F-DELIVER-3
+catalog-delegation convention both confirmed handled the documented way (not silently dropped, no
+unsupported schema field added).
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (210 files, 4363 tests, plus the boundaries-coverage
+config's own 64) all clean after every fix.
