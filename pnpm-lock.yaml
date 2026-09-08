@@ -92,15 +92,27 @@ importers:
 
   packages/agents:
     dependencies:
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
       '@forge/core':
         specifier: workspace:*
         version: link:../core
       '@forge/extensions':
         specifier: workspace:*
         version: link:../extensions
+      '@forge/kb':
+        specifier: workspace:*
+        version: link:../kb
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      '@forge/templates':
+        specifier: workspace:*
+        version: link:../templates
+      minimatch:
+        specifier: 10.2.6
+        version: 10.2.6
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -119,12 +131,40 @@ importers:
 
   packages/cli:
     dependencies:
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      '@forge/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/extensions':
+        specifier: workspace:*
+        version: link:../extensions
+      '@forge/methods':
+        specifier: workspace:*
+        version: link:../methods
+      '@forge/schemas':
+        specifier: workspace:*
+        version: link:../schemas
       '@forge/telemetry':
         specifier: workspace:*
         version: link:../telemetry
+      '@forge/templates':
+        specifier: workspace:*
+        version: link:../templates
+      execa:
+        specifier: 9.6.1
+        version: 9.6.1
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+    devDependencies:
+      '@forge/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/core:
     dependencies:

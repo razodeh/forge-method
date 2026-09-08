@@ -10,4 +10,5 @@
  * @see specs/03
  */
 export * from './entry/index.ts';
+export * from './init/index.ts';
 export * from './output/index.ts';

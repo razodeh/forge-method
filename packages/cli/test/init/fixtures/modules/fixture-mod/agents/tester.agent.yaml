@@ -1,0 +1,62 @@
+id: tester
+name: Fixture Tester
+version: 1.0.0
+tier: core
+
+mandate: >
+  A minimal, standalone (no extends) agent definition used only to exercise
+  @forge/cli's own init content-reading tests against a real, schema-valid fixture.
+
+decisions_owned:
+  - testing.approach
+
+persona:
+  voice: plain
+  stance: minimal
+  disagreement_style: states the concern directly
+
+inputs:
+  required:
+    - artifact: Story
+  optional: []
+
+outputs:
+  - type: Task
+    schema: task.schema.json
+    path: docs/forge/specs/tasks/{id}.md
+    cardinality: many
+
+kb_write: []
+kb_propose: []
+
+tools:
+  read: true
+  write: true
+  exec: []
+  network: false
+  git_commit: none
+  deploy: false
+
+model:
+  tier: frugal
+  thinking: none
+
+limits:
+  max_turns: 10
+  wall_clock_ms: 600000
+  max_cost_usd: 1.0
+
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+
+gates:
+  produces_evidence_for: []
+  may_approve: []
+
+frameworks: []
+skills: []
+
+prompt:
+  system: prompts/tester.system.md
+  briefs: {}
