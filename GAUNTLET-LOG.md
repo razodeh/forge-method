@@ -4585,3 +4585,73 @@ act, so no amount of re-reading the existing, passing tests would have surfaced 
 evidence yet in this build for why the critic round is a required step for an integration-heavy piece, not
 a redundant one: "every individual seam has a test" does not imply "every real combination of policies
 across those seams does."
+
+---
+
+## M5 P16 — `@forge/engine/failures`: classification, never-retry, and backoff-with-jitter (`06` §6.8, `21`
+§21.1/§21.3)
+
+**Rounds: 2 (one critic finding 1 MAJOR and 1 MINOR, both fixed; one scoped verify finding round 1's own
+MAJOR fix was real but incomplete, closed with a follow-up fix; no third round). Outcome: WON.**
+
+`classifyFailure`, `normaliseErrorSignature`, `decideRetry`, `computeBackoff` — `06` §6.8's own nine-member
+failure table, never-retry rule, and backoff-with-jitter, applied to a real `StepOutcome` (P15). Design
+points recorded in full in `SPEC-QUESTIONS.md` Q78: the classification mapping is almost entirely invented
+(the spec's table gives one example per class, not a real mapping from P15's own `source`/`code`
+vocabulary — the finest-grained "spec silence" this build has hit in one piece so far), the never-retry
+rule's own exact boundary (escalate on the second matching signature, not the third), `computeBackoff`'s own
+algebraic `[initial, max]` guarantee via a seeded FNV-1a hash (no `Math.random`, `21` §21.1), and three new
+`ForgeError` codes (`RUN-042`–`RUN-044`) for malformed input. Required one small, well-justified change to
+the previous piece's own already-committed code: three new structured failure codes added to P15's
+`runMergeStep` (`MERGE-PRE-CHECK-FAILED`/`MERGE-POST-CHECK-FAILED`/`MERGE-CONFLICT-UNRESOLVED`), so this
+piece's classifier does not have to sniff free-text messages to tell the three real merge failure modes
+apart.
+
+### Round 1 — critic: 1 MAJOR, 1 MINOR, both fixed
+
+**MAJOR: `normaliseErrorSignature`'s original path-stripping replaced an entire absolute path token with
+one fixed placeholder**, discarding the filename and `:line:col` suffix — exactly the part of a real
+compiler/lint/test error message that distinguishes one bug from a different one. Confirmed by repro: two
+unrelated exceptions in different files at different lines hashed identically, since almost every real tool
+error message references an absolute path. Since the never-retry rule keys entirely off this signature, this
+risked forcing escalation after two genuinely *different* bugs — the exact false-positive this piece exists
+to prevent. **Fixed** (round 1) by keeping a path token's own final path segment instead of discarding it
+outright; a scoped verify round found this first fix was still incomplete (see below).
+
+**MINOR:** `classifyVcsFailure`'s own doc comment listed an incomplete inventory of real `@forge/vcs` error
+codes (missing four real, reachable ones, all already falling through to the same default the logic already
+gave every unrecognised code — behaviourally inert). **Fixed** by updating the doc comment to the complete,
+grep-verified inventory.
+
+### Round 2 — scoped verify: 1 MAJOR (a real residual gap in round 1's own fix)
+
+**New finding (MAJOR): round 1's own "keep the final path segment" fix was a real improvement but not a
+complete one.** Two different files that merely share a basename and line:col in different directories
+still collided — confirmed both plausible (this monorepo itself has several `errors.ts`/`index.ts` files
+across packages) and reproducible directly. A narrower, genuinely out-of-scope MINOR was also surfaced (a
+UUID as a path's own basename gets erased before the path-preservation logic can keep it distinct, since
+UUID-stripping ran before the path pass) and confirmed to matter only for UUID-named generated source files,
+which nothing in this codebase's own real call paths currently produces. Windows-style and relative paths
+were checked and confirmed genuinely out of scope for this codebase (every real message-producing call site
+is POSIX-shaped). **Fixed** by preserving a path token's own trailing *two* segments instead of one, and
+reordering the normalisation passes so the path pass runs first — explicitly documented as a bounded
+heuristic, not a complete fix, since no fixed segment count can ever fully resolve "how many segments are
+the variable machine-specific prefix vs. the meaningful project-relative path" without knowing the real
+project root. New tests assert both the now-fixed case and the still-colliding deeper case explicitly, so a
+future change to the preserved-segment count has an honest baseline rather than a silently-drifting one.
+
+No other new findings; `tsc`, `eslint`, `prettier`, and the full-repo suite (3268 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file except two already-documented, provably-unreachable branches matching this milestone's own
+established exemption category.
+
+### Calibration note
+
+The path-normalisation bug is the general lesson: a "strip the noisy parts of a message" function is trying
+to solve an inherently underspecified problem — it has no filesystem access, only a bare string, so it
+cannot actually know where a real project root is. A fix that closes the *specific* reported repro can still
+leave a real, adjacent instance of the identical underlying problem in place, found only because the verify
+round was asked to adversarially construct new cases rather than only re-confirm the one already reported.
+Both rounds' own fixes are honest about being bounded approximations rather than claiming completeness — the
+right stance for a function whose own correctness is fundamentally a heuristic trade-off, not a provable
+property.

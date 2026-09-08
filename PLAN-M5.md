@@ -789,6 +789,27 @@ different failure each time) do not trigger the never-retry override; backoff va
 
 **Depends on:** P15.
 
+*(P16 is committed: `100ff6b`. See `SPEC-QUESTIONS.md` Q78 and its critic-round/verify-round addenda — the
+classification mapping (`classifyFailure`) is almost entirely invented: `06` §6.8's own table gives one
+illustrative example per class, not a real mapping from P15's own `StepFailureInfo.source`/`.code`
+vocabulary, the finest-grained "spec silence" this build has hit in one piece so far. Required one small,
+well-justified change to the previous piece's own already-committed code: three new structured failure
+codes added to P15's `runMergeStep` so this piece's classifier does not have to sniff free-text messages
+to tell the three real merge failure modes apart (`Q77`'s own "the next piece reveals the previous piece's
+own signature needs adjusting" pattern, again). A fresh critic round found a real bug in
+`normaliseErrorSignature`: the original path-normalisation replaced an entire absolute path token with one
+fixed placeholder, discarding the filename and `:line:col` that usually distinguish one real bug from a
+different one — since the never-retry rule keys entirely off this signature, and almost every real
+compiler/lint/test error message references an absolute path, this risked forcing escalation after two
+genuinely *different* bugs, not two identical ones. Fixed by keeping a path token's own final segment; a
+scoped verify round then found that fix still incomplete for two files sharing a basename and line:col in
+different directories (plausible in this very monorepo, which has several `errors.ts`/`index.ts` files
+across packages), closed by preserving two trailing segments instead of one and explicitly documenting the
+result as a bounded heuristic, not a complete fix — no fixed segment count can fully resolve "how many
+segments are the variable machine-specific prefix vs. the meaningful project-relative path" without
+knowing the real project root. See `GAUNTLET-LOG.md`'s own entry for the fuller story and its calibration
+note on why both rounds' fixes are honest about being approximations rather than claiming completeness.)*
+
 ---
 
 ## P17 — Budgets and admission control
