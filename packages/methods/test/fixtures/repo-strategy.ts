@@ -1,0 +1,51 @@
+/** `11` §11.0's own worked example, transcribed verbatim. Shared across `test/schema/load.test.ts`
+ * and `test/score/*.test.ts` -- both need the exact same real framework document. */
+export const REPO_STRATEGY = `
+id: repo-strategy
+name: Repository strategy selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: delivery/repo-strategy.md }
+inputs:
+  required: [ kb:constraints/**, artifact:ArchitectureSpec ]
+  derived:
+    - id: deployable_units
+      from: "architecture.components[?deployable].length"
+    - id: language_count
+      from: "distinct(architecture.components[].runtime).length"
+questions:
+  - id: team_size
+    text: "How many people (human or agent-lane) will change this codebase concurrently?"
+    type: number
+    default_from: "config.concurrency"
+  - id: release_coupling
+    text: "Must all deployables ship together?"
+    type: choice
+    options: [ always, usually, independent ]
+options:
+  - id: monorepo-single-package
+  - id: monorepo-workspaces
+  - id: polyrepo
+  - id: meta-repo
+criteria:
+  - id: atomic-cross-cutting-change
+    weight: 0.25
+  - id: independent-release-cadence
+    weight: 0.20
+  - id: build-tooling-cost
+    weight: 0.15
+  - id: access-control-granularity
+    weight: 0.10
+  - id: ci-scale
+    weight: 0.15
+  - id: onboarding-simplicity
+    weight: 0.15
+scoring: rubric
+rules:
+  - if: "deployable_units == 1"
+    then: { eliminate: [ polyrepo, meta-repo ], prefer: monorepo-single-package }
+  - if: "regulatory.code_isolation_required"
+    then: { eliminate: [ monorepo-single-package, monorepo-workspaces ] }
+output_template: templates/adr-repo-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/repo-bootstrap.yaml
+`;

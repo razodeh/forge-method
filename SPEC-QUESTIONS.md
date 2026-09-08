@@ -6514,3 +6514,57 @@ example
 fixture-violation stderr — are not real failures; both `node scripts/check-boundaries.mjs` and
 `node scripts/check-coverage-ratchet.mjs` run directly against the real repo exit 0, and the full `pnpm
 test` run reports every file and test passing with no `FAIL` entries.
+
+## Q84 — M6 M2's `@forge/methods/score`: `11` §11.0's own execution contract, "run rules → eliminate →
+score remaining... → the top option's own killer risk stated" — a self-contradiction guard, and choosing
+to preserve real scores for eliminated options rather than zeroing them
+
+`applyRules`/`score`/`killerRisk` implement `11` §11.0's execution-contract sentence on top of M1's schema.
+`applyRules` is pure given already-resolved `inputs.derived` values (an orchestrator resolving those
+against live KB/artifact data is M3's job, not this piece's); `score` is a pure weighted sum; `killerRisk`
+picks the top option's own lowest-scoring declared-criterion cell.
+
+1. **`RuleResult.preferred`/`.eliminated` can disagree with each other by construction** — nothing stops
+   an earlier matching rule's `then.prefer` from naming an option a *later* matching rule's `then.eliminate`
+   then disqualifies, since both fields are built independently in the same pass over `framework.rules`.
+   A fresh critic round caught this as a real, if currently inert, foot-gun (nothing yet consumes
+   `preferred`) rather than a live bug. **Fixed** by clearing `preferred` if it ever ends up naming an
+   eliminated option — a preferred-but-disqualified recommendation is self-contradictory for any future
+   consumer, so elimination wins. `applyRules`'s own "last matching rule's `prefer` wins" tie-break (when
+   more than one rule sets `prefer`) is a deliberate, simple default `11` §11.0's own worked example never
+   needs to exercise (only one rule in `repo-strategy` sets `prefer` at all) — not a spec requirement either
+   way, documented as such and now covered by an explicit regression test.
+
+2. **A real design correction: an eliminated option's `totalScore` is the real weighted sum, not forced to
+   `0`.** First written as: elimination forces `totalScore` to `0` regardless of the option's own real
+   evidence cells, on the reasoning that `11` §11.0 step 2 only ever "scores remaining" options. The critic
+   round pointed out this discards real, already-computed information an ADR's own comparison table would
+   want — "this option would have scored well but was disqualified" reads very differently from "this
+   option genuinely scored poorly," and `score` already has every cell needed to tell the two apart.
+   **Fixed**: `totalScore` is always the real weighted sum; only the *sort order* (never the score itself)
+   guarantees an eliminated option can never outrank a non-eliminated one — `score`'s own sort comparator
+   checks `eliminated` before `totalScore`, so a `10`-scoring eliminated option still sorts strictly after
+   every `0`-scoring surviving one.
+
+3. **Two other asymmetries the critic raised were judged intentional design, not bugs, and documented
+   rather than changed**: a criterion with no matching evidence cell for an option contributes `0` to that
+   option's own sum silently (deliberately lenient — `score` may run on a framework being scored
+   incrementally, before every cell exists yet), while a *present-but-blank* `evidence` string on any
+   supplied cell still throws. And `score` throws a raw `Error` for that blank-evidence case rather than
+   extending M1's own discriminated-result (`FrameworkParseResult`) pattern to it — reasoned as a
+   caller-contract violation (the piece producing `cells`, not raw hand-edited YAML, made the mistake),
+   the same "structural/config error vs. ordinary malformed external input" split this codebase already
+   uses elsewhere, not an oversight. Both now carry doc comments explaining the reasoning so a future
+   reader (or a future critic) doesn't need to re-derive it.
+
+Critic-flagged coverage gaps (conflicting `prefer`, partial cell coverage, `killerRisk`'s tie-break order,
+a cell naming a nonexistent option, a framework with no `criteria` at all) are now all covered by explicit
+tests. `tsc`, `eslint`, `prettier`, and the full-repo suite (3418 tests, plus the boundaries-coverage
+config's own 64) are all clean. One unrelated repo-floor gap surfaced along the way and was fixed in the
+same pass: `test/workspace-floor.test.ts`'s own stray-source walk flagged the new shared test fixture
+(`packages/methods/test/fixtures/repo-strategy.ts`, imported by both `test/schema/load.test.ts` and
+`test/score/*.test.ts`) because its filename doesn't match the `*.test.ts`/`*.spec.ts` heuristic that walk
+uses to recognise test-only code — added to that file's own `IGNORED_PATHS` allowlist, the same
+individually-named-exception pattern already used for four earlier pieces' own shared fixture modules
+(`packages/kb/test/lint/factories.ts`, `packages/telemetry/test/fixtures/append-and-hang.ts`,
+`packages/engine/test/dispatch/helpers.ts`, `packages/engine/test/e2e/fixture-workflow.ts`).

@@ -7,3 +7,4 @@
  * @see PLAN-M6.md
  */
 export * from './schema/index.ts';
+export * from './score/index.ts';

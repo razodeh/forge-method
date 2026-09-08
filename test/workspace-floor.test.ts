@@ -57,6 +57,10 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // process fixture `crash-resume.test.ts` spawns via `node --experimental-strip-types` (never imported,
 // never run as a vitest suite) — the identical "genuinely test-only, unrecognised by `TEST_FILE`'s
 // naming heuristic" shape `append-and-hang.ts` above is already listed for, and for the same reason.
+// `packages/methods/test/fixtures/repo-strategy.ts` (PLAN-M6.md M2): the shared verbatim `11` §11.0
+// `repo-strategy` YAML fixture string, imported by `test/schema/load.test.ts` and `test/score/*.test.ts`
+// — the identical "shared, importable module, not a runnable suite" shape as the `kb`/`engine` entries
+// above, for the same reason unrecognised by `TEST_FILE`'s naming heuristic.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
@@ -64,6 +68,7 @@ const IGNORED_PATHS = new Set([
   'packages/engine/test/dispatch/helpers.ts',
   'packages/engine/test/e2e/fixture-workflow.ts',
   'packages/engine/test/e2e/fixtures/run-engine-child.ts',
+  'packages/methods/test/fixtures/repo-strategy.ts',
 ]);
 
 /**
