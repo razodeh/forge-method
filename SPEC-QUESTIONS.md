@@ -7662,3 +7662,44 @@ decider session is instructed (via its brief) to record an ADR and runs through 
 `runAgentStep`, but nothing here verifies one was actually produced — recorded explicitly in
 `dispatchDebate`'s own doc comment, the identical honest-limitation treatment `dispatchPair`'s own
 comment already gives its own scope gap.
+
+## Q105 — M6 A7's `@forge/agents/handoff`: reusing `@forge/schemas/artifacts`' own already-built
+`handoffRecordSchema`, the `FORGE_HANDOFF:` token's thin payload vs. the record's own richer shape, and
+`inboundHandoffFor`'s fan-in tie-break
+
+**`handoffRecordSchema`/`Assumption` already existed — reused, not redefined.** `PLAN-M6.md` A7's own
+Surface text lists `handoffRecordSchema (zod)` as something this piece builds, but
+`packages/schemas/src/artifacts/handoff-record.ts` (an earlier milestone, `18` §18.7's own
+`HandoffRecord` registry entry, `idPrefix: 'HO'`, `idWidth: 4`) already ships the exact `05` §5.6
+worked-example shape, reusing `assumptionSchema` (`08` §8.2's own `Assumption` entry) for its nested
+`assumptions` field. `@forge/agents/handoff` re-exports both rather than shipping a second,
+independently-drifting transcription of the identical schema.
+
+**`FORGE_HANDOFF: <role> <reason>`'s own thin payload vs. `HandoffRecord`'s own richer shape.** `07`
+§7.2's own control-token grammar gives `emitHandoff` only `role`/`reason` from the parsed token — no
+room in one line of agent-emitted text for `delivered`/`open_questions`/`assumptions`/
+`constraints_for_receiver`/`acceptance_for_receiver`'s own nested arrays. `EmitHandoffContext` supplies
+every one of those as real, caller-assembled data about the emitting step's own actual output — this
+piece's own Checks text ("real, non-empty... derived from the emitting step's own actual output, not
+placeholder text") is about a caller wiring in real content, not about `emitHandoff` synthesising it
+from nothing. `token.reason` itself is not silently discarded: folded in as the first `open_questions`
+entry, since `HandoffRecord` has no dedicated field for "why this was handed off."
+
+**`ArtifactCreated` as the telemetry event type.** `18` §18.4's own closed `EventType` catalogue has no
+dedicated `Handoff*` entry; `05` §5.6's own opening line — "A handoff is an artifact, not a vibe" — is
+this piece's own direct textual justification for reusing `ArtifactCreated` rather than inventing a new
+catalogue entry, a cross-package change outside this piece's own scope.
+
+**`inboundHandoffFor`'s own fan-in tie-break, fixed after a fresh critic round.** A first draft's bare
+`.find` silently returned whichever matching record happened to appear first in the caller's own
+`records` array when two records named the same receiving step (a real possibility for a fan-in step
+with several predecessors) — undocumented and untested. `05` §5.6's own singular "the receiving agent's
+context pack always includes the inbound handoff record," and this function's own singular
+`HandoffRecord | undefined` return type (not an array), both commit to exactly one record being "the"
+answer — resolved as "the most recently emitted match wins" (`timestamp` comparison), the freshest real
+content for the receiving agent's own context pack, not an accident of array order. A new regression
+test proves this concretely: two records naming the same receiving step, with the chronologically later
+one appearing *first* in the array, still returns the later one.
+
+One new error code: `RUN-047` (`emitHandoff` given a non-`FORGE_HANDOFF` control token). See
+`GAUNTLET-LOG.md`'s own M6 A7 entry for the critic round.

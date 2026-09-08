@@ -99,6 +99,7 @@ const SAMPLE_DETAILS = {
   value: 'ludicrous',
   mode: 'panel',
   feature: 'kb diff',
+  got: 'FORGE_ASK',
 } satisfies Record<string, unknown> as never;
 
 /**

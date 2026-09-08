@@ -547,6 +547,13 @@ export const ERROR_CODES = {
     remedy:
       'Pass DispatchAgentStepOptions.perspectives (e.g. the workflow step\'s own mode.perspectives) when dispatching a panel or swarm-review step.',
   },
+  'RUN-047': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; got: string }) =>
+      `emitHandoff was called for step ${show(d.stepId)} with a ${show(d.got)} control token, not FORGE_HANDOFF.`,
+    remedy: 'Pass a ParsedControlToken whose own token field is "FORGE_HANDOFF" to emitHandoff.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

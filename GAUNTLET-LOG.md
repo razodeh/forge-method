@@ -5826,3 +5826,47 @@ attributions), not mere concatenation — proven by `dispatch-agent-step.test.ts
 
 `tsc`, `eslint`, and the `packages/agents`/`packages/engine`/`packages/core` suites (1267 tests) all
 clean after every fix.
+
+---
+
+## M6 A7 — `@forge/agents/handoff`: the handoff-record protocol (`05` §5.6)
+
+**Rounds: 1 (fresh critic finding one real, undocumented gap, fixed with a regression test; no separate
+verify round run). Outcome: WON.**
+
+The last piece of `@forge/agents` in this session's own scope. `emitHandoff` (turns an already-parsed
+`FORGE_HANDOFF:` token plus the emitting step's own real context into a schema-valid `HandoffRecord`,
+written to the event log as an `ArtifactCreated` event — `18` §18.4's own closed catalogue has no
+dedicated `Handoff*` entry, and `05` §5.6`'s own opening line, "A handoff is an artifact, not a vibe,"
+is this piece's own direct justification for that choice) and `inboundHandoffFor` (the record A4's own
+`packForStep` includes for the receiving agent's context pack). `handoffRecordSchema`/`HandoffRecord`
+were not built here at all — they already existed in `@forge/schemas/artifacts` (an earlier milestone),
+matching `05` §5.6's own worked `HO-0042` example field-for-field including its own reuse of
+`assumptionSchema`; this piece re-exports them rather than shipping a second, drifting transcription.
+See `SPEC-QUESTIONS.md` Q105 for the full design record.
+
+### Round 1 — fresh critic (no context on plan/log): one real, undocumented gap, fixed
+
+1. **Real gap.** `inboundHandoffFor`'s own first draft used a bare `.find`, silently returning
+   whichever matching record happened to appear first in the caller's own `records` array when two
+   records named the same receiving step (a real possibility for a fan-in step with several
+   predecessors) — an arbitrary, undocumented, untested choice the critic specifically flagged as
+   worth a deliberate decision, not an accident of array order. **Fixed**: resolved as "the most
+   recently emitted match wins" (`timestamp` comparison), recorded explicitly in the function's own
+   doc comment, with a new regression test proving a chronologically later record still wins even when
+   it appears *first* in the input array (ruling out an accidental "always returns the first" reading
+   of the fix).
+
+The critic independently re-verified, against source rather than trusting this piece's own comments:
+the re-exported `handoffRecordSchema`'s own field-for-field match to `05` §5.6's worked example; that
+`@forge/agents` genuinely has no boundary-graph edge to `@forge/telemetry` (making the caller-supplied
+`HandoffTelemetryEmitter` facade a real necessity, not an invented indirection); that `ArtifactCreated`
+really is a member of `18` §18.4's closed `EventType` catalogue; that `emitHandoff`'s own test uses a
+real `parseControlTokens` call (not a hand-built fake token) for both the happy path and the `RUN-047`
+failure case; and that `token.reason`'s own fold into `open_questions[0]` is a defensible design given
+`HandoffRecord` has no dedicated field of its own for it. `EmitHandoffContext`'s own choice not to
+runtime-enforce non-empty `delivered`/`constraints_for_receiver` (left to the caller, matching the
+Checks text's own "the caller supplies real content" framing rather than "this function synthesises
+it") was reviewed and accepted as a defensible reading, not a gap requiring a fix.
+
+`tsc`, `eslint`, and the `packages/agents`/`packages/core` suites (628 tests) all clean after the fix.
