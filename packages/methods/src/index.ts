@@ -8,3 +8,4 @@
  */
 export * from './schema/index.ts';
 export * from './score/index.ts';
+export * from './level/index.ts';

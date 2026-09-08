@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./score": "./src/score/index.ts"
+    "./score": "./src/score/index.ts",
+    "./level": "./src/level/index.ts"
   },
   "engines": {
     "node": ">=20.10"

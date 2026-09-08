@@ -6568,3 +6568,51 @@ uses to recognise test-only code — added to that file's own `IGNORED_PATHS` al
 individually-named-exception pattern already used for four earlier pieces' own shared fixture modules
 (`packages/kb/test/lint/factories.ts`, `packages/telemetry/test/fixtures/append-and-hang.ts`,
 `packages/engine/test/dispatch/helpers.ts`, `packages/engine/test/e2e/fixture-workflow.ts`).
+
+## Q85 — M6 M3's `@forge/methods/level`: `01` §1.9's own seven-signal level heuristic and `10` §10.2's own
+literal level-mapping paragraph — a drafting error in this plan's own earlier `LevelSignals` shape, caught
+and corrected before implementation
+
+`proposeLevel`/`phasesForLevel` implement `01` §1.9's scale-adaptive L0-L4 levels and `10` §10.2's own
+phase-per-level mapping.
+
+1. **`PLAN-M6.md`'s own original M3 draft invented a `LevelSignals` shape (`greenfield`,
+   `estimatedStories`, `multiTeam`, `regulatoryScope`, `multiService`) that does not match `01` §1.9's own
+   text.** `01` §1.9 names the real signal set verbatim: "greenfield vs brownfield, number of user-facing
+   capabilities, number of deployable units, presence of persistent state, presence of external
+   integrations, regulatory flags, and whether more than one runtime/language is involved" — seven signals,
+   none named `estimatedStories`/`multiTeam`/`multiService`. Caught by rereading the spec sentence closely
+   before writing any implementation code (not by a critic), and the plan's own M3 section was corrected in
+   place to the real seven-field shape (`userFacingCapabilities: number`, `deployableUnits: number`,
+   `hasPersistentState: boolean`, `hasExternalIntegrations: boolean`, `regulatory: boolean`,
+   `multiRuntime: boolean`, plus `greenfield: boolean`) before `src/level/types.ts` was ever written.
+
+2. **`01` §1.9 gives the signal list and the L0-L4 table's own "Typical" column, but no derivation
+   algorithm from one to the other — a genuine, unavoidable spec silence, resolved as follows and recorded
+   here rather than left an unstated guess**: `regulatory`, `multiRuntime`, or more than one
+   `deployableUnits` each independently force `L4` (Platform), regardless of every other signal, including
+   `greenfield` — reasoned from the table's own "Platform: multi-service/multi-team system, migrations,
+   compliance" row, none of which a plain greenfield product signal alone implies. Otherwise `greenfield`
+   forces at least `L3` (Product: "new product, greenfield"). Otherwise `userFacingCapabilities >= 2`,
+   `hasPersistentState`, or `hasExternalIntegrations` (checked in that order) each independently reach `L2`
+   (Capability: "new subsystem/service in an existing product"). Otherwise exactly one new capability
+   reaches `L1` (Feature: "1-3 stories inside an existing system"). Everything else — brownfield, no new
+   capability, no state/integration signal — is `L0` (Patch). A fresh critic round confirmed this ordering
+   never misclassifies either of the table's own two clearest worked descriptions (a brownfield bug fix
+   with no new capability signal always resolves to `L0`; a greenfield scenario always resolves to at least
+   `L3`) and found no logic bug, but did find a real, if narrow, test-coverage gap: the priority order
+   between competing signals in different branches (e.g. `greenfield` together with `hasPersistentState`,
+   or a single capability together with `hasPersistentState`/`hasExternalIntegrations`) was asserted for
+   only one pairing (`regulatory` + `greenfield`) and not the others, even though the code comments already
+   describe that ordering as load-bearing. **Fixed** by adding explicit cross-branch-priority tests for
+   every such pairing named above, rather than only single-signal-against-`BASE` tests.
+
+3. **`phasesForLevel` was independently re-verified against `10` §10.2's own literal level-mapping
+   sentence, phase by phase, and confirmed exact**: L0 = `{P6,P7}`; L1 = L0 + `{P5,P8}`; L2 = L1 +
+   `{P2,P3,P9}`; L3 and L4 both return every phase `P0`-`P10` (`10` §10.2's own "L4 adds G-Integration and
+   a domain decomposition step in P3" is a gate and an in-phase step, neither its own lifecycle phase, so
+   `phasesForLevel` itself has no way to — and should not — distinguish L3 from L4; a caller does that via
+   the extra gate and step directly, not via this function's own return value).
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (3440 tests, plus the boundaries-coverage config's own
+64) are all clean.
