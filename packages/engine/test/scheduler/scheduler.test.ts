@@ -70,11 +70,15 @@ describe('Scheduler', () => {
     expect(scheduler.next().map((n) => n.id)).toEqual(['c']);
   });
 
-  it('an exclusive agent\'s second ready step is never admitted while the first of that agent runs, across two ticks', () => {
+  it("an exclusive agent's second ready step is never admitted while the first of that agent runs, across two ticks", () => {
     const architect = toAgentId('architect');
     const first = node({ id: 'first', agent: architect });
     const second = node({ id: 'second', agent: architect });
-    const scheduler = new Scheduler([first, second], limits({ perAgent: new Map([[architect, 1]]) }), 'seed');
+    const scheduler = new Scheduler(
+      [first, second],
+      limits({ perAgent: new Map([[architect, 1]]) }),
+      'seed',
+    );
 
     const tick1 = scheduler.next().map((n) => n.id);
     expect(tick1).toHaveLength(1);
@@ -88,7 +92,11 @@ describe('Scheduler', () => {
     const architect = toAgentId('architect');
     const first = node({ id: 'first', agent: architect });
     const second = node({ id: 'second', agent: architect });
-    const scheduler = new Scheduler([first, second], limits({ perAgent: new Map([[architect, 1]]) }), 'seed');
+    const scheduler = new Scheduler(
+      [first, second],
+      limits({ perAgent: new Map([[architect, 1]]) }),
+      'seed',
+    );
 
     scheduler.markRunning('first');
     expect(scheduler.next()).toEqual([]);
@@ -131,14 +139,23 @@ describe('Scheduler', () => {
   it('uses the caller-supplied resourceClassOf function for per-resource-class limits', () => {
     const a = node({ id: 'a' });
     const b = node({ id: 'b' });
-    const scheduler = new Scheduler([a, b], limits({ perResourceClass: new Map([['migrations', 1]]) }), 'seed', () => 'migrations');
+    const scheduler = new Scheduler(
+      [a, b],
+      limits({ perResourceClass: new Map([['migrations', 1]]) }),
+      'seed',
+      () => 'migrations',
+    );
     expect(scheduler.next()).toHaveLength(1);
   });
 
   it('defaults to no resource class at all when the caller supplies no resourceClassOf function', () => {
     const a = node({ id: 'a' });
     const b = node({ id: 'b' });
-    const scheduler = new Scheduler([a, b], limits({ perResourceClass: new Map([['migrations', 1]]) }), 'seed');
+    const scheduler = new Scheduler(
+      [a, b],
+      limits({ perResourceClass: new Map([['migrations', 1]]) }),
+      'seed',
+    );
     expect(scheduler.next()).toHaveLength(2);
   });
 
@@ -155,21 +172,30 @@ describe('Scheduler', () => {
     expect(scheduler.status('a')).toBe('pending');
   });
 
-  it('counts an already-running node\'s own agent against the per-agent limit at the very start of the next tick, not just against nodes admitted within that same tick', () => {
+  it("counts an already-running node's own agent against the per-agent limit at the very start of the next tick, not just against nodes admitted within that same tick", () => {
     const architect = toAgentId('architect');
     const first = node({ id: 'first', agent: architect });
     const second = node({ id: 'second', agent: architect });
-    const scheduler = new Scheduler([first, second], limits({ perAgent: new Map([[architect, 1]]) }), 'seed');
+    const scheduler = new Scheduler(
+      [first, second],
+      limits({ perAgent: new Map([[architect, 1]]) }),
+      'seed',
+    );
     scheduler.markRunning('first');
     // "second" must not be admitted: "first" is already running under the same exclusive agent, counted
     // from the running set itself, before this tick's own greedy admission loop even starts.
     expect(scheduler.next()).toEqual([]);
   });
 
-  it('counts an already-running node\'s own resource class against the per-resource-class limit at the start of the next tick', () => {
+  it("counts an already-running node's own resource class against the per-resource-class limit at the start of the next tick", () => {
     const a = node({ id: 'a' });
     const b = node({ id: 'b' });
-    const scheduler = new Scheduler([a, b], limits({ perResourceClass: new Map([['migrations', 1]]) }), 'seed', () => 'migrations');
+    const scheduler = new Scheduler(
+      [a, b],
+      limits({ perResourceClass: new Map([['migrations', 1]]) }),
+      'seed',
+      () => 'migrations',
+    );
     scheduler.markRunning('a');
     expect(scheduler.next()).toEqual([]);
   });
@@ -206,7 +232,7 @@ describe('Scheduler', () => {
     expect(scheduler.next().map((n) => n.id)).toEqual(['s3']); // 1 running < ceiling of 2; one more admitted
   });
 
-  it('does not let a phantom running id -- never one of this scheduler\'s own constructor nodes -- inflate the global concurrency count against real, admittable work', () => {
+  it("does not let a phantom running id -- never one of this scheduler's own constructor nodes -- inflate the global concurrency count against real, admittable work", () => {
     // A verify round found the global counter derived from the raw `this.running.size` while the other
     // three counters (claims, perAgent, perResourceClass) all derive from `runningNodes()`, which filters
     // through `byId` -- a caller mistakenly calling `markRunning` with an id this scheduler was never
@@ -216,5 +242,43 @@ describe('Scheduler', () => {
     const scheduler = new Scheduler([a], limits({ global: 1 }), 'seed');
     scheduler.markRunning('phantom-not-a-real-node');
     expect(scheduler.next().map((n) => n.id)).toEqual(['a']);
+  });
+
+  it('defaults canAdmit to always-admit, so a caller with no budget concept pays nothing for it', () => {
+    const nodes = Array.from({ length: 3 }, (_, i) => node({ id: `s${String(i)}` }));
+    const scheduler = new Scheduler(nodes, limits({ global: 5 }), 'seed');
+    expect(scheduler.next()).toHaveLength(3);
+  });
+
+  it('refuses to admit a node the caller-supplied canAdmit rejects, without otherwise affecting claim/concurrency admission of the rest', () => {
+    const nodes = [
+      node({ id: 'expensive', produces: [] }),
+      node({ id: 'cheap-a', produces: [] }),
+      node({ id: 'cheap-b', produces: [] }),
+    ];
+    const scheduler = new Scheduler(
+      nodes,
+      limits({ global: 5 }),
+      'seed',
+      undefined,
+      (candidate) => candidate.id !== 'expensive',
+    );
+    const admittedIds = scheduler.next().map((n) => n.id);
+    expect(admittedIds).not.toContain('expensive');
+    expect(admittedIds).toEqual(expect.arrayContaining(['cheap-a', 'cheap-b']));
+  });
+
+  it('a node canAdmit refuses does not consume any concurrency slot -- refusing it leaves room for a node later in priority order that canAdmit does allow', () => {
+    // Global ceiling of exactly 1: if the refused node had already counted against it before being
+    // rejected, the one real slot would be wasted and nothing else would be admitted this tick.
+    const nodes = [node({ id: 'refused' }), node({ id: 'allowed' })];
+    const scheduler = new Scheduler(
+      nodes,
+      limits({ global: 1 }),
+      'seed',
+      undefined,
+      (candidate) => candidate.id !== 'refused',
+    );
+    expect(scheduler.next().map((n) => n.id)).toEqual(['allowed']);
   });
 });

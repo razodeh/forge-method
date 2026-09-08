@@ -5,6 +5,7 @@
  * @see PLAN-M5.md
  */
 export * from './backpressure/index.ts';
+export * from './budget/index.ts';
 export * from './dispatch/index.ts';
 export * from './expr/index.ts';
 export * from './failures/index.ts';

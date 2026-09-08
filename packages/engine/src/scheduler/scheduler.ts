@@ -1,10 +1,12 @@
 /**
  * `06` §6.3's own scheduler as one stateful coordinator: wraps `computeReadySet`/`orderReadyNodes`/
  * `admitsMoreConcurrency` around a run's own live status/running state, exposing one `next()` call per
- * scheduling tick.
+ * scheduling tick. Also the one place `@forge/engine/budget`'s own `canAdmit` (`PLAN-M5.md` P17) gets a
+ * real say over a tick's own admission decisions, via the constructor's own optional `canAdmit` callback —
+ * this module still has no dependency on, or awareness of, that one.
  *
- * @see specs/06 §6.3
- * @see PLAN-M5.md P12
+ * @see specs/06 §6.3, §6.9
+ * @see PLAN-M5.md P12, P17
  */
 import { ForgeError } from '@forge/core/errors';
 
@@ -20,12 +22,19 @@ export class Scheduler {
   private limits: ConcurrencyLimits;
   private readonly seed: string;
   private readonly resourceClassOf: (node: StepNode) => string | undefined;
+  private readonly canAdmit: (node: StepNode) => boolean;
   private readonly statuses = new Map<string, StepStatus>();
   private readonly running = new Set<string>();
 
   /** `resourceClassOf` is optional and defaults to "no node has a resource class" — `StepNode` itself has
    * no such field (`ConcurrencyLimits`'s own doc comment has the fuller reasoning), so a caller that
-   * doesn't care about this one limit class pays nothing for it.
+   * doesn't care about this one limit class pays nothing for it. `canAdmit` is the identical shape of seam
+   * for a second, independent admission axis: `@forge/engine/budget`'s own `canAdmit(node, budgetState)`
+   * (`PLAN-M5.md` P17) curried down to this one-argument form by whoever constructs this scheduler and
+   * owns a `BudgetState` — the same "two mutually unaware modules, wired together only by whichever future
+   * piece owns the real run loop" split `setLimits`'s own doc comment already establishes for
+   * `@forge/engine/backpressure`. Defaults to "always admit," so a caller with no budget concept yet pays
+   * nothing for it either.
    *
    * Throws `ForgeError('RUN-036')` if `nodes` contains two different objects sharing the same `id` — a
    * critic round found that `byId` (below) silently keeps only the last-declared duplicate, so once the
@@ -40,7 +49,13 @@ export class Scheduler {
    * "never assume an earlier validation pass is the only path to a piece of code" lesson this milestone
    * has already learned more than once, applied here before any tick's own tracking can be compromised by
    * it rather than after. */
-  constructor(nodes: readonly StepNode[], limits: ConcurrencyLimits, seed: string, resourceClassOf: (node: StepNode) => string | undefined = () => undefined) {
+  constructor(
+    nodes: readonly StepNode[],
+    limits: ConcurrencyLimits,
+    seed: string,
+    resourceClassOf: (node: StepNode) => string | undefined = () => undefined,
+    canAdmit: (node: StepNode) => boolean = () => true,
+  ) {
     const seen = new Set<string>();
     for (const node of nodes) {
       if (seen.has(node.id)) throw new ForgeError('RUN-036', { id: node.id });
@@ -52,6 +67,7 @@ export class Scheduler {
     this.limits = limits;
     this.seed = seed;
     this.resourceClassOf = resourceClassOf;
+    this.canAdmit = canAdmit;
   }
 
   status(id: string): StepStatus {
@@ -99,7 +115,9 @@ export class Scheduler {
   }
 
   private runningNodes(): readonly StepNode[] {
-    return [...this.running].map((id) => this.byId.get(id)).filter((node): node is StepNode => node !== undefined);
+    return [...this.running]
+      .map((id) => this.byId.get(id))
+      .filter((node): node is StepNode => node !== undefined);
   }
 
   /** One scheduling tick: the ready set, ordered by `06` §6.3's own four-level tiebreak, filtered down to
@@ -130,25 +148,35 @@ export class Scheduler {
     const perResourceClass = new Map<string, number>();
     for (const node of runningNodes) {
       const resourceClass = this.resourceClassOf(node);
-      if (resourceClass !== undefined) perResourceClass.set(resourceClass, (perResourceClass.get(resourceClass) ?? 0) + 1);
+      if (resourceClass !== undefined)
+        perResourceClass.set(resourceClass, (perResourceClass.get(resourceClass) ?? 0) + 1);
     }
 
     const admitted: StepNode[] = [];
     const admittedClaims: string[] = [...runningClaims];
 
     for (const node of ordered) {
-      const conflictsWithThisTick = node.produces.some((glob) => admittedClaims.some((claim) => globsOverlap(glob, claim)));
+      const conflictsWithThisTick = node.produces.some((glob) =>
+        admittedClaims.some((claim) => globsOverlap(glob, claim)),
+      );
       if (conflictsWithThisTick) continue;
 
       const resourceClass = this.resourceClassOf(node);
-      const admits = admitsMoreConcurrency({ node, resourceClass }, this.limits, { global, perAgent, perResourceClass });
+      const admits = admitsMoreConcurrency({ node, resourceClass }, this.limits, {
+        global,
+        perAgent,
+        perResourceClass,
+      });
       if (!admits) continue;
+
+      if (!this.canAdmit(node)) continue;
 
       admitted.push(node);
       admittedClaims.push(...node.produces);
       global += 1;
       if (node.agent !== undefined) perAgent.set(node.agent, (perAgent.get(node.agent) ?? 0) + 1);
-      if (resourceClass !== undefined) perResourceClass.set(resourceClass, (perResourceClass.get(resourceClass) ?? 0) + 1);
+      if (resourceClass !== undefined)
+        perResourceClass.set(resourceClass, (perResourceClass.get(resourceClass) ?? 0) + 1);
     }
 
     return admitted;

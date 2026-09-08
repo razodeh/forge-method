@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./backpressure": "./src/backpressure/index.ts",
+    "./budget": "./src/budget/index.ts",
     "./dispatch": "./src/dispatch/index.ts",
     "./expr": "./src/expr/index.ts",
     "./failures": "./src/failures/index.ts",
