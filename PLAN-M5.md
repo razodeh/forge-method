@@ -680,6 +680,20 @@ report (rule 3, idempotent).
 
 **Depends on:** P8, P9.
 
+*(P14 is committed: `ccf9c42`. See `SPEC-QUESTIONS.md` Q76 and its critic-round/verify-round addenda —
+`GateDefinition` deliberately models only `id`/`checks`/`openQuestionsPolicy`, not the full worked-example
+YAML, a scope choice explained there. Two full rounds were needed to actually close "a gate cannot be
+approved without a real waiver" against plain, unbranded data: the critic round found and fixed a doc
+comment's false claim that no bypass existed (a hand-built result could claim an unvalidated waiver), fixed
+by a shape-validity re-check; the verify round then found that fix was still incomplete (shape alone cannot
+tell a legitimately-applied-but-now-stale waiver apart from one fabricated with an already-past expiry from
+the start), closed by sealing the real validation moment onto the result (`waiverAppliedAt`) so approval can
+be re-derived by comparing two already-present fields rather than re-asking a live clock — required, not
+just preferred, to keep this piece's own idempotence guarantee intact. Also fixed: a waiver-applying
+function attaching the caller's own mutable object instead of a frozen copy, and a Unicode-whitespace gap in
+blank-field detection. See `GAUNTLET-LOG.md`'s own entry for the fuller story and its calibration note on
+why a stability-over-time check needs evidence sealed onto the data, not a fresh clock reading.)*
+
 ---
 
 ## P15 — Step execution dispatch (lane runner)

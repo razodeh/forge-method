@@ -4395,3 +4395,84 @@ read of it would surface this — it took a second, independently-adversarial pa
 correctness from scratch, not just confirming the stated fix worked, to find it. Checking "does this fix
 resolve its own finding" and checking "did this fix move the same class of problem somewhere adjacent" are
 different questions, and the second one has to be asked on purpose.
+
+---
+
+## M5 P14 — `@forge/engine`: gate evaluation (`10` §10.3)
+
+**Rounds: 2 (one critic finding 1 MAJOR and several MINOR, mostly fixed, two explicitly documented as
+already-correct or already-out-of-scope; one scoped verify finding 2 MAJOR and 4 MINOR, all fixed or
+explicitly documented as accepted. No third round). Outcome: WON.**
+
+The generic gate mechanism from `10` §10.3: run every deterministic check's declared command, parse its
+output, evaluate a `failOn` expression against it (reusing the previously-built expression evaluator),
+never let an advisory check affect pass/fail, handle waivers, produce report data. Confirmed empirically
+(both subagent rounds independently re-derived this rather than trusting the design) that a bare, unnested
+`failOn` identifier like `"errors > 0"` resolves correctly against the parsed command output's own top-level
+fields via the expression evaluator's own already-generic path-resolution logic, with no change needed to
+that earlier piece at all.
+
+### Round 1 — critic: 1 MAJOR, several MINOR
+
+**MAJOR: a doc comment claimed a caller had no way to construct a result that falsely claims a valid waiver
+was applied — false.** The relevant types are plain, publicly-constructible interfaces, the same as every
+other data shape in this package, so nothing stopped a caller from hand-building one with a blank,
+never-validated waiver, and the approval check trusted the waiver's mere presence alone. **Fixed** by adding
+a real shape-validity re-check — closing the "nothing was ever checked" half of the gap; a second round
+found this fix was still incomplete (see below).
+
+Also fixed: a blank-string check that missed a couple of specific invisible Unicode characters (a zero-width
+space, a NUL byte) neither classified as ordinary whitespace — closed with a principled Unicode-category
+rule instead of an ever-growing list of individually-discovered characters. Also documented (no code change,
+confirmed correct as-is): a hanging check runner has no internal timeout (deliberate — this piece owns no
+clock of its own, and command-level timeout belongs to an already-named, different concern one level up);
+a `failOn` referencing a field genuinely absent from a check's own output silently doesn't fail, inherited
+unmodified from the already-built expression evaluator's own established, correct behavior. Several tests
+were also strengthened for not proving what they claimed — most notably a "concurrent dispatch" test that
+used same-tick resolution for every check, unable to distinguish real interleaving safety from an untested
+implementation, replaced with genuinely staggered, reverse-order delays.
+
+### Round 2 — scoped verify: 2 MAJOR, 4 MINOR
+
+**New finding (MAJOR): round 1's own fix was still incomplete — closing "nothing was checked" while leaving
+"something was checked, but against the wrong thing" open.** A hand-built waiver with well-formed fields but
+an expiry already in the past *at the moment of construction* still passed the shape-only check, since
+shape alone cannot distinguish "legitimately applied, now merely stale with the passage of real time" (which
+this design deliberately still allows, for a real, considered reason) from "fabricated with an
+already-expired date from the start" (which it should not). **Fixed** by sealing the exact moment real
+validation happened onto the result itself, letting the approval check re-derive "was this genuinely valid
+when applied" by comparing two already-present fields against each other — never against a fresh clock
+reading, which the verify round confirmed is not just a style preference but a real requirement for this
+piece's own documented purity/idempotence guarantee elsewhere. Explicitly not fully closed, and documented
+as such: nothing stops a caller willing to fabricate *both* fields consistently by hand — this module, like
+the rest of the codebase, defends against honest mistakes, not a fully adversarial one.
+
+**New finding (MAJOR): a waiver-applying function attached the caller's own, still-mutable object directly,
+not a copy** — mutating it afterward silently rewrote an already-finalized, already-validated result's own
+audit-trail content, with no API misuse required, just the ordinary mistake of reusing one object across a
+loop. **Fixed** by returning an independent, frozen copy instead — the same "an audit record shouldn't
+silently change after the fact" reasoning this codebase already applies to its own error-detail objects.
+
+Also fixed: a stale doc comment left over from round 1's own incomplete fix; an inconsistency where a report
+builder sourced one identity-shaped field from the gate definition and a similar one from the evaluation
+result with no real reason for the difference. Two further gaps were surfaced and explicitly left
+unaddressed with reasoning recorded: a small number of additional invisible Unicode characters the
+blank-string check still doesn't catch (an accepted, bounded approximation, not a growing blacklist), and
+the general observation that no object in this package is deep-frozen beyond the one concrete fix above (a
+package-wide style question, not a vulnerability specific to this piece).
+
+No other new findings; the full package suite (451 engine tests after these fixes' own new ones, 3150
+full-repo) reconfirmed clean, 100% coverage on every touched file except one already-documented,
+provably-unreachable branch matching this milestone's own established exemption category.
+
+### Calibration note
+
+Proving "cannot be approved without a real waiver" against plain, unbranded data — the same shape of type
+every other piece in this codebase already uses — took two genuinely different fixes to actually close, not
+one fix needing a second pass at the same hole. Round 1 closed "nothing was ever checked." Round 2 closed
+"something was checked, but not enough to tell a legitimate-but-stale record apart from a fabricated one" —
+a failure mode only visible once round 1's own fix became the new target rather than the finish line. The
+general, reusable shape underneath: a validity check that must stay stable over time cannot re-ask a live
+clock without reintroducing the exact "answer changes on re-inspection" problem it exists to avoid, so it
+needs the *evidence* of an earlier, real check sealed onto the data itself — turning what would otherwise
+require either a live clock or blind trust into a comparison between two fields already sitting right there.
