@@ -4905,3 +4905,50 @@ at 20 randomised points, plus scheduler determinism) is a real, passing, non-tri
 that name. Every M1-M5 package's own test suite, boundaries check, and coverage ratchet are green as of
 this entry. Per this build's own standing discipline, work stops here at the milestone boundary, awaiting
 explicit instruction before M6.
+
+---
+
+## M6 M1 — `@forge/methods`: framework definition schema and loader (`11` §11.0)
+
+**Rounds: 1 (fresh critic finding 4 real gaps plus 1 build-quality issue, all fixed; no separate verify
+round run — every finding was small, mechanical, and independently re-confirmed by the full local
+re-verification floor below). Outcome: WON.**
+
+`frameworkSchema`/`loadFramework`/`readFramework`, plus a small local expression evaluator for `rules[].if`
+(`src/expr.ts`) — see `SPEC-QUESTIONS.md` Q83 for the full design record, including two boundary-graph-
+forced duplications decided before any code was written, and a `scoring`/`rules` design assumption the
+spec's own worked example disproved before the critic round ever ran.
+
+### Round 1 — fresh critic: 4 real findings, all fixed
+
+1. **A real parser bug**: `parseComparison` consumed a parenthesized left-hand operand's closing paren but
+   never the right-hand side's (`"a == (b)"` silently failed to parse). **Fixed** symmetrically, with a new
+   regression test.
+2. **`tokenize` rejected trailing whitespace as "unexpected trailing content"**, caught only by
+   `parseExpression`'s blanket catch — an otherwise-valid condition with an incidental trailing space
+   (easy to introduce hand-editing YAML) silently failed to parse. **Fixed** to trim before the final
+   length check.
+3. **No referential-integrity check on `rules[].then.eliminate`/`.prefer`** against the framework's own
+   declared `options[].id` set — a typo'd id loaded successfully and would only surface as a silent no-op
+   at scoring time. **Fixed** with a load-time check.
+4. **`type: 'choice'` questions could declare zero options.** **Fixed** via a `.refine` requiring at least
+   one.
+
+Also fixed, a build-quality issue rather than a logic bug: `package.json` declared `./score` and `./level`
+subpath exports pointing at directories M2/M3 haven't created yet. Removed both — an export ships only when
+the piece behind it actually exists.
+
+The critic's coverage-gate finding (branch coverage below the repo's 80% floor on `src/expr.ts`, from a
+scoped `vitest` invocation) was real for the code as first written; the fixes above plus targeted new tests
+(trailing-paren, trailing-garbage, missing-close-paren, right-hand-side grouping, unconsumed-token
+rejection, and the three previously-untested comparison operators against mixed types) closed it. The
+critic's separately-suggested `!`-precedence ambiguity (`"!a == b"` parses as `!(a == b)`, not `(!a) == b`)
+was confirmed not a bug against any real spec example — documented in a code comment and covered by an
+explicit regression test instead of changed.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3401 tests, plus the boundaries-
+coverage config's own 64) all clean after the fixes, including boundaries and the coverage ratchet — two
+lines of scoped-run output that read as failures (`check-boundaries.test.ts`/`ratchet.test.ts` printing
+their own fixture-violation stderr) are not real failures, confirmed by running both check scripts directly
+against the real repo (`node scripts/check-boundaries.mjs`, `node scripts/check-coverage-ratchet.mjs`),
+both exiting 0.
