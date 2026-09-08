@@ -7251,3 +7251,77 @@ silent guess:
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (5041 tests, plus the boundaries-coverage config's own
 64) are all clean after every fix.
+
+## Q97 — M6 A1's `@forge/agents`: `05` §5.3's own base agent-definition schema/loader/registry and
+`extends` resolution — a real cross-session file collision resolved, a spec-internal inconsistency
+recorded rather than silently normalized, and a critic-caught false-positive risk in a load-time rule
+
+`agentDefinitionSchema`/`loadAgentDefinition`/`readAgentDefinition`/`AgentRegistry`/`resolveExtends`
+implement `05` §5.3's own full base agent-definition YAML shape (distinct from `@forge/extensions/agents`'
+own *overlay* schema, M2 P3, which validates a partial document layered on top of this one) and its
+`extends: base-engineer`-shaped inheritance.
+
+1. **A real, active cross-session collision, resolved before any content diverged irreversibly**: a
+   concurrent session (already independently building `@forge/templates` T1-T5) started building this
+   exact same piece, `@forge/agents` A1, at the same file paths, at the same time -- both sessions'
+   `Write` calls to `packages/agents/src/schema/types.ts` raced and overwrote each other mid-build,
+   discovered when a file this session had just written appeared with completely different content on the
+   very next read. Resolved by immediately stopping all edits to `packages/agents/`, messaging the other
+   session directly, and agreeing a split matching how `@forge/catalog`/`@forge/templates` were already
+   split earlier in this same milestone: this session takes A1 through to a committed, stable schema; the
+   other session picks up A2/A3 (roster content) once A1 lands. No content was silently discarded --
+   both sessions' independent `types.ts` drafts were compared, and this session's version (already paired
+   with a working `schema.ts` reusing `@forge/extensions/agents`'s own `ToolGrant` for `ceiling.tools`) was
+   kept as the one to build on, by the other session's own explicit agreement, not unilaterally.
+
+2. **A real, load-bearing inconsistency within `05` §5.3's own single worked example, recorded rather than
+   silently normalized**: the worked `architect` example writes the base document's own `tools.network` as
+   a bare boolean (`network: false`) but the identically-named `ceiling.tools.network` two dozen lines
+   later as a three-value string enum (`network: none`) -- the same conceptual field, two different
+   representations, in the same canonical example. `AgentToolGrant.network` accepts
+   `boolean | 'none' | 'allowlist' | 'full'`, matching what the worked example itself actually contains,
+   rather than forcing every future agent YAML file toward one representation the spec's own canonical
+   example doesn't itself use consistently. Independently re-verified by a fresh critic round against the
+   literal spec text.
+
+3. **`ceiling.tools` reuses `@forge/extensions/agents`'s own `ToolGrant` (M2 P3) directly** rather than
+   redeclaring the same shape -- a ceiling *is* that same tool-grant concept (`15` §15.3.2). A real,
+   narrow TypeScript friction from doing so: this project's own `exactOptionalPropertyTypes` setting makes
+   a zod `.optional()` field's inferred type (`x?: T | undefined`) structurally incompatible with
+   `ToolGrant`'s own hand-written `x?: T` (no explicit `| undefined`). Resolved with a local
+   `CeilingToolGrant` mapped type (`{ [K in keyof ToolGrant]?: ToolGrant[K] | undefined }`) rather than
+   fighting the mismatch. A fresh critic round found this local type's own doc comment claimed a dedicated
+   test verifying it stays in sync with `ToolGrant` that did not actually exist -- **fixed** by adding one
+   (`test/schema/ceiling-tool-grant.test.ts`): a compile-time-only key-set-equality check that fails
+   `tsc --noEmit` (this repo's own real floor check) if the two types ever diverge, since there is no
+   runtime representation of a TypeScript-only interface to compare against instead.
+
+4. **A critic round found a real false-positive risk in `checkReviewRoleShape`, a load-time static check
+   for `05` §5.2's own separation-of-duties rule**: a first version flagged `reviewer`/`critic`/
+   `diagnostician`/`test-architect` for declaring any `Code`/`Component`-typed output, but `05` §5.2's own
+   roster table lists `diagnostician`'s own primary outputs as "RCA record, **failing test**, fix plan"
+   and `critic`'s as "Objection list with severity **+ test**" -- both legitimately code-shaped output for
+   roles whose whole mandate is proving a bug or falsifying a design, not implementing one. **Fixed** by
+   narrowing the check to the one role, `reviewer`, whose own roster-table output ("Review report,
+   blocking findings") never plausibly includes implementation code -- re-checked every other named role's
+   own outputs column against the identical risk before settling on this narrower, correctly-scoped set,
+   rather than only fixing the one case the critic actually named.
+
+5. **A real, open design tension the critic found, documented rather than redesigned under incomplete
+   information**: `agentDefinitionSchema` marks only `extends`/`kb_propose`/`frameworks`/`skills`/`mcp`/
+   `ceiling` optional -- every other field, including `tools`/`limits`/`parallel_safety`/`gates`/`prompt`
+   (arguably the fields a real `backend`/`frontend`/`mobile extends base-engineer` scheme would most want
+   to share), is required on every document whether or not it declares `extends`. `resolveExtends`'s own
+   merge is correctly implemented and tested for every field it *can* exercise (verified: a field the
+   child never declares inherits from the parent, not erased to `undefined`; a multi-level chain correctly
+   folds from the root outward), but for every currently-required field a child must always fully
+   redeclare it, so `extends` provides far less real deduplication than its one-line spec mention suggests
+   for exactly the fields a real roster would most want to share. Deliberately left open rather than
+   redesigned now (e.g. via a separate "partial child" schema variant, mirroring how `@forge/extensions`
+   already keeps its own overlay schema separate from a base document): the right answer is better decided
+   with real data, once A2/A3 actually try to author a real `base-engineer` plus real
+   `backend`/`frontend`/`mobile` children and see how much duplication this forces in practice. Recorded
+   directly in `resolveExtends`'s own doc comment so A2/A3 find it without needing to rediscover it.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (5066 tests, plus the boundaries-coverage config's own
+64) are all clean after every fix.

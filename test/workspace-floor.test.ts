@@ -65,6 +65,9 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // `postgresql` YAML fixture string, imported by `test/schema/load.test.ts`,
 // `test/registry/registry.test.ts`, and `test/registry/validate.test.ts` — the identical shape as the
 // `methods` entry above, for the same reason.
+// `packages/agents/test/fixtures/architect.ts` (PLAN-M6.md A1): the shared verbatim `05` §5.3
+// `architect` YAML fixture string, imported by `test/schema/load.test.ts`,
+// `test/registry/registry.test.ts`, and `test/registry/resolve-extends.test.ts` — the identical shape.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
@@ -74,6 +77,7 @@ const IGNORED_PATHS = new Set([
   'packages/engine/test/e2e/fixtures/run-engine-child.ts',
   'packages/methods/test/fixtures/repo-strategy.ts',
   'packages/catalog/test/fixtures/postgresql.ts',
+  'packages/agents/test/fixtures/architect.ts',
 ]);
 
 /**
