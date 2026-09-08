@@ -1,7 +1,7 @@
 {
   "packages/core": {
     "lines": 99.83,
-    "statements": 99.69,
+    "statements": 99.7,
     "functions": 100,
     "branches": 99.04
   },
@@ -42,6 +42,30 @@
     "branches": 96.89
   },
   "packages/adapter-kit": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 100
+  },
+  "packages/engine": {
+    "lines": 99.48,
+    "statements": 98.55,
+    "functions": 100,
+    "branches": 96.5
+  },
+  "packages/telemetry": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 100
+  },
+  "packages/testkit": {
+    "lines": 100,
+    "statements": 100,
+    "functions": 100,
+    "branches": 98.86
+  },
+  "packages/vcs": {
     "lines": 100,
     "statements": 100,
     "functions": 100,

@@ -90,6 +90,9 @@ const SAMPLE_DETAILS = {
   telemetryCode: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
   telemetryMessage: 'ENOSPC: no space left on device',
   conflict: 'both-modified',
+  status: 'succeeded',
+  attemptCount: 0,
+  attemptNumber: 0,
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -25,6 +25,7 @@ export {
   type CriticalPathResult,
   type CycleResult,
   type ResourceClaim,
+  type RetryableFailureClass,
   type RunPlanResult,
   type StepNode,
   type StepNodeKind,

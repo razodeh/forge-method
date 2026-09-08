@@ -471,6 +471,27 @@ export const ERROR_CODES = {
     remedy:
       'Fix the workflow\'s own merge step to declare policy.conflict as one of "agent", "human", or "abort".',
   },
+  'RUN-042': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; status: string }) =>
+      `Step ${show(d.stepId)}'s own StepOutcome has status ${show(d.status)}, but this function only classifies a failed outcome's own failure.`,
+    remedy: 'Pass a StepOutcome whose status is "failed" to this function instead.',
+  },
+  'RUN-043': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { attemptCount: number }) =>
+      `decideRetry was called with an empty attemptHistory (${show(d.attemptCount)} attempts recorded), but needs at least one already-failed attempt to decide anything.`,
+    remedy: 'Pass an attemptHistory containing at least the just-failed attempt.',
+  },
+  'RUN-044': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { attemptNumber: number }) =>
+      `computeBackoff was called with attemptNumber ${show(d.attemptNumber)}, which is not a positive integer.`,
+    remedy: 'Pass an attemptNumber of 1 or greater — 1 for the first retry, 2 for the second, and so on.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

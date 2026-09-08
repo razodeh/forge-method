@@ -524,6 +524,11 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       });
       anyFailed ??= {
         source: 'merge',
+        // A structured code, not just a message: P16's own classifyFailure (PLAN-M5.md P16) needs to
+        // tell this apart from the other two merge failure modes below without sniffing message text,
+        // this codebase's own established preference (GateNotFoundError's own doc comment names the
+        // same reasoning for a different case).
+        code: 'MERGE-POST-CHECK-FAILED',
         message: `Post-merge check failed for lane ${lane.laneId}: ${merge.checkResult.summary || '(no output)'}`,
       };
     } else if (merge.kind === 'conflict-unresolved') {
@@ -535,11 +540,13 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       });
       anyFailed ??= {
         source: 'merge',
+        code: 'MERGE-CONFLICT-UNRESOLVED',
         message: `Unresolved merge conflict for lane ${lane.laneId} (${merge.reason}).`,
       };
     } else {
       anyFailed ??= {
         source: 'merge',
+        code: 'MERGE-PRE-CHECK-FAILED',
         message: `Pre-merge check failed for lane ${lane.laneId}: ${merge.checkResult.summary || '(no output)'}`,
       };
     }

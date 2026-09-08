@@ -176,6 +176,7 @@ describe('runMergeStep', () => {
 
     expect(mergeOutcome.status).toBe('failed');
     expect(mergeOutcome.failure?.source).toBe('merge');
+    expect(mergeOutcome.failure?.code).toBe('MERGE-CONFLICT-UNRESOLVED');
     // The lane is retained (not removed) for inspection since the merge never actually completed.
     expect(ctx.laneRegistry.has('wf:produce')).toBe(true);
     const events = [];
@@ -238,6 +239,7 @@ describe('runMergeStep', () => {
 
     expect(mergeOutcome.status).toBe('failed');
     expect(mergeOutcome.failure?.source).toBe('merge');
+    expect(mergeOutcome.failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
     expect(mergeOutcome.failure?.message).toContain('Pre-merge check failed');
     expect(ctx.laneRegistry.has('wf:produce')).toBe(true);
     // The integration branch never received the change -- the pre-check ran before any merge attempt.
@@ -264,6 +266,7 @@ describe('runMergeStep', () => {
 
     expect(mergeOutcome.status).toBe('failed');
     expect(mergeOutcome.failure?.source).toBe('merge');
+    expect(mergeOutcome.failure?.code).toBe('MERGE-POST-CHECK-FAILED');
     // The revert restores the pre-merge tree exactly -- the file the merge briefly introduced is gone.
     await expect(readFileInRepo(projectRoot, 'out.txt')).rejects.toThrow();
     const events = [];

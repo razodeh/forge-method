@@ -8,6 +8,7 @@
     "./backpressure": "./src/backpressure/index.ts",
     "./dispatch": "./src/dispatch/index.ts",
     "./expr": "./src/expr/index.ts",
+    "./failures": "./src/failures/index.ts",
     "./gates": "./src/gates/index.ts",
     "./plan": "./src/plan/index.ts",
     "./scheduler": "./src/scheduler/index.ts",

@@ -5794,3 +5794,151 @@ the missing test and finding the bug were the same act — no amount of re-readi
 would have surfaced it. This is the strongest evidence yet in this build for why the critic round is a
 required step, not a redundant one, for a piece integration-heavy enough that "every individual seam has a
 test" does not imply "every real combination of policies across those seams does."
+
+## Q78 — M5 P16's `@forge/engine/failures`: `06` §6.8's own classification table and never-retry rule
+applied to a real `StepOutcome` (P15) — the classification mapping is entirely invented (the spec's own
+table names *examples*, not a real mapping), and a subtle regex bug nearly defeated the very rule this
+piece exists to implement, caught only two rounds deep
+
+`classifyFailure(outcome)`, `normaliseErrorSignature(outcome)`, `decideRetry(policy, attemptHistory)`,
+`computeBackoff(policy, attemptNumber, seed)` — `06` §6.8's own nine-member failure table, never-retry rule,
+and backoff-with-jitter, applied to a real `StepOutcome` (`@forge/engine/dispatch`, P15, Q77) rather than
+invented fixtures.
+
+**1. `06` §6.8's own table gives *examples* per class ("network, 429/529, provider overload" for
+`transient`), not a real mapping from `StepFailureInfo.source`/`.code` (P15's own vocabulary) to a
+`FailureClass` — this piece had to invent the entire mapping, one `source` at a time, cross-checked directly
+against what `steps.ts` actually constructs rather than guessed:**
+- `gate` → `validation` (a gate rejection is structurally the table's own "output failed schema/contract").
+- `command`: exit code `124` (the POSIX/GNU `timeout` utility's own conventional code) → `timeout`; every
+  other exit code → `tool-error` (a bare shell command step has no way to signal "this was a test," so
+  `test-failure` — the table's own *generated-code* example — does not fit a workflow-authored command).
+- `adapter`: `SessionResult.error.code` is a genuinely open, adapter-defined vocabulary (confirmed by grep:
+  no registry exists anywhere; `@forge/testkit`'s own `FakePlatformAdapter` invents its own ad hoc codes).
+  Only `'TOOL_ERROR'` (this milestone's own real, tested value) gets a dedicated mapping; everything else,
+  including a crash with no code at all, defaults to `transient`.
+- `vcs`: `VCS-INVALID-*` → `validation`; `VCS-MISSING-CONFLICT-RESOLVER` → `policy` (a run's own missing
+  configuration, not anything a retry of the identical step can fix — closer to "fail immediately, surface
+  to human" than to anything retryable); every other real `@forge/vcs` code (confirmed by reading
+  `errors.ts`/`git.ts`/`commit.ts`/`claims.ts`/`merge-queue.ts` directly: `VCS-GIT-OPERATION-FAILED`,
+  `VCS-CLAIM-REVERT-FAILED`, `VCS-REGENERATE-COMMAND-FAILED`, `VCS-NOT-A-REPO`, `VCS-DIRTY-TREE`, plus
+  `runVcsStep`'s own `UNKNOWN` fallback) defaults to `transient` — including two that are arguably closer to
+  a persistent config problem, kept in the shared default anyway since the never-retry rule already
+  escalates on the second identical occurrence regardless of which class it started in, not worth a third,
+  narrower category for two codes with no real test coverage yet.
+- `merge`: required adding three new, structured failure codes to P15's own already-committed `steps.ts`
+  (`MERGE-PRE-CHECK-FAILED`, `MERGE-POST-CHECK-FAILED`, `MERGE-CONFLICT-UNRESOLVED`) rather than
+  message-sniffing the free text that was there before — the same "the next piece reveals the previous
+  piece's own signature needs adjusting" pattern already established for `runCommandStep`'s own `run` field
+  and `hasChanges` (`Q77`). `MERGE-CONFLICT-UNRESOLVED` → `conflict` (the table's own "contradictory inputs"
+  example, verbatim); the two check-failure codes → `test-failure` (`06` §6.5's own pre/post-merge check
+  sets explicitly include real test runs, not just lint/typecheck).
+- `telemetry`/`unsupported` (two of `StepFailureInfo.source`'s seven declared values): confirmed genuinely
+  unreachable through any real P15 handler (a `TelemetryError` always escapes as a thrown `RUN-038`, never
+  folded into `StepOutcome` data; nothing in this milestone constructs an `'unsupported'` failure at all) —
+  defaulted to `transient`, the least harmful guess, kept only because the switch must stay exhaustive over
+  the type as declared.
+
+**2. The never-retry rule's own exact boundary** ("failed *twice* with the same signature... must not be
+retried a third time") is checked *before*, and independently of, `maxAttempts` — `PLAN-M5.md`'s own Checks
+text is explicit this must fire "even though maxAttempts isn't yet exhausted." Implemented as: escalate once
+the just-failed attempt's own signature already has one prior match in `attemptHistory` (two occurrences
+total, including itself) — confirmed this is "before the third identical attempt," not "after," the
+off-by-one direction the spec's own wording could otherwise be read either way on.
+
+**3. `computeBackoff`'s own `[initial, max]` guarantee required real algebra, not just "add jitter and hope":**
+`ceiling = min(max, initial * 2^(attempt-1))`, `jitterRange = max(0, ceiling - initial)`, result
+`= round(initial + fraction * jitterRange)` where `fraction ∈ [0,1)` comes from a seeded, deterministic
+FNV-1a hash (`21` §21.1's own "no `Math.random`" mandate) — algebraically always within `[initial, ceiling]
+⊆ [initial, max]` for every attempt number, including the degenerate first attempt (`2^0 = 1`, zero jitter
+range, always exactly `initial`). The FNV-1a hash itself is a small, deliberate duplicate of
+`@forge/engine/scheduler`'s own `orderReadyNodes` (`ordering.ts`) internal `seededHash`, not an import from
+it — a scheduler-internal module a sibling submodule has no real reason to depend on for one small pure
+function, matching this codebase's own established "duplicate small helpers rather than force a shared
+dependency" convention (`Q77`'s own `createTempRepo` precedent).
+
+**4. Three new `ForgeError` codes** (`RUN-042`/`RUN-043`/`RUN-044`) for the structural/config-error-throws
+half of this piece's own contract: classifying a succeeded (not failed) outcome, deciding retry with an
+empty attempt history, and computing backoff for a non-positive/non-integer attempt number — the identical
+split `@forge/engine/dispatch`'s own `RUN-039`/`RUN-040`/`RUN-041` already establishes for malformed input
+this piece has no way to have reached given a well-formed caller.
+
+### Round 1 — critic: 1 MAJOR, 1 MINOR, both fixed
+
+The critic was given the spec sections and file list only (no `PLAN-M5.md`/`SPEC-QUESTIONS.md`/
+`GAUNTLET-LOG.md`/git history) and asked to verify empirically, with particular attention to the
+classification mapping's own real-vs-invented codes, the never-retry rule's exact boundary, and
+`computeBackoff`'s own range/growth/determinism guarantees.
+
+- **MAJOR: `normaliseErrorSignature`'s original path-stripping replaced an entire absolute path token with
+  one fixed placeholder**, discarding the filename and `:line:col` suffix — exactly the part of a real
+  compiler/lint/test error message that distinguishes one bug from a different one. Confirmed by repro: two
+  unrelated exceptions in different files at different lines (`/repo/src/handlers/auth.ts:42:10` vs
+  `/repo/src/handlers/billing.ts:900:3`) hashed identically, since almost every real tool error message
+  references an absolute path. Since the never-retry rule keys entirely off this signature, this risked
+  forcing escalation after two genuinely *different* bugs, not two identical ones — the exact false-positive
+  this whole piece exists to avoid. None of the original tests caught it: they varied only the *directory*
+  in a path, never the filename, so the loss of exactly the identifying content went unexercised. **Fixed**
+  (round 1) by keeping a path token's own final `/`-delimited segment instead of discarding it outright — a
+  scoped verify round (below) found this first fix still incomplete.
+- **MINOR: `classifyVcsFailure`'s own doc comment claimed a smaller inventory of real `@forge/vcs` error
+  codes than actually exist** — missing four real, reachable ones found by direct grep of the real source
+  (`VCS-CLAIM-REVERT-FAILED`, `VCS-REGENERATE-COMMAND-FAILED`, `VCS-NOT-A-REPO`, `VCS-DIRTY-TREE`), all of
+  which already fell through to the same `transient` default the function's own logic already gave every
+  other unrecognised code — behaviourally inert, a documentation-accuracy gap only. **Fixed** by updating
+  the doc comment to the complete, verified inventory, with explicit reasoning for why the shared default
+  is still defensible for the two of those four that read closer to a persistent config problem than a
+  transient hiccup.
+
+### Round 2 — scoped verify: 1 MAJOR (a real residual gap in round 1's own fix), 0 new after the follow-up fix
+
+The verify round was asked to adversarially probe round 1's own path-normalisation fix specifically —
+different files at the same line, the same file at different lines, multiple path tokens in one message,
+interaction with the UUID/hex/timestamp passes, Windows-style paths, and any remaining or newly-introduced
+false-collision/false-distinction risk — plus independently re-confirm the `classifyVcsFailure` doc-comment
+fix against the real source.
+
+- **MAJOR: round 1's own "keep the final path segment" fix was a real improvement but not a complete one —
+  two different files that merely share a basename and line:col, in different directories, still collided.**
+  Confirmed both plausible in practice (this monorepo itself has several `errors.ts`/`index.ts`/`types.ts`
+  files across different packages) and reproducible directly (`/repo/moduleA/index.ts:1:1` vs
+  `/repo/moduleB/index.ts:1:1` — a coincidental line:col match at a common syntax-error location — hashed
+  identically). A narrower, genuinely-out-of-scope MINOR was also found: a UUID as a path's own basename
+  segment gets erased by the UUID pass before the path-preservation logic could keep it distinct, since UUID
+  stripping ran before the path pass — confirmed to only matter for the narrow case of UUID-named generated
+  source files, which nothing in this codebase's own real call paths currently produces. Windows-style paths
+  and relative paths were checked and confirmed genuinely out of scope (every real message-producing call
+  site across `@forge/vcs`/`@forge/engine/dispatch` is POSIX-shaped; grepped directly, no
+  `win32`/`process.platform` handling anywhere in either). **Fixed**: preserving a path token's own trailing
+  *two* segments instead of one (closing the specific `moduleA`/`moduleB` shape) and reordering the
+  normalisation passes so the path pass runs first (closing the UUID-ordering inconsistency, for the
+  identical reason the hex-token pass already ran after the path pass). Explicitly documented as a bounded
+  heuristic, not a complete fix, since no fixed segment count can ever fully resolve "how many segments are
+  the variable machine-specific prefix vs. the meaningful project-relative path" without knowing the real
+  project root — a new test asserts the now-fixed `moduleA`/`moduleB` case *and* a new test asserts the
+  still-colliding deeper case (two `errors.ts` files sharing an immediate parent directory name two levels
+  up), so a future change to the preserved-segment count has an honest, explicit baseline rather than a
+  silently-drifting implicit one.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3268 tests) all independently
+reconfirmed clean after both rounds' fixes, including boundaries and the coverage ratchet. 100% coverage on
+every touched file except the two already-documented, provably-unreachable `noUncheckedIndexedAccess`-
+adjacent branches this milestone's own established exemption category already covers (one pre-existing in
+`steps.ts`, one new one in this piece's own `decideRetry`, both requiring the type checker's own guard form
+for an array index the length check just above already makes provably safe).
+
+### Calibration note
+
+The classification mapping (design point 1) is the part of this piece with the least textual grip on the
+spec: `06` §6.8's own table gives one illustrative example per class, not a real mapping from this
+dispatcher's own concrete `source`/`code` vocabulary — every single mapping decision in `classify.ts` is
+this piece's own invented, documented default, the `Q62`-style "spec silence" pattern applied at a finer
+grain than anywhere else in this build so far (usually one or two genuine gaps per piece; here, essentially
+the entire function). The path-normalisation bug (finding 1, both rounds) is the more general lesson: a
+"strip the noisy parts" function is trying to solve an inherently underspecified problem (this function has
+no filesystem access, only a bare string — it cannot actually know where a real project root is), and a fix
+that closes the *specific* reported repro can still leave a real, adjacent instance of the identical
+underlying problem in place, found only because the verify round was asked to adversarially construct new
+cases rather than only confirm the one already reported. Both rounds' own fixes are honest about being
+bounded approximations rather than claiming completeness — the right stance for a function whose own
+correctness is fundamentally a heuristic trade-off, not a provable property.
