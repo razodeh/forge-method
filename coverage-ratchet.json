@@ -48,10 +48,10 @@
     "branches": 100
   },
   "packages/engine": {
-    "lines": 99.55,
-    "statements": 98.74,
+    "lines": 99.57,
+    "statements": 98.79,
     "functions": 100,
-    "branches": 96.99
+    "branches": 97.1
   },
   "packages/telemetry": {
     "lines": 100,

@@ -50,11 +50,20 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // `StepNode` fixture builder, imported by five real `*.test.ts` files in the same directory — the same
 // "shared, importable module rather than a runnable suite" shape as the `kb` entry above, for the same
 // reason unrecognised by `TEST_FILE`'s naming heuristic. Listed individually for the same reason too.
+// `packages/engine/test/e2e/fixture-workflow.ts` (PLAN-M5.md P20): the shared fixture workflow, gate
+// registry, and `RunEngineContext` builder every `test/e2e/*.test.ts` and `test/run/*.test.ts` file
+// imports — the identical "shared, importable module, not a runnable suite" shape as the two entries
+// above. `packages/engine/test/e2e/fixtures/run-engine-child.ts` (PLAN-M5.md P20): the real-child-
+// process fixture `crash-resume.test.ts` spawns via `node --experimental-strip-types` (never imported,
+// never run as a vitest suite) — the identical "genuinely test-only, unrecognised by `TEST_FILE`'s
+// naming heuristic" shape `append-and-hang.ts` above is already listed for, and for the same reason.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
   'packages/telemetry/test/fixtures/append-and-hang.ts',
   'packages/engine/test/dispatch/helpers.ts',
+  'packages/engine/test/e2e/fixture-workflow.ts',
+  'packages/engine/test/e2e/fixtures/run-engine-child.ts',
 ]);
 
 /**

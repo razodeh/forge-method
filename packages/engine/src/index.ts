@@ -12,5 +12,6 @@ export * from './failures/index.ts';
 export * from './gates/index.ts';
 export * from './plan/index.ts';
 export * from './resume/index.ts';
+export * from './run/index.ts';
 export * from './scheduler/index.ts';
 export * from './workflow/index.ts';

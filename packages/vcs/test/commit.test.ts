@@ -24,7 +24,7 @@ async function createTempRepo(): Promise<string> {
 }
 
 describe('formatCommitMessage', () => {
-  it('matches 06 §6.4 step 3\'s own shape exactly: forge(<scope>): <subject>, blank line, then the three trailers in order', () => {
+  it("matches 06 §6.4 step 3's own shape exactly: forge(<scope>): <subject>, blank line, then the three trailers in order", () => {
     const message = formatCommitMessage({
       scope: 'story-014',
       subject: 'implement invoice creation',
@@ -70,20 +70,26 @@ describe('formatCommitMessage', () => {
   );
 
   it('rejects a carriage return embedded in a field the same way as a newline', () => {
-    expect(() => formatCommitMessage({ ...validOptions, subject: 'poisoned\rForge-Step: forged' })).toThrow(
-      VcsError,
-    );
+    expect(() =>
+      formatCommitMessage({ ...validOptions, subject: 'poisoned\rForge-Step: forged' }),
+    ).toThrow(VcsError);
   });
 
-  it.each(['', 'has a space', 'already@has-an-email.example', 'Engineer', '-leading-hyphen', 'role\nwith-newline'])(
-    'rejects an agentRole that is not a valid short lowercase identifier: %j',
-    (agentRole) => {
-      expect(() => formatCommitMessage({ ...validOptions, agentRole })).toThrow(VcsError);
-    },
-  );
+  it.each([
+    '',
+    'has a space',
+    'already@has-an-email.example',
+    'Engineer',
+    '-leading-hyphen',
+    'role\nwith-newline',
+  ])('rejects an agentRole that is not a valid short lowercase identifier: %j', (agentRole) => {
+    expect(() => formatCommitMessage({ ...validOptions, agentRole })).toThrow(VcsError);
+  });
 
-  it('accepts a hyphenated multi-word role id, matching 05\'s own role table (e.g. data-architect)', () => {
-    expect(() => formatCommitMessage({ ...validOptions, agentRole: 'data-architect' })).not.toThrow();
+  it("accepts a hyphenated multi-word role id, matching 05's own role table (e.g. data-architect)", () => {
+    expect(() =>
+      formatCommitMessage({ ...validOptions, agentRole: 'data-architect' }),
+    ).not.toThrow();
   });
 });
 
@@ -95,7 +101,11 @@ describe('commitInLane', () => {
     await execa('git', ['add', 'tracked.txt', 'doomed.txt'], { cwd });
     await execa('git', ['commit', '--quiet', '-m', 'seed'], { cwd });
 
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await writeFile(path.join(handle.path, 'tracked.txt'), 'modified');
     await writeFile(path.join(handle.path, 'new.txt'), 'brand new');
     await rm(path.join(handle.path, 'doomed.txt'));
@@ -116,12 +126,20 @@ describe('commitInLane', () => {
     const { stdout: showFiles } = await execa('git', ['show', '--name-status', '--format=', sha], {
       cwd: handle.path,
     });
-    expect(showFiles.split('\n').filter(Boolean).sort()).toEqual(['A\tnew.txt', 'D\tdoomed.txt', 'M\ttracked.txt']);
+    expect(showFiles.split('\n').filter(Boolean).sort()).toEqual([
+      'A\tnew.txt',
+      'D\tdoomed.txt',
+      'M\ttracked.txt',
+    ]);
   });
 
-  it('the resulting commit message round-trips through git\'s own trailer parser, with exactly the three trailers and no more', async () => {
+  it("the resulting commit message round-trips through git's own trailer parser, with exactly the three trailers and no more", async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await writeFile(path.join(handle.path, 'a.txt'), 'x');
     const message = formatCommitMessage({
       scope: 'a',
@@ -133,7 +151,9 @@ describe('commitInLane', () => {
 
     const { sha } = await commitInLane(handle, { message, sign: false });
 
-    const { stdout: body } = await execa('git', ['log', '-1', '--format=%B', sha], { cwd: handle.path });
+    const { stdout: body } = await execa('git', ['log', '-1', '--format=%B', sha], {
+      cwd: handle.path,
+    });
     expect(body.trim()).toBe(message.trim());
     // `git interpret-trailers --parse` is git's own real trailer-recognition machinery (the same code
     // path the merge queue, a later piece, would use), not a substring/regex scan — asserting the exact
@@ -155,7 +175,11 @@ describe('commitInLane', () => {
     // so `sign: true` failing here — where the identical commit with `sign: false` succeeds — is
     // itself the proof the flag reaches the real git invocation rather than being dropped.
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     await writeFile(path.join(handle.path, 'a.txt'), 'x');
     const message = formatCommitMessage({
       scope: 'a',
@@ -168,9 +192,19 @@ describe('commitInLane', () => {
     await expect(commitInLane(handle, { message, sign: true })).rejects.toBeInstanceOf(VcsError);
   });
 
-  it('rejects with a VcsError, not a raw execa error, when there is nothing to commit', async () => {
+  it('is a genuine no-op (returns the current HEAD, not an error) when there is nothing to commit', async () => {
+    // A gauntlet critic round (@forge/engine/resume's own P19/P20 crash-resume E2E test) found the
+    // original, unconditional version threw a raw git "nothing to commit" failure here -- a real
+    // problem for any caller re-running already-idempotent work (06 §6.10's own resume/reroll) against
+    // a lane whose prior attempt had already committed the identical content. Checked structurally
+    // (getDirtyFiles, the same check assertCleanWorkingTree already uses), not by matching git's own
+    // English error text.
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
     const message = formatCommitMessage({
       scope: 'a',
       subject: 'x',
@@ -178,7 +212,32 @@ describe('commitInLane', () => {
       runId: 'run-1',
       agentRole: 'engineer',
     });
+    const { stdout: headSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
 
-    await expect(commitInLane(handle, { message, sign: false })).rejects.toBeInstanceOf(VcsError);
+    const result = await commitInLane(handle, { message, sign: false });
+
+    expect(result.sha).toBe(headSha.trim());
+  });
+
+  it('still commits for real when the working tree is genuinely dirty, not short-circuited by the no-op check', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'real.txt'), 'genuine content\n');
+    const message = formatCommitMessage({
+      scope: 'a',
+      subject: 'x',
+      stepId: 'a',
+      runId: 'run-1',
+      agentRole: 'engineer',
+    });
+    const { stdout: headSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path });
+
+    const result = await commitInLane(handle, { message, sign: false });
+
+    expect(result.sha).not.toBe(headSha.trim());
   });
 });

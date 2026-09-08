@@ -6322,3 +6322,136 @@ enforcement masked it) is itself worth naming as a reusable check — a regressi
 it shouldn't have" is only as strong as its own guarantee that nothing *else* in the pipeline would also
 have removed X for an unrelated reason; proving that requires the same destructive on/off test this build
 already applies to the *fix*, applied once more to the *test* itself.
+
+## Q82 — M5 P20's `@forge/engine/run`: the milestone's own capstone — `runEngine`, the E3 crash-resume test
+(a real `SIGKILL`'d child process, 20 randomised points), and the scheduler-determinism test — three real
+bugs in already-committed P15/P19/`@forge/vcs` code, surfaced only by driving the whole system end to end
+
+`06` §6.10/`21` §21.3's own E3 row is this milestone's own literal exit criterion, and it is deliberately
+almost entirely tests and fixtures: the one real "production code" addition is `runEngine`, the small
+harness gluing `@forge/engine/workflow` (parse), `@forge/engine/plan` (compile), `@forge/engine/scheduler`,
+and `@forge/engine/dispatch` into one runnable entry point — everything else this milestone built (P1-P19)
+was already independently proven; this piece's own job is proving those pieces are *actually correct when
+composed*, and every one of the three real bugs it found lived exactly in that composition, invisible to
+any single piece's own unit tests.
+
+1. **`runEngine(workflow, context, ctx, resumeFrom?): Promise<RunState>`** — `workflow` is raw YAML text
+   (`06` §6.10's own "compiles" literally spans P8's parse *and* P10/11's compile, not a pre-parsed
+   `Workflow` object), `resumeFrom` is an additive fourth parameter (`06` §6.10 step 4's own "re-enter the
+   scheduler loop") that skips re-emitting `RunPlanned`/`RunStarted` and seeds a fresh `Scheduler` from a
+   prior `RunState.stepStatuses` instead of starting from nothing. Throws `ForgeError('RUN-045')`, a new
+   registered code, for a parse or compile failure — a malformed workflow is a caller bug, not a runtime
+   `StepOutcome`-shaped result, matching this whole package's own established "structural/config errors
+   throw" split.
+2. **`toSchedulerStatus`/`seedScheduler` resolve the exact Scheduler-status-vocabulary gap P19's own
+   research fork flagged as "not yet decided here" when that piece was built**: P18's 7-value
+   `StepReconstructedStatus` folds onto `Scheduler`'s narrower 5-value `StepStatus` by mapping
+   `'aborted'`/`'escalated'` both to `'failed'` — neither is going to run further on its own, and
+   `computeReadySet` already treats anything but `'succeeded'` identically for a dependent's own readiness
+   check, so `'failed'` is the one *existing* status that correctly keeps every downstream dependent
+   permanently un-ready without inventing a new one. Both exported specifically for direct unit testability
+   (a hand-built `resumeFrom` claiming a status the durable log has no corresponding events for is not a
+   scenario `resumeRun`'s own real output can ever actually produce, and `runEngine`'s own final return
+   value re-derives entirely from the log regardless of what was seeded — confirmed empirically before
+   choosing to test these two functions directly rather than only through a full, necessarily-log-
+   inconsistent round trip).
+3. **The fixture workflow (test-local, `Q62` part 3) needed two real inventions of its own to actually
+   compile and run**, both discovered empirically, not assumed: `merge`'s own `dependsOn` cannot template
+   `{{item.id}}` against a sibling fanout's own items the way `10` §10.1's own worked example writes it —
+   `compile.ts`'s own `buildLeafNode` doc comment already documents this as a real, deliberately-undone
+   gap (a merge step is an ordinary leaf with no `item` binding in its own `ExpressionContext`) — so the
+   fixture's own merge step depends on the fanout's literal, known compiled ids instead. And
+   `FakePlatformAdapter` script matchers must key on `request.stepId`, never `request.prompt`:
+   `StepNode.brief` is never template-resolved by `compileStep` (only `inputs`/`produces`/`run`/`agent`
+   are, confirmed directly against `compile.ts`), so two fanout instances' own prompts are byte-identical.
+4. **The scheduler-determinism test's own "different seed can differ" half needed a second, separate,
+   minimal fixture** (two independent agent steps plus one deliberately-dominant third step) rather than
+   reusing the main fixture's own two fanout instances: confirmed empirically (searching dozens of
+   candidate seeds directly against `orderReadyNodes`) that the main fixture's two `implement` instances
+   are never actually tied — both feed the identical downstream `merge`, so `06` §6.3's own rules 1-3
+   already fully resolve their relative order before rule 4 (the seed) is ever consulted. A genuine tie
+   needs two ready nodes truly equal on rules 1-3, which needs a third, unambiguous critical-path winner
+   in the same plan to remove them both from "on the critical path" contention — `@forge/engine/scheduler`'s
+   own `ordering.test.ts` already proves the identical property at the unit level with this identical
+   three-node shape; this test proves it again through the real, full `runEngine` path.
+5. **Three real bugs in already-committed code, all found only by the E2E tests actually executing the
+   full composed system — none visible to any single piece's own prior unit tests**:
+   - **`commitInLane` (`@forge/vcs`, already-committed P3) threw a raw "nothing to commit" git failure**
+     whenever a resumed/rerolled step re-produced content a lane's own prior (pre-crash) attempt had
+     already committed — a genuinely idempotent re-run, exactly `06` §6.10's own resume/reroll scenario.
+     Fixed structurally (`getDirtyFiles`, the identical check `assertCleanWorkingTree` already uses, never
+     matching git's own English error text) — a real no-op now returns the lane's current `HEAD` unchanged
+     rather than throwing.
+   - **`resumeOneStep` (`@forge/engine/resume`, already-committed P19) never emitted `StepSucceeded`/
+     `StepFailed`** for a resumed/rerolled step, because it calls `runLaneLifecycle`/`runAgentWork`
+     directly (bypassing `@forge/engine/dispatch`'s own `executeStep`, the *only* other place either event
+     is ever emitted) — so a resumed step's own terminal status lived only in `resumeRun`'s in-memory
+     return value, never in the durable log itself, directly contradicting `18` §18.4's own "if a value
+     cannot be derived from the log, it does not exist" rule. A second, independent reconstruction later
+     (exactly what `runEngine`'s own `resumeFrom`-seeded continuation does) saw the step stuck at
+     `'running'` forever. Fixed by emitting both events directly, matching `executeStep`'s own exact shape.
+   - **`ctx.laneRegistry` (purely in-memory, part of `ExecuteStepContext`) was never repopulated on
+     resume** — a step that had already fully succeeded *before* a crash, with its own lane sitting
+     `'ready'` but not yet consumed by a `merge` step, silently vanished from that later merge's own view:
+     a fresh, empty registry in the new process, and `runMergeStep`'s own "no predecessor lane to merge"
+     case (a legitimate, *different* scenario) silently swallowed it, dropping real, already-committed
+     content from the final merged result with no error at all. Fixed by a new `repopulateLaneRegistry`,
+     restoring a real `LaneHandle` for every `'ready'` lane from `RunState.laneStatuses`/`laneOrigins`
+     before anything else in `resumeRun` runs.
+
+### Round 1 — fresh critic: 1 MAJOR, fixed
+
+**MAJOR: `repopulateLaneRegistry` (finding 5's own third bug, above) trusted `laneStatuses === 'ready'`
+unconditionally, with no cross-check against real git/filesystem state.** `runMergeStep` writes
+`MergeCompleted` *before* its own real `ctx.vcs.removeLane` call, and only writes `LaneRemoved` *after*
+that removal actually completes — so a crash landing in that exact gap durably logs `'ready'` for a lane
+whose real worktree is already gone. The original fix would restore a stale `LaneHandle` pointing at a
+now-nonexistent path, which a later resumed `merge` step (re-running from scratch over every predecessor)
+would then try to actually merge — a real git failure, not the "identical final state" the exit test
+requires. **Fixed** by checking `existsSync(lane.path)` before trusting a `'ready'`-status lane at all —
+the identical "cross-check against real state, never trust the log alone for something a crash could have
+outpaced" discipline `reclaimOrphanedWorktrees` (P19, already-committed) already applies for the analogous
+orphaned-worktree case — and threading the discovered stale lane ids back into `resumeRun`'s own returned
+`laneStatuses` (corrected to `'removed'`), so the returned `RunState` itself stops lying too.
+
+Two MINOR findings, both already honestly disclosed rather than fixed: the crash-resume E2E test forces
+`sessionResume: false` (a fresh `FakePlatformAdapter` instance in the parent process cannot validly resume
+a session the now-dead child process held), so it proves crash-safety for the reroll half of P19's own
+resume-vs-reroll decision only, not genuine cross-process session continuation; and the "no duplicated
+ledger entries" assertion is honestly vacuous today (`@forge/testkit`'s own fake adapter never populates a
+nonzero cost anywhere in this milestone), kept as a real, load-bearing assertion for the moment a later
+milestone gives it real cost data, not deleted.
+
+### Round 2 — scoped verify: fix CONFIRMED-CORRECT, no new findings
+
+Independently confirmed the fix is correctly wired end to end (`repopulateLaneRegistry`'s own returned
+stale-lane set reaches `resumeRun`'s own corrected `laneStatuses`, and no stale `LaneHandle` ever reaches
+`ctx.laneRegistry`), confirmed the regression test is a faithful reproduction (a real lane, real events,
+real removal via the actual `removeLaneWorktree` call, never writing `LaneRemoved`), and independently
+re-ran the destructive on/off test on the fix itself (reverted, confirmed the regression test fails
+exactly as expected; restored, confirmed byte-identical to the fix's own committed form). Checked every
+other real outcome branch inside `runMergeStep` for an analogous race and found none — only the
+`'clean'`/`'conflict-resolved'` branches ever call `removeLane` at all. `tsc`, `eslint`, and the full
+`packages/engine`/`packages/vcs`/`packages/core` suite all independently reconfirmed clean, including the
+crash-resume E2E test run three additional times with no flakiness observed.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3364 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file except one already-documented, provably-unreachable defensive branch
+(`revalidateArtifacts`'s own `describeArtifactFailure`, P19, pre-existing).
+
+### Calibration note
+
+Every one of this piece's own three real findings (the two retroactive P15/P19/`@forge/vcs` bugs, and the
+one Round-1 bug in the fix for one of them) shares one shape: a *local* invariant that looks obviously true
+in isolation (a session reporting written files really did change something; a step calling
+`executeStep`-shaped logic will have its terminal event logged somewhere; a lane the log calls `'ready'`
+really is) turns out to depend on a *global* ordering guarantee (write-before-effect, single-point-of-
+emission, in-memory-state-survives-the-process) that a real crash is specifically positioned to violate.
+None of these were reachable by testing any one piece in isolation — P15's own dispatch tests, P19's own
+resume tests, and `@forge/vcs`'s own commit tests were all, individually, completely correct against the
+assumptions they were each built under. Only driving the full, composed system through a real process kill
+at genuinely random points ever exposed the gap between "correct in isolation" and "correct under a crash
+at literally any point" — which is exactly why `06` §6.10 requires this as a real, randomised, repeated CI
+test rather than accepting a single hand-picked scenario as sufficient, and exactly why this piece was
+scoped as the milestone's own defining criterion rather than an optional nice-to-have at the end.

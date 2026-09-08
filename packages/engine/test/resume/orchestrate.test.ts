@@ -14,7 +14,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import { createLaneWorktree, listOrphanedWorktrees, slugifyStepId } from '@forge/vcs';
+import {
+  createLaneWorktree,
+  listOrphanedWorktrees,
+  removeLaneWorktree,
+  slugifyStepId,
+} from '@forge/vcs';
 import { appendEvent } from '@forge/telemetry/events';
 import { FAKE_MODEL_ID, FakePlatformAdapter, withCapabilities } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
@@ -450,5 +455,102 @@ describe('resumeRun', () => {
 
     expect(runState.stepStatuses.size).toBe(0);
     expect(runState.unresolvedStepIds).toEqual([]);
+  });
+
+  it('a "ready" lane with no recorded origin (a malformed/missing LaneCreated payload) is safely skipped, not a crash', async () => {
+    const runId = 'run-no-origin-ready';
+    const stepId = 'wf:already-done';
+    const projectRoot = await createTempRepo('no-origin-ready');
+    const laneId = `${runId}-${slugifyStepId(stepId)}`;
+    // LaneCreated with no baseSha at all -- laneOrigins never records this lane -- yet the lane still
+    // reaches 'ready' and the step still resolves normally, the identical "one malformed field doesn't
+    // suppress every other real effect the same event legitimately has" leniency reconstructRunState
+    // itself already established for this exact case (RunState.laneOrigins' own doc comment).
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneCreated',
+      stepId,
+      laneId,
+      payload: undefined,
+    });
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneReady',
+      stepId,
+      laneId,
+      payload: undefined,
+    });
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'StepSucceeded',
+      stepId,
+      payload: undefined,
+    });
+
+    const ctx: ResumeContext = {
+      ...createTestContext({ projectRoot, runId, now: createTestClock() }),
+      steps: new Map(),
+    };
+
+    const runState = await resumeRun(runId, ctx);
+
+    expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
+    expect(ctx.laneRegistry.has(stepId)).toBe(false);
+  });
+
+  it('a "ready" lane whose real worktree is already gone (a crash between the real removeLane and its own LaneRemoved write) is never repopulated as a stale handle', async () => {
+    // A gauntlet critic round found runMergeStep (dispatch/steps.ts) writes MergeCompleted *before* the
+    // real ctx.vcs.removeLane call, and only writes LaneRemoved *after* that removal actually completes
+    // -- so a crash landing in that exact gap durably logs 'ready' for a lane whose real worktree is
+    // already gone. Reproduced directly here: a real lane, reaching LaneReady/StepSucceeded for real,
+    // then physically removed (matching what a real merge's own removeLane call would have done) without
+    // ever writing the LaneRemoved event -- exactly the state that gap leaves behind.
+    const runId = 'run-stale-ready-lane';
+    const stepId = 'wf:already-merged';
+    const projectRoot = await createTempRepo('stale-ready-lane');
+    const laneId = `${runId}-${slugifyStepId(stepId)}`;
+    const lane = await createLaneWorktree(projectRoot, { runId, stepId, integrationBase: 'main' });
+    const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: lane.path });
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneCreated',
+      stepId,
+      laneId,
+      payload: { baseSha: baseSha.trim() },
+    });
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneReady',
+      stepId,
+      laneId,
+      payload: undefined,
+    });
+    await appendEvent(projectRoot, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'StepSucceeded',
+      stepId,
+      payload: undefined,
+    });
+    // The real removal a merge step's own ctx.vcs.removeLane call would have performed -- crashed
+    // before its own LaneRemoved event ever got written.
+    await removeLaneWorktree(projectRoot, lane, { retain: false });
+    expect(existsSync(lane.path)).toBe(false);
+
+    const ctx: ResumeContext = {
+      ...createTestContext({ projectRoot, runId, now: createTestClock() }),
+      steps: new Map(),
+    };
+
+    const runState = await resumeRun(runId, ctx);
+
+    expect(ctx.laneRegistry.has(stepId)).toBe(false);
+    expect(runState.laneStatuses.get(laneId)).toBe('removed');
+    expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
   });
 });

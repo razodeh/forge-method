@@ -10,7 +10,7 @@
 import { execa } from 'execa';
 
 import { VcsError } from './errors.ts';
-import { wrapGitFailure } from './git.ts';
+import { getDirtyFiles, wrapGitFailure } from './git.ts';
 import type { LaneHandle } from './lanes.ts';
 
 export interface CommitMessageOptions {
@@ -60,7 +60,8 @@ function assertValidAgentRole(agentRole: string): void {
     throw new VcsError({
       code: 'VCS-INVALID-AGENT-ROLE',
       message: `"${agentRole}" is not a valid agent role: it must be a lowercase identifier (letters, digits, hyphens, starting with a letter) to form a well-shaped "Co-Authored-By" name and email local-part.`,
-      remedy: 'Use the agent\'s short role id (e.g. "engineer", "reviewer", "data-architect"), not a display name or an email address.',
+      remedy:
+        'Use the agent\'s short role id (e.g. "engineer", "reviewer", "data-architect"), not a display name or an email address.',
     });
   }
 }
@@ -99,11 +100,33 @@ export function formatCommitMessage(options: CommitMessageOptions): string {
 /** Stages everything in the lane worktree (`git add -A` — new, modified and deleted files alike; `06`
  * §6.4 step 3 says only "the agent commits," not "the agent stages, then commits") and commits it with
  * `message`, optionally signed (`sign`, wiring `18` §18.3's own `vcs.signCommits`). Returns the new
- * commit's own sha, so a caller (the merge queue, P5) has it without a separate `rev-parse` round trip. */
+ * commit's own sha, so a caller (the merge queue, P5) has it without a separate `rev-parse` round trip.
+ *
+ * Checks the working tree for real, structural dirtiness (`getDirtyFiles`, the same check
+ * `assertCleanWorkingTree` already uses) *before* attempting `git add`/`git commit`, and returns the
+ * lane's own current `HEAD` unchanged — a genuine no-op, not an error — when there is nothing to stage
+ * at all. A gauntlet critic round (`@forge/engine/resume`'s own P19/P20 crash-resume E2E test) found the
+ * previous, unconditional version threw a raw `git commit` failure ("nothing to commit, working tree
+ * clean") whenever a caller re-ran identical, already-idempotent work against a lane whose own prior
+ * attempt had already committed it — exactly `06` §6.10's own resume/reroll scenario, where re-running a
+ * step from its `idempotencyKey` after a crash can legitimately reproduce content the lane already has.
+ * `session.changedFiles.length > 0`-shaped callers (`@forge/engine/dispatch`'s own `runAgentWork`) only
+ * know whether the *session itself* wrote anything, never whether that write actually changed the lane's
+ * own current state — this is the one place that gap can be closed structurally, for every caller at
+ * once, rather than patched per call site. */
 export async function commitInLane(
   handle: LaneHandle,
   options: { readonly message: string; readonly sign: boolean },
 ): Promise<{ readonly sha: string }> {
+  const dirtyFiles = await getDirtyFiles(handle.path);
+  if (dirtyFiles.length === 0) {
+    const { stdout } = await wrapGitFailure(
+      () => execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path }),
+      `resolving the lane worktree's own current HEAD (nothing to commit) at "${handle.path}"`,
+    );
+    return { sha: stdout.trim() };
+  }
+
   await wrapGitFailure(
     () => execa('git', ['add', '-A'], { cwd: handle.path }),
     `staging changes in the lane worktree at "${handle.path}"`,

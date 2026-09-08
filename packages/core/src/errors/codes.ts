@@ -490,7 +490,15 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { attemptNumber: number }) =>
       `computeBackoff was called with attemptNumber ${show(d.attemptNumber)}, which is not a positive integer.`,
-    remedy: 'Pass an attemptNumber of 1 or greater — 1 for the first retry, 2 for the second, and so on.',
+    remedy:
+      'Pass an attemptNumber of 1 or greater — 1 for the first retry, 2 for the second, and so on.',
+  },
+  'RUN-045': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { issues: string }) =>
+      `runEngine's own workflow source failed to parse or compile: ${show(d.issues)}.`,
+    remedy: 'Fix the workflow source (or its compiled plan) before calling runEngine with it.',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather

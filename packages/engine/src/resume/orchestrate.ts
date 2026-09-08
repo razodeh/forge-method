@@ -17,6 +17,7 @@
  * @see specs/20 §20.10
  * @see PLAN-M5.md P19
  */
+import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -218,7 +219,27 @@ async function resumeOneStep(
   const sessionId = runState.sessionIds.get(stepId);
   const strategy = decideResumeStrategy(sessionId, capabilities);
 
-  return resumeAgentStep(node, ctx, lane, origin.baseSha, strategy, sessionId);
+  const outcome = await resumeAgentStep(node, ctx, lane, origin.baseSha, strategy, sessionId);
+  // A gauntlet critic round (surfaced by P20's own crash-resume E2E test, not caught by this piece's
+  // own unit tests -- those only ever checked resumeRun's in-memory *returned* RunState, never the
+  // durable log a later, independent reconstruction reads) found this call bypasses `@forge/engine/
+  // dispatch`'s own `executeStep` entirely (`runLaneLifecycle`/`runAgentWork` are called directly, so a
+  // resume/reroll can reuse an *existing* lane rather than always creating a fresh one) -- and
+  // `executeStep` is the one place `StepSucceeded`/`StepFailed` is ever emitted (`execute.ts`'s own doc
+  // comment: "nothing else in this milestone's own built pieces ever emits either"). Without this, a
+  // resumed step's own terminal status lives only in `resumeRun`'s in-memory return value, never in the
+  // append-only log itself -- directly contradicting `18` §18.4's own "if a value cannot be derived from
+  // the log, it does not exist" rule this whole event system is built on: a *second* reconstruction
+  // later (`06` §6.10 step 4's own "re-enter the scheduler loop," done by re-reading the log, not by
+  // trusting an in-memory value handed across a function call) would see the step stuck at `'running'`
+  // forever. Emitted here, matching `executeStep`'s own exact shape, so every terminal `StepOutcome` this
+  // whole package ever produces -- resumed or not -- reaches the log exactly once.
+  await ctx.telemetry.emit({
+    type: outcome.status === 'succeeded' ? 'StepSucceeded' : 'StepFailed',
+    stepId,
+    payload: outcome.status === 'failed' ? outcome.failure : undefined,
+  });
+  return outcome;
 }
 
 /** See `resumeOneStep`'s own doc comment: removes a lane this run's own log already recorded
@@ -238,12 +259,64 @@ async function removeStaleLaneIfAny(
   await removeLaneWorktree(ctx.projectRoot, lane, { retain: false });
 }
 
+/** `ctx.laneRegistry` (`@forge/engine/dispatch`'s own `ExecuteStepContext`) is purely in-memory — "a
+ * caller constructs one empty `Map` per run and reuses it across every `executeStep` call in that run"
+ * (its own doc comment) — and a resume, by construction, is a *new* process with a *new*, empty one. A
+ * gauntlet critic round (P20's own crash-resume E2E test) found this meant a step that had already
+ * reached `LaneReady`/`StepSucceeded` *before* the crash, but whose lane a later `merge` step had not
+ * yet consumed, silently vanished from `runMergeStep`'s own view: `ctx.laneRegistry.get(predecessorId)`
+ * found nothing, and `runMergeStep`'s own "no predecessor lane to merge" case (a legitimate, different
+ * scenario — a `dependsOn` entry whose step never actually got a lane at all) silently swallowed it,
+ * merging every *other* lane but dropping this one's real, already-committed content with no error at
+ * all. Fixed by repopulating `ctx.laneRegistry` from `RunState.laneStatuses`/`laneOrigins` before
+ * anything else runs: every lane still `'ready'` (committed and claim-enforced, but not yet `'removed'`
+ * by a real merge) gets a real, deterministically-reconstructed `LaneHandle` set back in, keyed by the
+ * step id `laneOrigins` recorded for it — exactly what a normal, uninterrupted run would already have
+ * in memory at this same point.
+ *
+ * A second gauntlet critic round found this first version trusted `laneStatuses === 'ready'`
+ * unconditionally, with no check against real git state — but `runMergeStep` (`dispatch/steps.ts`)
+ * writes `MergeCompleted` *before* the real `ctx.vcs.removeLane` call, and only writes `LaneRemoved`
+ * *after* that removal actually completes, so a crash landing in that exact gap durably logs `'ready'`
+ * for a lane whose real worktree is already gone. Repopulating a handle for it unconditionally would
+ * hand a later merge attempt a path that no longer exists. Fixed by checking the real worktree still
+ * exists on disk (`existsSync`) before trusting `laneStatuses` at all — the identical "cross-check
+ * against real git/filesystem state, never trust the log alone for something a crash could have
+ * outpaced" discipline `reclaimOrphanedWorktrees` (above) already applies for the analogous orphaned-
+ * worktree case. Returns every laneId found stale this way, so `resumeRun` can correct its own returned
+ * `laneStatuses` to `'removed'` for them too — the log said `'ready'`, but reality already disagreed. */
+async function repopulateLaneRegistry(
+  ctx: ResumeContext,
+  runId: string,
+  runState: RunState,
+): Promise<ReadonlySet<string>> {
+  const staleLaneIds = new Set<string>();
+  for (const [laneId, status] of runState.laneStatuses) {
+    if (status !== 'ready') continue;
+    const origin = runState.laneOrigins.get(laneId);
+    if (origin === undefined) continue;
+    const lane: LaneHandle = {
+      laneId: laneId as LaneHandle['laneId'],
+      path: laneWorktreePath(await realpath(ctx.projectRoot), laneId),
+      branch: laneBranchName(runId, origin.stepId),
+    };
+    if (!existsSync(lane.path)) {
+      staleLaneIds.add(laneId);
+      continue;
+    }
+    ctx.laneRegistry.set(origin.stepId, lane);
+  }
+  return staleLaneIds;
+}
+
 export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunState> {
   const runState = await reconstructRunState(readEvents(ctx.projectRoot, runId));
   await reclaimOrphanedWorktrees(ctx, runId, runState);
+  const staleReadyLaneIds = await repopulateLaneRegistry(ctx, runId, runState);
 
   const stepStatuses = new Map<string, StepReconstructedStatus>(runState.stepStatuses);
   const laneStatuses = new Map(runState.laneStatuses);
+  for (const laneId of staleReadyLaneIds) laneStatuses.set(laneId, 'removed');
   for (const stepId of runState.unresolvedStepIds) {
     const outcome = await resumeOneStep(ctx, runId, runState, stepId);
     if (outcome === undefined) {
