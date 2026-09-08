@@ -1,0 +1,50 @@
+id: architecture-style
+name: Architecture style selection
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/style.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*)]
+questions:
+  - id: team_size
+    text: 'How many engineers-equivalent will build and operate this system?'
+    type: number
+    default_from: 'config.concurrency'
+  - id: independent_scaling_required
+    text: 'Is independent scaling of parts of the system a hard NFR?'
+    type: boolean
+  - id: ops_maturity
+    text: "What is the team's current operational maturity (CI/CD, on-call, observability)?"
+    type: choice
+    options: [none, basic, mature]
+options:
+  - id: modular-monolith
+  - id: layered-monolith
+  - id: microservices
+  - id: service-based
+  - id: event-driven
+  - id: serverless-faas
+  - id: pipeline-dataflow
+  - id: client-heavy-offline-first
+  - id: plugin-microkernel
+criteria:
+  - id: scaling-independence-fit
+    weight: 0.25
+  - id: ops-maturity-fit
+    weight: 0.2
+  - id: domain-boundary-clarity
+    weight: 0.2
+  - id: velocity
+    weight: 0.2
+  - id: latency-consistency-fit
+    weight: 0.15
+scoring: hybrid
+rules:
+  - if: 'team_size < 8'
+    then: { eliminate: [microservices] }
+  - if: 'ops_maturity == "none"'
+    then: { eliminate: [microservices, event-driven] }
+  - if: '!independent_scaling_required'
+    then: { prefer: modular-monolith }
+output_template: templates/adr-architecture-style.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/architecture-style-adoption.yaml

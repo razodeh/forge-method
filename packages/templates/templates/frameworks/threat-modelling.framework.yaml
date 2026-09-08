@@ -1,0 +1,16 @@
+id: threat-modelling
+name: Threat modelling (STRIDE)
+owner_agent: security
+produces: { adr_category: architecture, kb_section: architecture/threat-model.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+# 11 §11.2's own F-ARCH-6 text is a fixed procedure (STRIDE per component boundary + data-flow diagram
+# + trust boundaries), not a choice among named alternatives -- one option, no criteria/rules, the same
+# "execution step, not a decision" shape F-INIT-7/F-ARCH-2 already use.
+options:
+  - id: run-stride-threat-model
+scoring: rules
+output_template: templates/adr-threat-modelling.md.hbs
+follow_on:
+  # "mitigation (as a story)" -- 11 §11.2's own per-threat output list.
+  - create_stories_from: templates/stories/threat-mitigation.yaml

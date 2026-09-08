@@ -1,0 +1,49 @@
+id: communication-integration-patterns
+name: Communication and integration pattern selection
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/integration-patterns.md }
+inputs:
+  required: [kb:constraints/**, artifact:InterfaceContract(*)]
+questions:
+  - id: cross_boundary_hops
+    text: 'How many synchronous hops does this interaction chain span end-to-end?'
+    type: number
+  - id: requires_async
+    text: 'Is this interaction inherently asynchronous (fire-and-forget, fan-out, temporal decoupling)?'
+    type: boolean
+options:
+  - id: rest
+  - id: graphql
+  - id: grpc
+  - id: trpc
+  - id: soap
+  - id: websocket-sse
+  - id: webhooks
+  - id: message-queue
+  - id: pub-sub
+  - id: event-streaming
+  - id: batch-file-transfer
+  - id: shared-database
+criteria:
+  - id: latency-fit
+    weight: 0.2
+  - id: delivery-guarantee-fit
+    weight: 0.2
+  - id: tooling-maturity
+    weight: 0.2
+  - id: versioning-and-evolution
+    weight: 0.2
+  - id: coupling-cost
+    weight: 0.2
+scoring: hybrid
+rules:
+  # "cross-boundary synchronous chains > 2 deep require an ADR" (11 §11.2) -- shared-database is
+  # explicitly discouraged in the spec text, so a deep synchronous chain (already the expensive case)
+  # is where this framework also rules out compounding that cost with the most tightly-coupled option.
+  - if: 'cross_boundary_hops > 2'
+    then: { eliminate: [shared-database] }
+  - if: 'requires_async'
+    then: { prefer: event-streaming }
+output_template: templates/adr-communication-integration-patterns.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/integration-pattern-adoption.yaml

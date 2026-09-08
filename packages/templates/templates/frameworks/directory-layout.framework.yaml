@@ -1,0 +1,41 @@
+id: directory-layout
+name: Directory and module layout selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: engineering/standards.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+  derived:
+    - id: module_count
+      from: 'architecture.components.length'
+questions:
+  - id: ddd_adopted
+    text: 'Has domain-driven design (bounded contexts, aggregates) been adopted for this system?'
+    type: boolean
+  - id: delivery_mechanism_count
+    text: 'How many distinct delivery mechanisms (HTTP API, CLI, worker, ...) does this system expose?'
+    type: number
+options:
+  - id: layer-first
+  - id: feature-domain-first
+  - id: hexagonal-ports-adapters
+  - id: package-by-bounded-context
+criteria:
+  - id: scaling-beyond-fifteen-modules
+    weight: 0.3
+  - id: domain-complexity-fit
+    weight: 0.3
+  - id: delivery-mechanism-diversity
+    weight: 0.2
+  - id: ddd-alignment
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'module_count > 15'
+    then: { eliminate: [layer-first] }
+  - if: 'ddd_adopted'
+    then: { prefer: package-by-bounded-context }
+  - if: 'delivery_mechanism_count > 1'
+    then: { prefer: hexagonal-ports-adapters }
+output_template: templates/adr-directory-layout.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/layout-enforcement.yaml

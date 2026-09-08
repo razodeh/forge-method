@@ -97,6 +97,47 @@ export const WORKFLOW_INDEX: Readonly<Record<WorkflowId, string>> = {
   replan: 'templates/workflows/replan.workflow.yaml',
 };
 
+/** `11` §11.1-§11.2's own fourteen initialization/architecture frameworks (`repo-strategy` from `11`
+ * §11.0's own worked example, plus thirteen more: `PLAN-M6.md` T3), transcribed independently for the
+ * identical "this package has no `@forge/methods` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above
+ * already document (`02` §2.2's own boundary graph: `templates: []`, zero `@forge/*` dependencies). */
+export type FrameworkId =
+  | 'repo-strategy'
+  | 'directory-layout'
+  | 'build-toolchain'
+  | 'vcs-conventions'
+  | 'dev-environment'
+  | 'coding-standards'
+  | 'scaffold-generation'
+  | 'architecture-style'
+  | 'decomposition-boundaries'
+  | 'communication-integration-patterns'
+  | 'pattern-selection'
+  | 'nfr-strategy'
+  | 'threat-modelling'
+  | 'buy-build-borrow';
+
+/** Resolves a framework id to its `.framework.yaml` file, as a path relative to this package's own
+ * root — the identical "caller resolves against wherever `@forge/templates` is actually installed"
+ * contract `WORKFLOW_INDEX`/`GATE_INDEX`/`TEMPLATE_INDEX` already document. */
+export const FRAMEWORK_INDEX: Readonly<Record<FrameworkId, string>> = {
+  'repo-strategy': 'templates/frameworks/repo-strategy.framework.yaml',
+  'directory-layout': 'templates/frameworks/directory-layout.framework.yaml',
+  'build-toolchain': 'templates/frameworks/build-toolchain.framework.yaml',
+  'vcs-conventions': 'templates/frameworks/vcs-conventions.framework.yaml',
+  'dev-environment': 'templates/frameworks/dev-environment.framework.yaml',
+  'coding-standards': 'templates/frameworks/coding-standards.framework.yaml',
+  'scaffold-generation': 'templates/frameworks/scaffold-generation.framework.yaml',
+  'architecture-style': 'templates/frameworks/architecture-style.framework.yaml',
+  'decomposition-boundaries': 'templates/frameworks/decomposition-boundaries.framework.yaml',
+  'communication-integration-patterns':
+    'templates/frameworks/communication-integration-patterns.framework.yaml',
+  'pattern-selection': 'templates/frameworks/pattern-selection.framework.yaml',
+  'nfr-strategy': 'templates/frameworks/nfr-strategy.framework.yaml',
+  'threat-modelling': 'templates/frameworks/threat-modelling.framework.yaml',
+  'buy-build-borrow': 'templates/frameworks/buy-build-borrow.framework.yaml',
+};
+
 /** `10` §10.3's own ten-row gate catalogue, transcribed independently for the identical "this package
  * has no `@forge/engine` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above already document. */
 export type GateId =

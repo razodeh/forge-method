@@ -1,0 +1,39 @@
+id: build-toolchain
+name: Build system and toolchain selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: delivery/build.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+  derived:
+    - id: language_count
+      from: 'distinct(architecture.components[].runtime).length'
+questions:
+  - id: monorepo_task_graph_needed
+    text: 'Does the build need a cross-package task graph (affected-only builds, remote caching)?'
+    type: boolean
+options:
+  - id: pnpm-turbo
+  - id: npm-scripts
+  - id: uv-poetry-hatch
+  - id: gradle-maven
+  - id: go-tooling-make
+  - id: cargo-just
+  - id: bazel-pants-earthly-nix
+criteria:
+  - id: ecosystem-fit
+    weight: 0.35
+  - id: reproducibility
+    weight: 0.25
+  - id: caching-and-task-graph
+    weight: 0.2
+  - id: polyglot-support
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'language_count > 1'
+    then: { prefer: bazel-pants-earthly-nix }
+  - if: 'monorepo_task_graph_needed'
+    then: { prefer: pnpm-turbo }
+output_template: templates/adr-build-toolchain.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/build-toolchain-setup.yaml

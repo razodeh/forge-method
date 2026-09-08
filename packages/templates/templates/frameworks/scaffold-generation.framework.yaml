@@ -1,0 +1,16 @@
+id: scaffold-generation
+name: Project scaffold generation
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: delivery/scaffold.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+# 11 §11.1's own F-INIT-7 text: "Not a decision -- an execution step." One option, no criteria/rules:
+# there is nothing to compare or eliminate, only real files (README, CI skeleton, walking skeleton,
+# ...) to produce, so `scoring: rules` names the closest of the three enum values without claiming a
+# ranked comparison this framework never performs.
+options:
+  - id: generate-scaffold
+scoring: rules
+output_template: templates/adr-scaffold-generation.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/walking-skeleton.yaml

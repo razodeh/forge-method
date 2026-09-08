@@ -17,6 +17,9 @@ importers:
       '@forge/engine':
         specifier: workspace:*
         version: link:packages/engine
+      '@forge/methods':
+        specifier: workspace:*
+        version: link:packages/methods
       '@forge/schemas':
         specifier: workspace:*
         version: link:packages/schemas

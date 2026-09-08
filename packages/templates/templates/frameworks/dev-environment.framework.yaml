@@ -1,0 +1,31 @@
+id: dev-environment
+name: Development environment selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: delivery/dev-environment.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+questions:
+  - id: agent_lane_offline_capable
+    text: "Must an agent lane be able to run this project's dev environment fully offline?"
+    type: boolean
+options:
+  - id: native-version-manager
+  - id: devcontainer
+  - id: nix-flake
+  - id: docker-compose
+criteria:
+  - id: cold-start-speed
+    weight: 0.3
+  - id: reproducibility
+    weight: 0.3
+  - id: agent-lane-portability
+    weight: 0.25
+  - id: team-familiarity
+    weight: 0.15
+scoring: hybrid
+rules:
+  - if: 'agent_lane_offline_capable'
+    then: { eliminate: [docker-compose], prefer: devcontainer }
+output_template: templates/adr-dev-environment.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/dev-environment-setup.yaml

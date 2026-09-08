@@ -1,0 +1,33 @@
+id: vcs-conventions
+name: Version control conventions selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: engineering/ways-of-working.md }
+inputs:
+  required: [kb:constraints/**]
+questions:
+  - id: agent_may_merge
+    text: 'May an agent lane merge its own branch without human approval?'
+    type: boolean
+  - id: release_cadence
+    text: 'How often does this project intend to release?'
+    type: choice
+    options: [continuous, scheduled]
+options:
+  - id: trunk-based
+  - id: git-flow
+criteria:
+  - id: release-cadence-fit
+    weight: 0.4
+  - id: team-lane-concurrency
+    weight: 0.35
+  - id: review-overhead
+    weight: 0.25
+scoring: rubric
+rules:
+  - if: 'release_cadence == "continuous"'
+    then: { prefer: trunk-based }
+  - if: 'release_cadence == "scheduled"'
+    then: { prefer: git-flow }
+output_template: templates/adr-vcs-conventions.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/vcs-setup.yaml

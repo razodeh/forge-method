@@ -25,6 +25,7 @@
     "@changesets/cli": "2.31.1",
     "@eslint/js": "9.39.5",
     "@forge/engine": "workspace:*",
+    "@forge/methods": "workspace:*",
     "@forge/schemas": "workspace:*",
     "@forge/templates": "workspace:*",
     "@types/estree": "1.0.9",
