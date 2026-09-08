@@ -5431,3 +5431,42 @@ boundaries-coverage config's own 64) all clean after both rounds.
 
 `@forge/catalog` is now fully complete: C1 (schema/registry/hygiene) through C5 (the selection engine) are
 all committed.
+
+---
+
+## M6 A1 — `@forge/agents`: base agent-definition schema, loader, registry, and `extends` resolution
+(`05` §5.3)
+
+**Rounds: 1 (fresh critic finding two real, fixable issues and one real, documented design tension).
+Outcome: WON.**
+
+`agentDefinitionSchema`/`loadAgentDefinition`/`readAgentDefinition`/`AgentRegistry`/`resolveExtends` --
+see `SPEC-QUESTIONS.md` Q97 for the full design record, including a real, active cross-session collision
+(a concurrent session independently started the same piece at the same file paths) resolved by an
+immediate stop-and-message, with an explicit split matching how `@forge/catalog`/`@forge/templates` were
+already split earlier in this milestone.
+
+### Round 1 — fresh critic: two real fixes, one documented design tension
+
+The critic confirmed the `05` §5.3 worked-example field parity is exact, confirmed a real, load-bearing
+inconsistency within the spec's own single worked example (`tools.network: false` vs.
+`ceiling.tools.network: none`, same field, two representations) is handled reasonably rather than
+silently normalized, and confirmed `resolveExtends`'s merge semantics (child-overrides, omission-inherits,
+multi-level fold) are correctly implemented and genuinely tested. Two real, fixable findings:
+
+1. A doc comment for the local `CeilingToolGrant` type claimed a dedicated test verified it stayed in
+   sync with `@forge/extensions/agents`'s own `ToolGrant` -- no such test existed. **Fixed** by adding
+   one: a compile-time-only key-set-equality check caught by `tsc --noEmit`.
+2. `checkReviewRoleShape` (a load-time static check for `05` §5.2's own separation-of-duties rule) flagged
+   `reviewer`/`critic`/`diagnostician`/`test-architect` for any `Code`/`Component`-typed output -- but the
+   roster table's own outputs for `diagnostician` ("failing test") and `critic` ("+ test") are legitimately
+   code-shaped. **Fixed** by narrowing to `reviewer` alone, the one role whose own roster-table output
+   never plausibly includes code.
+
+One real, open design tension documented rather than redesigned under incomplete information: most
+`AgentDefinition` fields are required on every document regardless of `extends`, so inheritance can only
+ever deduplicate a small optional-field set -- recorded directly in `resolveExtends`'s own doc comment as
+an item for A2/A3 to resolve once real content exists to judge it against.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (5066 tests, plus the
+boundaries-coverage config's own 64) all clean.

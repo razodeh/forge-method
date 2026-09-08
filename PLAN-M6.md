@@ -570,11 +570,19 @@ real schema for the *complete* base document, plus a loader.
   shipped base agent (piece A2), not merely left to a later customization-layer invariant to catch.
 - `05` §5.2's own separation-of-duties rule ("`reviewer`, `critic`, `diagnostician`, `test-architect`
   MUST never be the same session instance as the author") is recorded here as a load-time *shape* check
-  where checkable statically (e.g. a role marked with review/critique/diagnose in `decisions_owned`
-  should not also declare implementation-shaped `outputs`) — the *runtime* half (an actual step's actual
-  assigned agent instance) is piece A5's job, not this one's.
+  where checkable statically — narrowed during implementation to `reviewer` alone (a fresh critic round
+  found `diagnostician`/`critic` both have real, spec-literal code-shaped outputs — "failing test",
+  "+ test" — that a blanket ban on Code/Component-typed outputs would falsely reject; see
+  `SPEC-QUESTIONS.md` Q97) — the *runtime* half (an actual step's actual assigned agent instance) is
+  piece A5's job, not this one's.
 
-**Depends on:** `@forge/core` (artifact/schema conventions), `@forge/schemas`.
+**Depends on:** `@forge/core` (artifact/schema conventions), `@forge/extensions` (`ceiling.tools` reuses
+`ToolGrant`, M2 P3), `@forge/schemas`.
+
+**Status:** done — see `SPEC-QUESTIONS.md` Q97. `resolveExtends`'s own real design limit (most fields
+are required on every document, so `extends` only deduplicates a small optional-field set) is documented
+in its own doc comment as an open item for A2/A3 to resolve with real content, not fixed speculatively
+here.
 
 ---
 
@@ -609,11 +617,14 @@ this piece's own literal content for that one row.
 
 **Spec:** `05` §5.2's Build, Quality & operations, and Facilitation subsections, every row.
 
-**Surface:** `modules/fm-core/agents/<id>.agent.yaml` — fifteen more files: `platform`, `backend`,
-`frontend`, `mobile`, `data-engineer`, `ml-engineer` (Build); `test-architect`, `sdet`, `reviewer`,
-`diagnostician`, `sre`, `release`, `techwriter`, `finops`, `compliance` (Quality & operations);
-`facilitator`, `critic` (Facilitation) — sixteen, not fifteen; count precisely against the real table
-when built rather than trusting this arithmetic.
+**Surface:** `modules/fm-core/agents/<id>.agent.yaml` — seventeen more files: `platform`, `backend`,
+`frontend`, `mobile`, `data-engineer`, `ml-engineer` (Build, 6); `test-architect`, `sdet`, `reviewer`,
+`diagnostician`, `sre`, `release`, `techwriter`, `finops`, `compliance` (Quality & operations, 9);
+`facilitator`, `critic` (Facilitation, 2) — 6+9+2 = 17, counted directly against the real `05` §5.2 table
+during A1 (this plan's own earlier drafts said "fifteen," then "sixteen, not fifteen" — both wrong; A2's
+own eleven plus this piece's seventeen totals the real 28-role roster `05` §5.2 names, confirmed by
+direct enumeration, not the "24 (or possibly 27)" estimate an even earlier pass through this codebase's
+own conversation history once guessed).
 
 **Checks:** identical shape to A2's, against this piece's own roster subset; plus the milestone's own
 whole-roster completeness test (every row of `05` §5.2's full table, across both A2 and A3, has a real
