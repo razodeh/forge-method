@@ -5282,3 +5282,52 @@ unsupported schema field added).
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (210 files, 4363 tests, plus the boundaries-coverage
 config's own 64) all clean after every fix.
+
+---
+
+## M6 T5 — `@forge/templates`: the 43 ADR output templates and the 32-skill built-in library (`15` §15.4)
+
+**Rounds: 2 (fresh critic finding one serious bug plus two content bugs, all fixed; one scoped verify
+round confirming the fix — the process cap). Outcome: WON.**
+
+Every `output_template` T3/T4's 43 frameworks reference (`templates/adr-<id>.md.hbs`, real Handlebars
+source for a rendering engine that does not exist yet anywhere in this codebase) plus the full `15`
+§15.4.4 built-in skill library (32 skills, six groups), validated with zero findings against the real
+`validateSkill` (M2 P4). See `SPEC-QUESTIONS.md` Q93/Q94 for the full design record, including the
+`templates/output/` vs. real `templates/adr-<id>.md.hbs` path resolution and the `templates/stories/`
+spec-silence gap.
+
+### Round 1 — fresh critic: one serious bug, two content bugs
+
+1. **All 43 `.hbs` files had been silently corrupted by this same piece's own earlier `prettier
+   --write .` pass** — prettier matched the `.md.hbs` extension as Markdown and reflowed/merged the
+   files' own deliberate line structure: distinct YAML front-matter keys collapsed onto one physical
+   line (`type: ADR schemaVersion: 1 title:`), and Handlebars block boundaries merged into surrounding
+   Markdown prose (`## Decision We choose **{{{chosenOption}}}**. ## Score table`). The critic confirmed
+   this by actually compiling and rendering a template with representative data and parsing the result
+   as YAML — a check this piece's own first-draft test suite never performed (it only checked
+   `Handlebars.parse` syntax validity and a source-text substring match, both blind to line layout).
+   **Fixed** by regenerating all 43 files from the original, pre-corruption source, and adding
+   `packages/templates/templates/adr-*.md.hbs` to `.prettierignore` with a comment explaining why —
+   structurally preventing recurrence, not just correcting the current state.
+2. **Empty Handlebars `{{#each}}` arrays rendered as YAML `null`**, which `adrSchema`'s own array fields
+   reject. **Fixed** by adding an `{{else}}` branch rendering `[]` to every array field's own `#each`
+   block.
+3. **The `changelog` entry used invented field names** (`version`/`author`) instead of the real
+   `changelogEntrySchema`'s own (`revision`/`by`). **Fixed** directly.
+
+`test/output-templates.test.ts` was rewritten in response: it now actually renders every one of the 43
+templates against two representative fixtures (non-empty arrays/real criteria, and empty arrays/no
+criteria — the two shapes `#each` renders differently) and validates the rendered front matter against
+the real `adrSchema`, not merely the template source's own syntax.
+
+### Round 2 — scoped verify: fix confirmed complete
+
+Independently re-checked five different `.md.hbs` files for correct line structure and `{{else}}`/
+`changelog` field-name fixes, confirmed `test/output-templates.test.ts` genuinely renders+parses+
+validates (not a weaker check), confirmed `.prettierignore`'s own exclusion is honored
+(`prettier --file-info` reports `"ignored": true`), and re-ran the full local suite. No remaining
+problems found.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (212 files, 4687 tests, plus the boundaries-coverage
+config's own 64) all clean after every fix.
