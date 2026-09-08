@@ -7531,3 +7531,32 @@ only one of the three skill-loading failure paths not wrapped in a try/catch, so
 whose own `SKILL.md` was missing/malformed aborted the whole `packForStep` call instead of demoting just
 that one skill, breaking the "one bad skill demotes, never aborts" contract the other two paths already
 honoured. See `GAUNTLET-LOG.md`'s own M6 A4 entry for the critic round.
+
+## Q102 — M6 A5's `@forge/agents/prompt`: block [5]'s missing front-matter-template field, and the
+`StepContext`/`options` Surface deviations
+
+**Block [5] has no separate front-matter-template data to render.** `05` §5.3 point 5 names block 5
+"exact artifact schema + file paths + front-matter template" — but `AgentOutput` (A1's own schema,
+`packages/agents/src/schema/types.ts`) carries only `type`/`schema`/`path`/optional `cardinality`, and
+`05` §5.3's own worked `architect` example lists every one of its four real outputs with exactly those
+same four fields and nothing else — no output anywhere in the spec's own canonical example carries a
+front-matter template of its own. `renderOutputContractBlock` therefore renders the real data
+`AgentOutput` actually has; it does not invent a template field neither the schema nor the spec's own
+worked example ever defines. A future piece that needs a real, distinct front-matter template per
+output type (rather than deriving it implicitly from the referenced `schema` file, which is presumably
+what `05` §5.3 point 5 actually means by the phrase) would need to extend `AgentOutput` itself first —
+recorded here rather than silently rendered as an empty placeholder or fabricated content.
+
+**`compilePrompt`'s two Surface deviations from `PLAN-M6.md` A5's literal text**, both now recorded
+directly in `compile-prompt.ts`'s own top-of-function doc comment (a fresh critic round flagged the
+first release as under-documented relative to A4's own much more explicit deviation notes):
+1. `step: StepContext`, not the real `StepNode` — the identical boundary-graph gap A4's own
+   `pack-for-step.ts` already hit (`agents` has no edge to `@forge/engine`) and resolved the same way.
+2. A sixth `options: CompilePromptOptions` parameter (`styleProfile?`, `appendGuidance?`) — block [9]'s
+   own two real, structurally unrelated sources (a project `StyleProfile`, `15` §15.8, and one agent
+   overlay's own `$append_guidance` string, `@forge/extensions/resolve`, M2), neither of which any of
+   the plan's five named parameters carries a field for.
+
+A fresh critic round also found the original `renderHouseStyleBlock` silently dropped
+`StyleProfile.artifact_conventions` and `.doc_length` — fixed to render both, so block [9] surfaces the
+whole document `15` §15.8 defines, not a partial subset. See `GAUNTLET-LOG.md`'s own M6 A5 entry.

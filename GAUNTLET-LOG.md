@@ -5650,3 +5650,55 @@ hazard worth remembering for any future doc comment quoting a glob with consecut
 transient race in `test/workspace-floor.test.ts` during the full-repo run (a file the concurrent
 `@forge/cli` session was actively writing appeared mid-scan) — re-ran clean, confirmed not a regression
 from this piece.
+
+---
+
+## M6 A5 — `@forge/agents/prompt`: the nine-block system prompt compiler (`05` §5.3, §5.5)
+
+**Rounds: 1 (fresh critic finding two real gaps and one documentation gap, all fixed; no separate
+verify round run — findings were narrowly scoped, each got its own fix and, where testable, a
+regression test). Outcome: WON.**
+
+`OPERATING_CONTRACT` (`05` §5.5's own eleven points, shipped verbatim), `compilePrompt` (assembles all
+nine `05` §5.3 blocks in order, with blocks [1]/[6] structurally invariant against any
+overlay/skill/MCP/fetched-content input while [2]/[9] are the real customization surfaces), and
+`writePromptRecord` (the mandatory audit write to
+`.forge/state/runs/<runId>/steps/<stepId>/prompt.md`). See `SPEC-QUESTIONS.md` Q102 for this piece's
+own two Surface deviations from `PLAN-M6.md`'s literal text (`StepContext` in place of the
+boundary-graph-inaccessible `StepNode`, and an additional `options` parameter carrying block [9]'s two
+real sources) and the block-[5] front-matter-template data gap.
+
+### Round 1 — fresh critic (no context on plan/log): two real gaps, one documentation gap, all fixed
+
+1. **REAL GAP.** `renderHouseStyleBlock` silently dropped two of `StyleProfile`'s own seven fields —
+   `artifact_conventions` and `doc_length` — from block [9], so a real house style document was only
+   partially surfaced despite `15` §15.8 defining it as one whole document. **Fixed**: both are now
+   rendered; a new test asserts every `StyleProfile` field (including a real `doc_length` entry)
+   appears in the rendered block.
+2. **REAL GAP, unexplained.** `renderOutputContractBlock` renders block [5] from `AgentOutput`'s own
+   `type`/`schema`/`path`/`cardinality` fields only, with no front-matter-template content — `05` §5.3
+   point 5 itself names the block "exact artifact schema + file paths + front-matter template." Traced
+   to A1's own `AgentOutput` schema (matching `05` §5.3's own worked `architect` example verbatim)
+   never having had a front-matter-template field to begin with — not something A5 can invent without
+   fabricating content neither the schema nor the spec's own canonical example ever defines. **Fixed**
+   by recording the gap explicitly (a code comment plus `SPEC-QUESTIONS.md` Q102) rather than leaving
+   it silently unaddressed, and by rendering only the real data available.
+3. **Documentation gap.** `compilePrompt`'s own two deliberate Surface deviations from
+   `PLAN-M6.md` A5's literal text (`StepContext` in place of `StepNode`; an added `options` parameter)
+   were real, justified choices but nowhere near as explicitly documented in-code as A4's own sibling
+   deviations. **Fixed**: both are now recorded directly in `compile-prompt.ts`'s own top-of-function
+   doc comment, plus `SPEC-QUESTIONS.md` Q102.
+
+The critic confirmed the invariance test (`compile-prompt.test.ts`) is a genuine adversarial proof, not
+a happy-path check: malicious content injected via `agent.mandate`/`persona`, `pack.declaredInputs`/
+`retrieved`/`skills[].body`, and `options.appendGuidance`, asserting blocks [1]/[6] stay byte-identical
+and contain none of the injected text while blocks [2]/[9] (fed the identical inputs) both change and
+do contain it — proving the invariant is real and selective, not a blanket immutability nobody actually
+exercised. `OPERATING_CONTRACT`'s own fidelity test extracts `05` §5.5's text directly from the spec
+file at runtime and compares byte-for-byte, so drift between the shipped constant and the spec becomes
+structurally impossible to miss silently. Also fixed: a real test-coverage gap for every block's own
+empty-array "(none)" rendering path (`forbiddenActions`/`definitionOfDone`/`skills`/`declaredInputs`/
+`retrieved`), now explicitly asserted rather than only incidentally exercised by fixtures that happened
+to use empty arrays.
+
+`tsc`, `eslint`, and the `packages/agents` suite (115 tests) all clean after every fix.
