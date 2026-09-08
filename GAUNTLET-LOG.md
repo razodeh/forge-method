@@ -5870,3 +5870,72 @@ Checks text's own "the caller supplies real content" framing rather than "this f
 it") was reviewed and accepted as a defensible reading, not a gap requiring a fix.
 
 `tsc`, `eslint`, and the `packages/agents`/`packages/core` suites (628 tests) all clean after the fix.
+
+---
+
+## M6 C3 — `@forge/cli` lifecycle and discovery commands (`03` §3.2.1, §3.2.2)
+
+**Rounds: 1 (fresh critic finding two real HIGH bugs and two real gaps, all fixed; no separate
+verify round run). Outcome: WON.**
+
+`@forge/cli`'s third piece: `forge kb`/`forge spec`/`forge adr`/`forge diagram`/`forge decide`/
+`forge uninstall` — every subcommand a real, thin wrapper over already-built package functions
+(`@forge/kb`, `@forge/core/artifacts`, `@forge/core/graph`'s `SpecGraph`, `@forge/core/ids`'
+`IdAllocator`, `@forge/diagrams`, `@forge/methods`' real rules→score→rank pipeline). `forge adopt`
+(brownfield ingestion) and `forge discover` (needs `forge run`/`@forge/engine` workflow execution,
+C4's own scope) are real, documented `USR-003` refusals — `PLAN-M6.md` C3's own Mandate text
+explicitly sanctions this rather than fabricating either mechanism. See `SPEC-QUESTIONS.md` Q106
+for the full design record.
+
+### Two real cross-cutting bugs found via TDD before the critic round, fixed in shared `@forge/core`
+infrastructure, not just this piece's own files
+
+1. `ArtifactDocument.set()` (`packages/core/src/artifacts/edit.ts`) produced corrupt YAML for an
+   array-valued front-matter field — `YAML.stringify`'s default block style spliced into a
+   single-line byte range produced `key: - item`, not valid YAML. Found while testing `adrSupersede`
+   (whose own cross-linking sets `supersedes`, an array field). **Fixed**: `stringifyScalar` now
+   forces flow style (`{ flow: true }`), which is identical for a real scalar and correct for an
+   array/object — with a new regression test in `packages/core/test/artifacts/document.test.ts`.
+2. Two places (`adr.ts`'s `findAdrPath`, `spec.ts`'s `loadGraphDocs`) called `readArtifact` with
+   `KbParsedEntry.path` bare — that path is relative to `kbRoot` (`parseKbTree`'s own convention),
+   while `readArtifact`/`writeArtifact` resolve relative to the project root. Both fixed to prepend
+   `${kbRoot}/` before the first commit, caught by the tests themselves failing with a real
+   `RUN-034` file-not-found rather than by inspection.
+
+### Round 1 — fresh critic (no context on plan/log): two real HIGH bugs, two real gaps, all fixed
+
+1. **HIGH.** `adrNew`/`specNew` each constructed a fresh `IdAllocator` per call.
+   `IdAllocator`'s own "never reuse an id" guarantee (`18` §18.8) is a per-*instance* FIFO queue —
+   two separate instances racing each other are not serialized against one another at all. The
+   critic demonstrated this directly: `Promise.all([adrNew(...), adrNew(...)])` against the same
+   project allocated the identical id (`ADR-0001`) to both. **Fixed**: a shared,
+   project-root-keyed `IdAllocator` (`getSharedIdAllocator` in `shared.ts`) reused across every
+   `adrNew`/`specNew` call against the same project; a new concurrency regression test in
+   `adr.test.ts` fires two `adrNew` calls via `Promise.all` and asserts distinct ids.
+2. **HIGH.** `adrSupersede` called `adrNew` — a real, unconditional id allocation and file write —
+   *before* checking the ADR being superseded actually existed. A typo'd `id` left a stray, unlinked
+   replacement ADR on disk (consuming a never-reused id) before the real `KB-015` for the
+   nonexistent original ever fired. **Fixed**: `findAdrPath` now runs first, throwing before
+   anything is allocated or written; a new test proves a nonexistent id writes nothing at all. A
+   secondary, lesser asymmetric-write-failure risk (if the *second* of the two real writes fails
+   after the first already succeeded) is documented as a residual risk in the code itself — no
+   two-phase-commit exists anywhere in this codebase to close it fully.
+3. **MEDIUM.** `diagramRender`'s own doc comment claimed "the file is written and its path
+   returned" — `renderHtml` is a pure string builder; nothing is ever written to disk. **Fixed**:
+   the comment now accurately describes the real return value (the HTML string itself) and states
+   plainly that writing it and handling `--open` is the real CLI command's own future job.
+4. **MEDIUM.** `diagramSync` let one diagram's real `checkDrift`/generator failure (a real,
+   demonstrated possibility — malformed `generatorInput`) escape the whole loop uncaught, losing
+   every other diagram's already-computed result with no diagram id attached to the error. **Fixed**:
+   each diagram's own outcome is now collected as a real `{ kind: 'ok', result }` or
+   `{ kind: 'error', message }`, always tagged with its own id — a new test proves one diagram's real
+   failure never hides another's real success in the same sync.
+
+Also fixed post-critic: two vacuous `kbGraph`/`kbLint` tests that only asserted `Array.isArray(...)`
+and would have passed identically had the underlying wiring returned nothing at all — replaced with
+real cross-reference fixtures (a genuine link between two KB entries; a genuine dangling reference) and
+assertions against the real edges/findings produced.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (70 new tests in `packages/cli/test/commands/`,
+run against real `@forge/kb`/`@forge/core/artifacts`/`@forge/diagrams`/`@forge/methods` content, never
+mocked) all clean after every fix.

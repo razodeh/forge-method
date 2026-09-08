@@ -7703,3 +7703,40 @@ one appearing *first* in the array, still returns the later one.
 
 One new error code: `RUN-047` (`emitHandoff` given a non-`FORGE_HANDOFF` control token). See
 `GAUNTLET-LOG.md`'s own M6 A7 entry for the critic round.
+
+## Q106 — M6 C3's `@forge/cli` lifecycle/discovery commands: why `kb`/`adr`/`diagram` share one `KbTree`
+scan, why `adopt`/`discover` are real refusals rather than stubs, and two new error codes
+
+**Why `kb`, `adr`, and `diagram` all read through the identical `parseKbTree` call.** `03` §3.2.2 lists
+`forge kb`, `forge adr`, and `forge diagram` as three separate command families, but `@forge/kb`'s own
+`KbTree` (`parseKbTree`) already parses ADRs and diagram sidecars as two of its own nine
+`KbParsedEntry` kinds (`08` §8.2's own file-classification rules: `decisions/ADR-####-*.md`,
+`*.mmd.yaml`) — they live inside the same `docs/forge/kb/**` tree as ordinary KB entries, not in a
+separate location `@forge/cli` would need its own scan for. `adr.ts`/`diagram.ts` each filter the
+identical `parseKbTree` result down to their own one kind rather than re-implementing a second parser
+or a second directory walk — real reuse, not three parallel almost-identical scanners.
+
+**Why `forge adopt` and `forge discover` are real `USR-003` refusals, not TODO stubs or fabricated
+behavior.** Both are named in `03` §3.2.1/§3.2.2's own command tables, but neither has a real
+mechanism to wrap: `forge adopt` needs `17`'s own brownfield-ingestion mechanism, which does not exist
+anywhere in this codebase (`17` is not itself a separate M6 package, per `PLAN-M6.md` C3's own Mandate
+text, which explicitly names this exact situation and says to record the gap rather than invent
+ingestion here); `forge discover`'s own "run intake" maps to a real workflow
+(`@forge/templates`' `templates/workflows/intake.workflow.yaml`) that only `@forge/engine`'s own
+`runEngine` (M5, already built) can actually execute end to end — but the CLI-facing compilation
+pipeline (workflow → `RunEngineContext`: real adapters, a compiled plan, a telemetry sink) is `03`
+§3.2.4`'s own `forge run <workflow>`, `PLAN-M6.md` C4's explicit, later scope. Building that pipeline
+here, ahead of C4, would be re-deriving C4's own work rather than thinly dispatching to it — the
+identical reasoning `PLAN-M6.md` C3's own Mandate already gives for `adopt`, applied to the one other
+command in this piece's own scope with the same shape of gap.
+
+**Two new error codes.** `KB-015` (no KB entry/ADR/diagram/runbook with a given id — distinct from
+`KB-013`'s own "a context pack's *declared* input is missing," a different domain with a different
+remedy) and `USR-003` (a named, real feature with no implementation yet — distinct from `USR-002`'s own
+"malformed flag value," used here by `kb diff`, `diagram legend`, `forge adopt`, and `forge discover`,
+each for the identical "refuse loudly rather than silently no-op" reason).
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (70 new tests in `packages/cli/test/commands/`,
+plus 3 new regression tests in `packages/core/test/artifacts/document.test.ts` for the `ArtifactDocument
+.set()` array-field fix) all clean after every fix; see `GAUNTLET-LOG.md`'s own M6 C3 entry for the
+critic round.

@@ -931,6 +931,14 @@ earlier milestone, record that gap explicitly rather than inventing brownfield i
 **Depends on:** C1, `@forge/kb` (M3), `@forge/core`/`@forge/schemas` (M1), `@forge/diagrams` (M1),
 `@forge/methods` (this milestone).
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q106. `forge adopt`/`forge discover` are real `USR-003`
+refusals (no real mechanism exists for either yet), per this section's own Mandate text. Found and
+fixed two real cross-cutting bugs in shared `@forge/core` infrastructure along the way (an
+`ArtifactDocument.set()` YAML-corruption bug for array fields; a `KbParsedEntry.path` prefix bug hit
+in two places), plus two real HIGH-severity concurrency/ordering bugs of this piece's own (`adrNew`/
+`specNew` double-allocating ids under concurrency; `adrSupersede` writing a stray ADR before checking
+the original existed) — all fixed.
+
 ---
 
 ## C4 — Planning and execution commands
