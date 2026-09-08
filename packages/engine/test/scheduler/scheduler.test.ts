@@ -174,6 +174,38 @@ describe('Scheduler', () => {
     expect(scheduler.next()).toEqual([]);
   });
 
+  it('setLimits replaces the limits enforced by every subsequent next() call, without needing to reconstruct the scheduler or losing its own accumulated status/running state', () => {
+    const nodes = Array.from({ length: 5 }, (_, i) => node({ id: `s${String(i)}` }));
+    const scheduler = new Scheduler(nodes, limits({ global: 5 }), 'seed');
+    expect(scheduler.next()).toHaveLength(5);
+
+    scheduler.setLimits(limits({ global: 2 }));
+    expect(scheduler.next()).toHaveLength(2);
+
+    // Status tracked before the limits changed must still be intact afterward -- setLimits touches only
+    // the concurrency ceiling, nothing else about this scheduler's own state.
+    scheduler.markRunning('s0');
+    expect(scheduler.status('s0')).toBe('running');
+  });
+
+  it('setLimits to a global ceiling BELOW the count of nodes already marked running does not crash, does not over-admit, and correctly reopens capacity as running nodes finish -- the shape backpressure actually needs, not just an unused-at-the-time limit change', () => {
+    const nodes = Array.from({ length: 5 }, (_, i) => node({ id: `s${String(i)}` }));
+    const scheduler = new Scheduler(nodes, limits({ global: 5 }), 'seed');
+    scheduler.markRunning('s0');
+    scheduler.markRunning('s1');
+    scheduler.markRunning('s2');
+
+    // A rate-limit signal drops the ceiling to 2 -- already BELOW the 3 nodes currently running.
+    scheduler.setLimits(limits({ global: 2 }));
+    expect(scheduler.next()).toEqual([]); // already over the new ceiling; nothing new admitted
+
+    scheduler.markSucceeded('s0');
+    expect(scheduler.next()).toEqual([]); // 2 still running == the new ceiling; still nothing admitted
+
+    scheduler.markSucceeded('s1');
+    expect(scheduler.next().map((n) => n.id)).toEqual(['s3']); // 1 running < ceiling of 2; one more admitted
+  });
+
   it('does not let a phantom running id -- never one of this scheduler\'s own constructor nodes -- inflate the global concurrency count against real, admittable work', () => {
     // A verify round found the global counter derived from the raw `this.running.size` while the other
     // three counters (claims, perAgent, perResourceClass) all derive from `runningNodes()`, which filters

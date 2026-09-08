@@ -5309,3 +5309,130 @@ additive accumulator; a topological-order description written for typical, finit
 correct in a *new* context that reuses it under a different operation (comparison via subtraction) or a
 different value space (a genuine tie at infinity) — each reuse needs its own fresh check, not an inherited
 assumption that "already fixed once" means "fixed everywhere this shape appears again."
+
+---
+
+## Q75 — M5 P13's `@forge/engine` backpressure state machine: a critic-round fix for a real bug introduced a
+new, more severe one, caught only by the verify round that followed it
+
+`06` §6.3's own backpressure rule as one small, self-contained state machine: halve effective concurrency
+on an adapter rate-limit signal (floor 1), restore it additively once a quiet period elapses — plus the
+one seam needed to make this real, `Scheduler.setLimits`, letting a caller feed a dynamically-changing
+ceiling into an already-constructed `Scheduler` between ticks.
+
+**1. Neither `06` nor `21` gives an exact quiet-period duration or additive-restoration step size —
+`specs/23`'s own open-decisions document, on the *related* question of the default `--concurrency` value
+itself, explicitly defers exact tuning to real evidence gathered later ("start at 3 ... set the default
+from evidence").** A reasoned, clearly-labelled placeholder (a single 30-second duration serving both as
+"how long counts as quiet" and "how often one more step is added," plus a flat `+1` per interval) is the
+right amount of precision for this milestone, modelled directly on TCP's own AIMD congestion control — the
+same "multiplicatively"/"additively" shape `06` §6.3's own wording already names.
+
+**2. `Scheduler`'s own `limits` field (P12) had to change from a constructor-only `readonly` field to a
+plain, mutable one, with a new `setLimits` method** — the only change made to an already-committed piece
+this window. `06` §6.3's own concurrency limits are explicitly a *moving* quantity backpressure must be
+able to change between ticks, not a fixed-for-the-run-lifetime value the way `nodes`/`seed` are; a fresh
+`Scheduler` per tick would work but would also discard every other piece of state (`statuses`, `running`)
+this class exists to accumulate. `@forge/engine/backpressure` and `@forge/engine/scheduler` remain mutually
+unaware of each other — no import either direction — with `setLimits` as the only seam, wired together only
+by a test, since the real run loop that would own both is a later piece.
+
+### Round 1 — critic: 1 BLOCKING, 2 MAJOR, 1 MINOR, all fixed
+
+The critic was asked to re-derive the state machine's own correctness independently (not just re-read the
+existing tests), check whether `tick`'s own "pure function of elapsed time" claim actually held under
+adversarial call ordering, and adversarially test `Scheduler.setLimits`'s interaction with already-running
+work.
+
+- **BLOCKING: `tick`'s own doc comment claimed "nothing about this piece's own contract depends on `now`
+  being monotonic," which was empirically false.** The original arithmetic recomputed `restored` fresh from
+  a fixed baseline on every call but then applied it *unconditionally* — a later `tick` call receiving a
+  smaller `now` than an earlier call did (still later than the signal's own timestamp) silently regressed
+  the ceiling, confirmed via a concrete repro and 500 randomized monotonic-vs-non-monotonic comparisons
+  against an independently-written reference model. Real wall-clock sources (`Date.now()` in Node) are not
+  actually guaranteed monotonic (NTP steps, VM pause/resume), so this was a real, not hypothetical, risk for
+  whichever future piece wires a real clock into this state machine. **Fixed** by clamping the shared
+  `ceilingAsOf` helper's own return value to never fall below `state.ceiling`.
+- **MAJOR: `onRateLimitSignal` halved the raw, possibly-stale `state.ceiling` field directly, correct only
+  if the caller had already called `tick` immediately beforehand** — an undocumented, unenforced assumption
+  a real caller plausibly violates, since an adapter's own rate-limit callback is naturally a different code
+  path than the scheduler's own per-tick cadence. Confirmed: signalling with no preceding tick call halved a
+  cached value 3 quiet-periods stale, producing a materially wrong result. **Fixed** by routing both
+  `tick` and `onRateLimitSignal` through the same `ceilingAsOf(state, now)` helper, so a signal always halves
+  the true as-of-now ceiling.
+- **MAJOR: a non-finite `now` or `configuredCeiling` could permanently corrupt the state with no
+  self-healing** — `NaN` compares `false` against everything, including the "have we fully restored" check
+  that would otherwise reset the state, so one bad clock read poisons every future call forever. Confirmed
+  reachable via `Scheduler`'s own `setLimits`/`admitsMoreConcurrency` wiring: a poisoned `NaN` ceiling is
+  read by `concurrency.ts`'s own `safeLimit` (`Q74`) as the *most restrictive* limit, silently zeroing
+  admission for the rest of the run. `configuredCeiling` itself is confirmed unreachable from any real
+  construction site today (`@forge/schemas`' own config schema already validates a positive integer), but
+  `now` has no equivalent upstream gate. **Fixed** with `Number.isFinite` guards at both entry points
+  (treated as "no signal at all," not an error) and a `sanitizedCeiling` helper in the constructor.
+- **MINOR: `configuredCeiling` of `0`/negative was unvalidated** (folded into the fix above once the
+  guard was added anyway, for the identical reason `Q74`'s own `safeCost`/`safeLimit` guards were kept even
+  where provably unreachable today).
+
+Also flagged, not requiring a fix: two tests (`setLimits` with a limit change never exercised against any
+currently-running node; the backpressure/`Scheduler` integration test using exactly as many nodes as the
+ceiling, so nothing was left to prove capacity actually reopens) that passed without proving what their own
+names claimed. **Strengthened**: the `setLimits` test now drops the global ceiling below an already-running
+count and confirms correct behaviour as work completes; the integration test now uses more nodes than the
+ceiling and marks real work running, so a genuinely-pending node is left for reopened capacity to admit.
+
+### Round 2 — scoped verify: 1 new BLOCKING, in round 1's own fix — fixed locally, no third round
+
+The verify pass was asked to re-derive all three round-1 fixes independently, specifically hunt for a
+sequence that could make `ceilingAsOf`'s own clamp produce a wrong-*high* (over-admitting) ceiling rather
+than just testing the already-fixed wrong-low direction, and read the newly-added tests adversarially for
+whether they proved what they claimed.
+
+**New finding (BLOCKING): fixing the "stale ceiling" bug (round 1's MAJOR) introduced a new bug one field
+over — `onRateLimitSignal` set `lastSignalAt` to the incoming `now` unconditionally, with no protection
+against it moving backward across two signals.** `ceilingAsOf`'s own clamp (round 1's BLOCKING fix) protects
+the *computed ceiling value*, but nothing protected the *anchor* (`lastSignalAt`/`ceilingAtLastSignal`)
+those computations are measured from. A second signal reporting an earlier `now` than the first dragged the
+anchor itself backward — invisible in the signal's own immediate result (already correctly clamped by
+`ceilingAsOf`), but silently inflating every *later* call's own elapsed-time computation, since elapsed time
+is measured from that now-corrupted anchor. Confirmed via a concrete repro and 20,000 fuzzed trials
+(triggering in over 95% of trials with a ≥10-minute backward jump between two signals, common enough given
+this exact scenario — VM pause/resume — is already named in this module's own doc comments): one ordinary
+tick immediately after two such signals fabricated up to 19 concurrency slots from near-zero real elapsed
+time in one observed case, and in a minimal two-signal-plus-one-tick repro, fully erased an active
+backpressure state back to unrestricted, full concurrency with zero memory that rate-limiting had ever
+occurred. This is the sharpest possible violation of `06` §6.3's own core guarantee: two rate-limit signals
+— the exact situation backpressure exists to handle — could silently *increase* concurrency back to
+unrestricted on the very next tick. **Fixed** by recording `lastSignalAt` as `Math.max(now, state.
+lastSignalAt)` rather than the raw incoming `now`, so the anchor itself can only ever advance, never regress,
+across signals — independent of, and in addition to, `ceilingAsOf`'s own separate clamp on the computed
+value.
+
+**New finding (test-quality, not a functional bug): the round-1 "hardening" test named for `tick`'s own
+regression fix would still pass with `ceilingAsOf`'s own clamp reverted** — confirmed by mutation testing
+(reverting just that one line, all 23 existing tests still passed). Root cause: `tick` itself independently
+guards `if (restored <= state.ceiling) return state;`, which alone fully covers that specific scenario
+regardless of whether the shared helper also clamps; `ceilingAsOf`'s own clamp instead protects a narrower,
+different scenario (a signal's own `now` landing between the anchor and a `now` a separately-applied,
+later `tick` call already used to advance the ceiling) that no existing test exercised. **Fixed**: the
+existing test's own comment was corrected to attribute the protection to `tick`'s own guard, and a new,
+precisely-targeted test was added for the scenario `ceilingAsOf`'s clamp actually protects, plus a direct
+regression test for the new anchor-clamp fix using the same near-full-erasure repro found above.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (402 engine tests after these fixes' own
+new ones, 3097 full-repo) all independently reconfirmed clean. 100% coverage on every file this piece
+touches.
+
+### Calibration note
+
+This piece's own two rounds form a clean, minimal illustration of a pattern this whole milestone has
+circled repeatedly at larger scale: a fix aimed precisely at a real, confirmed finding can still be
+*incomplete* in a way that isn't visible from the finding's own repro. Round 1's BLOCKING fix (clamp the
+computed ceiling) and MAJOR fix (halve the as-of-now value via a shared helper) were each independently
+correct and well-tested for the scenarios that motivated them — but combining "the ceiling itself can't
+regress" with "signals now share a helper that reads the anchor" left the anchor itself, a field neither fix
+was actually about, with no equivalent protection. Neither round-1's own tests nor a first read of the fix
+would surface this: it only became visible to a *second*, independently-adversarial round explicitly asked
+to re-derive correctness from scratch rather than confirm the stated fix worked. The general lesson,
+sharpened rather than merely repeated from `Q74`: verifying that a fix resolves its own named finding is a
+different, narrower task than verifying the fix didn't move the same class of problem to an adjacent field
+it touches in passing — and the second question needs asking explicitly, not assumed answered by the first.

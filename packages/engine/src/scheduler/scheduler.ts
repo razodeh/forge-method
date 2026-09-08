@@ -17,7 +17,7 @@ import type { ConcurrencyLimits, StepStatus } from './types.ts';
 export class Scheduler {
   private readonly nodes: readonly StepNode[];
   private readonly byId: ReadonlyMap<string, StepNode>;
-  private readonly limits: ConcurrencyLimits;
+  private limits: ConcurrencyLimits;
   private readonly seed: string;
   private readonly resourceClassOf: (node: StepNode) => string | undefined;
   private readonly statuses = new Map<string, StepStatus>();
@@ -80,6 +80,22 @@ export class Scheduler {
   markSkipped(id: string): void {
     this.statuses.set(id, 'skipped');
     this.running.delete(id);
+  }
+
+  /** Replaces the limits this scheduler enforces on every subsequent `next()` call — the seam
+   * `@forge/engine/backpressure` (`PLAN-M5.md` P13) uses to feed its own, independently-computed
+   * concurrency ceiling in: a caller owning both a `Scheduler` and a `BackpressureState` calls this once
+   * per tick with `{ ...originalLimits, global: Math.min(originalLimits.global, backpressureState.ceiling)
+   * }` before calling `next()`, so a rate-limit signal takes effect on the very next scheduling decision.
+   * Deliberately a plain setter rather than a constructor-only field: unlike `nodes`/`seed` (fixed for a
+   * run's own lifetime), `06` §6.3's own concurrency limits are explicitly a *moving* quantity backpressure
+   * must be able to change between ticks, the same "this piece enforces whatever limits it is handed, it
+   * does not decide what they should be" stance `ConcurrencyLimits`'s own doc comment already takes, now
+   * also true across time, not just across callers. `@forge/engine/backpressure` itself never imports this
+   * class (nor is imported by it) — the two modules stay mutually unaware of each other, wired together
+   * only by whichever future piece owns the real run loop. */
+  setLimits(limits: ConcurrencyLimits): void {
+    this.limits = limits;
   }
 
   private runningNodes(): readonly StepNode[] {
