@@ -944,6 +944,20 @@ orphaned worktree left by a killed process is reclaimed on resume rather than le
 
 **Depends on:** P18, P16, P17, P2 (vcs).
 
+*(P19 is committed: `5ef8db7`. See `SPEC-QUESTIONS.md` Q81 and its critic-round/verify-round addenda —
+required three retroactive touches to already-committed P15/P18 code (a new `SessionEvent` emission via a
+`runAgentWork` extraction, a new `LaneCreated.payload.baseSha`, three new `RunState` fields) and one new
+`@forge/vcs` primitive (`resetLaneWorktree`). A fresh critic round found two real bugs — a stale lane
+worktree left behind by the `'scheduled'` fallback path (colliding with the next real lane creation for the
+same step), and a `decideResumeStrategy` doc comment claiming a runtime resume-then-fallback existed when
+none did — both fixed; fixing the first surfaced a third, real, previously-latent `realpath`/symlink
+mismatch bug (macOS's own symlinked tmpdir), also fixed. A scoped verify round found one more real bug in
+the second fix itself (the fallback's own rollback target was resolved *after* the failed attempt that
+could itself have already committed real content, making the rollback a no-op) — fixed by capturing the
+rollback target before the attempt runs, confirmed via a destructive on/off regression test whose own first
+version was itself too weak to catch the bug, caught and widened before being trusted. See
+`GAUNTLET-LOG.md`'s own entry for the fuller story.)*
+
 ---
 
 ## P20 — Crash-resume and scheduler-determinism capstone

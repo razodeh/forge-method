@@ -4777,3 +4777,58 @@ working code, but an aspirational claim about verification that was never wired 
 instructive lesson for this build's own discipline going forward: a doc comment claiming "this is tested"
 is itself a claim that needs verifying, not a substitute for checking the test actually exists and actually
 proves what the comment says it does.
+
+## M5 P19 — `@forge/engine/resume` orchestration: resume-vs-reroll, orphan reclamation, artifact
+reconciliation (`06` §6.10 steps 2-4 — this milestone's own defining criterion)
+
+**Rounds: 2 (one critic finding 2 MAJOR, both fixed — one fix itself surfaced a third, real bug, fixed the
+same round; one scoped verify finding 1 MAJOR in the Round-1 fix, fixed; no third round). Outcome: WON.**
+
+`decideResumeStrategy(sessionId, capabilities)`, `rollbackLaneToBase(handle, lastKnownGoodCommit)`,
+`revalidateArtifacts(runState, projectRoot)`, `resumeRun(runId, ctx)` — see `SPEC-QUESTIONS.md` Q81 for the
+full design record, including three retroactive touches to already-committed P15/P18 code this piece
+required (a new `SessionEvent` emission and `runAgentWork` extraction in `dispatch/steps.ts`; a new
+`LaneCreated.payload.baseSha`; three new `RunState` fields) and one new `@forge/vcs` primitive
+(`resetLaneWorktree`).
+
+### Round 1 — fresh critic: 2 MAJOR, both fixed (one fix itself introduced a third bug, also fixed)
+
+**MAJOR: a stale lane worktree from an unresolved step that fell back to `'scheduled'` was never cleaned
+up**, colliding with the next real `createLane` call for the identical `(runId, stepId)`. **Fixed** via a
+new `removeStaleLaneIfAny`, called on every `'scheduled'` fallback. **While testing that fix**, a second,
+real bug surfaced: the lane path was recomputed from `ctx.projectRoot` without resolving it through
+`realpath` first, unlike every one of `@forge/vcs`'s own worktree functions — silently mismatching
+`removeLaneWorktree`'s own internal path comparison against git's own (realpath'd) registration on macOS's
+symlinked tmpdir, skipping the worktree removal while still attempting (and failing) the branch deletion.
+**Fixed** by resolving `ctx.projectRoot` through `realpath` before computing any lane path.
+
+**MAJOR: `decideResumeStrategy`'s own doc comment claimed a runtime resume-then-fallback existed, but no
+such fallback was actually implemented anywhere** — a failed resume-session attempt was reported straight
+through as a permanently failed step. **Fixed** via a new `resumeAgentStep`, which attempts the resume
+first and falls back to a fresh reroll if that attempt does not succeed.
+
+### Round 2 — scoped verify: 1 MAJOR found in the Round-1 fix, fixed
+
+**MAJOR: the fallback's rollback target (`'HEAD'`) was resolved *after* the failed resume attempt, not
+before** — but a failed attempt can itself commit real partial writes before failing (`runAgentWork`'s own
+documented behaviour), advancing `HEAD` first, making the rollback a no-op against exactly that stale
+content. **Fixed** by capturing `HEAD` via `resolveRevision` before the resume attempt runs, rolling back
+to that captured value instead. Confirmed destructively: a regression test reproducing the exact scenario
+fails without the fix and passes with it — and the *first* version of that regression test itself didn't
+actually catch the bug (an under-scoped `produces` claim let ordinary claim enforcement mask it regardless
+of rollback timing), caught and widened before trusting it as real coverage.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3346 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file except two already-documented, provably-unreachable defensive branches.
+
+### Calibration note
+
+A fix that is correct in isolation ("roll back to `HEAD`" — true in general) can still be wrong once
+*timing* is accounted for, if the very attempt the fix exists to recover from can itself mutate the value
+being resolved — the right question for a fallback recomputing "current state" after an attempt is not "is
+this value correct" but "correct as of when." Separately: a regression test for "X survived when it
+shouldn't have" is only as strong as its own guarantee that nothing *else* in the pipeline would also have
+removed X for an unrelated reason — proving that needs the identical destructive on/off test this build
+already applies to fixes, applied once more to the test itself, which is exactly what caught this test's
+own first, too-weak version before it was trusted.
