@@ -5592,3 +5592,205 @@ approval status) cannot use a fresh clock reading (that reintroduces the exact "
 problem `Q75` already named once), so it needs the *evidence* of an earlier, legitimate check sealed onto
 the data itself instead — turning a question that would otherwise require either a live clock or blind trust
 into one two already-present-or-absent fields can answer by comparison alone.
+
+## Q77 — M5 P15's `@forge/engine/dispatch` step execution — the largest, most integration-heavy piece in M5:
+wiring five sibling packages together surfaced a package-graph gap, a spec-silent event, and (twice) a real
+TypeScript closure-narrowing trap, before the gauntlet loop itself found a genuinely blocking bug
+
+`executeStep(node, ctx)`: dispatch a compiled `StepNode` to one of five real handlers by `kind`
+(`agent`/`command`/`gate`/`merge`/`checkpoint`), wiring `@forge/vcs` (lanes, commits, claim enforcement,
+merge queue), `@forge/telemetry` (the event log), `@forge/adapter-kit`/`@forge/testkit` (agent sessions), and
+this package's own `gates` submodule (P14) into one call, per `10` §10.1's own step-kind table and `06`
+§6.4/§6.5/§6.7/§6.8's own lane/merge lifecycle.
+
+**1. `ExecuteStepContext` bundles sixteen fields, not the plan's own five** (`adapter, vcs, telemetry, gates,
+mergeQueue`) — the "the plan's own bullet undersells what the signature needs" correction `Q70`/`Q71`/`Q73`/
+`Q75`/`Q76` have each already made once for a different function's own return type or parameter; here for a
+whole context object, since reaching a real `createLaneWorktree`/`appendEvent`/`startSession` at all needs a
+run id, a project root, an integration branch and a maintained integration worktree, a model/tool stub, an
+injected clock, and a shared lane registry no five-field surface could represent.
+
+**2. Lane lifecycle stops at "ready"; a dedicated `merge`-kind step does the actual merging.** `Q62`'s own
+sixth note ("claim enforcement runs... before handing the lane to the merge queue") read as two separate
+acts, not one, plus `10` §10.1's own "merge-queue processing for a *set* of lanes" wording taken literally:
+`runAgentStep`/`runCommandStep` create a lane, run the work, commit, enforce claim, and register the
+now-ready lane in a new `ExecuteStepContext.laneRegistry: Map<string, LaneHandle>` — never enqueueing
+anything themselves. A separate `merge` step looks its own `dependsOn` predecessors up in that registry and
+processes however many of them it finds in one call.
+
+**3. `StepNodeKind`'s post-compile reality, confirmed directly in `compile.ts`:** only
+`agent|command|gate|elicit|session|subworkflow|merge|checkpoint` can ever appear on a real compiled
+`StepNode`. `elicit`/`session`/`subworkflow` are refused with a specific, actionable `RUN-039` (this
+milestone builds none of the infrastructure they need); `fanout` is handled too even though `compilePlan`
+structurally excludes it from ever surviving to this module (it always expands into per-item children of a
+different kind) — kept as a real, tested runtime guard rather than an unreachable-code assumption, the
+identical stance `RUN-036`'s own duplicate-id check (`@forge/engine/scheduler`, P12) already takes for the
+same class of "should never happen given a well-formed caller, but must not silently corrupt anything if it
+does" input.
+
+**4. `VcsError`/`TelemetryError` get two different treatments, both already anticipated by their own doc
+comments** (each names `@forge/engine` as the one place that wraps it into a real `ForgeError`): a
+`VcsError` from any lane-lifecycle or merge operation is caught and folded into `StepOutcome{status:'failed'}`
+data — a normal, retriable runtime outcome (`06` §6.8, P16's own job to react to). A `TelemetryError` is
+caught exactly once, at the top of `executeStep`, and rethrown as the registered `RUN-038` — an unwritable
+event log is an infrastructure failure affecting the whole run, not this one step's work having gone wrong,
+and retrying cannot fix a full disk.
+
+**5. `exactOptionalPropertyTypes` meeting two upstream types that don't declare `| undefined` on their own
+optional fields** (`@forge/telemetry`'s `NewForgeEvent`, `@forge/vcs`'s `ProcessMergeCandidateOptions`)
+needed a real, reusable fix, not a per-call-site workaround: `omitUndefinedValues<T>`/
+`type WithoutUndefinedValues<T> = {[K in keyof T]?: Exclude<T[K], undefined>}` (`facades.ts`) — arrived at
+only after two earlier, still-wrong return-type attempts (`T`, which lost key-optionality; `Partial<T>`,
+which kept `| undefined` in the value type) each failed for a different, diagnosable reason.
+
+**6. The `engine → testkit` package-boundary edge did not exist anywhere in `PACKAGE_GRAPH`, and this piece
+is the first to actually need it.** `@forge/testkit`'s own doc comments and `Q16` already establish its whole
+purpose as supplying `FakePlatformAdapter` to *other packages'* tests — but `Q16` only documents `testkit`'s
+own outgoing edges as a deliberate spec-silence default; nothing documented who may import it inward, and no
+package anywhere in the graph actually could. `graph.mjs`'s own `PACKAGE_GRAPH.engine` now includes
+`testkit` (with a doc comment recording this reasoning), `boundaries.test.ts`'s generic spec-table loop test
+now excludes `engine`'s row the same way it already excludes `templates`/`testkit` (both undeclared in
+`specs/02` §2.2's own table), and a new, dedicated test asserts `engine`'s full edge list explicitly,
+mirroring the existing `testkit`-row test's own style. The alternative considered and rejected: a local,
+hand-rolled fake `PlatformAdapter` in this piece's own tests instead of `@forge/testkit`'s real one — rejected
+because it would contradict `PLAN-M5.md` P15's own explicit Checks text naming a real `FakePlatformAdapter`
+session, and because this exact need will almost certainly recur for later M5 pieces testing
+`executeStep`-adjacent behaviour (P16's own retry logic, at minimum).
+
+**7. `18` §18.4's own Merge event row names five event types; `06` §6.5's numbered steps give an explicit
+firing point for only two of them** (`MergeCompleted`/`MergeReverted`, step 6). `MergeQueued` and
+`MergeConflict` are inferred straightforwardly from steps 1-2; `MergeStarted` is genuinely spec-silent on
+exactly when. Read here as "the queue has now actually begun working the candidate" — emitted once, right
+before `ctx.mergeQueue.process` is called, distinct from `MergeQueued` ("was handed to the queue"). A
+`pre-check-failed` outcome gets no dedicated event of its own beyond that: the vocabulary has no sixth name
+for it, and the real signal is the step's own `StepOutcome{status:'failed'}` — the same place every other
+handler in this module surfaces a failure that isn't one of its own already-registered event types.
+
+**8. A `command`-kind step's non-inline branch originally hardcoded `changed: true` unconditionally** — an
+arbitrary shell command's own stdout/exit code say nothing about which files, if any, it actually touched,
+unlike an agent session's own `SessionResult.changedFiles`. Caught while closing this piece's own coverage
+gaps (a no-op command test could only be written by first noticing the design didn't distinguish "ran
+successfully, nothing to commit" from "ran successfully, something changed" at all) — fixed by adding
+`VcsFacade.hasChanges(handle, baseSha)`, backed by `@forge/vcs`'s own `diffLaneChanges`, checked before every
+attempted commit rather than assumed. This is the fix the critic round's own first finding (below) reused
+for the identical, previously-unhandled situation in `runAgentStep`'s own crash path.
+
+**9. TypeScript's closure-narrowing limitation surfaced twice in this one piece, needing the identical fix
+both times:** a `const` captured *outside* a nested closure preserves an earlier narrowing check; the same
+member re-read *inside* the closure does not, since the checker cannot prove the outer object was not
+mutated in between. `runCommandStep`'s own `run` field (`node.run`, narrowed by an `undefined` check) and
+`runMergeStep`'s own `mergePolicy.conflict` (narrowed by `isConflictPolicy`) each needed exactly this: hoist
+the already-narrowed expression into a `const` immediately after the check, before any closure re-reads the
+original path. The `runMergeStep` case additionally required getting the *order* right — capturing
+`mergePolicy = node.mergePolicy` first and reading `mergePolicy.conflict` a line later does **not** inherit
+the narrowing above, since that checked the `node.mergePolicy.conflict` path specifically, not the new one —
+the conflict-policy constant had to be captured before, not after, the wider object was.
+
+### Round 1 — critic: 1 BLOCKING, 6 MAJOR, several MINOR, all fixed or explicitly documented as accepted
+
+The critic was given the spec sections and file list only (no `PLAN-M5.md`/`SPEC-QUESTIONS.md`/
+`GAUNTLET-LOG.md`/git history) and asked to verify empirically: run the real suite, and for anything it
+suspected was a bug, construct a minimal repro before reporting it.
+
+- **BLOCKING: `runMergeStep` called `ctx.mergeQueue.process(...)` completely unguarded.** `@forge/vcs`'s own
+  `processMergeCandidate` throws a real `VcsError` (`VCS-MISSING-CONFLICT-RESOLVER`) whenever
+  `conflictPolicy` is `'agent'`/`'human'` and no `conflictResolver` was supplied — which is *every* real
+  configuration of either policy in this milestone's own scope, since no resolver mechanism is built yet.
+  Confirmed by repro: a real conflict under `conflictPolicy: 'agent'` made `executeStep` reject with a raw
+  `VcsError`, not resolve to `StepOutcome{status:'failed'}` — directly violating this module's own file-level
+  contract ("a genuine runtime failure... is always returned as data, never thrown"), and not a rare
+  misconfiguration: it is what happens the first time anyone uses the spec's own default conflict policy.
+  **Fixed** by wrapping the call through the same `runVcsStep` helper every other VCS operation in this file
+  already uses, confirmed against the exact repro scenario in the fix, and independently re-confirmed in the
+  verify round.
+- **MAJOR: `runAgentStep`'s adapter-crash catch hardcoded `changed: false`**, discarding any real file
+  writes an agent session made before crashing mid-stream (a session dropped mid-stream, not one that never
+  started, is a realistic failure mode `@forge/vcs`'s own docs anticipate). **Fixed** using the same
+  `hasChanges` check design point 8 above already introduced, confirmed via a new test that writes a real
+  file inside the lane, crashes, and checks via `git log` that the file was genuinely committed.
+- **MAJOR: `runLaneLifecycle`'s two early-failure returns (before `runWork` ever runs) hardcoded
+  `detail: {kind:'checkpoint'}`** regardless of the caller's real kind — an agent step failing to even
+  create its own lane would report `detail.kind === 'checkpoint'`, contradicting `StepOutcomeDetail`'s own
+  contract. **Fixed** by adding an `emptyDetail: StepOutcomeDetail` parameter each caller supplies with its
+  own real, kind-correct placeholder.
+- **MAJOR: the claim-enforcement revert commit got no `LaneCommitted` event of its own** — a second, real
+  git commit, invisible to the durable event log. **Fixed** by emitting a second `LaneCommitted` (payload
+  `{reason:'claim-revert'}`) after the revert commit succeeds.
+- **MAJOR: `runVcsStep`'s own constructed `ForgeError('RUN-037', ...)` was dead code** — never assigned,
+  thrown, or returned, despite `RUN-037`'s own registered remedy text claiming a caller could inspect it as
+  a chained cause. **Fixed** by adding `cause?: unknown` to `StepFailureInfo` and actually retaining the
+  constructed error there.
+- **MAJOR: `runMergeStep`'s own `detail = outcomes[0]` silently discarded every predecessor lane's outcome
+  but the first**, actively misleading for a multi-lane merge step where an earlier lane succeeded and a
+  later one failed (`.detail` would show a fake "clean" merge for the failing step's own outcome).
+  **Fixed** by changing `StepOutcomeDetail`'s `'merge'` variant from a single `MergeOutcome` to
+  `readonly {stepId: string; outcome: MergeOutcome}[]`, one entry per lane actually processed — `10` §10.1's
+  own "processing for a *set* of lanes" wording taken seriously at the type level, not just the runtime
+  loop's. `anyFailed` also changed from "last failure silently overwrites" to "first failure wins" (`??=`).
+- **MAJOR: `LaneRemoved` (a real, registered `@forge/telemetry` event type) was never emitted anywhere**,
+  despite `runMergeStep` being this module's only call site for `ctx.vcs.removeLane`. **Fixed** by emitting
+  it right after a successful `removeLane`.
+- **MAJOR (hedged, confirmed in the verify round): `runGateStep` evaluated gates against `ctx.projectRoot`
+  instead of `ctx.integrationPath`** — a merge step lands its result at `integrationPath`, and `10` §10.1's
+  own canonical workflow chains a gate straight off `dependsOn: [merge]`, implying a post-merge gate should
+  see the merged result. Every fixture in this package happened to default the two paths to the same value,
+  so this was unverified either way. **Fixed** by switching to `ctx.integrationPath`; a dedicated test using
+  two genuinely distinct real repositories was added afterward (see Round 2).
+- **MINOR: `facades.ts`'s pre/post-merge check `summary` field dropped stdout entirely on a failing check**
+  (`exitCode === 0 ? stdout : stderr`) — many real check commands write their failure detail to stdout, not
+  stderr. **Fixed** to `stderr || stdout`, matching the identical fallback `steps.ts`'s own inline-command
+  failure path already used.
+- **MAJOR, architectural, explicitly left for a later piece: `LaneReady` fires unconditionally even when the
+  step's own work failed, and nothing in this milestone's own built pieces ever emits `StepSucceeded`/
+  `StepFailed`/the rest of `18` §18.4's own Step-group events** (`@forge/engine/scheduler`, P12, tracks
+  `StepOutcome` only in memory — confirmed by grep, it never touches the event log). Read as a real gap in
+  *this* piece's own scope, not a future one's, since `executeStep` is the one place every real outcome from
+  every kind already passes through once: **fixed** by adding a trailing `ctx.telemetry.emit` inside
+  `executeStep`'s own existing try block (so a `TelemetryError` from this call is wrapped into `RUN-038`
+  exactly like every other telemetry failure in this function), emitting `StepSucceeded`/`StepFailed` with
+  `payload: outcome.failure` on the failure case. Every existing event-sequence test updated to include it.
+- Test-quality findings, all fixed: none of the VCS-fault-injection tests checked `outcome.detail.kind`
+  (masking the `'checkpoint'`-placeholder bug above); no merge test used `conflict: 'agent'`/`'human'` at
+  all (masking the blocking bug — an entire conflict-resolution code path had zero coverage); no agent test
+  exercised a crash *after* real file writes landed (only a synchronous `startSession` throw); no test
+  checked the event sequence for an actual claim-enforcement revert.
+
+### Round 2 — scoped verify: all 10 items CONFIRMED-FIXED; 1 real gap found and closed, 1 cosmetic fix
+
+The verify pass was given the list of round-1 fixes (not the full original critic report) and asked to
+independently confirm each was actually correct and complete, with its own repros where the existing tests
+didn't already prove the claim directly.
+
+- Nine of the ten fixes were independently reproduced and confirmed exactly as designed, including
+  re-deriving `slugifyStepId`'s own output shape from `lanes.ts` directly to confirm the multi-lane test's
+  own shell trick (`case "$PWD" in *wf-produce-b*)`) really does target only the one lane it claims to, and
+  independently re-confirming the blocking merge-queue fix against the exact repro scenario, plus a second
+  repro proving the per-lane loop's `continue` (not an accidental `break`) really does keep processing
+  remaining lanes after one fails this way.
+- The `runGateStep`/`ctx.integrationPath` fix (hedged in round 1) was judged correct on the reasoning but
+  flagged as genuinely untested either way, with a concrete, cheap suggestion: a test using two distinct real
+  repositories for `projectRoot`/`integrationPath`. **Added** — a gate check that only passes if it actually
+  ran with `integrationPath` as its cwd (a marker file that exists only there).
+- **MINOR, cosmetic: `gate.test.ts`'s "a gate step never creates a lane" test title/comment still said
+  "evaluates against the project root," now stale phrasing post-fix** (the test itself never asserted which
+  directory was used, so it kept passing on fixture coincidence). **Fixed** — reworded to "a shared
+  directory," not overclaiming which one, since that specific claim now belongs to the new dedicated test.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3222 tests) all independently
+reconfirmed clean after both rounds' fixes, including the new tests each round's own fixes needed.
+100% coverage on every file this piece touches except one already-documented, provably-unreachable branch
+(`buildCommitMessage`'s own `node.id.split(':')[0] ?? node.id` — `String.split` always returns at least one
+element for any string input including `''`, so the fallback can never actually fire; the identical
+`noUncheckedIndexedAccess`-adjacent exemption category used throughout this milestone).
+
+### Calibration note
+
+This piece's own scale (wiring five sibling packages together, the largest integration surface in M5 so
+far) is what let a genuinely blocking bug survive local verification entirely: `tsc`/`eslint`/coverage/
+boundaries/the ratchet all passed clean before the critic round ever ran, because nothing in that mechanical
+gate can catch "a whole conflict-resolution code path has real production code but zero test coverage of its
+own default policy." The gap was invisible from inside the piece's own test suite precisely because writing
+the missing test and finding the bug were the same act — no amount of re-reading the existing, passing tests
+would have surfaced it. This is the strongest evidence yet in this build for why the critic round is a
+required step, not a redundant one, for a piece integration-heavy enough that "every individual seam has a
+test" does not imply "every real combination of policies across those seams does."

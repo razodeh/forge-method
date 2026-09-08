@@ -54,9 +54,12 @@ const schemas = (relative: string) => `/repo/packages/schemas/${relative}`;
 const adapter = (relative: string) => `/repo/packages/adapter-claude-code/${relative}`;
 
 /**
- * Transcribed verbatim from the `specs/02` §2.2 dependency-rules block. Two rows have no spec entry
- * — `templates` and `testkit` — and their absence is deliberate: see `SPEC-QUESTIONS.md` Q16, which
- * records the reasoned default this test also asserts.
+ * Transcribed verbatim from the `specs/02` §2.2 dependency-rules block. Three rows are checked
+ * separately below instead of through this table, each for its own documented reason:
+ * `templates` and `testkit` have no spec entry at all (`SPEC-QUESTIONS.md` Q16); `engine` has a spec
+ * entry, but `PACKAGE_GRAPH.engine` deliberately carries one edge beyond it (`SPEC-QUESTIONS.md`
+ * Q77) — so asserting `engine` here, against the literal spec text alone, would fail on a graph
+ * that is correct on purpose.
  */
 const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   schemas: [],
@@ -74,17 +77,6 @@ const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   extensions: ['schemas', 'core', 'templates'],
   agents: ['core', 'kb', 'schemas', 'adapter-kit', 'templates', 'extensions'],
   sessions: ['core', 'kb', 'agents', 'schemas'],
-  engine: [
-    'core',
-    'kb',
-    'agents',
-    'adapter-kit',
-    'vcs',
-    'telemetry',
-    'schemas',
-    'methods',
-    'extensions',
-  ],
   installer: ['core', 'schemas', 'templates', 'extensions'],
   tui: ['engine', 'core', 'kb', 'telemetry', 'schemas'],
   // "cli ← everything": the spec's own words, not a list — asserted separately below rather than
@@ -142,7 +134,12 @@ describe('specs/02 §2.2 — the dependency graph', () => {
     // test then has to be updated with the new spec row, rather than silently trusting the export.
     const declaredKeys = new Set(Object.keys(SPEC_TABLE));
     const undeclared = FORGE_PACKAGES.filter(
-      (pkg) => !declaredKeys.has(pkg) && pkg !== 'cli' && pkg !== 'templates' && pkg !== 'testkit',
+      (pkg) =>
+        !declaredKeys.has(pkg) &&
+        pkg !== 'cli' &&
+        pkg !== 'templates' &&
+        pkg !== 'testkit' &&
+        pkg !== 'engine',
     );
     expect(undeclared).toEqual([]);
   });
@@ -161,6 +158,27 @@ describe('specs/02 §2.2 — the dependency graph', () => {
     // specs/22 M4: "@forge/testkit with FakePlatformAdapter". Undeclared in the spec table; see
     // SPEC-QUESTIONS.md Q16.
     expect([...PACKAGE_GRAPH.testkit].sort()).toEqual(['adapter-kit', 'schemas']);
+  });
+
+  it("gives engine every spec-declared edge, plus testkit for its own dispatch tests' real adapter sessions", () => {
+    // The spec's own nine edges (specs/02 §2.2), unchanged, plus one recorded addition: PLAN-M5.md
+    // P15's dispatch tests need a real FakePlatformAdapter, and testkit otherwise has no permitted
+    // consumer anywhere in this graph despite existing specifically to be one. See
+    // SPEC-QUESTIONS.md Q77.
+    expect([...PACKAGE_GRAPH.engine].sort()).toEqual(
+      [
+        'core',
+        'kb',
+        'agents',
+        'adapter-kit',
+        'vcs',
+        'telemetry',
+        'schemas',
+        'methods',
+        'extensions',
+        'testkit',
+      ].sort(),
+    );
   });
 
   it('never lets a package depend on itself', () => {

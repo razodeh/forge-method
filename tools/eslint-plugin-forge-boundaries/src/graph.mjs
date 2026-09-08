@@ -61,6 +61,15 @@ export const FORGE_PACKAGES = /** @type {const} */ ([
  * Both defaults are recorded with their reasoning in `SPEC-QUESTIONS.md` Q16, proceeding per
  * `CLAUDE.md`'s rule for spec silence: record the recommendation, mark it, move on.
  *
+ * One row has an edge the spec's table does not: `engine → testkit`. The spec table only ever
+ * describes who a package depends on to *run*; it is silent on the identical, narrower question of
+ * who a package's own *tests* may depend on, because `testkit` (whose entire declared purpose is
+ * supplying `FakePlatformAdapter` to other packages' test suites, per its own doc comments and
+ * `SPEC-QUESTIONS.md` Q16) otherwise has zero permitted consumers anywhere in this graph — a gap,
+ * not a deliberate restriction, first hit by `PLAN-M5.md` P15's own dispatch tests, which need a real
+ * adapter session rather than a locally hand-rolled fake. Recorded in `SPEC-QUESTIONS.md` Q77,
+ * proceeding per the same spec-silence rule as the two rows above.
+ *
  * `cli`'s row is `specs/02` §2.2's own words — "cli ← everything" — rather than a hand-expanded
  * list, so adding a package here can never leave `cli` one entry behind.
  *
@@ -92,6 +101,7 @@ export const PACKAGE_GRAPH = {
     'schemas',
     'methods',
     'extensions',
+    'testkit',
   ],
   installer: ['core', 'schemas', 'templates', 'extensions'],
   tui: ['engine', 'core', 'kb', 'telemetry', 'schemas'],

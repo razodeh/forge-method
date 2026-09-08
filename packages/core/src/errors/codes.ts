@@ -222,7 +222,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { entryId: string }) =>
       `Write to ${show(d.entryId)} has no sources: provenance is mandatory for every KB write.`,
-    remedy: 'Add at least one entry to `sources` naming the decision, human, or code it comes from.',
+    remedy:
+      'Add at least one entry to `sources` naming the decision, human, or code it comes from.',
   },
   // `08` §8.6: "Schema-valid front matter or reject" — the general KbWriter invariant for every field
   // other than sources (KB-004, its own code because the spec names it specifically).
@@ -238,7 +239,8 @@ export const ERROR_CODES = {
   'KB-007': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: { entryId: string }) => `No KB entry with id ${show(d.entryId)} exists to propose against.`,
+    message: (d: { entryId: string }) =>
+      `No KB entry with id ${show(d.entryId)} exists to propose against.`,
     remedy: 'Check the target id is correct, or write the entry first.',
   },
   // `08` §8.3: a legitimate KB entry need not carry all four body sections (only `## Verification`
@@ -259,7 +261,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { entryId: string }) =>
       `${show(d.entryId)} already exists: write() only creates a brand-new entry.`,
-    remedy: 'Choose a different destination path, or propose a change to the existing entry instead.',
+    remedy:
+      'Choose a different destination path, or propose a change to the existing entry instead.',
   },
   // `08` §8.9: the KB is meant to be hand-editable — a gauntlet critic found a first version of
   // `KbWriter.propose` silently picked whichever of several same-id files matched first, with no
@@ -269,7 +272,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { entryId: string }) =>
       `More than one KB entry claims id ${show(d.entryId)}: refusing to guess which one to propose against.`,
-    remedy: 'Fix the duplicate id by hand — rename or supersede one of the two conflicting entries.',
+    remedy:
+      'Fix the duplicate id by hand — rename or supersede one of the two conflicting entries.',
   },
   // `02` §2.1: `openKbIndex`'s own "never throws for an unavailable native module" is scoped to
   // exactly that — a genuine filesystem obstruction (a plain file sitting where `.forge/state/`
@@ -300,7 +304,8 @@ export const ERROR_CODES = {
   'KB-014': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: { budgetTokens: number }) => `budgetTokens is ${show(d.budgetTokens)}, not a real number.`,
+    message: (d: { budgetTokens: number }) =>
+      `budgetTokens is ${show(d.budgetTokens)}, not a real number.`,
     // Deliberately doesn't say "non-negative" — a negative budget is accepted (it just yields an
     // empty `retrieved`, failing safe); only NaN itself is rejected, so the remedy names exactly that.
     remedy: 'Pass a budget that is a real number, not NaN (Infinity is fine and means "no limit").',
@@ -391,7 +396,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.failure,
     message: (d: { maxDepth: number }) =>
       `Cycle detection exceeded ${show(d.maxDepth)} levels of dependency chaining; refusing to search further.`,
-    remedy: 'Split the workflow into smaller stages, or reduce how many steps chain through dependsOn in a single run plan.',
+    remedy:
+      'Split the workflow into smaller stages, or reduce how many steps chain through dependsOn in a single run plan.',
   },
   // `06` §6.3 (`PLAN-M5.md` P12's own `Scheduler`). A critic round found two distinct `StepNode` objects
   // sharing the same `id` silently defeats the scheduler's own concurrency-safety tracking: its internal
@@ -405,8 +411,65 @@ export const ERROR_CODES = {
   'RUN-036': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: { id: string }) => `Scheduler received more than one step with the id ${show(d.id)}; every step id must be unique.`,
-    remedy: 'Fix the plan compiler or caller supplying these nodes so every compiled step id is unique before constructing a Scheduler.',
+    message: (d: { id: string }) =>
+      `Scheduler received more than one step with the id ${show(d.id)}; every step id must be unique.`,
+    remedy:
+      'Fix the plan compiler or caller supplying these nodes so every compiled step id is unique before constructing a Scheduler.',
+  },
+  // `PLAN-M5.md` P15's own step-execution dispatch. `@forge/vcs`'s own `VcsError` (its doc comment,
+  // verbatim) names `@forge/engine` as the one place that wraps it into a real, registered `ForgeError` —
+  // `vcs ← schemas` only, no `core` edge, so `VcsError` cannot become a `ForgeError` itself. One generic
+  // code rather than one per `VcsError` code (`VCS-CLAIM-REVERT-FAILED`, `VCS-INVALID-COMMIT-FIELD`, ...):
+  // the underlying code/message/remedy are already carried in full via `d.vcsCode`/the message text/`cause`
+  // (a real `VcsError`, not discarded), so a second, parallel registry entry per `VcsError` code would only
+  // duplicate information already present, not add any.
+  'RUN-037': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; vcsCode: string; vcsMessage: string }) =>
+      `Step ${show(d.stepId)} failed a VCS operation (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
+    remedy:
+      "Check the underlying VCS error's own remedy (chained as this error's cause) for the specific next action.",
+  },
+  // The identical reasoning as RUN-037, one layer over: `@forge/telemetry`'s own `TelemetryError` doc
+  // comment names the same "the engine wraps it" contract (`telemetry ← core` for `@forge/core/errors`
+  // itself, but `TelemetryError` is this package's own, deliberately separate type, not `ForgeError`).
+  'RUN-038': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; telemetryCode: string; telemetryMessage: string }) =>
+      `Step ${show(d.stepId)} failed a telemetry operation (${show(d.telemetryCode)}): ${show(d.telemetryMessage)}`,
+    remedy:
+      "Check the underlying telemetry error's own remedy (chained as this error's cause) for the specific next action.",
+  },
+  // `10` §10.1's own eleven-kind step-kind table names `elicit`/`session`/`subworkflow` as real,
+  // schedulable step kinds, but each needs infrastructure this milestone does not build (a real
+  // interactive human-input channel; `16`'s own facilitated-session machinery; recursive workflow
+  // invocation) — the identical "a step dispatcher that fakes a capability with no real mechanism behind
+  // it would be worse than one that visibly has none" standard `SPEC-QUESTIONS.md` Q62 already holds this
+  // whole milestone to for agent/role resolution, applied here to three more kinds at once.
+  'RUN-039': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; kind: string }) =>
+      `Step ${show(d.stepId)} has kind ${show(d.kind)}, which this milestone's own dispatcher does not yet support.`,
+    remedy:
+      'Remove elicit/session/subworkflow steps from any workflow scheduled until a later milestone builds real support for them.',
+  },
+  'RUN-040': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; gateId: string }) =>
+      `Step ${show(d.stepId)} names gate ${show(d.gateId)}, which is not registered with this run's own gate evaluator.`,
+    remedy: 'Add a GateDefinition for this id to the gate evaluator before executing this step.',
+  },
+  'RUN-041': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; conflict: string }) =>
+      `Step ${show(d.stepId)}'s mergePolicy.conflict is ${show(d.conflict)}, not one of "agent", "human", or "abort".`,
+    remedy:
+      'Fix the workflow\'s own merge step to declare policy.conflict as one of "agent", "human", or "abort".',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
@@ -528,7 +591,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { template: string; placeholder: string }) =>
       `Template ${show(d.template)}'s placeholder "{{${show(d.placeholder)}}}" did not resolve to a string, number, or boolean.`,
-    remedy: 'Check the placeholder path against the context actually supplied at this point in the run, and correct it or the context.',
+    remedy:
+      'Check the placeholder path against the context actually supplied at this point in the run, and correct it or the context.',
   },
   // `10` §10.1's sandboxed expression language (`PLAN-M5.md` P9's own `evaluate`). No spec page numbers
   // a code for this; next free `CFG-*` slot after `CFG-015`. Confirmed empirically that an AST built
@@ -542,7 +606,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { maxDepth: number }) =>
       `Expression evaluation nests more than ${show(d.maxDepth)} levels deep; refusing to evaluate further.`,
-    remedy: 'Split the expression into smaller pieces, or reduce how many terms are combined with && or || in one condition.',
+    remedy:
+      'Split the expression into smaller pieces, or reduce how many terms are combined with && or || in one condition.',
   },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
@@ -622,7 +687,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { gateId: string; expiresAt: string }) =>
       `Gate ${show(d.gateId)}'s waiver expired at ${show(d.expiresAt)} and can no longer be applied.`,
-    remedy: 'Provide a new waiver with a later expiresAt, or resolve the underlying failing check instead.',
+    remedy:
+      'Provide a new waiver with a later expiresAt, or resolve the underlying failing check instead.',
   },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."

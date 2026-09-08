@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./backpressure": "./src/backpressure/index.ts",
+    "./dispatch": "./src/dispatch/index.ts",
     "./expr": "./src/expr/index.ts",
     "./gates": "./src/gates/index.ts",
     "./plan": "./src/plan/index.ts",
@@ -19,9 +20,16 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@forge/adapter-kit": "workspace:*",
     "@forge/core": "workspace:*",
+    "@forge/telemetry": "workspace:*",
+    "@forge/vcs": "workspace:*",
+    "execa": "9.6.1",
     "minimatch": "10.2.6",
     "yaml": "2.9.0",
     "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@forge/testkit": "workspace:*"
   }
 }

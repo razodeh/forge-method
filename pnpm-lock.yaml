@@ -113,9 +113,21 @@ importers:
 
   packages/engine:
     dependencies:
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      '@forge/vcs':
+        specifier: workspace:*
+        version: link:../vcs
+      execa:
+        specifier: 9.6.1
+        version: 9.6.1
       minimatch:
         specifier: 10.2.6
         version: 10.2.6
@@ -125,6 +137,10 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+    devDependencies:
+      '@forge/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/extensions:
     dependencies:

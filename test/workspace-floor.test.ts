@@ -46,10 +46,15 @@ const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git',
 // awaits at the top level, and ends in a deliberately never-resolving `setInterval`, so that attempt
 // would hang the whole run. Genuinely test-only for the same reason as the `kb` entry above; listed
 // individually for the same reason too.
+// `packages/engine/test/dispatch/helpers.ts` (PLAN-M5.md P15): a real `ExecuteStepContext` builder and
+// `StepNode` fixture builder, imported by five real `*.test.ts` files in the same directory — the same
+// "shared, importable module rather than a runnable suite" shape as the `kb` entry above, for the same
+// reason unrecognised by `TEST_FILE`'s naming heuristic. Listed individually for the same reason too.
 const IGNORED_PATHS = new Set([
   'tools/lint-fixture/.fixtures',
   'packages/kb/test/lint/factories.ts',
   'packages/telemetry/test/fixtures/append-and-hang.ts',
+  'packages/engine/test/dispatch/helpers.ts',
 ]);
 
 /**

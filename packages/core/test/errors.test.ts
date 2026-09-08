@@ -84,6 +84,12 @@ const SAMPLE_DETAILS = {
   parseError: 'Unexpected token "&&".',
   maxDepth: 200,
   expiresAt: '2026-01-01T00:00:00.000Z',
+  stepId: 'design:review',
+  vcsCode: 'VCS-GIT-OPERATION-FAILED',
+  vcsMessage: 'git worktree add failed: already exists',
+  telemetryCode: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
+  telemetryMessage: 'ENOSPC: no space left on device',
+  conflict: 'both-modified',
 } satisfies Record<string, unknown> as never;
 
 /**
