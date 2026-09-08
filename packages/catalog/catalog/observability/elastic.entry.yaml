@@ -1,0 +1,27 @@
+id: elastic
+kind: observability
+name: Elastic
+category: observability-platform
+maturity: mature
+licence: SSPL/Elastic License 2.0
+managed_options: [elastic-cloud]
+strengths:
+  - "Built on Elasticsearch's own mature search/aggregation engine, giving powerful ad-hoc log/metric querying and Kibana's mature visualization layer"
+  - 'One platform spanning logs, metrics, APM, and security (SIEM) use cases'
+weaknesses:
+  - "SSPL/Elastic License 2.0 (not OSI-approved) is a real consideration for some organizations' open-source policies"
+  - 'Real operational weight if self-hosted, the same class of concern as Elasticsearch itself'
+fits_when:
+  - 'the organization already runs Elasticsearch/Kibana and wants to extend it to observability use cases'
+  - 'powerful ad-hoc search/aggregation over logs and metrics is a priority'
+avoid_when:
+  - "the organization's open-source policy excludes SSPL/Elastic-License-2.0 software"
+  - 'the team wants a lighter-weight, purpose-built observability stack rather than a search-engine-based one'
+pairs_with: [opentelemetry]
+alternatives: [grafana-lgtm, datadog]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Set explicit index lifecycle management policies -- agent-generated ingestion pipelines without retention policies silently accumulate unbounded storage cost, the same risk noted for Elasticsearch itself'

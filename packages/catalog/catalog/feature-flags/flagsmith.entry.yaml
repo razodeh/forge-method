@@ -1,0 +1,27 @@
+id: flagsmith
+kind: feature-flags
+name: Flagsmith
+category: feature-flags
+maturity: growing
+licence: BSD-3-Clause (Flagsmith open-source, self-hosted), proprietary (managed SaaS tiers)
+managed_options: [flagsmith-cloud]
+strengths:
+  - "Open-source and self-hostable with a genuinely permissive BSD-3-Clause licence, unlike Unleash's Apache-2.0-plus-gated-Enterprise-tier model"
+  - 'Combines feature flags with remote config values in one product'
+weaknesses:
+  - 'Smaller community and ecosystem than LaunchDarkly or Unleash'
+  - "Fewer advanced targeting/experimentation features than LaunchDarkly's much more mature platform"
+fits_when:
+  - 'a permissively-licensed, self-hostable feature-flag and remote-config platform is preferred'
+  - 'combining feature flags with remote config values in one product is valuable'
+avoid_when:
+  - "the team needs LaunchDarkly's much more mature targeting/experimentation feature set"
+  - 'the team wants the widest possible third-party integration ecosystem -- LaunchDarkly has more'
+pairs_with: [openfeature]
+alternatives: [unleash, launchdarkly]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - "Use the OpenFeature provider where available rather than Flagsmith's own SDK directly, to keep the integration portable"

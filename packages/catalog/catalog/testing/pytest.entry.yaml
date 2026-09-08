@@ -1,0 +1,26 @@
+id: pytest
+kind: testing
+name: pytest
+category: unit-testing
+maturity: mature
+licence: MIT
+strengths:
+  - 'The dominant Python testing framework, with a powerful, minimal-boilerplate fixture system and a huge plugin ecosystem'
+  - 'Plain assert statements (no special assertion methods to learn) with excellent introspective failure output'
+weaknesses:
+  - "The fixture system's implicit dependency injection can be genuinely hard to trace in a large suite without disciplined naming/organization"
+  - 'Plugin quality varies significantly across the ecosystem -- some third-party plugins are far more maintained than others'
+fits_when:
+  - 'the project is Python and needs a mature, minimal-boilerplate testing framework'
+  - 'a large, actively-maintained plugin ecosystem (coverage, mocking, parallelization) is valuable'
+avoid_when:
+  - 'the project is not Python'
+  - "the team wants Python's built-in unittest module's more explicit, class-based style over pytest's fixture-based one"
+pairs_with: [python, fastapi, django]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Name fixtures clearly and keep fixture scope (function/module/session) deliberate -- agent-generated fixtures with unclear scope are a common source of subtle test-isolation bugs'

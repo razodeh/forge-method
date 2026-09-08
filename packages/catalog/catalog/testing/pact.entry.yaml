@@ -1,0 +1,27 @@
+id: pact
+kind: testing
+name: Pact (contract)
+category: contract-testing
+maturity: mature
+licence: MIT
+managed_options: [pactflow]
+strengths:
+  - 'Consumer-driven contract testing: catches breaking API changes between services before they reach production, without a full end-to-end test environment'
+  - 'Language-agnostic protocol (the Pact Broker) lets services in different languages verify contracts against each other'
+weaknesses:
+  - 'Requires real discipline across teams to keep consumer/provider contracts and their tests up to date -- a real organizational, not just technical, adoption cost'
+  - 'Narrower scope than full E2E testing -- catches contract mismatches specifically, not every category of integration bug'
+fits_when:
+  - 'multiple independently-deployed services need to verify API compatibility without a full E2E test environment'
+  - 'the organization can commit to the cross-team discipline consumer-driven contract testing requires'
+avoid_when:
+  - 'the architecture is a single monolith with no real service-to-service contract surface'
+  - "the team can't realistically commit to keeping contracts synchronized across services"
+pairs_with: []
+alternatives: [schemathesis]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Run provider verification in CI on every change, not just periodically -- a stale, unverified contract gives false confidence'

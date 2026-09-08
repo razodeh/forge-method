@@ -1,0 +1,27 @@
+id: crossplane
+kind: iac
+name: Crossplane
+category: kubernetes-native-iac
+maturity: growing
+licence: Apache-2.0
+managed_options: [upbound]
+strengths:
+  - 'Manages cloud infrastructure (databases, networks, etc.) as native Kubernetes custom resources -- one control plane and one API style for both apps and infrastructure'
+  - "Lets platform teams build self-service infrastructure APIs (Composite Resources) tailored to their own organization's needs"
+weaknesses:
+  - "Real conceptual overhead versus a standalone IaC tool -- requires understanding both Kubernetes's own control-plane model and Crossplane's composition layer on top of it"
+  - "Smaller ecosystem and community than Terraform's much larger, longer-established one"
+fits_when:
+  - 'the organization wants infrastructure provisioning to happen through the same Kubernetes-native API/GitOps workflow as application deployment'
+  - 'a platform team wants to build a self-service infrastructure API tailored to internal developers'
+avoid_when:
+  - "the team has no existing Kubernetes investment and adopting it solely for infrastructure provisioning isn't justified"
+  - "the team wants Terraform's larger community and longer production track record"
+pairs_with: [kubernetes]
+alternatives: [terraform-opentofu]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - "Understand the distinction between a Composite Resource Definition (the platform team's own API) and a Managed Resource (the underlying cloud primitive) before generating either kind of manifest"

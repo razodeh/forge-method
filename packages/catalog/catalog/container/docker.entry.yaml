@@ -1,0 +1,27 @@
+id: docker
+kind: container
+name: Docker
+category: container-runtime
+maturity: mature
+licence: Apache-2.0 (Docker Engine)
+managed_options: [docker-hub]
+strengths:
+  - 'The de facto standard container runtime and image format -- universally supported tooling, registries, and orchestration platforms'
+  - 'Excellent local development experience (docker compose) for running multi-service stacks on a single machine'
+weaknesses:
+  - "The daemon's own historical root-privileged architecture is a real security consideration versus rootless/daemonless alternatives (Podman)"
+  - "Docker Desktop's licensing terms for larger commercial organizations are a real consideration outside the free-for-small-business tier"
+fits_when:
+  - 'local development or CI needs a fast, universally-supported container build/run tool'
+  - 'the deployment target (Kubernetes, ECS, any cloud) expects standard OCI-format container images'
+avoid_when:
+  - 'the organization specifically needs a rootless/daemonless runtime for security reasons -- Podman fits that directly'
+  - "Docker Desktop's commercial licensing terms conflict with the organization's size/usage tier"
+pairs_with: [kubernetes, github-actions]
+alternatives: [podman]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use multi-stage builds and pin base image versions explicitly -- agent-generated Dockerfiles using a floating 'latest' tag are a real reproducibility and security risk"

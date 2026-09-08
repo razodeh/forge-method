@@ -1,0 +1,27 @@
+id: datadog
+kind: observability
+name: Datadog
+category: observability-platform
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [datadog]
+strengths:
+  - 'Fully managed, unified platform for metrics, logs, traces, and APM with an extensive library of pre-built integrations'
+  - 'Polished dashboards and alerting with minimal self-hosted infrastructure to operate'
+weaknesses:
+  - 'Per-host/per-GB pricing can become a real, significant cost at scale without deliberate usage management'
+  - 'Proprietary -- real vendor lock-in for dashboards, alerts, and integrations built on the platform'
+fits_when:
+  - 'the team wants a fully managed, all-in-one observability platform with minimal self-hosting'
+  - "the budget supports Datadog's usage-based pricing at the organization's real scale"
+avoid_when:
+  - 'cost predictability at scale is a hard constraint and a self-hosted stack (LGTM) would be cheaper'
+  - 'vendor lock-in for observability tooling is a real, deliberate concern'
+pairs_with: [opentelemetry]
+alternatives: [new-relic, honeycomb, grafana-lgtm]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Review ingested log/metric volume regularly -- agent-generated instrumentation that logs excessively is a real, easy-to-miss cost driver on usage-based platforms like this one'

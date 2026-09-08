@@ -1,0 +1,27 @@
+id: fly-io
+kind: container
+name: Fly.io
+category: edge-container-platform
+maturity: growing
+licence: N/A (proprietary managed service)
+managed_options: [fly-io]
+strengths:
+  - 'Deploys containers close to users across a global edge network with a notably fast, developer-friendly CLI-first workflow'
+  - 'First-class support for stateful apps (Fly Volumes, Postgres) alongside stateless services, unlike most serverless-container platforms'
+weaknesses:
+  - 'Smaller platform and ecosystem than the major hyperscalers -- less enterprise-scale operational track record'
+  - "Global-edge-first architecture has real, different failure modes (multi-region consistency) a single-region deployment doesn't need to reason about"
+fits_when:
+  - 'low-latency, globally-distributed deployment is a real requirement and a developer-friendly CLI workflow is valued'
+  - 'the app needs stateful services (volumes, databases) alongside stateless containers on the same platform'
+avoid_when:
+  - 'the organization needs a major-hyperscaler-level enterprise operational track record and support SLAs'
+  - "a single-region deployment is sufficient and multi-region complexity isn't worth taking on"
+pairs_with: [docker]
+alternatives: [render, railway, cloud-run]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Confirm which regions a service actually needs before deploying to Fly's full global edge -- agent-generated fly.toml configs defaulting to every region incur real, unnecessary cost"

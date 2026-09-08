@@ -1,0 +1,26 @@
+id: stryker
+kind: testing
+name: Stryker (mutation)
+category: mutation-testing
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'Mutation testing deliberately introduces small bugs into the code and checks whether the existing test suite actually catches them -- a real measure of test-suite effectiveness beyond line coverage'
+  - 'Exposes tests that execute code without meaningfully asserting on its behavior, a gap line-coverage metrics alone cannot see'
+weaknesses:
+  - 'Mutation test runs are significantly slower than the normal test suite -- typically run periodically or in a dedicated CI job, not on every commit'
+  - "Some surviving mutants are false positives (equivalent mutants that don't actually change behavior), requiring real judgment to interpret results"
+fits_when:
+  - 'line/branch coverage numbers already look good but the team wants a real signal on whether tests actually assert meaningful behavior'
+  - 'the team wants a periodic, deeper quality signal beyond what fast unit-test CI runs alone provide'
+avoid_when:
+  - 'the test suite itself is still immature (low coverage) -- mutation testing is most valuable as a check on an already-reasonably-covered suite, not a replacement for building one'
+  - "CI time budget can't absorb a meaningfully slower, periodic mutation-testing run"
+pairs_with: [vitest-jest]
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: low
+notes_for_agents:
+  - 'Run mutation testing periodically (e.g. nightly), not on every commit -- agent-generated CI configs that add it to the fast feedback loop will make every commit unacceptably slow'

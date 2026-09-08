@@ -1,0 +1,27 @@
+id: nomad
+kind: container
+name: Nomad
+category: container-orchestration
+maturity: mature
+licence: BUSL-1.1 (converts to MPL-2.0 after 4 years per version)
+managed_options: [hcp-nomad]
+strengths:
+  - 'Substantially simpler operational model than Kubernetes -- a single binary that can orchestrate containers, VMs, and raw binaries alike'
+  - "Tight integration with the rest of HashiCorp's tooling (Consul, Vault) for teams already in that ecosystem"
+weaknesses:
+  - 'Much smaller ecosystem and community than Kubernetes -- fewer pre-built operators, Helm-chart-equivalents, or third-party integrations'
+  - "HashiCorp's own BUSL licensing change is a real consideration for some procurement policies"
+fits_when:
+  - 'the team wants Kubernetes-like orchestration with a substantially simpler operational model'
+  - "the workload mixes containers, VMs, and raw binaries, or the team is already invested in HashiCorp's ecosystem"
+avoid_when:
+  - "the team needs Kubernetes's much larger ecosystem of operators and pre-built integrations"
+  - "the licence terms conflict with the organization's procurement policy"
+pairs_with: [docker]
+alternatives: [kubernetes, ecs-fargate]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'Confirm job specification syntax (HCL) targets the correct Nomad version -- schema has evolved across major versions'

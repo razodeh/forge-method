@@ -1,0 +1,27 @@
+id: pulumi
+kind: iac
+name: Pulumi
+category: iac
+maturity: mature
+licence: Apache-2.0
+managed_options: [pulumi-cloud]
+strengths:
+  - 'Infrastructure-as-code written in real general-purpose languages (TypeScript, Python, Go) rather than a DSL -- full IDE support, loops, and abstractions come for free'
+  - 'Multi-cloud, provider-agnostic like Terraform, with a comparable ecosystem of provider integrations'
+weaknesses:
+  - "Using a full programming language for infrastructure can make state/execution harder to reason about than Terraform's more constrained declarative HCL"
+  - "Smaller community and ecosystem than Terraform's much larger, longer-established one"
+fits_when:
+  - 'the team strongly prefers writing infrastructure in a real programming language rather than a declarative DSL'
+  - 'sharing code/abstractions between application code and infrastructure code is valuable'
+avoid_when:
+  - "the team wants Terraform's larger community, longer track record, and more constrained (easier-to-reason-about) declarative model"
+  - "the team's infrastructure state needs to be reasoned about by people who don't write general-purpose code (some platform/ops roles)"
+pairs_with: [kubernetes]
+alternatives: [terraform-opentofu, cdk]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Review the preview/diff output before an actual update, the same discipline terraform plan requires -- agent-generated Pulumi programs applied without review carry the same blast-radius risk'

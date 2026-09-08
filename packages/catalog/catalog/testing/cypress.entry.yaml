@@ -1,0 +1,27 @@
+id: cypress
+kind: testing
+name: Cypress
+category: e2e-testing
+maturity: mature
+licence: MIT (Cypress test runner), proprietary (Cypress Cloud)
+managed_options: [cypress-cloud]
+strengths:
+  - 'Mature, widely-adopted E2E and component testing with an excellent interactive debugging UI (time-travel snapshots)'
+  - 'Large, established plugin ecosystem and community, with the longest production track record of any E2E tool in this row'
+weaknesses:
+  - "Runs tests inside the browser's own execution context, a real architectural constraint that limits true multi-tab/multi-origin scenarios versus Playwright"
+  - 'No native WebKit/Safari support the way Playwright provides'
+fits_when:
+  - 'the team wants the most established E2E testing tool with the largest plugin ecosystem and interactive debugging UI'
+  - 'component testing alongside full E2E in the same tool and API is valuable'
+avoid_when:
+  - 'real cross-browser coverage including WebKit/Safari is a requirement -- Playwright supports that natively'
+  - 'the test scenario needs true multi-tab or multi-origin browser control'
+pairs_with: [typescript-js]
+alternatives: [playwright]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Use cy.intercept for network stubbing rather than relying on real backend calls in CI -- agent-generated tests depending on live external services are a common source of flaky CI failures'

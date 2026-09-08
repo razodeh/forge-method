@@ -1,0 +1,27 @@
+id: grafana-lgtm
+kind: observability
+name: Grafana+Loki+Tempo+Mimir (LGTM)
+category: observability-stack
+maturity: mature
+licence: AGPL-3.0 (Grafana, Loki, Tempo, and Mimir core, since Grafana Labs' April 2021 relicensing; some separate plugins/agents/libraries remain Apache-2.0)
+managed_options: [grafana-cloud]
+strengths:
+  - 'A fully open-source, self-hostable observability stack covering dashboards (Grafana), logs (Loki), traces (Tempo), and long-term metrics (Mimir) as one coherent system'
+  - 'Avoids per-seat/per-host proprietary pricing that vendors like Datadog/New Relic charge, at the cost of self-hosting the stack'
+weaknesses:
+  - 'Four separate components to deploy, configure, and operate together -- real operational complexity versus a single managed vendor product'
+  - "AGPL-3.0 licensing on several components is a real consideration for some organizations' open-source policies"
+fits_when:
+  - 'a fully open-source, self-hostable observability stack is preferred over a proprietary managed vendor'
+  - 'the team has the operational capacity to run and integrate four separate components'
+avoid_when:
+  - 'the team wants a single managed product with no self-hosting operational burden -- Datadog/New Relic/Honeycomb fit that better'
+  - "the organization's open-source policy excludes AGPL-3.0-licensed software"
+pairs_with: [opentelemetry, prometheus]
+alternatives: [datadog, new-relic]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Confirm which LGTM component (Loki/Tempo/Mimir) a given query targets before generating dashboard queries -- their query languages (LogQL/TraceQL/PromQL) are distinct'

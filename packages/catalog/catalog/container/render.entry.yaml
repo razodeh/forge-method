@@ -1,0 +1,27 @@
+id: render
+kind: container
+name: Render
+category: paas
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [render]
+strengths:
+  - 'Heroku-like developer experience (git push to deploy) with modern container support and reasonable, predictable pricing'
+  - 'Built-in managed Postgres/Redis and preview environments per pull request, all with minimal configuration'
+weaknesses:
+  - 'Smaller platform and ecosystem than the major hyperscalers -- less enterprise-scale operational track record'
+  - 'Less configurable than raw Kubernetes/ECS for complex, highly customized infrastructure needs'
+fits_when:
+  - 'the team wants a Heroku-like, low-configuration deployment experience with modern container support'
+  - 'built-in preview environments and managed datastores matter for developer velocity'
+avoid_when:
+  - 'the architecture needs highly customized infrastructure control that only raw Kubernetes/ECS provides'
+  - 'the organization needs a major-hyperscaler-level enterprise operational track record'
+pairs_with: [docker, postgresql]
+alternatives: [railway, fly-io, netlify]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Use Render's own preview-environment feature for PR-based review rather than hand-rolling a separate staging deployment pipeline"

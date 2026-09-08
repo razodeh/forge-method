@@ -1,0 +1,27 @@
+id: new-relic
+kind: observability
+name: New Relic
+category: observability-platform
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [new-relic]
+strengths:
+  - 'Fully managed, unified observability platform with strong APM roots and a generous free usage tier for smaller teams'
+  - "Broad pre-built integration library comparable to Datadog's, with a unified data platform (NRDB) underneath"
+weaknesses:
+  - 'Usage-based pricing (data ingest) can become a real, significant cost at scale, the same class of concern as Datadog'
+  - 'Proprietary -- real vendor lock-in for dashboards, alerts, and integrations built on the platform'
+fits_when:
+  - 'the team wants a fully managed, all-in-one observability platform, especially with strong APM needs, and values the free tier for smaller-scale usage'
+  - 'the free usage tier meaningfully reduces cost for a smaller-scale deployment'
+avoid_when:
+  - 'cost predictability at scale is a hard constraint and a self-hosted stack (LGTM) would be cheaper'
+  - 'vendor lock-in for observability tooling is a real, deliberate concern'
+pairs_with: [opentelemetry]
+alternatives: [datadog, honeycomb, grafana-lgtm]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Review ingested data volume regularly against the plan's own usage tier -- the same cost-discipline note that applies to any usage-priced observability platform"

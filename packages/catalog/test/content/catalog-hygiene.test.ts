@@ -1,17 +1,15 @@
 /**
- * Every shipped catalog entry, across every piece (C2, C3, and beyond) validates cleanly against
+ * Every shipped catalog entry, across the whole `12` §12.2 catalog, validates cleanly against
  * `validateEntry`, `fits_when`/`avoid_when` each name at least two real *distinct* conditions (a
  * mechanical non-emptiness/length/distinctness floor, not a subjective quality bar), and no list field
  * contains an accidental exact or near-duplicate item.
  *
- * A `pairs_with`/`alternatives` reference to an id from a row this milestone hasn't shipped content for
- * yet is expected to be "dangling" until that piece ships -- `KNOWN_FUTURE_IDS` is the explicit, closed
- * allowlist of ids `12` §12.2's own scope table promises will exist once the whole catalog is built,
- * comma-split from each remaining row exactly as every shipped row's own items were (`SPEC-QUESTIONS.md`
- * Q86/Q87's "split on commas, not further" rule). Any other dangling reference is a real authoring bug
- * this test still catches. As each future piece ships, its own ids move out of this allowlist (they
- * resolve for real) rather than needing a new copy of this whole file -- one hygiene test for the whole
- * catalog, not one per piece.
+ * `KNOWN_FUTURE_IDS` held the explicit allowlist of ids `12` §12.2's own scope table promised but this
+ * milestone hadn't shipped content for yet, while C2/C3/C4 were still landing -- as of C4 (the last
+ * content piece), every row is shipped, so this is now empty and any dangling `pairs_with`/`alternatives`
+ * reference is unconditionally a real authoring bug. Left as an explicit empty set, not deleted, so a
+ * future catalog kind added beyond the current 18 rows has an obvious place to reintroduce the allowlist
+ * pattern rather than reinventing it.
  *
  * The near-duplicate check exists because of a real bug C2 shipped and a fresh critic round caught
  * (`SPEC-QUESTIONS.md` Q89): a mechanical `length >= 2` count floor does not itself prove two *distinct*
@@ -19,7 +17,7 @@
  * point. This test is that lesson made permanent, not just fixed once by hand.
  *
  * @see specs/12 §12.2
- * @see PLAN-M6.md C2, C3
+ * @see PLAN-M6.md C2, C3, C4
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -33,76 +31,7 @@ import type { CatalogEntry } from '../../src/schema/types.ts';
 
 const catalogRoot = path.resolve(import.meta.dirname, '../../catalog');
 
-/** Every id `12` §12.2's own scope table names in a row not yet shipped (C4: CI/CD, Containers/
- * orchestration, IaC, Observability, Testing, Feature flags & config, Secrets). */
-const KNOWN_FUTURE_IDS = new Set([
-  // CI/CD
-  'github-actions',
-  'gitlab-ci',
-  'jenkins',
-  'circleci',
-  'buildkite',
-  'argo-cd',
-  'flux',
-  'spinnaker',
-  // Containers/orchestration
-  'docker',
-  'podman',
-  'kubernetes',
-  'ecs-fargate',
-  'nomad',
-  'cloud-run',
-  'app-runner',
-  'fly-io',
-  'render',
-  'railway',
-  'vercel',
-  'netlify',
-  // IaC
-  'terraform-opentofu',
-  'pulumi',
-  'cdk',
-  'cloudformation',
-  'ansible',
-  'helm',
-  'kustomize',
-  'crossplane',
-  // Observability
-  'opentelemetry',
-  'prometheus',
-  'grafana-lgtm',
-  'datadog',
-  'new-relic',
-  'honeycomb',
-  'sentry',
-  'elastic',
-  'jaeger',
-  'pyroscope',
-  // Testing
-  'vitest-jest',
-  'playwright',
-  'cypress',
-  'pytest',
-  'junit5',
-  'testcontainers',
-  'k6-gatling-locust',
-  'pact',
-  'schemathesis',
-  'hypothesis-fast-check',
-  'stryker',
-  // Feature flags & config
-  'openfeature',
-  'unleash',
-  'launchdarkly',
-  'flagsmith',
-  'env-config-service',
-  // Secrets
-  'vault',
-  'aws-gcp-azure-secret-managers',
-  'sops-age',
-  'doppler',
-  '1password-infisical',
-]);
+const KNOWN_FUTURE_IDS = new Set<string>([]);
 
 function loadAllShippedEntries(): readonly CatalogEntry[] {
   const entries: CatalogEntry[] = [];

@@ -1,0 +1,27 @@
+id: vercel
+kind: container
+name: Vercel
+category: paas
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [vercel]
+strengths:
+  - 'Purpose-built for frontend frameworks (especially Next.js, which it authors) with zero-configuration preview deployments per pull request'
+  - 'Global edge network and tight integration with the modern JS/TS frontend ecosystem'
+weaknesses:
+  - 'Optimized specifically for frontend/edge workloads -- not a natural fit for arbitrary long-running backend services'
+  - 'Serverless function execution limits (duration, memory) are real constraints for heavier backend workloads'
+fits_when:
+  - 'the project is a frontend framework app (especially Next.js) needing zero-configuration deployment and preview URLs'
+  - 'the team wants automatic preview deployments per pull request with zero pipeline configuration'
+avoid_when:
+  - "the workload is a long-running backend service outside Vercel's serverless-function execution model"
+  - 'the team needs a general-purpose container platform rather than a frontend-optimized one'
+pairs_with: [nextjs, react]
+alternatives: [netlify, render]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Check serverless-function duration/memory limits before generating backend logic intended to run on Vercel -- long-running or heavy-compute tasks don't fit its execution model"

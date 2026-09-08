@@ -1,0 +1,26 @@
+id: testcontainers
+kind: testing
+name: testcontainers
+category: integration-testing
+maturity: mature
+licence: MIT
+strengths:
+  - 'Spins up real, disposable Docker containers (databases, message brokers) for integration tests -- tests run against the real thing, not a mock'
+  - 'Available across many languages (Java, Go, Python, JS/TS) with a consistent programming model'
+weaknesses:
+  - "Requires a working Docker daemon in every environment tests run, including CI -- a real environment-setup dependency unit tests don't have"
+  - 'Container startup adds real, measurable time to test suites versus mocked dependencies'
+fits_when:
+  - 'integration tests need to run against a real database/broker rather than a mock, for higher-fidelity coverage'
+  - 'the CI environment can run Docker containers'
+avoid_when:
+  - 'the CI/test environment cannot run Docker containers'
+  - "the test's own scope is genuinely unit-level, where a real dependency isn't needed and mocking is faster"
+pairs_with: [postgresql, kafka]
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Reuse containers across tests within a suite where safe (testcontainers' own reuse feature) -- agent-generated tests that start a fresh container per test needlessly slow down the whole suite"

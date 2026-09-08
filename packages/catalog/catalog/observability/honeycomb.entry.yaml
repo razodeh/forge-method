@@ -1,0 +1,27 @@
+id: honeycomb
+kind: observability
+name: Honeycomb
+category: observability-platform
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [honeycomb]
+strengths:
+  - 'Purpose-built for high-cardinality, wide-event observability and fast ad-hoc exploratory querying -- a genuinely different query model than metric-dashboard-first tools'
+  - 'Strong native OpenTelemetry support and a design philosophy well-suited to debugging novel production issues rather than pre-built dashboards alone'
+weaknesses:
+  - "Smaller ecosystem of pre-built integrations/dashboards than Datadog/New Relic's much broader platforms"
+  - 'The wide-event data model has a real conceptual shift from traditional metrics-first monitoring for teams new to it'
+fits_when:
+  - 'high-cardinality, ad-hoc exploratory debugging of production issues is a priority over pre-built dashboards'
+  - 'the team is already OpenTelemetry-native and wants a backend purpose-built around that model'
+avoid_when:
+  - 'the team wants the broadest possible library of pre-built integrations and dashboards -- Datadog/New Relic have more'
+  - "the team isn't ready to adopt the wide-event data model's different way of thinking about observability data"
+pairs_with: [opentelemetry]
+alternatives: [datadog, new-relic]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Instrument with rich, high-cardinality attributes (user id, request params) rather than sparse tags -- Honeycomb's main value depends on that data being present"

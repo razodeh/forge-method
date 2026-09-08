@@ -1,0 +1,27 @@
+id: k6-gatling-locust
+kind: testing
+name: k6/Gatling/Locust
+category: load-testing
+maturity: mature
+licence: AGPL-3.0 (k6), Apache-2.0 (Gatling), MIT (Locust)
+managed_options: [grafana-cloud-k6]
+strengths:
+  - 'Purpose-built load/performance testing tools, each with a distinct authoring model: k6 (JS scripting), Gatling (Scala DSL), Locust (Python, code-first)'
+  - 'All three support distributed, high-throughput load generation far beyond what a simple script could produce'
+weaknesses:
+  - "Three genuinely different tools with different authoring languages -- picking the wrong one for the team's existing language skills adds real friction"
+  - 'Meaningful load-testing infrastructure (generating realistic distributed load) has real setup cost regardless of which tool is chosen'
+fits_when:
+  - 'the system needs deliberate, repeatable load/performance testing before a release or capacity-planning decision'
+  - 'the team can pick the tool matching its existing language skills (k6: JS, Gatling: Scala/JVM, Locust: Python)'
+avoid_when:
+  - 'the workload has no real performance-sensitive path that would benefit from dedicated load testing'
+  - "the team has no distributed-load-generation infrastructure and setting it up isn't justified yet"
+pairs_with: []
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Base load-test targets on real production traffic patterns, not arbitrary numbers -- agent-generated load scripts with guessed request rates produce misleading results'

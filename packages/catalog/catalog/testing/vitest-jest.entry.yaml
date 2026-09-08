@@ -1,0 +1,26 @@
+id: vitest-jest
+kind: testing
+name: Vitest/Jest
+category: unit-testing
+maturity: mature
+licence: MIT
+strengths:
+  - 'The dominant JS/TS unit-testing frameworks, with rich mocking, snapshot testing, and coverage reporting built in'
+  - "Vitest (the newer, Vite-native option) gives substantially faster watch-mode iteration than Jest's own transform pipeline for most modern TS projects"
+weaknesses:
+  - "Jest's CJS-first heritage makes native ESM and modern TypeScript projects genuinely more fiddly to configure correctly than Vitest's own ESM-native design"
+  - "Vitest is younger and has a smaller long-term production track record than Jest's decade-plus history"
+fits_when:
+  - 'the project is JS/TS and needs a mature, full-featured unit-testing framework with mocking and coverage built in'
+  - 'fast watch-mode iteration on a Vite-based or modern ESM project is a priority -- Vitest specifically fits this'
+avoid_when:
+  - "the project needs Jest's own longest possible production track record and largest plugin ecosystem specifically"
+  - "the project cannot yet migrate off Jest's transform pipeline and needs its specific plugin ecosystem"
+pairs_with: [typescript-js, react]
+alternatives: [playwright, cypress]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Write tests that assert real behavior, not implementation details -- agent-generated snapshot tests with no assertions beyond "matches snapshot" catch far fewer real regressions than they appear to'

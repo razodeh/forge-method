@@ -7093,3 +7093,75 @@ now does.
 `tsc`, `eslint`, `prettier` (with the new `.hbs` exclusion), and the full-repo suite (212 files, 4687
 tests, plus the boundaries-coverage config's own 64) all clean after every fix; see `GAUNTLET-LOG.md`'s
 own M6 T5 entry for the full critic round.
+
+## Q95 — M6 C4's `@forge/catalog` content, part 3 (final): `12` §12.2's own scope table rows 12-18 (59
+entries) — completing all 183 catalog entries, and verifying the whole catalog is now internally
+self-consistent
+
+59 real `catalog/<kind>/<id>.entry.yaml` files for CI/CD, Containers/orchestration, IaC, Observability,
+Testing, Feature flags & config, and Secrets -- `12` §12.2's own scope-table rows 12-18, the last content
+rows. Combined with C2's 56 and C3's 68, the catalog now ships all 183 entries the table requires, across
+all 18 rows and 23 `kind` values (the 20 the spec's own comment names plus `stack`/`feature-flags`/
+`secrets`, Q87).
+
+1. **A whole-catalog self-check ran before any critic round, the same discipline C3 established**: every
+   one of the 183 shipped entries was re-verified to parse cleanly, carry two genuinely distinct
+   `fits_when`/`avoid_when` conditions, contain no exact/near-duplicate list item, and pass `validateEntry`
+   with zero real hygiene violations -- catching and fixing, before the critic ever saw the content, one
+   real superlative violation (`container/railway.entry.yaml`'s own "fastest possible path") and 31 missing
+   second `fits_when`/`avoid_when` conditions across 28 entries (mostly a repeat of C4's own first-draft
+   authoring gap: several C4 entries, unlike C2/C3, initially shipped with only one condition per list
+   field rather than two written from the start -- caught by the same mechanical count check, fixed with
+   genuinely distinct second conditions, not a repeat of C2's specific copy-paste-duplication bug, which
+   the near-duplicate scan confirmed did not recur here).
+
+2. **The `catalog-hygiene.test.ts`'s own `KNOWN_FUTURE_IDS` allowlist is now the empty set, left explicit
+   rather than deleted**: with all 18 rows shipped, a whole-catalog script cross-check (independently
+   confirmed by a fresh critic round) found zero dangling `pairs_with`/`alternatives` references anywhere
+   across all 183 entries -- the catalog is, for the first time, fully internally self-consistent. The
+   empty set (not removing the allowlist mechanism entirely) is deliberate: a future catalog kind added
+   beyond these 18 rows has an obvious, already-proven place to reintroduce the same allowlist pattern
+   rather than needing to reinvent it.
+
+3. **A final `test/content/c4-completeness.test.ts` was added mirroring C2/C3's own shape exactly for rows
+   12-18**, plus (since this is the last content piece) a whole-catalog completeness suite verifying every
+   one of the 18 scope-table kind directories ships at least one entry, the total is exactly 183, and every
+   shipped entry loads with zero issues -- the concrete fulfillment of C4's own plan-level Checks section
+   ("a final, whole-catalog completeness test... run once here since this is the last content piece").
+
+4. **A fresh critic round independently re-verified completeness (59/59, no gaps) and the whole-catalog
+   self-consistency claim (an independent script over all 183 entries, zero dangling references) itself,
+   not by trusting the shipped tests, and found four real, concrete issues, all fixed**:
+   - `observability/grafana-lgtm.entry.yaml`'s own licence line claimed an "Apache-2.0/AGPL-3.0 dual"
+     characterization for Grafana core that is not accurate -- Grafana Labs' April 2021 relicensing moved
+     Grafana core (along with Loki and Tempo) from Apache-2.0 to AGPLv3 outright, not a dual license (some
+     *separate* plugins/agents/libraries remain Apache-2.0, which is a different, narrower fact than what
+     was written). **Fixed** to state the real relicensing event precisely. HashiCorp's BUSL
+     characterizations (Terraform/OpenTofu, Vault, Nomad) and Sentry's FSL characterization were
+     independently re-checked by the critic and confirmed accurate as written -- not every licence-timing
+     claim in this piece was wrong, only this one.
+   - Three list items scored just under the shipped near-duplicate test's own 0.4 Jaccard threshold
+     (0.30-0.40) while still restating the same underlying condition in different words --
+     `observability/sentry.entry.yaml`, `iac/pulumi.entry.yaml`, and `feature-flags/openfeature.entry.yaml`
+     each had one `avoid_when` pair that read as the same point twice. **Fixed** with genuinely distinct
+     replacement text for the weaker of each pair. This is not a threshold-tuning bug in the test (0.4 was
+     deliberately calibrated against Q89's own much-more-similar 0.42-0.73 real near-duplicates, and
+     lowering it risks new false positives on legitimately related-but-distinct points elsewhere in 183
+     entries) -- it is the expected, known limit of a coarse word-overlap heuristic, which is exactly why
+     human critic review still catches what the mechanical check alone does not.
+   - `testing/vitest-jest.entry.yaml` argued the identical watch-mode-speed fact twice, once as a strength
+     ("Vitest...gives substantially faster watch-mode iteration") and once as a matching weakness ("Jest's
+     transform pipeline...is notably slower") -- a real redundant strength/weakness pair the near-duplicate
+     scan doesn't check across those two different fields. **Fixed** by replacing the weakness with a
+     genuinely distinct point (Jest's CJS-first heritage making modern ESM/TS configuration more fiddly).
+     The critic separately noted this comparative "faster/slower" phrasing style (without hard numbers) has
+     precedent already shipped in C2/C3 (`grpc`, `svelte-sveltekit`, `neo4j`) and is not a novel C4
+     regression -- flagged here as a real, if pre-existing and catalog-wide, house-style note rather than
+     something this piece alone should retroactively fix across already-committed content.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (4992 tests, plus the boundaries-coverage config's own
+64) are all clean after every fix. Two unrelated, known-flaky tests
+(`packages/engine/test/e2e/crash-resume.test.ts`, a real randomised `SIGKILL` test; and
+`packages/engine/test/run/run-engine.test.ts`'s own concurrency-timing assertion) each failed once across
+this session's several full-suite runs and passed cleanly on immediate isolated re-run -- confirmed not
+regressions from this piece, which touches nothing in `@forge/engine`.

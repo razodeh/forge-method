@@ -1,0 +1,26 @@
+id: schemathesis
+kind: testing
+name: Schemathesis
+category: property-based-api-testing
+maturity: growing
+licence: MIT
+strengths:
+  - 'Automatically generates test cases directly from an OpenAPI/GraphQL schema, finding edge cases a hand-written test suite would likely miss'
+  - 'Property-based testing applied to API contracts specifically -- verifies the implementation actually matches its own documented schema'
+weaknesses:
+  - 'Only as good as the schema it tests against -- an incomplete or inaccurate OpenAPI spec limits what it can meaningfully verify'
+  - "Generated edge-case failures sometimes require real investigation to determine if they're a genuine bug or an overly strict schema"
+fits_when:
+  - 'the API has a real, reasonably complete OpenAPI/GraphQL schema and automated edge-case discovery against it is valuable'
+  - 'the team wants automated fuzzing-style edge-case discovery without hand-writing every test case'
+avoid_when:
+  - 'the API has no schema, or the schema is too incomplete/inaccurate to generate meaningful test cases from'
+  - 'the team wants example-based tests it fully controls rather than randomly generated edge cases'
+pairs_with: [rest, graphql]
+alternatives: [pact]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Keep the OpenAPI/GraphQL schema itself accurate and current -- Schemathesis's entire value depends on the schema being a faithful description of real API behavior"

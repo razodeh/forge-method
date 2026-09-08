@@ -1,0 +1,27 @@
+id: ecs-fargate
+kind: container
+name: ECS/Fargate
+category: container-orchestration
+maturity: mature
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-ecs, aws-fargate]
+strengths:
+  - "Fargate removes server management entirely -- pay only for the container's own resource usage, no EC2 instances or Kubernetes nodes to patch"
+  - 'Deep native integration with the rest of AWS (IAM, ALB, CloudWatch) with a notably gentler learning curve than Kubernetes'
+weaknesses:
+  - 'AWS-only -- a real vendor lock-in cost for a multi-cloud or cloud-agnostic architecture'
+  - "Smaller ecosystem of third-party tooling/operators than Kubernetes's much larger community"
+fits_when:
+  - "the architecture is AWS-native and the team wants container orchestration without Kubernetes's operational complexity"
+  - 'serverless-style container execution (no servers to manage) is a priority'
+avoid_when:
+  - 'the organization is not AWS-native and cloud-agnosticism matters'
+  - "the team needs Kubernetes's much larger ecosystem of operators and third-party tooling"
+pairs_with: [docker]
+alternatives: [kubernetes, cloud-run]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Set explicit CPU/memory task-definition sizing based on real profiling, not guesswork -- agent-generated task definitions with oversized defaults are a real, easy cost mistake'

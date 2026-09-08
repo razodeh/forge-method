@@ -1,0 +1,27 @@
+id: argo-cd
+kind: ci
+name: Argo CD
+category: gitops-cd
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - "GitOps-native continuous delivery for Kubernetes: the cluster state continuously reconciles to match a Git repository's own declared state"
+  - 'Strong drift detection and a clear UI for visualizing the difference between desired and actual cluster state'
+weaknesses:
+  - 'Kubernetes-specific -- not a general-purpose CD tool for non-Kubernetes deployment targets'
+  - "Adds real operational surface (its own controller, UI, and RBAC model) to a cluster that didn't previously need it"
+fits_when:
+  - 'the deployment target is Kubernetes and GitOps (Git as the single source of truth for cluster state) is the desired delivery model'
+  - 'strong drift detection and auditability of cluster state changes matter'
+avoid_when:
+  - 'the deployment target is not Kubernetes'
+  - "the team doesn't want to adopt a GitOps workflow -- a push-based CD pipeline may be simpler"
+pairs_with: [kubernetes, helm]
+alternatives: [flux]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Never apply changes directly to the cluster with kubectl for anything Argo CD manages -- manual drift will be reconciled away, and agent-generated infra changes must go through the Git-tracked source instead'

@@ -1,0 +1,27 @@
+id: kubernetes
+kind: container
+name: Kubernetes
+category: container-orchestration
+maturity: mature
+licence: Apache-2.0
+managed_options: [aws-eks, gcp-gke, azure-aks]
+strengths:
+  - 'The industry-standard container orchestrator, with the deepest ecosystem (Helm, operators, service meshes) and cross-cloud portability'
+  - 'Powerful, declarative primitives for scaling, self-healing, rolling updates, and complex multi-service topologies'
+weaknesses:
+  - 'Substantial operational complexity and a real learning curve -- widely considered overkill for small, simple deployments'
+  - 'Cluster operations (upgrades, networking, RBAC) require genuine, ongoing platform-engineering investment'
+fits_when:
+  - 'the system has multiple services with complex scaling, self-healing, or multi-cloud portability requirements'
+  - 'the team has (or is building) real platform-engineering capacity to operate a cluster'
+avoid_when:
+  - 'the workload is a single small service that a simpler platform (Cloud Run, Fly.io, Render) would serve just as well'
+  - 'the team has no capacity to invest in the ongoing cluster-operations work Kubernetes requires'
+pairs_with: [docker, helm, argo-cd]
+alternatives: [ecs-fargate, cloud-run, nomad]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Set resource requests/limits explicitly on every workload -- agent-generated manifests without them are a common source of noisy-neighbor scheduling problems'

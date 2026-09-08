@@ -1,0 +1,26 @@
+id: playwright
+kind: testing
+name: Playwright
+category: e2e-testing
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'Cross-browser (Chromium, Firefox, WebKit) end-to-end testing with a single API, plus strong built-in auto-waiting that eliminates most manual timing hacks'
+  - 'Excellent debugging tooling (trace viewer, codegen) that meaningfully lowers the cost of writing and maintaining E2E tests'
+weaknesses:
+  - 'E2E tests are inherently slower and more flake-prone than unit tests, regardless of the tool -- a real cost class, not specific to Playwright'
+  - 'Younger than Cypress in raw community size, though rapidly growing and now widely considered at least as capable'
+fits_when:
+  - 'cross-browser end-to-end testing (including real WebKit/Safari coverage) is a requirement'
+  - 'the team wants strong built-in auto-waiting and debugging tooling to reduce E2E flakiness'
+avoid_when:
+  - 'the test need is component-level, not full end-to-end -- a unit/component testing tool is faster and simpler'
+  - "the team specifically needs Cypress's own longer community track record and plugin ecosystem"
+pairs_with: [typescript-js]
+alternatives: [cypress]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use Playwright's own auto-waiting locators rather than manual sleep/wait calls -- agent-generated tests with hardcoded waits are a common source of flaky CI failures"

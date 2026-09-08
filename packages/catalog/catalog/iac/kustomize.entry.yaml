@@ -1,0 +1,27 @@
+id: kustomize
+kind: iac
+name: Kustomize
+category: kubernetes-packaging
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - "Template-free, patch-based approach to customizing Kubernetes manifests -- plain YAML overlays rather than Helm's Go-template string manipulation"
+  - 'Built directly into kubectl, so no separate tool installation is required for basic use'
+weaknesses:
+  - 'No built-in package/release-versioning model the way Helm charts provide -- less suited to distributing reusable, parameterized packages'
+  - "Smaller ecosystem of pre-built, shareable configurations than Helm's chart repository model"
+fits_when:
+  - 'customizing a set of plain Kubernetes manifests across environments (dev/staging/prod) without templating'
+  - "the team wants to avoid Helm's Go-template whitespace/quoting footguns"
+avoid_when:
+  - 'the team needs to consume or distribute versioned, parameterized packages the way Helm charts provide'
+  - 'the team wants built-in release versioning and rollback the way Helm provides'
+pairs_with: [kubernetes]
+alternatives: [helm]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Run kustomize build (or kubectl kustomize) to inspect the fully rendered output before applying -- overlay interactions can be non-obvious'

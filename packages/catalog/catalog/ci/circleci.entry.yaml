@@ -1,0 +1,27 @@
+id: circleci
+kind: ci
+name: CircleCI
+category: ci-cd
+maturity: mature
+licence: N/A (proprietary managed service, with a self-hosted "server" option)
+managed_options: [circleci]
+strengths:
+  - 'Mature, source-host-agnostic managed CI (works with GitHub, GitLab, Bitbucket) with strong caching and parallelism features'
+  - 'Orbs (reusable config packages) give a clean way to share pipeline configuration across projects'
+weaknesses:
+  - 'Proprietary pricing based on compute credits can become a real, variable cost at scale'
+  - "Smaller ecosystem of pre-built integrations than GitHub Actions' marketplace"
+fits_when:
+  - 'the team wants a mature, source-host-agnostic managed CI platform independent of GitHub/GitLab'
+  - 'fine-grained caching and parallelism control matter for build performance'
+avoid_when:
+  - 'the repository already lives on GitHub/GitLab and the tighter native CI integration is preferred'
+  - "predictable, fixed CI cost matters more than CircleCI's compute-credit-based pricing model"
+pairs_with: [docker, kubernetes]
+alternatives: [github-actions, gitlab-ci, buildkite]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Use CircleCI's contexts for secrets rather than hardcoding them in config.yml -- the same discipline agent-generated pipeline files need everywhere"

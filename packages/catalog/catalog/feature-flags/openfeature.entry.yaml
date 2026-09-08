@@ -1,0 +1,26 @@
+id: openfeature
+kind: feature-flags
+name: OpenFeature
+category: feature-flag-standard
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'A vendor-neutral, CNCF-incubating standard API for feature flags -- instrument once, swap providers (LaunchDarkly, Flagsmith, a homegrown service) without rewriting application code'
+  - "Avoids locking feature-flag evaluation logic to one specific vendor's own proprietary SDK"
+weaknesses:
+  - "Younger project with a smaller ecosystem of provider integrations than any single established vendor's own mature SDK"
+  - "Only as useful as the quality of the underlying provider it's wired to -- OpenFeature itself doesn't manage flags"
+fits_when:
+  - 'avoiding vendor lock-in to a specific feature-flag provider is a priority'
+  - 'the org may switch flag providers over time and wants application code insulated from that change'
+avoid_when:
+  - "the org is fully committed to one vendor's own SDK long-term and the abstraction layer adds no real value"
+  - 'the team wants direct access to a specific provider feature not yet exposed through the OpenFeature abstraction'
+pairs_with: [unleash, launchdarkly]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Wire flag evaluation through the OpenFeature API even when only one provider is in use today -- agent-generated code calling a provider's proprietary SDK directly defeats the point of adopting the standard"

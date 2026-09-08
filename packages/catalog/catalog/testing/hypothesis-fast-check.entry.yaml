@@ -1,0 +1,26 @@
+id: hypothesis-fast-check
+kind: testing
+name: Hypothesis/fast-check
+category: property-based-testing
+maturity: mature
+licence: MPL-2.0 (Hypothesis), MIT (fast-check)
+strengths:
+  - 'Property-based testing generates hundreds of randomized inputs per test and automatically shrinks failures to a minimal reproducing case'
+  - 'Finds edge cases (empty strings, boundary numbers, unusual unicode) that example-based hand-written tests routinely miss'
+weaknesses:
+  - 'Writing good properties (invariants that should always hold) is a real skill distinct from writing example-based tests, with a genuine learning curve'
+  - 'Slower per-run than example-based tests, since each test executes many generated cases rather than one'
+fits_when:
+  - 'the function under test has real invariants (not just specific examples) worth verifying across a wide input space'
+  - 'the domain has known edge-case-prone areas (parsing, serialization, numeric boundaries) that benefit from randomized input generation'
+avoid_when:
+  - "the function's correctness is adequately captured by a small number of specific example cases"
+  - "the team hasn't yet built the skill of identifying real properties/invariants to test"
+pairs_with: [python, typescript-js]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Write real invariant properties (e.g. "decode(encode(x)) == x"), not properties that just restate the implementation -- agent-generated property tests that mirror the code under test verify nothing'

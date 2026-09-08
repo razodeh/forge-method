@@ -1,0 +1,27 @@
+id: cdk
+kind: iac
+name: CDK
+category: iac
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - "Infrastructure-as-code written in real programming languages (TypeScript, Python, Java) that synthesizes to CloudFormation, giving AWS's own native IaC a modern authoring experience"
+  - 'Deep, first-party AWS integration and constructs library maintained directly by AWS'
+weaknesses:
+  - 'AWS-only -- not a fit for multi-cloud infrastructure the way Terraform/Pulumi are'
+  - "Synthesizes to CloudFormation underneath, inheriting some of CloudFormation's own operational quirks (stack drift, deployment failure rollback behavior)"
+fits_when:
+  - 'the infrastructure is entirely AWS and the team wants a modern, general-purpose-language authoring experience over CloudFormation'
+  - 'sharing code/types between application code and infrastructure code is valuable'
+avoid_when:
+  - 'the infrastructure spans multiple clouds -- CDK cannot express non-AWS resources'
+  - 'the team prefers a fully declarative model over a general-purpose-language one'
+pairs_with: []
+alternatives: [terraform-opentofu, cloudformation]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Review cdk diff output before cdk deploy -- the same pre-apply review discipline every IaC tool in this catalog requires'

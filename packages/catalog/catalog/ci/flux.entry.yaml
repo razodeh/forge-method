@@ -1,0 +1,27 @@
+id: flux
+kind: ci
+name: Flux
+category: gitops-cd
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'GitOps-native, lightweight Kubernetes continuous delivery with a strong focus on being a set of small, composable controllers (the GitOps Toolkit)'
+  - 'CNCF-graduated project with deep, native integration into the broader Kubernetes/Helm/Kustomize ecosystem'
+weaknesses:
+  - 'Kubernetes-specific -- not a general-purpose CD tool for non-Kubernetes deployment targets'
+  - "Its own UI/visualization tooling is less polished than Argo CD's out of the box (though Weave GitOps adds one)"
+fits_when:
+  - 'the deployment target is Kubernetes and a lightweight, composable GitOps toolset is preferred'
+  - 'deep native integration with Helm/Kustomize workflows is a priority'
+avoid_when:
+  - 'the deployment target is not Kubernetes'
+  - "a polished, built-in UI for visualizing GitOps state matters more than Flux's more minimal default tooling"
+pairs_with: [kubernetes, helm]
+alternatives: [argo-cd]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Never apply changes directly to the cluster for anything Flux manages -- the same GitOps discipline Argo CD requires applies here'

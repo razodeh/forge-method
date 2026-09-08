@@ -1,0 +1,27 @@
+id: ansible
+kind: iac
+name: Ansible
+category: configuration-management
+maturity: mature
+licence: GPL-3.0
+managed_options: [red-hat-ansible-automation-platform]
+strengths:
+  - 'Agentless configuration management over SSH -- no persistent agent to install on managed hosts, a real operational simplicity advantage'
+  - 'Extremely broad module ecosystem covering everything from server configuration to cloud-resource provisioning'
+weaknesses:
+  - 'Primarily a configuration-management/provisioning tool, not a full declarative-state IaC system like Terraform -- playbooks are more imperative in practice'
+  - 'Execution speed over SSH to many hosts can be a real bottleneck at large fleet scale compared to agent-based alternatives'
+fits_when:
+  - 'configuring/provisioning existing servers (not just cloud-resource creation) is the primary need'
+  - 'an agentless, SSH-based approach is preferred over installing a persistent management agent'
+avoid_when:
+  - 'the primary need is declarative cloud-resource provisioning with strong state tracking -- Terraform fits that better'
+  - 'the fleet is large enough that SSH-based execution speed becomes a real bottleneck'
+pairs_with: []
+alternatives: [terraform-opentofu]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Write idempotent playbooks (safe to re-run) -- agent-generated tasks using ad-hoc shell commands instead of Ansible's own idempotent modules break this guarantee"

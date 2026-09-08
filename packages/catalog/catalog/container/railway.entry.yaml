@@ -1,0 +1,27 @@
+id: railway
+kind: container
+name: Railway
+category: paas
+maturity: growing
+licence: N/A (proprietary managed service)
+managed_options: [railway]
+strengths:
+  - 'Extremely fast, low-friction path from a git repo to a deployed service, with a polished, developer-focused UI'
+  - 'Built-in managed databases and simple, usage-based pricing that scales down naturally for small projects'
+weaknesses:
+  - 'Smaller platform and shorter track record than Render/Fly.io for larger-scale production workloads'
+  - 'Less configurable than raw Kubernetes/ECS for complex, highly customized infrastructure needs'
+fits_when:
+  - 'the project is early-stage or small-scale and a very quick path from repo to deployed service matters'
+  - 'usage-based pricing that scales down for low-traffic projects is a priority'
+avoid_when:
+  - "the workload is large-scale production traffic where a more established platform's track record matters"
+  - 'the architecture needs highly customized infrastructure control that only raw Kubernetes/ECS provides'
+pairs_with: [docker, postgresql]
+alternatives: [render, fly-io]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Confirm environment-variable and secret configuration through Railway's own dashboard/CLI rather than committing them to the repo"

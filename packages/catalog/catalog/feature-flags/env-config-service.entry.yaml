@@ -1,0 +1,26 @@
+id: env-config-service
+kind: feature-flags
+name: env+config service
+category: configuration
+maturity: mature
+licence: N/A (an approach, not a specific product)
+strengths:
+  - 'The simplest possible configuration mechanism -- environment variables (or a lightweight config service) with zero new infrastructure to adopt'
+  - 'Universally supported by every deployment platform and language with no special SDK required'
+weaknesses:
+  - 'No built-in support for gradual rollouts, percentage-based targeting, or runtime toggling without a redeploy -- a real feature gap versus a dedicated flag platform'
+  - 'Configuration drift across environments is easy to introduce without deliberate discipline (a shared config schema/validation)'
+fits_when:
+  - 'configuration needs are simple (environment-specific values, on/off toggles set at deploy time) with no need for runtime targeting or gradual rollout'
+  - 'the team wants to avoid adopting a dedicated feature-flag SDK/vendor for simple needs'
+avoid_when:
+  - 'the team needs gradual percentage-based rollouts, user-targeted flags, or runtime toggling without a redeploy -- a dedicated feature-flag platform fits that better'
+  - 'multiple teams need self-service control over flags without a redeploy for every change'
+pairs_with: []
+alternatives: [unleash, launchdarkly]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Validate required environment variables at startup and fail fast if missing -- agent-generated code that silently falls back to a default for a missing required config value hides real deployment misconfigurations'

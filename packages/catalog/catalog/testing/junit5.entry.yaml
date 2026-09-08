@@ -1,0 +1,26 @@
+id: junit5
+kind: testing
+name: JUnit5
+category: unit-testing
+maturity: mature
+licence: EPL-2.0
+strengths:
+  - "The standard JVM (Java/Kotlin) testing framework, with a modern, extensible architecture (Jupiter engine) over JUnit4's older design"
+  - 'Deep IDE and build-tool integration across the entire JVM ecosystem'
+weaknesses:
+  - 'Migrating a large existing JUnit4 suite to JUnit5 has real, if usually mechanical, migration cost'
+  - "Parameterized/dynamic test authoring has a steeper learning curve than pytest's more implicit fixture model"
+fits_when:
+  - 'the project is JVM (Java/Kotlin) and needs the standard, modern unit-testing framework'
+  - 'the project needs parameterized/dynamic test generation with deep IDE and build-tool integration'
+avoid_when:
+  - 'the project is not JVM-based'
+  - "the team wants TestNG's own alternative feature set instead of JUnit's"
+pairs_with: [java, kotlin, spring-boot]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use JUnit5's own extension model (@ExtendWith) rather than reflection hacks for test lifecycle customization"

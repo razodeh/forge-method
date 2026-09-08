@@ -1,0 +1,27 @@
+id: terraform-opentofu
+kind: iac
+name: Terraform/OpenTofu
+category: iac
+maturity: mature
+licence: BUSL-1.1 (Terraform, HashiCorp), MPL-2.0 (OpenTofu, the Linux-Foundation-backed fork)
+managed_options: [hcp-terraform, spacelift, scalr]
+strengths:
+  - 'The dominant declarative, provider-agnostic infrastructure-as-code tool, with the largest ecosystem of cloud-provider integrations of any tool in this row'
+  - "OpenTofu (the fork created after HashiCorp's 2023 licence change) preserves full compatibility under a fully open-source MPL-2.0 licence"
+weaknesses:
+  - 'State-file management (locking, drift, remote backends) is a real operational concern requiring deliberate setup'
+  - "HashiCorp's own BUSL licensing change is a real consideration for some procurement policies; OpenTofu exists specifically to address it"
+fits_when:
+  - 'multi-cloud or provider-agnostic infrastructure-as-code with the widest ecosystem of provider integrations is needed'
+  - "the team wants a fully open-source path -- OpenTofu specifically, given Terraform's own licence change"
+avoid_when:
+  - "the infrastructure is entirely within one cloud and that provider's own native IaC tool (CDK/CloudFormation) would be simpler"
+  - "the licence terms conflict with the organization's procurement policy -- OpenTofu directly addresses this if chosen instead"
+pairs_with: [kubernetes, aws-gcp-azure-secret-managers]
+alternatives: [pulumi, cloudformation, cdk]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Always run terraform plan and review the diff before apply -- agent-generated infrastructure changes applied without review are a real, high-blast-radius risk'

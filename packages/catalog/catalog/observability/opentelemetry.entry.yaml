@@ -1,0 +1,27 @@
+id: opentelemetry
+kind: observability
+name: OpenTelemetry
+category: instrumentation-standard
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'The vendor-neutral, CNCF-graduated standard for traces, metrics, and logs -- instrument once, export to any compatible backend'
+  - "Avoids locking application instrumentation to one specific observability vendor's own proprietary SDK"
+weaknesses:
+  - 'Auto-instrumentation coverage and stability vary meaningfully across languages -- some ecosystems are far more mature than others'
+  - "The collector/exporter pipeline adds real operational configuration surface versus a vendor's own single-SDK approach"
+fits_when:
+  - 'avoiding vendor lock-in to a specific observability backend is a priority, or the org may switch backends over time'
+  - 'traces/metrics/logs need to be correlated consistently across a polyglot service architecture'
+avoid_when:
+  - "the org is fully committed to one observability vendor's own proprietary SDK and instrumentation quality is already excellent there"
+  - "auto-instrumentation maturity for the team's specific language is still too immature to rely on"
+pairs_with: [prometheus, grafana-lgtm, jaeger]
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use OpenTelemetry's own semantic conventions for span/attribute naming -- agent-generated instrumentation with ad-hoc naming loses cross-service correlation value"

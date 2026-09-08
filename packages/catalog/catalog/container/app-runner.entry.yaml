@@ -1,0 +1,27 @@
+id: app-runner
+kind: container
+name: App Runner
+category: serverless-containers
+maturity: growing
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-app-runner]
+strengths:
+  - 'The simplest AWS path from a container image or source repo to a running, auto-scaled HTTPS service -- no Kubernetes manifests or ECS task definitions to author'
+  - 'Built-in load balancing, TLS, and auto-scaling with minimal configuration'
+weaknesses:
+  - 'Far less configurable than ECS/Fargate or Kubernetes for complex multi-service architectures'
+  - 'AWS-only -- a real vendor lock-in cost for a multi-cloud organization'
+fits_when:
+  - 'the workload is a single, simple containerized web service and minimal AWS configuration overhead is the priority'
+  - 'the team wants managed HTTPS/load-balancing/auto-scaling with essentially zero configuration'
+avoid_when:
+  - 'the architecture needs complex multi-service orchestration -- ECS/Fargate or Kubernetes give more control'
+  - 'the organization is not AWS-native and cloud-agnosticism matters'
+pairs_with: [docker]
+alternatives: [cloud-run, fly-io, render]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Confirm App Runner's own resource/scaling limits fit the real workload before relying on it -- it trades configurability for simplicity, and some advanced needs genuinely don't fit"

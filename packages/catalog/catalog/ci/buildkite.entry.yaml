@@ -1,0 +1,27 @@
+id: buildkite
+kind: ci
+name: Buildkite
+category: ci-cd
+maturity: mature
+licence: N/A (proprietary managed service, self-hosted agents)
+managed_options: [buildkite]
+strengths:
+  - "Hybrid model: the control plane is managed, but build agents run entirely on the team's own infrastructure -- full control over the execution environment with none of Jenkins's control-plane operational burden"
+  - 'Well-suited to very large monorepos and complex, high-throughput build pipelines'
+weaknesses:
+  - "Requires operating and scaling the team's own agent fleet, unlike a fully managed CI's zero-infrastructure model"
+  - 'Smaller community and ecosystem than GitHub Actions/CircleCI'
+fits_when:
+  - 'the team wants full control over the build execution environment without operating a full CI control plane like Jenkins'
+  - 'the workload is a very large monorepo needing high build throughput and custom agent infrastructure'
+avoid_when:
+  - 'the team wants a fully managed CI system with zero infrastructure to run themselves'
+  - 'the team needs the largest possible community/ecosystem of pre-built integrations'
+pairs_with: [docker, kubernetes]
+alternatives: [circleci, jenkins]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Confirm agent queue targeting in pipeline YAML matches the intended execution environment -- agent-generated pipelines with the wrong queue silently run on the wrong infrastructure'

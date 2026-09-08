@@ -1,0 +1,27 @@
+id: helm
+kind: iac
+name: Helm
+category: kubernetes-packaging
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'The de facto standard package manager for Kubernetes -- templated manifests with versioned releases, upgrades, and rollbacks'
+  - 'Enormous ecosystem of pre-built charts for nearly every common piece of infrastructure software'
+weaknesses:
+  - "Templating YAML with Go templates is notoriously easy to get subtly wrong (whitespace, quoting) versus Kustomize's overlay-based approach"
+  - 'Chart quality varies significantly across the public ecosystem -- some charts are far more maintained than others'
+fits_when:
+  - 'deploying to Kubernetes and either consuming a widely-used pre-built chart or needing versioned, parameterized releases'
+  - 'versioned releases with built-in upgrade/rollback semantics are needed'
+avoid_when:
+  - "the team prefers Kustomize's patch-based overlay model over Helm's template-and-values approach"
+  - 'the specific chart needed is poorly maintained -- verify chart quality before adopting'
+pairs_with: [kubernetes, argo-cd]
+alternatives: [kustomize]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Run helm template (or --dry-run) to inspect rendered manifests before installing -- agent-generated values files can produce unexpected output from complex chart templates'

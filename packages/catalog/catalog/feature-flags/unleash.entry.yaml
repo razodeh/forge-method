@@ -1,0 +1,27 @@
+id: unleash
+kind: feature-flags
+name: Unleash
+category: feature-flags
+maturity: mature
+licence: Apache-2.0 (Unleash open-source), proprietary (Unleash Enterprise)
+managed_options: [unleash-cloud]
+strengths:
+  - 'Fully open-source, self-hostable feature-flag platform with no per-seat pricing for the core open-source edition'
+  - "Native OpenFeature provider support, avoiding lock-in to Unleash's own SDK specifically"
+weaknesses:
+  - 'Self-hosting requires real operational investment; some advanced features are gated behind the paid Enterprise tier'
+  - "Smaller ecosystem/community than LaunchDarkly's much larger, longer-established commercial platform"
+fits_when:
+  - 'a fully open-source, self-hostable feature-flag platform is preferred over a proprietary managed one'
+  - 'the team wants native OpenFeature provider support to avoid deeper vendor lock-in'
+avoid_when:
+  - 'the team wants zero self-hosting operational overhead and a proprietary managed platform is acceptable'
+  - "the org needs LaunchDarkly's much broader ecosystem/enterprise feature set specifically"
+pairs_with: [openfeature]
+alternatives: [launchdarkly, flagsmith]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use the OpenFeature provider rather than Unleash's own proprietary SDK directly, to keep the integration portable"

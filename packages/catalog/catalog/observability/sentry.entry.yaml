@@ -1,0 +1,27 @@
+id: sentry
+kind: observability
+name: Sentry
+category: error-tracking
+maturity: mature
+licence: FSL-1.1 (Functional Source License; converts to Apache-2.0 after 2 years per version), self-hosted option available
+managed_options: [sentry-io]
+strengths:
+  - 'Purpose-built error tracking and crash reporting with excellent source-map/symbolication support across nearly every language and framework'
+  - 'Fast, focused developer workflow for triaging and resolving real production errors, distinct from general-purpose observability platforms'
+weaknesses:
+  - 'Narrower scope than a full observability platform -- not a substitute for metrics/tracing/logging infrastructure'
+  - 'Self-hosting is possible but has real operational overhead; most teams use the managed service'
+fits_when:
+  - 'the team needs focused, real-time error/crash tracking and triage, alongside (not instead of) broader observability tooling'
+  - 'excellent source-map/symbolication support across many languages/frameworks is valuable'
+avoid_when:
+  - 'the team needs a full observability platform (metrics, traces, logs) rather than error tracking specifically'
+  - 'self-hosting is required and the operational overhead of running Sentry is unwanted'
+pairs_with: [opentelemetry]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Scrub PII from error payloads (Sentry's own data-scrubbing config) before shipping -- agent-generated error handlers that log raw request bodies are a real data-leak risk"

@@ -1,0 +1,27 @@
+id: cloudformation
+kind: iac
+name: CloudFormation
+category: iac
+maturity: mature
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-cloudformation]
+strengths:
+  - "AWS's own first-party, fully native IaC service with no separate tool to install or state backend to manage -- AWS itself tracks stack state"
+  - 'Deepest possible AWS-service coverage, since new AWS services typically ship CloudFormation support immediately'
+weaknesses:
+  - 'AWS-only -- not a fit for multi-cloud infrastructure'
+  - "Raw YAML/JSON templates are notably more verbose and less ergonomic than Terraform's HCL or CDK's general-purpose-language authoring"
+fits_when:
+  - "the infrastructure is entirely AWS and the team wants AWS's own fully native IaC with no separate state backend to manage"
+  - 'the team wants zero third-party tooling to install for basic infrastructure provisioning'
+avoid_when:
+  - 'the infrastructure spans multiple clouds'
+  - 'the team wants a more ergonomic authoring experience -- CDK (which synthesizes to CloudFormation) or Terraform both improve on raw template authoring'
+pairs_with: []
+alternatives: [cdk, terraform-opentofu]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use change sets to review a stack update before executing it -- agent-generated templates applied directly without a change-set review are a real blast-radius risk'

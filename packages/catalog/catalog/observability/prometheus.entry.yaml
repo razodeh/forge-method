@@ -1,0 +1,27 @@
+id: prometheus
+kind: observability
+name: Prometheus
+category: metrics
+maturity: mature
+licence: Apache-2.0
+managed_options: [aws-amp, gcp-managed-prometheus]
+strengths:
+  - 'The de facto standard for metrics collection in cloud-native/Kubernetes environments, with a powerful query language (PromQL) and pull-based scraping model'
+  - 'Enormous ecosystem of exporters covering nearly every common piece of infrastructure software'
+weaknesses:
+  - "Long-term storage and high-cardinality metrics at scale require a separate remote-write backend (Thanos, Mimir, Cortex) -- Prometheus alone isn't built for that"
+  - 'The pull-based model is a real architectural mismatch for short-lived/serverless workloads without a push-gateway workaround'
+fits_when:
+  - 'the environment is Kubernetes/cloud-native and pull-based metrics scraping fits the architecture'
+  - "PromQL's query power for alerting/dashboards is a real requirement"
+avoid_when:
+  - 'long-term, high-cardinality metric storage at scale is needed without adopting a separate remote-write backend'
+  - 'the workload is serverless/short-lived and push-based metrics would fit more naturally'
+pairs_with: [grafana-lgtm, opentelemetry]
+alternatives: [datadog, new-relic]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Set explicit alert thresholds based on real baseline data, not arbitrary numbers -- agent-generated alerting rules with guessed thresholds are a common source of alert fatigue'

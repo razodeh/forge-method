@@ -1,0 +1,27 @@
+id: jenkins
+kind: ci
+name: Jenkins
+category: ci-cd
+maturity: mature
+licence: MIT
+managed_options: []
+strengths:
+  - 'The most extensible, plugin-driven CI system in existence, able to integrate with nearly any tool via its enormous plugin ecosystem'
+  - 'Fully self-hostable with complete control over the execution environment, a real asset for air-gapped or highly regulated environments'
+weaknesses:
+  - 'Real operational burden to run, secure, and upgrade -- plugin compatibility and security patching are an ongoing maintenance cost'
+  - 'Groovy-based Jenkinsfile pipelines are notably less ergonomic than modern YAML-based CI configs'
+fits_when:
+  - 'the organization needs a fully self-hosted CI system, especially in an air-gapped or highly regulated environment'
+  - 'an unusual or legacy toolchain integration exists as a Jenkins plugin but nowhere else'
+avoid_when:
+  - 'the team wants a managed, low-maintenance CI system rather than one to operate and patch themselves'
+  - 'the workflow authoring experience matters more than maximum plugin flexibility -- modern YAML-based CI tools are more ergonomic'
+pairs_with: [docker, kubernetes]
+alternatives: [github-actions, gitlab-ci]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Keep Jenkins itself and every installed plugin patched aggressively -- it is a frequent target, and agent-assisted infrastructure work should treat version currency here as a real security requirement'

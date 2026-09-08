@@ -1,0 +1,27 @@
+id: gitlab-ci
+kind: ci
+name: GitLab CI
+category: ci-cd
+maturity: mature
+licence: MIT (GitLab CE core), proprietary (GitLab EE features)
+managed_options: [gitlab-com]
+strengths:
+  - "Tightly integrated with GitLab's own source control, issue tracking, and container registry in one platform"
+  - 'Mature, YAML-based pipeline model with strong built-in support for multi-stage pipelines and DAG-based job ordering'
+weaknesses:
+  - 'Tied to GitLab as the source host -- not a natural fit for a GitHub-hosted repository'
+  - "Some of the more advanced pipeline features are gated behind GitLab's paid EE tiers"
+fits_when:
+  - 'the repository is already hosted on GitLab and tight platform integration is valuable'
+  - 'the team wants CI, source control, and container registry unified in one product'
+avoid_when:
+  - 'the repository is not hosted on GitLab'
+  - "the required pipeline features are gated behind a paid tier the organization won't adopt"
+pairs_with: [docker, kubernetes]
+alternatives: [github-actions, jenkins]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Use GitLab CI/CD variables (masked/protected) for secrets, never hardcode them in .gitlab-ci.yml -- agent-generated pipeline files with inline secrets are a real leak risk'

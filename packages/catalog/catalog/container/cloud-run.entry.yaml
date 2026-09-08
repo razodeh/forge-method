@@ -1,0 +1,27 @@
+id: cloud-run
+kind: container
+name: Cloud Run
+category: serverless-containers
+maturity: mature
+licence: N/A (proprietary GCP managed service)
+managed_options: [gcp-cloud-run]
+strengths:
+  - 'Fully serverless container execution -- scales to zero, pay only for actual request-serving time, with no cluster to manage'
+  - 'Deploys any standard container image directly, without needing a Kubernetes manifest or GCP-specific packaging'
+weaknesses:
+  - 'GCP-only -- a real vendor lock-in cost for a multi-cloud organization'
+  - 'Cold-start latency for scale-to-zero services is a real consideration for latency-sensitive workloads'
+fits_when:
+  - 'the workload is a stateless HTTP service that benefits from scale-to-zero serverless execution'
+  - 'the team wants to deploy a plain container image with minimal infrastructure setup'
+avoid_when:
+  - 'the organization is not GCP-native and cloud-agnosticism matters'
+  - 'the workload is latency-sensitive and cannot tolerate scale-to-zero cold-start delay'
+pairs_with: [docker]
+alternatives: [ecs-fargate, app-runner, fly-io]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Set minimum instance counts explicitly if cold-start latency is unacceptable for a given service -- agent-generated deployment configs defaulting to scale-to-zero everywhere can silently introduce latency regressions'

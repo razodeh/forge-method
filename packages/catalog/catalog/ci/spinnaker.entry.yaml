@@ -1,0 +1,27 @@
+id: spinnaker
+kind: ci
+name: Spinnaker
+category: continuous-delivery
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'Purpose-built for complex, multi-cloud continuous delivery with sophisticated deployment strategies (canary, blue/green) as first-class features'
+  - 'Originally built at Netflix for very large-scale, multi-cloud deployment orchestration -- proven at real scale'
+weaknesses:
+  - 'Significant operational complexity to run and maintain -- one of the heaviest-weight tools in this row'
+  - 'Smaller, shrinking community relative to newer GitOps-native tools (Argo CD/Flux)'
+fits_when:
+  - 'the organization needs sophisticated multi-cloud deployment strategies (canary, blue/green) across many services'
+  - "the team has the operational capacity to run Spinnaker's own multi-component architecture"
+avoid_when:
+  - "the deployment target is a single cloud or Kubernetes cluster where Argo CD/Flux's lighter GitOps model fits better"
+  - "the team can't commit to the real operational overhead Spinnaker's architecture requires"
+pairs_with: [kubernetes]
+alternatives: [argo-cd, flux]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Verify canary/blue-green pipeline stage configuration carefully before relying on agent-generated deployment pipelines -- a misconfigured stage can route production traffic incorrectly'

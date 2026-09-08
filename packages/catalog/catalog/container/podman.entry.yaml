@@ -1,0 +1,27 @@
+id: podman
+kind: container
+name: Podman
+category: container-runtime
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - "Daemonless, rootless-by-default container runtime -- a real security improvement over Docker's traditional root-privileged daemon model"
+  - 'Drop-in CLI compatibility with Docker commands for most common workflows, easing migration'
+weaknesses:
+  - "Smaller ecosystem and community than Docker; some Docker-specific tooling/integrations don't have a direct Podman equivalent"
+  - "Docker Compose compatibility (via podman-compose) is not as seamless as Docker's own native tooling"
+fits_when:
+  - 'rootless, daemonless container execution is a real security requirement'
+  - "the organization wants to avoid Docker Desktop's commercial licensing terms"
+avoid_when:
+  - 'the team relies on Docker-specific tooling/integrations with no direct Podman equivalent'
+  - 'seamless docker-compose-based local multi-service development is a priority'
+pairs_with: [kubernetes]
+alternatives: [docker]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Verify any Docker-specific CLI flag/feature used in agent-generated scripts has a real Podman equivalent before assuming drop-in compatibility'

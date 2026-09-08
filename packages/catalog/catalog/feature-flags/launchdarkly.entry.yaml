@@ -1,0 +1,27 @@
+id: launchdarkly
+kind: feature-flags
+name: LaunchDarkly
+category: feature-flags
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [launchdarkly]
+strengths:
+  - 'The most established, feature-complete managed feature-flag platform -- mature targeting rules, experimentation, and audit logging'
+  - 'Broad SDK coverage across nearly every language and platform, with a polished management UI'
+weaknesses:
+  - 'Per-seat/monthly-active-user pricing can become a real, significant cost at scale'
+  - 'Proprietary -- real vendor lock-in unless deliberately abstracted (e.g. via OpenFeature)'
+fits_when:
+  - 'the team wants the most mature, feature-complete managed feature-flag platform with minimal self-hosting'
+  - 'built-in experimentation and audit-logging features are a real, near-term requirement'
+avoid_when:
+  - 'cost at scale is a hard constraint and a self-hosted option (Unleash) would be cheaper'
+  - 'vendor lock-in for feature-flag tooling is a real, deliberate concern'
+pairs_with: [openfeature]
+alternatives: [unleash, flagsmith]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Use the OpenFeature provider where available rather than LaunchDarkly's own proprietary SDK directly, to keep the integration portable"

@@ -1,0 +1,27 @@
+id: github-actions
+kind: ci
+name: GitHub Actions
+category: ci-cd
+maturity: mature
+licence: N/A (proprietary, bundled with GitHub)
+managed_options: [github-actions]
+strengths:
+  - 'Zero setup for any repo already hosted on GitHub -- no separate CI system to provision or connect'
+  - 'Enormous marketplace of pre-built actions covering nearly every common CI/CD task'
+weaknesses:
+  - 'Tied to GitHub as the source host -- not a natural fit if the repo lives elsewhere'
+  - 'Self-hosted runner management, while supported, has less mature tooling than some dedicated CI platforms'
+fits_when:
+  - 'the repository is already hosted on GitHub and minimal extra setup is a priority'
+  - 'the team wants the largest marketplace of pre-built, reusable workflow actions'
+avoid_when:
+  - 'the repository is not hosted on GitHub'
+  - 'the team needs advanced self-hosted-runner fleet management beyond what Actions provides natively'
+pairs_with: [docker, kubernetes]
+alternatives: [gitlab-ci, circleci, buildkite]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Pin third-party actions to a specific commit SHA, not a mutable tag -- agent-generated workflows referencing a floating tag are a real supply-chain risk'

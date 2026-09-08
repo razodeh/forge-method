@@ -1,0 +1,27 @@
+id: jaeger
+kind: observability
+name: Jaeger
+category: distributed-tracing
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'A mature, CNCF-graduated, fully open-source distributed tracing backend with native OpenTelemetry compatibility'
+  - 'Self-hostable with no per-seat/usage-based pricing, unlike proprietary observability platforms'
+weaknesses:
+  - 'Tracing-only -- not a full observability platform; needs pairing with separate metrics/logs tooling for complete coverage'
+  - 'Self-hosting and scaling the storage backend (Elasticsearch/Cassandra) is real operational work'
+fits_when:
+  - 'the team wants a fully open-source, self-hostable distributed tracing backend with no usage-based pricing'
+  - 'the architecture is already OpenTelemetry-native and needs a tracing-specific backend'
+avoid_when:
+  - 'the team wants a single unified platform covering metrics/logs/traces rather than a tracing-only backend'
+  - "the team can't commit to operating the storage backend Jaeger requires at scale"
+pairs_with: [opentelemetry]
+alternatives: [grafana-lgtm]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Propagate trace context consistently across every service boundary (HTTP headers, message queues) -- agent-generated code that drops context at one hop breaks the trace'

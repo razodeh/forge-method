@@ -1,0 +1,27 @@
+id: pyroscope
+kind: observability
+name: Pyroscope
+category: continuous-profiling
+maturity: growing
+licence: AGPL-3.0
+managed_options: [grafana-cloud]
+strengths:
+  - "Purpose-built continuous profiling (CPU, memory) across a running fleet -- finds real performance hotspots that traces/metrics alone can't show"
+  - 'Now part of the Grafana ecosystem (acquired), giving direct integration alongside Grafana/Loki/Tempo/Mimir dashboards'
+weaknesses:
+  - 'Narrower scope than a full observability platform -- profiling specifically, not a substitute for metrics/tracing/logging'
+  - "AGPL-3.0 licensing is a real consideration for some organizations' open-source policies"
+fits_when:
+  - 'the team needs continuous, fleet-wide CPU/memory profiling to find real performance hotspots, alongside existing metrics/tracing'
+  - 'the team already uses Grafana/LGTM and wants profiling integrated into the same dashboards'
+avoid_when:
+  - "the organization's open-source policy excludes AGPL-3.0-licensed software"
+  - "the performance question at hand doesn't need profiling-level granularity -- metrics/traces may already answer it"
+pairs_with: [grafana-lgtm]
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: low
+notes_for_agents:
+  - 'Continuous profiling has a real, if usually small, CPU overhead -- confirm the sampling rate is deliberately chosen, not left at an untested default, for latency-sensitive services'

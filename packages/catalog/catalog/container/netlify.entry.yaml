@@ -1,0 +1,27 @@
+id: netlify
+kind: container
+name: Netlify
+category: paas
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [netlify]
+strengths:
+  - 'Purpose-built for static sites and JAMstack apps, with zero-configuration preview deployments per pull request and a mature build-plugin ecosystem'
+  - 'Strong built-in support for forms, edge functions, and split-testing without additional infrastructure'
+weaknesses:
+  - 'Optimized specifically for static/JAMstack workloads -- not a natural fit for arbitrary long-running backend services'
+  - 'Serverless/edge function execution limits are real constraints for heavier backend workloads'
+fits_when:
+  - 'the project is a static site or JAMstack app needing zero-configuration deployment and preview URLs'
+  - 'built-in forms, edge functions, or split-testing would otherwise require separate infrastructure'
+avoid_when:
+  - "the workload is a long-running backend service outside Netlify's serverless-function execution model"
+  - 'the frontend framework is Next.js specifically, where Vercel (its author) often has tighter first-party support'
+pairs_with: [react, vue-nuxt, astro]
+alternatives: [vercel, render]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Check serverless/edge-function execution limits before generating backend logic intended to run on Netlify'
