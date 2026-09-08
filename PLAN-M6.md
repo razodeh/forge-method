@@ -267,8 +267,12 @@ of the spec's own comment before implementation, corrected here).
 - `CatalogRegistry.byKind('datastore')` returns every real datastore entry piece C2 ships, no more, no
   fewer.
 
-**Depends on:** `@forge/schemas` (no other real dependency — this package's own boundary edge is
-`catalog ← schemas` only).
+**Depends on:** nothing beyond `yaml`/`zod` — this piece never actually reuses anything from
+`@forge/schemas`, so a fresh critic round caught the declared-but-unused dependency and it was removed
+from `package.json`; the boundary graph's own `catalog ← schemas` edge stays available for a later piece
+(C2+) to use if one of them genuinely needs it.
+
+**Status:** done — see `SPEC-QUESTIONS.md` Q86.
 
 ---
 
@@ -385,17 +389,18 @@ generic parser/evaluator — no new engine logic anywhere in this package.
 **Mandate:** ship every workflow `10` §10.5's own built-in roster names, as real, `parseWorkflow`-valid
 YAML (`@forge/engine/workflow`, M5 P8, already built and unchanged by this piece).
 
-**Spec:** `10` §10.5's own table (19 named workflows); `10` §10.1's own full worked `build-stage`
-example as the literal content for that one entry; `10` §10.6 (the story implementation loop, for
-`implement-story`).
+**Spec:** `10` §10.5's own table (20 named workflows — recounted directly against the spec text before
+writing this section; an earlier draft of this plan miscounted it as 19); `10` §10.1's own full worked
+`build-stage` example as the literal content for that one entry; `10` §10.6 (the story implementation
+loop, for `implement-story`).
 
 **Surface:** `templates/workflows/<id>.workflow.yaml` — one real file per `10` §10.5 row.
 
 A real, unresolved wording tension to settle when this piece is built, recorded here rather than
 guessed silently: `specs/22` M6's own Build line says "the ten lifecycle workflows," but `10` §10.5's
-own table names nineteen distinct workflow ids. The ten `10` §10.2 lifecycle *phases* (P0-P10, eleven
-including P0) do not map 1:1 onto the nineteen workflow ids either. Record the actual resolution
-(most likely: ship all nineteen, since `10` §10.5 is the concrete, load-bearing content list and "ten
+own table names twenty distinct workflow ids. The ten `10` §10.2 lifecycle *phases* (P0-P10, eleven
+including P0) do not map 1:1 onto the twenty workflow ids either. Record the actual resolution
+(most likely: ship all twenty, since `10` §10.5 is the concrete, load-bearing content list and "ten
 lifecycle workflows" is `22`'s own loose paraphrase of the phases, not a literal subset instruction) in
 `SPEC-QUESTIONS.md` before writing the first workflow file, not after.
 

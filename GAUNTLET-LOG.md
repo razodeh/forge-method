@@ -5019,3 +5019,32 @@ priority tests for every such pairing.
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3440 tests, plus the boundaries-
 coverage config's own 64) all clean.
+
+---
+
+## M6 C1 — `@forge/catalog`: entry schema, registry, and hygiene validation (`12` §12.2)
+
+**Rounds: 1 (fresh critic finding zero logic bugs, two real minor issues, both fixed; no separate verify
+round run). Outcome: WON.**
+
+`catalogEntrySchema`/`loadCatalogEntry`/`CatalogRegistry`/`loadCatalogRegistry`/`validateEntry` — see
+`SPEC-QUESTIONS.md` Q86 for the full design record, including a second miscounted-enum correction (the
+`kind` enum: 20 members, not 19 as this plan's own first draft claimed) caught before implementation, the
+same discipline M3's `LevelSignals` correction (Q85) already used this milestone.
+
+### Round 1 — fresh critic: zero logic bugs, two real minor findings
+
+The critic independently re-derived the 20-member `kind` enum from the spec text and confirmed it exact,
+confirmed the performance-number hygiene regex does not false-positive against the worked example's own
+"millions of ops/sec" text (no digit present), and found no bug in the directory walk, registry CRUD, or
+issue-collection logic. Two real, if minor, findings, both fixed:
+
+1. `package.json` declared `@forge/schemas` as a dependency nothing in this piece actually imports.
+   **Fixed** by removing it — the boundary graph's own edge stays available for a later piece to use if
+   genuinely needed.
+2. `validateEntry`'s hygiene lexical scan covered four fields but not `notes_for_agents`, even though `12`
+   §12.2's own hygiene sentence is a blanket rule, not scoped to a field subset. **Fixed** by adding it to
+   the scanned set, with a new regression test.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3476 tests, plus the boundaries-
+coverage config's own 64) all clean.
