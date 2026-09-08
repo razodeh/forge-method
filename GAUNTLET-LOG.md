@@ -4722,3 +4722,58 @@ symmetry means the logic is symmetric too. The second finding is a different kin
 a real scope question the spec pack does not answer, resolved by picking the more conservative reading and
 recording why, rather than guessing silently or blocking the piece on an ambiguity nothing in the spec
 actually settles.
+
+---
+
+## M5 P18 — `@forge/engine/resume`: run-state reconstruction (`06` §6.10, `18` §18.4)
+
+**Rounds: 2 (one critic finding 2 MAJOR, both fixed; one scoped verify confirming both fixes with no new
+findings; no third round). Outcome: WON.**
+
+`reconstructRunState(events): Promise<RunState>` — `06` §6.10 step 1 ("reload event log; rebuild run
+state"), a pure, deterministic fold exhaustive over every real `EventType` (`18` §18.4's own ~56-member
+catalogue). Design points recorded in full in `SPEC-QUESTIONS.md` Q80: `06` §6.10's own transition diagram
+names a `StepAborted` event that was never actually registered in the real catalogue (confirmed directly
+against source), so a run-level `RunAborted` cascades to every step not already terminal-or-skipped
+instead; `PLAN-M5.md`'s own literal 6-value status enum was missing `'skipped'`, a real registered event;
+and the reducer's own exhaustive switch (no `default` case) is a real, directly-verified compile-time
+guarantee, not a stylistic choice — removing a case was confirmed to break the build.
+
+### Round 1 — critic: 2 MAJOR, both fixed
+
+**MAJOR: the `RunPlanned` reducer case unconditionally overwrote `planRef`, contradicting its own doc
+comment's documented leniency.** A malformed later `RunPlanned` payload made the assignment evaluate to
+`undefined`, silently discarding a previously-recovered, well-formed `planRef` — the opposite of the
+intended "survive a partially-written trailing line after a crash" behaviour this whole piece exists for.
+**Fixed** by changing the assignment to fall back to the previous value when extraction fails.
+
+**MAJOR: `EVENT_TYPES_HANDLED` (driving the "every event type" test) was checked only one direction** — a
+hand-typed array where nothing caught it *missing* a real `EventType` member. Confirmed empirically:
+removing a member produced no compile error and no test failure, contradicting the constant's own doc
+comment claiming this exact guarantee existed. **Fixed** by replacing it with a `Record<EventType, true>`
+object literal, from which the array is now mechanically derived — TypeScript's own ordinary object-literal
+checking requires every key present and rejects unknown ones, a genuine bidirectional guarantee verified
+directly in both directions (a missing key and a bogus extra key each produced real compile errors).
+
+### Round 2 — scoped verify: both fixes CONFIRMED-CORRECT, no new findings
+
+Independently re-derived whether the `planRef` fix's leniency should also apply to `runStatus` (assigned
+unconditionally in the same reducer case) and confirmed the two fields' different treatment is correct by
+design — `runStatus` doesn't read from the payload at all, so it has no equivalent "malformed input
+produces the wrong answer" failure mode. Independently destructive-tested the `Record` fix in both
+directions with the expected real compiler errors each time, confirmed fully reverted afterward.
+
+No other new findings; `tsc`, `eslint`, `prettier`, and the full-repo suite (3312 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file.
+
+### Calibration note
+
+Two different shapes of "the doc comment was wrong" in one piece. The `planRef` bug: the comment correctly
+described the *intended* behaviour, the *code* just didn't match it — an ordinary logic bug caught by
+testing the claim directly instead of trusting it. The `EVENT_TYPES_HANDLED` finding: the comment asserted
+a *test-suite guarantee* that never actually existed anywhere in the tests — not a wrong description of
+working code, but an aspirational claim about verification that was never wired up. The second is the more
+instructive lesson for this build's own discipline going forward: a doc comment claiming "this is tested"
+is itself a claim that needs verifying, not a substitute for checking the test actually exists and actually
+proves what the comment says it does.

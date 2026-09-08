@@ -889,6 +889,23 @@ not a thrown error.
 
 **Depends on:** P6 (telemetry), P11 (compiled plan shape).
 
+*(P18 is committed: `835421f`. See `SPEC-QUESTIONS.md` Q80 and its critic-round/verify-round addenda —
+confirmed directly against `@forge/telemetry`'s own real source that `06` §6.10's own step-transition
+diagram names a `StepAborted` event never actually registered in the real event catalogue, so a run-level
+`RunAborted` cascades to every step not already terminal-or-skipped instead; added a `'skipped'` status the
+plan's own literal 6-value enum bullet was missing, a real registered `StepSkipped` event with no home in
+it otherwise. A fresh critic round found two real bugs: a `RunPlanned` reducer case that silently discarded
+a previously-recovered plan reference the moment a later event had a malformed payload — the opposite of
+its own documented leniency, in exactly the "partially-written trailing line after a crash" scenario this
+piece exists to survive — and a test-support constant whose own doc comment claimed an exhaustiveness
+guarantee that was never actually wired up anywhere in the test suite (confirmed empirically: removing a
+real event type from it caused neither a compile error nor a test failure). Both fixed — the second via a
+`Record<EventType, true>` object literal, giving a genuine, directly-verified bidirectional compile-time
+guarantee (TypeScript itself now refuses to compile if the list and the real event catalogue ever
+disagree, in either direction). A scoped verify round independently confirmed both fixes with no new
+findings. See `GAUNTLET-LOG.md`'s own entry for the fuller story and its calibration note on the two
+different shapes "the doc comment was wrong" took in this one piece.)*
+
 ---
 
 ## P19 — Resumability: resume orchestration
