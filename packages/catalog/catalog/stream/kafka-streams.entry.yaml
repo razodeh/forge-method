@@ -1,0 +1,26 @@
+id: kafka-streams
+kind: stream
+name: Kafka Streams
+category: stream-processing
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'A lightweight Java/Kotlin library (not a separate cluster to operate) for stream processing directly against Kafka topics'
+  - 'No separate processing cluster needed -- runs embedded inside the consuming application itself'
+weaknesses:
+  - 'Tightly coupled to Kafka specifically -- not a general-purpose stream-processing engine like Flink'
+  - 'JVM-only; not an option for non-JVM stacks without a separate service boundary'
+fits_when:
+  - 'the team is already on the JVM and wants lightweight stream processing without operating a separate cluster'
+  - 'the processing logic is tightly scoped to transforming/aggregating Kafka topics directly'
+avoid_when:
+  - 'the stack is not JVM-based'
+  - 'the workload needs a general-purpose stream-processing engine independent of Kafka specifically -- Flink fits that better'
+pairs_with: [kafka]
+alternatives: [flink]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'State stores need explicit changelog-topic configuration for fault tolerance -- agent-generated code skipping this loses state on restart'

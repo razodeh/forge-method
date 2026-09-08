@@ -1,0 +1,27 @@
+id: flink
+kind: stream
+name: Flink
+category: stream-processing
+maturity: mature
+licence: Apache-2.0
+managed_options: [aws-kda, confluent-cloud]
+strengths:
+  - 'True low-latency stream processing (not micro-batched) with exactly-once state semantics and mature event-time/windowing support'
+  - 'Unified API for both batch and streaming workloads on the same engine'
+weaknesses:
+  - 'Steeper learning curve and heavier operational footprint than higher-level tools like dbt/Airflow'
+  - 'Cluster operations (checkpointing, state backends) require real distributed-systems expertise to run well'
+fits_when:
+  - 'the workload needs true low-latency, exactly-once stream processing with complex event-time windowing'
+  - 'the same engine needs to handle both batch and streaming jobs'
+avoid_when:
+  - "the workload is simple batch ETL that doesn't need sub-second stream-processing latency -- dbt/Airflow fit better"
+  - 'the team has no distributed stream-processing operational experience'
+pairs_with: [kafka]
+alternatives: [spark, kafka-streams]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Verify checkpointing/state-backend configuration explicitly -- agent-generated Flink jobs without it lose exactly-once guarantees on failure'

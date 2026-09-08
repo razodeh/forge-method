@@ -1,0 +1,26 @@
+id: jooq
+kind: orm
+name: jOOQ
+category: orm
+maturity: mature
+licence: Apache-2.0 (open-source edition), commercial (some databases)
+strengths:
+  - 'Type-safe SQL query builder that generates Java/Kotlin code directly from the real database schema -- queries that compile are queries that match the actual schema'
+  - 'Full access to database-specific SQL features that a higher-level ORM abstraction often hides'
+weaknesses:
+  - 'Requires codegen from a live database connection as part of the build, a real extra build-pipeline step'
+  - 'Commercial licensing is required for some databases (e.g. certain versions of SQL Server/Oracle) beyond the open-source edition'
+fits_when:
+  - "the team wants type-safe SQL with full access to database-specific features, without Hibernate's session/caching complexity"
+  - 'the queries are complex enough that a query builder closer to real SQL is preferred over a full ORM abstraction'
+avoid_when:
+  - 'the team wants the widest possible feature set (caching, lazy loading) that a full ORM like Hibernate provides'
+  - 'adding a schema-codegen step to the build pipeline is unwanted'
+pairs_with: [spring-boot, postgresql]
+alternatives: [hibernate-jpa]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Re-run codegen after any schema change before generating query code against it -- stale generated classes are a real source of confusing compile errors'

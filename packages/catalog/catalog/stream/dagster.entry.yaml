@@ -1,0 +1,27 @@
+id: dagster
+kind: stream
+name: Dagster
+category: workflow-orchestration
+maturity: growing
+licence: Apache-2.0
+managed_options: [dagster-cloud]
+strengths:
+  - "Asset-centric orchestration model (data assets as first-class citizens, not just tasks) gives better lineage and testability than Airflow's task-centric DAGs"
+  - 'Strong local development experience (Dagit UI, typed I/O) purpose-built for modern data-engineering workflows'
+weaknesses:
+  - 'Smaller ecosystem and community than Airflow, with fewer pre-built operators for niche integrations'
+  - "The asset-centric model has a real learning curve for teams coming from Airflow's task-centric mental model"
+fits_when:
+  - 'data lineage and testability of pipeline outputs (not just task execution) is a priority'
+  - "the team wants a more modern local-development experience than Airflow's"
+avoid_when:
+  - "the team needs Airflow's larger ecosystem of pre-built operators for niche integrations"
+  - "the team already has significant Airflow investment and switching cost isn't justified"
+pairs_with: [dbt]
+alternatives: [airflow, prefect]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Model pipeline outputs as assets (not bare tasks) to get Dagster's real lineage/testability benefit -- agent-generated task-only code loses the framework's main advantage"

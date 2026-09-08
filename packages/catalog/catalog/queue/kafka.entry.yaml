@@ -1,0 +1,27 @@
+id: kafka
+kind: queue
+name: Kafka
+category: distributed-log
+maturity: mature
+licence: Apache-2.0
+managed_options: [confluent-cloud, aws-msk, redpanda-cloud]
+strengths:
+  - 'The de facto standard distributed commit log: durable, ordered, replayable event streaming at very high throughput'
+  - 'Enormous ecosystem (Kafka Connect, Kafka Streams, Schema Registry) and near-universal client library support'
+weaknesses:
+  - 'Operationally heavy to self-host (ZooKeeper historically, now KRaft) -- most teams should use a managed offering'
+  - 'Not a task queue in the traditional sense -- consumer-group semantics differ meaningfully from RabbitMQ/SQS-style point-to-point queues'
+fits_when:
+  - 'the workload is high-throughput event streaming with a need for durable, replayable history'
+  - 'multiple independent consumers need to read the same event stream at their own pace'
+avoid_when:
+  - 'the workload is simple point-to-point task queuing -- RabbitMQ/SQS fit that shape more directly'
+  - 'the team cannot commit to operating Kafka (or paying for a managed offering) at the required scale'
+pairs_with: [debezium, kafka-streams, flink]
+alternatives: [redpanda, rabbitmq, pulsar]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Design topic/partition keys around real consumption patterns before writing producer code -- partition count is expensive to change after the fact'

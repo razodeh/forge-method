@@ -1,0 +1,27 @@
+id: ory
+kind: auth
+name: Ory
+category: self-hosted-identity-provider
+maturity: growing
+licence: Apache-2.0
+managed_options: [ory-network]
+strengths:
+  - 'Cloud-native, API-first identity stack (Kratos for identity, Hydra for OAuth2/OIDC) designed for modern containerized deployment rather than a monolithic legacy-style server'
+  - "Lighter-weight and more composable than Keycloak's all-in-one Java server model"
+weaknesses:
+  - "Smaller community and ecosystem than Keycloak's longer track record"
+  - 'The composable, multi-component architecture (separate Kratos/Hydra/Oathkeeper services) has more moving parts to understand than a single all-in-one server'
+fits_when:
+  - 'the team wants a cloud-native, API-first identity stack that fits a modern containerized architecture'
+  - "self-hosting is preferred, but Keycloak's monolithic Java-server model doesn't fit the deployment style"
+avoid_when:
+  - 'the team wants the largest possible community/ecosystem and longest production track record -- Keycloak has more'
+  - "a single all-in-one server is preferred over Ory's composable multi-service architecture"
+pairs_with: [postgresql]
+alternatives: [keycloak, auth0-okta-entra]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Understand which Ory component (Kratos/Hydra/Oathkeeper/Keto) owns a given concern before generating integration code -- they are separate services with distinct responsibilities'

@@ -1,0 +1,27 @@
+id: redis-valkey
+kind: datastore
+name: Redis/Valkey
+category: cache-and-key-value
+maturity: mature
+licence: RSALv2/SSPLv1 (Redis 7.4+), BSD-3-Clause (Valkey, the Linux-Foundation-backed fork)
+managed_options: [aws-elasticache, gcp-memorystore, azure-cache, upstash]
+strengths:
+  - 'The dominant in-memory cache/key-value store, with rich data structures (lists, sets, sorted sets, streams) beyond plain key-value'
+  - "Valkey (the open-source fork created after Redis's 2024 licence change) preserves full protocol compatibility under a permissive licence"
+weaknesses:
+  - 'Primarily in-memory: durability requires deliberate persistence (AOF/RDB) configuration, and dataset size is bounded by available RAM'
+  - "Redis's own post-2024 licence change (RSALv2/SSPLv1) is a real consideration; Valkey exists specifically to address it"
+fits_when:
+  - 'caching, session storage, rate limiting, or pub/sub messaging at low latency'
+  - 'a lightweight queue or leaderboard-style data structure fits the workload without adopting a dedicated system'
+avoid_when:
+  - 'the dataset must exceed available RAM as durable primary storage'
+  - 'strict ACID transactional guarantees across multiple keys are required'
+pairs_with: [express, django, rails]
+alternatives: [dynamodb]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Prefer Valkey for new projects unless a specific Redis-only feature is needed -- verify the licence terms of whichever client/server combination is chosen'

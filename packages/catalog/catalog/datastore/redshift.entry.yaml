@@ -1,0 +1,27 @@
+id: redshift
+kind: datastore
+name: Redshift
+category: cloud-data-warehouse
+maturity: mature
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-redshift]
+strengths:
+  - 'Deep native integration with the rest of the AWS data ecosystem (S3, Glue, QuickSight) for organizations already on AWS'
+  - 'Mature, widely-used PostgreSQL-derived SQL dialect that most analysts already know'
+weaknesses:
+  - 'AWS-only -- a real vendor lock-in cost for a multi-cloud organization'
+  - "Provisioned-cluster pricing model (unlike BigQuery/Snowflake's more elastic options) requires more deliberate capacity planning, though Redshift Serverless narrows this gap"
+fits_when:
+  - 'the organization is already AWS-native and wants tight integration with S3/Glue/QuickSight'
+  - "the team already knows PostgreSQL's SQL dialect and wants that familiarity in a warehouse"
+avoid_when:
+  - 'the organization is not AWS-native and cloud-agnosticism matters'
+  - 'fully elastic, pay-per-query pricing without capacity planning is the priority -- consider BigQuery'
+pairs_with: [dbt, airflow]
+alternatives: [snowflake, bigquery]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Right-size cluster/serverless capacity deliberately -- agent-generated infrastructure code defaulting to an oversized cluster is a real, easy cost mistake'

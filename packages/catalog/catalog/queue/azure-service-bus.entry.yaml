@@ -1,0 +1,27 @@
+id: azure-service-bus
+kind: queue
+name: Azure Service Bus
+category: cloud-managed-messaging
+maturity: mature
+licence: N/A (proprietary Azure managed service)
+managed_options: [azure-service-bus]
+strengths:
+  - 'Fully managed enterprise messaging with rich features (sessions, transactions, dead-lettering) beyond a basic queue'
+  - 'Deep native integration with the rest of the Azure/.NET ecosystem'
+weaknesses:
+  - 'Azure-only -- a real vendor lock-in cost for a multi-cloud organization'
+  - 'Less natural fit for very high-throughput event streaming than Kafka/Kinesis-style log-based systems'
+fits_when:
+  - 'the architecture is Azure-native, especially a .NET-heavy stack wanting enterprise messaging features'
+  - 'transactional messaging semantics (sessions, dead-lettering) are a real requirement'
+avoid_when:
+  - 'the organization is not Azure-native and cloud-agnosticism matters'
+  - 'the workload needs Kafka-style high-throughput durable event streaming rather than enterprise queuing'
+pairs_with: [aspnet-core, dotnet-stack]
+alternatives: [aws-sqs-sns-eventbridge-kinesis, gcp-pub-sub]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Confirm queue vs. topic/subscription usage matches the intended messaging pattern before generating client code'

@@ -1,0 +1,27 @@
+id: auth0-okta-entra
+kind: auth
+name: Auth0/Okta/Entra
+category: managed-identity-provider
+maturity: mature
+licence: N/A (proprietary managed services)
+managed_options: [auth0, okta, azure-entra-id]
+strengths:
+  - "Fully managed identity providers handling OAuth2/OIDC/SAML, MFA, and compliance (SOC2/HIPAA) correctly out of the box -- avoids hand-rolling auth's many security pitfalls"
+  - 'Enterprise-grade features (SSO federation, adaptive MFA, breach detection) that would take real engineering time to build in-house'
+weaknesses:
+  - 'Per-user/per-active-user pricing can become a real, significant cost at scale'
+  - 'Vendor lock-in for identity is a genuinely hard thing to migrate away from once deeply integrated'
+fits_when:
+  - 'the team wants proven, compliant identity management without building and maintaining it in-house'
+  - 'enterprise SSO/SAML federation with customer identity providers is a real, recurring requirement'
+avoid_when:
+  - 'cost at scale is a hard constraint and a self-hosted option (Keycloak/Ory) would be cheaper long-term'
+  - "the product has simple auth needs that don't justify a managed identity provider's cost and complexity"
+pairs_with: []
+alternatives: [keycloak, ory, supabase-auth, cognito]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Use the provider's own official SDK rather than hand-rolling token verification -- agent-generated manual JWT verification against these providers is a common source of subtle security bugs"

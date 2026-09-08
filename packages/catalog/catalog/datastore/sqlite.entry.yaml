@@ -1,0 +1,26 @@
+id: sqlite
+kind: datastore
+name: SQLite
+category: embedded-relational
+maturity: mature
+licence: Public Domain
+strengths:
+  - 'Zero-configuration, single-file, in-process database -- no server to run, deploy, or operate'
+  - 'Extremely fast for read-heavy, single-writer workloads; the most-deployed database engine in the world by install count'
+weaknesses:
+  - 'Limited concurrent-write support -- one writer at a time, a real ceiling for multi-user server workloads'
+  - 'No native network protocol; only usable by processes on the same machine/filesystem'
+fits_when:
+  - 'local development, testing, embedded/edge devices, or a single-user desktop/CLI application'
+  - 'the workload is read-heavy with minimal concurrent write contention'
+avoid_when:
+  - 'the app is a multi-user server workload with meaningful concurrent write traffic'
+  - 'the data needs to be queried from more than one machine/process over a network'
+pairs_with: [sqlc, prisma]
+alternatives: [postgresql, duckdb]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Never use SQLite as a production server database's primary store for a multi-user web app -- it is correct for tests/local dev/embedded, not for that role"

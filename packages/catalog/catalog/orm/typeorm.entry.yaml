@@ -1,0 +1,26 @@
+id: typeorm
+kind: orm
+name: TypeORM
+category: orm
+maturity: mature
+licence: MIT
+strengths:
+  - 'Mature, widely-adopted TypeScript ORM supporting both Active Record and Data Mapper patterns'
+  - 'Decorator-based entity definitions are familiar to teams coming from Java/C# ORMs (Hibernate/Entity Framework)'
+weaknesses:
+  - "Type inference and API ergonomics are generally considered weaker than Prisma's or Drizzle's more modern designs"
+  - 'Historically slower-moving maintenance cadence and some longstanding open issues relative to newer alternatives'
+fits_when:
+  - 'the team wants a decorator-based ORM familiar to Java/C# developers, or needs both Active Record and Data Mapper support'
+  - "an existing codebase already uses TypeORM and migrating away isn't justified"
+avoid_when:
+  - 'the team is starting fresh and wants the strongest type inference and modern DX -- Prisma/Drizzle fit better'
+  - 'the project needs the most actively-maintained option among TypeScript ORMs'
+pairs_with: [nestjs, postgresql]
+alternatives: [prisma, drizzle]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer the Data Mapper pattern (repositories) over Active Record for testability, unless the codebase already commits to one pattern consistently'

@@ -1,0 +1,27 @@
+id: redpanda
+kind: queue
+name: Redpanda
+category: distributed-log
+maturity: growing
+licence: Source Available License (BSL-derived; converts to Apache-2.0 after 4 years per version)
+managed_options: [redpanda-cloud]
+strengths:
+  - 'Kafka-API-compatible with a single-binary, no-ZooKeeper/no-JVM architecture -- substantially simpler to operate'
+  - 'Lower tail latency and better hardware utilization than Kafka in most published comparisons, from its C++ implementation'
+weaknesses:
+  - 'Smaller production track record and ecosystem than Kafka itself, despite API compatibility'
+  - 'Source-available licence (not fully open until the version-delay conversion) is a real consideration for some procurement policies'
+fits_when:
+  - 'the team wants Kafka-API compatibility with substantially simpler operations (no ZooKeeper/JVM)'
+  - 'lower operational overhead than self-hosted Kafka is a priority while keeping the same client ecosystem'
+avoid_when:
+  - "the team needs Kafka's own longest possible production track record and largest ecosystem"
+  - "the licence terms conflict with the organization's procurement policy"
+pairs_with: [kafka-streams, flink]
+alternatives: [kafka, pulsar]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Kafka client libraries and tooling work largely unmodified -- verify any Kafka-ecosystem tool's specific compatibility claim before relying on it"

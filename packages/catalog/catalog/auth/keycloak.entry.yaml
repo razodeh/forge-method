@@ -1,0 +1,27 @@
+id: keycloak
+kind: auth
+name: Keycloak
+category: self-hosted-identity-provider
+maturity: mature
+licence: Apache-2.0
+managed_options: []
+strengths:
+  - 'The most feature-complete open-source identity/access-management server, supporting OAuth2/OIDC/SAML with full admin UI'
+  - 'Fully self-hostable, avoiding per-user pricing and vendor lock-in that managed identity providers carry'
+weaknesses:
+  - 'Real operational burden to run and secure correctly (JVM-based, its own database, upgrade discipline) versus a managed provider'
+  - 'Admin UI and configuration surface are notably less polished than commercial managed alternatives'
+fits_when:
+  - 'the organization wants a fully open-source, self-hosted identity provider avoiding per-user pricing'
+  - 'the team has the operational capacity to run and secure it correctly'
+avoid_when:
+  - 'the team wants zero operational overhead for identity -- a managed provider fits that better'
+  - "the organization can't commit to the security-patch discipline self-hosting identity infrastructure requires"
+pairs_with: [postgresql]
+alternatives: [ory, auth0-okta-entra]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Keep Keycloak itself patched aggressively -- it is a high-value target, and agent-assisted infrastructure work should treat version currency here as a real security requirement, not just a maintenance chore'

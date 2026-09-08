@@ -1,0 +1,26 @@
+id: trpc
+kind: api-style
+name: tRPC
+category: api-style
+maturity: growing
+licence: MIT
+strengths:
+  - "End-to-end TypeScript type safety with zero code generation -- the client infers types directly from the server's own router"
+  - 'Eliminates an entire class of client/server contract drift bugs that a separately-maintained OpenAPI/GraphQL schema can accumulate'
+weaknesses:
+  - 'TypeScript-only, and effectively requires client and server to live in the same monorepo/toolchain for the type inference to work'
+  - 'Not consumable by non-TypeScript clients as a first-class citizen -- a real limitation for public APIs'
+fits_when:
+  - 'both client and server are TypeScript in the same monorepo, and end-to-end type safety with no codegen is wanted'
+  - "the API will only ever be consumed by this project's own TypeScript client"
+avoid_when:
+  - 'the API needs to be consumed by external, non-TypeScript clients as a first-class concern'
+  - "client and server are not both TypeScript, or don't share a build toolchain"
+pairs_with: [t3-stack, nextjs]
+alternatives: [rest, graphql]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Keep tRPC routers organized by domain rather than one flat router -- agent-generated procedures scattered across an unstructured router become hard to navigate quickly'

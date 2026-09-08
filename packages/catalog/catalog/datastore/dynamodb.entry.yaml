@@ -1,0 +1,27 @@
+id: dynamodb
+kind: datastore
+name: DynamoDB
+category: key-value
+maturity: mature
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-dynamodb]
+strengths:
+  - 'Fully managed, serverless-native key-value/wide-column store with single-digit-millisecond latency at any scale on AWS'
+  - 'Scales to essentially unlimited throughput with no server or cluster to operate'
+weaknesses:
+  - 'Access-pattern-first schema design (single-table design) has a real learning curve and locks queries into patterns decided up front'
+  - 'AWS-only -- a real vendor lock-in cost, and local development requires a separate emulator (DynamoDB Local)'
+fits_when:
+  - 'the workload is AWS-native and access patterns are known up front, favoring single-digit-millisecond key-based lookups'
+  - 'serverless-first architecture with no infrastructure to operate is a priority'
+avoid_when:
+  - 'access patterns are not known up front or change frequently -- schema redesign is costly'
+  - 'ad-hoc/relational queries across entities are a common requirement'
+pairs_with: [serverless-first, aws-sqs-sns-eventbridge-kinesis]
+alternatives: [mongodb, cassandra-scylladb]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Design the table's own key schema around real, known access patterns before writing any query code -- agent-generated ad-hoc scans against DynamoDB are both slow and expensive"

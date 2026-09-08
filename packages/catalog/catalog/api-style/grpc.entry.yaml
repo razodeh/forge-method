@@ -1,0 +1,26 @@
+id: grpc
+kind: api-style
+name: gRPC
+category: api-style
+maturity: mature
+licence: Apache-2.0 (the gRPC project itself)
+strengths:
+  - 'Binary protocol (Protocol Buffers) over HTTP/2 gives substantially lower latency and bandwidth than JSON-over-HTTP for internal service-to-service traffic'
+  - 'Strongly-typed, code-generated clients/servers across many languages from a single .proto contract'
+weaknesses:
+  - 'Binary protocol is not human-readable/debuggable in a browser the way REST/JSON is -- real friction for ad-hoc debugging'
+  - 'Browser support requires a separate proxy layer (grpc-web); not a natural fit for direct public-facing browser clients'
+fits_when:
+  - 'the traffic is internal, high-throughput service-to-service communication where latency/bandwidth matter'
+  - 'strongly-typed, code-generated clients across multiple languages are valuable'
+avoid_when:
+  - 'the API is public-facing and consumed directly by browsers -- REST/GraphQL are more natural fits'
+  - 'ad-hoc human debuggability (curl-and-read-JSON) matters more than raw performance'
+pairs_with: []
+alternatives: [rest, trpc]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Keep .proto files as the single source of truth and regenerate clients/servers from them -- never hand-edit generated gRPC code'

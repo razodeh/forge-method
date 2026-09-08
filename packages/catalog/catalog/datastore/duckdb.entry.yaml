@@ -1,0 +1,26 @@
+id: duckdb
+kind: datastore
+name: DuckDB
+category: embedded-analytical
+maturity: growing
+licence: MIT
+strengths:
+  - 'In-process, zero-server columnar analytical engine -- the "SQLite of OLAP," embeddable directly in an application or notebook'
+  - 'Extremely fast for local/single-machine analytical queries over Parquet/CSV files with no separate database server to run'
+weaknesses:
+  - 'Single-process by design -- not a multi-user server database; no built-in replication or clustering'
+  - 'Younger ecosystem than ClickHouse/Snowflake for large-team, multi-user analytical workflows'
+fits_when:
+  - 'local or embedded analytical queries over files (Parquet/CSV) without standing up a server'
+  - 'a data-science/notebook workflow needs fast in-process SQL over medium-sized datasets'
+avoid_when:
+  - 'the workload needs multi-user concurrent access to a shared analytical dataset'
+  - 'the dataset exceeds what fits comfortably on a single machine'
+pairs_with: [dbt]
+alternatives: [sqlite, clickhouse]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'A strong default for local data exploration/prototyping before committing to a server-based analytical database'

@@ -1,0 +1,26 @@
+id: graphql
+kind: api-style
+name: GraphQL
+category: api-style
+maturity: mature
+licence: N/A (specification, multiple independent implementations)
+strengths:
+  - "Clients request exactly the fields they need in one round-trip, eliminating REST's over-fetching/under-fetching problem"
+  - 'A single, strongly-typed schema serves as both documentation and a contract every client can introspect'
+weaknesses:
+  - "Caching is meaningfully harder than REST's built-in HTTP caching, since every query can shape a different response"
+  - 'N+1 query problems at the resolver level are a common, easy-to-introduce performance bug without deliberate batching (DataLoader-style)'
+fits_when:
+  - 'clients (especially mobile, with bandwidth constraints) need precisely-shaped, deeply-nested data in one round-trip'
+  - 'multiple frontend clients have genuinely different data-shape needs from the same backend'
+avoid_when:
+  - 'the API is simple CRUD with no meaningful over/under-fetching problem -- REST is simpler for that case'
+  - 'the team has no capacity to guard against N+1 resolver performance bugs'
+pairs_with: [nestjs]
+alternatives: [rest, trpc]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Add batching (DataLoader or equivalent) to any resolver that fetches related entities -- agent-generated resolvers without it are a common source of N+1 query bugs'

@@ -1,0 +1,27 @@
+id: snowflake
+kind: datastore
+name: Snowflake
+category: cloud-data-warehouse
+maturity: mature
+licence: N/A (proprietary managed service)
+managed_options: [snowflake]
+strengths:
+  - 'Fully managed cloud data warehouse with independently scalable storage and compute, usable across AWS/GCP/Azure'
+  - 'Mature ecosystem for data sharing, governance, and semi-structured (JSON/Avro/Parquet) data alongside structured tables'
+weaknesses:
+  - 'Proprietary, consumption-based pricing can become expensive at scale without deliberate cost management'
+  - "No self-hosted option -- fully dependent on the vendor's managed service"
+fits_when:
+  - 'the organization needs a fully managed, cloud-agnostic data warehouse with elastic compute'
+  - 'data sharing/governance across teams or external partners is a real requirement'
+avoid_when:
+  - 'cost predictability at fixed scale matters more than elastic compute -- a self-hosted or reserved-capacity alternative may be cheaper'
+  - 'the organization needs a self-hosted option for compliance/data-residency reasons'
+pairs_with: [dbt, airflow]
+alternatives: [bigquery, redshift, clickhouse]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Watch warehouse auto-suspend/auto-resume settings -- agent-generated pipelines that leave a warehouse running idle are a real, easy-to-miss cost leak'

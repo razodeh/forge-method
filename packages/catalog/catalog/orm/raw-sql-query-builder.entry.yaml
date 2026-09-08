@@ -1,0 +1,26 @@
+id: raw-sql-query-builder
+kind: orm
+name: raw SQL + query builder
+category: data-access
+maturity: mature
+licence: N/A (an approach, not a specific product)
+strengths:
+  - "Zero abstraction overhead and zero ORM-specific query-translation surprises -- what's written is exactly what runs against the database"
+  - 'Full, unconstrained access to every database-specific feature and query-optimization technique'
+weaknesses:
+  - 'No automatic type safety unless paired with a codegen tool (sqlc-style) -- plain string SQL is easy to get subtly wrong without one'
+  - 'More boilerplate for simple CRUD operations that an ORM would otherwise handle with a one-line call'
+fits_when:
+  - 'the team wants full control over exact generated SQL and has the discipline (or tooling) to keep it type-safe'
+  - 'the query complexity or performance requirements make ORM-generated SQL an unacceptable black box'
+avoid_when:
+  - "the team wants an ORM's productivity for routine CRUD operations without hand-writing SQL for every query"
+  - "there's no tooling (sqlc-style codegen, careful parameterization discipline) in place to keep raw SQL safe from injection and type errors"
+pairs_with: []
+alternatives: [sqlc, prisma]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - "Always use parameterized queries, never string-concatenate user input into SQL -- agent-generated raw SQL is a real, well-known SQL-injection risk if this discipline isn't enforced"

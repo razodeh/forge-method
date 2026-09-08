@@ -1,0 +1,26 @@
+id: mongodb
+kind: datastore
+name: MongoDB
+category: document
+maturity: mature
+licence: SSPL 1.0
+managed_options: [mongodb-atlas]
+strengths:
+  - 'Flexible, schemaless-by-default document model fits rapidly-evolving or naturally nested data well'
+  - 'Native horizontal sharding and a mature, widely-used driver ecosystem across every mainstream language'
+weaknesses:
+  - 'Schemaless-by-default means data-integrity checks that a relational schema catches at write time must be enforced in application code instead'
+  - "SSPL licensing (not OSI-approved) is a real blocker for some organizations' open-source policies"
+fits_when:
+  - 'the data model is naturally document-shaped/nested and evolves rapidly'
+  - "horizontal write scaling is needed without a relational schema's constraints"
+avoid_when:
+  - 'the domain has strong relational/transactional invariants across entities'
+  - "the organization's open-source policy excludes SSPL-licensed software"
+alternatives: [postgresql, dynamodb, cassandra-scylladb]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Define and enforce a schema at the application layer (e.g. via Mongoose/Zod validation) -- agent-generated code writing arbitrary shapes to a collection silently accumulates data-integrity debt'

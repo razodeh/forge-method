@@ -1,0 +1,26 @@
+id: ecto
+kind: orm
+name: Ecto
+category: orm
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - "Elixir's own data-mapping/query toolkit, explicitly not an ORM in the traditional sense -- changesets give an explicit, functional model for validation and casting"
+  - "Composable, pipeable query syntax that fits Elixir's functional style naturally, with strong support for the BEAM's concurrency model"
+weaknesses:
+  - "Elixir-only, so it inherits the language's own small hiring pool and learning curve"
+  - 'The changeset-based validation model is a real conceptual shift for developers coming from traditional ActiveRecord-style ORMs'
+fits_when:
+  - 'the stack is Elixir/Phoenix, where Ecto is the natural, idiomatic data-access choice'
+  - 'explicit, functional data validation (changesets) is preferred over implicit ORM-level validation'
+avoid_when:
+  - 'the stack is not Elixir'
+  - "the team wants an ActiveRecord-style implicit validation model rather than Ecto's explicit changesets"
+pairs_with: [phoenix, elixir, postgresql]
+alternatives: [activerecord]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Always validate and cast data through a changeset before a database write -- agent-generated code bypassing changesets loses Ecto's main safety guarantee"

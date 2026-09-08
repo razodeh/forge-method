@@ -1,0 +1,27 @@
+id: temporal
+kind: queue
+name: Temporal (durable execution)
+category: durable-execution
+maturity: growing
+licence: MIT
+managed_options: [temporal-cloud]
+strengths:
+  - 'Durable execution model: long-running, fault-tolerant workflows survive process crashes and resume exactly where they left off, without hand-rolled state machines'
+  - 'Removes an entire category of distributed-systems bugs (retries, timeouts, saga-pattern orchestration) by making them first-class workflow primitives'
+weaknesses:
+  - 'A genuinely different programming model (deterministic workflow code, separate activity code) with a real learning curve'
+  - "Self-hosting requires operating Temporal's own server plus a backing datastore (PostgreSQL/Cassandra/MySQL)"
+fits_when:
+  - 'the system needs long-running, multi-step business processes (sagas, approval workflows) with strong fault-tolerance guarantees'
+  - 'hand-rolled retry/timeout/state-machine logic for distributed workflows has become a real maintenance burden'
+avoid_when:
+  - "the workload is simple request/response or a basic task queue -- Temporal's model is overkill for that shape"
+  - "the team isn't willing to adopt its deterministic-workflow-code programming model"
+pairs_with: []
+alternatives: [kafka]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Workflow code must be deterministic (no direct I/O, random numbers, or wall-clock reads inside workflow functions) -- agent-generated workflow code violating this will fail Temporal's replay mechanism"

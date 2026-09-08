@@ -1,0 +1,26 @@
+id: asyncapi
+kind: api-style
+name: AsyncAPI
+category: api-style
+maturity: growing
+licence: N/A (open specification)
+strengths:
+  - 'Brings OpenAPI-style machine-readable documentation and code generation to event-driven/async APIs (Kafka topics, WebSocket messages, MQTT)'
+  - 'Gives consumers of an event-driven system a real, versioned contract instead of tribal knowledge about message shapes'
+weaknesses:
+  - 'Younger and less universally adopted than OpenAPI -- tooling maturity and ecosystem depth vary by protocol binding'
+  - "Only as useful as the team's discipline in keeping the spec in sync with actual producer/consumer code"
+fits_when:
+  - 'an event-driven architecture (Kafka, WebSocket, MQTT) needs a documented, versioned message contract'
+  - 'multiple teams produce/consume the same event streams and need a shared source of truth for message shapes'
+avoid_when:
+  - 'the system has no meaningful event-driven/async messaging surface to document'
+  - "the team won't commit to keeping the spec synchronized with actual code -- an out-of-date spec is worse than none"
+pairs_with: [kafka]
+alternatives: [rest]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Generate the spec from the actual producer/consumer code where tooling supports it, rather than hand-maintaining a separate document that can drift'

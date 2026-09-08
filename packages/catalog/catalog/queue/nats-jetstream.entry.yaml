@@ -1,0 +1,27 @@
+id: nats-jetstream
+kind: queue
+name: NATS/JetStream
+category: message-broker
+maturity: growing
+licence: Apache-2.0
+managed_options: [synadia-cloud]
+strengths:
+  - "Extremely lightweight, single-binary messaging system with JetStream adding Kafka-like durable streaming on top of NATS's simple pub/sub core"
+  - 'Very low latency and minimal operational footprint -- a strong fit for edge/IoT and service-mesh-style internal messaging'
+weaknesses:
+  - 'Smaller ecosystem and community than Kafka/RabbitMQ; fewer pre-built connectors'
+  - "JetStream's durable-streaming feature set is younger and less battle-tested than Kafka's"
+fits_when:
+  - 'internal service-to-service messaging needs to be extremely lightweight and low-latency'
+  - 'edge/IoT deployments need a minimal-footprint messaging system'
+avoid_when:
+  - "the workload needs Kafka's ecosystem depth (Connect, Streams, Schema Registry) or longest production track record"
+  - 'durable event replay at very high throughput and scale is the primary requirement'
+pairs_with: []
+alternatives: [rabbitmq, kafka]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Confirm whether a given deployment uses plain NATS pub/sub or JetStream specifically -- they have meaningfully different durability guarantees'

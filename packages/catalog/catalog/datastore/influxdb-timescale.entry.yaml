@@ -1,0 +1,27 @@
+id: influxdb-timescale
+kind: datastore
+name: InfluxDB/Timescale
+category: time-series
+maturity: mature
+licence: MIT/Apache-2.0 (InfluxDB 3.x core), Apache-2.0/proprietary (TimescaleDB community/enterprise split)
+managed_options: [influxdb-cloud, timescale-cloud]
+strengths:
+  - 'Purpose-built for high-write-volume time-stamped data (metrics, IoT sensor readings) with time-bucketed queries and retention policies as first-class features'
+  - 'TimescaleDB, as a PostgreSQL extension, gives full SQL and relational-join capability alongside time-series performance'
+weaknesses:
+  - 'Not a good fit for general-purpose relational or document workloads outside the time-series shape'
+  - "InfluxDB's own query language(s) have changed across major versions (InfluxQL, Flux, SQL in 3.x), a real migration consideration"
+fits_when:
+  - 'the workload is metrics/observability/IoT-sensor data with high write volume and time-bucketed queries'
+  - 'the team wants full SQL/relational joins alongside time-series data -- TimescaleDB specifically fits this'
+avoid_when:
+  - 'the workload is not fundamentally time-series shaped'
+  - 'the team needs long-term API stability without version-to-version query-language churn'
+pairs_with: [prometheus, grafana-lgtm]
+alternatives: [postgresql, clickhouse]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Confirm which InfluxDB major version (and query language) a project targets before generating queries -- InfluxQL/Flux/SQL are not interchangeable'

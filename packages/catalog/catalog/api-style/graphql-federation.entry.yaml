@@ -1,0 +1,26 @@
+id: graphql-federation
+kind: api-style
+name: GraphQL Federation
+category: api-style
+maturity: growing
+licence: N/A (specification with multiple implementations, e.g. Apollo Federation)
+strengths:
+  - 'Lets multiple independently-deployed GraphQL services compose into a single unified graph, without one monolithic GraphQL server owning every type'
+  - 'Each domain team can own and deploy its own subgraph independently while consumers see one coherent API'
+weaknesses:
+  - 'Real added architectural complexity (a gateway layer, schema composition rules) versus a single GraphQL server'
+  - 'Debugging a query that spans multiple subgraphs is genuinely harder than debugging a single-service GraphQL query'
+fits_when:
+  - 'multiple independent teams/services each own a piece of the domain and need one unified GraphQL API'
+  - 'a single monolithic GraphQL server has become an organizational bottleneck for independent deployment'
+avoid_when:
+  - 'one team/service can reasonably own the entire GraphQL schema -- plain GraphQL is simpler'
+  - "the team has no experience operating a federation gateway and the organizational need doesn't yet justify the complexity"
+pairs_with: [graphql]
+alternatives: [graphql, rest]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Verify subgraph schema composition succeeds in CI before deploying -- a breaking change in one subgraph can silently break the composed graph for every other team'

@@ -1,0 +1,26 @@
+id: websocket-sse
+kind: api-style
+name: WebSocket/SSE
+category: api-style
+maturity: mature
+licence: N/A (web standards, not products)
+strengths:
+  - 'WebSocket gives full-duplex, low-latency real-time communication; SSE gives a simpler one-directional server-push stream over plain HTTP'
+  - 'Both are natively supported by every modern browser with no extra library required for basic use'
+weaknesses:
+  - 'WebSocket connections are stateful and add real operational complexity (connection affinity, reconnection handling, horizontal-scaling considerations) versus stateless request/response'
+  - 'SSE is one-directional only (server-to-client); it cannot replace WebSocket for bidirectional real-time needs'
+fits_when:
+  - 'the app needs real-time, low-latency bidirectional communication (chat, collaborative editing, live dashboards) -- WebSocket'
+  - 'the app only needs server-to-client push updates (live notifications, progress streams) -- SSE is simpler'
+avoid_when:
+  - 'the interaction is fundamentally request/response with no real-time push need -- REST/GraphQL are simpler'
+  - "the infrastructure can't easily support stateful long-lived connections at the required scale"
+pairs_with: [express, phoenix-liveview]
+alternatives: [rest]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Handle reconnection and message-ordering/deduplication explicitly on the client -- agent-generated WebSocket clients without reconnection logic silently stop working after a network blip'

@@ -1,0 +1,26 @@
+id: elasticsearch-opensearch
+kind: datastore
+name: Elasticsearch/OpenSearch
+category: search-and-analytics
+maturity: mature
+licence: SSPL/Elastic License 2.0 (Elasticsearch), Apache-2.0 (OpenSearch, the AWS-led fork)
+managed_options: [elastic-cloud, aws-opensearch-service]
+strengths:
+  - 'Purpose-built full-text search with relevance ranking, fuzzy matching, and faceted search far beyond a relational LIKE/ILIKE query'
+  - "OpenSearch (the Apache-2.0 fork created after Elastic's licence change) gives a fully open-source path with strong compatibility"
+weaknesses:
+  - 'Not a system of record -- eventually-consistent indexing means it should sit alongside a primary datastore, not replace one'
+  - "Elasticsearch's own licence change (SSPL/Elastic License 2.0) is a real consideration; OpenSearch exists specifically to address it"
+fits_when:
+  - 'full-text search with relevance ranking or log/observability analytics is a core requirement'
+  - 'faceted search or fuzzy matching over large text corpora is needed'
+avoid_when:
+  - "the workload needs a strongly-consistent system of record -- pair with, don't replace, a primary datastore"
+  - "the search need is simple enough that a smaller tool (Meilisearch/Typesense or the primary database's own full-text support) suffices"
+alternatives: [meilisearch-typesense, postgresql]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer OpenSearch for new projects unless a specific Elasticsearch-only feature is needed -- verify licence terms of whichever is chosen'

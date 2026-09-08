@@ -1,0 +1,27 @@
+id: meilisearch-typesense
+kind: datastore
+name: Meilisearch/Typesense
+category: search
+maturity: growing
+licence: MIT (Meilisearch), GPL-3.0 (Typesense)
+managed_options: [meilisearch-cloud, typesense-cloud]
+strengths:
+  - 'Dramatically simpler to operate and configure than Elasticsearch/OpenSearch, with excellent typo-tolerant search out of the box'
+  - 'Fast to set up for a typical app-search use case (product search, docs search) without a dedicated search-ops team'
+weaknesses:
+  - 'Far narrower feature surface than Elasticsearch/OpenSearch -- no aggregation-heavy analytics or log-analysis use case'
+  - 'Smaller ecosystem and community than Elasticsearch/OpenSearch'
+fits_when:
+  - 'the need is app-facing search (product catalog, docs, in-app search) rather than log/observability analytics'
+  - 'the team wants search up and running quickly without a dedicated search-ops investment'
+avoid_when:
+  - "the workload needs Elasticsearch/OpenSearch's aggregation-heavy analytics or log-analysis capability"
+  - 'the search corpus and query complexity will grow well beyond typical app-search needs'
+pairs_with: []
+alternatives: [elasticsearch-opensearch]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "A strong default for adding search to a typical CRUD app without adopting Elasticsearch/OpenSearch's operational weight"

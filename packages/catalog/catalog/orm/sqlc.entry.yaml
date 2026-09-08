@@ -1,0 +1,26 @@
+id: sqlc
+kind: orm
+name: sqlc
+category: orm
+maturity: growing
+licence: MIT
+strengths:
+  - 'Generates fully type-safe Go (and other-language) code directly from hand-written SQL queries -- no ORM abstraction layer at all, just real SQL with compile-time-checked results'
+  - 'Zero runtime overhead versus a full ORM, since the generated code is a thin, direct wrapper over the database driver'
+weaknesses:
+  - 'Requires writing raw SQL by hand for every query -- no query-builder convenience for dynamically-constructed queries'
+  - 'Smaller ecosystem than a full ORM; no built-in migration tooling of its own'
+fits_when:
+  - 'the team wants to write real SQL directly with full compile-time type safety and zero ORM runtime overhead'
+  - 'the queries are largely static/known-in-advance rather than dynamically constructed at runtime'
+avoid_when:
+  - 'queries need to be built dynamically at runtime based on variable conditions -- a query builder fits that better'
+  - 'the team wants to avoid hand-writing SQL at all -- a full ORM abstraction fits that preference better'
+pairs_with: [go, postgresql]
+alternatives: [drizzle, jooq]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Re-run code generation after any change to the hand-written SQL query files -- generated code and source queries can otherwise silently drift apart'

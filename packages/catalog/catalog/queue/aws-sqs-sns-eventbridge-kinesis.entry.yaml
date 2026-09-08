@@ -1,0 +1,27 @@
+id: aws-sqs-sns-eventbridge-kinesis
+kind: queue
+name: AWS SQS/SNS/EventBridge/Kinesis
+category: cloud-managed-messaging
+maturity: mature
+licence: N/A (proprietary AWS managed services)
+managed_options: [aws-sqs, aws-sns, aws-eventbridge, aws-kinesis]
+strengths:
+  - 'Fully managed, zero-operations messaging primitives tightly integrated with the rest of AWS (Lambda, ECS, IAM)'
+  - 'Each service is purpose-fit for a distinct pattern: SQS for point-to-point queues, SNS for pub/sub fan-out, EventBridge for event routing/rules, Kinesis for high-throughput streaming'
+weaknesses:
+  - 'AWS-only -- a real vendor lock-in cost for a multi-cloud or cloud-agnostic architecture'
+  - 'Four related-but-distinct services can create real decision friction over which one actually fits a given need'
+fits_when:
+  - 'the architecture is AWS-native and serverless-first, and a managed messaging primitive fits the exact need'
+  - 'zero operational overhead for messaging infrastructure is a priority'
+avoid_when:
+  - 'the organization needs a cloud-agnostic messaging layer'
+  - "the workload needs Kafka-style long-term event replay across a large retention window -- Kinesis's retention is bounded and costs scale differently"
+pairs_with: [serverless-first]
+alternatives: [gcp-pub-sub, azure-service-bus, kafka]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - 'Pick the specific service (SQS/SNS/EventBridge/Kinesis) deliberately based on the actual messaging pattern needed -- do not default to one without checking whether it fits'

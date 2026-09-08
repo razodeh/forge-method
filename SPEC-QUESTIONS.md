@@ -6830,3 +6830,58 @@ Mobile/cross-platform, and Stacks (`12` §12.2's own scope-table rows 1-5), plus
 (`packages/engine/test/e2e/crash-resume.test.ts`, a real randomised `SIGKILL` test) failed once and passed
 cleanly on an immediate re-run — not a regression from this piece, which touches nothing in `@forge/engine`
 or `@forge/vcs`.
+
+## Q90 — M6 C3's `@forge/catalog` content, part 2: `12` §12.2's own scope table rows 6-11 (68 entries) —
+applying C2's own lessons from the start, and generalizing its hygiene test into one whole-catalog test
+that grows with every future piece
+
+68 real `catalog/<kind>/<id>.entry.yaml` files for Datastores (20), Messaging/stream (9), Stream/batch
+processing (10), API styles (8), ORM/data access (11), and Auth (10) — `12` §12.2's own scope-table rows
+6-11 — plus a new `test/content/c3-completeness.test.ts` mirroring C2's own completeness-test shape exactly.
+
+1. **This piece deliberately applied C2's own two real lessons (Q89) from the first draft, not as a
+   post-hoc fix**: every `fits_when`/`avoid_when` was written with two genuinely distinct conditions from
+   the start (no second-pass fix-up that could reintroduce the copy-paste duplication bug), and a full
+   parse/count/near-duplicate/hygiene self-check ran against all 68 files before any critic round, catching
+   and fixing (before the critic ever saw the content): one mojibake/text-corruption typo
+   (`datastore/snowflake.entry.yaml`'s own strengths field), two real superlative-hygiene violations
+   (`orm/activerecord.entry.yaml`, `orm/prisma.entry.yaml`, both using "fastest"/"Best-in-class"), and five
+   dangling `pairs_with` references to ids that are not real scope-table items at all and never will be
+   (`pgbouncer`, `apollo`, `mongoose`, `logstash`/`kibana`, `okta` — the last being a genuine authoring
+   slip: "Auth0/Okta/Entra" is one combined catalog entry, `auth0-okta-entra`, not three separate ids).
+
+2. **`c2-hygiene.test.ts` was renamed and generalized to `catalog-hygiene.test.ts`, rather than adding a
+   parallel `c3-hygiene.test.ts`**: that test already walked every shipped entry regardless of which piece
+   shipped it (a full `readdirSync` of the catalog root), so a second copy of the same walk would have been
+   pure duplication with a stale, piece-specific name. The one meaningful content change beyond the rename:
+   `KNOWN_FUTURE_IDS` shrank to only the rows C4 still owns (C3's own 68 ids are no longer "future" — they
+   now resolve for real), and the doc comment now states plainly that future pieces shrink this same
+   allowlist further rather than each needing a new hygiene-test file.
+
+3. **A new, permanent regression test was added to that same generalized file**: an exact/near-duplicate
+   scan (Jaccard word-overlap similarity, threshold 0.4, empirically chosen against the real C2 near-
+   duplicates' own 0.42-0.73 score range) across every list field of every shipped entry — the mechanical
+   enforcement of Q89's own calibration-note lesson ("a `length >= 2` count floor is not itself sufficient
+   evidence of quality"), so this exact bug class cannot silently recur in C4 or any later content piece
+   without a test catching it immediately, rather than only being caught by a critic round after the fact.
+
+4. **A fresh critic round independently re-verified completeness (68/68, zero gaps) and re-ran both the
+   dangling-reference and near-duplicate checks itself** (at a stricter 0.25 similarity threshold, to
+   stress-test the shipped 0.4 one) and found this piece's own claim — "genuinely distinct lists from the
+   start, not a duplicate-then-fix cycle" — held up under independent verification, not just by trusting
+   the automated test. It found one real, concrete issue: `datastore/cockroachdb.entry.yaml`'s licence line
+   ("BSL 1.1, converts to Apache-2.0 after 3 years") was accurate for CockroachDB's pre-November-2024
+   licensing but stale for current releases, which moved to a proprietary, source-available "CockroachDB
+   Software License" with no automatic open-source conversion. **Fixed**, along with the one place this
+   same stale fact was echoed in a comparative claim inside `datastore/yugabytedb.entry.yaml`'s own
+   strengths field. Also softened one unqualified comparative-performance claim
+   (`datastore/cassandra-scylladb.entry.yaml`: "substantially better hardware utilization... than the
+   Java-based original") to describe the real architectural mechanism (shard-per-core, no JVM GC pauses)
+   rather than an unattributed performance comparison — the critic judged it borderline/defensible as
+   originally written (unlike C2's Q89 violations, no banned word or bare number), but the same "describe
+   mechanism, not comparison" fix already applied repeatedly in Q89 was cheap to apply here too.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (4151 tests, plus the boundaries-coverage config's own
+64) are all clean after every fix. One unrelated, known-flaky test
+(`packages/engine/test/e2e/crash-resume.test.ts`) failed twice across this session's two full-suite runs
+and passed cleanly both times on immediate isolated re-run — confirmed not a regression from this piece.

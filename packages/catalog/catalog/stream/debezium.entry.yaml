@@ -1,0 +1,26 @@
+id: debezium
+kind: stream
+name: Debezium
+category: change-data-capture
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'The standard open-source change-data-capture (CDC) tool, streaming database row changes into Kafka in near-real-time without modifying the source application'
+  - 'Broad source-database support (PostgreSQL, MySQL, MongoDB, SQL Server, and more) via a consistent connector model'
+weaknesses:
+  - "Adds real operational complexity (typically Kafka Connect plus Kafka itself) to a stack that didn't previously need it"
+  - 'Source database configuration (logical replication, binlog settings) must be set up correctly, a real source of subtle bugs if misconfigured'
+fits_when:
+  - 'downstream systems need a near-real-time stream of database changes without modifying the source application'
+  - 'the architecture already includes Kafka and CDC fits naturally alongside it'
+avoid_when:
+  - "the architecture doesn't already use Kafka and adopting it solely for CDC isn't justified"
+  - 'a simpler polling-based or application-level event-publishing approach would meet the actual latency requirement'
+pairs_with: [kafka, postgresql]
+alternatives: []
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Verify the source database's replication/binlog configuration is correct before assuming CDC events are flowing -- a common, silent failure mode is a misconfigured source with no events ever captured"

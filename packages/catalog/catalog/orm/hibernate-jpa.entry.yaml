@@ -1,0 +1,26 @@
+id: hibernate-jpa
+kind: orm
+name: Hibernate/JPA
+category: orm
+maturity: mature
+licence: LGPL-2.1 (Hibernate), EPL-2.0/GPL-2.0 (JPA specification, implementation-dependent)
+strengths:
+  - 'The dominant, deeply mature JVM ORM, implementing the standard JPA specification so code is portable across JPA providers'
+  - 'Extremely rich feature set (caching, lazy loading, complex inheritance mapping) built up over two decades of production use'
+weaknesses:
+  - 'Notoriously easy to misuse (N+1 query problems, unexpected lazy-loading exceptions) without deep understanding of its session/caching model'
+  - 'Configuration and mapping-annotation surface area is large, with a real learning curve for correct, performant usage'
+fits_when:
+  - 'the stack is JVM (Java/Kotlin) and the team wants the standard, most feature-complete ORM option'
+  - 'portability across JPA implementations is a real requirement'
+avoid_when:
+  - "the team hasn't invested in understanding Hibernate's session/caching model -- N+1 and lazy-loading bugs are a common, costly mistake"
+  - 'a lighter-weight option (jOOQ, sqlc-style generated code) would be simpler for the actual query complexity'
+pairs_with: [spring-boot, postgresql]
+alternatives: [jooq]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Watch for N+1 queries explicitly (use fetch joins or entity graphs) -- agent-generated code that naively accesses lazy associations in a loop is a very common Hibernate performance bug'

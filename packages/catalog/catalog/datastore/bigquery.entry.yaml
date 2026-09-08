@@ -1,0 +1,27 @@
+id: bigquery
+kind: datastore
+name: BigQuery
+category: cloud-data-warehouse
+maturity: mature
+licence: N/A (proprietary GCP managed service)
+managed_options: [gcp-bigquery]
+strengths:
+  - 'Fully serverless data warehouse with no infrastructure to provision; scales automatically to petabyte-scale queries'
+  - 'Deep native integration with the rest of the GCP data/ML ecosystem (Dataflow, Vertex AI, Looker)'
+weaknesses:
+  - 'GCP-only -- a real vendor lock-in cost for a multi-cloud or non-GCP organization'
+  - 'On-demand pricing (per byte scanned) can surprise teams without deliberate query-cost discipline'
+fits_when:
+  - 'the organization is already GCP-native and wants a fully serverless data warehouse'
+  - 'petabyte-scale ad-hoc analytical queries with no capacity planning are a real requirement'
+avoid_when:
+  - 'the organization is not GCP-native and cloud-agnosticism matters'
+  - 'predictable, budgeted query cost matters more than serverless elasticity'
+pairs_with: [dbt, airflow]
+alternatives: [snowflake, redshift]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Always estimate query cost (bytes scanned) before running agent-generated queries against large tables -- an unbounded SELECT * is a real, easy cost mistake'

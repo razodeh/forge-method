@@ -1,0 +1,27 @@
+id: eventstoredb
+kind: datastore
+name: EventStoreDB
+category: event-sourcing
+maturity: growing
+licence: Event Store License (source-available, not OSI-approved for recent major versions)
+managed_options: [event-store-cloud]
+strengths:
+  - 'Purpose-built for event sourcing: an immutable, ordered append log with native stream subscriptions and projections'
+  - 'Gives event-sourced systems a real system-of-record designed for that pattern, rather than simulating it atop a relational table'
+weaknesses:
+  - 'Narrow use case -- only a good fit for systems deliberately built around event sourcing, not general-purpose storage'
+  - 'Smaller community and hiring pool than general-purpose datastores; the licence is source-available, not fully open-source, for current versions'
+fits_when:
+  - 'the system is deliberately built around event sourcing/CQRS with a need for native stream subscriptions'
+  - 'an auditable, immutable history of every state change is a first-class requirement'
+avoid_when:
+  - 'the system is not built around event sourcing -- a general-purpose datastore fits better'
+  - "the licence terms conflict with the organization's procurement policy"
+pairs_with: []
+alternatives: [postgresql, kafka]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'Only reach for this when the domain is genuinely modeled as an event-sourced aggregate -- do not use it as a general-purpose database substitute'

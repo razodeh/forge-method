@@ -1,0 +1,27 @@
+id: pulsar
+kind: queue
+name: Pulsar
+category: distributed-log
+maturity: mature
+licence: Apache-2.0
+managed_options: [streamnative-cloud]
+strengths:
+  - 'Combines Kafka-style durable streaming with native multi-tenancy and a separate storage layer (Apache BookKeeper), enabling independent scaling of compute and storage'
+  - "Built-in support for both queuing and streaming semantics in one system, unlike Kafka's streaming-first model"
+weaknesses:
+  - 'More moving parts to operate than Kafka (brokers plus a separate BookKeeper storage layer)'
+  - 'Smaller community and ecosystem than Kafka, despite comparable capability'
+fits_when:
+  - 'multi-tenancy (many independent teams/namespaces on one cluster) is a real operational requirement'
+  - 'the workload needs both queuing and streaming semantics from a single system'
+avoid_when:
+  - "the team wants Kafka's larger ecosystem and more widespread hiring pool"
+  - "the added operational complexity of a separate storage layer isn't justified by an actual multi-tenancy need"
+pairs_with: []
+alternatives: [kafka, redpanda]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Confirm whether a given topic is being used in queuing or streaming mode -- Pulsar supports both and agent-generated consumer code must match the intended semantics'

@@ -1,0 +1,27 @@
+id: neo4j
+kind: datastore
+name: Neo4j
+category: graph
+maturity: mature
+licence: GPL-3.0 (Community Edition), proprietary (Enterprise)
+managed_options: [neo4j-aura]
+strengths:
+  - 'Purpose-built native graph storage and traversal (Cypher query language) makes deeply-connected-data queries far simpler and faster than simulating graphs in a relational schema'
+  - 'Mature tooling (Neo4j Browser, Bloom) for visualizing and exploring graph data directly'
+weaknesses:
+  - 'Not a natural fit for tabular/aggregate-heavy workloads a relational or columnar store handles better'
+  - "Community Edition's GPL-3.0 licence and Enterprise's proprietary pricing are both real considerations depending on the deployment model"
+fits_when:
+  - 'the domain is fundamentally relationship-heavy (social graphs, recommendation engines, fraud detection, knowledge graphs)'
+  - 'multi-hop traversal queries are common and would be slow/complex as relational joins'
+avoid_when:
+  - 'the workload is primarily tabular aggregation or reporting -- a relational or columnar store fits better'
+  - "the team has no graph-database experience and the domain doesn't clearly need one"
+pairs_with: []
+alternatives: [postgresql]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Model the domain as a graph deliberately (nodes/relationships/properties) rather than porting a relational schema directly -- a directly-ported schema loses Neo4j's main advantage"

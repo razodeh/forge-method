@@ -1,0 +1,26 @@
+id: jwt-vs-sessions
+kind: auth
+name: JWT vs sessions
+category: auth-mechanism
+maturity: mature
+licence: N/A (approaches/standards, not products)
+strengths:
+  - 'JWTs are stateless and self-contained, scaling naturally across multiple servers with no shared session store required'
+  - 'Server-side sessions give trivial, immediate revocation (delete the session record) that a stateless JWT cannot match without extra machinery'
+weaknesses:
+  - 'JWTs cannot be revoked before their own expiry without a separate blocklist/allowlist mechanism, which reintroduces the statefulness they were meant to avoid'
+  - 'Server-side sessions require a shared session store (Redis, database) to scale across multiple servers, an extra piece of infrastructure'
+fits_when:
+  - 'stateless, horizontally-scalable auth across many independent services is needed -- JWTs fit that shape'
+  - 'immediate, reliable revocation matters more than statelessness -- server-side sessions fit that need directly'
+avoid_when:
+  - "immediate token revocation is a hard requirement and no blocklist mechanism is planned -- plain JWTs alone won't satisfy it"
+  - 'the app is a single monolith with no real need for stateless cross-service auth -- sessions are simpler'
+pairs_with: [redis-valkey]
+alternatives: [oauth2-oidc]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Set short JWT expiry with a refresh-token rotation strategy if using JWTs -- agent-generated code issuing long-lived, unrevocable JWTs is a real security risk'

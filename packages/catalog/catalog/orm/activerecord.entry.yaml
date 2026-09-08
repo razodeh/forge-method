@@ -1,0 +1,26 @@
+id: activerecord
+kind: orm
+name: ActiveRecord
+category: orm
+maturity: mature
+licence: MIT
+strengths:
+  - "Rails' own deeply integrated ORM implementing the Active Record pattern -- models, validations, associations, and migrations all consistent and conventions-driven"
+  - 'The most productive ORM in this catalog for rapid CRUD-app development, given how much it handles by convention'
+weaknesses:
+  - 'Tightly coupled to Rails'' own conventions -- the implicit "magic" (callbacks, dynamic finders) can obscure control flow for newcomers'
+  - 'Complex, highly-relational queries can produce inefficient generated SQL without deliberate eager-loading (includes/preload) discipline'
+fits_when:
+  - "the project is Rails, where ActiveRecord's tight framework integration is a real asset"
+  - 'the team wants a highly convention-driven path from schema to working model code'
+avoid_when:
+  - "the project is not Rails -- ActiveRecord isn't a natural standalone choice the way SQLAlchemy is"
+  - 'the queries are complex enough that explicit, less "magic" query control is preferred'
+pairs_with: [rails, postgresql]
+alternatives: [django-orm, ecto]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Use includes/preload explicitly for any association accessed in a loop -- agent-generated code without it is a very common source of N+1 query bugs in Rails apps'

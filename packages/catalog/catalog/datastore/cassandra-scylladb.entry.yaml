@@ -1,0 +1,27 @@
+id: cassandra-scylladb
+kind: datastore
+name: Cassandra/ScyllaDB
+category: wide-column
+maturity: mature
+licence: Apache-2.0 (Cassandra), AGPL-3.0/proprietary (ScyllaDB open-source/enterprise split)
+managed_options: [aws-keyspaces, scylla-cloud, datastax-astra]
+strengths:
+  - 'Masterless, linearly-scalable wide-column store built for very high write throughput across many nodes with no single point of failure'
+  - "ScyllaDB (a Cassandra-compatible C++ rewrite using a shard-per-core architecture) avoids the JVM's own garbage-collection pauses and thread-per-connection overhead"
+weaknesses:
+  - 'Eventually-consistent by default; strong consistency requires deliberate, costly quorum-level tuning'
+  - "Query flexibility is intentionally limited to the access patterns the table's own partition key supports"
+fits_when:
+  - 'very high write throughput across many nodes with no single point of failure is a hard requirement'
+  - 'access patterns are known up front and eventual consistency is acceptable'
+avoid_when:
+  - 'ad-hoc queries across arbitrary fields are a common requirement'
+  - 'strong consistency is needed for most operations, not just a deliberately-tuned subset'
+pairs_with: []
+alternatives: [dynamodb, mongodb]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Design partition keys around real access patterns before writing queries; an agent defaulting to relational-style ad-hoc filtering will generate slow, full-cluster-scanning queries'

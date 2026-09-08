@@ -1,0 +1,26 @@
+id: webhooks
+kind: api-style
+name: Webhooks
+category: api-style
+maturity: mature
+licence: N/A (architectural pattern, not a product)
+strengths:
+  - 'Simple, universally-supported pattern for one system to push event notifications to another over plain HTTP -- no persistent connection or special client library needed'
+  - 'Decouples the event source from the consumer; the consumer only needs a public HTTP endpoint'
+weaknesses:
+  - "No built-in delivery guarantee -- the receiver must be reachable at delivery time, or the sender's own retry policy (if any) determines what happens on failure"
+  - 'Payload verification (signature checking) must be implemented deliberately, or the endpoint is open to spoofed requests'
+fits_when:
+  - 'one external system needs to notify another of events asynchronously without a persistent connection'
+  - 'the receiving system can expose a public, reachable HTTP endpoint'
+avoid_when:
+  - 'guaranteed, ordered delivery is required -- a message queue fits that need better'
+  - 'the receiving system cannot expose a public endpoint (e.g. behind a strict firewall with no inbound access)'
+pairs_with: []
+alternatives: [kafka, rabbitmq]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Always verify webhook payload signatures before trusting the request body -- agent-generated webhook handlers that skip this are open to spoofed events'

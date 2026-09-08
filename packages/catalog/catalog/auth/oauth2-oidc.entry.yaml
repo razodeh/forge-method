@@ -1,0 +1,26 @@
+id: oauth2-oidc
+kind: auth
+name: OAuth2/OIDC
+category: auth-protocol
+maturity: mature
+licence: N/A (open standards, not a product)
+strengths:
+  - 'The universal standard for delegated authorization (OAuth2) and identity (OIDC on top of it) -- supported by every major identity provider'
+  - 'Enables "log in with X" flows and third-party API access without ever sharing the user''s own password with a relying app'
+weaknesses:
+  - "The specification's own flexibility (many grant types, flows) creates real risk of misconfiguration if implemented by hand rather than via a vetted library"
+  - 'Token lifecycle management (refresh, revocation, expiry) has real edge cases that are easy to get subtly wrong'
+fits_when:
+  - 'the app needs to delegate authentication to a third-party identity provider or expose delegated API access to third parties'
+  - 'standards-based interoperability with any OIDC-compliant identity provider is required'
+avoid_when:
+  - 'the app has simple, single-tenant username/password needs with no third-party delegation requirement -- a simpler session-based approach may suffice'
+  - 'the team lacks the security expertise to implement it correctly by hand -- use a vetted library or managed provider instead'
+pairs_with: [keycloak, auth0-okta-entra]
+alternatives: [saml, jwt-vs-sessions]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Never hand-roll an OAuth2/OIDC flow from scratch -- use a well-vetted library or SDK; agent-generated hand-rolled implementations are a common source of real security vulnerabilities'

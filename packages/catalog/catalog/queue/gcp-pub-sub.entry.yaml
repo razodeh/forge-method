@@ -1,0 +1,27 @@
+id: gcp-pub-sub
+kind: queue
+name: GCP Pub/Sub
+category: cloud-managed-messaging
+maturity: mature
+licence: N/A (proprietary GCP managed service)
+managed_options: [gcp-pubsub]
+strengths:
+  - 'Fully managed, globally-distributed pub/sub messaging with automatic scaling and no infrastructure to operate'
+  - 'Deep native integration with the rest of the GCP data/serverless ecosystem (Cloud Functions, Dataflow, BigQuery)'
+weaknesses:
+  - 'GCP-only -- a real vendor lock-in cost for a multi-cloud organization'
+  - "Fewer distinct specialized primitives than AWS's messaging suite (one general pub/sub service rather than SQS+SNS+EventBridge+Kinesis)"
+fits_when:
+  - 'the architecture is GCP-native and needs globally-distributed pub/sub messaging'
+  - "tight integration with GCP's serverless/data ecosystem (Cloud Functions, Dataflow) is valuable"
+avoid_when:
+  - 'the organization is not GCP-native and cloud-agnosticism matters'
+  - 'the workload needs Kafka-style long-term durable event replay at very large retention windows'
+pairs_with: [serverless-first]
+alternatives: [aws-sqs-sns-eventbridge-kinesis, azure-service-bus]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: high
+notes_for_agents:
+  - "Confirm subscription type (pull vs. push) matches the consuming service's own architecture before generating subscriber code"

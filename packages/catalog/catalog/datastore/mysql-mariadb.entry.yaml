@@ -1,0 +1,27 @@
+id: mysql-mariadb
+kind: datastore
+name: MySQL/MariaDB
+category: relational
+maturity: mature
+licence: GPL-2.0 (MySQL), GPL-2.0 (MariaDB)
+managed_options: [aws-rds, gcp-cloudsql, azure-flexible, planetscale]
+strengths:
+  - 'Extremely widespread hosting availability and the largest installed base of any relational database'
+  - 'Simple replication model (row-based) that most teams already know how to operate'
+weaknesses:
+  - 'Historically weaker standards compliance and stricter-mode defaults than PostgreSQL (improving, still a real gap)'
+  - "JSON/GIS/full-text feature surface is narrower than PostgreSQL's"
+fits_when:
+  - 'the hosting target or existing team expertise is specifically MySQL/MariaDB'
+  - 'the workload is straightforward CRUD without PostgreSQL-specific feature needs'
+avoid_when:
+  - "the workload needs PostgreSQL's broader JSONB/GIS/full-text feature surface"
+  - 'strict ACID compliance with serializable isolation is a hard requirement'
+pairs_with: [django-orm, typeorm, prisma]
+alternatives: [postgresql, sqlite, cockroachdb]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Prefer InnoDB (the default) explicitly; never assume MyISAM-era defaults from older training data'

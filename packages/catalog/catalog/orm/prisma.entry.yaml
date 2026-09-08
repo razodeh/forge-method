@@ -1,0 +1,26 @@
+id: prisma
+kind: orm
+name: Prisma
+category: orm
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'Strong TypeScript type inference generated directly from a declarative schema file, with excellent autocomplete'
+  - 'Prisma Migrate gives a clean, reviewable migration workflow out of the box'
+weaknesses:
+  - 'The query engine (historically a separate Rust binary) adds a real extra process/deployment consideration versus a pure-JS driver'
+  - 'Complex, highly-relational queries can be harder to express than raw SQL or a query-builder approach'
+fits_when:
+  - 'the stack is TypeScript and strong compile-time type safety for database access is a priority'
+  - 'the team wants a declarative schema file as the single source of truth for models and migrations'
+avoid_when:
+  - 'the queries are complex enough that raw SQL or a lighter query builder (Drizzle/Kysely) would be clearer'
+  - "the deployment target can't easily accommodate Prisma's query-engine binary (some edge/serverless runtimes need extra configuration)"
+pairs_with: [postgresql, mysql-mariadb, t3-stack]
+alternatives: [drizzle, typeorm]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Run prisma migrate dev (or the equivalent CI-safe command) rather than hand-editing the generated migration SQL directly'

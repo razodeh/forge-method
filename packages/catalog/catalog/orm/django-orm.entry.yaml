@@ -1,0 +1,26 @@
+id: django-orm
+kind: orm
+name: Django ORM
+category: orm
+maturity: mature
+licence: BSD-3-Clause
+strengths:
+  - 'Tightly integrated with Django''s admin panel, forms, and migrations -- the most "batteries-included" ORM experience in this catalog'
+  - 'Highly opinionated, consistent API that minimizes decision fatigue for common CRUD patterns'
+weaknesses:
+  - 'Tightly coupled to the Django framework -- not usable standalone outside a Django project the way SQLAlchemy is'
+  - 'Less flexible than SQLAlchemy for highly complex, hand-tuned queries'
+fits_when:
+  - "the project is already Django, where the ORM's tight framework integration is a real asset"
+  - 'the team wants the most opinionated, batteries-included ORM experience with minimal setup decisions'
+avoid_when:
+  - "the project is not Django -- Django ORM isn't usable standalone the way SQLAlchemy is"
+  - "the queries are complex enough that SQLAlchemy's finer-grained control would be clearer"
+pairs_with: [django, postgresql]
+alternatives: [sqlalchemy, prisma]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Always run makemigrations/migrate; never hand-edit a generated migration file, the same discipline Django itself already requires'

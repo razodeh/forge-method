@@ -1,0 +1,26 @@
+id: rest
+kind: api-style
+name: REST
+category: api-style
+maturity: mature
+licence: N/A (architectural style, not a product)
+strengths:
+  - 'Universally understood, cacheable-by-default (HTTP semantics), and supported by every client/tool in existence -- zero adoption friction'
+  - 'Maps naturally onto HTTP verbs/status codes, giving a simple mental model for CRUD-shaped resources'
+weaknesses:
+  - 'Over-fetching/under-fetching is common for complex, deeply-nested data needs -- often requires multiple round-trips or ad-hoc query parameters'
+  - 'No built-in strong typing or schema contract without a separate layer (OpenAPI) bolted on'
+fits_when:
+  - 'the API is public-facing or consumed by many heterogeneous clients where universal tooling support matters'
+  - 'the domain maps naturally onto resource-oriented CRUD operations'
+avoid_when:
+  - 'clients need to fetch precisely-shaped, deeply-nested data in one round-trip -- GraphQL fits that better'
+  - "the API is internal, high-throughput service-to-service traffic where gRPC's binary protocol would perform better"
+pairs_with: [express, django, aspnet-core]
+alternatives: [graphql, grpc]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Generate and maintain an OpenAPI spec alongside the implementation -- agent-generated REST endpoints without one drift undocumented over time'

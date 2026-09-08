@@ -1,0 +1,27 @@
+id: cockroachdb
+kind: datastore
+name: CockroachDB
+category: distributed-relational
+maturity: mature
+licence: CockroachDB Software License (proprietary, source-available; versions before the November 2024 relicensing remain under their original BSL 1.1 terms)
+managed_options: [cockroachcloud]
+strengths:
+  - 'PostgreSQL-wire-compatible with built-in horizontal scaling and multi-region survivability out of the box'
+  - 'Automatic sharding and rebalancing without the manual operational work Citus-on-Postgres requires'
+weaknesses:
+  - 'Distributed transactions have real latency cost versus a single-node PostgreSQL for co-located data'
+  - 'The CockroachDB Software License (a proprietary, source-available licence for current versions) is a real consideration for some procurement policies'
+fits_when:
+  - 'the product needs horizontal write scaling and multi-region survivability with a relational/SQL model'
+  - 'the team wants PostgreSQL-wire-compatible tooling without managing sharding by hand'
+avoid_when:
+  - 'the workload is small enough that a single-node PostgreSQL instance meets every requirement'
+  - "the licence terms conflict with the organization's procurement policy"
+pairs_with: [prisma, sqlalchemy]
+alternatives: [postgresql, yugabytedb]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Most PostgreSQL client libraries work unmodified, but verify any PostgreSQL-specific extension (e.g. certain JSONB operators) is actually supported before relying on it'

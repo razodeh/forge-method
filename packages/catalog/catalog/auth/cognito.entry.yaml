@@ -1,0 +1,27 @@
+id: cognito
+kind: auth
+name: Cognito
+category: managed-identity-provider
+maturity: mature
+licence: N/A (proprietary AWS managed service)
+managed_options: [aws-cognito]
+strengths:
+  - 'Deep native integration with the rest of AWS (API Gateway, AppSync, IAM) for an AWS-native architecture'
+  - "No per-provider cost beyond AWS's own pricing model, avoiding a separate vendor relationship"
+weaknesses:
+  - 'Widely reported as having a rougher developer experience and less polished tooling than Auth0/Clerk/Okta'
+  - 'AWS-only -- a real vendor lock-in cost for a multi-cloud or non-AWS organization'
+fits_when:
+  - 'the architecture is already AWS-native and tight integration with API Gateway/AppSync/IAM is valuable'
+  - 'avoiding a separate identity-provider vendor relationship (beyond AWS itself) is a priority'
+avoid_when:
+  - 'the organization is not AWS-native and cloud-agnosticism matters'
+  - 'developer experience and integration polish matter more than AWS-native integration -- Auth0/Clerk are generally considered smoother'
+pairs_with: [aws-sqs-sns-eventbridge-kinesis, serverless-first]
+alternatives: [auth0-okta-entra, supabase-auth]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Use the AWS Amplify or official SDK rather than hand-rolling Cognito token verification -- agent-generated manual verification against Cognito's JWKS is a common source of subtle bugs"

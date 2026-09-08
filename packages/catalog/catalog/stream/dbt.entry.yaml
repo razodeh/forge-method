@@ -1,0 +1,27 @@
+id: dbt
+kind: stream
+name: dbt
+category: transformation
+maturity: mature
+licence: Apache-2.0 (dbt Core)
+managed_options: [dbt-cloud]
+strengths:
+  - 'Brings software-engineering discipline (version control, testing, documentation, modular SQL) to data-warehouse transformations'
+  - 'The dominant "transform" tool in the modern ELT pattern, with deep integration across every major warehouse (Snowflake, BigQuery, Redshift)'
+weaknesses:
+  - 'SQL-only transformation logic -- not a fit for workloads needing arbitrary code (Python/Scala) inside the transform step itself'
+  - "Assumes an existing warehouse with data already loaded (via a separate EL tool like Airbyte/Fivetran); dbt itself doesn't extract or load"
+fits_when:
+  - 'the team needs testable, version-controlled SQL transformations inside an existing data warehouse'
+  - 'the ELT pattern (extract/load first, transform in the warehouse) fits the architecture'
+avoid_when:
+  - 'the transformation logic genuinely needs arbitrary code (not SQL) -- Spark/Beam fit that better'
+  - 'there is no existing warehouse to transform data inside'
+pairs_with: [snowflake, bigquery, redshift, airflow]
+alternatives: [spark]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Write dbt tests (unique/not_null/relationships) alongside every model -- agent-generated models without tests silently ship undetected data-quality regressions'

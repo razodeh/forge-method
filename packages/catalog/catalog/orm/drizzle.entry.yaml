@@ -1,0 +1,26 @@
+id: drizzle
+kind: orm
+name: Drizzle
+category: orm
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'SQL-like, lightweight query builder with full TypeScript type inference and no separate query-engine binary/process'
+  - 'Generates plain SQL migrations that are fully readable and editable, rather than an opaque abstraction'
+weaknesses:
+  - 'Younger ecosystem and smaller community than Prisma; fewer third-party tools built around it'
+  - 'Less "batteries-included" tooling (studio/GUI, admin panel) than Prisma provides out of the box'
+fits_when:
+  - 'the team wants SQL-like query ergonomics with full type safety but no separate runtime process'
+  - 'edge/serverless deployment targets where a lightweight, dependency-minimal client matters'
+avoid_when:
+  - "the team wants Prisma's more mature tooling ecosystem (Studio, broader third-party integrations)"
+  - "the team prefers a fully declarative schema-first workflow over Drizzle's more SQL-like API"
+pairs_with: [postgresql, mysql-mariadb]
+alternatives: [prisma, sqlc]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Review generated SQL migrations before applying them -- Drizzle's transparency is a benefit specifically because agent-generated migrations can be read and verified directly"

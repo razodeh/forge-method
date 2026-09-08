@@ -1,0 +1,26 @@
+id: beam
+kind: stream
+name: Beam
+category: unified-batch-and-stream
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'A portable, unified programming model that runs unmodified on multiple backend engines (Dataflow, Flink, Spark) -- write once, choose the runner later'
+  - 'First-class support for both batch and streaming with the same API'
+weaknesses:
+  - 'An extra abstraction layer over whichever runner actually executes the job, with real debugging cost when something goes wrong at the runner level'
+  - "Smaller direct community than using a runner's own native API (e.g. Flink or Spark directly)"
+fits_when:
+  - 'portability across execution engines (avoiding lock-in to one runner) is a real, deliberate requirement'
+  - 'the team is already committed to GCP Dataflow, where Beam is the native programming model'
+avoid_when:
+  - "the team has already committed to one specific runner and portability isn't a real requirement -- using that runner's native API directly is simpler"
+  - "the extra debugging complexity of an abstraction layer over the real runner isn't worth the portability benefit"
+pairs_with: [flink, spark]
+alternatives: [flink, spark]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'Confirm which runner a Beam pipeline actually targets before debugging performance issues -- symptoms are often runner-specific, not portable across the abstraction'

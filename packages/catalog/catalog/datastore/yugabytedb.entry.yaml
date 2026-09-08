@@ -1,0 +1,27 @@
+id: yugabytedb
+kind: datastore
+name: YugabyteDB
+category: distributed-relational
+maturity: growing
+licence: Apache-2.0
+managed_options: [yugabyte-cloud]
+strengths:
+  - "PostgreSQL-compatible distributed SQL with a fully open-source (Apache-2.0) licence, unlike CockroachDB's proprietary, source-available licence"
+  - 'Also exposes a Cassandra-compatible API (YCQL) for teams wanting a wide-column option on the same cluster'
+weaknesses:
+  - 'Smaller community and production track record than CockroachDB or PostgreSQL'
+  - 'Distributed transaction latency cost applies here too, same as any distributed-SQL database'
+fits_when:
+  - 'the team wants distributed SQL with a fully permissive open-source licence'
+  - "PostgreSQL compatibility with horizontal scaling is needed and CockroachDB's licence is a blocker"
+avoid_when:
+  - 'the workload is small enough that a single-node PostgreSQL instance meets every requirement'
+  - 'the team needs the largest possible community and production track record for a distributed SQL database'
+pairs_with: [prisma, sqlalchemy]
+alternatives: [cockroachdb, postgresql]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Verify PostgreSQL-extension compatibility before relying on it, the same caveat as CockroachDB'

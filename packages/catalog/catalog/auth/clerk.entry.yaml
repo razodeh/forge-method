@@ -1,0 +1,27 @@
+id: clerk
+kind: auth
+name: Clerk
+category: managed-identity-provider
+maturity: growing
+licence: N/A (proprietary managed service)
+managed_options: [clerk]
+strengths:
+  - 'Extremely fast integration for modern JS/TS frontend frameworks (Next.js especially), with pre-built UI components for sign-in/sign-up/user-management'
+  - 'Excellent developer experience for the common case of adding auth to a web app quickly'
+weaknesses:
+  - 'Younger, narrower-scope product than Auth0/Okta -- less enterprise-federation/compliance depth for large organizations'
+  - 'Per-monthly-active-user pricing can become a real cost consideration at scale'
+fits_when:
+  - 'the project is a modern JS/TS web app (especially Next.js) and fast, polished auth UI integration matters'
+  - 'the team wants pre-built sign-in/user-management UI rather than building it from scratch'
+avoid_when:
+  - 'the organization needs Auth0/Okta-level enterprise SSO federation and compliance depth'
+  - "the stack is not a JS/TS frontend where Clerk's integration story is strongest"
+pairs_with: [nextjs, react]
+alternatives: [supabase-auth, auth0-okta-entra]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Use Clerk's own official SDK and pre-built components rather than reimplementing auth UI/flows by hand"

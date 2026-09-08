@@ -1,0 +1,27 @@
+id: airflow
+kind: stream
+name: Airflow
+category: workflow-orchestration
+maturity: mature
+licence: Apache-2.0
+managed_options: [aws-mwaa, gcp-composer, astronomer]
+strengths:
+  - 'The most widely-adopted data-pipeline orchestrator, with the largest ecosystem of pre-built operators and integrations'
+  - 'Mature scheduling, retry, and dependency-management model expressed as Python DAGs'
+weaknesses:
+  - 'Scheduler/DAG-parsing overhead and operational complexity are real at scale, and DAG authoring has historically been less ergonomic than newer tools'
+  - 'Not designed for low-latency streaming orchestration -- purpose-built for scheduled/batch pipelines'
+fits_when:
+  - 'the workload is scheduled batch pipeline orchestration with complex task dependencies'
+  - 'the team wants the largest ecosystem of pre-built operators for common data-tool integrations'
+avoid_when:
+  - 'the orchestration need is simple enough that a lighter tool (cron, a managed scheduler) would suffice'
+  - 'the team wants the more modern, asset-centric DX that Dagster/Prefect specifically offer'
+pairs_with: [dbt, spark]
+alternatives: [dagster, prefect]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Keep DAG-file top-level code side-effect-free and fast -- agent-generated DAGs doing heavy work at parse time (not inside a task) slow down or break the scheduler'

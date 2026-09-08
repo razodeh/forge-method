@@ -1,0 +1,27 @@
+id: clickhouse
+kind: datastore
+name: ClickHouse
+category: columnar-analytical
+maturity: mature
+licence: Apache-2.0
+managed_options: [clickhouse-cloud]
+strengths:
+  - 'Columnar storage engine purpose-built for extremely fast aggregate queries over billions of rows'
+  - 'Real-time analytics at a fraction of the hardware cost of many alternative OLAP systems, with a familiar SQL dialect'
+weaknesses:
+  - 'Not designed for high-frequency single-row updates/deletes -- optimized for append-heavy, read-heavy analytical workloads'
+  - 'Operational tuning (merge trees, partitioning) has a real learning curve distinct from row-store databases'
+fits_when:
+  - 'the workload is real-time or near-real-time analytics over very large event/log datasets'
+  - 'aggregate query speed at scale matters more than transactional row-level update support'
+avoid_when:
+  - 'the workload needs frequent single-row transactional updates'
+  - "the dataset is small enough that a row-store database's analytical query performance is already sufficient"
+pairs_with: [dbt, kafka]
+alternatives: [duckdb, bigquery, snowflake]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Design tables around the query patterns that will run against them (ORDER BY/partition key choice matters enormously for performance) before writing ingestion code'

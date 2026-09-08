@@ -1,0 +1,26 @@
+id: sqlalchemy
+kind: orm
+name: SQLAlchemy
+category: orm
+maturity: mature
+licence: MIT
+strengths:
+  - 'The most mature and flexible Python ORM/SQL toolkit, supporting both a full ORM layer and a lower-level Core query-building API'
+  - 'Deep support for complex relational modeling and fine-grained control over generated SQL when needed'
+weaknesses:
+  - "More verbose and has a steeper learning curve than Django ORM's more opinionated, batteries-included approach"
+  - 'The dual ORM/Core API surface can create real decision friction over which layer to use for a given query'
+fits_when:
+  - "the project is Python but not Django, or needs SQLAlchemy's finer-grained control over complex queries"
+  - 'the team wants an ORM flexible enough to drop to raw SQL-like Core queries when needed'
+avoid_when:
+  - "the project is already Django and Django ORM's tighter framework integration fits better"
+  - 'the team wants the most opinionated, lowest-decision-friction ORM experience -- Django ORM fits that better'
+pairs_with: [fastapi, flask, postgresql]
+alternatives: [django-orm, prisma]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Use Alembic for migrations rather than hand-writing schema-change SQL -- agent-generated schema changes without a migration tool are a real drift risk'

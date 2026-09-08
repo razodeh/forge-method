@@ -1,0 +1,27 @@
+id: s3-class-object-stores
+kind: datastore
+name: S3-class object stores
+category: object-storage
+maturity: mature
+licence: N/A (composition of proprietary managed services and open-source implementations, e.g. MinIO)
+managed_options: [aws-s3, gcp-cloud-storage, azure-blob, cloudflare-r2, minio]
+strengths:
+  - 'The universal standard for durable, cheap, effectively unlimited blob/file storage, with the S3 API as a de facto industry protocol'
+  - 'Deep integration with nearly every data pipeline, CDN, and backup tool across every major cloud'
+weaknesses:
+  - 'Not a queryable database -- no indexing or query language of its own without a separate layer (Athena, BigQuery external tables)'
+  - "Egress/request pricing across providers can add real, sometimes-surprising cost at scale (Cloudflare R2's zero-egress pricing is a notable exception)"
+fits_when:
+  - 'storing files, backups, media, or data-lake files (Parquet/CSV) durably and cheaply is the requirement'
+  - 'the storage needs to be accessed via the widely-supported S3 API from many tools'
+avoid_when:
+  - 'the data needs to be queried directly with SQL/indexes -- pair with a query engine (Athena, DuckDB, BigQuery external tables) instead'
+  - 'low, predictable egress cost across regions/providers is a hard requirement -- compare provider egress pricing carefully'
+pairs_with: [duckdb, airbyte]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Set explicit bucket lifecycle/retention policies -- agent-generated pipelines that write without a retention plan silently accumulate storage cost over time'

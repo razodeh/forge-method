@@ -1,0 +1,27 @@
+id: prefect
+kind: stream
+name: Prefect
+category: workflow-orchestration
+maturity: growing
+licence: Apache-2.0
+managed_options: [prefect-cloud]
+strengths:
+  - "Python-native, dynamic workflow definitions (plain functions with decorators) with a notably lower barrier to entry than Airflow's DAG-file model"
+  - "Strong native support for dynamic, runtime-determined task graphs rather than Airflow's more static DAG structure"
+weaknesses:
+  - 'Smaller ecosystem and community than Airflow, with fewer pre-built operators for niche integrations'
+  - "Younger production track record at very large scale than Airflow's decade-plus history"
+fits_when:
+  - 'workflow structure needs to be determined dynamically at runtime rather than statically defined up front'
+  - 'the team wants the lowest-friction Python-native orchestration authoring experience'
+avoid_when:
+  - "the team needs Airflow's larger ecosystem of pre-built operators for niche integrations"
+  - 'the team needs the longest possible production track record at very large scale'
+pairs_with: [dbt]
+alternatives: [airflow, dagster]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Use Prefect's native retry/caching decorators rather than hand-rolling retry logic -- agent-generated hand-rolled retries duplicate what the framework already provides correctly"

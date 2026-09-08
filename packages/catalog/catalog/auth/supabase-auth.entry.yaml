@@ -1,0 +1,27 @@
+id: supabase-auth
+kind: auth
+name: Supabase Auth
+category: managed-identity-provider
+maturity: growing
+licence: Apache-2.0 (self-hostable) / N/A (managed service)
+managed_options: [supabase]
+strengths:
+  - "Tightly integrated with Supabase's own PostgreSQL database (row-level security policies keyed directly off auth), a real advantage for a Supabase-based stack"
+  - 'Open-source and self-hostable, unlike most managed identity providers, avoiding hard vendor lock-in'
+weaknesses:
+  - 'Its main advantage (tight Postgres/RLS integration) is specific to a Supabase-centric architecture -- less compelling as a standalone identity provider outside that context'
+  - 'Smaller enterprise-feature surface than Auth0/Okta for large-organization SSO/compliance needs'
+fits_when:
+  - "the project already uses Supabase's PostgreSQL database and wants auth tightly integrated with row-level security"
+  - 'an open-source, self-hostable option is preferred over a fully proprietary managed provider'
+avoid_when:
+  - "the project doesn't use Supabase's database -- the main integration advantage doesn't apply"
+  - 'the organization needs Auth0/Okta-level enterprise SSO federation and compliance depth'
+pairs_with: [postgresql]
+alternatives: [clerk, auth0-okta-entra]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Use row-level security policies as the real enforcement boundary, not just client-side checks -- agent-generated queries that rely solely on client-side auth checks bypass Postgres RLS's actual protection"

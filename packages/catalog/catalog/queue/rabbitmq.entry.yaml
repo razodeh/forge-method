@@ -1,0 +1,27 @@
+id: rabbitmq
+kind: queue
+name: RabbitMQ
+category: message-broker
+maturity: mature
+licence: MPL-2.0
+managed_options: [cloudamqp, aws-mq]
+strengths:
+  - 'Mature, flexible message broker with rich routing (exchanges, topics, fanout) purpose-built for point-to-point task queuing'
+  - 'Simple mental model and operational footprint relative to a distributed log like Kafka'
+weaknesses:
+  - 'Not designed for Kafka-style long-term event replay/retention -- messages are consumed and removed, not kept as a durable log'
+  - "Horizontal scaling and very high throughput are less natural than Kafka's own partition-based design"
+fits_when:
+  - 'the workload is classic point-to-point task queuing or flexible pub/sub routing'
+  - 'operational simplicity matters more than Kafka-scale throughput or long-term event replay'
+avoid_when:
+  - 'the workload needs durable, replayable event history at high throughput -- Kafka fits that shape better'
+  - 'the system needs Kafka-style consumer-group fan-out to many independent readers of the same stream'
+pairs_with: [django, express, rails]
+alternatives: [nats-jetstream, kafka]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Set explicit message TTLs and dead-letter exchanges -- agent-generated queue code without them silently accumulates unbounded backlogs on failure'

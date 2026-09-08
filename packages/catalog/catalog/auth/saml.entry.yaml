@@ -1,0 +1,26 @@
+id: saml
+kind: auth
+name: SAML
+category: auth-protocol
+maturity: legacy
+licence: N/A (open standard, not a product)
+strengths:
+  - 'The entrenched standard for enterprise single sign-on, especially with older/legacy identity providers still widely deployed in large organizations'
+  - 'Well-understood by enterprise IT departments, easing procurement/security-review conversations for B2B SaaS'
+weaknesses:
+  - "XML-based protocol is notably more complex and verbose than OAuth2/OIDC's JSON-based approach, with a real history of signature-validation vulnerabilities when implemented incorrectly"
+  - 'Considered a legacy pattern for new development -- most modern identity providers push OIDC as the preferred protocol'
+fits_when:
+  - "the target customer's enterprise identity provider only supports SAML, a common requirement in enterprise B2B sales"
+  - "integrating with an existing legacy enterprise SSO deployment that hasn't migrated to OIDC"
+avoid_when:
+  - 'starting a new project with no specific enterprise-SAML requirement -- OIDC is the modern default'
+  - "the team lacks deep security expertise to review a SAML implementation's signature validation correctly"
+pairs_with: [keycloak, auth0-okta-entra]
+alternatives: [oauth2-oidc]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Never hand-roll SAML signature validation -- use a well-vetted library; this protocol has a real history of critical vulnerabilities from incorrect manual implementations'

@@ -1,0 +1,27 @@
+id: spark
+kind: stream
+name: Spark
+category: batch-and-stream-processing
+maturity: mature
+licence: Apache-2.0
+managed_options: [databricks, aws-emr, gcp-dataproc]
+strengths:
+  - 'The dominant large-scale batch data-processing engine, with a mature ecosystem (Spark SQL, MLlib, Structured Streaming) and the deepest hiring pool of any tool in this row'
+  - 'Handles genuinely massive datasets across distributed clusters with a well-understood programming model'
+weaknesses:
+  - "Structured Streaming's micro-batch model has higher latency than Flink's true streaming for latency-sensitive use cases"
+  - 'JVM-based cluster operations have real memory-tuning and operational overhead at scale'
+fits_when:
+  - 'the workload is large-scale batch data processing or ML feature engineering across a cluster'
+  - 'the team wants the largest ecosystem and hiring pool for a big-data processing engine'
+avoid_when:
+  - "the workload needs true low-latency stream processing -- Flink's model fits that better"
+  - 'the dataset is small enough that a single-machine tool (DuckDB, dbt) would be simpler and cheaper to operate'
+pairs_with: [dbt, airflow]
+alternatives: [flink, dbt]
+operational_burden: high
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Partition and cache DataFrames deliberately based on real access patterns -- agent-generated Spark jobs with no partitioning strategy are a common source of slow, expensive shuffles'

@@ -1,0 +1,27 @@
+id: airbyte
+kind: stream
+name: Airbyte
+category: data-integration
+maturity: growing
+licence: MIT (Airbyte Core), ELv2 (some connectors)
+managed_options: [airbyte-cloud]
+strengths:
+  - 'Large, open-source library of pre-built EL (extract-load) connectors, avoiding hand-written integration code for common sources'
+  - 'Self-hostable, giving a fully open-source alternative to proprietary EL tools like Fivetran'
+weaknesses:
+  - 'Connector quality/maturity varies significantly across the catalog -- some are far more battle-tested than others'
+  - 'Self-hosting has real operational overhead (its own infrastructure to run and monitor)'
+fits_when:
+  - 'the team needs to extract-and-load data from many common SaaS/database sources without hand-writing each integration'
+  - 'a fully open-source, self-hostable EL tool is preferred over a proprietary managed one'
+avoid_when:
+  - 'the specific source/destination pair needed has an immature or unmaintained connector -- verify before committing'
+  - 'the team wants zero self-hosting operational overhead and a proprietary managed tool is acceptable'
+pairs_with: [dbt, s3-class-object-stores]
+alternatives: []
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Check a connector's own maturity/support tier before relying on it in production -- not every connector in the catalog is equally battle-tested"

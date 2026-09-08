@@ -1,0 +1,26 @@
+id: webauthn-passkeys
+kind: auth
+name: WebAuthn/passkeys
+category: auth-protocol
+maturity: growing
+licence: N/A (open W3C/FIDO standard)
+strengths:
+  - 'Phishing-resistant, passwordless authentication using public-key cryptography backed by device biometrics/hardware -- a real, meaningful security improvement over passwords'
+  - 'Increasingly native OS/browser support (Face ID, Windows Hello, hardware keys) with no extra app install required'
+weaknesses:
+  - 'Cross-device/account-recovery UX is still maturing and varies meaningfully across platforms and browsers'
+  - 'Requires a fallback authentication method for users on unsupported devices/browsers, adding real implementation surface'
+fits_when:
+  - 'phishing-resistant, passwordless authentication is a real security priority'
+  - 'the target user base is on modern devices/browsers with good WebAuthn support'
+avoid_when:
+  - 'the user base includes a meaningful share of older devices/browsers without WebAuthn support, and no fallback is planned'
+  - "the team hasn't budgeted for the real UX design work account-recovery flows for passkeys require"
+pairs_with: []
+alternatives: [oauth2-oidc, jwt-vs-sessions]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use a well-vetted WebAuthn library, never hand-roll the cryptographic ceremony -- this is exactly the kind of security-critical code where agent-generated hand-rolled implementations are highest-risk'
