@@ -393,6 +393,21 @@ export const ERROR_CODES = {
       `Cycle detection exceeded ${show(d.maxDepth)} levels of dependency chaining; refusing to search further.`,
     remedy: 'Split the workflow into smaller stages, or reduce how many steps chain through dependsOn in a single run plan.',
   },
+  // `06` §6.3 (`PLAN-M5.md` P12's own `Scheduler`). A critic round found two distinct `StepNode` objects
+  // sharing the same `id` silently defeats the scheduler's own concurrency-safety tracking: its internal
+  // `byId` lookup keeps only the last-declared duplicate, so once the *other* one is marked running, every
+  // claim/agent it carried is invisibly dropped from every future tick's own conflict/limit check — a real
+  // resource-claim or exclusive-agent violation with no error at all. `@forge/engine/plan`'s own
+  // `compileRunPlan` already rejects a duplicate compiled id before a well-formed caller ever reaches this
+  // point, so this is defense against a caller bypassing that pipeline (or a future bug in it), not a
+  // normal business outcome — thrown eagerly at construction, before any tick's own safety tracking could
+  // ever be silently compromised by it.
+  'RUN-036': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) => `Scheduler received more than one step with the id ${show(d.id)}; every step id must be unique.`,
+    remedy: 'Fix the plan compiler or caller supplying these nodes so every compiled step id is unique before constructing a Scheduler.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

@@ -71,6 +71,73 @@ describe('computeCriticalPath', () => {
     expect(result.estimatedCost).toBe(22);
   });
 
+  it('on a genuine cost tie between two different-length chains, the shallower (fewer-hop) one wins, not whichever was declared first', () => {
+    // A verify round found the real tie-break is topological depth, not declaration order as an earlier
+    // version of this file's own doc comment claimed: Kahn's algorithm processes every node at depth 1
+    // before any node at depth 2, regardless of array position. Declared here with the *deeper* chain
+    // first specifically to prove that alone doesn't win it the tie.
+    const nodes = [
+      node('deep1', [], 3),
+      node('deep2', ['deep1'], 3),
+      node('deep3', ['deep2'], 4),
+      node('shallow', [], 10),
+    ];
+    const result = computeCriticalPath(nodes);
+    expect(result.path).toEqual(['shallow']);
+    expect(result.estimatedCost).toBe(10);
+  });
+
+  it('declaration order only breaks a cost tie among candidates already at the same topological depth', () => {
+    const nodes = [
+      node('first', [], 5),
+      node('second', [], 5),
+    ];
+    const result = computeCriticalPath(nodes);
+    expect(result.path).toEqual(['first']);
+    expect(computeCriticalPath([...nodes].reverse()).path).toEqual(['second']);
+  });
+
+  it('does not let a NaN-costed node silently poison the best-path selection -- a verify round found any comparison against NaN is false, so a NaN visited first could never be replaced by a later, real, higher cost', () => {
+    const poisoned = node('poisoned', [], Number.NaN);
+    const real = node('real', [], 5);
+    const nodes = [poisoned, real];
+    const result = computeCriticalPath(nodes);
+    expect(result.path).toEqual(['real']);
+    expect(result.estimatedCost).toBe(5);
+  });
+
+  it('treats a NaN cost as zero rather than propagating it through a downstream sum', () => {
+    const poisoned = node('poisoned', [], Number.NaN);
+    const sink = node('sink', ['poisoned'], 3);
+    const result = computeCriticalPath([poisoned, sink]);
+    expect(result.path).toEqual(['poisoned', 'sink']);
+    expect(result.estimatedCost).toBe(3);
+    expect(Number.isFinite(result.estimatedCost)).toBe(true);
+  });
+
+  it('does not treat an Infinity cost the same as NaN -- unlike NaN, Infinity carries real ordering information ("more expensive than anything finite"), so it is left to flow through untouched, correctly making that node dominate rather than being silently reported as free', () => {
+    const unbounded = node('unbounded', [], Number.POSITIVE_INFINITY);
+    const real = node('real', [], 1_000_000);
+    const result = computeCriticalPath([unbounded, real]);
+    expect(result.path).toEqual(['unbounded']);
+    expect(result.estimatedCost).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('propagates an Infinity cost through a downstream sum as Infinity, deliberately unlike the NaN case above (which is neutralised to 0, not propagated)', () => {
+    // "sink"'s own total (Infinity + 3) is still exactly Infinity in IEEE 754 -- a genuine tie with
+    // "unbounded" alone, not a strictly larger value -- so "unbounded" (the shallower of the two) correctly
+    // wins the already-established depth tie-break, exactly as it would for any other genuine cost tie.
+    // Had the old, un-narrowed `Number.isFinite`-based guard still been in place, "unbounded" would have
+    // been silently zeroed instead, "sink" would total a bare 3, and *that* (not a tie at Infinity) would
+    // have been reported as the answer -- so the assertions below still fully distinguish the two.
+    const unbounded = node('unbounded', [], Number.POSITIVE_INFINITY);
+    const sink = node('sink', ['unbounded'], 3);
+    const result = computeCriticalPath([unbounded, sink]);
+    expect(result.path).toEqual(['unbounded']);
+    expect(result.estimatedCost).toBe(Number.POSITIVE_INFINITY);
+    expect(Number.isFinite(result.estimatedCost)).toBe(false);
+  });
+
   it('does not loop forever or crash if handed a cyclic graph directly, and simply excludes the cyclic portion', () => {
     const nodes = [node('a', ['b'], 1), node('b', ['a'], 1), node('isolated', [], 5)];
     expect(() => computeCriticalPath(nodes)).not.toThrow();

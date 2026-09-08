@@ -150,6 +150,34 @@ describe('buildClaimIntervalMap', () => {
     const b = node({ id: 'b', produces: ['src/foo.ts'] });
     expect(buildClaimIntervalMap([a, b]).overlaps).toHaveLength(1);
   });
+
+  it('still detects a real overlap for an ordinary, bracket-free produces path exceeding the earlier length-only cap -- a verify round found a purely length-based cap falsely reports "no overlap" for a realistic fanout-generated path with no pathological content at all', () => {
+    // A deeply-nested generated-file path with a descriptive slug: zero "[" characters, but long enough
+    // (confirmed below) to have tripped the earlier fix's own 256-character cap, which had no way to tell
+    // this apart from a genuinely adversarial string of the same length.
+    const longButOrdinary = `packages/design-system/src/components/generated/${'a-descriptive-slug-segment-'.repeat(10)}/CheckoutFlowStep.generated.tsx`;
+    expect(longButOrdinary.length).toBeGreaterThan(256);
+    expect(longButOrdinary).not.toContain('[');
+    const a = node({ id: 'a', produces: [longButOrdinary] });
+    const b = node({ id: 'b', produces: ['packages/design-system/src/components/generated/**/*.tsx'] });
+    expect(buildClaimIntervalMap([a, b]).overlaps).toHaveLength(1);
+  });
+
+  it('still rejects (treats as no overlap) a pattern short enough to clear the length cap but containing many unmatched "[" characters -- the dedicated bracket-count guard, not the length guard, is what catches this one', () => {
+    const manyBrackets = '['.repeat(100);
+    expect(manyBrackets.length).toBeLessThan(512);
+    const a = node({ id: 'a', produces: [manyBrackets] });
+    const b = node({ id: 'b', produces: ['src/foo.ts'] });
+    const started = performance.now();
+    expect(buildClaimIntervalMap([a, b]).overlaps).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('still detects a real overlap for a pattern containing a small, realistic number of "[" characters (a genuine glob character class), not just a bracket-free one', () => {
+    const a = node({ id: 'a', produces: ['src/components/[A-Z]*.tsx'] });
+    const b = node({ id: 'b', produces: ['src/components/Foo.tsx'] });
+    expect(buildClaimIntervalMap([a, b]).overlaps).toHaveLength(1);
+  });
 });
 
 describe('applyClaimOverlaps', () => {

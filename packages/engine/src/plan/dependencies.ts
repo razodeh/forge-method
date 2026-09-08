@@ -77,37 +77,59 @@ export function insertContractDependencies(nodes: readonly StepNode[]): readonly
  * of a call the way it looks like it should: a pattern of a few thousand unmatched `[` characters —
  * comfortably under 64KiB — drives its own internal bracket-class scanner (an O(n) forward search for a
  * matching `]`, restarted from *each* unmatched `[`) into genuine O(n²) blocking time (measured directly:
- * ~13 seconds at n=8000, doubling roughly 4× per doubling of n) with **no exception thrown at all** — so
- * the catch below cannot help with this one, and extrapolating to a pattern just under the 64KiB limit
- * itself puts the real cost at somewhere around ten minutes of blocking CPU time for one single call.
- * `MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK` bounds this the only way available short of re-implementing a
- * meaningful slice of `minimatch`'s own parser just to detect the dangerous shape before calling it:
- * capped at a length safely below where *either* this bracket-scan cost or a separate, independently-
- * confirmed stack overflow from deeply-nested extglob groups (`RangeError`, reliably reachable past ~700
- * nested `+(`/`@(` groups, itself only ~2100 characters) becomes measurable at all — a real `produces`
- * glob names a project-relative file path pattern, not a security-testing string, and has no legitimate
- * reason to approach even this conservative a bound. The `catch` immediately below is narrowed to
- * `TypeError` specifically (rethrowing anything else) as defense in depth for that same stack-overflow
- * finding, matching this codebase's own established "catch the one expected type, rethrow anything else"
- * convention elsewhere — the length cap is what actually keeps a real call away from that shape at all,
- * not the catch, but a `RangeError` slipping through regardless (a future `minimatch` version changing its
- * own internal algorithm, say) is a genuine, worth-surfacing problem, not something to fold silently into
- * the same "not detected as overlapping" outcome as the two *deliberate*, bounded approximations above. */
-const MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK = 256;
+ * ~13 seconds at n=8000, doubling roughly 4× per doubling of n) with **no exception thrown at all**. That
+ * round's own fix bounded this the blunt way — rejecting *any* glob over 256 characters, brackets or not —
+ * which a third verify round then found rejects real, ordinary `produces` paths with no pathological
+ * content at all: a fanout-generated path under a deeply-nested generated-file tree with a descriptive
+ * slug can genuinely clear 256 characters while containing zero `[` characters (confirmed directly:
+ * `minimatch` resolves a 354-character, bracket-free path against an ordinary short pattern in under a
+ * millisecond) — silently reporting "no overlap" for a pair that *does* overlap is the identical, if
+ * inverted, failure this whole function exists to avoid. `MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK` targets the
+ * actual cost driver directly (how many `[` a string contains, matched or not — a cheap, conservative
+ * over-count of the "unmatched" figure that actually drives the O(n²) cost, needing no real bracket-
+ * matching logic of its own to compute) instead of using overall length as a proxy for it: confirmed
+ * directly that 64 unmatched brackets costs low single-digit milliseconds, many multiples below where a
+ * real scheduling tick would notice, while a real `produces` glob has no legitimate reason to contain more
+ * than one or two character classes in the first place.
+ *
+ * `MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK` still exists independently, for the *other*, separately-confirmed
+ * danger this function's own history already found: a stack overflow (`RangeError`) from deeply-nested
+ * extglob groups (`+(`/`@(`), needing no bracket characters at all to trigger, so the bracket-count guard
+ * above cannot substitute for it. Re-confirmed directly this round: the threshold is not a clean function
+ * of length alone (2101 characters of nesting threw, 2401 characters of *deeper* nesting did not, in the
+ * same process) — some slack in exactly where the real call stack overflows depending on whatever else is
+ * on it at the time, not a defect in this reasoning. 512 sits comfortably below the entire observed danger
+ * band (~1500–2400 characters) with room to spare, while remaining far more generous than any real file
+ * path pattern has reason to need. Both guards are deliberately conservative *approximations* of their own
+ * respective dangers, not proofs — which is exactly why the `catch` immediately below still exists and
+ * still rethrows anything other than `TypeError`, as a real backstop, rather than trusting either cap
+ * alone to make a `RangeError` provably unreachable. */
+const MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK = 512;
+const MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK = 64;
 
-function globsOverlap(a: string, b: string): boolean {
+function countOpenBrackets(value: string): number {
+  let count = 0;
+  for (const char of value) {
+    if (char === '[') count += 1;
+  }
+  return count;
+}
+
+export function globsOverlap(a: string, b: string): boolean {
   if (a === b) return true;
   if (a.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK || b.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK) return false;
+  if (countOpenBrackets(a) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK || countOpenBrackets(b) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK) return false;
   try {
     return minimatch(a, b) || minimatch(b, a);
   } catch (cause) {
-    // Not currently reachable through this function's own real callers: the length guard just above
-    // (256) is well under the ~2100 characters the confirmed extglob `RangeError` needs, so nothing that
+    // Not currently reachable through this function's own real callers: the length guard above (512) is
+    // well under the ~1500-2400-character band the confirmed extglob `RangeError` needs, so nothing that
     // reaches `minimatch` here can still be that deep. Kept as a real, if presently unexercised, guard
     // rather than a bare `catch {}` regardless — a `RangeError` slipping through despite the length cap
-    // (a future `minimatch` version needing far less depth to overflow, say) is a genuine, worth-
-    // surfacing problem, the same "runtime check kept even where provably unreachable today" choice made
-    // throughout this codebase for identically-shaped guards.
+    // (a future `minimatch` version needing far less depth to overflow, say, or this same non-determinism
+    // landing unluckily on a deeper ambient call stack) is a genuine, worth-surfacing problem, the same
+    // "runtime check kept even where provably unreachable today" choice made throughout this codebase for
+    // identically-shaped guards.
     if (!(cause instanceof TypeError)) throw cause;
     return false;
   }

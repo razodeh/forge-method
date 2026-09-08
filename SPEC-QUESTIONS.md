@@ -5119,3 +5119,193 @@ blowup at 3% of that documented threshold, via a mechanism the limit was never b
 dependency's own documented boundary as the *complete* boundary, rather than an oracle's own literal
 pass/fail as the *complete* property being verified, are the same mistake pointed in two different
 directions.
+
+---
+
+## Q74 — M5 P12's `@forge/engine` scheduler core: a NaN-poisoning lesson already fixed once this milestone
+needed relearning in a sibling module, then relearning again one layer deeper in the very fix for it
+
+`06` §6.3's ready-set computation, four-level ordering tiebreak, and three concurrency-limit classes (plus
+the adapter-reported one), wrapped into one stateful `Scheduler` coordinating a single `next()` call per
+scheduling tick.
+
+**1. `computeReadySet` is a thin, direct translation of the spec's own definition**: `status === 'pending'`,
+every `dependsOn` entry `'succeeded'`, and no `produces` glob overlapping anything in the caller-supplied
+`runningClaims` (reusing P11's own `globsOverlap`, made public there specifically for this reuse).
+Deliberately duplicates the claim-conflict check `@forge/engine/plan`'s own `applyClaimOverlaps` already
+performs at compile time, as defense-in-depth against a run-time state the compiler could never have seen
+(a resumed run, a manually-edited plan) — not redundant, a different phase checking the same invariant for
+a different reason.
+
+**2. The four-level ordering tiebreak (`06` §6.3) needs an unnamed fifth level underneath it**: a genuine
+`seededHash` collision between two different ids is astronomically unlikely but not impossible, and
+`Array.prototype.sort`'s own comparator contract requires returning `0` only for values the caller
+genuinely considers interchangeable — two different step ids never are. A plain lexicographic-by-id
+comparison closes that gap, found and pinned with a real, brute-force-discovered hash collision
+(`seededHash('collision-seed', 'n439599') === seededHash('collision-seed', 'n622382') === 1086886594`), not
+a hypothetical one.
+
+**3. Rule 4's own hash is FNV-1a (32-bit)** — small, well-known, and above all *pure*: no `Math.random`, no
+wall-clock, nothing but its own two string inputs, per `21` §21.1's own explicit determinism mandate ("a
+flaky scheduler test means the scheduler is non-deterministic, which is a bug in the scheduler").
+
+**4. Rule 1 ("unblocks the most downstream work") is a transitive descendant count, not an immediate-
+dependent count** — computed via a reverse-dependency-graph BFS per node, de-duplicated with a `visited`
+set so a diamond-shaped graph's own doubly-reachable descendant is counted once, not twice. Walked with a
+growing array and `for...of`, not `while (queue.length > 0) { const id = queue.shift(); ... }` — the
+identical choice `@forge/engine/plan`'s own `topologicalOrder` (P11) already documents for itself, and for
+the identical reason: a `for...of` over an array re-reads `.length` on every step, so this needs no
+`noUncheckedIndexedAccess`-style `undefined` guard for a `.shift()` call that can only ever succeed anyway.
+Built this way from the start after nearly getting it wrong (see finding 1 below).
+
+**5. `admitsMoreConcurrency` folds `adapterMax` into the same gate as `limits.global`** via `Math.min` —
+both describe "how many sessions may run at once," just from two different sources (an operator's own flag
+vs. a platform's own reported ceiling), not two independent things to check.
+
+**6. `Scheduler.next()` tracks claim conflicts *within* one tick, not just against what was already running
+before it** — a locally-accumulated `admittedClaims` array (seeded from already-running nodes' own claims)
+grows as each candidate is greedily admitted in priority order, so two ready nodes with overlapping claims
+are never both admitted in the same tick even when nothing was running yet to conflict with either of them.
+
+### Before either round: three self-caught test-design bugs from one wrong mental model, held confidently
+enough to write it into source *and* test comments
+
+All four of this piece's own rule-isolation tests (`06` §6.3's own Checks text: "proven with a constructed
+case where each of the four rules is individually the deciding factor") need the *other* three rules held
+tied between the two candidates under test. The first attempt at three of the four accidentally let
+`computeCriticalPath`'s own rule-2 selection decide the order instead of the rule actually being tested,
+because of a wrong belief — held since P11, written into both `critical-path.ts`'s own doc comment and
+`ordering.test.ts`'s own — that `computeCriticalPath`'s tie-break for a genuine cost tie was plain
+declaration order. It is not: Kahn's-algorithm topological order processes every node at BFS depth *d*
+before any node at depth *d + 1* regardless of array position, so the real rule is "shallowest topological
+depth wins outright; declaration order only breaks a tie among nodes already at the same depth." Caught by
+re-deriving the algorithm's actual behaviour before ever dispatching a critic, not by either round — but the
+wrong belief had already been load-bearing in two files for an entire piece. **Fixed** with a `dominant()`
+test fixture (a node costed far above anything else in each fixture, added to `nodes` but not `ready`, so
+it unambiguously wins the critical path outright regardless of any tie-break subtlety) added to every
+rule-isolation test, and the doc comments in both files corrected.
+
+A related, separately self-caught bug: an "order is unaffected by input order" determinism test reversed
+*both* `nodes` and `ready`, which legitimately can change which node wins a genuine tie (reversing `nodes`
+changes `computeCriticalPath`'s own declaration-order component) — not a real bug, just an over-strict test.
+Replaced with one that reorders only `ready`.
+
+### Round 1 — critic: 1 BLOCKING (native), 1 MAJOR + 1 MINOR (both in P11's `critical-path.ts`)
+
+The critic was asked to verify the ordering tiebreak and concurrency logic empirically (brute-force hash-
+collision search, cross-process determinism checks, 2000-iteration randomized fuzzing, multi-tick
+simulation to completion), not just read the code.
+
+- **BLOCKING (native to this piece): two different `StepNode` objects sharing the same `id`, passed to
+  `Scheduler`'s constructor, silently corrupt live concurrency/claim-conflict tracking.** `this.byId`'s
+  `Map` construction keeps only the last-declared duplicate; the moment the *other* one is marked running,
+  every claim and agent it carried disappears from every future tick's own safety check with no error at
+  all. `@forge/engine/plan`'s own `computeCriticalPath` (P11) accepts the identical "last duplicate wins"
+  shape for its own `byId`, but that map only ever feeds an advisory display value — the stakes here are
+  categorically different (a live safety mechanism, not a display computation). **Fixed** with eager
+  constructor-time validation, throwing a new `ForgeError('RUN-036')` on the first duplicate id found.
+- **MAJOR (a P11 bug, surfaced by this piece leaning on it more heavily): `computeCriticalPath`'s own tie-
+  break was mis-documented as pure declaration order** — see the self-caught section above; the critic
+  independently rediscovered the identical inaccuracy this piece's own build had already found and fixed
+  hours earlier, confirming it as a real, not imagined, documentation defect. Fixed identically (already
+  applied before this round; the critic's finding was folded in as independent confirmation).
+- **MINOR (a P11 bug): a `NaN`-costed node silently "wins" `computeCriticalPath` forever once visited
+  first**, since any comparison against `NaN` is `false`. **Fixed** with a new `safeCost(node)` helper
+  (originally private to `critical-path.ts`, since exported for reuse — see round 2) treating a non-finite
+  cost as `0` rather than propagating it.
+
+### Round 2 — scoped verify: 1 BLOCKING, 2 MAJOR, 2 MINOR, all fixed — one fix needing a second, self-caught
+correction before it ever ran
+
+The verify pass was asked to check the three round-1 fixes empirically through the real `Scheduler.next()`
+API (not just re-read the diffs) and to give the rest of the package adversarial fresh eyes.
+
+- **BLOCKING: `orderReadyNodes`'s own rule 3 ("lowest estimated cost") had no `NaN` guard of its own**,
+  comparing `a.limits.maxCostUsd - b.limits.maxCostUsd` directly — the identical class of bug round 1 had
+  just fixed one file over, in `critical-path.ts`, for the identical field, with no guard ever added here.
+  Confirmed through `Scheduler.next()` directly: a `NaN`-costed ready node made the scheduler pick the
+  *most* expensive node instead of the cheapest, differently depending purely on the `ready` array's own
+  input order — a direct, confirmed violation of this same module's own tested "reordering `ready` never
+  changes the result" invariant. **Fixed** by exporting `critical-path.ts`'s own `safeCost` from the `plan`
+  barrel and reusing it here, rather than writing a second, independent guard for the same field.
+- **That reuse itself needed a second fix, caught while writing this fix's own regression test, before any
+  test run.** `safeCost(a) - safeCost(b)` is still not safe: `safeCost` deliberately lets
+  `Infinity`/`-Infinity` pass through untouched (see the MINOR finding below), and two same-signed infinite
+  costs subtracted from each other (`Infinity - Infinity`) is itself `NaN` — the identical sort-breaking
+  failure, reachable through a rarer trigger (two ready nodes both genuinely costed at `Infinity`) than the
+  one just fixed. **Fixed** by comparing with `<`/`>` directly instead of subtracting; a regression test
+  needed its own correction in turn, once a "dominant" fixture built for a normal (finite) tie-break turned
+  out to lose to an `Infinity`-costed candidate instead of neutralising it, entangling rule 2 with the
+  rule-3 behaviour actually under test — fixed with an equal-`Infinity` "decoy" instead.
+- **MAJOR: `globsOverlap`'s 256-character length cap (P11, `Q73`) rejects real, ordinary `produces` paths
+  with no pathological content at all.** A fanout-generated path under a deeply-nested generated-file tree
+  with a descriptive slug can genuinely clear 256 characters while containing zero `[` characters —
+  confirmed directly that `minimatch` resolves a 354-character, bracket-free path against an ordinary
+  pattern in under a millisecond, meaning the length cap was never actually protecting against anything at
+  that shape, just producing a false "no overlap" for a pair that does overlap. **Fixed** by re-deriving the
+  guard from the actual cost driver: a new `MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK` (64) counts `[` characters
+  directly (a cheap, conservative superset of the "unmatched" count that actually drives `minimatch`'s own
+  O(n²) bracket-scan cost), confirmed empirically (own benchmark, not just the verify round's claim) that 64
+  costs low single-digit milliseconds; the length cap itself is *raised* to 512 and kept independently,
+  since it guards a completely different, bracket-independent danger (a stack overflow from deeply-nested
+  extglob syntax) that a bracket-count guard cannot substitute for. Re-confirmed directly this round that the
+  extglob threshold is not a clean function of length alone (2101 characters of nesting threw in one
+  process, 2401 characters of *deeper* nesting did not, in the same process) — 512 sits comfortably below
+  the entire observed danger band regardless.
+- **MAJOR: `admitsMoreConcurrency` has no `NaN` guard on the *limit values themselves*.** Every other
+  degenerate limit value (`0`, negative, `Infinity`) already fails safe (denies) purely because `count >=
+  that value` behaves sensibly for all of them; `NaN` was the one exception (`count >= NaN` is always
+  `false`), silently disabling an entire limit axis — confirmed for all three classes (`adapterMax`, which
+  also corrupts the *combined* global limit via `Math.min`; `perAgent`; `perResourceClass`) through
+  `Scheduler.next()` directly, e.g. an "exclusive" (limit-1) agent silently admitting 50 concurrent steps.
+  **Fixed** with a `safeLimit` helper joining `NaN` to the same fail-safe direction every other degenerate
+  value already takes.
+- **MINOR: `scheduler.ts`'s own global running-count used unfiltered `this.running.size`, inconsistent with
+  the other three counters** (claims, `perAgent`, `perResourceClass`), which all derive from
+  `runningNodes()` — ids filtered through `byId`. A caller mistakenly calling `markRunning` with an id never
+  among the constructor's own nodes would inflate the global count against a phantom entry contributing to
+  none of the other three. Low severity (requires caller error, fails safe by under-admitting, self-heals
+  once the same id is later marked succeeded/failed) but a real inconsistency in the same class RUN-036
+  already defends against elsewhere in this exact file. **Fixed** by deriving `global` from the same
+  `runningNodes` array already computed for the other three.
+- **MINOR: `safeCost` treated `Infinity` identically to `NaN` (both → `0`), which is a different, worse kind
+  of wrong than the `NaN` case.** `NaN` carries no ordering information at all, so `0` is a neutral
+  placeholder; `Infinity` very much does carry real ordering information ("more expensive than anything
+  finite"), and silently reporting an intentionally-unbounded cost as the *cheapest* possible node inverts
+  it rather than neutralising it. **Fixed** by narrowing `safeCost` to `Number.isNaN` specifically, leaving
+  `Infinity`/`-Infinity` to flow through and compare/sum exactly as their own values mean — which is what
+  surfaced the subtraction-based-comparator finding above.
+
+Two further notes raised but not requiring a code change: a self-referential `dependsOn` node counts itself
+as its own transitive descendant in `transitiveDescendantCounts`, reachable only by calling the exported
+`orderReadyNodes` directly on a cyclic graph a caller failed to run `detectCycles` on first (never reachable
+through the real `Scheduler`, whose own `computeReadySet` permanently excludes a self-cycling node) —
+already accurately scoped by this function's own doc comment ("terminates, does not double-count," never a
+promise of a *meaningful* count for out-of-contract input); and `orderReadyNodes`/`Scheduler.next()`
+recompute the full plan's critical path and descendant counts from scratch every tick rather than
+incrementally, a visible design cost at no demonstrated problem for any realistic plan size.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (371 engine tests after these fixes' own
+new ones, 3066 full-repo) all independently reconfirmed clean. 100% coverage on every file this piece
+touches, including two coverage-driven fixes with no behavioural change: `transitiveDescendantCounts`
+rewritten from `while (queue.length > 0) { const id = queue.shift(); ... }` to a growing-array `for...of`
+(matching `topologicalOrder`'s own established precedent, eliminating a `noUncheckedIndexedAccess` guard
+that could never actually fire rather than leaving it undocumented-and-uncovered), and two new tests
+closing genuine gaps in the fifth, lexicographic tie-break level (a same-id tie, and both comparator
+argument orderings for the existing hash-collision test's own `a.id`/`b.id` fallback lookups).
+
+### Calibration note
+
+This piece produced the highest density yet of one specific failure shape: a correct-looking fix for a
+`NaN`-class bug, built by directly reusing an already-correct helper from a sibling file, still wasn't
+enough — because the *reuse itself* went through a subtraction-based comparator, and subtraction has its
+own, separate non-finite failure mode (`Infinity - Infinity = NaN`) that a `NaN`-only guard does nothing to
+prevent and that the guard's own, deliberately-preserved `Infinity` semantics actively re-opens. Neither the
+critic nor the verify round caught this second layer — it surfaced only while writing this fix's own
+regression test, one level of "did I actually verify the fix, not just the original finding" past where
+either subagent round stopped. The broader pattern underneath both this and the self-caught tie-break bugs
+earlier in this same piece: a helper or a belief being *correct in the context it was built for* (an
+additive accumulator; a topological-order description written for typical, finite costs) does not make it
+correct in a *new* context that reuses it under a different operation (comparison via subtraction) or a
+different value space (a genuine tie at infinity) — each reuse needs its own fresh check, not an inherited
+assumption that "already fixed once" means "fixed everywhere this shape appears again."

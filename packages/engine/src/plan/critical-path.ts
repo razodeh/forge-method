@@ -15,6 +15,33 @@ function mapGetOr(map: ReadonlyMap<string, number>, key: string, fallback: numbe
   return map.get(key) ?? fallback;
 }
 
+/** `StepNodeLimits.maxCostUsd` is typed `number`, which admits `NaN`/`Infinity`/`-Infinity` at runtime —
+ * `@forge/engine/plan`'s own `compileLimits` (P10) never actually produces one of these for a node
+ * compiled through the real pipeline, but this function is directly callable on a hand-built `StepNode[]`
+ * too (as is `@forge/engine/scheduler`'s own `orderReadyNodes`, which reuses this exact helper for its own,
+ * separate comparison of the same field — a critic round found it had no equivalent guard of its own, and
+ * this one is now exported specifically so both places share one answer rather than two that could drift).
+ * A verify round confirmed a `NaN` cost silently poisons the best-path selection below: any comparison
+ * against `NaN` is `false`, so once a `NaN`-costed node is visited first in topological order, no later,
+ * legitimately higher real cost can ever replace it as "best" (`5 > NaN` is `false`) — a completely
+ * unrelated node ends up flagged as the critical path for a reason that has nothing to do with its own real
+ * cost. Treated as `0` rather than propagated: the safest reading of "this step's own cost contribution is
+ * not a real number" for a function whose entire purpose is comparing costs.
+ *
+ * Deliberately narrower than a plain `Number.isFinite` check: only `NaN` itself is replaced. A later
+ * finding pointed out that folding `Infinity`/`-Infinity` into the same "treat as 0" bucket is a different,
+ * worse kind of wrong than the `NaN` case — `NaN` carries no ordering information at all, so `0` is a
+ * neutral placeholder for it, but `Infinity` very much does carry real ordering information ("more
+ * expensive than anything finite"), and silently reporting an intentionally-unbounded cost as the
+ * *cheapest* possible node inverts it rather than neutralising it. Left to flow through untouched,
+ * `Infinity`/`-Infinity` already compare and sum exactly as their own values mean (an `Infinity`-costed
+ * node naturally dominates any cost comparison and correctly propagates as `Infinity` through anything
+ * depending on it) — only literal `NaN`, whose entire defect is comparing false against everything
+ * including itself, needs this special case at all. */
+export function safeCost(node: StepNode): number {
+  return Number.isNaN(node.limits.maxCostUsd) ? 0 : node.limits.maxCostUsd;
+}
+
 /** Kahn's algorithm — iterative, and naturally robust to being handed a cyclic graph directly (a node
  * inside a cycle simply never reaches in-degree zero and is silently excluded from the returned order,
  * rather than looping forever or crashing): a well-formed caller always runs `detectCycles` first and
@@ -32,7 +59,16 @@ function mapGetOr(map: ReadonlyMap<string, number>, key: string, fallback: numbe
  * pushed *during* iteration (a newly-ready node) is still visited — the identical FIFO traversal order a
  * shift-based loop gives, without ever needing a `noUncheckedIndexedAccess`-style `undefined` guard for a
  * `.shift()` call this module could otherwise prove, but not express to the compiler, always succeeds
- * while the surrounding `while` condition holds. */
+ * while the surrounding `while` condition holds.
+ *
+ * A critic round found this function's own earlier doc comment mischaracterised the resulting order's own
+ * tie-break as plain declaration order — confirmed empirically that it is not: a FIFO queue seeded with
+ * every root (in-degree-zero) node and only ever appended to processes every node at topological *depth*
+ * `d` before any node at depth `d + 1`, regardless of where either sits in `nodes`. So the real rule
+ * `computeCriticalPath` inherits from this ordering is "shallowest topological depth first; declaration
+ * order (which of two same-depth candidates was reached first) only breaks a tie *among* nodes already at
+ * the same depth" — a real, deterministic, and reasonable tie-break (nothing in `06` §6.2's own rule 6
+ * mandates any particular one), just a different one than what was previously written down here. */
 function topologicalOrder(nodes: readonly StepNode[]): readonly string[] {
   const dependents = new Map<string, string[]>();
   const remainingInDegree = new Map<string, number>();
@@ -93,7 +129,7 @@ export function computeCriticalPath(nodes: readonly StepNode[]): CriticalPathRes
         bestDep = dep;
       }
     }
-    cost.set(id, bestDepCost + node.limits.maxCostUsd);
+    cost.set(id, bestDepCost + safeCost(node));
     predecessor.set(id, bestDep);
   }
 
