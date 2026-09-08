@@ -1,0 +1,26 @@
+id: flask
+kind: framework
+name: Flask
+category: backend-framework
+maturity: mature
+licence: BSD-3-Clause
+strengths:
+  - 'Minimal, unopinionated microframework -- easy to understand end to end and to extend exactly as needed'
+  - 'Huge extension ecosystem for anything not built in'
+weaknesses:
+  - "No built-in async support on par with FastAPI (Flask 2+ has partial async, not the framework's core design)"
+  - 'Lack of strong conventions means larger apps can accumulate inconsistent structure without discipline'
+fits_when:
+  - "the service is small-to-medium and the team wants to choose its own pieces rather than accept a framework's opinions"
+  - "the app is a small internal tool or prototype where a full framework's conventions would be overkill"
+avoid_when:
+  - 'the workload needs first-class async performance or auto-generated API docs -- prefer FastAPI'
+  - 'the app will grow large and needs enforced structure rather than assembled-by-hand conventions'
+pairs_with: [python, postgresql, sqlalchemy]
+alternatives: [fastapi, django, express]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - "Establish an explicit project structure (blueprints) up front; Flask's flexibility otherwise lets agent-generated code drift unstructured"

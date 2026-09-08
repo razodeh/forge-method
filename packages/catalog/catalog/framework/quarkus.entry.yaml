@@ -1,0 +1,27 @@
+id: quarkus
+kind: framework
+name: Quarkus
+category: backend-framework
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'Designed specifically for fast startup and low memory in containers/serverless (GraalVM native-image first-class)'
+  - 'Spring-familiar annotation model lowers the migration cost from Spring Boot'
+  - 'Live-reload dev mode is genuinely fast for iteration'
+weaknesses:
+  - 'Smaller ecosystem and community than Spring Boot; some integrations lag'
+  - 'Native-image builds add real build-pipeline complexity and longer CI times'
+fits_when:
+  - 'the workload is containerized/serverless JVM and cold-start/memory footprint matters'
+  - 'the team wants Spring-familiar annotations with a lower cold-start cost than Spring Boot'
+avoid_when:
+  - 'the team needs the widest possible integration ecosystem -- Spring Boot has more coverage'
+  - "native-image build complexity in CI is unacceptable for the team's pipeline"
+pairs_with: [java, kotlin, kubernetes, postgresql]
+alternatives: [spring-boot, micronaut]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer the reactive (Mutiny) extensions consistently, not mixed with blocking code, to avoid thread-starvation bugs'

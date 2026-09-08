@@ -1,0 +1,25 @@
+id: jvm-react
+kind: stack
+name: JVM + React
+category: enterprise-fullstack
+maturity: mature
+licence: N/A (composition of independently-licensed open-source projects)
+strengths:
+  - "Pairs the JVM's enterprise-grade backend maturity (Spring Boot/Quarkus) with React's frontend ecosystem and hiring pool"
+  - 'A common, well-understood composition with deep tooling support on both sides'
+weaknesses:
+  - 'Two languages (Java/Kotlin + TypeScript) means two toolchains, two dependency ecosystems, and a real API-contract-sync burden between them (mitigated by OpenAPI codegen)'
+fits_when:
+  - "the org has existing JVM backend investment but wants React's frontend ecosystem rather than a JVM-rendered UI"
+  - 'the team is split between a JVM-experienced backend group and a React-experienced frontend group'
+avoid_when:
+  - 'the team wants a single-language full stack -- a T3/MERN-style composition avoids the two-toolchain split'
+  - 'the org has no existing JVM investment and would be adopting it solely for this composition'
+pairs_with: [java, kotlin, spring-boot, react, typescript-js]
+alternatives: [dotnet-stack, mern-mean]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Generate the TypeScript client from the backend's OpenAPI spec rather than hand-writing request types, to keep the two sides of the contract from silently drifting"

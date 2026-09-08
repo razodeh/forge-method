@@ -1,0 +1,25 @@
+id: phoenix
+kind: framework
+name: Phoenix
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'BEAM/OTP-backed fault tolerance and massive concurrency inherited directly from Elixir'
+  - 'Channels give first-class, low-latency real-time communication without bolting on a separate system'
+weaknesses:
+  - "Elixir's own small hiring pool and learning curve apply fully"
+fits_when:
+  - 'the workload needs massive concurrent connections with strong fault-tolerance guarantees'
+  - 'the team already has Elixir experience or is investing in it for the concurrency guarantees'
+avoid_when:
+  - "the team has no Elixir/BEAM experience and the workload doesn't need extreme concurrency"
+  - "the team wants a mainstream imperative framework rather than OTP's supervision-tree model"
+pairs_with: [elixir, postgresql, phoenix-liveview]
+alternatives: [spring-boot, aspnet-core]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Phoenix contexts are the intended module boundary -- agent-generated code reaching directly into another context's schema bypasses the framework's own encapsulation"

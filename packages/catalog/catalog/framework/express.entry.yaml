@@ -1,0 +1,26 @@
+id: express
+kind: framework
+name: Express
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'The de facto standard minimal Node.js HTTP framework -- unopinionated, huge middleware ecosystem, and the most training-data coverage of any Node framework'
+  - 'Simple mental model: middleware chain over raw HTTP -- easy for an agent or a human to reason about'
+weaknesses:
+  - 'No built-in structure (DI, modules) -- larger apps need a chosen convention layered on top or drift inconsistent'
+  - "Lacks Fastify's schema-validation performance advantages out of the box"
+fits_when:
+  - 'the service is small-to-medium and maximum ecosystem/community support matters'
+  - 'the team wants the largest possible middleware ecosystem and community support'
+avoid_when:
+  - 'raw request throughput is a hard requirement -- prefer Fastify'
+  - 'the team wants an opinionated, DI-driven structure out of the box -- prefer NestJS'
+pairs_with: [typescript-js, postgresql, mongodb]
+alternatives: [fastify, nestjs, django]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Always add a centralized error-handling middleware; agent-generated Express routes without one silently swallow async errors'

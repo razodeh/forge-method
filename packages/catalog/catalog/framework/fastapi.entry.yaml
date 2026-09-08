@@ -1,0 +1,26 @@
+id: fastapi
+kind: framework
+name: FastAPI
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Pydantic-based request/response validation gives real type safety and automatic OpenAPI docs for free'
+  - 'Async-first design gives strong throughput for I/O-bound APIs'
+  - "Excellent fit for ML-model-serving endpoints given Python's ML ecosystem"
+weaknesses:
+  - 'Younger and less batteries-included than Django -- no built-in admin, ORM, or auth; those are separate choices'
+fits_when:
+  - 'the workload is an API-first service, especially one serving ML models or needing auto-generated OpenAPI docs'
+  - 'auto-generated OpenAPI docs and request/response type validation are wanted with minimal ceremony'
+avoid_when:
+  - "the product needs Django's batteries-included admin/ORM/auth out of the box"
+  - "the team is not already comfortable with async Python and Pydantic's validation model"
+pairs_with: [python, postgresql, sqlalchemy]
+alternatives: [django, flask, express]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Use Pydantic models for every request/response body; agent-generated endpoints returning raw dicts lose FastAPI's main safety benefit"

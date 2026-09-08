@@ -1,0 +1,27 @@
+id: angular
+kind: frontend
+name: Angular
+category: spa-framework
+maturity: mature
+licence: MIT
+strengths:
+  - "Full, opinionated framework (DI, routing, forms, HTTP client all built in) -- fewer independent decisions than React's library-plus-ecosystem model"
+  - 'Strong TypeScript-first design and enterprise-grade tooling (Angular CLI, strict mode)'
+  - 'Long-term Google backing with a stable, well-documented upgrade path'
+weaknesses:
+  - 'Steeper learning curve and more ceremony (modules, DI, RxJS) than React/Vue for smaller apps'
+  - 'Smaller ecosystem/hiring pool than React'
+fits_when:
+  - 'the team wants a full, opinionated framework with enforced structure for a large enterprise app'
+  - 'the team wants enforced structure (DI, modules) rather than assembling pieces independently'
+avoid_when:
+  - 'the team wants a lighter-weight library with maximum flexibility -- React/Vue fit better'
+  - "the app is small and the DI/module ceremony isn't worth the overhead"
+pairs_with: [typescript-js]
+alternatives: [react, vue-nuxt, nestjs]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer standalone components (Angular 14+) over NgModules for new agent-generated code, per current Angular guidance'

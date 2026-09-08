@@ -1,0 +1,26 @@
+id: vue-nuxt
+kind: frontend
+name: Vue/Nuxt
+category: spa-library
+maturity: mature
+licence: MIT
+strengths:
+  - "Vue's single-file-component model and reactivity system are widely considered easier to onboard onto than React's"
+  - 'Nuxt gives Next.js-equivalent SSR/routing/meta-framework capability on top of Vue'
+  - "Composition API gives React-hooks-like composability while retaining Vue's template ergonomics"
+weaknesses:
+  - 'Smaller ecosystem and hiring pool than React, though still large'
+fits_when:
+  - "the team prefers Vue's template-based ergonomics or is already a Vue shop"
+  - "the team wants Nuxt's SSR/routing story without leaving Vue's template-based ergonomics"
+avoid_when:
+  - 'maximum hiring-pool size or ecosystem breadth is the priority -- React has more'
+  - "the team wants React's larger ecosystem specifically, e.g. for a rare/niche library"
+pairs_with: [typescript-js]
+alternatives: [react, svelte-sveltekit, angular]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use the Composition API with <script setup> for new code; agent-generated Options-API code mixed into a Composition-API codebase creates inconsistent patterns'

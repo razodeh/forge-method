@@ -1,0 +1,27 @@
+id: rails
+kind: framework
+name: Ruby on Rails
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Convention-over-configuration gives a very quick path from empty repo to a working, full-featured CRUD app'
+  - 'ActiveRecord, migrations, and the asset pipeline are all deeply integrated and mature'
+  - 'Hotwire/Turbo gives a real modern-feeling UX without a separate SPA framework'
+weaknesses:
+  - 'Runtime performance ceiling is lower than JVM/Go/Rust alternatives for CPU-bound work'
+  - 'Convention-heavy design has a real learning curve for engineers used to more explicit frameworks'
+fits_when:
+  - 'the product is a CRUD-heavy web app and developer velocity is the priority'
+  - "the team already has Rails experience or wants Hotwire's SPA-like interactivity without a separate frontend"
+avoid_when:
+  - 'raw throughput or CPU-bound performance is a hard requirement'
+  - 'the team is starting fresh with no Ruby experience and no strong reason to choose it over a larger-hiring-pool alternative'
+pairs_with: [ruby, postgresql, rails-hotwire]
+alternatives: [django, laravel, express]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Follow Rails conventions (fat model, thin controller, RESTful routes); deviating makes agent-generated code harder for the rest of the app to integrate with'

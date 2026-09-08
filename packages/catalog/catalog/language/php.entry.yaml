@@ -1,0 +1,27 @@
+id: php
+kind: language
+name: PHP
+category: general-purpose
+maturity: mature
+licence: PHP License 3.01
+strengths:
+  - 'Huge existing deployment base and hosting ecosystem; Laravel gives a modern, productive framework layer'
+  - 'Fast iteration for content- and CRUD-heavy sites; shared-hosting-friendly'
+  - 'Large, mature package ecosystem (Composer/Packagist)'
+weaknesses:
+  - 'Reputation deficit from pre-PHP7 era persists despite real modern-PHP improvements (typed properties, JIT)'
+  - 'Historically inconsistent standard library naming/behavior, though modern frameworks abstract most of it'
+fits_when:
+  - 'the target is a content-heavy or e-commerce site, especially on widely-available PHP hosting'
+  - 'the team already has PHP/Laravel experience'
+avoid_when:
+  - "the team has no PHP experience and the workload isn't specifically web/content-site shaped"
+  - 'the workload is CPU-bound or needs a modern async-first runtime model'
+pairs_with: [laravel, mysql-mariadb, redis-valkey]
+alternatives: [ruby, python, typescript-js]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use PHP 8.x with strict_types declared; agent-generated PHP targeting old PHP5-era idioms is a real risk without explicit guardrails'

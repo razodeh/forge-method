@@ -1,0 +1,29 @@
+id: go
+kind: language
+name: Go
+category: general-purpose
+maturity: mature
+licence: BSD-3-Clause
+strengths:
+  - 'Fast compilation, single static binary output, minimal runtime footprint -- excellent for containers and CLIs'
+  - 'Built-in concurrency primitives (goroutines/channels) that are simple to reason about for I/O-bound services'
+  - 'Strong standard library reduces third-party dependency surface for common tasks (HTTP, JSON, crypto)'
+weaknesses:
+  - 'No generics-based expressiveness on par with Rust/TypeScript for complex domain modeling (improving, still limited)'
+  - 'Error handling via explicit returns is verbose and easy for an inexperienced author to mishandle'
+  - 'Smaller ecosystem than Node/Python/Java for niche domains (ML, some enterprise integrations)'
+fits_when:
+  - 'the service is I/O-bound, needs fast startup, and benefits from a single static binary'
+  - 'operational simplicity (one binary, low memory) matters more than ecosystem breadth'
+avoid_when:
+  - 'the domain needs a rich, expressive type system for complex business rules'
+  - "heavy data-science/ML workloads, where Python's ecosystem is far deeper"
+pairs_with: [gin-echo-fiber, postgresql, docker, kubernetes]
+alternatives: [rust, java, typescript-js]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Always run go vet and staticcheck in CI; Go's permissive compiler catches less than TypeScript's"
+  - 'Use go.mod with a committed go.sum for reproducible builds'

@@ -1,0 +1,25 @@
+id: rails-hotwire
+kind: stack
+name: Rails + Hotwire
+category: server-rendered-fullstack
+maturity: mature
+licence: N/A (composition of independently-licensed open-source projects)
+strengths:
+  - 'Turbo/Stimulus (Hotwire) give SPA-like interactivity without writing a separate frontend app or API layer'
+  - "One language (Ruby), Rails' mature conventions, and no client-server API contract to maintain"
+weaknesses:
+  - 'Not well-suited to highly stateful, complex client-side interactions that a dedicated SPA framework handles more naturally'
+fits_when:
+  - "the app is CRUD-heavy and the team wants Rails' velocity without a separate frontend app"
+  - "the team wants Rails' velocity with SPA-like interactivity but no separate frontend app"
+avoid_when:
+  - 'the product needs rich, stateful client-side interactivity'
+  - 'the team has no Ruby/Rails experience'
+pairs_with: [ruby, rails, postgresql]
+alternatives: [django-htmx, mern-mean]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer Turbo Frames/Streams for interactivity before reaching for a full Stimulus controller or, further still, a separate JS framework'

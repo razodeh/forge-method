@@ -1,0 +1,26 @@
+id: serverless-first
+kind: stack
+name: Serverless-first
+category: architectural-pattern
+maturity: mature
+licence: N/A (architectural pattern, not a single product)
+strengths:
+  - 'No server/container fleet to operate; scales to zero and to very high load without capacity planning'
+  - 'Pay-per-invocation cost model can be substantially cheaper for spiky or low-average-traffic workloads'
+weaknesses:
+  - 'Cold-start latency is a real, measurable cost for latency-sensitive paths, language-dependent (worse for JVM than Node/Go)'
+  - 'Vendor-specific primitives (AWS Lambda/API Gateway, etc.) create real lock-in unless deliberately abstracted'
+  - 'Local development and end-to-end testing are meaningfully harder than a conventional server process'
+fits_when:
+  - 'traffic is spiky or low-average and operating a persistent server fleet is unwanted'
+  - 'the team wants to avoid operating and patching a persistent server fleet'
+avoid_when:
+  - 'the workload is steady, high-throughput, and latency-sensitive -- a conventional always-on service avoids cold-start cost'
+  - 'the team wants full control over the runtime environment rather than a managed execution model'
+pairs_with: [typescript-js, go, cloud-run]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Keep business logic in plain functions decoupled from the cloud provider's event-handler signature, so agent-generated code stays portable across a future provider migration"

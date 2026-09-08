@@ -1,0 +1,25 @@
+id: ionic-capacitor
+kind: mobile
+name: Ionic/Capacitor
+category: cross-platform-mobile
+maturity: mature
+licence: MIT
+strengths:
+  - 'Wraps a standard web app (React/Vue/Angular/plain HTML) in a native shell -- maximum code reuse for teams that already have a web app'
+  - 'Capacitor gives access to native APIs (camera, filesystem) via plugins without leaving web technology'
+weaknesses:
+  - 'UI is fundamentally a WebView -- performance and native feel are a real step below Flutter/React Native/native for demanding UI'
+fits_when:
+  - 'the team already has a substantial web app and wants to ship it as a mobile app with minimal additional investment'
+  - "the team's core expertise is web development, not native mobile development"
+avoid_when:
+  - 'the app needs near-native UI performance or deep, complex native integration'
+  - 'the team has no existing web app and is starting a mobile app from scratch'
+pairs_with: [react, vue-nuxt, angular]
+alternatives: [react-native-expo, flutter]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Test on real devices, not just the browser preview -- WebView behavior genuinely differs across platforms in ways agent-generated code can silently break'

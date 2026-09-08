@@ -1,0 +1,27 @@
+id: elixir
+kind: language
+name: Elixir
+category: general-purpose
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'BEAM VM gives exceptional fault tolerance and massive concurrency (millions of lightweight processes) essentially for free'
+  - 'Phoenix/LiveView give real-time, low-latency UIs without a separate frontend framework'
+  - 'Hot code reloading and supervision trees make it uniquely suited to always-on, self-healing systems'
+weaknesses:
+  - 'Smallest hiring pool and AI-training-data representation of any language on this list'
+  - 'Functional/immutable paradigm has a real learning curve for teams coming from OOP-heavy backgrounds'
+fits_when:
+  - 'the system needs massive concurrent connections (chat, real-time collaboration, IoT ingestion) with high fault tolerance'
+  - 'the team is willing to invest in BEAM/OTP expertise for those guarantees'
+avoid_when:
+  - "the team has no functional-programming or BEAM experience and the workload doesn't need extreme concurrency/fault tolerance"
+  - 'hiring pool size is a hard constraint'
+pairs_with: [phoenix, phoenix-liveview, postgresql]
+alternatives: [go, java, typescript-js]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'Elixir/OTP idioms (supervision trees, GenServer) are unlike mainstream imperative patterns -- verify agent-generated code follows OTP conventions rather than reinventing them imperatively'

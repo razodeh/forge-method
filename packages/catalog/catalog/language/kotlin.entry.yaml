@@ -1,0 +1,28 @@
+id: kotlin
+kind: language
+name: Kotlin
+category: general-purpose
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'Full JVM interop with a much more concise, null-safe surface than Java'
+  - 'First-class Android language and a real, growing multiplatform (KMP) story for mobile + backend sharing'
+  - "Coroutines give a lighter-weight concurrency model than Java's raw threads"
+weaknesses:
+  - 'Smaller hiring pool than Java, though shrinking as a gap'
+  - "Compile times can be slower than Java's for large multi-module projects"
+  - 'Multiplatform tooling (KMP) is still maturing relative to single-platform Kotlin/JVM'
+fits_when:
+  - 'the team wants JVM interop with modern language ergonomics'
+  - 'Android is a target platform and code-sharing with backend/other mobile platforms is valuable'
+avoid_when:
+  - "the team has no JVM experience and no Android target -- Kotlin's main advantages don't apply"
+  - 'compile times for a large multi-module project are a hard constraint'
+pairs_with: [spring-boot, ktor, micronaut, postgresql]
+alternatives: [java, swift, typescript-js]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Use ktlint or detekt in CI; Kotlin's flexible syntax otherwise drifts across agent-generated files"

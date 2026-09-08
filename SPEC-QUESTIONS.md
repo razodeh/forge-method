@@ -6755,3 +6755,78 @@ workflow actually needs:
   step handling the whole `run.findings` collection in a single turn (`inputs: [ "artifact:Defect(*)" ]`),
   matching the pattern most of the other 19 workflows already use for collection-level work, rather than a
   fanout no downstream step could actually depend on correctly.
+
+## Q89 — M6 C2's `@forge/catalog` content, part 1: `12` §12.2's own scope table rows 1-5 (56 entries) — a
+completeness/hygiene test suite cross-checked against the live spec, and three real content-quality bugs a
+fresh critic round found in the hand-authored data itself, not the code
+
+56 real `catalog/<kind>/<id>.entry.yaml` files for Languages, Backend frameworks, Frontend,
+Mobile/cross-platform, and Stacks (`12` §12.2's own scope-table rows 1-5), plus two content tests
+(`test/content/c2-completeness.test.ts`, `test/content/c2-hygiene.test.ts`).
+
+1. **Item-to-entry mapping rule**: each row's own "Must include" cell is comma-separated; each
+   comma-separated phrase is exactly one catalog entry (its own internal `/` or `+`, e.g.
+   "Gin/Echo/Fiber", "HTMX+server-rendered", is part of that one entry's own display name, not a further
+   split point). This reads directly off the table's own punctuation — items are commas, `/`/`+` groups a
+   single named technology or a deliberate combo — and was chosen before authoring any content rather than
+   guessed per-cell. `id`s are hand-authored slugs (not a mechanical transform of the cell text — several,
+   e.g. `htmx-ssr` for "HTMX+server-rendered", don't slugify losslessly), so the completeness test
+   cross-checks each required item's own cell text against the *live* spec file (a canary against spec
+   drift) rather than trusting a hardcoded list divorced from the source.
+
+2. **A real schema gap found before writing any content**: `12` §12.2's own scope table requires a
+   "Stacks (as compositions)" row (9 items: MERN/MEAN, T3, etc.), but C1's own 20-value `CatalogKind` enum
+   (transcribed directly from that section's `kind:` comment, per Q86) has no matching value — confirmed by
+   direct re-enumeration, not an oversight in the transcription. The identical gap exists for C4's own
+   later "Feature flags & config" and "Secrets" rows. **Fixed** by extending `CatalogKind` with exactly
+   `'stack' | 'feature-flags' | 'secrets'` — necessary honesty (an unrelated existing kind would make the
+   `kind` field a false statement about what an entry is), not scope creep; the extension touches
+   already-committed C1 code, the same "a later piece finds and fixes a real gap in an earlier committed
+   piece" pattern this whole build already uses repeatedly. Full reasoning in `CatalogKind`'s own doc
+   comment.
+
+3. **A fresh critic round, given the full 56-file batch (not a sample) because a scripted near-duplicate
+   scan surfaced a pattern too widespread to sample around, found three real, distinct classes of bug in
+   the hand-authored content itself**:
+   - **Three-and-a-half entries violated `12` §12.2's own "never claim fastest/best/performance numbers"
+     hygiene rule in spirit while passing `validateEntry`'s mechanical regex** (`aspnet-core`,
+     `axum-actix`, `csharp` naming a specific benchmark suite or using "top-tier"/"leading" as a
+     superlative synonym-swap; `fastify` asserting an unqualified "measured throughput advantage").
+     **Fixed** by rewording all four to describe the underlying mechanism (schema-based validation, async
+     I/O support) rather than a comparative performance claim — closing exactly the gap the mechanical
+     regex (`fastest|best` plus a small set of performance-unit patterns) cannot catch on its own, since it
+     matches literal banned words/patterns, not the rule's actual intent.
+   - **A real, self-inflicted authoring bug: 24 exact-duplicate and 15 near-duplicate list items across 33
+     of the 56 files.** Traced to this piece's own second-pass fix-up (adding a missing second
+     `fits_when`/`avoid_when` item to clear C2's own "at least two real conditions" floor after the first
+     authoring pass under-supplied several entries) — in composing that batch's replacement text by hand at
+     volume, a meaningful fraction of the "new" second items were, by copy-paste error, identical or
+     near-identical restatements of the item already there, satisfying the test's mechanical length check
+     (`length >= 2`) while not actually satisfying its own real intent (two *distinct* conditions). **Fixed**
+     by writing genuinely new, distinct second conditions for every flagged pair, verified with both an
+     exact-string-duplicate scan and a Jaccard-similarity near-duplicate scan (threshold 0.4) across every
+     `fits_when`/`avoid_when`/`strengths`/`weaknesses` list in all 56 files, re-run clean after the fix.
+     Recorded here as a real methodological lesson: a mechanical count floor (`length >= 2`) is not itself
+     sufficient evidence of quality when list *items* are hand-authored at volume — this piece's own
+     completeness/hygiene tests should have (and now, for future pieces authoring list content at this
+     scale, are documented as needing to) include a duplicate-detection pass, not just a count assertion.
+   - **The apostrophe-escaping fix for those replacement strings introduced 10 genuine YAML syntax errors**
+     (an unescaped `'` inside a single-quoted scalar, e.g. `'Java's ecosystem'`, is invalid YAML) —
+     caught immediately by re-running `loadCatalogEntry` against all 56 files after the content fix, before
+     any test suite run; fixed by converting each affected line to double-quoted style, matching this
+     codebase's own existing convention for any string containing an apostrophe.
+
+4. **A real, non-blocking modeling seam the critic raised independently**: for an atomic technology,
+   `pairs_with` means "compatible peer" (`12` §12.3 step 2's own "prefers combinations with existing
+   `pairs_with` edges" — real coherence signal for the selection engine C5 will build). For a `kind:
+   'stack'` entry, the same field is overloaded to mean "constituent parts of this composition" instead — a
+   different relationship, and tautological as coherence signal (a stack always "pairs with" its own
+   parts). Not restructured now (would touch C1's schema again for a piece not yet built), but documented
+   directly in `CatalogEntry.pairs_with`'s own doc comment so C5 does not silently treat a stack's edges as
+   real signal the way it would an atomic entry's.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (3749 tests, plus the boundaries-coverage config's own
+64) are all clean after every fix. One unrelated, known-flaky test
+(`packages/engine/test/e2e/crash-resume.test.ts`, a real randomised `SIGKILL` test) failed once and passed
+cleanly on an immediate re-run — not a regression from this piece, which touches nothing in `@forge/engine`
+or `@forge/vcs`.

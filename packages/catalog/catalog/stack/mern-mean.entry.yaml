@@ -1,0 +1,26 @@
+id: mern-mean
+kind: stack
+name: MERN/MEAN
+category: js-fullstack
+maturity: mature
+licence: N/A (composition of independently-licensed open-source projects)
+strengths:
+  - 'Single language (JS/TS) across the entire stack (MongoDB, Express, React or Angular, Node) -- one hiring pool, one toolchain'
+  - 'Enormous tutorial/training-data coverage makes it the easiest full-stack composition for an AI agent to generate correctly'
+weaknesses:
+  - "MongoDB's schemaless-by-default model can hide data-integrity issues a relational schema would catch at write time"
+  - 'No single opinionated framework ties the pieces together -- routing, state, and API conventions are all separate decisions'
+fits_when:
+  - 'the team wants one language across the full stack and is comfortable with a document database'
+  - 'rapid prototyping speed matters more than a rigorous relational schema up front'
+avoid_when:
+  - "the domain has strong relational/transactional invariants that fit PostgreSQL's model better than MongoDB's"
+  - 'the team has no JavaScript/Node experience'
+pairs_with: [typescript-js, express, react, angular, mongodb]
+alternatives: [t3-stack, jvm-react]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Pick MongoDB deliberately, not by default -- if the domain is relational, swap in PostgreSQL and keep the rest of the composition'

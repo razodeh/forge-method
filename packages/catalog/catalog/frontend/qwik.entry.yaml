@@ -1,0 +1,26 @@
+id: qwik
+kind: frontend
+name: Qwik
+category: meta-framework
+maturity: emerging
+licence: MIT
+strengths:
+  - 'Resumability (rather than hydration) gives genuinely near-instant interactivity even on large pages -- a real architectural differentiator'
+  - 'Fine-grained lazy-loading is automatic, not something the developer has to hand-tune'
+weaknesses:
+  - 'Smallest ecosystem and community of any frontend option in this catalog -- fewer libraries, less Stack Overflow/training-data coverage'
+  - "Resumability's mental model is genuinely different from hydration-based frameworks and has a real learning curve"
+fits_when:
+  - 'time-to-interactive on large, content-heavy pages is a hard, measured requirement'
+  - 'the page is large and content-heavy with many interactive widgets that would otherwise cost hydration time'
+avoid_when:
+  - 'ecosystem maturity, hiring pool, or AI-agent training-data coverage matter -- Qwik is weakest here of any option in this catalog'
+  - "the ecosystem's current small size and library gaps would block real feature work"
+pairs_with: [typescript-js]
+alternatives: [astro, svelte-sveltekit]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "maturity: emerging -- per 12 §12.3's own hard rule, this requires human approval and a documented fallback before being selected for a real project"

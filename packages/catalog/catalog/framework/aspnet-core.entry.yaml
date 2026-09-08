@@ -1,0 +1,26 @@
+id: aspnet-core
+kind: framework
+name: ASP.NET Core
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'A fully modern, cross-platform, high-throughput runtime with strong async I/O support'
+  - 'Minimal APIs give a lightweight option alongside the full MVC/Razor stack for larger apps'
+  - 'Strong first-party tooling (Visual Studio, dotnet CLI) and long-term Microsoft support'
+weaknesses:
+  - 'Ecosystem mindshare outside Microsoft-shop teams is smaller than Node/Java equivalents'
+fits_when:
+  - 'the org already runs .NET/C# infrastructure'
+  - 'raw throughput matters and the team has .NET experience'
+avoid_when:
+  - 'the team has no .NET background and no reason to introduce the ecosystem'
+  - 'the team wants the largest possible community/ecosystem outside Microsoft-shop conventions'
+pairs_with: [csharp, postgresql]
+alternatives: [spring-boot, express, django]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Prefer minimal APIs for small services, full MVC for larger ones; mixing styles inconsistently across an agent-generated codebase hurts maintainability'

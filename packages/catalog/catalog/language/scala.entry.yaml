@@ -1,0 +1,28 @@
+id: scala
+kind: language
+name: Scala
+category: general-purpose
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'Powerful type system (higher-kinded types, pattern matching) enables expressive, correct-by-construction domain modeling'
+  - 'Full JVM interop; reuses the entire Java ecosystem'
+  - 'Dominant language for large-scale data engineering (Spark is Scala-native)'
+weaknesses:
+  - 'Steep learning curve, especially for the functional-programming-heavy idioms common in Scala codebases'
+  - 'Compile times are slow, and the ecosystem has historically fragmented across competing styles (pure-FP vs. OOP-hybrid)'
+  - 'Shrinking hiring pool outside data-engineering-specific roles'
+fits_when:
+  - 'the workload is large-scale data processing (Spark) or needs a highly expressive type system for complex domains'
+  - 'the team already has strong JVM and functional-programming experience'
+avoid_when:
+  - "the team has no Scala/FP experience and the workload isn't specifically Spark/data-engineering shaped"
+  - 'compile-time cost and ecosystem fragmentation across FP/OOP styles are unacceptable for the team'
+pairs_with: [spark, kafka, postgresql]
+alternatives: [java, kotlin]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Scala's flexibility allows wildly different coding styles across one codebase -- enforce Scalafmt and a chosen style (pure-FP vs. idiomatic-OOP) in CI to keep agent-generated code consistent"

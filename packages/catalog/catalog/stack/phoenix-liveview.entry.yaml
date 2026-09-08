@@ -1,0 +1,26 @@
+id: phoenix-liveview
+kind: stack
+name: Phoenix LiveView
+category: server-rendered-fullstack
+maturity: growing
+licence: MIT
+strengths:
+  - 'Real-time, stateful server-rendered UI over a persistent WebSocket connection -- no separate client-side framework or API layer needed for genuinely rich interactivity'
+  - "Inherits BEAM's concurrency and fault-tolerance, so many concurrent LiveView sessions scale naturally"
+weaknesses:
+  - 'Requires a persistent WebSocket connection per active user, a real different operational shape than stateless HTTP request/response'
+  - "Elixir's small hiring pool and learning curve apply fully"
+fits_when:
+  - 'the product needs rich, real-time server-rendered interactivity and the team has (or is willing to build) Elixir expertise'
+  - 'the team wants rich real-time interactivity without maintaining a separate JS SPA and API layer'
+avoid_when:
+  - "the team has no Elixir experience and the interactivity needs don't specifically call for LiveView's real-time model"
+  - 'the interactivity needs are minimal and a simpler server-rendered approach (no persistent connection) would suffice'
+pairs_with: [elixir, phoenix, postgresql]
+alternatives: [rails-hotwire, django-htmx]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "LiveView state lives server-side per connection -- do not let agent-generated code duplicate that state into client-side JS, which defeats LiveView's whole model"

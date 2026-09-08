@@ -1,0 +1,27 @@
+id: htmx-ssr
+kind: frontend
+name: HTMX + server-rendered
+category: server-rendered
+maturity: growing
+licence: BSD-2-Clause (htmx)
+strengths:
+  - 'Radically simpler architecture: no client-side state management or build pipeline, HTML-over-the-wire from the existing backend'
+  - 'Works with any server-rendering backend (Rails, Django, Laravel, Phoenix) without a separate JS app'
+  - 'Small footprint and near-zero client-side complexity to maintain'
+weaknesses:
+  - 'Not well-suited to highly stateful, app-like client interactions (rich drag-and-drop, offline-first, complex client state)'
+  - 'Smaller ecosystem of pre-built components than any full SPA framework'
+fits_when:
+  - 'the app is primarily CRUD/forms-driven and the team wants to avoid a separate frontend build pipeline entirely'
+  - 'the team is small and wants to minimize the number of moving parts to maintain long-term'
+avoid_when:
+  - 'the product needs rich, stateful client-side interactivity (real-time collaborative editing, complex client state machines)'
+  - 'the team has no existing server-rendering backend and would need to adopt one specifically for this'
+pairs_with: [rails, django, laravel, phoenix]
+alternatives: [react, rails-hotwire]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Keep interaction logic declarative via htmx attributes; agent-generated code reaching for custom JS to replicate what htmx attributes already do defeats the point of choosing it'

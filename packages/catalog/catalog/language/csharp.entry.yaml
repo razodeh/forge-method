@@ -1,0 +1,27 @@
+id: csharp
+kind: language
+name: C#
+category: general-purpose
+maturity: mature
+licence: MIT (.NET runtime and SDK)
+strengths:
+  - 'Modern, actively-developed language (nullable reference types, records, pattern matching) with strong tooling (Visual Studio, Rider)'
+  - '.NET is cross-platform and performant, with ASP.NET Core giving strong throughput and clean async ergonomics'
+  - 'First-class choice for Windows-integrated enterprise environments and Unity game development'
+weaknesses:
+  - 'Historically Windows-centric perception persists even though .NET is now genuinely cross-platform'
+  - 'Smaller open-source community mindshare than Java/JS for non-Microsoft-shop hiring'
+fits_when:
+  - 'the organization already runs Microsoft/.NET infrastructure or Windows-integrated systems'
+  - 'team familiarity with C#/.NET is already high'
+avoid_when:
+  - 'the team and org have no .NET history and no compelling reason to introduce a new ecosystem'
+  - "the workload is CPU-bound data science/ML, where Python's ecosystem is far deeper"
+pairs_with: [aspnet-core, dotnet-maui, postgresql]
+alternatives: [java, kotlin, typescript-js]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Enable nullable reference types project-wide; agent-generated C# without it silently reintroduces null-reference bugs'

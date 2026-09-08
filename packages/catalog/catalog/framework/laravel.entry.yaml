@@ -1,0 +1,27 @@
+id: laravel
+kind: framework
+name: Laravel
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'The most complete, modern PHP framework: ORM (Eloquent), queues, auth, and testing all first-class'
+  - 'Excellent documentation and a large, active community'
+  - 'Artisan CLI and built-in scaffolding give real developer-velocity leverage'
+weaknesses:
+  - 'Runtime performance ceiling lower than compiled-language alternatives for CPU-bound work'
+  - '"Magic" (facades, dynamic method resolution) can obscure control flow for newcomers'
+fits_when:
+  - 'the product is a content-heavy or e-commerce PHP application'
+  - 'the team wants Artisan CLI scaffolding and built-in queues/auth/testing out of the box'
+avoid_when:
+  - "the team has no PHP experience and the workload isn't specifically web/content-site shaped"
+  - 'raw throughput or CPU-bound performance is a hard requirement'
+pairs_with: [php, mysql-mariadb, redis-valkey]
+alternatives: [rails, django, express]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - "Use Eloquent's query builder rather than raw SQL strings for agent-generated queries, to avoid injection risk"

@@ -1,0 +1,28 @@
+id: cpp
+kind: language
+name: C++
+category: general-purpose
+maturity: mature
+licence: 'N/A (ISO standard; implementations vary, mostly permissive -- GCC is GPL, Clang is Apache-2.0/MIT)'
+strengths:
+  - 'Maximum control over memory and performance; the standard for game engines, embedded systems, and latency-critical infrastructure'
+  - 'Enormous existing codebase and library ecosystem across four decades of systems software'
+  - 'Modern C++ (17/20/23) has meaningfully improved safety ergonomics (smart pointers, RAII, concepts)'
+weaknesses:
+  - 'Manual memory management (even with smart pointers) remains a real source of use-after-free/double-free bugs absent Rust-level compiler enforcement'
+  - 'Build systems and dependency management are famously fragmented (CMake, Conan, vcpkg, Bazel all coexist)'
+  - 'Highest AI-agent risk of any language here: memory-safety bugs an agent introduces are the hardest class to catch automatically'
+fits_when:
+  - 'the domain is genuinely performance/latency-critical systems software, game engines, or embedded targets'
+  - "an existing large C++ codebase already exists and rewriting isn't viable"
+avoid_when:
+  - 'a memory-safe alternative (Rust, Go) would meet the same performance requirements with a lower defect-rate ceiling'
+  - 'the team is building ordinary application software with no hard systems-level constraint'
+alternatives: [rust, go]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: high
+agent_friendliness: low
+notes_for_agents:
+  - 'Always run AddressSanitizer/UBSan in CI and static analysis (clang-tidy); an agent generating C++ without these enabled is generating unverified memory-safety risk'
+  - 'Prefer RAII and smart pointers over raw new/delete in any agent-generated code'

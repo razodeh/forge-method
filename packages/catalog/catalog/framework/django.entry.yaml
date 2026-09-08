@@ -1,0 +1,27 @@
+id: django
+kind: framework
+name: Django
+category: backend-framework
+maturity: mature
+licence: BSD-3-Clause
+strengths:
+  - 'Batteries-included: ORM, admin panel, auth, and migrations all first-class and consistent'
+  - 'One of the most mature and stable frameworks in any language, with strong backward-compatibility discipline'
+  - 'The built-in admin panel gives real operational leverage for internal tools with near-zero extra work'
+weaknesses:
+  - 'Synchronous-by-default heritage (async support exists but is newer and less battle-tested than the sync path)'
+  - "Monolithic conventions can feel heavy for small services that don't need most of what Django provides"
+fits_when:
+  - 'the product is a data-model-heavy web app that benefits from a mature ORM and admin tooling'
+  - 'the team wants strong conventions over assembling a framework from parts'
+avoid_when:
+  - "the workload is a small, high-throughput API where FastAPI/Flask's lighter footprint fits better"
+  - 'the team wants a lightweight microframework rather than a batteries-included one'
+pairs_with: [python, postgresql]
+alternatives: [rails, laravel, fastapi]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Always run makemigrations/migrate as part of the workflow; never hand-edit a generated migration file'

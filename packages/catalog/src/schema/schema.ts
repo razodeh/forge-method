@@ -27,6 +27,11 @@ const CATALOG_KINDS = [
   'cloud',
   'container',
   'iac',
+  // Extension beyond 12 §12.2's own 20-member enum comment, required by that same section's "Catalog
+  // scope" table -- see CatalogKind's own doc comment and SPEC-QUESTIONS.md Q87.
+  'stack',
+  'feature-flags',
+  'secrets',
 ] as const;
 
 const burdenLevelSchema = z.enum(['low', 'medium', 'high']);

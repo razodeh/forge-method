@@ -1,0 +1,26 @@
+id: axum-actix
+kind: framework
+name: Axum/Actix
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - "Rust's primary async web frameworks, built on Tokio's mature async runtime for high-throughput I/O"
+  - "Axum's tower-based middleware model and Actix's actor model both give strong compile-time-checked correctness"
+weaknesses:
+  - "Rust's own learning curve applies fully here -- async Rust specifically has real additional complexity"
+  - 'Smaller ecosystem of framework-specific integrations than Express/Django/Spring'
+fits_when:
+  - 'the service demands maximum throughput/latency guarantees and the team has Rust experience'
+  - 'the team has Rust experience and wants async performance without leaving the language'
+avoid_when:
+  - "the team has no Rust experience or the workload doesn't need Rust-level performance"
+  - 'the team wants a batteries-included framework with built-in ORM/auth/admin -- these are intentionally minimal'
+pairs_with: [rust, postgresql]
+alternatives: [gin-echo-fiber, spring-boot]
+operational_burden: high
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'Async Rust has real footguns (blocking calls inside async contexts); verify agent-generated handlers use async-safe I/O throughout'

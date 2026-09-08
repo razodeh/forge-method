@@ -1,0 +1,27 @@
+id: react-native-expo
+kind: mobile
+name: React Native/Expo
+category: cross-platform-mobile
+maturity: mature
+licence: MIT
+strengths:
+  - "Single JS/TS codebase targets iOS and Android, reusing React knowledge and much of a web team's existing skillset"
+  - "Expo's managed workflow gives real velocity: OTA updates, a managed build service, and a huge library of pre-integrated native modules"
+  - 'Largest cross-platform mobile ecosystem and hiring pool of any option here'
+weaknesses:
+  - "Bridging to native modules outside Expo's managed set still requires native (Swift/Kotlin) knowledge for anything unsupported"
+  - 'Raw UI performance ceiling is below fully-native (Swift/Kotlin) for extremely demanding UI (heavy animation, custom rendering)'
+fits_when:
+  - 'iOS and Android both need a shared codebase and the team has React experience'
+  - 'the team wants OTA updates and a managed build service without owning native build infrastructure'
+avoid_when:
+  - "the app needs the absolute highest native UI performance ceiling, or deep platform-specific integration outside Expo's ecosystem"
+  - "a specific native capability outside Expo's managed module set is required and the team wants to avoid ejecting"
+pairs_with: [typescript-js, react]
+alternatives: [flutter, kotlin-compose, swift-swiftui]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Prefer Expo's managed workflow and its module ecosystem over ejecting to bare React Native unless a specific unsupported native capability requires it"

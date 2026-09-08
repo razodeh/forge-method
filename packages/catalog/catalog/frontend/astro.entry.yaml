@@ -1,0 +1,26 @@
+id: astro
+kind: frontend
+name: Astro
+category: meta-framework
+maturity: growing
+licence: MIT
+strengths:
+  - 'Ships zero JS by default ("islands architecture"), giving excellent raw page-load performance for content-heavy sites'
+  - 'Framework-agnostic: React, Vue, Svelte, or plain HTML components can all coexist in one Astro project'
+weaknesses:
+  - 'Not designed for highly interactive, app-like SPAs -- islands architecture works against that use case'
+  - 'Smaller ecosystem specific to Astro itself (though it can reuse React/Vue/Svelte ecosystems for islands)'
+fits_when:
+  - 'the product is content-heavy (marketing sites, blogs, docs) where page-load performance and SEO are priorities'
+  - 'the site is largely static/content-driven with only isolated islands of interactivity'
+avoid_when:
+  - 'the product is a highly interactive, stateful application -- prefer Next.js/Remix/SvelteKit'
+  - 'the product needs broad, app-wide client-side state management'
+pairs_with: [react, vue-nuxt, typescript-js]
+alternatives: [nextjs, remix]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - "Default to zero-JS static components; only mark a component as a client island (client:load etc.) when real interactivity is needed, to preserve Astro's core performance benefit"

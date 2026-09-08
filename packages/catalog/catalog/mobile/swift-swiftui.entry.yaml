@@ -1,0 +1,26 @@
+id: swift-swiftui
+kind: mobile
+name: Swift/SwiftUI
+category: native-mobile
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'The native, first-party UI framework for Apple platforms with deep OS integration and a high performance ceiling'
+  - 'Declarative syntax and live previews give a fast iteration loop'
+weaknesses:
+  - 'Apple-only -- no path to Android without a second, entirely separate codebase'
+  - 'SwiftUI still has real gaps versus UIKit for some complex/legacy UI patterns'
+fits_when:
+  - 'the target is exclusively iOS/macOS and native platform integration/performance matters most'
+  - 'the team wants a single language across Apple client and a Swift-based backend (Vapor)'
+avoid_when:
+  - 'Android is also a target and a single shared codebase is wanted'
+  - 'the team has no Apple-platform (Swift/Xcode) experience'
+pairs_with: [swift]
+alternatives: [react-native-expo, flutter, kotlin-compose]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Use SwiftUI's native state management (@State/@Observable) rather than importing UIKit patterns unnecessarily into agent-generated views"

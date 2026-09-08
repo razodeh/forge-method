@@ -1,0 +1,25 @@
+id: ktor
+kind: framework
+name: Ktor
+category: backend-framework
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'Kotlin-native, coroutine-based async framework with a lightweight, DSL-driven routing model'
+  - 'Shares language and idioms directly with Kotlin Multiplatform mobile code, easing full-stack Kotlin teams'
+weaknesses:
+  - 'Smaller ecosystem than Spring Boot/Quarkus for enterprise integrations'
+fits_when:
+  - "the team is Kotlin-first and wants a lightweight, coroutine-native framework rather than Spring Boot's full weight"
+  - 'the app shares code with a Kotlin Multiplatform mobile client and wants consistent idioms across both'
+avoid_when:
+  - 'the team needs the widest enterprise integration ecosystem -- Spring Boot has more'
+  - "the team is not already Kotlin-first and Java's ecosystem (Spring Boot) fits better"
+pairs_with: [kotlin, postgresql]
+alternatives: [spring-boot, micronaut]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Ktor's DSL routing is flexible but unstructured for large apps -- establish an explicit module/route-file convention before agent-generated routes accumulate inconsistently"

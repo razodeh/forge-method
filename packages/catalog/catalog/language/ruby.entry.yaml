@@ -1,0 +1,28 @@
+id: ruby
+kind: language
+name: Ruby
+category: general-purpose
+maturity: mature
+licence: Ruby License / BSD-2-Clause
+strengths:
+  - 'Rails gives a very quick path from zero to a full-featured, convention-driven web app'
+  - 'Highly readable, expressive syntax reduces boilerplate for CRUD-heavy domains'
+  - 'Mature ecosystem for web application development specifically'
+weaknesses:
+  - 'Runtime performance lags Go/Java/Rust meaningfully for CPU-bound work'
+  - 'Hiring pool has shrunk relative to its 2010s peak'
+  - 'Global VM lock limits true multi-core parallelism within one process'
+fits_when:
+  - 'the product is a CRUD-heavy web application where developer velocity matters most'
+  - 'the team already has Rails experience'
+avoid_when:
+  - 'raw throughput or CPU-bound performance is a hard requirement'
+  - 'the team is starting fresh with no Ruby experience and no strong reason to choose it over a larger-hiring-pool alternative'
+pairs_with: [rails, postgresql]
+alternatives: [python, typescript-js, php]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Follow Rails conventions (convention over configuration); an agent deviating from them creates code the rest of the app can't easily maintain"

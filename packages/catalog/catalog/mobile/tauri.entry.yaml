@@ -1,0 +1,26 @@
+id: tauri
+kind: mobile
+name: Tauri
+category: cross-platform-desktop
+maturity: growing
+licence: MIT OR Apache-2.0
+strengths:
+  - "Uses the OS's native WebView instead of bundling Chromium, giving dramatically smaller binaries and lower memory than Electron"
+  - "Rust backend gives a genuinely more secure default (fine-grained permission model) than Electron's historically looser defaults"
+weaknesses:
+  - 'Younger ecosystem than Electron; fewer battle-tested plugins and community answers'
+  - "Relying on the OS's native WebView means real cross-platform rendering inconsistencies Electron's bundled Chromium avoids"
+fits_when:
+  - 'binary size and memory footprint matter and the team can accept a younger ecosystem'
+  - 'the app is a lightweight utility where binary size and startup time matter more than rendering-engine consistency'
+avoid_when:
+  - 'maximum cross-platform rendering consistency and ecosystem maturity matter more than binary size'
+  - 'the team needs the largest library/plugin ecosystem for desktop-app-specific features'
+pairs_with: [rust, typescript-js]
+alternatives: [electron]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Tauri's permission model is opt-in and granular -- do not let agent-generated code request broader capabilities than a given command actually needs"

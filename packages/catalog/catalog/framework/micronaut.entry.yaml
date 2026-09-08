@@ -1,0 +1,26 @@
+id: micronaut
+kind: framework
+name: Micronaut
+category: backend-framework
+maturity: growing
+licence: Apache-2.0
+strengths:
+  - 'Compile-time dependency injection avoids reflection overhead, giving fast startup without needing native-image'
+  - 'First-class support for both Java and Kotlin with a consistent programming model'
+weaknesses:
+  - 'Smaller community and ecosystem than Spring Boot or Quarkus'
+  - "Compile-time DI means some dynamic-Spring patterns don't translate directly"
+fits_when:
+  - 'fast JVM startup matters but native-image build complexity is unwanted'
+  - 'the team wants compile-time DI for fast startup without native-image build complexity'
+avoid_when:
+  - 'the team needs the largest possible ecosystem/integration coverage'
+  - "the team is not already comfortable with compile-time DI's more rigid wiring model"
+pairs_with: [java, kotlin, postgresql]
+alternatives: [quarkus, spring-boot]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Micronaut's compile-time DI means missing bean wiring fails at compile time, not runtime -- treat a build failure here as a real signal, not noise"

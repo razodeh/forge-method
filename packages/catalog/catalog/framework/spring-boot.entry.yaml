@@ -1,0 +1,27 @@
+id: spring-boot
+kind: framework
+name: Spring Boot
+category: backend-framework
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'The most complete enterprise-Java framework: DI, data access, security, and observability all first-class and battle-tested'
+  - 'Enormous ecosystem of starters covering nearly every integration an enterprise stack needs'
+  - 'Excellent tooling support (IntelliJ, Spring Initializr) and deep operational maturity'
+weaknesses:
+  - 'Startup time and memory footprint are real costs in serverless/scale-to-zero contexts (mitigated but not eliminated by Spring Native/GraalVM)'
+  - 'Annotation-heavy magic can obscure control flow for newcomers'
+fits_when:
+  - 'the org runs JVM infrastructure and needs a batteries-included enterprise framework'
+  - 'regulated/enterprise integration breadth (security, auditing, messaging) matters'
+avoid_when:
+  - 'fast cold-start (serverless) is a hard requirement -- consider Quarkus/Micronaut instead'
+  - 'the team wants a lighter-weight framework with less annotation-driven ceremony'
+pairs_with: [java, kotlin, postgresql, kafka]
+alternatives: [quarkus, micronaut, aspnet-core]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use constructor injection, not field injection; agent-generated Spring code defaulting to @Autowired fields is harder to test'

@@ -1,0 +1,26 @@
+id: dotnet-maui
+kind: mobile
+name: .NET MAUI
+category: cross-platform-mobile
+maturity: growing
+licence: MIT
+strengths:
+  - 'Single C#/.NET codebase targets iOS, Android, macOS, and Windows -- a natural fit for teams already invested in .NET'
+  - 'Shares business logic directly with a C#/.NET backend'
+weaknesses:
+  - 'Smaller ecosystem, community, and battle-testing than Flutter/React Native'
+  - 'Historically rough edges (MAUI succeeded the less-stable Xamarin.Forms; some teams report real platform-specific bugs)'
+fits_when:
+  - 'the org is already a .NET shop and wants to reuse C# skills/logic across mobile'
+  - 'macOS/Windows desktop targets are also needed alongside iOS/Android from one codebase'
+avoid_when:
+  - 'maximum cross-platform-mobile ecosystem maturity is the priority -- Flutter/React Native are more proven'
+  - 'the app needs the most mature, battle-tested cross-platform mobile ecosystem available today'
+pairs_with: [csharp]
+alternatives: [flutter, react-native-expo]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - 'maturity: growing -- verify current platform-specific known issues before relying on agent-generated MAUI code for a production release'

@@ -1,0 +1,29 @@
+id: rust
+kind: language
+name: Rust
+category: general-purpose
+maturity: mature
+licence: MIT OR Apache-2.0
+strengths:
+  - 'Memory safety without a garbage collector, verified at compile time -- eliminates whole bug classes'
+  - 'Performance on par with C/C++ with far fewer classes of undefined behavior'
+  - 'The borrow checker forces correct concurrent code, catching data races at compile time'
+weaknesses:
+  - 'The steepest learning curve of any mainstream language on this list; the borrow checker has a real ramp-up cost'
+  - 'Compile times are slow relative to Go, hurting iteration speed on large codebases'
+  - 'Smaller pool of experienced hires than Go/TypeScript/Java'
+fits_when:
+  - 'the workload demands C-level performance with memory safety (systems software, performance-critical services)'
+  - 'the team is willing to invest in the learning curve for long-term correctness guarantees'
+avoid_when:
+  - 'the team needs to ship fast with a small, inexperienced team and no Rust background'
+  - 'the domain is standard CRUD where the performance ceiling is never approached'
+pairs_with: [axum-actix, postgresql, docker]
+alternatives: [go, cpp, typescript-js]
+operational_burden: medium
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Run cargo clippy and cargo audit in CI; Rust's compiler catches memory bugs but not all logic or dependency-CVE issues"
+  - 'Prefer well-known crates (tokio, serde) over niche ones for agent-generated code, for supply-chain and maintenance reasons'

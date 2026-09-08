@@ -1,0 +1,25 @@
+id: fastify
+kind: framework
+name: Fastify
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Schema-based validation and serialization avoid the runtime overhead of unvalidated, ad-hoc JSON handling'
+  - "Plugin architecture with encapsulation gives more structure than Express without NestJS's full opinionation"
+weaknesses:
+  - 'Smaller ecosystem and community than Express, though large and actively growing'
+fits_when:
+  - 'the API is throughput-sensitive and JSON schema validation is wanted at the framework level'
+  - 'the team wants JSON-schema-driven validation at the framework level rather than assembling it separately'
+avoid_when:
+  - 'the team wants the largest possible middleware ecosystem -- Express has more'
+  - "the team is prototyping quickly and doesn't want to define schemas up front"
+pairs_with: [typescript-js, postgresql]
+alternatives: [express, nestjs]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - "Define JSON schemas for every route's request/response; this is Fastify's main safety and performance benefit and is easy for an agent to skip"

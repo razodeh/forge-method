@@ -1,0 +1,27 @@
+id: react
+kind: frontend
+name: React
+category: spa-library
+maturity: mature
+licence: MIT
+strengths:
+  - 'The largest frontend ecosystem and hiring pool of any UI library, with the deepest AI-training-data coverage'
+  - 'Component model with hooks is well-understood and composes cleanly across most app shapes'
+  - 'Unopinionated core lets teams choose their own routing/state/meta-framework layer (or adopt Next.js for all of it)'
+weaknesses:
+  - 'Being a library, not a framework, means routing/state/data-fetching are all separate decisions with real decision-fatigue cost'
+  - 'Rapid ecosystem churn (state-management libraries especially) can leave codebases with mismatched patterns over time'
+fits_when:
+  - 'the team wants the largest ecosystem and hiring pool for a component-based SPA/UI'
+  - 'flexibility to choose routing/state/meta-framework independently is valued'
+avoid_when:
+  - 'the team wants an all-in-one, opinionated framework with routing/data-fetching built in -- prefer Next.js/Remix directly'
+  - 'the team has no JS/TS experience and a simpler server-rendered approach would suffice'
+pairs_with: [nextjs, remix, typescript-js]
+alternatives: [vue-nuxt, angular, svelte-sveltekit, solid]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Use function components with hooks exclusively; agent-generated class components mix an outdated pattern into a hooks-based codebase'

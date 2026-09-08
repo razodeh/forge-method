@@ -1,0 +1,26 @@
+id: gin-echo-fiber
+kind: framework
+name: Gin/Echo/Fiber
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Minimal, fast HTTP routers/frameworks for Go with low overhead and simple middleware models'
+  - "Excellent fit for Go's own strengths: fast cold-start, single binary, low memory"
+weaknesses:
+  - 'Minimal by design -- no built-in ORM, auth, or admin; every piece is a separate library choice'
+  - 'Three competing options (Gin, Echo, Fiber) with overlapping feature sets can create real decision-paralysis without a clear tie-breaker'
+fits_when:
+  - 'the service is a Go HTTP API and the team wants a thin, fast router rather than a full framework'
+  - 'the team is comfortable choosing its own ORM/auth/logging libraries independently'
+avoid_when:
+  - 'the team wants a batteries-included framework -- these are intentionally minimal'
+  - 'the team is unfamiliar with Go and would rather use a language/framework with a gentler learning curve'
+pairs_with: [go, postgresql, docker]
+alternatives: [express, fastify]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: medium
+notes_for_agents:
+  - 'Pick exactly one of Gin/Echo/Fiber per project and record the choice in an ADR; do not let agent-generated code mix idioms from more than one'

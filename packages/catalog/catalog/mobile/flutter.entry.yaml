@@ -1,0 +1,26 @@
+id: flutter
+kind: mobile
+name: Flutter
+category: cross-platform-mobile
+maturity: mature
+licence: BSD-3-Clause
+strengths:
+  - "Single Dart codebase compiles to genuinely native ARM code on both platforms, giving a performance ceiling closer to native than React Native's JS-bridge model"
+  - 'Its own rendering engine gives pixel-perfect UI consistency across iOS and Android'
+  - 'Also targets web and desktop from the same codebase'
+weaknesses:
+  - 'Dart is a smaller, less-transferable skill than JS/TS -- a genuinely separate language to learn'
+  - 'Smaller ecosystem and hiring pool than React Native'
+fits_when:
+  - 'pixel-perfect UI consistency across platforms and near-native performance both matter'
+  - 'the product will also target web/desktop from the same codebase alongside mobile'
+avoid_when:
+  - 'the team wants to reuse existing JS/TS/React skills directly'
+  - "pixel-perfect native platform look-and-feel (not Flutter's own consistent rendering) is a hard requirement"
+alternatives: [react-native-expo, kotlin-compose, swift-swiftui]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Use Flutter's official state-management guidance (Riverpod/Provider) consistently; agent-generated code mixing multiple state-management approaches in one app creates real maintenance debt"

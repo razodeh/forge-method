@@ -1,0 +1,29 @@
+id: python
+kind: language
+name: Python
+category: general-purpose
+maturity: mature
+licence: PSF (permissive)
+strengths:
+  - 'Dominant language for data/ML workloads, with the deepest ecosystem (pandas, numpy, PyTorch, scikit-learn)'
+  - 'Readable syntax lowers onboarding cost and agent-generated-code review burden'
+  - 'FastAPI/Django give a mature, batteries-included path to production web services'
+weaknesses:
+  - 'The GIL limits true multi-core parallelism within one process for CPU-bound work'
+  - 'Dynamic typing without discipline (type hints + mypy/pyright) reintroduces the bug classes static typing prevents'
+  - 'Packaging/environment tooling (pip/venv/poetry/conda fragmentation) is a real source of friction'
+fits_when:
+  - 'the workload is data engineering, ML/AI, or scripting-heavy automation'
+  - 'team familiarity with Python is already high'
+avoid_when:
+  - 'CPU-bound, latency-sensitive services where per-request overhead must be minimal'
+  - 'a team wants one language shared across a TypeScript-heavy frontend'
+pairs_with: [fastapi, django, flask, postgresql, pytest]
+alternatives: [typescript-js, java, go, ruby]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'Always pin dependencies via a lockfile (poetry.lock/uv.lock); pip without a lockfile is non-reproducible'
+  - 'Add type hints and run mypy/pyright in CI; agent-generated Python without them hides real bugs'

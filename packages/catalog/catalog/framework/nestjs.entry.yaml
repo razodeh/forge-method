@@ -1,0 +1,27 @@
+id: nestjs
+kind: framework
+name: NestJS
+category: backend-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Opinionated, Angular-inspired architecture (modules, DI, decorators) gives real structure for large teams/codebases'
+  - 'First-class TypeScript design, not a TS wrapper over a JS-first framework'
+  - 'Built-in support for GraphQL, microservices, and WebSockets alongside REST'
+weaknesses:
+  - 'Heavier ceremony (decorators, modules, DI) than Express/Fastify for small services'
+  - 'Steeper learning curve for teams unfamiliar with Angular-style DI patterns'
+fits_when:
+  - 'the team wants Angular-style structure and DI on the backend, or is already an Angular shop'
+  - 'the codebase will grow large and benefits from enforced module boundaries'
+avoid_when:
+  - "the service is small and the DI/decorator ceremony isn't worth the overhead"
+  - "the developer-experience overhead of decorators/modules isn't worth it for a small service"
+pairs_with: [typescript-js, postgresql, graphql]
+alternatives: [express, fastify, spring-boot]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Follow Nest's module boundaries (one module per domain concern); agent-generated code bypassing DI to import services directly defeats the framework's structure"

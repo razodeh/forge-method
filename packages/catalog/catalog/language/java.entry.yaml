@@ -1,0 +1,29 @@
+id: java
+kind: language
+name: Java
+category: general-purpose
+maturity: mature
+licence: GPL-2.0-with-classpath-exception (OpenJDK)
+strengths:
+  - 'Mature JIT-compiled runtime with strong multi-decade backward compatibility and predictable long-term support'
+  - 'Excellent tooling for large-team static analysis, refactoring, and enterprise IDE support'
+  - 'The JVM ecosystem (Spring, Kafka clients, observability agents) is the deepest for regulated/enterprise workloads'
+weaknesses:
+  - 'Verbose relative to modern alternatives; boilerplate remains real even with records/var'
+  - 'Slower cold-start and higher baseline memory than Go/Rust, a real cost in serverless/scale-to-zero contexts'
+  - 'Build tooling (Maven/Gradle) has a real learning curve'
+fits_when:
+  - 'the organization already runs JVM infrastructure and has JVM-experienced engineers'
+  - 'long-term maintainability and enterprise support contracts matter more than minimal footprint'
+avoid_when:
+  - 'a small team wants the quickest possible time-to-first-deploy with minimal ceremony'
+  - 'serverless-first with aggressive cold-start requirements'
+pairs_with: [spring-boot, quarkus, micronaut, ktor, postgresql, kafka]
+alternatives: [kotlin, csharp, go]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - 'Use Gradle or Maven with a locked dependency version; never hand-edit generated build artifacts'
+  - 'Prefer records and modern Java (17+) idioms over legacy Java 8-era boilerplate an agent might default to'

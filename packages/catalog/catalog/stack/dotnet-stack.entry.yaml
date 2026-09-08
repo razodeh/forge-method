@@ -1,0 +1,25 @@
+id: dotnet-stack
+kind: stack
+name: .NET stack
+category: enterprise-fullstack
+maturity: mature
+licence: N/A (composition of independently-licensed open-source/Microsoft projects)
+strengths:
+  - 'ASP.NET Core backend, Entity Framework Core ORM, and optionally Blazor for a C#-only frontend give one language across the whole stack'
+  - 'Deep first-party Microsoft tooling and long-term support commitments'
+weaknesses:
+  - "Blazor's ecosystem/hiring pool is smaller than a React/Vue frontend paired with the same backend"
+fits_when:
+  - 'the org is already a .NET shop and wants a cohesive, first-party-supported full stack'
+  - 'team familiarity with C#/.NET across the whole stack is already high'
+avoid_when:
+  - 'the team wants the largest possible frontend ecosystem -- pairing ASP.NET Core with React/Vue instead is more common'
+  - 'the org has no existing .NET investment and would be adopting it solely for this composition'
+pairs_with: [csharp, aspnet-core, postgresql]
+alternatives: [jvm-react, mern-mean]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - 'Decide up front whether Blazor Server or Blazor WebAssembly (or a separate JS frontend) is used -- these have different agent-generated-code implications for state handling'

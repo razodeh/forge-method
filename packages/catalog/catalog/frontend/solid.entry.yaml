@@ -1,0 +1,26 @@
+id: solid
+kind: frontend
+name: SolidJS
+category: spa-library
+maturity: growing
+licence: MIT
+strengths:
+  - 'Fine-grained reactivity gives React-like ergonomics with substantially better raw runtime performance (no virtual DOM diffing)'
+  - 'JSX syntax is immediately familiar to React developers, easing adoption'
+weaknesses:
+  - 'Small ecosystem and hiring pool -- the least mature of the mainstream React-alternatives here'
+  - 'Fewer meta-framework/tooling options than Next.js/SvelteKit/Nuxt'
+fits_when:
+  - 'raw runtime performance is a priority and the team accepts a smaller ecosystem for it'
+  - 'the team wants React-like JSX ergonomics with a smaller runtime cost'
+avoid_when:
+  - 'ecosystem maturity and hiring-pool size matter more than peak runtime performance'
+  - "the team wants React's own (larger) ecosystem and library availability specifically"
+pairs_with: [typescript-js]
+alternatives: [react, svelte-sveltekit]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: low
+notes_for_agents:
+  - "Solid's reactivity model looks like React's but behaves differently (no re-render on state change, signals instead) -- do not let agent-generated code apply React mental models (e.g. destructuring props) directly"

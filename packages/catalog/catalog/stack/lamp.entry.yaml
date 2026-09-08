@@ -1,0 +1,26 @@
+id: lamp
+kind: stack
+name: LAMP
+category: server-rendered-fullstack
+maturity: legacy
+licence: N/A (composition of independently-licensed open-source projects)
+strengths:
+  - 'Decades of production hardening and the widest, cheapest hosting availability of any stack in this catalog'
+  - 'Extremely well understood; abundant documentation and operational knowledge'
+weaknesses:
+  - 'Represents an older architectural pattern (Linux/Apache/MySQL/PHP) that modern frameworks (Laravel) have mostly superseded even within the PHP ecosystem'
+  - 'Raw LAMP (without a modern framework layer) has weaker security/structure defaults than Laravel or any modern alternative'
+fits_when:
+  - "maintaining or extending an existing LAMP-era application where a rewrite isn't justified"
+  - 'the hosting environment is cost-constrained and LAMP-compatible shared hosting is the cheapest option'
+avoid_when:
+  - 'starting a new project -- prefer Laravel (still PHP, but with modern structure) or a different stack entirely'
+  - 'the team has no PHP/MySQL operational experience at all'
+pairs_with: [php, mysql-mariadb]
+alternatives: [laravel]
+operational_burden: medium
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: low
+notes_for_agents:
+  - 'For any new code in a LAMP context, use parameterized queries/PDO explicitly -- raw mysql_* style code an agent might default to from older training data is a real SQL-injection risk'

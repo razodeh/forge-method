@@ -1,0 +1,27 @@
+id: swift
+kind: language
+name: Swift
+category: general-purpose
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'The native, first-class language for Apple platforms with strong compile-time safety (optionals, value types)'
+  - 'SwiftUI gives a modern, declarative UI framework tightly integrated with the language'
+  - 'Server-side Swift (Vapor) is viable for teams wanting one language across iOS and backend'
+weaknesses:
+  - 'Effectively single-vendor (Apple) despite open-source status; ecosystem outside Apple platforms is thin'
+  - 'ABI/tooling churn between major versions has real migration cost'
+fits_when:
+  - 'the target platform is iOS/macOS/watchOS/tvOS natively'
+  - 'the team wants a single language across Apple client and backend'
+avoid_when:
+  - "the target isn't an Apple platform and there's no code-sharing motivation"
+  - 'cross-platform (non-Apple) reach is required with a single shared codebase'
+pairs_with: [swift-swiftui]
+alternatives: [kotlin, typescript-js, dotnet-maui]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Prefer value types (structs) and Swift's strict-concurrency checking; agent-generated Swift defaulting to classes/unstructured concurrency reintroduces bugs Swift's design otherwise prevents"

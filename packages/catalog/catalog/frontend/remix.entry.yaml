@@ -1,0 +1,26 @@
+id: remix
+kind: frontend
+name: Remix
+category: meta-framework
+maturity: growing
+licence: MIT
+strengths:
+  - "Web-standards-first design (loaders/actions map directly to HTTP) gives a simpler mental model than Next.js's evolving conventions"
+  - 'Excellent nested-routing and progressive-enhancement story; forms work without JS by default'
+weaknesses:
+  - 'Smaller ecosystem and community than Next.js'
+  - "Static-site-generation story is less mature than Next.js's/Astro's"
+fits_when:
+  - 'the team values web-standards alignment and progressive enhancement over the largest possible ecosystem'
+  - 'progressive enhancement (forms working without JS) is a real requirement'
+avoid_when:
+  - 'the product is primarily static/content-driven -- Astro fits better'
+  - 'the team wants the largest possible plugin/ecosystem coverage -- Next.js has more'
+pairs_with: [react, typescript-js]
+alternatives: [nextjs, astro]
+operational_burden: low
+team_familiarity_weight: low
+exit_cost: medium
+agent_friendliness: medium
+notes_for_agents:
+  - "Use loaders/actions for data, not client-side useEffect fetches; agent-generated code reaching for client fetching bypasses Remix's core design"

@@ -1,0 +1,27 @@
+id: nextjs
+kind: frontend
+name: Next.js
+category: meta-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Full-featured React meta-framework: file-based routing, SSR/SSG/ISR, and API routes all first-class'
+  - "App Router's React Server Components give real, measured performance wins for content-heavy pages"
+  - "Vercel's tight integration gives a genuinely smooth deploy path, though the framework itself is platform-agnostic"
+weaknesses:
+  - "App Router's Server Components model is a real conceptual shift from client-only React and has a learning curve"
+  - 'Some non-Vercel hosting targets require extra configuration to get full feature parity'
+fits_when:
+  - "the product needs SSR/SSG for SEO or performance, and the team wants React's ecosystem with routing/data-fetching built in"
+  - 'the deploy target benefits from incremental static regeneration or edge rendering'
+avoid_when:
+  - 'the app is a pure client-side SPA with no SEO/SSR need -- a lighter tool (Vite + React) may be simpler'
+  - 'the team wants the simplest possible mental model with no Server/Client Component distinction -- consider a plain Vite+React SPA'
+pairs_with: [react, typescript-js, vercel]
+alternatives: [remix, vue-nuxt, astro]
+operational_burden: low
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Be explicit about Server vs. Client Components ('use client'); agent-generated code that reaches for client-only APIs inside a Server Component fails at build/runtime"

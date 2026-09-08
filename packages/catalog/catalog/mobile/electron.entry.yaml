@@ -1,0 +1,27 @@
+id: electron
+kind: mobile
+name: Electron
+category: cross-platform-desktop
+maturity: mature
+licence: MIT
+strengths:
+  - 'The most mature, battle-tested cross-platform desktop framework -- VS Code, Slack, Discord, and countless others ship on it'
+  - 'Bundled Chromium gives fully consistent rendering across every OS, unlike WebView-based alternatives'
+  - 'Largest ecosystem and community of any desktop-web-hybrid option'
+weaknesses:
+  - 'Bundling a full Chromium instance per app gives real binary-size and memory-footprint costs versus Tauri'
+  - "Historically looser default security posture than Tauri's permission model, though modern Electron has improved this significantly"
+fits_when:
+  - 'rendering consistency and ecosystem maturity matter more than binary size/memory footprint'
+  - 'the app is a developer tool or internal utility where ecosystem maturity outweighs binary size'
+avoid_when:
+  - 'binary size or memory footprint is a hard constraint -- prefer Tauri'
+  - 'the team has no web (JS/HTML/CSS) experience and native desktop APIs are the priority'
+pairs_with: [typescript-js, react]
+alternatives: [tauri]
+operational_burden: medium
+team_familiarity_weight: high
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - 'Enable contextIsolation and disable nodeIntegration in the renderer by default; agent-generated Electron code skipping this is a real, well-known security regression'

@@ -1,0 +1,25 @@
+id: kotlin-compose
+kind: mobile
+name: Kotlin/Compose
+category: native-mobile
+maturity: mature
+licence: Apache-2.0
+strengths:
+  - 'The native, first-party declarative UI toolkit for Android with deep OS integration and a high performance ceiling on that platform'
+  - 'Compose Multiplatform extends real code-sharing to iOS/desktop, a growing option beyond Android-only'
+weaknesses:
+  - 'Android-only by default -- Compose Multiplatform for iOS is younger and less battle-tested than Android-only Compose'
+fits_when:
+  - 'the target is exclusively (or primarily) Android and native platform integration/performance matters most'
+  - 'Compose Multiplatform code-sharing with iOS/desktop is a real, near-term goal'
+avoid_when:
+  - 'iOS and Android both need a fully shared codebase today -- Flutter/React Native are more proven for that'
+  - 'the team has no JVM/Android experience at all'
+pairs_with: [kotlin]
+alternatives: [swift-swiftui, flutter, react-native-expo]
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: high
+agent_friendliness: medium
+notes_for_agents:
+  - "Use Compose's state hoisting pattern consistently; agent-generated composables holding mutable state internally instead of hoisting it break testability"

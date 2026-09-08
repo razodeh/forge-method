@@ -51,8 +51,8 @@ describe('loadCatalogEntry', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts every one of the 20 declared kind values', () => {
-    const kinds = [
+  it("accepts every one of the 20 kind values 12 §12.2's own comment enumerates, plus this schema's own real extension (stack/feature-flags/secrets, see SPEC-QUESTIONS.md Q87)", () => {
+    const specKinds = [
       'language',
       'framework',
       'datastore',
@@ -74,7 +74,8 @@ describe('loadCatalogEntry', () => {
       'container',
       'iac',
     ];
-    expect(kinds).toHaveLength(20);
+    expect(specKinds).toHaveLength(20);
+    const kinds = [...specKinds, 'stack', 'feature-flags', 'secrets'];
     for (const kind of kinds) {
       const source = POSTGRESQL.replace('kind: datastore', `kind: ${kind}`);
       const result = loadCatalogEntry(source, `${kind}/postgresql.entry.yaml`);
