@@ -5208,3 +5208,35 @@ payload per gate, genuinely exercising each gate's own distinct `failOn`.
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (209 files, 4186 tests, plus the
 boundaries-coverage config's own 64) all clean.
+
+---
+
+## M6 T3 — `@forge/templates`: the 14 initialization/architecture frameworks (`11` §11.1-§11.2)
+
+**Rounds: 1 (fresh critic finding zero issues; no verify round run). Outcome: WON.**
+
+All 14 F-INIT/F-ARCH framework YAML files, `FRAMEWORK_INDEX`, and `test/frameworks.test.ts` (a repo-
+root cross-package suite against the real `loadFramework`, M6 M1 — needed because `@forge/templates`
+and `@forge/methods` have no dependency edge in either direction, the identical reason T1/T2's own
+tests live at the repo root). Three procedural frameworks (`scaffold-generation`/F-INIT-7,
+`decomposition-boundaries`/F-ARCH-2, `threat-modelling`/F-ARCH-6) use a single-option, no-criteria,
+`scoring: rules` shape matching `11`'s own "not a decision, an execution step" framing for those three.
+
+### Round 1 — fresh critic: zero findings
+
+The critic confirmed `repo-strategy.framework.yaml` byte-for-byte structurally identical to `11`
+§11.0's own worked example, hand-verified every `rules[].if` expression in all 14 files against
+`@forge/methods/expr.ts`'s own bounded grammar (no hyphens inside a bare identifier — none found,
+hyphens appear only inside quoted literals or `options[].id`/`eliminate`/`prefer` values, which are
+never parsed as expressions), confirmed every `eliminate`/`prefer` reference resolves to a real
+declared option id within its own file, hand-summed every declared `criteria` block to confirm each
+sums to exactly 1.0, confirmed every `owner_agent` is a real `05` §5.2 role sensible for that decision
+per the roster's own "Owns" column, confirmed `FRAMEWORK_INDEX` names exactly the right 14 ids mapped
+to real files, and cross-checked five frameworks' own `options` lists directly against `11`'s own named
+candidate lists (`architecture-style` against the 9-row style table, `communication-integration-
+patterns` against the 12 named protocols, `directory-layout` against the four layout conventions,
+`dev-environment` against the four provisioning choices, `nfr-strategy` against the 9-category
+Verification column) — all exact matches.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (210 files, 4246 tests, plus the
+boundaries-coverage config's own 64) all clean.
