@@ -123,6 +123,16 @@ export const ERROR_CODES = {
     message: (d: { tool: string }) => `Required tool not found on PATH: ${show(d.tool)}.`,
     remedy: 'Install the tool and re-run `forge doctor` to confirm it is discoverable.',
   },
+  'ENV-005': {
+    // `03` §3.1 step 1: the very first resolution step, checked before anything else (config
+    // detection, TUI). `@forge/cli/entry`'s `checkNodeVersion` is the pure check this message
+    // renders for; the process-level exit(5) is a thin caller around it, not this package's job.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { required: string; actual: string }) =>
+      `FORGE requires Node.js ${show(d.required)} or newer; found ${show(d.actual)}.`,
+    remedy: 'Install a supported Node.js version (nvm install --lts, or nvm use 20) and retry.',
+  },
   'ADP-012': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -347,6 +357,16 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.interrupted,
     message: (d: { gate: string }) => `Gate ${show(d.gate)} was rejected by the operator.`,
     remedy: 'Address the reported findings and re-run the gate, or record a waiver with an expiry.',
+  },
+  'USR-002': {
+    // `03` §3.2's global-flags table: an enum flag (`--model-tier`, `--autonomy`) given a value
+    // outside its declared set, or an int/float flag given a non-numeric value. Raised by
+    // `@forge/cli/entry`'s `parseGlobalFlags`, at the CLI boundary before any command runs.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { flag: string; value: string }) =>
+      `Invalid value ${show(d.value)} for ${show(d.flag)}.`,
+    remedy: 'Run `forge --help` to see the accepted values for this flag.',
   },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path

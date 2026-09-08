@@ -1,0 +1,21 @@
+{
+  "name": "@forge/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./entry": "./src/entry/index.ts",
+    "./output": "./src/output/index.ts"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@forge/core": "workspace:*",
+    "@forge/telemetry": "workspace:*"
+  }
+}

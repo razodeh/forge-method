@@ -93,6 +93,10 @@ const SAMPLE_DETAILS = {
   status: 'succeeded',
   attemptCount: 0,
   attemptNumber: 0,
+  required: '20.10.0',
+  actual: 'v18.17.0',
+  flag: '--model-tier',
+  value: 'ludicrous',
 } satisfies Record<string, unknown> as never;
 
 /**
