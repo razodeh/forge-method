@@ -179,6 +179,21 @@ importers:
         specifier: 13.0.3
         version: 13.0.3
 
+  packages/methods:
+    dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
+      '@forge/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+
   packages/schemas:
     dependencies:
       zod:

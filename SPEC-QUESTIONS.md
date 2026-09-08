@@ -6455,3 +6455,62 @@ at genuinely random points ever exposed the gap between "correct in isolation" a
 at literally any point" — which is exactly why `06` §6.10 requires this as a real, randomised, repeated CI
 test rather than accepting a single hand-picked scenario as sufficient, and exactly why this piece was
 scoped as the milestone's own defining criterion rather than an optional nice-to-have at the end.
+
+## Q83 — M6 M1's `@forge/methods`: `11` §11.0's own framework schema and loader — two boundary-graph-driven
+duplications instead of reuse, and a `scoring`/`rules` design assumption disproven by the spec's own worked
+example
+
+`11` §11.0 defines one generic YAML schema every one of the 43 counted frameworks across specs 11-14 shares
+(`id`, `produces`, `inputs`, `questions`, `options`, `criteria`, `scoring`, `rules`, `output_template`,
+`follow_on`), plus a `rules[].if` condition grammar. This piece is the schema (`zod`) and loader
+(`loadFramework`/`readFramework`) for that document — no scoring or level-selection logic yet (M2/M3).
+
+1. **Two deliberate, boundary-graph-forced duplications, not oversights.** `02` §2.2's own graph
+   (`tools/eslint-plugin-forge-boundaries/src/graph.mjs`) gives `methods: ['core', 'kb', 'schemas']` — no
+   `engine` edge and no `extensions` edge (`methods` and `extensions` are graph peers, not one built on the
+   other). Two planned reuses were caught against this before any code was written: `11` §11.0's own
+   `rules[].if` grammar needs an expression evaluator, and the natural reuse target was `@forge/engine/expr`
+   — not importable. Built a small local one instead (`src/expr.ts`): dotted-path field access, `==`/`!=`/
+   `<`/`<=`/`>`/`>=` comparison, `&&`/`||`/`!`, parenthesized grouping, string/number/boolean literals —
+   exactly what every worked `if` expression in specs 11-14 actually uses, nothing more. Follows the same
+   "duplicate a small helper rather than force a cross-cutting dependency" precedent M5 itself used
+   repeatedly (P16's own `seededHash`, P15's own `createTempRepo`). The second (a `ProjectLevel` type
+   `@forge/extensions/agents` already declares) is deferred to M3, noted here so a future piece doesn't
+   quietly try to import it instead of re-declaring it.
+
+2. **A real design error, self-caught by testing against the spec's own literal worked example, not by a
+   critic.** The loader's semantic validation first assumed `scoring: rubric` meant "no elimination phase"
+   and rejected any `rubric` framework whose `rules` carried `then.eliminate`/`then.prefer` entries. Writing
+   the round-trip test against `11` §11.0's own verbatim `repo-strategy` example — which is exactly
+   `scoring: rubric` *with* two such rules — immediately proved this false before the test suite was ever
+   run against a critic. Re-reading the execution contract text ("run rules → eliminate → score
+   remaining...") gives the real relationship: `rules` (an elimination pre-pass) is orthogonal to `scoring`
+   (how the survivors are ranked) — every scoring mode can carry a pre-pass; `rubric` only says the survivors
+   are weighted-criteria-ranked, not that nothing was eliminated first. The speculative check was removed
+   entirely rather than patched, with the reasoning kept as a comment in `load.ts` so it cannot silently
+   creep back in without a second real data point (real T3/T4 framework content) to justify it.
+
+3. **A critic round found one real logic bug and three real gaps, all fixed:**
+   - `expr.ts`'s `parseComparison` consumed a parenthesized *left*-hand operand's closing paren but never
+     the right-hand side's (`"a == (b)"` silently failed to parse — the trailing `)` was left on the stream,
+     tripping `parseExpression`'s own "must consume every token" check). Fixed symmetrically.
+   - `tokenize` treated trailing whitespace as "unexpected trailing content" and threw — caught only by
+     `parseExpression`'s blanket catch, so a condition string with an incidental trailing space (easy to
+     introduce by hand-editing YAML) silently failed to parse with no visible reason. Fixed to trim before
+     the final length check; genuine trailing garbage that matches no token still errors correctly.
+   - `semanticIssues` never checked that `rules[].then.eliminate`/`.prefer` entries actually name a declared
+     `options[].id` — a typo'd id loaded successfully and would only surface as a silent no-op at execution
+     time. Added a referential-integrity check against the framework's own `options` set.
+   - `questionSchema` allowed `type: 'choice'` with no `options` array at all. Added a `.refine` requiring at
+     least one option for a choice question.
+   - Also removed two dangling `package.json` subpath exports (`./score`, `./level`) that pointed at
+     directories M2/M3 haven't created yet — caught as a real "manifest claims something that doesn't exist"
+     issue, not a style nitpick; M6's own convention is to add an export only when the piece behind it is
+     actually built.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (3401 tests, plus the boundaries-coverage config's own
+64) are all clean after the fixes. Two lines of test-run output that read as failures on a scoped
+(`packages/methods`-only) invocation — `check-boundaries.test.ts` and `ratchet.test.ts` printing their own
+fixture-violation stderr — are not real failures; both `node scripts/check-boundaries.mjs` and
+`node scripts/check-coverage-ratchet.mjs` run directly against the real repo exit 0, and the full `pnpm
+test` run reports every file and test passing with no `FAIL` entries.
