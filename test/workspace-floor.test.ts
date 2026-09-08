@@ -91,6 +91,15 @@ const IGNORED_PATHS = new Set([
   // shape as the `kb`/`engine`/`methods`/`catalog`/`agents` entries above, for the same reason
   // unrecognised by `TEST_FILE`'s naming heuristic.
   'packages/cli/test/commands/helpers.ts',
+  // `packages/cli/test/commands/run/helpers.ts` (PLAN-M6.md C4): the identical shape, one directory
+  // deeper — shared real git-repo/workflow/gate fixture scaffolding for `test/commands/run/*.test.ts`.
+  'packages/cli/test/commands/run/helpers.ts',
+  // `packages/cli/test/commands/run/fixtures/run-child.ts` (PLAN-M6.md C4): the real crash-then-resume
+  // child-process fixture `resume.test.ts` spawns and `SIGKILL`s — the identical "real child process
+  // driven via `node --experimental-strip-types`, not a runnable suite" shape
+  // `packages/engine/test/e2e/fixtures/run-engine-child.ts` above already establishes, for the
+  // identical reason unrecognised by `TEST_FILE`'s naming heuristic.
+  'packages/cli/test/commands/run/fixtures/run-child.ts',
 ]);
 
 /**

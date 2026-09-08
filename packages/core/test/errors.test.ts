@@ -100,6 +100,9 @@ const SAMPLE_DETAILS = {
   mode: 'panel',
   feature: 'kb diff',
   got: 'FORGE_ASK',
+  laneId: 'run-014-implement-a1b2c3d4',
+  workflowId: 'plan-stage',
+  runId: 'run-014-implement',
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -1,0 +1,189 @@
+/**
+ * `forge resume [runId]` — a real crash-then-resume proof against the CLI's own real `runWorkflow`/
+ * `resumeWorkflow`: a real child process, genuinely `SIGKILL`'d mid-run, then resumed in-process by this
+ * test, reaching the identical completed state an uninterrupted run would. Also covers `resumeWorkflow`'s
+ * own real precondition/error paths (`RUN-048` no last run, `CFG-002` a live lock).
+ *
+ * @see specs/03 §3.2.4
+ * @see specs/06 §6.10
+ */
+import { spawn } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { pathExists, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
+import { resumeWorkflow } from '../../../src/commands/run/resume.ts';
+import { runLanes } from '../../../src/commands/run/status.ts';
+import {
+  FIXTURE_ITEM_ID,
+  FIXTURE_WORKFLOW_ID,
+  WORKFLOWS_ROOT,
+  cleanupAll,
+  createTestProject,
+  fixtureExpressionContext,
+  testRunDeps,
+  type TestProject,
+} from './helpers.ts';
+
+/** Writes a real manifest directly — the identical shape `runWorkflow`'s own first durable write
+ * produces — without paying for a full run, for the two tests below that only care about what
+ * `resumeWorkflow` does with a workflow source that fails to parse/compile by the time it re-reads it
+ * fresh from disk. */
+async function writeManifest(project: TestProject, runId: string): Promise<void> {
+  await writeFileAtomic(
+    project.paths.resolveState(`runs/${runId}/manifest.json`),
+    JSON.stringify({
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+    }),
+  );
+}
+
+afterEach(cleanupAll);
+
+const CHILD_PATH = fileURLToPath(new URL('./fixtures/run-child.ts', import.meta.url));
+
+/** Spawns the real child fixture and `SIGKILL`s it once its own manifest file (`runWorkflow`'s own
+ * first durable write, before it ever reaches the slow `prepare` step) genuinely exists on disk —
+ * polled for, rather than a fixed delay: the child's own cold start (loading `@forge/engine`/`@forge/
+ * vcs`/`@forge/telemetry`'s full module graph via `--experimental-strip-types`) has no fixed, portable
+ * duration a constant sleep could safely assume. The slow fixture workflow's own `prepare` step
+ * (`sleep 0.4`) then gives a genuine, real wall-clock window past that point to land the kill inside.
+ * Resolves once the OS confirms the pid is genuinely gone, the same structural proof
+ * `packages/engine/test/e2e/crash-resume.test.ts`'s own `waitForProcessGone` uses. */
+async function spawnAndKill(
+  paths: ProjectPaths,
+  projectRoot: string,
+  runId: string,
+): Promise<void> {
+  const child = spawn('node', [
+    '--experimental-strip-types',
+    CHILD_PATH,
+    projectRoot,
+    runId,
+    'test-host',
+  ]);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('child process failed to spawn (no pid)');
+
+  const manifestPath = paths.resolveState(`runs/${runId}/manifest.json`);
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    if (await pathExists(manifestPath)) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  child.kill('SIGKILL');
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`pid ${String(pid)} still exists after waiting`);
+}
+
+describe('resumeWorkflow', () => {
+  it('throws RUN-048 when there is no last run to resume', async () => {
+    const project = await createTestProject();
+    await expect(resumeWorkflow(testRunDeps(project), { host: 'test-host' })).rejects.toMatchObject(
+      {
+        code: 'RUN-048',
+      },
+    );
+  });
+
+  it('throws CFG-002 when a real, still-alive process already holds the project lock', async () => {
+    const project = await createTestProject();
+    await acquireRunLock(project.paths, {
+      pid: process.pid,
+      host: 'other-host',
+      runId: 'run-1',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await expect(
+      resumeWorkflow(testRunDeps(project), { runId: 'run-1', host: 'test-host' }),
+    ).rejects.toMatchObject({ code: 'CFG-002' });
+  });
+
+  it('throws RUN-054 when the named run has no real manifest (never started by forge run)', async () => {
+    const project = await createTestProject();
+    await expect(
+      resumeWorkflow(testRunDeps(project), { runId: 'run-never-started', host: 'test-host' }),
+    ).rejects.toMatchObject({ code: 'RUN-054' });
+  });
+
+  it('throws RUN-045 when the workflow source no longer parses by the time resume re-reads it', async () => {
+    const project = await createTestProject();
+    await writeManifest(project, 'run-bad-parse');
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      'not: [valid, workflow',
+    );
+    await expect(
+      resumeWorkflow(testRunDeps(project), { runId: 'run-bad-parse', host: 'test-host' }),
+    ).rejects.toMatchObject({ code: 'RUN-045' });
+  });
+
+  it('throws RUN-045 when the workflow source parses but no longer compiles (a dangling dependsOn)', async () => {
+    const project = await createTestProject();
+    await writeManifest(project, 'run-bad-compile');
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      `id: ${FIXTURE_WORKFLOW_ID}
+name: Broken
+version: 1.0.0
+description: A broken fixture — parses fine, fails to compile.
+steps:
+  - id: only
+    kind: command
+    run: "true"
+    dependsOn: [ nonexistent ]
+`,
+    );
+    await expect(
+      resumeWorkflow(testRunDeps(project), { runId: 'run-bad-compile', host: 'test-host' }),
+    ).rejects.toMatchObject({ code: 'RUN-045' });
+  });
+
+  it('a real SIGKILL mid-run, then resumed, reaches the same completed state as an uninterrupted run', async () => {
+    const project = await createTestProject({ variant: 'slow' });
+    const runId = 'run-crash';
+
+    await spawnAndKill(project.paths, project.dir, runId);
+
+    const { runId: resumedRunId, runState } = await resumeWorkflow(testRunDeps(project), {
+      runId,
+      host: 'test-host',
+    });
+
+    expect(resumedRunId).toBe(runId);
+    expect(runState.runStatus).toBe('completed');
+    expect(runState.unresolvedStepIds).toEqual([]);
+
+    // No merge step in this fixture — the produced artifact lives in the real lane worktree, not the
+    // main project root (`run.test.ts`'s own merge-step case covers the merged-into-integration path).
+    const lanes = await runLanes(project.paths, project.dir, runId);
+    const laneId = lanes[0]?.laneId;
+    if (laneId === undefined) throw new Error('resumed run left no lane');
+    const written = await readFile(
+      project.paths.resolveState(`worktrees/${laneId}/${FIXTURE_ITEM_ID}.txt`),
+      'utf8',
+    );
+    expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
+
+    // The lock is released once resume finishes.
+    expect(await readRunLock(project.paths)).toBeUndefined();
+
+    // Resolving an omitted runId via the real last-run.json pointer works too — the crashed run's own
+    // `runWorkflow` call already wrote that pointer before it was killed.
+    const explicit = await resumeWorkflow(testRunDeps(project), { host: 'test-host' });
+    expect(explicit.runId).toBe(runId);
+  }, 30_000);
+});

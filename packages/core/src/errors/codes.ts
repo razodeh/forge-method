@@ -385,7 +385,7 @@ export const ERROR_CODES = {
     severity: 'fatal',
     exitCode: EXIT_CODES.usage,
     message: (d: { feature: string }) => `${show(d.feature)} is not yet supported.`,
-    remedy: 'Check GAUNTLET-LOG.md or SPEC-QUESTIONS.md for this feature\'s current status.',
+    remedy: "Check GAUNTLET-LOG.md or SPEC-QUESTIONS.md for this feature's current status.",
   },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path
@@ -545,7 +545,7 @@ export const ERROR_CODES = {
     message: (d: { stepId: string; mode: string }) =>
       `Step ${show(d.stepId)}'s own interaction mode is ${show(d.mode)}, which requires at least one declared perspective, but none was given.`,
     remedy:
-      'Pass DispatchAgentStepOptions.perspectives (e.g. the workflow step\'s own mode.perspectives) when dispatching a panel or swarm-review step.',
+      "Pass DispatchAgentStepOptions.perspectives (e.g. the workflow step's own mode.perspectives) when dispatching a panel or swarm-review step.",
   },
   'RUN-047': {
     severity: 'error',
@@ -553,6 +553,85 @@ export const ERROR_CODES = {
     message: (d: { stepId: string; got: string }) =>
       `emitHandoff was called for step ${show(d.stepId)} with a ${show(d.got)} control token, not FORGE_HANDOFF.`,
     remedy: 'Pass a ParsedControlToken whose own token field is "FORGE_HANDOFF" to emitHandoff.',
+  },
+  'RUN-048': {
+    // `@forge/cli`'s own `forge pause`/`forge abort`/`forge status`/`forge lanes`/`forge logs` (`03`
+    // §3.2.4): distinct from `CFG-002` (a *live* process holds the lock, refusing a new run) -- this
+    // is the opposite state, no run active at all, so there is nothing to pause/abort/report on.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: () => 'No FORGE run is currently active in this project.',
+    remedy: 'Run `forge run <workflow>` to start one.',
+  },
+  'RUN-049': {
+    // `@forge/cli`'s own `forge pause`/`forge abort`: the real signal was sent (`SIGTERM`/`SIGKILL`)
+    // but the process did not actually die within the real, bounded poll window this command waits.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { pid: number }) =>
+      `Sent the signal, but pid ${show(d.pid)} is still alive after the wait window.`,
+    remedy: 'Check the process directly (ps -p <pid>); it may be unkillable or hung in kernel I/O.',
+  },
+  'RUN-050': {
+    // `@forge/cli`'s own `forge gate check/waive <id>` (`03` §3.2.4): distinct from `RUN-040` (a
+    // *step* inside a running workflow names an unregistered gate) -- this is a bare CLI invocation
+    // with no step in scope at all, so RUN-040's own "Step X names gate Y" message does not fit.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string }) =>
+      `No gate ${show(d.gateId)} is registered in .forge/checks/.`,
+    remedy: 'Run `forge gate list` to see every real, registered gate id.',
+  },
+  'RUN-051': {
+    // `@forge/cli`'s own `forge merge --lane <id>`.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { laneId: string }) =>
+      `No lane ${show(d.laneId)} in this run's own reconstructed state.`,
+    remedy: 'Run `forge lanes` to see every real lane id for this run.',
+  },
+  'RUN-052': {
+    // `@forge/cli`'s own `buildRunEngineContext` (`03` §3.2.4): `RunEngineContext.model` needs one
+    // real, concrete model id "resolved from tier" (`@forge/engine/dispatch`'s own doc comment) --
+    // with no tier/role system yet built (M5's own known gap, `SPEC-QUESTIONS.md` Q62 part 2), the
+    // real, adapter-reported model list is the only source of truth this piece has for "a real model
+    // id" at all, and an adapter reporting none leaves nothing to run a session against.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: () => 'The platform adapter reports no available models.',
+    remedy: 'Configure at least one model on the platform this adapter targets, then retry.',
+  },
+  'RUN-053': {
+    // `@forge/cli`'s own `forge run <workflow>`: distinct from `RUN-045` (a real workflow file that
+    // failed to *parse or compile*) -- a critic round caught the previous code reusing `RUN-045`'s
+    // own "failed to parse or compile" message for this genuinely different situation (no such file
+    // at all), rendering a nonsensical "failed to parse or compile: no such workflow..." message.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { workflowId: string; path: string }) =>
+      `No such workflow ${show(d.workflowId)} (looked for ${show(d.path)}).`,
+    remedy: 'Run `forge plan list` (or check the workflows directory) for every real workflow id.',
+  },
+  'RUN-054': {
+    // `@forge/cli`'s own `forge resume [runId]`: distinct from `RUN-045` for the identical reason
+    // `RUN-053` above is -- a named run this project's own `.forge/state/runs/` has no manifest for
+    // at all is not a parse/compile failure, it is a run `forge run` never actually started.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { runId: string }) =>
+      `No real manifest for run ${show(d.runId)} -- it was never started by a real "forge run" invocation.`,
+    remedy: 'Run `forge status` to see the last real run id, or pass an explicit one that was.',
+  },
+  'RUN-055': {
+    // `@forge/cli`'s own `ensureIntegrationWorktree`: `ENV-004` ("Required tool not found on PATH")
+    // is correct only for a genuine missing-binary spawn failure -- a real `git worktree add` that
+    // ran and failed (a bad base ref, a path/branch collision, disk-full, real resource exhaustion
+    // under heavy load) is a categorically different situation a critic round caught being reported
+    // with the identical, actively misleading "install the tool" remedy regardless of real cause.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { detail: string }) => `git worktree operation failed: ${show(d.detail)}.`,
+    remedy: 'Fix the underlying repository state named above, then retry.',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather

@@ -143,6 +143,9 @@ importers:
       '@forge/diagrams':
         specifier: workspace:*
         version: link:../diagrams
+      '@forge/engine':
+        specifier: workspace:*
+        version: link:../engine
       '@forge/extensions':
         specifier: workspace:*
         version: link:../extensions
@@ -161,6 +164,9 @@ importers:
       '@forge/templates':
         specifier: workspace:*
         version: link:../templates
+      '@forge/vcs':
+        specifier: workspace:*
+        version: link:../vcs
       execa:
         specifier: 9.6.1
         version: 9.6.1
