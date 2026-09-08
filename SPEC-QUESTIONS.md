@@ -7366,3 +7366,51 @@ real content decision, recorded there rather than presumed here.
 `tsc`, `eslint`, `prettier`, and the full-repo suite (45 new tests in `packages/agents/test/content/
 a2-roster.test.ts`, covering all eleven A2 roster agents plus `base-engineer`) all clean; see
 `GAUNTLET-LOG.md`'s own M6 A2 entry for the critic round.
+
+## Q99 — M6 A3's `@forge/agents` roster content: the whole-28-role roster confirms the `extends`
+inheritance tension empirically (Q98's own second data point), avoided every A2-style overlap
+proactively, and the exact-completeness test moved from A2's own file to A3's
+
+**The `extends` tension, second data point.** Q98 recorded that `architect` (A2's only `extends`-using
+agent) fully redeclares every required field, so its own real use of `extends: base-engineer` never
+actually exercises inheritance-on-omission — only override. A3 ships five real engineer-tier children of
+`base-engineer` (`backend`/`frontend`/`mobile`/`data-engineer`/`ml-engineer`), the more representative case
+Q98 asked for. Four of the five fully redeclare every field, matching `architect`'s own pattern; `frontend`
+deliberately omits its own `skills:` list, the one real instance across the whole roster where a child
+genuinely inherits an optional field from `base-engineer` via `resolveExtends` rather than overriding it —
+confirmed by a dedicated test (`a3-roster.test.ts`). This closes Q98's own open question with a real
+answer: the tension is real and load-bearing (every required field still degenerates to "child always
+wins"), but the six optional fields (`extends`/`kb_propose`/`frameworks`/`skills`/`mcp`/`ceiling`) genuinely
+work as designed when a child chooses to omit one — inheritance is real for exactly the field set A1's own
+schema makes optional, no more, no less. Left unresolved (a schema redesign is still out of a
+content-only piece's own scope), but now backed by two real data points instead of a hypothetical one.
+
+**No A2-style overlap this time, by design.** A2's own critic round found real `file_ownership`/`kb_write`
+overlaps between `architect` and two new specialist roles (Q98's own account). A3 avoided the identical
+class of defect proactively: every engineer-tier implementer (`backend`/`frontend`/`mobile`/
+`data-engineer`/`ml-engineer`) follows `base-engineer`'s own established pattern of claiming no exclusive
+`file_ownership` at all (real code lives across arbitrary `src/**` paths no static glob claim can safely
+partition ahead of time — multiple engineer lanes are expected to run concurrently, per `base-engineer`'s
+own `exclusive: false`); `compliance`'s own compliance-matrix work, which draws on `security`'s own
+exclusively-owned `security/**` namespace, proposes into it (`kb_propose`) rather than claiming a subset of
+it, the identical "specialist proposes into a more senior role's owned section" pattern A2's own fix
+established. Every other A3 agent's own `kb_write`/`file_ownership` claim uses a namespace distinct from
+every other agent's (`delivery/build/**` for `platform`, `delivery/pipeline/**`/`ops/observability/**` for
+`sre`, `delivery/release/**` for `release`, `docs/**` for `techwriter`, `ops/cost/**` for `finops`,
+`compliance/**` for `compliance`, `engineering/testing/**` for `test-architect`) -- confirmed by two
+dedicated whole-roster tests (`a3-roster.test.ts`'s own "whole-roster (A2+A3) invariants" block) that
+re-run the identical overlap check A2's own fix introduced, now against the complete 28-role roster rather
+than A2's own eleven-agent subset.
+
+**Test-file reorganisation.** A2's own `a2-roster.test.ts` originally asserted `modules/fm-core/agents/`
+contained *exactly* its own eleven agents plus `base-engineer` — a real, correct assertion at the time,
+but one A3 would necessarily break the moment it shipped seventeen more files into the same directory
+(two competing partial-completeness checks can never both stay true at once). Moved to `a3-roster.test.ts`'s
+own "whole-roster" describe block instead, asserting completeness against the real, complete 28-role
+roster — the single check `PLAN-M6.md` A3's own Checks text asks for ("the milestone's own whole-roster
+completeness test ... run once here, the last roster-content piece"), not two files that would otherwise
+need to keep renegotiating where the dividing line between them falls.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (76 tests across both roster content files, covering
+the complete 28-role roster plus `base-engineer`) all clean; see `GAUNTLET-LOG.md`'s own M6 A3 entry for
+the critic round.

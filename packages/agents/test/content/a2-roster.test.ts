@@ -11,10 +11,15 @@
  * own fixture-string tests already use, so no repository-root placement or boundary-graph edge is
  * needed at all.
  *
+ * The exact-directory-listing completeness check originally lived here but moved to
+ * `a3-roster.test.ts`'s own "whole-roster" describe block once A3 shipped seventeen more files into
+ * the same directory — a single, real completeness check against the complete 28-role roster, not two
+ * competing partial ones that would need to agree on where the dividing line falls.
+ *
  * @see specs/05 §5.2, §5.3
  * @see PLAN-M6.md A2
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -43,9 +48,6 @@ const A2_ROSTER_IDS = [
   'security',
 ] as const;
 
-/** Not itself a roster row -- see this file's own top comment. */
-const BASE_DOCUMENT_IDS = ['base-engineer'] as const;
-
 function readAgentSource(id: string): string {
   return readFileSync(path.join(agentsDir, `${id}.agent.yaml`), 'utf8');
 }
@@ -60,14 +62,6 @@ function loadAgent(id: string): AgentDefinition {
 describe('A2: the eleven Direction & product / Architecture & design roster agents', () => {
   it.each(A2_ROSTER_IDS)('%s loads via loadAgentDefinition with a matching id', (id) => {
     expect(loadAgent(id).id).toBe(id);
-  });
-
-  it('modules/fm-core/agents/ names exactly the eleven A2 roster ids plus base-engineer, no more and no fewer', () => {
-    const shipped = readdirSync(agentsDir)
-      .filter((name) => name.endsWith('.agent.yaml'))
-      .map((name) => name.replace(/\.agent\.yaml$/, ''))
-      .sort();
-    expect(shipped).toEqual([...A2_ROSTER_IDS, ...BASE_DOCUMENT_IDS].sort());
   });
 
   it("architect matches 05 §5.3's own literal worked example exactly", () => {

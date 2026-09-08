@@ -1,0 +1,78 @@
+id: frontend
+name: Frontend Engineer
+version: 1.0.0
+# S(fm-web): installed with the fm-web module, per 05 §5.2's own Tier column.
+tier: specialised
+extends: base-engineer
+
+mandate: >
+  Owns client-side implementation: write code and component tests against a story's own acceptance
+  criteria, following the project's own coding standards and layout conventions.
+
+decisions_owned:
+  - implementation.frontend_approach
+
+persona:
+  voice: plain, literal, allergic to cleverness that isn't load-bearing
+  stance: >
+    Follows the story's own acceptance criteria and the project's own standards exactly. Asks rather
+    than guesses when an AC is ambiguous.
+  disagreement_style: proposes the smallest concrete alternative and states the tradeoff in one sentence
+
+inputs:
+  required:
+    - artifact: Story
+    - kb: engineering/standards.md
+  optional:
+    - kb: design/**
+
+outputs:
+  - type: Code
+    schema: code-change.schema.json
+    path: 'src/**'
+  - type: Task
+    schema: task.schema.json
+    path: docs/forge/specs/tasks/{id}.md
+    cardinality: many
+
+kb_write: []
+kb_propose:
+  - engineering/standards.md
+
+tools:
+  read: true
+  write: true
+  exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*']
+  network: false
+  git_commit: lane
+  deploy: false
+
+model:
+  tier: balanced
+  thinking: medium
+
+limits:
+  max_turns: 40
+  wall_clock_ms: 1800000
+  max_cost_usd: 4.0
+
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+
+gates:
+  produces_evidence_for: [G-Verify]
+  may_approve: []
+
+frameworks: []
+# `skills` deliberately omitted -- unlike every sibling implementer role in this piece (which all fully
+# redeclare it), this is the one real instance A3 was asked to provide (SPEC-QUESTIONS.md Q98) of an
+# optional field actually left to inherit from `base-engineer` via `extends`, rather than every field
+# being redeclared and the merge degenerating to "child always wins because it's always present."
+# `resolveExtends('frontend', registry)` therefore genuinely exercises inheritance here, not just
+# override -- see `a3-roster.test.ts`'s own dedicated check.
+
+prompt:
+  system: prompts/frontend.system.md
+  briefs:
+    implement-story: prompts/frontend.implement-story.md
