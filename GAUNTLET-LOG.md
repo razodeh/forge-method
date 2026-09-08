@@ -5601,3 +5601,52 @@ Node version) and `USR-002` (invalid global-flag value).
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (47 new tests in `packages/cli/test/`, 5171+
 tests overall) all clean after every fix.
+
+---
+
+## M6 A4 — `@forge/agents` context assembly: `loadAgentRegistry`, `packForStep`, `resolveContextRequest`,
+`markExternalContent` (`05` §5.3, §5.4; `15` §15.4.3)
+
+**Rounds: 1 (fresh critic finding two real bugs, both fixed; no separate verify round run, given the
+findings were narrowly scoped and each got its own regression test). Outcome: WON.**
+
+The registry loader (`modules/<module>/agents/<id>.agent.yaml` → `AgentRegistry`) and the four
+`@forge/agents/context` functions layered over `@forge/kb/pack`'s already-proven pinned-core/declared-
+inputs/retrieved layers: `packForStep` (skill-body inclusion per `15` §15.4.3), `resolveContextRequest`
+(the `FORGE_REQUEST_CONTEXT:` expansion protocol), and `markExternalContent` (the labelled-untrusted-
+content wrapper from MCP/fetch sources). No boundary-graph edge to `@forge/engine` exists, so
+`packForStep` takes an independently-declared `StepContext` rather than the real `StepNode` — see
+`SPEC-QUESTIONS.md` Q101 for this and two other design records (the per-pack, not per-entry,
+`markExternalContent` taint; the injectable `SKILL_INDEX` option that let tests exercise
+`activation: always`/`applies_to.paths` code paths no real shipped T5 skill happens to cover).
+
+### Round 1 — fresh critic (no context on plan/log): two real bugs, both fixed
+
+1. **REAL BUG.** `wantsBody`'s own condition omitted an `activation === 'auto'` guard before the
+   path-match upgrade, so an `activation: explicit` skill's own body was wrongly auto-injected on a
+   bare file-claim match — `15` §15.4.3 point 2's own path/language upgrade is specific to
+   `auto`-activation skills; `explicit` ("only loadable when a workflow step or the user names it") is
+   a narrower activation this piece carries no signal for at all. **Fixed**: `wantsBody` now reads
+   `activation === 'always' || (activation === 'auto' && matchesStepFileClaim(...))`. A new regression
+   test proves an `activation: explicit` skill with a matching `applies_to.paths` still gets
+   `bodyIncluded: false`.
+2. **REAL GAP.** `parseSkillPackage`'s own call was the only one of the three skill-loading failure
+   paths (unresolved id, invalid front matter, package load) not wrapped in a try/catch — a resolved
+   skill id whose own `SKILL.md` was missing or malformed aborted the entire `packForStep` call instead
+   of demoting just that one skill, breaking the "one bad skill demotes, never aborts the whole pack"
+   contract the other two paths already honoured. **Fixed**: the call is now wrapped, converting any
+   thrown error (a `ForgeError` or a raw fs error alike) into the same demoted, body-less entry shape.
+   A new regression test proves a skill whose package directory has no `SKILL.md` at all still returns
+   a demoted entry rather than throwing.
+
+One self-caught defect, found by the first real test run rather than the critic: an early doc comment
+for `load-agent-registry.ts` quoted the glob `modules/*/agents/*.agent.yaml` literally inside a
+`/** ... */` JSDoc block — the substring `*/agents/*` is itself a valid block-comment close followed by
+bare source text, closing the comment early and producing `ReferenceError: agents is not defined` on
+load. Fixed by rephrasing to angle-bracket placeholders (`modules/<module>/agents/<id>.agent.yaml`), a
+hazard worth remembering for any future doc comment quoting a glob with consecutive `*`/`/` characters.
+
+`tsc`, `eslint`, and the `packages/agents` suite (102 tests) all clean after every fix; one unrelated,
+transient race in `test/workspace-floor.test.ts` during the full-repo run (a file the concurrent
+`@forge/cli` session was actively writing appeared mid-scan) — re-ran clean, confirmed not a regression
+from this piece.

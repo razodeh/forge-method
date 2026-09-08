@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./registry": "./src/registry/index.ts"
+    "./registry": "./src/registry/index.ts",
+    "./context": "./src/context/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -15,9 +16,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@forge/adapter-kit": "workspace:*",
     "@forge/core": "workspace:*",
     "@forge/extensions": "workspace:*",
+    "@forge/kb": "workspace:*",
     "@forge/schemas": "workspace:*",
+    "@forge/templates": "workspace:*",
+    "minimatch": "10.2.6",
     "yaml": "2.9.0",
     "zod": "3.25.76"
   }

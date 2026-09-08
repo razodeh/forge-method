@@ -7464,3 +7464,70 @@ elsewhere in that file.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (47 new tests in `packages/cli/test/`) all clean
 after every fix; see `GAUNTLET-LOG.md`'s own M6 C1 entry for the critic round.
+
+## Q101 — M6 A4's `@forge/agents/context`: no boundary edge to `@forge/engine` means `StepNode` cannot be
+imported, the real per-pack (not per-entry) `markExternalContent` shape, and the `SKILL_INDEX`
+injectability decision
+
+**`StepContext`, not the real `StepNode`.** `PLAN-M6.md` A4's own Surface text writes `packForStep(node:
+StepNode, ...)` — but `02` §2.2's own boundary graph gives `agents ← core, kb, schemas, adapter-kit,
+templates, extensions`, no edge to `engine` at all, so the real `StepNode` (`06` §6.2,
+`@forge/engine/plan`) is not importable here. Resolved the same way this codebase already resolves the
+identical class of gap everywhere else it has occurred (`ProjectLevel` in `@forge/extensions/agents`,
+`WorkflowId`/`GateId`/`FrameworkId`/`SkillId` in `@forge/templates`): an independently-declared, minimal
+`StepContext` interface (`brief`, `declaredInputIds`, `produces`, `consumes` — exactly the four fields
+`packForStep`'s own real logic reads) rather than forcing a boundary-graph change into a content/
+integration piece's own scope. A real caller (a later piece, or `@forge/engine` itself once it needs to
+call into `@forge/agents`) is expected to project a real `StepNode` down to this shape at the call site.
+
+**`markExternalContent`'s own per-pack, not per-entry, taint.** `05` §5.4 point 6's own text and
+`PLAN-M6.md` A4's own Checks ("a pack built from real MCP-sourced content is provably wrapped and
+tainted; one built entirely from KB/artifact content is not") both read as a binary, whole-pack
+distinction, not a mixed-provenance one — and `ContextPack`'s own shape (`@forge/kb/pack`, M3) carries no
+per-entry provenance field at all for a per-entry design to key off of. `markExternalContent(pack,
+source)` therefore wraps every `declaredInputs`/`retrieved` entry in the *whole* pack it is given,
+uniformly, under the one `source` label — the real, intended calling convention is that a caller builds
+an entire pack from MCP/fetch results before ever calling this function, never mixing KB-sourced and
+externally-sourced entries within one pack it marks. `pinnedCore` is left untouched entirely: every one
+of its own fields is always KB/config-derived (`computePinnedCore`, M3), never sourced from an MCP call
+or a fetch, so there is no real external content there to wrap in the first place.
+
+**`SKILL_INDEX` is an injectable option, not a hardwired import.** `packForStep`'s own real skill
+resolution needs `@forge/templates`' own real `SKILL_INDEX` (T5) in production, but hardwiring a
+module-level import would make the function untestable against any skill shape `@forge/templates`' own
+32 real, deliberately thin built-ins (none of which happen to declare `activation: always` or
+`applies_to.paths` — T5's own content is uniformly `activation: auto` with no path/language hints) don't
+already cover. `PackForStepOptions.skillIndex` is an optional override (`Readonly<Record<string,
+string>>`, defaulting to the real `SKILL_INDEX` when omitted) — the identical dependency-injection shape
+this function's own `kbBackend`/`kbTree` parameters already use, applied consistently to the one other
+external data source this piece reads. This is what let `pack-for-step.test.ts` exercise real
+`activation: always` and `applies_to.paths`-match code paths against synthetic fixture skills, rather
+than either leaving those branches untested or inventing a 33rd real, permanently-shipped skill whose
+only reason to exist would be exercising a test.
+
+**A real, self-caught bug while writing this piece.** An early draft's own top-of-file doc comment for
+`load-agent-registry.ts` literally contained the text `modules/*/agents/*.agent.yaml` inside a `/** ...
+*/` JSDoc block — the substring `*/agents/*` inside that text is itself a valid block-comment *close*
+(`*/`) followed by bare source text (`agents/*...`), which closed the comment early and produced a
+`ReferenceError: agents is not defined` the moment the file was loaded. Caught immediately by the first
+real test run (not a critic round) and fixed by rephrasing the glob as `modules/<module>/agents/
+<id>.agent.yaml` (angle-bracket placeholders, no literal `*/` substring) — a real, non-obvious hazard
+worth remembering for any future doc comment that quotes a glob pattern containing consecutive
+`*` and `/` characters.
+
+Full-repo suite (100 new tests in `packages/agents/test/{context,registry}/`) all clean except one
+unrelated, transient race in `test/workspace-floor.test.ts` (a file the concurrent `@forge/cli` session
+was actively writing appeared between that test's own two internal directory scans — re-ran clean,
+confirmed not a regression from this piece); `tsc`/`eslint`/boundaries all clean.
+
+A fresh critic round (no prior context) on `pack-for-step.ts` found two real issues, both fixed with a
+regression test each (102 tests total in `packages/agents/test/context/`): (1) `wantsBody`'s own
+condition omitted an `activation === 'auto'` guard before the path-match upgrade, so an `activation:
+explicit` skill's body was wrongly injected on a bare file-claim match — `15` §15.4.3 point 2's own
+path/language upgrade is specific to `auto`-activation skills; `explicit`'s own definition ("only
+loadable when a workflow step or the user names it") is a narrower activation this piece has no signal
+for at all, so an explicit skill is never auto-upgraded here. (2) `parseSkillPackage`'s own call was the
+only one of the three skill-loading failure paths not wrapped in a try/catch, so a resolved skill id
+whose own `SKILL.md` was missing/malformed aborted the whole `packForStep` call instead of demoting just
+that one skill, breaking the "one bad skill demotes, never aborts" contract the other two paths already
+honoured. See `GAUNTLET-LOG.md`'s own M6 A4 entry for the critic round.
