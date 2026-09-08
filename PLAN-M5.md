@@ -736,6 +736,27 @@ survives.
 **Depends on:** P2, P3, P4 (vcs); P5 (vcs); P6 (telemetry); P9, P11, P14 (engine); `@forge/adapter-kit`
 and `@forge/testkit` (M4, already built).
 
+*(P15 is committed: `1f21dea`. See `SPEC-QUESTIONS.md` Q77 and its critic-round/verify-round addenda —
+the largest, most integration-heavy piece in M5 so far. A fresh critic round found one BLOCKING bug (a
+real merge conflict under the spec's own default `'agent'` conflict policy — with no resolver mechanism
+built yet, which describes every real configuration of that policy this milestone can produce — could
+throw a raw `VcsError` straight out of `executeStep` instead of resolving to failed-outcome data, the
+exact "never throw for a genuine runtime failure" contract this whole module otherwise holds) plus six
+MAJOR findings (a crash mid-session discarding real file writes; an early lane failure misreporting its
+own step kind; a claim-enforcement revert commit invisible to the event log; a dead error-provenance
+construction; a multi-lane merge silently discarding every lane's outcome but the first; a real,
+registered `LaneRemoved` event never emitted; gates evaluating against the wrong directory relative to
+where a merge actually lands its result; and this module never emitting the `StepSucceeded`/`StepFailed`
+events `18` §18.4 registers and nothing else in the milestone's own built pieces emits either). A
+scoped verify round independently reconfirmed all ten fixes, found and closed one further, genuinely
+untested gap, and fixed one stale test comment. Also resolved along the way: a genuine gap in the
+package boundary graph (`engine → testkit`, needed for this piece's own tests against a real
+`FakePlatformAdapter`, previously undeclared anywhere), and a real production bug caught while closing
+this piece's own coverage (a `command` step's own change-detection unconditionally assumed `true`
+regardless of whether the command actually touched any files). See `GAUNTLET-LOG.md`'s own entry for the
+fuller story and its calibration note on why this piece's own integration scale is what let a genuinely
+blocking bug survive local, mechanical verification entirely.)*
+
 ---
 
 ## P16 — Failure classification, retry, and anti-thrash

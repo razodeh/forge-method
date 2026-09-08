@@ -4476,3 +4476,112 @@ general, reusable shape underneath: a validity check that must stay stable over 
 clock without reintroducing the exact "answer changes on re-inspection" problem it exists to avoid, so it
 needs the *evidence* of an earlier, real check sealed onto the data itself — turning what would otherwise
 require either a live clock or blind trust into a comparison between two fields already sitting right there.
+
+---
+
+## M5 P15 — `@forge/engine/dispatch`: step execution — the lane runner (`06` §6.4/§6.5/§6.7/§6.8, `10`
+§10.1/§10.3, `18` §18.4)
+
+**Rounds: 2 (one critic finding 1 BLOCKING and 6 MAJOR, all fixed; one scoped verify confirming all ten
+fixes correct, finding one real, previously-untested gap and closing it, plus one cosmetic fix; no third
+round). Outcome: WON.**
+
+The largest, most integration-heavy piece in M5 so far: `executeStep(node, ctx)` dispatches a compiled step
+to one of five real handlers (`agent`/`command`/`gate`/`merge`/`checkpoint`), wiring `@forge/vcs`,
+`@forge/telemetry`, `@forge/adapter-kit`/`@forge/testkit`, and this package's own gate evaluator (P14) into
+one call. Design points recorded in full in `SPEC-QUESTIONS.md` Q77: `ExecuteStepContext` bundling sixteen
+fields against the plan's own five-field bullet; the lane lifecycle stopping at "ready" with a separate
+`merge`-kind step doing the actual merging via a new `ExecuteStepContext.laneRegistry`; the `VcsError`
+(data)/`TelemetryError` (thrown) split; an `exactOptionalPropertyTypes` fix generalized into a reusable
+`omitUndefinedValues` helper; a genuine gap in the package boundary graph (`engine → testkit`, needed for
+this piece's own tests, never previously declared anywhere) resolved the same way `Q16` resolved
+`testkit`'s own outgoing edges; and a real production bug caught while closing this piece's own coverage —
+a `command` step's non-inline branch hardcoded `changed: true` regardless of whether the command actually
+touched any files, fixed with a new `VcsFacade.hasChanges` check.
+
+### Round 1 — critic: 1 BLOCKING, 6 MAJOR, several MINOR, all fixed or explicitly documented as accepted
+
+**BLOCKING: `runMergeStep` called `ctx.mergeQueue.process(...)` completely unguarded.** `@forge/vcs`'s own
+`processMergeCandidate` throws a real `VcsError` whenever `conflictPolicy` is `'agent'`/`'human'` with no
+`conflictResolver` configured — which is every real configuration of either policy in this milestone's own
+scope, since no resolver exists yet. Confirmed by repro: a real conflict under the spec's own default policy
+made `executeStep` reject with a raw `VcsError` rather than resolving to failed-outcome data, directly
+violating this module's own "never throw for a genuine runtime failure" contract, and not a rare
+misconfiguration — it is what happens the first time anyone uses the default policy at all. **Fixed** by
+routing the call through the same `runVcsStep` helper every other VCS operation in this file already uses.
+
+**MAJOR: an agent-session crash mid-stream discarded any real file writes already made**, hardcoding
+`changed: false` rather than checking. **Fixed** with a new `VcsFacade.hasChanges` check, the same fix a
+`command` step's own identical gap (found independently while closing this piece's coverage) already needed.
+
+**MAJOR: an early lane-lifecycle failure (before any real work ran) always reported `detail.kind:
+'checkpoint'`**, regardless of the step's real kind. **Fixed** by having each caller supply its own
+kind-correct empty-detail placeholder.
+
+**MAJOR: a claim-enforcement revert commit — a second, real git commit — got no `LaneCommitted` event of its
+own**, invisible to the durable event log. **Fixed** by emitting a second one.
+
+**MAJOR: a constructed `ForgeError('RUN-037', ...)` meant to be inspectable as a chained cause was dead
+code** — never assigned, thrown, or returned. **Fixed** by adding `cause?: unknown` to `StepFailureInfo` and
+actually retaining it.
+
+**MAJOR: a multi-lane merge step's own `detail = outcomes[0]` silently discarded every lane's outcome but
+the first**, misleading whenever an earlier lane succeeded and a later one failed. **Fixed** by changing
+`StepOutcomeDetail`'s `merge` variant to one entry per lane actually processed, and changing failure
+tracking from "last failure silently overwrites" to "first failure wins."
+
+**MAJOR: `LaneRemoved`, a real registered event type, was never emitted anywhere** despite this module being
+its only real call site. **Fixed.**
+
+**MAJOR (hedged, confirmed in round 2): gates evaluated against `ctx.projectRoot` instead of
+`ctx.integrationPath`**, the directory a merge step actually lands its result in — every fixture in this
+package happened to default the two to the same value, so this was unverified either way. **Fixed**, with a
+dedicated test added afterward using two genuinely distinct real repositories.
+
+**MAJOR, architectural: `LaneReady` fires even when the step's own work failed, and nothing in this
+milestone's own built pieces (confirmed: the already-built Scheduler, P12, never touches the event log)
+emits `StepSucceeded`/`StepFailed` or the rest of `18` §18.4's own Step-group events at all** — the durable
+log this module produces could not, by itself, distinguish a successful step from a failed one. Judged this
+piece's own gap to close, not a future one's, since `executeStep` is the one place every real outcome from
+every kind already passes through once. **Fixed** by emitting `StepSucceeded`/`StepFailed` there, inside the
+same try block that already wraps `TelemetryError` into `RUN-038`.
+
+**MINOR:** a pre/post-merge check's own failure summary dropped stdout entirely (`stderr` only, often
+empty). **Fixed** to `stderr || stdout`, matching an identical fallback already used elsewhere in the file.
+
+Several test-quality gaps were also closed: no VCS-fault-injection test ever checked `detail.kind` (masking
+the `'checkpoint'`-placeholder bug); no merge test used `'agent'`/`'human'` conflict policy at all (masking
+the blocking bug — an entire code path had zero coverage); no agent test exercised a crash *after* real file
+writes landed; no test checked the event sequence for an actual claim-enforcement revert.
+
+### Round 2 — scoped verify: all ten fixes confirmed, 1 real gap closed, 1 cosmetic fix
+
+Nine of the ten fixes were independently reproduced and confirmed exactly as designed — including
+re-deriving the lane-slug format directly from source to confirm a shell-based test fixture really targets
+only the lane it claims to, and a second, independent repro of the blocking fix confirming the per-lane loop
+correctly keeps processing remaining lanes after one fails rather than aborting early.
+
+**New finding: the `ctx.integrationPath` gate fix (hedged in round 1) was judged correct but genuinely
+untested either way**, since every fixture defaults the two paths to the same value. **Fixed** — added a
+test using two distinct real repositories, with a gate check that only passes if it actually ran against
+`integrationPath`.
+
+**MINOR, cosmetic:** an existing test's own title/comment still described the pre-fix behavior ("evaluates
+against the project root"), stale phrasing that happened to keep passing on fixture coincidence. **Fixed.**
+
+No other new findings; `tsc`, `eslint`, `prettier`, and the full-repo suite (3222 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file except one already-documented, provably-unreachable branch matching this milestone's own
+established exemption category.
+
+### Calibration note
+
+This piece's own integration scale is what let a genuinely blocking bug survive local, mechanical
+verification entirely — `tsc`/`eslint`/coverage/boundaries/the ratchet all passed clean before the critic
+round ever ran, because none of that gate can catch "a whole conflict-resolution code path has real
+production code but zero test coverage of its own default policy." The gap was invisible from inside this
+piece's own test suite for a specific reason: writing the missing test and finding the bug were the same
+act, so no amount of re-reading the existing, passing tests would have surfaced it first. The strongest
+evidence yet in this build for why the critic round is a required step for an integration-heavy piece, not
+a redundant one: "every individual seam has a test" does not imply "every real combination of policies
+across those seams does."
