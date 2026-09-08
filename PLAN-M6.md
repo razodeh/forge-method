@@ -173,6 +173,8 @@ against criteria with evidence per cell → produce a ranked recommendation with
 
 **Depends on:** M1.
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q84.
+
 ---
 
 ## M3 — Level selection

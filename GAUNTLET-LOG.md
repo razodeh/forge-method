@@ -4952,3 +4952,42 @@ lines of scoped-run output that read as failures (`check-boundaries.test.ts`/`ra
 their own fixture-violation stderr) are not real failures, confirmed by running both check scripts directly
 against the real repo (`node scripts/check-boundaries.mjs`, `node scripts/check-coverage-ratchet.mjs`),
 both exiting 0.
+
+---
+
+## M6 M2 — `@forge/methods/score`: rubric scoring and the elimination pass (`11` §11.0)
+
+**Rounds: 1 (fresh critic finding 4 real gaps, all addressed -- 2 fixed as real bugs, 2 judged intentional
+and documented instead; no separate verify round run, all findings small and mechanical). Outcome: WON.**
+
+`applyRules`/`score`/`killerRisk` — see `SPEC-QUESTIONS.md` Q84 for the full design record.
+
+### Round 1 — fresh critic: 4 real findings
+
+1. **A real foot-gun**: `RuleResult.preferred` could name an option `RuleResult.eliminated` also
+   disqualified, since both are built independently over the same rule pass. **Fixed** by clearing
+   `preferred` whenever it ends up naming an eliminated option.
+2. **A real design flaw**: an eliminated option's `totalScore` was forced to `0` regardless of its own
+   real evidence cells, discarding information a comparison table would want ("would have scored well but
+   disqualified" vs. "genuinely scored poorly"). **Fixed**: `totalScore` is always the real weighted sum;
+   only the sort order (checked before `totalScore`) keeps an eliminated option from ever outranking a
+   surviving one.
+3. **Missing-cell-vs-blank-evidence asymmetry** (a missing cell silently contributes `0`; a present but
+   blank `evidence` string throws) — judged intentional (partial/incremental scoring should not error) and
+   documented with a code comment rather than changed.
+4. **Throwing a raw `Error` for blank evidence, rather than extending M1's own discriminated-result
+   pattern** — judged intentional (a caller-contract violation in already-assembled data, not raw
+   untrusted YAML) and documented with a code comment explaining the distinction rather than changed.
+
+Coverage gaps the critic named (conflicting `prefer`, partial cell coverage, `killerRisk`'s tie-break
+order, a cell naming a nonexistent option, a framework with no `criteria`) are all now covered by explicit
+tests.
+
+One unrelated repo-floor gap surfaced and was fixed in the same pass: the new shared test fixture
+(`packages/methods/test/fixtures/repo-strategy.ts`) tripped `test/workspace-floor.test.ts`'s own
+stray-source walk (its filename doesn't match the `*.test.ts`/`*.spec.ts` heuristic that walk uses to
+recognise test-only code) — added to that file's own `IGNORED_PATHS`, the same individually-named-
+exception pattern four earlier pieces' own shared fixtures already use.
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3418 tests, plus the boundaries-
+coverage config's own 64) all clean.
