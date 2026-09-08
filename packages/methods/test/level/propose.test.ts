@@ -93,6 +93,44 @@ describe('proposeLevel', () => {
     expect(proposeLevel({ ...BASE, deployableUnits: 2 }).level).toBe('L4');
   });
 
+  it('within the same tier, persistent state outranks an external integration in the priority order -- reasoning names state, not the integration', () => {
+    const result = proposeLevel({
+      ...BASE,
+      hasPersistentState: true,
+      hasExternalIntegrations: true,
+    });
+    expect(result.level).toBe('L2');
+    expect(result.reasoning).toMatch(/persistent state/);
+  });
+
+  it('within the L2 tier, two-or-more capabilities outranks persistent state and an external integration even when all three fire together', () => {
+    const result = proposeLevel({
+      ...BASE,
+      userFacingCapabilities: 3,
+      hasPersistentState: true,
+      hasExternalIntegrations: true,
+    });
+    expect(result.level).toBe('L2');
+    expect(result.reasoning).toMatch(/capabilities/);
+  });
+
+  it('within the L4 tier, regulatory outranks multiRuntime and multiple deployable units even when all three fire together', () => {
+    const result = proposeLevel({
+      ...BASE,
+      regulatory: true,
+      multiRuntime: true,
+      deployableUnits: 3,
+    });
+    expect(result.level).toBe('L4');
+    expect(result.reasoning).toMatch(/regulatory/);
+  });
+
+  it('within the L4 tier, multiRuntime outranks multiple deployable units when regulatory is absent', () => {
+    const result = proposeLevel({ ...BASE, multiRuntime: true, deployableUnits: 3 });
+    expect(result.level).toBe('L4');
+    expect(result.reasoning).toMatch(/runtime/);
+  });
+
   it('reasoning names the driving signal', () => {
     expect(proposeLevel({ ...BASE, regulatory: true }).reasoning).toMatch(/regulatory/);
     expect(proposeLevel({ ...BASE, greenfield: true }).reasoning).toMatch(/greenfield/);
