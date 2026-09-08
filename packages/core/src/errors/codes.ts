@@ -320,6 +320,15 @@ export const ERROR_CODES = {
     // empty `retrieved`, failing safe); only NaN itself is rejected, so the remedy names exactly that.
     remedy: 'Pass a budget that is a real number, not NaN (Infinity is fine and means "no limit").',
   },
+  'KB-015': {
+    // `@forge/cli`'s own `kb show`/`kb open` (`03` §3.2.2): distinct from `KB-013` (a *declared*
+    // input a context pack expected but the KB tree lacks) -- this is a user-typed id at the CLI
+    // that never named anything in the tree at all, a plain usage mistake with a different remedy.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) => `No KB entry, ADR, diagram or runbook with id ${show(d.id)}.`,
+    remedy: 'Run `forge kb list` to see every real id in the current KB tree.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',
@@ -367,6 +376,16 @@ export const ERROR_CODES = {
     message: (d: { flag: string; value: string }) =>
       `Invalid value ${show(d.value)} for ${show(d.flag)}.`,
     remedy: 'Run `forge --help` to see the accepted values for this flag.',
+  },
+  'USR-003': {
+    // Distinct from USR-002: not a malformed flag value, but a real, named feature this codebase has
+    // no implementation for yet (`kb diff`, `forge adopt`'s brownfield ingestion, `forge discover`'s
+    // own workflow-execution dependency) -- refusing loudly, not silently no-op'ing, is what keeps a
+    // named-but-unbuilt command from *looking* like it worked.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { feature: string }) => `${show(d.feature)} is not yet supported.`,
+    remedy: 'Check GAUNTLET-LOG.md or SPEC-QUESTIONS.md for this feature\'s current status.',
   },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path
@@ -519,6 +538,14 @@ export const ERROR_CODES = {
     message: (d: { issues: string }) =>
       `runEngine's own workflow source failed to parse or compile: ${show(d.issues)}.`,
     remedy: 'Fix the workflow source (or its compiled plan) before calling runEngine with it.',
+  },
+  'RUN-046': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; mode: string }) =>
+      `Step ${show(d.stepId)}'s own interaction mode is ${show(d.mode)}, which requires at least one declared perspective, but none was given.`,
+    remedy:
+      'Pass DispatchAgentStepOptions.perspectives (e.g. the workflow step\'s own mode.perspectives) when dispatching a panel or swarm-review step.',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather

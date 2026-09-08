@@ -140,9 +140,15 @@ importers:
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/diagrams':
+        specifier: workspace:*
+        version: link:../diagrams
       '@forge/extensions':
         specifier: workspace:*
         version: link:../extensions
+      '@forge/kb':
+        specifier: workspace:*
+        version: link:../kb
       '@forge/methods':
         specifier: workspace:*
         version: link:../methods
@@ -198,6 +204,9 @@ importers:
       '@forge/adapter-kit':
         specifier: workspace:*
         version: link:../adapter-kit
+      '@forge/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@forge/core':
         specifier: workspace:*
         version: link:../core

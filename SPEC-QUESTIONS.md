@@ -7607,3 +7607,58 @@ cross-reference survived into the shipped code.
 `tsc`, `eslint`, `prettier`, and the full-repo suite (124 tests in `packages/cli/test/init/`, run
 against real `@forge/templates` content and a real, schema-valid fixture agent roster — never mocked)
 all clean after every fix; see `GAUNTLET-LOG.md`'s own M6 C2 entry for the critic round.
+
+## Q104 — M6 A6's own resolution of `PLAN-M6.md`'s top-level open design question: `pair`/`panel`/
+`debate`/`swarm-review` need a small additive extension to `@forge/engine`, not something
+`@forge/agents` alone can drive
+
+`PLAN-M6.md`'s own preamble (just above the `@forge/agents` piece list) flags, in advance, that piece A6
+"must determine, empirically, whether `mode`-bearing dispatch can be implemented entirely inside
+`@forge/agents`... or genuinely needs a small, additive extension to already-committed M5 code." Checked
+directly against `tools/eslint-plugin-forge-boundaries/src/graph.mjs`: `agents: ['core', 'kb', 'schemas',
+'adapter-kit', 'templates', 'extensions']` has no edge to `engine` at all, while `engine: [..., 'agents',
+...]` already runs the other way. "Entirely inside `@forge/agents`" is therefore not a design option to
+weigh — it is structurally impossible: `@forge/agents` cannot import `@forge/engine/dispatch`'s
+`runAgentStep`/`runAgentWork` under any circumstance, since no boundary edge permits it and one would
+have to be added contrary to `02` §2.2's own one-directional graph.
+
+**Resolution:** split the piece across both packages, matching where each half's own real dependencies
+already point:
+- `@forge/agents/interaction` (no `engine` dependency needed): `InteractionMode`, the four
+  separation-of-duties roles, and `checkSeparationOfDuties` — a pure comparison over caller-supplied
+  data, needing no dispatch mechanism of its own.
+- `@forge/engine/interaction` (a new module, added the same way P15/P19 already extended earlier
+  already-committed M5 code): `dispatchAgentStep`, importing `InteractionMode` from
+  `@forge/agents/interaction` (a legal `engine → agents` edge) and delegating to `@forge/engine/dispatch`'s
+  own already-built `runAgentStep` for `solo`/`fan-out`/`relay` unchanged. `pair`/`panel`/`debate`/
+  `swarm-review` drive additional sessions directly against `ctx.adapter` (real, uncommitted,
+  non-lane-owning participant sessions — a reviewer, a panelist, a debate round, a review perspective),
+  matching the plan's own named alternative ("multiple `runAgentWork`-shaped calls from one dispatch").
+
+**A second, real Surface deviation, recorded rather than silent:** `dispatchAgentStep`'s own return type
+is `InteractionOutcome` (`{outcome: StepOutcome, participants?, reviewReport?}`), not the plan's literal
+`Promise<StepOutcome>`. `solo`/`fan-out`/`relay` need nothing more than the existing, already-committed
+`StepOutcomeDetail` union (`@forge/engine/dispatch`, M5) — extending that *closed* union itself would
+have been the genuinely disruptive "additive extension," touching six already-tested variants for no
+real gain. `panel`/`debate`/`swarm-review` produce real data (a de-duplicated `ReviewReport`; the
+panelist/round-by-round transcript) that union has no field for at all; wrapping `StepOutcome` rather
+than mutating its shape keeps every existing consumer (`P12`'s `Scheduler`, `P16`'s `classifyFailure`)
+unchanged while giving the new data an honestly-optional home.
+
+**A third, real, accepted scope limitation:** `pair`'s own spec description ("reviewer sees each
+proposed diff before commit") describes a genuinely interactive, per-diff continuous-review loop this
+milestone has no real-time human/session-interject infrastructure for (`@forge/adapter-kit`'s own
+`SessionHandle.interject` is real but no consumer anywhere in this build drives it yet). Implemented
+here as the closest honest approximation available: the author's own full step runs and commits exactly
+as `solo` does, then one real reviewer session reads the committed result and reports independently —
+not a true "sees each proposed diff before commit" loop. Recorded rather than silently claimed as
+complete; a later piece with real interactive infrastructure can replace this without changing
+`dispatchAgentStep`'s own Surface.
+
+One new error code: `RUN-046` (a `panel`/`swarm-review` dispatch with no declared `perspectives`).
+See `GAUNTLET-LOG.md`'s own M6 A6 entry for the critic round, including a fourth real gap the critic
+found and this piece chose to document rather than build new verification machinery for: `debate`'s own
+decider session is instructed (via its brief) to record an ADR and runs through the real, committing
+`runAgentStep`, but nothing here verifies one was actually produced — recorded explicitly in
+`dispatchDebate`'s own doc comment, the identical honest-limitation treatment `dispatchPair`'s own
+comment already gives its own scope gap.

@@ -5770,3 +5770,59 @@ landing at the same time) — corrected to `Q103` throughout before commit.
 `tsc`, `eslint`, `prettier`, and the full-repo suite (124 tests in `packages/cli/test/`, run against
 real `@forge/templates` content and a real, schema-valid fixture agent roster) all clean after every
 fix.
+
+---
+
+## M6 A6 — Interaction modes and separation-of-duties runtime enforcement (`05` §5.2, §5.7)
+
+**Rounds: 1 (fresh critic finding four real gaps, all fixed; no separate verify round run — every
+finding was narrowly scoped and directly fixable). Outcome: WON.**
+
+Resolves `PLAN-M6.md`'s own top-level open design question (flagged in the plan's own preamble, ahead of
+piece A1, for A6 to settle empirically — see `SPEC-QUESTIONS.md` Q104 for the full record): confirmed
+directly against `tools/eslint-plugin-forge-boundaries/src/graph.mjs` that `@forge/agents` has no
+boundary-graph edge to `@forge/engine` at all, while `@forge/engine` already depends on `@forge/agents`
+— making "entirely inside `@forge/agents`" (the plan's own literal Surface placement) structurally
+impossible, not a design option to weigh. Split across both packages instead: `@forge/agents/interaction`
+(`InteractionMode`, the four separation-of-duties roles, `checkSeparationOfDuties` — no `engine`
+dependency needed) and a new `@forge/engine/interaction` module (`dispatchAgentStep`, the small additive
+extension to already-committed M5 code the plan's own preamble anticipated as the alternative).
+`solo`/`fan-out`/`relay` delegate straight to `@forge/engine/dispatch`'s already-built `runAgentStep`,
+unchanged; `pair`/`panel`/`debate`/`swarm-review` drive additional real sessions directly against
+`ctx.adapter`.
+
+### Round 1 — fresh critic (no context on plan/log): four real gaps, all fixed
+
+1. **REAL BUG.** `SeparationViolation.authoredStepId` was dead data — always equal to `stepId` by
+   construction, since `checkSeparationOfDuties`'s own `authoredBy` map is keyed by the *reviewing*
+   step's own id, never the original authored step's (which this function has no way to learn at all).
+   The field's own doc comment claimed it named "the step whose own recorded author matches
+   `agentInstanceId`," a contract the implementation could never fulfil. **Fixed** by removing the field
+   entirely rather than shipping misleading, always-redundant data; the doc comment on
+   `SeparationViolation` now records why.
+2. **REAL BUG.** `dispatchSwarmReview`'s own synthetic `StepOutcome` captured both `startedAt` and
+   `finishedAt` back-to-back via `ctx.now()`, *after* the N-perspective review loop had already
+   completed — every swarm-review outcome reported near-zero duration regardless of how long the real
+   sessions actually took. **Fixed**: `startedAt` now captured before the loop starts.
+3. **Doc/code mismatch.** `DispatchAgentStepOptions.perspectives`'s own doc comment cited `RUN-041`
+   (a real, but unrelated, merge-policy-conflict code) instead of the actual `RUN-046` the code throws.
+   **Fixed**: corrected to the real code.
+4. **Real gap, previously undocumented.** `dispatchDebate`'s own decider session is instructed, via its
+   brief, to "record an ADR," and runs through the real, committing `runAgentStep` — but nothing
+   verifies an ADR was actually produced. Unlike `dispatchPair`'s own identical class of scope
+   limitation (already documented in its own doc comment), this one read as fully implemented without
+   being flagged anywhere. **Fixed** by recording it explicitly in `dispatchDebate`'s own doc comment
+   and in `SPEC-QUESTIONS.md` Q104, matching `dispatchPair`'s own precedent, rather than building new
+   per-agent output-contract verification machinery this piece's own scope does not call for.
+
+The critic independently re-verified the boundary-graph claim above (reading `graph.mjs` directly rather
+than trusting this piece's own doc comments), confirmed `solo`/`fan-out`/`relay` introduce no behavioural
+change from plain `runAgentStep`, confirmed the debate loop is a genuine, tested bounded loop (exactly 6
+participants at the no-concede 3-round cap; clamps a caller-supplied `maxDebateRounds` above 3 down to
+3; ends early on a real concession), and confirmed swarm-review's own `ReviewReport` deduplication is a
+real merge (a finding raised by two distinct perspectives collapses into one entry carrying both
+attributions), not mere concatenation — proven by `dispatch-agent-step.test.ts`'s own scripted
+`FakePlatformAdapter` fixture with two perspectives reporting the identical finding text.
+
+`tsc`, `eslint`, and the `packages/agents`/`packages/engine`/`packages/core` suites (1267 tests) all
+clean after every fix.

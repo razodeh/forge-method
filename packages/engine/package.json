@@ -11,6 +11,7 @@
     "./expr": "./src/expr/index.ts",
     "./failures": "./src/failures/index.ts",
     "./gates": "./src/gates/index.ts",
+    "./interaction": "./src/interaction/index.ts",
     "./plan": "./src/plan/index.ts",
     "./resume": "./src/resume/index.ts",
     "./run": "./src/run/index.ts",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "@forge/adapter-kit": "workspace:*",
+    "@forge/agents": "workspace:*",
     "@forge/core": "workspace:*",
     "@forge/telemetry": "workspace:*",
     "@forge/vcs": "workspace:*",

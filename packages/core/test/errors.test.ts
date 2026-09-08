@@ -97,6 +97,8 @@ const SAMPLE_DETAILS = {
   actual: 'v18.17.0',
   flag: '--model-tier',
   value: 'ludicrous',
+  mode: 'panel',
+  feature: 'kb diff',
 } satisfies Record<string, unknown> as never;
 
 /**

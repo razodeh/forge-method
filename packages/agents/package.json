@@ -8,7 +8,8 @@
     "./schema": "./src/schema/index.ts",
     "./registry": "./src/registry/index.ts",
     "./context": "./src/context/index.ts",
-    "./prompt": "./src/prompt/index.ts"
+    "./prompt": "./src/prompt/index.ts",
+    "./interaction": "./src/interaction/index.ts"
   },
   "engines": {
     "node": ">=20.10"
