@@ -9,6 +9,7 @@
  * @see specs/02 §2.2
  * @see specs/03
  */
+export * from './commands/index.ts';
 export * from './entry/index.ts';
 export * from './init/index.ts';
 export * from './output/index.ts';

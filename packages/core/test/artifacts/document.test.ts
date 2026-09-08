@@ -145,6 +145,29 @@ describe('ArtifactDocument.set', () => {
     expect(doc.toString()).toContain('tags: [a, b]');
   });
 
+  it('sets an array-valued field to a new, real array — flow style, not a corrupting block sequence', () => {
+    // A gauntlet critic found `set()` on an array field produced `tags: - a` (YAML.stringify's
+    // default block style spliced into a single-line range) instead of valid YAML — this is the
+    // regression test for that fix.
+    const doc = ArtifactDocument.parse(source, 'x.md');
+    doc.set(['tags'], ['x', 'y']);
+    expect(doc.get(['tags'])).toEqual(['x', 'y']);
+    expect(doc.toString()).toContain('tags: [ x, y ]');
+  });
+
+  it('sets an empty array back to an empty array', () => {
+    const doc = ArtifactDocument.parse(source, 'x.md');
+    doc.set(['tags'], []);
+    expect(doc.get(['tags'])).toEqual([]);
+  });
+
+  it('round-trips through toString(): a document re-parsed after set() still gets the real value', () => {
+    const doc = ArtifactDocument.parse(source, 'x.md');
+    doc.set(['tags'], ['re-parsed']);
+    const reparsed = ArtifactDocument.parse(doc.toString(), 'x.md');
+    expect(reparsed.get(['tags'])).toEqual(['re-parsed']);
+  });
+
   it('throws a RangeError for a path with no existing value', () => {
     const doc = ArtifactDocument.parse(source, 'x.md');
     expect(() => {

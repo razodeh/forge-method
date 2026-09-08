@@ -85,6 +85,12 @@ const IGNORED_PATHS = new Set([
   'packages/catalog/test/fixtures/postgresql.ts',
   'packages/agents/test/fixtures/architect.ts',
   'packages/cli/test/entry/fixtures/node-version-guard.ts',
+  // `packages/cli/test/commands/helpers.ts` (PLAN-M6.md C3): shared, real test-project scaffolding
+  // (a temp `ProjectPaths`, small real KB-entry/diagram fixtures) imported by every
+  // `test/commands/*.test.ts` file — the identical "shared, importable module, not a runnable suite"
+  // shape as the `kb`/`engine`/`methods`/`catalog`/`agents` entries above, for the same reason
+  // unrecognised by `TEST_FILE`'s naming heuristic.
+  'packages/cli/test/commands/helpers.ts',
 ]);
 
 /**

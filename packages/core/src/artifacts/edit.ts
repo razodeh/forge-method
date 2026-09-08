@@ -28,9 +28,19 @@ export function getValue(text: string, path: FrontMatterPath): unknown {
   return YAML.isCollection(value) ? value.toJSON() : value;
 }
 
-/** A YAML scalar's own text for `value` — no trailing newline, since it is spliced inline. */
+/**
+ * `value`'s own single-line YAML text — no trailing newline, since it is spliced inline into an
+ * existing byte range. `{ flow: true }` matters for a non-scalar `value` (an array or object field —
+ * `supersedes`, `blast_radius`, `related`, every other `[]`-shaped field `@forge/templates`' own
+ * stubs declare): `YAML.stringify`'s default is block style, which for an array is a `- item`-per-
+ * line sequence with no way to fit on one line — spliced into a single-line range it produces
+ * `key: - item`, which is not valid YAML (a gauntlet critic found `set(['supersedes'], [id])`
+ * corrupting the document this way). Flow style (`[item]`) is unaffected for an actual scalar (a
+ * string/number/boolean/null stringifies identically either way), so this is safe for every existing
+ * caller and correct for the one this had no test covering before.
+ */
 function stringifyScalar(value: unknown): string {
-  return YAML.stringify(value).trimEnd();
+  return YAML.stringify(value, { flow: true }).trimEnd();
 }
 
 /** Whether `text` uses CRLF line endings — checked once, from whichever line ending appears first. */

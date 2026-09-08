@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./entry": "./src/entry/index.ts",
     "./output": "./src/output/index.ts",
-    "./init": "./src/init/index.ts"
+    "./init": "./src/init/index.ts",
+    "./commands": "./src/commands/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -19,7 +20,9 @@
     "@forge/adapter-kit": "workspace:*",
     "@forge/agents": "workspace:*",
     "@forge/core": "workspace:*",
+    "@forge/diagrams": "workspace:*",
     "@forge/extensions": "workspace:*",
+    "@forge/kb": "workspace:*",
     "@forge/methods": "workspace:*",
     "@forge/schemas": "workspace:*",
     "@forge/telemetry": "workspace:*",
