@@ -4832,3 +4832,76 @@ shouldn't have" is only as strong as its own guarantee that nothing *else* in th
 removed X for an unrelated reason — proving that needs the identical destructive on/off test this build
 already applies to fixes, applied once more to the test itself, which is exactly what caught this test's
 own first, too-weak version before it was trusted.
+
+## M5 P20 — `@forge/engine/run`: crash-resume and scheduler-determinism capstone (`06` §6.10, `21` §21.3
+E3) — the milestone's own defining exit criterion
+
+**Rounds: 2 (one critic finding 1 MAJOR, fixed; one scoped verify confirming the fix with no new
+findings). Outcome: WON.**
+
+`runEngine(workflow, context, ctx, resumeFrom?): Promise<RunState>` — see `SPEC-QUESTIONS.md` Q82 for the
+full design record. This piece is almost entirely tests and fixtures by design (`06` §6.10's own exit
+criterion), and its own real value was proving three genuine bugs in already-committed P15/P19/`@forge/vcs`
+code that no single piece's own unit tests could ever have found: `commitInLane` throwing on an idempotent
+re-commit of already-committed content; `resumeOneStep` never durably logging a resumed step's own terminal
+status (bypassing `executeStep`, the only other place `StepSucceeded`/`StepFailed` is ever emitted); and
+`ctx.laneRegistry` (purely in-memory) never being repopulated on resume, silently dropping an
+already-succeeded step's own real, committed content from a later merge. All three fixed before the fresh
+critic round below, discovered by the E2E tests actually failing during this piece's own build.
+
+### Round 1 — fresh critic: 1 MAJOR, fixed
+
+**MAJOR: the `ctx.laneRegistry` repopulation fix (built during this piece, before the critic round) trusted
+the durable log's own `'ready'` lane status unconditionally, with no check against real disk state.**
+`runMergeStep` writes `MergeCompleted` before its own real `removeLane` call, and `LaneRemoved` only after
+that completes — a crash in that exact gap durably logs `'ready'` for a lane whose worktree is already
+gone. The unconditional version would restore a stale `LaneHandle` a later resumed merge would then try to
+actually merge, a real git failure. **Fixed** via `existsSync`, the identical "cross-check real state, never
+trust the log alone" discipline `reclaimOrphanedWorktrees` (P19) already applies for the analogous
+orphaned-worktree case — and by threading the discovered stale lane ids back into `resumeRun`'s own
+returned `laneStatuses` (corrected to `'removed'`), so the returned `RunState` stops lying too.
+
+Two MINOR findings, both already honestly disclosed in the test's own comments rather than requiring a
+code fix: the crash-resume test only exercises the reroll half of resume-vs-reroll (a fresh
+`FakePlatformAdapter` in the parent process cannot validly resume a session the dead child process held);
+and the "no duplicated ledger entries" assertion is honestly vacuous today (the fake adapter never
+populates a nonzero cost anywhere in this milestone yet).
+
+### Round 2 — scoped verify: fix CONFIRMED-CORRECT, no new findings
+
+Independently confirmed the fix is correctly wired end to end, the regression test is a faithful
+reproduction (a real lane, real events, real removal via the real `removeLaneWorktree` call, never writing
+`LaneRemoved`), and independently re-ran the destructive on/off test on the fix itself with the expected
+result both ways. Checked every other real outcome branch inside `runMergeStep` for an analogous race and
+found none.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3364 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet, and the crash-resume
+E2E test (real `SIGKILL`, 20 randomised points) run five times total across both rounds with no flakiness.
+100% coverage on every touched file except one already-documented, pre-existing, provably-unreachable
+defensive branch.
+
+### Calibration note
+
+Every one of this piece's own three real findings — the two retroactive bugs found while building it, and
+the one Round-1 bug in the fix for one of them — shares one shape: a local invariant that looks obviously
+true in isolation turns out to depend on a global ordering guarantee (write-before-effect, single-point-of-
+emission, in-memory-state-survives-the-process) that a real crash is specifically positioned to violate.
+None were reachable by testing any one piece alone — every one of P15's, P19's, and `@forge/vcs`'s own
+prior tests was completely correct against the assumptions it was built under. Only driving the full,
+composed system through a real process kill at genuinely random points ever exposed the gap between
+"correct in isolation" and "correct under a crash at literally any point" — the whole reason `06` §6.10
+requires this as a real, randomised, repeated test rather than one hand-picked scenario, and why this piece
+was built as the milestone's own defining criterion rather than an afterthought at the end.
+
+---
+
+## Milestone 5 (Engine) — complete
+
+P1 through P20, all 20 pieces, each carried through the full gauntlet loop (build with tests → fresh
+critic → fix → optional scoped verify → fix → full local re-verification → commit → log), are now
+committed. The milestone's own literal exit criterion (`06` §6.10/`21` §21.3 E3: a real crash-resume test
+at 20 randomised points, plus scheduler determinism) is a real, passing, non-trivial test under exactly
+that name. Every M1-M5 package's own test suite, boundaries check, and coverage ratchet are green as of
+this entry. Per this build's own standing discipline, work stops here at the milestone boundary, awaiting
+explicit instruction before M6.

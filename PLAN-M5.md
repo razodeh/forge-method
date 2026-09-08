@@ -1003,3 +1003,13 @@ piece-level tests (P1–P19) remain green — this piece adds no new escape hatc
 already-proven pieces together.
 
 **Depends on:** every prior piece (P1–P19).
+
+*(P20 is committed: `869c6fb`. See `SPEC-QUESTIONS.md` Q82 and its critic-round/verify-round addenda —
+this piece's own real value was proving three genuine bugs in already-committed P15/P19/`@forge/vcs` code
+that no single piece's own unit tests could ever have found (`commitInLane` throwing on an idempotent
+re-commit; a resumed step never durably logging its own terminal status; `ctx.laneRegistry` never being
+repopulated on resume), all fixed before a fresh critic round found one more — a lane-status race between
+`runMergeStep`'s own `MergeCompleted` and `LaneRemoved` writes that could leave a resumed run trusting a
+stale, already-deleted `LaneHandle` — also fixed, confirmed by an independent scoped verify round. This is
+Milestone 5's own final piece: all 20 (P1-P20) are now built, gauntlet-reviewed, and committed. See
+`GAUNTLET-LOG.md`'s own entry for the fuller story and its "Milestone 5 (Engine) — complete" note.)*
