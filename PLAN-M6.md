@@ -343,6 +343,10 @@ new copy here, only this piece's own ids removed from its `KNOWN_FUTURE_IDS` all
 
 **Depends on:** C1.
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q95. All 183 catalog entries now shipped across all 18 scope-
+table rows; `KNOWN_FUTURE_IDS` is now the empty set, and the whole catalog is verified internally
+self-consistent (zero dangling `pairs_with`/`alternatives` references anywhere).
+
 ---
 
 ## C5 — The technology selection engine

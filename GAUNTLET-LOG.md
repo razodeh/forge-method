@@ -5331,3 +5331,49 @@ problems found.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (212 files, 4687 tests, plus the boundaries-coverage
 config's own 64) all clean after every fix.
+
+---
+
+## M6 C4 — `@forge/catalog` content, part 3 (final): CI/CD, containers, IaC, observability, testing,
+feature flags, secrets (`12` §12.2) -- all 183 catalog entries now shipped
+
+**Rounds: 1 (fresh critic independently re-verifying completeness and whole-catalog self-consistency,
+finding four real issues, all fixed). Outcome: WON.**
+
+59 real `catalog/<kind>/<id>.entry.yaml` files for the last 7 scope-table rows -- see `SPEC-QUESTIONS.md`
+Q95 for the full design record. Combined with C2 (56) and C3 (68), the catalog now ships all 183 entries
+across all 18 rows and 23 `kind` values.
+
+A whole-catalog self-check (parse/count/near-duplicate/hygiene, the same discipline C3 established) ran
+before any critic round, catching and fixing one real superlative violation and 31 missing second
+`fits_when`/`avoid_when` conditions across 28 entries on its own. `catalog-hygiene.test.ts`'s own
+`KNOWN_FUTURE_IDS` is now the empty set (left explicit, not deleted) -- a whole-catalog script check found
+zero dangling `pairs_with`/`alternatives` references anywhere across all 183 entries, for the first time.
+
+### Round 1 — fresh critic: completeness and self-consistency independently re-verified, four real findings
+
+The critic independently re-derived all 7 remaining rows' item lists (59/59 match) and independently ran
+its own script across all 183 entries confirming zero dangling references, not by trusting the shipped
+tests. Four real, concrete findings, all fixed:
+
+1. `observability/grafana-lgtm.entry.yaml`'s own licence line claimed an inaccurate "Apache-2.0/AGPL-3.0
+   dual" characterization for Grafana core -- Grafana Labs' 2021 relicensing moved Grafana core (with Loki
+   and Tempo) to AGPLv3 outright, not a dual license. **Fixed.** (HashiCorp's BUSL and Sentry's FSL
+   characterizations elsewhere in this piece were independently re-checked and confirmed accurate.)
+2. Three list items scored just under the near-duplicate test's own 0.4 Jaccard threshold (0.30-0.40)
+   while still restating the same condition in different words (`sentry`, `pulumi`, `openfeature`).
+   **Fixed** with genuinely distinct replacement text -- not a threshold-tuning bug, the expected limit of
+   a coarse heuristic that human review still needs to catch.
+3. `testing/vitest-jest.entry.yaml` argued the identical watch-mode-speed fact as both a strength and a
+   matching weakness -- a redundant pair the near-duplicate scan doesn't check across different fields.
+   **Fixed.**
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (4992 tests, plus the
+boundaries-coverage config's own 64) all clean after every fix. Two unrelated, known-flaky tests
+(`crash-resume.test.ts`, `run-engine.test.ts`'s own concurrency-timing assertion) each failed once and
+passed cleanly on isolated re-run -- confirmed not regressions from this piece.
+
+### Milestone note
+
+`@forge/catalog` is now content-complete: C1 (schema/registry/hygiene) through C4 (all 183 entries) are
+committed. C5 (the technology selection engine, `12` §12.3) remains as the package's own final piece.
