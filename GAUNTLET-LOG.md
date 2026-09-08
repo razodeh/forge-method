@@ -5508,3 +5508,41 @@ overlap check.
 
 `tsc`, `eslint`, `prettier`, and the full-repo suite (230 files, 5132 tests, plus the boundaries-coverage
 config's own 64) all clean after every fix.
+
+---
+
+## M6 A3 — `@forge/agents` roster content: Build / Quality & operations / Facilitation, completing the
+28-role roster (`05` §5.2)
+
+**Rounds: 1 (fresh critic finding three real issues, all fixed; no separate verify round run).
+Outcome: WON.**
+
+The remaining 17 real agent-definition YAML files, completing the full 28-role roster A2 started. See
+`SPEC-QUESTIONS.md` Q99 for the full design record, including the second, now-confirmed data point on
+A1's own open `extends`-inheritance tension (`frontend` genuinely inherits `skills` from
+`base-engineer`, the one field this whole roster leaves to actually inherit rather than override).
+
+### Round 1 — fresh critic: three real issues, all fixed
+
+1. Six files (`test-architect`, `techwriter`, `finops`, `compliance`, `release`, `critic`) misused the
+   `HandoffRecord` output type as a stand-in for role-specific documents that aren't inter-agent
+   handoffs at all — the identical class of mistake A2's own `ux`/`domain-modeler`/`security` files
+   made and fixed. **Fixed** by giving each a properly-named type (`TestStrategy`, `Readme`/`DocsSet`,
+   `CostModel`, `ComplianceMatrix`, `ReleasePlan`, `ObjectionList`), each matching `05` §5.2's own
+   Outputs column wording directly.
+2. `techwriter` claimed `cardinality: many` over a literal, non-templated `README.md` path — every
+   other `many` output across the whole roster uses a real placeholder precisely to avoid this.
+   **Fixed** by splitting into a singular `Readme` output (no cardinality) and a properly templated
+   `DocsSet` output (`docs/forge/kb/docs/{name}.md`).
+3. `platform` only covered one of `05` §5.2's own four listed Outputs-column items ("Dev env") —
+   **Fixed** by adding `RepoLayoutSpec`/`BuildSpec`/`Scaffold`, matching the "one dedicated output per
+   table item" fidelity `architect`'s own worked example already establishes.
+
+This piece avoided A2's own first-round exclusive-claim-overlap defect proactively (every engineer-tier
+implementer follows `base-engineer`'s own non-exclusive default; `compliance` proposes into `security`'s
+owned namespace rather than claiming a subset of it) — confirmed clean by the critic's own manual
+cross-check and by two new regression tests (HandoffRecord-misuse, non-templated-many-cardinality) added
+alongside the fixes above.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (231 files, 5171 tests, plus the boundaries-coverage
+config's own 64) all clean after every fix.
