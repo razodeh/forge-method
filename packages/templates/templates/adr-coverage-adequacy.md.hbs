@@ -1,0 +1,109 @@
+{{!--
+  Coverage and adequacy policy -- ADR output template for the "coverage-adequacy" decision framework (11 §11.0's own execution
+  contract: "produce a ranked recommendation with the top option's own killer risk stated ...
+  write an ADR"). Rendered by whichever future piece builds the real template-rendering engine
+  (none exists yet anywhere in this codebase, per test/templates.test.ts's own comment: "no piece
+  before the M2 engine renders a template at all" -- still true as of M6 T5) against that
+  framework's own real execution data. Only Handlebars built-in helpers are used (#each, #if) --
+  no custom helper is declared anywhere in this repository yet, matching TEMPLATE_INDEX's own 21
+  artifact stubs' identical "no undeclared helper calls" convention (test/templates.test.ts).
+  Every triple-stash {{{ }}} is deliberate: a double-stash {{ }} HTML-escapes its value by
+  Handlebars' own default, which would corrupt a YAML scalar containing an apostrophe or an
+  ampersand -- this is a Markdown/YAML render target, not HTML.
+  Every array field's own {{#each}} carries an {{else}} branch rendering a literal "[]" -- Handlebars'
+  own each helper renders nothing at all for an empty array, which would otherwise leave the YAML key
+  with no value and parse as null, not an empty array; adrSchema's own array fields
+  (supersedes/related/diagrams/blast_radius/deciders) reject null. A critic round confirmed this by
+  actually rendering a template with empty-array data and parsing the result as YAML, not just
+  parsing the Handlebars source as an AST.
+--}}
+---
+id: ADR-{{seq}}
+type: ADR
+schemaVersion: 1
+title: {{{title}}}
+status: {{{status}}}
+category: process
+deciders:
+{{#each deciders}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+date: {{{date}}}
+created: {{{date}}}
+updated: {{{date}}}
+revision: 1
+author: {{{author}}}
+reversibility: {{{reversibility}}}
+blast_radius:
+{{#each blastRadius}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+revisit_trigger: {{{revisitTrigger}}}
+supersedes:
+{{#each supersedes}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+superseded_by: null
+related:
+{{#each related}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+diagrams:
+{{#each diagrams}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+framework: coverage-adequacy
+changelog:
+  - revision: 1
+    date: {{{date}}}
+    by: {{{author}}}
+    summary: {{{changelogSummary}}}
+---
+
+## Context
+
+{{{context}}}
+
+## Decision
+
+We choose **{{{chosenOption}}}**.
+
+## Score table
+
+{{!-- 11 §11.0's own "Frameworks MUST show the score table in the ADR" -- one row per surviving
+      option, one column per this framework's own declared criteria[]. A framework with no
+      criteria: block (a procedural, single-option framework) has nothing to score; its own single
+      option is adopted directly, and #if criteria renders the alternative "executed" phrasing
+      instead of an empty table. --}}
+{{#if criteria}}
+{{{scoreTable}}}
+{{else}}
+This framework has no comparative "criteria" (11 §11.0) -- its single option was executed
+directly. See "Decision" above for what was done.
+{{/if}}
+
+## Killer risk
+
+{{{killerRisk}}}
+
+## Consequences
+
+{{{consequences}}}
+
+## Alternatives considered
+
+{{#if alternativesConsidered}}
+{{{alternativesConsidered}}}
+{{else}}
+None -- this framework had no eliminated or competing options to record.
+{{/if}}

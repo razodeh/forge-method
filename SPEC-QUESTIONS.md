@@ -6965,3 +6965,131 @@ role-id cross-check deferred until `@forge/agents`' roster exists.
 
 `tsc`, `eslint`, and the full-repo suite (177 new tests in `test/frameworks.test.ts`, covering all 43
 shipped frameworks) all clean; see `GAUNTLET-LOG.md`'s own M6 T4 entry for the critic round.
+
+## Q93 — M6 T5's `@forge/templates` output templates and skill library: `output_template`'s own real
+shipped path (`templates/adr-<id>.md.hbs`, not `PLAN-M6.md` T5's own `templates/output/<name>.md.hbs`
+paraphrase), and `follow_on.create_stories_from`'s own unscoped, unspecified target format
+
+**The `output_template` path.** `PLAN-M6.md` T5's own Surface line says templates ship at
+`templates/output/<name>.md.hbs`. But `11` §11.0's own literal worked `repo-strategy` example — the one
+concrete, load-bearing path the spec pack gives for this field anywhere — writes `output_template:
+templates/adr-repo-strategy.md.hbs`, with no `output/` segment, and T1/T3 already shipped
+`repo-strategy.framework.yaml` reproducing that exact string verbatim (`test/frameworks.test.ts`'s own
+byte-for-byte worked-example test depends on it). All 43 shipped frameworks (T3+T4) follow the identical
+`templates/adr-<id>.md.hbs` convention, extrapolated consistently from the one spec-given example. T5
+therefore ships every real template at `templates/adr-<id>.md.hbs`, matching the spec's own concrete
+content over the plan's own un-verified paraphrase — the identical "the concrete worked example wins over
+a loose paraphrase" resolution `SPEC-QUESTIONS.md` Q88 already used for T1's own "ten lifecycle workflows"
+vs `10` §10.5's real 20-row table.
+
+**The `create_stories_from` gap.** Every one of the 43 shipped frameworks' own `follow_on` block names a
+`create_stories_from: templates/stories/<name>.yaml` path (`11` §11.0's own worked example itself:
+`create_stories_from: templates/stories/repo-bootstrap.yaml`) — but grepping the entire spec pack finds
+this field named exactly once, in that one worked example, with no format definition, no schema, and no
+further mention anywhere in `11`-`15`. `PLAN-M6.md` T5's own Mandate is scoped explicitly to
+"`output_template` files" and "the built-in skill library" — it does not mention `templates/stories/` at
+all, and no other M6 piece's own Surface does either. This is a genuine spec silence (an unspecified
+target format), not merely a plan-drafting gap the way the `output_template` path above was: inventing a
+schema for 43 story-seed files with no spec basis for their real shape would be exactly the kind of
+scope this project's own calibration notes warn against manufacturing unprompted. Resolved by leaving
+`templates/stories/*.yaml` unshipped in M6 — every `follow_on.create_stories_from` path stays a real,
+well-formed, forward-referencing string (`test/workflows.test.ts` and `test/frameworks.test.ts` both
+assert the path shape), and this entry is the explicit record that no M6 piece's own Surface covers
+shipping the files themselves, for whichever future piece defines the format and ships them.
+
+## Q94 — M6 T5's actual delivery: 43 ADR output templates and 32 built-in skills, real design choices
+made building them, and a self-caught, unrelated test-infrastructure bug found along the way
+
+**Output templates are real Handlebars, not static example documents.** `TEMPLATE_INDEX`'s own 21
+artifact stubs (M1 P11) are static, schema-valid example documents with zero live `{{...}}` syntax
+(`test/templates.test.ts`'s own `DECLARED_HELPERS` is empty, and its own comment: "none of these 21
+static stubs use `{{...}}` syntax"). T5's own 43 `templates/adr-<id>.md.hbs` files are a different kind
+of thing — real Handlebars source, rendered against a framework's own real execution data by whichever
+future piece builds the actual rendering engine (confirmed: none exists anywhere in this codebase yet,
+the identical "no piece before the M2 engine renders a template at all" state `test/templates.test.ts`
+already documented, still true at M6). Every text placeholder uses a triple-stash `{{{x}}}`. not a
+double-stash `{{x}}`: Handlebars' own default HTML-escapes double-stash output, which would corrupt a
+YAML front-matter scalar containing an apostrophe or an ampersand — this is a Markdown/YAML render
+target, not HTML, and no piece before this one had reason to establish that distinction. Every array
+field (`deciders`, `blast_radius`, `supersedes`, `related`, `diagrams`) uses a real `{{#each}}` block,
+not an inline flow-sequence placeholder, avoiding any need to invent array-literal serialization
+semantics with nothing built yet to verify them against. Only Handlebars *built-in* helpers are used
+anywhere (`#if`, `#each`) — no custom helper is registered anywhere in this repository yet, matching
+`TEMPLATE_INDEX`'s own identical constraint; `test/output-templates.test.ts` reuses `test/
+templates.test.ts`'s own `undeclaredHelperCalls` AST-walk verbatim to check this mechanically, not by
+inspection.
+
+**A real, self-caught bug in already-committed T4 content, found while researching T5.** Fifteen T4
+framework files (`agent-executable-tests`, `coverage-adequacy`, and eleven more — see the
+`fix(templates)` commit for the full list) declared `produces.adr_category: testing`, and three declared
+`operations` — neither is a real value of `@forge/schemas`' own `adrSchema.category` enum
+(`architecture | data | delivery | ops | process | product | security`, `08` §8.4). `frameworkSchema`
+never cross-checks `adr_category` against that enum (a bare non-empty string, `packages/methods/src/
+schema/schema.ts`), so nothing caught this at load time — an ADR actually written from any of these
+frameworks would have failed `adrSchema.safeParse` at real write time. Fixed directly (`testing` ->
+`process`, the closest real fit for testing/debugging/review content; `operations` -> `ops`, the actual
+enum spelling), with a new regression test (`test/frameworks.test.ts`) locking it in — see the
+`fix(templates)` commit, separate from T4's own original commit per this project's own never-amend rule.
+
+**Skills use no `references/`/`scripts/` subdirectories.** All 32 built-in skills are a single
+self-contained `SKILL.md` with no `references/`, `examples/`, `scripts/`, or `assets/` subdirectory —
+`15` §15.4.2 states all four are optional, and a `references/` directory in particular carries real,
+mechanically-checked risk (`checkDeadReferences`'s own two-way "every linked file exists, every existing
+file is linked" requirement, `packages/extensions/src/skills/validate.ts`) for content this piece's own
+Mandate calls "deliberately thin and generic" (`15` §15.4.4's own closing line) — a genuinely deep-dive
+reference file is exactly the kind of content an organisation's own overlay should add, not this
+built-in baseline.
+
+**The diagramming skills' own grounding.** T5's own Checks text requires the six diagramming skills
+reference "real, checkable conventions `@forge/diagrams` already enforces, not aspirational prose." Each
+one names real check ids read directly from `packages/diagrams/src/lint/rules.ts` (`diagram:refs`,
+`diagram:orphan-nodes`, `diagram:complexity`, `diagram:label-quality`, `diagram:caption`,
+`diagram:staleness`), the real placeholder-word list, and the real `generated: true` requires-a-
+`generator` rule from `diagramSchema` itself (`08` §8.11.5) — not paraphrased from the spec prose alone.
+
+**An unrelated, self-caught test-infrastructure bug.** `test/workspace-floor.test.ts`'s own
+`collectedTestFiles` helper calls `execFileSync('node', ['scripts/run-tests.mjs', 'list', '--json'],
+...)` with no `maxBuffer` — Node's own 1 MB default. `vitest list --json` emits one entry per *test*,
+not per file, and this session's own cumulative M6 work pushed the suite past 4600 tests across 200+
+files, tripping `ENOBUFS` twice in a row (confirmed not transient by re-running). Not a T5 content bug —
+a pre-existing scaling ceiling this session's own growth crossed. **Fixed** by setting `maxBuffer: 64 *
+1024 * 1024`, a wide margin above the current real output size, not a number tuned to just barely fit
+today's count.
+
+**Three real bugs the fresh critic round found in the output templates themselves, all fixed.**
+
+1. **`prettier --write` silently corrupted all 43 `.hbs` files.** An early formatting pass in this same
+   piece ran the repo's own `prettier --write .` over the newly-created `adr-*.md.hbs` files — prettier
+   matched them as Markdown (the `.md.hbs` extension's own `.md` prefix) and reflowed/merged their line
+   structure, collapsing distinct YAML front-matter keys onto one physical line (`type: ADR
+   schemaVersion: 1 title:` as a single line) and merging Handlebars block boundaries into surrounding
+   prose (`## Decision We choose **{{{chosenOption}}}**. ## Score table`). The bug survived the piece's
+   own first test pass because `test/output-templates.test.ts` originally only checked `Handlebars.parse`
+   succeeding (syntax-only, blind to line layout) and a substring-`.toContain` check on `category:`/
+   `framework:` — both true even inside a corrupted merged line. **Fixed** by regenerating all 43 files
+   from the original (pre-prettier) generator script, and adding `packages/templates/templates/
+   adr-*.md.hbs` to `.prettierignore` with a comment explaining why prettier can never safely reformat
+   YAML-plus-Handlebars content — this is now structurally prevented from recurring, not merely
+   corrected once.
+2. **Empty arrays rendered as YAML `null`, which `adrSchema` rejects.** `{{#each x}}...{{/each}}` renders
+   nothing at all when `x` is `[]`, leaving `supersedes:`/`related:`/`diagrams:`/`blast_radius:`/
+   `deciders:` with no value on the next line — valid YAML, but `null`, not `[]`, and `adrSchema`'s own
+   array fields reject `null`. **Fixed** by adding an `{{else}}\n  []\n{{/each}}` branch to every array
+   block (Handlebars' own `each` helper supports an `else` branch for the empty case) — confirmed by
+   actually rendering against an empty-array fixture and parsing the result.
+3. **The `changelog` entry shape used invented field names.** The template wrote `version`/`author`;
+   the real `changelogEntrySchema` (`packages/schemas/src/registry/front-matter.ts`, `.strict()`) wants
+   `revision`/`by` — `version`/`author` are both rejected as unrecognised keys, and `revision`/`by` were
+   both then reported missing. **Fixed** by correcting the field names to the real schema.
+
+None of these three were caught by this piece's own first-draft test suite, which is itself the deeper
+finding: `test/output-templates.test.ts` was rewritten to actually compile and render every one of the
+43 templates against two representative fixtures (populated arrays/real criteria, and empty arrays/no
+criteria — the two shapes Handlebars' own `#each` renders differently), parse the rendered front matter
+as YAML, and validate it against the real `adrSchema` — not merely parse the Handlebars source as an
+AST or substring-match the source text. This is the check that would have caught all three bugs, and
+now does.
+
+`tsc`, `eslint`, `prettier` (with the new `.hbs` exclusion), and the full-repo suite (212 files, 4687
+tests, plus the boundaries-coverage config's own 64) all clean after every fix; see `GAUNTLET-LOG.md`'s
+own M6 T5 entry for the full critic round.

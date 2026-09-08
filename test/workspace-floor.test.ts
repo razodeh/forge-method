@@ -157,6 +157,13 @@ describe('no test file can escape collection', () => {
       execFileSync('node', ['scripts/run-tests.mjs', 'list', '--json'], {
         cwd: repoRoot,
         encoding: 'utf8',
+        // Node's own default `maxBuffer` (1 MB) — fine when this repo had a few dozen test files, but
+        // `vitest list --json` emits one entry per *test*, not per file, and the repo has grown past
+        // 4600 tests across 200+ files. A first version of this call with no explicit `maxBuffer` hit
+        // `ENOBUFS` here, not as a real regression in this piece's own content but because the suite
+        // itself had grown enough to cross Node's default ceiling. 64 MB is a wide margin above the
+        // current real output size, not a number tuned to just barely fit today's count.
+        maxBuffer: 64 * 1024 * 1024,
       }),
     ) as readonly { file: string }[];
     // `vitest list --json` emits one entry per *test*, not per file, so the paths must be deduped

@@ -21,3 +21,13 @@ PLAN-*.md
 SPEC-QUESTIONS.md
 GAUNTLET-LOG.md
 BLOCKED-*.md
+
+# ADR output templates (11 §11.0, PLAN-M6.md T5): YAML front matter interleaved with Handlebars
+# block helpers (#each/#if), not ordinary prose. A critic round found prettier's own markdown
+# formatter (matched by the plain .md extension prefix) reflows and merges these files' own
+# deliberate line structure -- collapsing distinct YAML keys onto one line and merging Handlebars
+# block boundaries with surrounding text, silently corrupting both the YAML and the template's own
+# control flow. Excluded outright rather than fixed per-file: prettier has no markdown-aware mode
+# for "YAML plus Handlebars," and reformatting would reintroduce the identical corruption on the
+# next `prettier --write .`.
+packages/templates/templates/adr-*.md.hbs

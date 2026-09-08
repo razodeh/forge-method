@@ -263,3 +263,88 @@ export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = 
   GateReport: 'templates/artifacts/GateReport.md',
   HandoffRecord: 'templates/artifacts/HandoffRecord.md',
 };
+
+/** `15` §15.4.4's own six-group built-in skill library table, one real skill per named example
+ * (thirty-two total: 6 method + 6 discipline + 6 diagramming + 6 stack + 5 tooling + 3 writing;
+ * `PLAN-M6.md` T5). Transcribed independently for the identical "this package has no `@forge/*` edge"
+ * reason every other index in this module already documents — `02` §2.2's own boundary graph runs
+ * `extensions -> templates`, not the other way around, so `@forge/extensions/skills`' own
+ * `SkillFrontMatter.id` type is not reachable from here either. */
+export type SkillId =
+  // Method skills
+  | 'writing-an-adr'
+  | 'writing-testable-acceptance-criteria'
+  | 'splitting-an-oversized-story'
+  | 'running-an-rca'
+  | 'writing-a-runbook'
+  | 'expand-contract-migration'
+  // Discipline skills
+  | 'tdd-loop-discipline'
+  | 'test-oracle-design'
+  | 'contract-testing'
+  | 'property-based-testing'
+  | 'performance-benchmarking'
+  | 'threat-modelling-stride'
+  // Diagramming skills
+  | 'mermaid-authoring'
+  | 'c4-diagramming'
+  | 'sequence-diagramming'
+  | 'er-diagramming'
+  | 'state-diagramming'
+  | 'diagram-review'
+  // Stack skills
+  | 'nodejs-typescript-conventions'
+  | 'python-conventions'
+  | 'jvm-conventions'
+  | 'go-conventions'
+  | 'rust-conventions'
+  | 'dotnet-conventions'
+  // Tooling skills
+  | 'git-hygiene-for-lanes'
+  | 'conventional-commits'
+  | 'debugging-with-traces'
+  | 'reading-a-flamegraph'
+  | 'interpreting-a-coverage-report'
+  // Writing skills
+  | 'house-documentation-style'
+  | 'changelog-writing'
+  | 'api-reference-writing';
+
+/** Resolves a skill id to its package *directory* (not a single file — `15` §15.4.2's own package
+ * layout is `SKILL.md` plus optional `references/`/`examples/`/`scripts/`/`assets/` subdirectories),
+ * as a path relative to this package's own root — the identical "caller resolves against wherever
+ * `@forge/templates` is actually installed" contract every other index in this module documents. */
+export const SKILL_INDEX: Readonly<Record<SkillId, string>> = {
+  'writing-an-adr': 'templates/skills/writing-an-adr',
+  'writing-testable-acceptance-criteria': 'templates/skills/writing-testable-acceptance-criteria',
+  'splitting-an-oversized-story': 'templates/skills/splitting-an-oversized-story',
+  'running-an-rca': 'templates/skills/running-an-rca',
+  'writing-a-runbook': 'templates/skills/writing-a-runbook',
+  'expand-contract-migration': 'templates/skills/expand-contract-migration',
+  'tdd-loop-discipline': 'templates/skills/tdd-loop-discipline',
+  'test-oracle-design': 'templates/skills/test-oracle-design',
+  'contract-testing': 'templates/skills/contract-testing',
+  'property-based-testing': 'templates/skills/property-based-testing',
+  'performance-benchmarking': 'templates/skills/performance-benchmarking',
+  'threat-modelling-stride': 'templates/skills/threat-modelling-stride',
+  'mermaid-authoring': 'templates/skills/mermaid-authoring',
+  'c4-diagramming': 'templates/skills/c4-diagramming',
+  'sequence-diagramming': 'templates/skills/sequence-diagramming',
+  'er-diagramming': 'templates/skills/er-diagramming',
+  'state-diagramming': 'templates/skills/state-diagramming',
+  'diagram-review': 'templates/skills/diagram-review',
+  'nodejs-typescript-conventions': 'templates/skills/nodejs-typescript-conventions',
+  'python-conventions': 'templates/skills/python-conventions',
+  'jvm-conventions': 'templates/skills/jvm-conventions',
+  'go-conventions': 'templates/skills/go-conventions',
+  'rust-conventions': 'templates/skills/rust-conventions',
+  'dotnet-conventions': 'templates/skills/dotnet-conventions',
+  'git-hygiene-for-lanes': 'templates/skills/git-hygiene-for-lanes',
+  'conventional-commits': 'templates/skills/conventional-commits',
+  'debugging-with-traces': 'templates/skills/debugging-with-traces',
+  'reading-a-flamegraph': 'templates/skills/reading-a-flamegraph',
+  'interpreting-a-coverage-report': 'templates/skills/interpreting-a-coverage-report',
+  'house-documentation-style': 'templates/skills/house-documentation-style',
+  'changelog-writing': 'templates/skills/changelog-writing',
+  'api-reference-writing': 'templates/skills/api-reference-writing',
+};
