@@ -12,6 +12,7 @@
     "./failures": "./src/failures/index.ts",
     "./gates": "./src/gates/index.ts",
     "./plan": "./src/plan/index.ts",
+    "./resume": "./src/resume/index.ts",
     "./scheduler": "./src/scheduler/index.ts",
     "./workflow": "./src/workflow/index.ts"
   },

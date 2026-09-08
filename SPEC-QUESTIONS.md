@@ -6066,3 +6066,118 @@ either guessing silently or blocking the whole piece on an ambiguity nothing in 
 settles — the same "record the recommendation, mark it, move on" discipline this whole build has applied
 to spec silence from its very first piece, applied here to a safety-relevant tradeoff instead of a type
 signature.
+
+## Q80 — M5 P18's `@forge/engine/resume`: `06` §6.10 step 1 — replaying `18` §18.4's own ~56-member event
+catalogue into a `RunState` — a genuinely spec-registered event `06` §6.10's own transition diagram names
+but was never actually added to the catalogue, and a doc comment whose own claim about its documented
+leniency turned out to be false for the one field it was written to describe
+
+`reconstructRunState(events): Promise<RunState>` — `06` §6.10 step 1 ("reload event log; rebuild run
+state"), as one pure, deterministic fold, exhaustive over every real `EventType` `18` §18.4 registers.
+
+**1. `06` §6.10's own step-transition diagram (`StepScheduled → StepStarted → StepProgress* →
+(StepSucceeded | StepFailed | StepAborted)`) names a `StepAborted` event that `18` §18.4's own catalogue
+table — the actual registered `EventType` union, confirmed directly in `@forge/telemetry`'s own
+`events.ts` — never added.** A gauntlet-loop critic round independently re-confirmed this by reading the
+real union directly rather than trusting the claim. Since no per-step abort event exists to derive an
+`'aborted'` per-step status from, this piece treats a run-level `RunAborted` event as cascading to every
+step not already in a terminal-or-skipped status (`succeeded`/`failed`/`skipped`) — `scheduled`, `running`,
+and `escalated` (an escalation still under review when the whole run aborts is abandoned, not resolved,
+along with everything else in flight) all become `'aborted'`. `06` §6.9's own "`abort`... also terminates
+running lanes" framing (`Q79`) already establishes a run-level abort is understood to cascade to in-flight
+work, not stay a purely run-level fact — this piece's own design just makes that literal at the per-step
+status level, the only real signal available given the missing event.
+
+**2. `PLAN-M5.md`'s own literal per-step status enum (`scheduled | running | succeeded | failed | aborted |
+escalated`) was missing `'skipped'`** — a real, registered `StepSkipped` event (`18` §18.4's own Step
+group) with no home in the six-value enum otherwise. The same "the plan's own bullet undersells the
+signature" correction this build has made once per piece for many pieces running now, here for an enum
+value rather than a function parameter.
+
+**3. `RunPlanned`'s own payload has no shape given anywhere in the spec pack** — this piece's own invented
+design, the same situation `@forge/telemetry`'s own `UsageRecordedPayload` (P7) already resolved once. A
+bare `planRef: string` reference (a workflow id, a plan hash), not the full compiled `StepNode[]`: the
+*actual* plan structure a resumed run needs comes from re-compiling the same workflow source fresh
+(`@forge/engine/plan`, P10), not a second copy duplicated into the append-only log — every step this run
+ever actually reached already has its own `StepScheduled`/... event regardless of whether the plan itself
+is ever logged.
+
+**4. The reducer is structured as a pure, exhaustive `applyEvent(acc, event)` switch with no `default`
+case** — not a stylistic choice, a real compile-time guarantee: because the function has a non-`void`
+return type and every real case must `return`, TypeScript itself refuses to compile if a future new
+`EventType` member is ever left unhandled. Verified directly (not just asserted) by temporarily commenting
+out one case and confirming a genuine `tsc` failure, then restoring it.
+
+### Round 1 — critic: 2 MAJOR, both fixed
+
+The critic was given the spec sections and file list only (no `PLAN-M5.md`/`SPEC-QUESTIONS.md`/
+`GAUNTLET-LOG.md`/git history) and asked to verify empirically, with particular attention to whether the
+exhaustiveness claim was actually true (not just plausible), the correctness of the `RunAborted` cascade
+and `StepRetried` reset logic, and the leniency choices for malformed payloads.
+
+- **MAJOR: the `RunPlanned` reducer case unconditionally overwrote `planRef` with `extractPlanRef`'s own
+  result, contradicting `extractPlanRef`'s own doc comment**, which explicitly claimed a malformed payload
+  "leaves `Accumulator.planRef` at whatever it already was rather than throwing." Since a malformed
+  payload makes `extractPlanRef` return `undefined`, the actual code silently *discarded* a
+  previously-recovered, well-formed `planRef` the moment a later, malformed `RunPlanned` appeared in the
+  same log — doing the opposite of the documented, intended leniency, in exactly the "partially-written
+  trailing line after a real crash" scenario this whole piece exists to survive. Confirmed by repro: a
+  good `RunPlanned` followed by a malformed one produced `planRef: undefined`, not the earlier good value.
+  **Fixed** by changing the assignment to `extractPlanRef(event.payload) ?? acc.planRef`; a new test
+  proves the specific previously-broken scenario now preserves the earlier value, and a scoped verify
+  round confirmed the fix doesn't over-apply the same leniency to `runStatus` in the identical case (which
+  is correctly a plain "most recent Run-group event wins" field, not payload-derived, so the two fields'
+  own different treatment is itself correct, not an inconsistency).
+- **MAJOR: `EVENT_TYPES_HANDLED` (the constant the test suite iterates to exercise every real event type)
+  was a hand-typed array checked only one direction** (`as const satisfies readonly EventType[]` — every
+  array element really is a valid `EventType`, but nothing caught the array *missing* a real member).
+  Confirmed empirically: removing a real member produced no compile error and no test failure, directly
+  contradicting the constant's own doc comment claiming the test suite used it to "assert the catalogue...
+  matches `@forge/telemetry`'s real, current `EventType` union directly" — no such assertion actually
+  existed anywhere. **Fixed** by replacing the array with `EVENT_TYPE_MEMBERSHIP: Record<EventType,
+  true>`, an ordinary object literal TypeScript itself requires to have *every* key of `EventType` present
+  (a missing one is `TS2741`) and rejects any key that isn't a real `EventType` (an unknown one is
+  `TS2353`) — a genuine bidirectional guarantee, not a one-directional `satisfies` check, achieved with
+  nothing more exotic than TypeScript's own ordinary object-literal checking. `EVENT_TYPES_HANDLED` is now
+  mechanically derived from it (`Object.keys(...)`), so the two can never silently drift apart again.
+  Verified directly (both directions): removing a real key, and adding a bogus one, each produced the
+  expected real compile error; a scoped verify round independently reconfirmed both, and cross-checked the
+  derived list's own 56 entries against the real `EventType` union directly (zero missing, zero extra,
+  zero duplicates).
+- **MINOR, addressed by documentation only:** `acc.runId` is reassigned on every event rather than set
+  once — harmless under this function's own real contract (one run's own event log, all sharing one
+  `runId`, matching `readEvents`'s own per-run-file design), but nothing in the function's own signature
+  enforces that assumption. Documented directly rather than left implicit.
+
+### Round 2 — scoped verify: both fixes CONFIRMED-CORRECT, no new findings
+
+The verify round independently re-derived the `runStatus`-consistency question (does the `planRef` fix's
+own leniency need to also apply to `runStatus`, assigned unconditionally in the identical `RunPlanned`
+case) and confirmed the two fields' different treatment is correct by design, not an inconsistency the fix
+introduced or left unaddressed — `runStatus` doesn't read from the payload at all, so there is no
+"malformed input silently produces the wrong answer" failure mode for it to share. Also independently
+re-derived and confirmed: two well-formed `RunPlanned` events with genuinely different `planRef`s correctly
+let the second (a real replan) win, not pinned to the first; a malformed `RunPlanned` as the very first
+event correctly leaves `planRef` undefined (nothing to fall back to); and a whitespace-only `planRef` is
+correctly treated as malformed by the existing `.trim() !== ''` check. The `Record<EventType, true>` fix
+was independently destructive-tested in both directions (a missing key, a bogus extra key), both producing
+the expected real compiler errors, with the fix's own edits confirmed fully reverted afterward and no
+residual diff.
+
+No other new findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3312 tests) all independently
+reconfirmed clean after both rounds, including boundaries and the coverage ratchet. 100% coverage on every
+touched file.
+
+### Calibration note
+
+Two different classes of "the doc comment was wrong" surfaced in one piece, worth distinguishing. The
+`planRef` bug is a doc comment describing the *intended* behaviour accurately while the *code* didn't
+match it — the comment was right, the implementation was wrong, an ordinary logic bug a fresh pair of eyes
+caught by testing the claim directly rather than trusting it. The `EVENT_TYPES_HANDLED` finding is the
+opposite shape: the doc comment described a *test-suite guarantee* ("the test suite can assert this
+matches the real union") that never actually existed anywhere in the test suite — not a wrong description
+of working code, but an aspirational claim about verification that was never actually wired up. Both are
+real findings a critic round exists to catch, but the second is the more instructive one for this whole
+build's own discipline: a doc comment asserting "this is tested" is itself a claim that needs verifying,
+not a substitute for checking whether the test actually exists and actually proves what the comment says
+it does.
