@@ -389,6 +389,11 @@ worked output shape.
 
 **Depends on:** C1-C4 (a real, populated registry to select against).
 
+**Status:** done — see `SPEC-QUESTIONS.md` Q96. `@forge/catalog` is now fully complete: C1-C5 all
+committed. Two design bugs self-caught before any critic round (a polarity inversion in `scoreCandidate`,
+an additive-vs-lexicographic coherence bug in `selectStack`), one structural bug (mandated-entry cap)
+found and fixed via a critic round plus a scoped verify round.
+
 ---
 
 # `@forge/templates` — `fm-core` content (workflows, gates/checks, frameworks, base templates, skills)

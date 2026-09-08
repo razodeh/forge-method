@@ -5377,3 +5377,57 @@ passed cleanly on isolated re-run -- confirmed not regressions from this piece.
 
 `@forge/catalog` is now content-complete: C1 (schema/registry/hygiene) through C4 (all 183 entries) are
 committed. C5 (the technology selection engine, `12` §12.3) remains as the package's own final piece.
+
+---
+
+## M6 C5 — `@forge/catalog/select`: the technology selection engine (`12` §12.3, `12` §12.4) -- `@forge/catalog` complete
+
+**Rounds: 2 (fresh critic finding one MAJOR structural bug plus two minor doc-comment-level notes; one
+scoped verify confirming the fix). Outcome: WON.**
+
+`filterByConstraints`/`scoreCoherence`/`scoreCandidate`/`evaluateHardRules`/`isMandated`/`selectStack` --
+real algorithmic logic (not content) implementing `12` §12.3's own five-step procedure and three hard
+rules against the real, 183-entry catalog. See `SPEC-QUESTIONS.md` Q96 for the full design record,
+including two design bugs this piece caught and fixed on its own, before any critic round, by testing
+against real shipped data rather than only synthetic fixtures:
+
+1. A polarity-inversion bug: `CatalogBurdenLevel` is "low is good" for `operational_burden`/`exit_cost`
+   but "high is good" for `team_familiarity_weight`/`agent_friendliness` -- a shared lookup table silently
+   inverted the latter two. Caught by this piece's own tests before ever running against real data.
+2. An additive-scoring bug: combining coherence bonus and weighted score into one summed number let a
+   candidate from a completely unrelated ecosystem (Elixir's Phoenix) outscore one with a real `pairs_with`
+   edge to what was already chosen (mandating `typescript-js`, scoring `framework`). Caught by running
+   `selectStack` against the real shipped catalog. Fixed by comparing coherence lexicographically first,
+   matching `12` §12.3's own step ordering.
+
+### Round 1 — fresh critic: one MAJOR structural bug, two minor doc-comment notes
+
+The critic confirmed both self-caught fixes above are complete and correct (every polarity-sensitive field
+reads from the right table; the lexicographic tiebreak works as claimed against the real catalog), found
+no bug in `filterByConstraints`'s cloud heuristic or `scoreCoherence`'s edge/penalty logic in isolation,
+and confirmed `evaluateHardRules`'s L3-boundary logic is correct against the literal spec text. One real,
+MAJOR finding: `selectStack` used `.find(...)` for the mandated-entry check, capping every kind (including
+`language`) at one winner even when `constraints.mandated` named more than one entry of that kind --
+making the "2 max at L3" language-count hard rule and the runtime-count penalty structurally unreachable
+through the real orchestrator, even though both were correctly implemented and unit-tested in isolation.
+**Fixed** by switching to `.filter(...)`: every mandated entry of a kind is chosen, not just the first,
+principled by hard rule 3 (mandated entries already bypass scoring). Two secondary findings (CORE_KINDS
+order as an unstated coherence-bonus priority lever; `RUNTIME_COUNT_PENALTY_KINDS` naming) addressed via
+doc-comment additions, no behavior change.
+
+### Round 2 — scoped verify: fix CONFIRMED-CORRECT
+
+Independently re-derived both new empirical test scenarios by hand against the real catalog (mandating two
+languages triggers the hard rule at L2 not L3; mandating two datastores lowers `coherenceScore`), audited
+the exact `pairs_with` edge arithmetic behind the second scenario's own score delta, confirmed
+`hard-rules.ts`/`coherence.ts` needed no changes (the fix is entirely upstream, in how many entries reach
+them), and confirmed no downstream consumer in the repo assumes one-`ChosenEntry`-per-kind. One minor
+test-comment imprecision found and fixed (the assertion itself was always correct).
+
+No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (5041 tests, plus the
+boundaries-coverage config's own 64) all clean after both rounds.
+
+### Milestone note
+
+`@forge/catalog` is now fully complete: C1 (schema/registry/hygiene) through C5 (the selection engine) are
+all committed.
