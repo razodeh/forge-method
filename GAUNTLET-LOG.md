@@ -5048,3 +5048,41 @@ issue-collection logic. Two real, if minor, findings, both fixed:
 
 No other findings. `tsc`, `eslint`, `prettier`, and the full-repo suite (3476 tests, plus the boundaries-
 coverage config's own 64) all clean.
+
+---
+
+## M6 T1 — `@forge/templates`: the 20 built-in lifecycle workflows (`10` §10.5)
+
+**Rounds: 1 (fresh critic finding zero structural/logic bugs, two real content bugs, both fixed; no
+separate verify round run). Outcome: WON.**
+
+All 20 workflow YAML files, `WORKFLOW_INDEX`, and `test/workflows.test.ts` (a repo-root cross-package
+compile/parse validation suite, needed because `@forge/templates` and `@forge/engine` have no dependency
+edge in either direction — see `SPEC-QUESTIONS.md` Q88 for the full design record, including the 20-vs-
+"ten" workflow-count resolution and the documented, deliberate exclusion of `build-stage` from the generic
+compile check).
+
+### Round 1 — fresh critic: zero structural bugs, two real content findings
+
+The critic cross-referenced every role id against `05` §5.2's roster and every artifact type id against
+`18` §18.7's registry, confirmed `build-stage.workflow.yaml` a faithful reproduction of `10` §10.1's own
+worked example (only the necessary flow-sequence quoting differs), confirmed `implement-story.workflow.yaml`
+matches `10` §10.6's 9-step canonical sequence exactly, confirmed `WORKFLOW_INDEX` names exactly the right
+20 ids mapped to real files, and found no duplicate step ids, dependency cycles, or illogical `dependsOn`
+chains in any of the 20 files. Two real, concrete content bugs, both fixed:
+
+1. A nonexistent literal role id `engineer` was hardcoded as an `agent:` value in 6 places across 5
+   workflows (`debug`, `harden`, `refactor`, `migrate` ×2, `quick-fix`) — `05` §5.2's roster has no bare
+   `engineer`; "engineers" in `10` §10.2's Owner column is a generic plural, not a literal role id. **Fixed**
+   by changing all 6 to `backend`, the real core-tier general implementation role, with the test fixture's
+   own `owner_role`/`ownerRole` values updated to match for consistency.
+2. `plan-stage.workflow.yaml`'s `write-stories` step declared `outputs: [{ type: Task, cardinality: many }]`,
+   but `18` §18.7's own parent-chain rules make `Task` a distinct, lower-level artifact from `Story`
+   ("no Task without a Story," `09` §9) — every downstream workflow (`build-stage`'s own
+   `over: stage.stories`, `artifact:Story({{item.id}})`) operates on `Story` artifacts, and P5's own key
+   outputs in `10` §10.2 are explicitly "epics, stories," not tasks. **Fixed** by changing the declared
+   output type to `Story`.
+
+No other findings. `tsc`, `eslint`, and the full-repo suite (3749 tests, one unrelated pre-existing flake in
+`packages/engine/test/e2e/crash-resume.test.ts` — a randomised-SIGKILL-timing test, confirmed to pass
+cleanly in isolation and untouched by this piece) all clean, plus the coverage ratchet and boundaries check.
