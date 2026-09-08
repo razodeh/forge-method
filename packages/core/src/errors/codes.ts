@@ -602,6 +602,28 @@ export const ERROR_CODES = {
       "Remove the overlay's autonomy downgrade for this gate; alwaysHuman gates cannot be " +
       'relaxed by customization.',
   },
+  // The run-time half of I3 (`PLAN-M5.md` P14): `GATE-501`'s own comment already names this as "M5's to
+  // enforce" -- a gate with a failing deterministic check cannot be approved without a *complete* waiver.
+  // A missing/blank `reason`, `owner`, or `expiresAt`, or an `expiresAt` that does not parse as a real
+  // instant at all, are the identical "not actually provided" outcome, whichever field is at fault.
+  'GATE-504': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string }) =>
+      `Gate ${show(d.gateId)}'s waiver is missing a reason, an owner, or a valid expiry -- all three are required.`,
+    remedy: 'Provide a non-blank reason, owner, and a valid expiresAt instant for this waiver.',
+  },
+  // The run-time half of I3, continued: a *complete*, well-formed waiver that has already lapsed is
+  // treated identically to having no waiver at all -- distinct from `GATE-504` (which is about the
+  // waiver's own shape, not its content) because the remedy is different: renew with a fresh expiry,
+  // not fill in a missing field.
+  'GATE-505': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string; expiresAt: string }) =>
+      `Gate ${show(d.gateId)}'s waiver expired at ${show(d.expiresAt)} and can no longer be applied.`,
+    remedy: 'Provide a new waiver with a later expiresAt, or resolve the underlying failing check instead.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

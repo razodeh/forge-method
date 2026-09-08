@@ -83,6 +83,7 @@ const SAMPLE_DETAILS = {
   placeholder: 'stageId',
   parseError: 'Unexpected token "&&".',
   maxDepth: 200,
+  expiresAt: '2026-01-01T00:00:00.000Z',
 } satisfies Record<string, unknown> as never;
 
 /**

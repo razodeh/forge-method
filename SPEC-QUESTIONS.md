@@ -5436,3 +5436,159 @@ to re-derive correctness from scratch rather than confirm the stated fix worked.
 sharpened rather than merely repeated from `Q74`: verifying that a fix resolves its own named finding is a
 different, narrower task than verifying the fix didn't move the same class of problem to an adjacent field
 it touches in passing — and the second question needs asking explicitly, not assumed answered by the first.
+
+---
+
+## Q76 — M5 P14's `@forge/engine` gate evaluation: proving a "typed refusal, not a constructible state" against
+plain, unbranded data took two full rounds to actually close
+
+`10` §10.3's gate mechanism, generically: run every deterministic check's declared command, parse its
+output, evaluate `failOn` (via P9's own expression evaluator) against the parsed result, never fail on an
+advisory result, handle waivers (reason + owner + expiry, required), and produce report data.
+
+**1. `GateDefinition` deliberately models only `id`, `checks`, and `openQuestionsPolicy`** — not `10`
+§10.3's own full worked-example YAML (`name`, `phase`, `autonomyOverride`, `approval`, `evidence`,
+`onReject`). Unlike `06` §6.2's own "phase" concept (`Q73`), these omitted fields are all trivially
+representable as plain data; left out because nothing in this piece's own Mandate ("proves the mechanism
+against a trivial fixture gate," real gate *content* being M6's job) ever reads them, not because they are
+unbuildable — a scope choice, not a capability gap.
+
+**2. `failOn`'s own bare, unnested identifiers (`"errors > 0"`, `"undefined_refs > 0"`) resolve directly
+against the parsed JSON output's own top-level fields, not nested under one of `ExpressionContext`'s own
+named helper slots (`item`/`stage`/`run`/`config`/`kb`/`failures`/`vars`).** P9's own `resolvePath`
+(`Q71`) walks `Object.hasOwn` generically over whatever object is actually handed to it at runtime,
+regardless of `ExpressionContext`'s own declared TypeScript field names — confirmed empirically (independently
+re-derived by both the critic and verify rounds, not just asserted) against every real `failOn` example the
+whole spec pack shows. `TypeScript`'s own structural typing already permits this: every field on
+`ExpressionContext` is optional, so any plain object — including the parsed-JSON output cast to nothing more
+specific than `Record<string, unknown>` after a runtime shape guard — is already assignable to it.
+
+**3. `parser`'s only two spec-named values (`forge-json`, `10` §10.3; `json`, `15`, a third-party custom
+check's own example) describe the identical strategy from two different authoring contexts, not two
+different behaviours** — an absent `parser` is treated exactly like an explicit one of either, and any other
+value is refused (a specific reason recorded on that one check, not a thrown exception) rather than silently
+JSON-parsed anyway.
+
+**4. Exit code is completely decoupled from pass/fail** — only `failOn`'s own evaluated result decides a
+deterministic check's outcome, confirmed in both directions (exit 0 with `failOn` true still fails; a
+nonzero exit with `failOn` false still passes) by dedicated, isolated tests added in the verify round after
+the original test suite's own single mixed-signal example could not have caught a regression that
+accidentally ANDed exit code into the result. `stdout`/`exitCode` are still recorded on every check for rule
+4's own audit trail, just never consulted for the pass/fail decision itself.
+
+**5. `applyWaiver`'s own literal `PLAN-M5.md` signature (`(result, waiver): GateEvaluationResult`) omits
+`now` entirely — the same "the plan's own bullet undersells what the signature needs" correction
+`Q70`/`Q71`/`Q73`/`Q75` have each already made once for a different function's own return type; here for a
+parameter instead, since expiry cannot be checked against nothing, and this whole build's determinism
+mandate (`21` §21.1) forbids reading `Date.now()` internally.
+
+### Round 1 — critic: 0 BLOCKING, 1 MAJOR, several MINOR, all fixed or explicitly documented as accepted
+
+The critic was asked to independently re-derive the `ExpressionContext`/bare-identifier claim above against
+the real evaluator (not trust it), re-derive `evaluateGate`'s own pass/fail logic with freshly-constructed
+gates, and adversarially test `applyWaiver`/`isApproved`'s own boundary conditions.
+
+- **MAJOR: `isApproved`'s own doc comment claimed "there is no other way for a caller to construct a
+  `GateEvaluationResult` that claims a waiver exists without having actually satisfied `applyWaiver`'s own
+  checks" — false, and a real gap, not just an inaccurate comment.** `GateEvaluationResult`/`Waiver` are
+  plain, publicly-constructible interfaces, the same as every other data shape in `@forge/engine` — nothing
+  stops a caller (a future piece reviving a persisted report, say) from hand-building one with a blank,
+  never-validated waiver, and the original `isApproved` trusted `waiver !== undefined` alone. **Fixed**
+  (round 1) by extracting a shared `isWellFormedWaiver` shape check used by both `applyWaiver` (already
+  had an equivalent check inline) and a new defensive re-check inside `isApproved` itself — closing the
+  "blank waiver" half of the gap; the verify round found this fix was still incomplete (see below).
+- **MINOR: `isNonBlank` (`.trim().length > 0`) does not catch a `reason`/`owner` made entirely of a
+  zero-width space (U+200B) or a NUL byte**, since neither is ECMAScript `WhiteSpace`. **Fixed** by
+  stripping every Unicode "control" (`\p{Cc}`) and "format" (`\p{Cf}`) character in addition to whitespace —
+  a principled rule ("is there anything a human would actually read here") rather than an enumerated,
+  always-incomplete blacklist of individually-discovered invisible characters.
+- **MINOR: no documented scope boundary for a hanging `CheckRunner`, or for `failOn` referencing a field
+  absent from the parsed output.** The first is a deliberate boundary (this piece owns no clock/timer of its
+  own, per the determinism mandate; command-level timeout is `RUN-033`'s own concern at the step level,
+  already named by an earlier piece). The second is `@forge/engine/expr`'s own already-established,
+  documented behaviour (a missing path resolves to `undefined`, `Q71`) inherited unmodified — confirmed by
+  the critic as correct, not a bug, and not this piece's place to override. **Fixed** by adding explicit
+  doc-comment notes for both, rather than changing any behaviour.
+- **MINOR: duplicate check ids within one gate are preserved independently, not deduped or flagged** — the
+  critic's own assessment ("almost certainly out of scope... noted for completeness") matched this piece's
+  own already-stated stance for `GATE-502`-adjacent config-shape concerns (a different, already-built
+  package's job); left unfixed, undocumented further.
+- **Test-quality findings, all fixed**: the one test with a failing check gave it both a nonzero exit *and*
+  a triggered `failOn` simultaneously, so no test actually isolated exit-code-independence (closed by finding
+  4 above); a "concurrent dispatch" test used same-tick `Promise.resolve()` for every response, which cannot
+  distinguish real interleaving safety from an untested implementation (replaced with genuinely staggered,
+  reverse-order `setTimeout` delays); no test covered applying a waiver twice in a row, or the newly-fixed
+  `isApproved` bypass; the report idempotence test reused the same object references across both calls
+  rather than two independently-built, structurally-identical ones.
+
+### Round 2 — scoped verify: 0 BLOCKING, 2 MAJOR, 4 MINOR, all fixed or explicitly documented as accepted
+
+The verify pass was asked to specifically stress-test the round-1 `isApproved` fix's own "don't re-check
+expiry against a fresh clock" design decision (is it a real bug, or just a judgment call), re-derive the
+`isNonBlank` regex against a wide sweep of real scripts and other invisible-character tricks, and confirm
+the new interleaving test actually has teeth (would it catch a deliberately-introduced crosstalk bug).
+
+- **MAJOR: round 1's shape-only `isApproved` fix still accepted a hand-built waiver with a "well-formed but
+  dead-on-arrival" `expiresAt`** — non-blank fields, a genuinely parseable date, but one already in the past
+  at the moment of construction, which the real `applyWaiver` would have refused with `GATE-505` had it
+  actually been called. Shape-checking alone cannot distinguish "legitimately applied, now stale" (which the
+  design deliberately still allows — see below) from "fabricated with an already-past expiry" (which it
+  should not), since neither leaves any trace once only the waiver's own three fields are inspected.
+  **Fixed** by adding `waiverAppliedAt` to `GateEvaluationResult`/`GateReport` — the `now` `applyWaiver`
+  itself validated expiry against, sealed onto the result alongside the waiver — and having `isApproved`
+  re-derive "was `expiresAt` genuinely still in the future at the moment this was applied" by comparing two
+  fields already on the result against each other, never against a fresh clock reading of its own. This
+  preserves the original, deliberate "an already-legitimately-waived result should not silently flip to
+  unapproved just because more wall-clock time has since passed" property (confirmed by the verify round to
+  be *required*, not merely a preference, for `buildGateReport`'s own documented purity/idempotence — a
+  fresh-clock re-check there would make the identical `(gate, result)` pair produce a different report
+  depending on when it happens to be built) while closing the fabrication gap for an *honest* reconstruction
+  bug. Explicitly not closed, and documented as such: a caller willing to also fabricate a self-consistent
+  `waiverAppliedAt` by hand — this module, like the rest of this codebase, uses plain data, not cryptographic
+  sealing, and defends against honest mistakes, not a fully adversarial caller.
+- **MAJOR: `applyWaiver` attached the caller's own, still-mutable `Waiver` object directly, not a copy** —
+  mutating it after a fully legitimate `applyWaiver` call silently rewrote an already-validated result's own
+  audit-trail content, undetectably whenever the mutated content happened to still look well-formed (no API
+  bypass needed — just the common mistake of reusing one waiver object across a loop). **Fixed** by
+  returning `Object.freeze({ ...waiver })` — an independent, frozen copy — the identical "audit record
+  should not silently change" reasoning this codebase's own `ForgeError.details` already applies to itself.
+- **MINOR: a stale doc comment** (the original, now-corrected "there is no other way..." claim `types.ts`
+  still carried after round 1's own, still-incomplete fix) — **fixed**, rewritten to accurately describe the
+  real, narrower guarantee `waiverAppliedAt` actually provides.
+- **MINOR: `buildGateReport` sourced `gateId` from `gate` but `openQuestionsPolicy` from `result`, with no
+  real reason for the difference** — for any real `evaluateGate` output the two sources always agree, so
+  this only mattered for a caller passing a mismatched `(gate, result)` pair directly, but the asymmetry
+  looked like an oversight rather than a decision. **Fixed** by sourcing both identity/policy fields
+  consistently from `gate` (properties of the gate definition itself, not of any one evaluation) — also
+  making `gate` a meaningfully-read parameter again, not a vestigial one.
+- **MINOR: the `isNonBlank` regex still misses a handful of `Lo`-category "renders as visually blank"
+  characters** (Hangul filler U+3164, Braille pattern blank U+2800) outside the `\p{Cc}`/`\p{Cf}`/whitespace
+  categories it checks — the verify round's own assessment ("much more obscure... doesn't undermine the
+  fix's core improvement") matched this piece's own established stance for similar bounded approximations
+  elsewhere (`globsOverlap`, `Q73`); left unfixed rather than starting the exact "growing, always-incomplete
+  blacklist" round 1's own fix was written specifically to avoid.
+- **MINOR: no object in this module is deep-frozen** beyond the one waiver-specific fix above — the verify
+  round's own framing ("same underlying theme... lower probability... requires the consumer to mutate a
+  retained reference") is a general concern about this whole package's `readonly`-typing-not-runtime-freezing
+  convention, not specific to a concrete vulnerability in this piece; left as-is, consistent with every other
+  result/state type `@forge/engine` already returns the same way.
+
+No other new findings; `tsc`, `eslint`, and the full package suite (451 engine tests after these fixes' own
+new ones, 3150 full-repo) all independently reconfirmed clean. 100% coverage on every file this piece
+touches except one already-documented, provably-unreachable rethrow branch (the identical
+`noUncheckedIndexedAccess`-adjacent exemption category used throughout this milestone).
+
+### Calibration note
+
+Proving "a gate cannot be approved without a real waiver" against *plain, unbranded data* — the same kind
+of type every other piece in this package already uses — turned out to need two full rounds to actually
+close, and the two rounds closed two genuinely different holes in the same claim. Round 1 closed the
+"nothing at all was ever checked" case (a blank waiver). Round 2 closed the "something was checked, but
+against the wrong thing" case (shape without provenance) — a subtler failure than round 1's own, only
+visible once round 1's own fix was itself taken as the new thing to attack rather than as settled. The
+`waiverAppliedAt` field this needed is a real, if narrow, generalizable pattern for this whole codebase: a
+plain-data-only "is this actually valid" check that must stay stable over time (an audit record's own
+approval status) cannot use a fresh clock reading (that reintroduces the exact "flips on re-inspection"
+problem `Q75` already named once), so it needs the *evidence* of an earlier, legitimate check sealed onto
+the data itself instead — turning a question that would otherwise require either a live clock or blind trust
+into one two already-present-or-absent fields can answer by comparison alone.
