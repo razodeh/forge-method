@@ -7165,3 +7165,89 @@ all 18 rows and 23 `kind` values (the 20 the spec's own comment names plus `stac
 `packages/engine/test/run/run-engine.test.ts`'s own concurrency-timing assertion) each failed once across
 this session's several full-suite runs and passed cleanly on immediate isolated re-run -- confirmed not
 regressions from this piece, which touches nothing in `@forge/engine`.
+
+## Q96 — M6 C5's `@forge/catalog/select`: `12` §12.3's own five-step stack-selection procedure and three
+hard rules -- real algorithmic logic (not content), two design bugs self-caught by testing against the
+real shipped catalog before any critic round, and one further structural bug a critic round found and
+fixed
+
+`filterByConstraints`/`scoreCoherence`/`scoreCandidate`/`evaluateHardRules`/`isMandated`/`selectStack`
+implement `12` §12.3's own five steps end to end against a real, populated 183-entry `CatalogRegistry`,
+worked-example-checked against `12` §12.4. Unlike every other M6 C-piece, this is genuinely new algorithmic
+logic, not catalog content -- `12` §12.3 names the procedure, the three hard rules, and eight scoring
+criteria, but gives no scoring algorithm, no weights, and no explicit list of which catalog `kind`s a
+selection run must decide. Every such gap is this piece's own invented, documented resolution, not a
+silent guess:
+
+1. **`ProjectLevel` is a second, independent declaration**, not imported from `@forge/methods/level` (M3)
+   -- `02` §2.2's own boundary graph gives `@forge/catalog` no `methods` edge (`catalog ← schemas` only;
+   `catalog`/`methods` are graph peers). The identical small, unavoidable duplication `@forge/methods`
+   itself already accepts for this exact type, for the identical boundary reason (Q85).
+
+2. **`12` §12.3's own eight named scoring criteria don't map 1:1 onto `CatalogEntry`'s real fields**:
+   "hiring/AI-support" and the separately-listed "agent_friendliness" both describe, in substance, the
+   same idea the spec's own parenthetical names -- `CatalogEntry` has exactly one field for it. Scored
+   once, at the combined weight both bullets together imply, rather than silently double-counting one
+   stored field under two different names. "Cost" has no corresponding field at all (no catalog piece,
+   C1-C4, ever added price/cost data) -- weighted `0` in the scoring table, left in the type/weight table
+   rather than silently dropped, so a future piece adding real cost data has an obvious place to wire it
+   in.
+
+3. **A self-caught polarity bug, found before any critic round**: `CatalogBurdenLevel` (`'low'|'medium'
+   |'high'`) is reused by four `CatalogEntry` fields with two *opposite* polarities --
+   `operational_burden`/`exit_cost` are "low is good," while `team_familiarity_weight`/`agent_friendliness`
+   are "high is good." A first-draft `scoreCandidate` used one shared low-is-good lookup table for all
+   four, silently inverting the two high-is-good criteria -- caught immediately by this piece's own tests
+   (`'high' agent_friendliness scored lower than 'low'`), before ever running against real data. **Fixed**
+   with two separate tables (`LOW_IS_GOOD_SCORE`, `HIGH_IS_GOOD_SCORE`), each field read from the correct
+   one.
+
+4. **A second self-caught bug, found by testing `selectStack` against the real shipped catalog before any
+   critic round**: an additive `weightedScore + coherenceBonus` combination let a candidate from a
+   completely unrelated ecosystem outscore one with a real, explicit `pairs_with` edge to what was already
+   chosen -- verified directly: mandating `typescript-js` and scoring the `framework` kind by an additive
+   total picked `phoenix` (Elixir) over `fastify`, despite `fastify`'s own real, mutual `pairs_with` edge
+   to `typescript-js`, purely because Phoenix's raw maturity/burden/agent-friendliness score happened to be
+   higher. **Fixed** by comparing coherence *lexicographically first*, weighted score only as a tiebreaker
+   within equal coherence -- matching `12` §12.3's own step ordering (coherence grouping, step 2, before
+   scoring, step 3) more faithfully than an additive combination did, and fixing the bug by construction:
+   a real edge now always outranks a merely-higher raw score. Re-running the worked-example reproduction
+   after this fix correctly selected the whole TypeScript ecosystem (`typescript-js`, `express`/`fastify`,
+   `nextjs`, `postgresql`, `prisma`).
+
+5. **`selectStack` decides one winner for a fixed, documented subset of the catalog's 18 kinds
+   (`CORE_KINDS`)**, not all 18 -- `12` §12.3 gives no explicit list, and not every kind (e.g. `mobile`)
+   is relevant to every project; a kind `CORE_KINDS` omits simply has no `ChosenEntry`, not a forced or
+   fabricated one.
+
+6. **A critic round found one further, real, structural bug**: a first-draft `selectStack` used
+   `candidates.find(...)` for the mandated-entry check, capping *every* kind (including `language`) at
+   exactly one winner even when `constraints.mandated` named more than one entry of that kind. This made
+   two real `12` §12.3 mechanisms structurally unreachable through the actual orchestrator -- the "2 max
+   at L3" primary-language-count hard rule, and `scoreCoherence`'s own runtime-count penalty -- even though
+   both were correctly implemented and correctly unit-tested *in isolation* (their own test files hand-build
+   multi-entry-per-kind fixtures `selectStack` itself could never produce). **Fixed** by switching to
+   `candidates.filter(...)`: every mandated entry of a kind is now chosen, not just the first match --
+   principled because mandated entries already bypass scoring entirely (hard rule 3: "does not
+   re-litigate"), so there was no reason to also cap how many of them win. New tests prove this through the
+   real orchestrator against the real shipped catalog (mandating two real languages triggers the hard rule
+   at L2 but not L3; mandating two real datastores lowers `coherenceScore`), not just synthetic fixtures.
+   A scoped verify round independently re-derived both empirical results by hand (including auditing the
+   exact `pairs_with` edge arithmetic behind the second test's own coherence-score delta) and confirmed the
+   fix CONFIRMED-CORRECT, with one minor test-comment imprecision fixed (the score drop is the runtime
+   penalty net of one small incidental edge, not the penalty in total isolation -- the assertion itself was
+   always correct and non-tautological either way).
+
+7. **Two secondary findings from the same critic round were addressed via doc-comment additions, not
+   behavior changes**: `selectStack`'s own doc comment now states plainly that `CORE_KINDS`'s fixed array
+   order is itself a priority lever for coherence bonus (a candidate's edge to a kind processed *later* in
+   the array can never count toward its own bonus), and that a *non-mandated* decision still only ever
+   picks one winner per kind (the fix only extended multi-selection to the `mandated` path -- a project
+   the engine itself must *discover* needs two independently-scored languages, without the caller naming
+   them via `mandated`, remains out of scope for this piece). `RUNTIME_COUNT_PENALTY_KINDS` also gained the
+   literal `'infra'` `CatalogKind` value (real in the type system, but no catalog piece ever shipped
+   content under it) alongside the already-present `'iac'`/`'container'`, so the check is already correct
+   the moment a future piece adds real `infra`-kind content.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (5041 tests, plus the boundaries-coverage config's own
+64) are all clean after every fix.

@@ -19,7 +19,7 @@ fits_when:
 avoid_when:
   - "CPU-bound numeric or simulation workloads where a compiled language's throughput is required"
   - 'a team with zero JS/TS experience and a hard deadline, where the learning curve outweighs the benefits'
-pairs_with: [express, fastify, nestjs, react, nextjs]
+pairs_with: [express, fastify, nestjs, react, nextjs, prisma]
 alternatives: [python, java, kotlin, go]
 operational_burden: low
 team_familiarity_weight: high
