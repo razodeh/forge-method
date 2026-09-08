@@ -1,0 +1,44 @@
+id: deployment-strategy
+name: Deployment strategy
+owner_agent: sre
+produces: { adr_category: delivery, kb_section: delivery/deployment-strategy.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*)]
+questions:
+  - id: downtime_acceptable
+    text: 'Is a maintenance-window downtime acceptable for this deployable unit?'
+    type: boolean
+  - id: change_is_high_risk
+    text: 'Is this a high-risk change needing metrics-based, gradual promotion?'
+    type: boolean
+  - id: needs_decoupled_release
+    text: 'Does release need to be decoupled from deploy (ship dark, enable later)?'
+    type: boolean
+options:
+  - id: recreate
+  - id: rolling
+  - id: blue-green
+  - id: canary
+  - id: progressive-feature-flagged
+criteria:
+  - id: rollback-speed
+    weight: 0.3
+  - id: infrastructure-cost
+    weight: 0.2
+  - id: risk-appropriateness
+    weight: 0.3
+  - id: operational-complexity
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'downtime_acceptable'
+    then: { prefer: recreate }
+  - if: 'change_is_high_risk'
+    then: { prefer: canary }
+  - if: 'needs_decoupled_release'
+    then: { prefer: progressive-feature-flagged }
+  - if: '!downtime_acceptable && !change_is_high_risk && !needs_decoupled_release'
+    then: { prefer: rolling }
+output_template: templates/adr-deployment-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/rollback-rehearsal.yaml

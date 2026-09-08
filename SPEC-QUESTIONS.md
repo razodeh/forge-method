@@ -6927,3 +6927,41 @@ resolve this, not T2.
 
 `tsc`, `eslint`, and the full-repo suite (79 new tests across `test/gates.test.ts`/`test/workflows.test.ts`'s
 own gate-adjacent additions) all clean; see `GAUNTLET-LOG.md`'s own M6 T2 entry for the critic round.
+
+## Q92 — M6 T4's `@forge/templates` framework content (`12`-`14`): `frameworkSchema` has no field for
+`12` §12.1's own framework-to-framework ordering dependency (F-DATA-3 `requires: [ access-patterns ]`),
+and the F-TECH-1/F-DELIVER-3 catalog-delegation convention this piece establishes
+
+**The `requires:` gap.** `12` §12.1's own F-DATA-2 text states directly: "This runs before F-DATA-3 ...
+`F-DATA-3` has `requires: [ access-patterns ]`." `frameworkSchema` (`packages/methods/src/schema/
+schema.ts`, M6 M1) is `.strict()` with a fixed field set (`id`, `name`, `owner_agent`, `produces`,
+`inputs`, `questions?`, `options`, `criteria?`, `scoring`, `rules?`, `output_template`, `follow_on?`) —
+no `requires:` key exists anywhere in it, so this real, spec-stated ordering dependency cannot be
+expressed in `storage-selection.framework.yaml` (F-DATA-3) without either a schema change (out of a
+content-only piece's own Mandate, the identical reasoning Q91 already gave for the `ArchitectureSpec`/
+`ThreatModel` registry gap) or silently dropping the requirement. Resolved by recording the dependency
+as a comment in both `access-pattern-analysis.framework.yaml` (F-DATA-2) and `storage-selection.
+framework.yaml` (F-DATA-3), and by having F-DATA-3's own `inputs.required` list literally include
+`kb:data/access-patterns.md` (the KB artifact F-DATA-2 itself produces) — a real, load-bearing
+`inputs.required` entry, not merely documentation, even though it does not give `loadFramework` an
+enforceable *execution-order* check the way a real `requires:` field eventually should. Left for
+whichever future piece extends `frameworkSchema` itself to resolve properly, the same "surfaced, not
+fixed here" stance Q91 already took for its own out-of-scope registry gap.
+
+**The catalog-delegation convention.** `PLAN-M6.md` T4 asked this piece to record how a framework YAML
+signals "delegate to `@forge/catalog`'s own selection engine (C5)" rather than enumerating a fixed
+option list of its own, since a fixed list would misrepresent the catalog's real, independently-growing
+content. The convention settled on, applied identically to both `stack-selection.framework.yaml`
+(F-TECH-1, `12` §12.3) and `cicd-pipeline-design.framework.yaml` (F-DELIVER-3, `14` §14.3 — "Decides
+the platform (from the catalog)"): `scoring: hybrid`, plus an `options` list naming the catalog's own
+top-level *kind* categories (F-TECH-1) or a small, explicitly-curated representative subset of real
+catalog entries (F-DELIVER-3's five named CI/CD platforms), never the full catalog — with a comment at
+each site explaining that the real per-technology comparison happens inside `@forge/catalog/select`
+itself, not via this framework's own `rules[].eliminate`/`.prefer`. `test/frameworks.test.ts`'s own
+dedicated `stack-selection` test asserts the structural half of this convention now and is an explicit,
+recorded forward-reference for whoever builds C5 (`@forge/catalog`'s own selection engine, not yet built
+as of this piece) to re-run a real round-trip check against, matching T1's own precedent for the A2
+role-id cross-check deferred until `@forge/agents`' roster exists.
+
+`tsc`, `eslint`, and the full-repo suite (177 new tests in `test/frameworks.test.ts`, covering all 43
+shipped frameworks) all clean; see `GAUNTLET-LOG.md`'s own M6 T4 entry for the critic round.

@@ -1,0 +1,33 @@
+id: test-environment-dependency-strategy
+name: Environment and dependency strategy for tests
+owner_agent: test-architect
+produces: { adr_category: testing, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**]
+questions:
+  - id: agent_lane_must_run_offline
+    text: 'Must an agent lane be able to run this test layer fully offline?'
+    type: boolean
+options:
+  - id: in-process-fake
+  - id: testcontainer
+  - id: shared-dev-instance
+  - id: ephemeral-cloud-environment
+criteria:
+  - id: fidelity-to-production
+    weight: 0.35
+  - id: agent-lane-portability
+    weight: 0.3
+  - id: speed
+    weight: 0.2
+  - id: cost
+    weight: 0.15
+scoring: hybrid
+rules:
+  # "which of these an agent lane can start offline, since a lane that cannot run its own integration
+  # tests must defer them to the merge queue, which slows the whole loop" (13 §13.1).
+  - if: 'agent_lane_must_run_offline'
+    then: { eliminate: [shared-dev-instance, ephemeral-cloud-environment], prefer: testcontainer }
+output_template: templates/adr-test-environment-dependency-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/test-preflight-command.yaml

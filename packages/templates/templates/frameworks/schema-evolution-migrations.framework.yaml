@@ -1,0 +1,30 @@
+id: schema-evolution-migrations
+name: Schema evolution and migrations
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/migrations.md }
+inputs:
+  required: [kb:constraints/**, kb:data/storage.md]
+questions:
+  - id: requires_zero_downtime
+    text: 'Must this system tolerate a deploy with no downtime window?'
+    type: boolean
+options:
+  - id: forward-only
+  - id: reversible
+criteria:
+  - id: rollback-safety
+    weight: 0.4
+  - id: operational-simplicity
+    weight: 0.3
+  - id: team-familiarity
+    weight: 0.3
+scoring: hybrid
+rules:
+  # "zero-downtime rules (no destructive change in the same release as the code that stops using it)"
+  # (12 §12.1) -- zero-downtime tolerance is exactly the case expand-contract's own reversibility
+  # discipline exists for.
+  - if: 'requires_zero_downtime'
+    then: { prefer: reversible }
+output_template: templates/adr-schema-evolution-migrations.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/migration-ci-check.yaml

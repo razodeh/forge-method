@@ -1,0 +1,22 @@
+id: access-pattern-analysis
+name: Access-pattern analysis
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/access-patterns.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*), artifact:DataModel]
+# 12 §12.1's own F-DATA-2 text is a fixed procedure (per-operation read/write, frequency, latency
+# budget, selectivity, result size, consistency requirement, growth), not a comparative decision --
+# one option, no criteria/rules, the same "execution step" shape as F-DATA-1.
+#
+# 12 §12.1's own worked text states storage-selection.framework.yaml (F-DATA-3) "requires:
+# [ access-patterns ]" -- `frameworkSchema` (M6 M1, packages/methods/src/schema/schema.ts) has no
+# framework-to-framework ordering field at all (its own `.strict()` shape has no `requires` key), so
+# this dependency cannot be expressed in the YAML itself without a schema change outside this content
+# piece's own Mandate. Recorded here as a comment, and in SPEC-QUESTIONS.md, rather than silently
+# adding an unsupported field or silently dropping the ordering requirement.
+options:
+  - id: produce-access-pattern-table
+scoring: rules
+output_template: templates/adr-access-pattern-analysis.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/access-pattern-review.yaml

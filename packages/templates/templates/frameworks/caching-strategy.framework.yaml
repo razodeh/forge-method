@@ -1,0 +1,36 @@
+id: caching-strategy
+name: Caching strategy
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/caching.md }
+inputs:
+  required: [kb:constraints/**, kb:data/access-patterns.md]
+questions:
+  - id: writes_must_be_immediately_visible
+    text: 'Must a write to this data be immediately visible to the next read of it?'
+    type: boolean
+  - id: write_volume_is_high
+    text: 'Is this a high write-volume path relative to reads?'
+    type: boolean
+options:
+  - id: cache-aside
+  - id: read-through
+  - id: write-through
+  - id: write-behind
+criteria:
+  - id: correctness-under-staleness
+    weight: 0.35
+  - id: read-latency-improvement
+    weight: 0.25
+  - id: write-path-simplicity
+    weight: 0.2
+  - id: operational-burden
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'writes_must_be_immediately_visible'
+    then: { eliminate: [write-behind] }
+  - if: 'write_volume_is_high'
+    then: { prefer: write-behind }
+output_template: templates/adr-caching-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/cache-invalidation.yaml

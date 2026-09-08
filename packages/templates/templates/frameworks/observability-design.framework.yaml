@@ -1,0 +1,37 @@
+id: observability-design
+name: Observability design
+owner_agent: sre
+produces: { adr_category: operations, kb_section: ops/observability.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*)]
+questions:
+  - id: cost_sensitive
+    text: 'Is observability spend a significant, actively-managed constraint for this project?'
+    type: boolean
+# 14 §14.5's own F-OPS-1: "Instrumentation: OpenTelemetry as the default vendor-neutral SDK; backend
+# chosen separately so it can change without touching code." This framework's own real decision is the
+# backend, not the instrumentation layer (fixed) -- options are the five named catalog backends plus
+# the cloud-native default.
+options:
+  - id: lgtm-stack
+  - id: datadog
+  - id: new-relic
+  - id: honeycomb
+  - id: sentry
+  - id: cloud-native
+criteria:
+  - id: cost
+    weight: 0.3
+  - id: operational-burden
+    weight: 0.25
+  - id: retention
+    weight: 0.2
+  - id: query-ergonomics
+    weight: 0.25
+scoring: hybrid
+rules:
+  - if: 'cost_sensitive'
+    then: { prefer: lgtm-stack }
+output_template: templates/adr-observability-design.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/slo-alert-runbook-wiring.yaml

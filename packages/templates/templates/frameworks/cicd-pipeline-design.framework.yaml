@@ -1,0 +1,38 @@
+id: cicd-pipeline-design
+name: CI/CD pipeline design
+owner_agent: sre
+produces: { adr_category: delivery, kb_section: delivery/pipeline.md }
+inputs:
+  required: [kb:constraints/**, kb:delivery/build-artifact.md]
+# 14 §14.3's own F-DELIVER-3 text: "Decides the platform (from the catalog) and, more importantly, the
+# stage graph." The platform half delegates to @forge/catalog/select the same way F-TECH-1/
+# stack-selection.framework.yaml does (see that file's own comment for the established convention) --
+# this options list is a curated, representative set of real CI/CD platforms, not the full catalog.
+options:
+  - id: github-actions
+  - id: gitlab-ci
+  - id: circleci
+  - id: buildkite
+  - id: jenkins
+criteria:
+  - id: fit-to-vcs-host
+    weight: 0.3
+  - id: parallel-stage-support
+    weight: 0.25
+  - id: oidc-federated-identity-support
+    weight: 0.2
+  - id: cost
+    weight: 0.15
+  - id: team-familiarity
+    weight: 0.1
+scoring: hybrid
+# 14 §14.3's own canonical stage graph (setup -> static -> parallel test layers -> security -> build
+# -> gate check, on PR; setup -> full verify -> build+sign -> publish -> deploy staging -> migrate+
+# smoke+e2e -> gate -> deploy production -> post-deploy verify -> auto-rollback, on merge) and its own
+# seven normative rules (pipeline is the only path to production, same commands as local gate suite,
+# fast feedback first, pinned-by-SHA definitions, OIDC over static keys, <10min PR target, machine-
+# readable results per stage) apply to whichever platform is chosen -- they are not eliminable/
+# preferable per-platform signals, so no `rules:` block encodes them here.
+output_template: templates/adr-cicd-pipeline-design.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/pipeline-stage-graph.yaml

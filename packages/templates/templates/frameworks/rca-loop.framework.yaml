@@ -1,0 +1,17 @@
+id: rca-loop
+name: The autonomous RCA loop
+owner_agent: diagnostician
+produces: { adr_category: testing, kb_section: engineering/debugging.md }
+inputs:
+  required: [kb:constraints/**, artifact:Defect]
+# 13 §13.2's own F-DEBUG-1 is a strict ten-state state machine (INTAKE -> REPRODUCE -> ISOLATE ->
+# HYPOTHESISE -> FALSIFY -> DIAGNOSE -> FIX -> PROVE -> PREVENT -> RECORD), not a choice among named
+# alternatives -- it is the loop `debug.workflow.yaml`'s own `run-rca` step invokes via
+# briefs/run-rca-framework.md (10 §10.5/PLAN-M6.md T1). One option, no criteria/rules, the same
+# "execution step, not a decision" shape already established.
+options:
+  - id: run-rca-state-machine
+scoring: rules
+output_template: templates/adr-rca-loop.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/rca-record.yaml

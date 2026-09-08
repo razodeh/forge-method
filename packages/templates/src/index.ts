@@ -98,10 +98,13 @@ export const WORKFLOW_INDEX: Readonly<Record<WorkflowId, string>> = {
 };
 
 /** `11` §11.1-§11.2's own fourteen initialization/architecture frameworks (`repo-strategy` from `11`
- * §11.0's own worked example, plus thirteen more: `PLAN-M6.md` T3), transcribed independently for the
- * identical "this package has no `@forge/methods` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above
- * already document (`02` §2.2's own boundary graph: `templates: []`, zero `@forge/*` dependencies). */
+ * §11.0's own worked example, plus thirteen more: `PLAN-M6.md` T3), plus `12`-`14`'s own twenty-nine
+ * data/technology/testing/debugging/delivery/operations frameworks (`PLAN-M6.md` T4) — forty-three in
+ * total, transcribed independently for the identical "this package has no `@forge/methods` edge"
+ * reason `WorkflowId`/`WORKFLOW_INDEX` above already document (`02` §2.2's own boundary graph:
+ * `templates: []`, zero `@forge/*` dependencies). */
 export type FrameworkId =
+  // T3 — 11 §11.1-§11.2 (F-INIT-1..7, F-ARCH-1..7)
   | 'repo-strategy'
   | 'directory-layout'
   | 'build-toolchain'
@@ -115,7 +118,42 @@ export type FrameworkId =
   | 'pattern-selection'
   | 'nfr-strategy'
   | 'threat-modelling'
-  | 'buy-build-borrow';
+  | 'buy-build-borrow'
+  // T4 — 12 §12.1 (F-DATA-1..8)
+  | 'conceptual-logical-modelling'
+  | 'access-pattern-analysis'
+  | 'storage-selection'
+  | 'consistency-transaction-design'
+  | 'caching-strategy'
+  | 'schema-evolution-migrations'
+  | 'data-lifecycle-privacy-retention'
+  | 'analytical-pipeline-design'
+  // T4 — 12 §12.3 (F-TECH-1)
+  | 'stack-selection'
+  // T4 — 13 §13.1 (F-TEST-1..7)
+  | 'test-pyramid-shape'
+  | 'test-oracle-design'
+  | 'test-data-strategy'
+  | 'test-environment-dependency-strategy'
+  | 'coverage-adequacy'
+  | 'flake-control'
+  | 'agent-executable-tests'
+  // T4 — 13 §13.2 (F-DEBUG-1..3)
+  | 'rca-loop'
+  | 'rca-loop-bounds-escalation'
+  | 'debugging-observability-precondition'
+  // T4 — 13 §13.3 (F-REVIEW-1..2)
+  | 'review-perspectives'
+  | 'review-boundaries'
+  // T4 — 14 (F-DELIVER-1..5, F-OPS-1..3)
+  | 'environment-strategy'
+  | 'build-artifact-strategy'
+  | 'cicd-pipeline-design'
+  | 'deployment-strategy'
+  | 'observability-design'
+  | 'release-management'
+  | 'operational-readiness'
+  | 'cost-model';
 
 /** Resolves a framework id to its `.framework.yaml` file, as a path relative to this package's own
  * root — the identical "caller resolves against wherever `@forge/templates` is actually installed"
@@ -136,6 +174,40 @@ export const FRAMEWORK_INDEX: Readonly<Record<FrameworkId, string>> = {
   'nfr-strategy': 'templates/frameworks/nfr-strategy.framework.yaml',
   'threat-modelling': 'templates/frameworks/threat-modelling.framework.yaml',
   'buy-build-borrow': 'templates/frameworks/buy-build-borrow.framework.yaml',
+  'conceptual-logical-modelling':
+    'templates/frameworks/conceptual-logical-modelling.framework.yaml',
+  'access-pattern-analysis': 'templates/frameworks/access-pattern-analysis.framework.yaml',
+  'storage-selection': 'templates/frameworks/storage-selection.framework.yaml',
+  'consistency-transaction-design':
+    'templates/frameworks/consistency-transaction-design.framework.yaml',
+  'caching-strategy': 'templates/frameworks/caching-strategy.framework.yaml',
+  'schema-evolution-migrations': 'templates/frameworks/schema-evolution-migrations.framework.yaml',
+  'data-lifecycle-privacy-retention':
+    'templates/frameworks/data-lifecycle-privacy-retention.framework.yaml',
+  'analytical-pipeline-design': 'templates/frameworks/analytical-pipeline-design.framework.yaml',
+  'stack-selection': 'templates/frameworks/stack-selection.framework.yaml',
+  'test-pyramid-shape': 'templates/frameworks/test-pyramid-shape.framework.yaml',
+  'test-oracle-design': 'templates/frameworks/test-oracle-design.framework.yaml',
+  'test-data-strategy': 'templates/frameworks/test-data-strategy.framework.yaml',
+  'test-environment-dependency-strategy':
+    'templates/frameworks/test-environment-dependency-strategy.framework.yaml',
+  'coverage-adequacy': 'templates/frameworks/coverage-adequacy.framework.yaml',
+  'flake-control': 'templates/frameworks/flake-control.framework.yaml',
+  'agent-executable-tests': 'templates/frameworks/agent-executable-tests.framework.yaml',
+  'rca-loop': 'templates/frameworks/rca-loop.framework.yaml',
+  'rca-loop-bounds-escalation': 'templates/frameworks/rca-loop-bounds-escalation.framework.yaml',
+  'debugging-observability-precondition':
+    'templates/frameworks/debugging-observability-precondition.framework.yaml',
+  'review-perspectives': 'templates/frameworks/review-perspectives.framework.yaml',
+  'review-boundaries': 'templates/frameworks/review-boundaries.framework.yaml',
+  'environment-strategy': 'templates/frameworks/environment-strategy.framework.yaml',
+  'build-artifact-strategy': 'templates/frameworks/build-artifact-strategy.framework.yaml',
+  'cicd-pipeline-design': 'templates/frameworks/cicd-pipeline-design.framework.yaml',
+  'deployment-strategy': 'templates/frameworks/deployment-strategy.framework.yaml',
+  'observability-design': 'templates/frameworks/observability-design.framework.yaml',
+  'release-management': 'templates/frameworks/release-management.framework.yaml',
+  'operational-readiness': 'templates/frameworks/operational-readiness.framework.yaml',
+  'cost-model': 'templates/frameworks/cost-model.framework.yaml',
 };
 
 /** `10` §10.3's own ten-row gate catalogue, transcribed independently for the identical "this package

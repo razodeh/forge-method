@@ -1,0 +1,16 @@
+id: rca-loop-bounds-escalation
+name: RCA loop bounds and escalation
+owner_agent: diagnostician
+produces: { adr_category: testing, kb_section: engineering/debugging.md }
+inputs:
+  required: [kb:constraints/**]
+# 13 §13.2's own F-DEBUG-2 is a fixed bound table (reproduction attempts 5, hypothesis rounds 3, fix
+# attempts 3, wall clock 45 min, cost = step budget) plus the anti-thrash diff-hashing rule -- not a
+# choice among named alternatives. One option, no criteria/rules, the same "execution step, not a
+# decision" shape already established for rca-loop.framework.yaml.
+options:
+  - id: adopt-rca-loop-bounds
+scoring: rules
+output_template: templates/adr-rca-loop-bounds-escalation.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/rca-escalation-wiring.yaml

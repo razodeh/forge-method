@@ -1,0 +1,37 @@
+id: analytical-pipeline-design
+name: Analytical and pipeline design
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/pipeline.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*)]
+questions:
+  - id: needs_near_real_time_freshness
+    text: 'Do downstream consumers need this data within seconds/minutes of the source event, not hours?'
+    type: boolean
+  - id: source_supports_change_capture
+    text: 'Does the source system support change-data-capture (a WAL/binlog or equivalent) without extra load?'
+    type: boolean
+options:
+  - id: batch
+  - id: cdc
+  - id: stream
+criteria:
+  - id: freshness-fit
+    weight: 0.35
+  - id: operational-burden
+    weight: 0.25
+  - id: source-system-load
+    weight: 0.2
+  - id: cost-per-tb-scanned
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: '!needs_near_real_time_freshness'
+    then: { prefer: batch }
+  - if: 'needs_near_real_time_freshness && source_supports_change_capture'
+    then: { prefer: cdc }
+  - if: 'needs_near_real_time_freshness && !source_supports_change_capture'
+    then: { prefer: stream }
+output_template: templates/adr-analytical-pipeline-design.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/pipeline-data-quality-tests.yaml

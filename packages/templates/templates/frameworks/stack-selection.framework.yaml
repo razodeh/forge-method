@@ -1,0 +1,59 @@
+id: stack-selection
+name: Technology stack selection
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/tech-stack.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec, kb:data/access-patterns.md]
+questions:
+  - id: primary_language_count
+    # 12 §12.3's own hard rule: "The number of primary languages defaults to 1 (2 max at L3) unless an
+    # ADR justifies more." No context field this piece has access to derives that fixed default (it is
+    # not config.concurrency, team_size, or anything else this framework's own inputs carry), so it is
+    # stated in the question text itself rather than left as a `default_from` referencing an unrelated
+    # field -- a copy-paste of repo-strategy.framework.yaml's own `config.concurrency` default was
+    # caught here by a critic round and removed for exactly that reason.
+    text: 'How many primary languages does this stack need? (defaults to 1, 2 max at L3, unless an ADR justifies more)'
+    type: number
+# 12 §12.3's own F-TECH-1 is "the framework that consumes the catalog" -- its real candidate set is
+# @forge/catalog's own selection engine (C5), not a fixed list this file could enumerate honestly (the
+# catalog's own entries number in the hundreds and change independently of this framework). The
+# convention this piece establishes for "delegate to the catalog selection engine," per PLAN-M6.md T4's
+# own instruction to record one: `scoring: hybrid` plus an `options` list naming the catalog's own
+# top-level *kind* categories most central to a stack decision (not individual technologies) -- the
+# real per-technology comparison happens inside @forge/catalog/select itself, called once per kind, with
+# this framework's own criteria/rules as the delegated scoring inputs it is given.
+options:
+  - id: language
+  - id: framework
+  - id: database
+  - id: cache
+  - id: message-queue
+  - id: observability-backend
+  - id: deployment-platform
+criteria:
+  - id: fit-to-requirements
+    weight: 0.2
+  - id: team-familiarity
+    weight: 0.15
+  - id: ecosystem-maturity
+    weight: 0.15
+  - id: operational-burden
+    weight: 0.15
+  - id: hiring-and-agent-support
+    weight: 0.1
+  - id: cost
+    weight: 0.1
+  - id: exit-cost
+    weight: 0.1
+  - id: agent-friendliness
+    weight: 0.05
+scoring: hybrid
+# 12 §12.3's own hard rules (primary-language-count default 1/2-max-at-L3, `maturity: emerging`
+# requires human approval, a `constraints/technical.md` mandate is recorded as-is rather than
+# re-litigated) are enforced by @forge/catalog/select itself against the live catalog data, not by an
+# `eliminate`/`prefer` rule here against this file's own seven kind-category options -- none of those
+# hard rules names a specific *kind* to eliminate or prefer, so no `rules:` block would honestly encode
+# them at this framework's own level.
+output_template: templates/adr-stack-selection.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/stack-adoption.yaml

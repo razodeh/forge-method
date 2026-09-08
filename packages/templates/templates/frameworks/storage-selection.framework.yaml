@@ -1,0 +1,66 @@
+id: storage-selection
+name: Storage selection
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/storage.md }
+inputs:
+  # 12 §12.1's own F-DATA-2 text: "This runs before F-DATA-3 ... F-DATA-3 has requires:
+  # [ access-patterns ]" -- see access-pattern-analysis.framework.yaml's own comment for why this
+  # ordering cannot be expressed as a real `frameworkSchema` field today.
+  required: [kb:constraints/**, kb:data/access-patterns.md, artifact:NFR(*)]
+questions:
+  - id: multi_entity_transactional_invariants
+    text: 'Does this data set have transactional invariants spanning more than one entity?'
+    type: boolean
+  - id: relationship_traversal_is_the_query
+    text: 'Is traversing relationships between records the primary query shape, not lookups or aggregation?'
+    type: boolean
+  - id: consistency_requirement
+    text: 'What consistency does this data set need?'
+    type: choice
+    options: [strong, read-your-writes, monotonic, eventual]
+options:
+  - id: relational
+  - id: key-value-wide-column
+  - id: document
+  - id: graph
+  - id: time-series
+  - id: search-engine
+  - id: cache-in-memory
+  - id: columnar-warehouse
+  - id: event-store-log
+criteria:
+  - id: fit-to-access-patterns
+    weight: 0.2
+  - id: consistency-model-match
+    weight: 0.15
+  - id: operational-burden
+    weight: 0.15
+  - id: team-familiarity
+    weight: 0.1
+  - id: cost-at-projected-scale
+    weight: 0.1
+  - id: ecosystem-and-driver-maturity
+    weight: 0.1
+  - id: migration-and-exit-cost
+    weight: 0.1
+  - id: managed-service-availability
+    weight: 0.05
+  - id: licence
+    weight: 0.05
+scoring: hybrid
+rules:
+  # 12 §12.1's own normative default: "Default to one relational store (PostgreSQL-class) until an
+  # access pattern demonstrably doesn't fit." Encoded as a `prefer`, not a blanket elimination of
+  # every other option, since Postgres itself is still the eliminable default under a real
+  # disqualifying signal.
+  - if: 'multi_entity_transactional_invariants'
+    then: { prefer: relational }
+  - if: 'relationship_traversal_is_the_query'
+    then: { prefer: graph }
+  - if: '!multi_entity_transactional_invariants && !relationship_traversal_is_the_query'
+    then: { prefer: relational }
+  - if: 'consistency_requirement == "eventual"'
+    then: { prefer: event-store-log }
+output_template: templates/adr-storage-selection.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/storage-provisioning.yaml

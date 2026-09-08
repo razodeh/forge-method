@@ -1,0 +1,16 @@
+id: debugging-observability-precondition
+name: Observability as a debugging precondition
+owner_agent: diagnostician
+produces: { adr_category: testing, kb_section: engineering/debugging.md }
+inputs:
+  required: [kb:constraints/**]
+# 13 §13.2's own F-DEBUG-3 is a fixed checklist (correlation/trace ids, an enumerated error taxonomy,
+# trace propagation across async boundaries, redacted request-input retrieval, a debug:context
+# command) `G-Operate` mandates before a stage can pass -- not a choice among named alternatives. One
+# option, no criteria/rules, the same "execution step, not a decision" shape already established.
+options:
+  - id: adopt-debugging-observability-preconditions
+scoring: rules
+output_template: templates/adr-debugging-observability-precondition.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/debug-context-command.yaml

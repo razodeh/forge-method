@@ -1,0 +1,16 @@
+id: conceptual-logical-modelling
+name: Conceptual and logical data modelling
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/conceptual-model.md }
+inputs:
+  required: [kb:constraints/**, artifact:Capability(*), artifact:DataModel]
+# 12 §12.1's own F-DATA-1 text is a fixed procedure (extract entities -> identity/attributes/
+# invariants/lifecycle/ownership -> relationships and aggregates -> ER + state diagrams -> validate),
+# not a choice among named alternatives -- one option, no criteria/rules, matching the "execution step,
+# not a decision" shape already established for F-INIT-7/F-ARCH-2/F-ARCH-6.
+options:
+  - id: produce-conceptual-logical-model
+scoring: rules
+output_template: templates/adr-conceptual-logical-modelling.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/data-model-review.yaml

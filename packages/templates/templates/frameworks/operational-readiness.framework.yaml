@@ -1,0 +1,18 @@
+id: operational-readiness
+name: Operational readiness
+owner_agent: sre
+produces: { adr_category: operations, kb_section: ops/operational-readiness.md }
+inputs:
+  required: [kb:constraints/**, kb:ops/observability.md]
+# 14 §14.7's own F-OPS-2 is the fixed twelve-item checklist G-Operate enforces (deploy+rollback
+# rehearsed, dashboards, alerts with runbooks, backups restore-tested, secrets rotation, log
+# retention/PII, capacity/cost model, on-call expectations, incident process, diagrams current,
+# debugging preconditions) -- not a choice among named alternatives, each item is either satisfied or
+# has a recorded, expiring waiver. One option, no criteria/rules, the same "execution step, not a
+# decision" shape already established.
+options:
+  - id: evaluate-operational-readiness-checklist
+scoring: rules
+output_template: templates/adr-operational-readiness.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/operational-readiness-waivers.yaml
