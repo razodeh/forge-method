@@ -40,9 +40,12 @@ import {
   findMissingGrantedServers,
   mapGrantedMcpServersToAllowedTools,
   mapGrantedMcpServersToConfig,
+  mergeSdkForgeMcpServer,
   readMcpServerNames,
 } from './mcp.ts';
 import type { McpSessionExtras } from './mcp.ts';
+import type { ForgeMcpBackend } from './forge-mcp/index.ts';
+import { createForgeMcpServer } from './forge-mcp/index.ts';
 import { runPreflight } from './preflight.ts';
 import { makeSessionHandle } from './session-handle.ts';
 import { accumulateSessionResult } from './session-result.ts';
@@ -154,6 +157,20 @@ export interface ClaudeCodeAdapterOptions {
    * without a real, billed `claude` process spawn for every such test. */
   readonly spawnCli?: typeof spawnClaudeCli;
   readonly loadSdkTransport?: LoadSdkTransport;
+  /**
+   * `07` §7.3's own "Optional: FORGE MCP server" -- when given, every `sdk`-transport session gets a
+   * fresh `createForgeMcpServer(forgeMcpBackend)` instance (`./forge-mcp/index.ts`, P8) folded into its
+   * own MCP config via `mergeSdkForgeMcpServer` (`mcp.ts`), all 9 `forge_*` tools unconditionally
+   * allowed. `undefined` (the default: no real backend exists yet anywhere this adapter has a
+   * boundary edge to) means zero behavioural change from before this option existed -- the same
+   * "absent input, absent effect" contract `provisionMcp`'s own `mcpGrantsByCwd` already established.
+   *
+   * `cli`-transport sessions never see this at all, by design, not by an oversight this option could
+   * fix: a real, live `McpServer` instance cannot cross the real OS process boundary a spawned `claude`
+   * subprocess is on the other side of. See `mergeSdkForgeMcpServer`'s own doc comment and
+   * `SPEC-QUESTIONS.md` Q120 for the full record of this real, honest transport asymmetry.
+   */
+  readonly forgeMcpBackend?: ForgeMcpBackend;
 }
 
 /**
@@ -170,6 +187,7 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
   private readonly now: () => number;
   private readonly spawnCli: typeof spawnClaudeCli;
   private readonly loadSdk: LoadSdkTransport;
+  private readonly forgeMcpBackend: ForgeMcpBackend | undefined;
 
   /**
    * Never evicted -- a real, deliberate trade-off, not an oversight (`SPEC-QUESTIONS.md` Q116), and
@@ -219,6 +237,7 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     this.now = options.now;
     this.spawnCli = options.spawnCli ?? spawnClaudeCli;
     this.loadSdk = options.loadSdkTransport ?? defaultLoadSdkTransport;
+    this.forgeMcpBackend = options.forgeMcpBackend;
   }
 
   /**
@@ -468,13 +487,29 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
           startedAt,
         );
     } else {
+      // `07` §7.3's own "Optional: FORGE MCP server" (P8) -- `sdk` transport only, a fresh
+      // `McpServer` instance per session (never reused across sessions: a live `McpServer.connect()`
+      // "assumes ownership of the Transport, replacing any callbacks... expects that it is the only
+      // user of the Transport instance going forward," confirmed against the real, installed
+      // `@modelcontextprotocol/sdk`'s own `mcp.d.ts`, so two concurrent sessions sharing one instance
+      // would race for that ownership). The caller-granted `mcpExtras` (if any) is preserved and
+      // merged with, never replaced by, this adapter-internal server -- see `mergeSdkForgeMcpServer`'s
+      // own doc comment (`mcp.ts`) for why this only ever runs for `sdk`, never `cli`.
+      const sdkMcpExtras: McpSessionExtras | undefined =
+        this.forgeMcpBackend === undefined
+          ? mcpExtras
+          : mergeSdkForgeMcpServer(
+              mcpExtras,
+              createForgeMcpServer(this.forgeMcpBackend),
+              !this.config.mcp.adoptHostServers,
+            );
       const outcomePromise = this.startSdkQuery(
         req,
         resumeClaudeSessionId,
         abortController.signal,
         sessionEnv,
         preloadedSdk,
-        mcpExtras,
+        sdkMcpExtras,
       );
       createGenerator = () =>
         this.runSdkSessionFromOutcome(

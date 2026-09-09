@@ -26,6 +26,7 @@ import type {
 import { ClaudeCodeAdapter } from '../src/adapter.ts';
 import type { SdkTransportModule } from '../src/adapter.ts';
 import { claudeCodeAdapterConfigSchema } from '../src/config.ts';
+import type { ForgeMcpBackend } from '../src/forge-mcp/index.ts';
 import { listClaudeCodeModels } from '../src/list-models.ts';
 import type { spawnClaudeCli } from '../src/cli/spawn.ts';
 
@@ -894,6 +895,163 @@ describe('ClaudeCodeAdapter — provisionMcp()/MCP load-verification', () => {
     expect(events.some((event) => event.type === 'error')).toBe(false);
     expect(events.at(-1)).toEqual({ type: 'session.ended', reason: 'complete' });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('ClaudeCodeAdapter — forgeMcpBackend wiring (P8)', () => {
+  const fixtureBackend: ForgeMcpBackend = {
+    kbSearch: () => Promise.resolve([]),
+    kbGet: () => Promise.resolve(undefined),
+    specGet: () => Promise.resolve(undefined),
+    ask: () => Promise.resolve({ answer: 'ok' }),
+    assume: () => Promise.resolve({ acknowledged: true }),
+    handoff: () => Promise.resolve({ acknowledged: true }),
+    requestChange: () => Promise.resolve({ acknowledged: true }),
+    report: () => Promise.resolve({ acknowledged: true }),
+    skillLoad: () => Promise.resolve(undefined),
+  };
+
+  function sdkAdapterCapturingMcpArg(capturedMcpArg: unknown[]): ClaudeCodeAdapter {
+    return new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'sdk' }),
+      env: {},
+      now: () => 0,
+      forgeMcpBackend: fixtureBackend,
+      loadSdkTransport: () =>
+        Promise.resolve({
+          buildSdkOptions: (..._args: unknown[]) => {
+            capturedMcpArg.push(_args[3]);
+            return {};
+          },
+          runSdkQuery: () => ({
+            events: eventsOf([
+              {
+                type: 'session.started',
+                sessionId: 'forge-mcp-sdk-test',
+                model: 'm',
+                tools: [],
+                meta: {},
+              },
+              { type: 'session.ended', reason: 'complete' },
+            ]),
+            interrupt: () => Promise.resolve(),
+          }),
+        }),
+    });
+  }
+
+  it('an sdk-transport session gets a real, in-process "forge" server entry and mcp__forge__* allowed, when forgeMcpBackend is configured and no provisionMcp grant exists at all', async () => {
+    const capturedMcpArg: unknown[] = [];
+    const adapter = sdkAdapterCapturingMcpArg(capturedMcpArg);
+    const { result } = await drain(
+      await adapter.startSession(baseRequest({ cwd: '/tmp/forge-mcp-sdk-lane-1' })),
+    );
+    expect(result.ok).toBe(true);
+    const mcp = capturedMcpArg[0] as {
+      allowedTools: readonly string[];
+      serverConfig: Record<string, { type: string; name: string; instance: unknown }>;
+      strict: boolean;
+    };
+    expect(mcp.allowedTools).toContain('mcp__forge__*');
+    expect(mcp.serverConfig['forge']).toMatchObject({ type: 'sdk', name: 'forge' });
+    expect(mcp.serverConfig['forge']?.instance).toBeDefined();
+  });
+
+  it('the forge server entry is merged alongside, not instead of, a real provisionMcp() grant for the same session', async () => {
+    const capturedMcpArg: unknown[] = [];
+    const adapter = sdkAdapterCapturingMcpArg(capturedMcpArg);
+    const cwd = '/tmp/forge-mcp-sdk-lane-merge';
+    await adapter.provisionMcp(
+      [{ id: 'github', transport: 'stdio', command: 'npx', grantedTools: ['get_issue'] }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    await drain(await adapter.startSession(baseRequest({ cwd })));
+    const mcp = capturedMcpArg[0] as {
+      allowedTools: readonly string[];
+      serverConfig: Record<string, unknown>;
+    };
+    expect(mcp.allowedTools).toEqual(
+      expect.arrayContaining(['mcp__github__get_issue', 'mcp__forge__*']),
+    );
+    expect(Object.keys(mcp.serverConfig).sort()).toEqual(['forge', 'github']);
+  });
+
+  it("the reserved 'forge' server id silently supersedes a caller-granted server that happens to use the identical id -- documented precedence, not a merge or a conflict error", async () => {
+    const capturedMcpArg: unknown[] = [];
+    const adapter = sdkAdapterCapturingMcpArg(capturedMcpArg);
+    const cwd = '/tmp/forge-mcp-sdk-lane-collision';
+    await adapter.provisionMcp(
+      [{ id: 'forge', transport: 'stdio', command: 'a-caller-supplied-binary', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    await drain(await adapter.startSession(baseRequest({ cwd })));
+    const mcp = capturedMcpArg[0] as { serverConfig: Record<string, { type: string }> };
+    expect(mcp.serverConfig['forge']?.type).toBe('sdk');
+  });
+
+  it('each session gets its own fresh McpServer instance -- never the same live object reused across two sessions on the same adapter', async () => {
+    const capturedMcpArg: unknown[] = [];
+    const adapter = sdkAdapterCapturingMcpArg(capturedMcpArg);
+    await drain(
+      await adapter.startSession(baseRequest({ cwd: '/tmp/forge-mcp-sdk-lane-fresh-1' })),
+    );
+    await drain(
+      await adapter.startSession(baseRequest({ cwd: '/tmp/forge-mcp-sdk-lane-fresh-2' })),
+    );
+    const first = capturedMcpArg[0] as { serverConfig: Record<string, { instance: unknown }> };
+    const second = capturedMcpArg[1] as { serverConfig: Record<string, { instance: unknown }> };
+    expect(first.serverConfig['forge']?.instance).not.toBe(second.serverConfig['forge']?.instance);
+  });
+
+  it('a cli-transport session never receives a forge server entry at all, even when forgeMcpBackend is configured -- a live McpServer instance cannot cross the real subprocess boundary', async () => {
+    const log: string[] = [];
+    const capturedArgs: (readonly string[])[] = [];
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      forgeMcpBackend: fixtureBackend,
+      spawnCli: (args, options) => {
+        capturedArgs.push(args);
+        return fakeSpawnCli(log)(args, options);
+      },
+    });
+    const { result } = await drain(
+      await adapter.startSession(baseRequest({ cwd: '/tmp/forge-mcp-cli-lane' })),
+    );
+    expect(result.ok).toBe(true);
+    expect(capturedArgs[0]).not.toContain('--mcp-config');
+  });
+
+  it('omitting forgeMcpBackend entirely leaves an sdk-transport session exactly as before this option existed -- no mcp arg at all when no provisionMcp grant exists either', async () => {
+    const capturedMcpArg: unknown[] = [];
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'sdk' }),
+      env: {},
+      now: () => 0,
+      loadSdkTransport: () =>
+        Promise.resolve({
+          buildSdkOptions: (..._args: unknown[]) => {
+            capturedMcpArg.push(_args[3]);
+            return {};
+          },
+          runSdkQuery: () => ({
+            events: eventsOf([
+              {
+                type: 'session.started',
+                sessionId: 'no-forge-mcp-test',
+                model: 'm',
+                tools: [],
+                meta: {},
+              },
+              { type: 'session.ended', reason: 'complete' },
+            ]),
+            interrupt: () => Promise.resolve(),
+          }),
+        }),
+    });
+    await drain(await adapter.startSession(baseRequest({ cwd: '/tmp/forge-mcp-sdk-lane-absent' })));
+    expect(capturedMcpArg[0]).toBeUndefined();
   });
 });
 

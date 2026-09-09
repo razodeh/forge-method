@@ -8888,3 +8888,128 @@ on:**
   future reader knows the actual boundary of what P7 guarantees.
 
 See `GAUNTLET-LOG.md`'s own M7 P7 entry for the full critic round.
+
+## Q120 — M7 P8's FORGE MCP server: the verbatim 9-tool table built and tested, a real in-process
+SDK-transport wiring path found and used, and a genuine, unresolved cli-transport gap recorded honestly
+
+**`createForgeMcpServer(backend): McpServer`** (`packages/adapter-claude-code/src/forge-mcp/`) registers
+all 9 tools from `07` §7.3's own table verbatim (`forge_kb_search`, `forge_kb_get`, `forge_spec_get`,
+`forge_ask`, `forge_assume`, `forge_handoff`, `forge_request_change`, `forge_report`,
+`forge_skill_load`), each delegating to an injected `ForgeMcpBackend` method — no boundary edge to
+`@forge/kb`/`@forge/agents` exists, so every method is injected, exactly as `PLAN-M7.md`'s own P8
+Surface names, not implemented against a real backend here. Proven against a real, connecting MCP
+client (`@modelcontextprotocol/sdk`'s own `Client` + `InMemoryTransport.createLinkedPair()`, never
+Claude Code itself) — `test/forge-mcp/server.test.ts`, 14 tests.
+
+**Five of the nine tools' own parameter shapes were deliberately matched, field-for-field, to
+`@forge/adapter-kit`'s already-established `ParsedControlToken` union** (`ask`↔`FORGE_ASK`,
+`assume`↔`FORGE_ASSUME`, `handoff`↔`FORGE_HANDOFF`, `requestChange`↔`FORGE_REQUEST_CHANGE`,
+`skillLoad`↔`FORGE_LOAD_SKILL`) rather than inventing new, independently-designed shapes — `07` §7.3
+itself frames the MCP tool and the token-parser fallback as two routes to the *same* action, so keeping
+their payload shapes aligned (not just their names) is what makes that framing actually true. The other
+four (`kbSearch`/`kbGet`/`specGet`/`report`) have no control-token equivalent at all — confirmed real,
+not an oversight: those four return data an agent consumes programmatically, unlike the escalation-style
+actions the token parser exists to let a human see even without MCP.
+
+**A real, confirmed field-count mismatch, left as specified rather than silently "fixed":**
+`ParsedControlToken`'s own `'FORGE_ASSUME'` variant carries a fourth, mandatory `validateBy: string`
+field this method's own signature does not — because `07` §7.3's own tool table and `PLAN-M7.md`'s own
+P8 surface both name `assume`'s real signature as exactly three parameters (`text, confidence, impact`),
+verbatim. Implemented exactly as specified; the real structural asymmetry between the two "equivalent"
+routes is recorded here rather than resolved by unilaterally widening this piece's own agreed contract.
+
+**A confirmed, load-bearing MCP SDK guarantee, verified against real source, not assumed:** the
+installed `@modelcontextprotocol/sdk@1.30.0`'s own `McpServer` (`dist/esm/server/mcp.js`,
+`setToolRequestHandlers`) already wraps every registered tool's dispatch in a `try`/`catch` that
+converts a handler's synchronous throw *or* a rejected promise into a real `{content: [...], isError:
+true}` result — never an uncaught rejection. `server.ts` relies on this directly rather than adding a
+second, redundant `try`/`catch` per tool; proven end to end (not just read from source) by a test whose
+backend throws mid-call and whose next call on the same connection still succeeds normally.
+
+**A confirmed, load-bearing constraint on `structuredContent`:** `CallToolResultSchema`'s own real field
+type is `z.record(z.string(), z.unknown())` — a plain object, never a bare array or primitive. This is
+why `forge_kb_search`'s naturally array-shaped result is wrapped as `{hits: [...]}` rather than returned
+directly, and why `forge_kb_get`/`forge_spec_get`/`forge_skill_load`'s "not found" case is `{found:
+false}` (a real, non-error, object-shaped result) rather than a thrown/error result — "not found" is a
+normal, expected outcome for a fetch-by-id tool, not an exceptional one.
+
+**The real "wired into both transports... whenever the adapter reports `mcp: true`" mandate resolved
+asymmetrically, on real evidence, not evenly by default:**
+
+- **`sdk` transport: genuinely wired, real, and tested.** The real, installed
+  `@anthropic-ai/claude-agent-sdk`'s own `sdk.d.ts` confirms `McpServerConfig` (the union
+  `McpSessionExtras.serverConfig`'s values are already typed as, P7) includes a fourth variant beyond
+  the three P7 already used: `McpSdkServerConfigWithInstance = {type: 'sdk', name, instance: McpServer}`
+  — its own doc comment states verbatim "Not serializable - contains a live McpServer object," and
+  `McpServer` there is confirmed (via `sdk.d.ts`'s own import statement) to be the *identical*
+  `@modelcontextprotocol/sdk/server/mcp.js` class `createForgeMcpServer` already returns. No subprocess,
+  no URL, no JSON — the SDK transport hosts a real, live, in-process instance directly.
+  `mergeSdkForgeMcpServer` (`mcp.ts`) folds this into whatever `provisionMcp`-granted `McpSessionExtras`
+  already existed (or starts fresh if none did); `ClaudeCodeAdapterOptions.forgeMcpBackend` (`undefined`
+  by default, zero behavioural change) is the real, tested, off-by-default integration point
+  `startOnTransport`'s own `sdk` branch calls this from. A **fresh** `McpServer` instance is constructed
+  per session, never reused across sessions on the same adapter — confirmed necessary, not merely
+  cautious: the real `McpServer.connect()`'s own doc comment states it "assumes ownership of the
+  Transport, replacing any callbacks... expects that it is the only user of the Transport instance going
+  forward," which two concurrent sessions sharing one instance would violate. Tested directly (two
+  sequential sessions on the same adapter instance capture two distinct `instance` object references).
+- **`cli` transport: genuinely NOT wired, and left that way deliberately, not by an oversight.** The
+  `cli` transport spawns a real, separate OS subprocess (`execa`, P2) with no relationship to the Agent
+  SDK's own in-process hosting at all — a live `McpServer` instance cannot cross that real process
+  boundary (it is not JSON-serializable, and `--mcp-config` only ever accepts a JSON string). Making a
+  *real* backend reachable from inside that subprocess would need real IPC infrastructure (the
+  subprocess would need some channel back to this adapter's own process to actually invoke a live
+  `ForgeMcpBackend`'s methods) that no piece in this milestone owns yet, and building an unverified,
+  likely-fragile version of it now — with no real backend to even exercise it against, since none exists
+  anywhere reachable from this package — would repeat the exact mistake `build-args.ts`'s own stdin-
+  piping refusal (`SPEC-QUESTIONS.md` Q114) already avoided once this milestone: shipping an unverified
+  mechanism instead of an honest, documented gap. `ClaudeCodeAdapter`'s own `capabilities()`/`mcp`/
+  `toolProxy` fields are unaffected either way (confirmed both predate and are conceptually unrelated to
+  forge-mcp specifically — `mcp: true` is about caller-*granted* MCP servers passing through, P7's own
+  concern, not this adapter-internal server).
+
+**Two further, deliberate, non-fixed trade-offs, recorded rather than resolved:**
+
+- **`'forge'` is a reserved server id.** `mergeSdkForgeMcpServer` always keys the forge-mcp entry at
+  `'forge'`, silently superseding a caller-granted `GrantedMcpServer` that happens to use the identical
+  id (via `provisionMcp`) rather than merging with it or reporting a conflict. Tested directly (a
+  caller-granted server literally named `'forge'` is confirmed superseded, not merged). No validation was
+  added to `provisionMcp`/`mcp.ts` itself to reject a caller grant using this reserved id up front —
+  would touch P7's own already-committed, already-tested grant-validation path for a collision this
+  piece has no evidence is a real, reachable scenario (`GrantedMcpServer.id` values come from FORGE's
+  own MCP-server registry configuration, not untrusted model output, the identical lower-realistic-risk
+  reasoning `mcp.ts`'s own top-of-file doc comment already applies to a sibling concern).
+- **`drainAndTrack`'s own load-verification Check (P7) never covers the forge-mcp server itself.** Only
+  `provisionMcp`'s own caller-granted `GrantedMcpServer[]` list is checked against the real
+  `system/init` event's reported names — the forge-mcp server has no `GrantedMcpServer`-shaped
+  representation at all (it is a raw `McpServer` instance, not something a caller "granted"), and no
+  live evidence exists of what a real `type: 'sdk'` server's own failure mode even looks like (this
+  whole milestone has never made a single live MCP-server-granting call of any kind). A real, if silent,
+  degradation this leaves open: if the forge-mcp server ever failed to load for real, the session would
+  proceed as if it had never been configured, with no typed error naming that -- left honestly
+  unresolved rather than building an unverified check against a failure mode with zero real evidence
+  behind it.
+
+**A fresh critic round, given the piece plus instructions to verify every load-bearing SDK claim
+directly against the real, installed source (not the `.d.ts` alone — it traced the actual bundled
+`@anthropic-ai/claude-agent-sdk/sdk.mjs` to confirm the `McpServer.connect()`-ownership race this
+piece's own "fresh instance per session" design avoids is real, not merely documented as a risk),
+found one real issue: `backend.ts`'s own top-of-file field-comparison list said `assume` ↔
+`'FORGE_ASSUME'` matched "except `impact`" — backwards. `impact` is present, identically typed, in
+*both* routes; the real, sole divergence (correctly named ten lines further down in the same file's own
+fuller explanation) is `validateBy`. **Fixed**: the one-line summary now names `validateBy`, matching
+the fuller explanation beneath it. No other genuine bug was found after this level of scrutiny,
+including the prototype-pollution question `mapGrantedMcpServersToConfig`'s own `Object.create(null)`
+fix (Q119) raises for `mergeSdkForgeMcpServer`'s own object-spread merge: object-spread uses
+`[[DefineOwnProperty]]`, not the bracket-assignment `[[Set]]` the earlier fix had to guard against, so
+a source object with an own `"__proto__"` key copies as an inert data property here — genuinely no gap,
+confirmed rather than assumed.
+
+The critic also noted, without treating it as a required fix, that `mergeSdkForgeMcpServer` had no
+*direct*, pure-function unit test in `mcp.test.ts` — every scenario was proven correctly, but only via
+the fuller adapter/session machinery in `adapter.test.ts`. Judged "defensible, not a real gap in what's
+proven," but cheap enough to close directly: four new unit tests were added to `mcp.test.ts` (fresh-
+extras case, preserve-existing-grant case, reserved-id-supersedes case, `strict` passthrough), isolating
+this function's own logic from the rest of the adapter for faster, more exhaustive coverage.
+
+See `GAUNTLET-LOG.md`'s own M7 P8 entry for the full critic round.

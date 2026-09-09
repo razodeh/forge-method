@@ -6,14 +6,17 @@
  * @see specs/15 §15.6
  * @see PLAN-M7.md P7
  */
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { describe, expect, it } from 'vitest';
 
 import type { GrantedMcpServer } from '@forge/adapter-kit';
 
 import {
+  FORGE_MCP_SERVER_ID,
   findMissingGrantedServers,
   mapGrantedMcpServersToAllowedTools,
   mapGrantedMcpServersToConfig,
+  mergeSdkForgeMcpServer,
   readMcpServerNames,
 } from '../src/mcp.ts';
 
@@ -207,5 +210,76 @@ describe('readMcpServerNames', () => {
 
   it('an empty mcp_servers array reads as no names reported', () => {
     expect(readMcpServerNames({ mcp_servers: [] })).toEqual([]);
+  });
+});
+
+describe('mergeSdkForgeMcpServer', () => {
+  it('starts a fresh McpSessionExtras (allowedTools/serverConfig both containing only the forge entry) when no prior extras exist at all', () => {
+    const forgeServer = new McpServer({ name: 'forge', version: '0.0.0' });
+    const merged = mergeSdkForgeMcpServer(undefined, forgeServer, true);
+    expect(merged.allowedTools).toEqual(['mcp__forge__*']);
+    expect(Object.keys(merged.serverConfig)).toEqual([FORGE_MCP_SERVER_ID]);
+    expect(merged.serverConfig[FORGE_MCP_SERVER_ID]).toEqual({
+      type: 'sdk',
+      name: FORGE_MCP_SERVER_ID,
+      instance: forgeServer,
+    });
+    expect(merged.strict).toBe(true);
+  });
+
+  it("preserves an existing grant's own allowedTools/serverConfig entries, adding the forge entry alongside rather than replacing them", () => {
+    const forgeServer = new McpServer({ name: 'forge', version: '0.0.0' });
+    const existing = mapGrantedMcpServersToConfig([
+      { id: 'github', transport: 'stdio', command: 'npx', grantedTools: ['get_issue'] },
+    ]);
+    const merged = mergeSdkForgeMcpServer(
+      {
+        allowedTools: ['mcp__github__get_issue'],
+        serverConfig: existing,
+        strict: false,
+      },
+      forgeServer,
+      false,
+    );
+    expect(merged.allowedTools).toEqual(['mcp__github__get_issue', 'mcp__forge__*']);
+    expect(Object.keys(merged.serverConfig).sort()).toEqual(['forge', 'github']);
+    expect(merged.serverConfig['github']).toEqual(existing['github']);
+    expect(merged.strict).toBe(false);
+  });
+
+  it("the reserved 'forge' id silently supersedes a same-named entry an existing grant already had, rather than merging or throwing", () => {
+    const forgeServer = new McpServer({ name: 'forge', version: '0.0.0' });
+    const merged = mergeSdkForgeMcpServer(
+      {
+        allowedTools: [],
+        serverConfig: { forge: { type: 'stdio', command: 'a-caller-supplied-binary' } },
+        strict: true,
+      },
+      forgeServer,
+      true,
+    );
+    expect(merged.serverConfig['forge']).toEqual({
+      type: 'sdk',
+      name: FORGE_MCP_SERVER_ID,
+      instance: forgeServer,
+    });
+  });
+
+  it('passes strict through verbatim, independent of whatever the prior extras carried', () => {
+    const forgeServer = new McpServer({ name: 'forge', version: '0.0.0' });
+    expect(
+      mergeSdkForgeMcpServer(
+        { allowedTools: [], serverConfig: {}, strict: false },
+        forgeServer,
+        true,
+      ).strict,
+    ).toBe(true);
+    expect(
+      mergeSdkForgeMcpServer(
+        { allowedTools: [], serverConfig: {}, strict: true },
+        forgeServer,
+        false,
+      ).strict,
+    ).toBe(false);
   });
 });

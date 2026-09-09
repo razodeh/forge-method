@@ -6901,3 +6901,63 @@ the critic's own findings. A full monorepo `tsc --build`/`eslint .`/test run was
 one pre-existing, unrelated flaky test in `packages/engine/test/e2e/crash-resume.test.ts` (a git-
 worktree-lock contention race under full-suite concurrency, confirmed by re-running it alone
 successfully) — untouched by this piece and not a regression it introduced.
+
+## M7 P8 — the FORGE MCP server, in-process, 9 tools, injected backend (`07` §7.3)
+
+**Rounds: 1 (fresh critic finding one real documentation-clarity issue plus one worth-closing test-
+coverage gap, neither a correctness/security bug; both addressed; no separate verify round run).
+Outcome: WON.**
+
+`@forge/adapter-claude-code/forge-mcp`: `ForgeMcpBackend` (9 injected methods, no real implementation --
+no boundary edge to `@forge/kb`/`@forge/agents` exists) and `createForgeMcpServer(backend): McpServer`,
+a real `@modelcontextprotocol/sdk` server registering all 9 tools from `07` §7.3's own table verbatim.
+Also wired a real, off-by-default integration point (`ClaudeCodeAdapterOptions.forgeMcpBackend`) into
+`ClaudeCodeAdapter`'s own `sdk` transport, using a real, confirmed `@anthropic-ai/claude-agent-sdk`
+mechanism (`McpSdkServerConfigWithInstance`) discovered specifically for this piece — genuinely not
+possible for the `cli` transport (a live `McpServer` instance cannot cross a real OS process boundary),
+recorded honestly rather than built unverified. See `SPEC-QUESTIONS.md` Q120 for the full record.
+
+### Round 1 — fresh critic (no context on plan/log, told to verify every load-bearing SDK claim against
+the real, installed source rather than trust the doc comments): one real finding, one worth-closing gap
+
+What the critic caught, most severe first:
+
+1. **[LOW, doc-accuracy] `backend.ts`'s own field-comparison list named the wrong divergent field for
+   `assume`.** The one-line summary read "`assume` ↔ `'FORGE_ASSUME'` (`text`, `confidence`) --
+   except `impact`" — backwards: `impact` is present, identically typed, in *both* `assume()` and the
+   real `ParsedControlToken`'s `'FORGE_ASSUME'` variant (`@forge/adapter-kit/control-tokens.ts`); the
+   real, sole divergence (already correctly explained ten lines further down in the same file) is the
+   token's own extra, mandatory `validateBy` field. **Fixed**: the summary now names `validateBy`,
+   matching the fuller explanation beneath it. The critic went further than the doc comment itself,
+   tracing into the actual bundled `@anthropic-ai/claude-agent-sdk/sdk.mjs` (not just its `.d.ts`) to
+   confirm the real `Query.connectSdkMcpServer` call site genuinely calls `.connect()` per session on
+   whatever `McpServer` instance it's given -- proving this piece's own "fresh instance per session,
+   never reused" design is necessary, not merely cautious, and separately confirmed (via pnpm store
+   inspection) that both this package's own `@modelcontextprotocol/sdk` dependency and the Agent SDK's
+   own internal one resolve to the *identical* physical package on disk, ruling out a subtle duplicate-
+   package class-identity mismatch between the two.
+2. **[Coverage, not a bug] `mergeSdkForgeMcpServer` had no direct, pure-function unit test in
+   `mcp.test.ts`** -- every real scenario (fresh extras, preserving an existing grant, the reserved-id
+   supersede case) was already correctly proven, but only via the fuller `adapter.test.ts` machinery.
+   The critic explicitly judged this "defensible, not a real gap in what's proven," not a required fix
+   -- closed anyway, cheaply: four new unit tests isolate the function's own logic directly, including
+   confirming the merge's own object-spread pattern does *not* need the same `Object.create(null)`
+   defense `mapGrantedMcpServersToConfig` required (Q119): object-spread uses `[[DefineOwnProperty]]`,
+   not the bracket-assignment `[[Set]]` that made the earlier function's own `__proto__` gap possible.
+
+The critic explicitly found no genuine correctness or security bug after checking, among other things:
+the real `McpServer` tool-dispatch code's own try/catch-to-`isError` conversion (traced directly into
+`dist/esm/server/mcp.js`, not assumed from the doc comment merely citing it), the real
+`CallToolResultSchema.structuredContent`'s own `z.record(...)` type (confirming why `forge_kb_search`'s
+array result is wrapped as `{hits:[...]}`), every one of the 9 handlers' own argument order and Zod
+schema strictness, and whether the unconditional `mcp__forge__*` allow-rule for an adapter-internal,
+always-trusted server is a real risk (judged reasonable, not a bug: gating FORGE's own escalation tools
+behind ordinary permission prompting would risk an unattended session deadlocking on a callback nothing
+answers).
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (266 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after both fixes. A full monorepo `tsc --build`/`eslint .`/
+test run was also clean, aside from one pre-existing, unrelated flaky test in
+`packages/cli/test/commands/run/resume.test.ts` (a git branch-name collision under full-suite
+concurrency -- the same class of pre-existing flake as P7's own `crash-resume.test.ts` one, confirmed
+by re-running it alone successfully) -- untouched by this piece and not a regression it introduced.

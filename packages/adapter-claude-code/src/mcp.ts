@@ -21,12 +21,21 @@
  * `--allowedTools`/`Options.allowedTools` value `mapToolGrantToAllowedTools` (`tool-grant.ts`) already
  * builds, not a second, separate permission channel.
  *
+ * `mergeSdkForgeMcpServer` (P8) is this file's own third piece, added alongside the above rather than
+ * in `forge-mcp/`: it produces the identical `McpSessionExtras` shape this file already owns, just
+ * with one more, adapter-internal server folded in -- `forge-mcp/` itself has no reason to know that
+ * shape exists, or to depend on this package's own `@anthropic-ai/claude-agent-sdk` dependency at all
+ * (it is built to work against any real MCP client, Claude Code included but not exclusively).
+ *
  * @see specs/07 §7.3
  * @see specs/15 §15.5
  * @see specs/15 §15.6
  * @see SPEC-QUESTIONS.md Q119
+ * @see SPEC-QUESTIONS.md Q120
  * @see PLAN-M7.md P7
+ * @see PLAN-M7.md P8
  */
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { GrantedMcpServer } from '@forge/adapter-kit';
 
@@ -176,4 +185,48 @@ export function readMcpServerNames(meta: Readonly<Record<string, unknown>>): rea
     }
   }
   return names;
+}
+
+/** Reserved: the server id `mergeSdkForgeMcpServer` (below) always uses for the adapter-internal
+ * forge-mcp server -- a caller-granted `GrantedMcpServer` happening to use this exact id is silently
+ * superseded by it (see that function's own doc comment), never merged or reported as a conflict. */
+export const FORGE_MCP_SERVER_ID = 'forge';
+
+/**
+ * `PLAN-M7.md` P8's own "wired into both transports... whenever the adapter reports `mcp: true`"
+ * mandate, for the `sdk` transport specifically: folds an already-constructed, real, in-process
+ * `McpServer` (`forge-mcp/server.ts`'s own `createForgeMcpServer`) into whatever `McpSessionExtras`
+ * `provisionMcp`'s own caller-granted servers already produced (`extras`, possibly `undefined`).
+ *
+ * The real, confirmed `McpSdkServerConfigWithInstance` variant ("MCP SDK server config with an actual
+ * McpServer instance... Not serializable - contains a live McpServer object," `sdk.d.ts`) is exactly
+ * this: no subprocess, no URL, no JSON -- the SDK transport hosts it directly, in this same process.
+ * `McpServerConfig` (the type `McpSessionExtras.serverConfig`'s own values are already typed as)
+ * already includes this variant, confirmed directly against `sdk.d.ts` -- nothing about
+ * `McpSessionExtras` itself needed to change to carry it.
+ *
+ * This function is deliberately never called for the `cli` transport: a live `McpServer` instance
+ * cannot cross a real OS process boundary (`JSON.stringify`-ing it for `--mcp-config` would not
+ * produce a working server, and likely not even valid JSON at all, given the object's own internal
+ * circular references) -- `adapter.ts`'s own `startOnTransport` only calls this from its `sdk` branch,
+ * an honest, real asymmetry recorded in `SPEC-QUESTIONS.md` Q120, not something this function itself
+ * tries to paper over.
+ *
+ * All 9 forge-mcp tools are allowed unconditionally (`mcp__forge__*`) whenever this runs -- unlike a
+ * caller's own `provisionMcp` grant, there is no "subset of first-party FORGE tools" concept for this
+ * adapter to enforce a narrower allowlist against.
+ */
+export function mergeSdkForgeMcpServer(
+  extras: McpSessionExtras | undefined,
+  forgeServer: McpServer,
+  strict: boolean,
+): McpSessionExtras {
+  return {
+    allowedTools: [...(extras?.allowedTools ?? []), `mcp__${FORGE_MCP_SERVER_ID}__*`],
+    serverConfig: {
+      ...extras?.serverConfig,
+      [FORGE_MCP_SERVER_ID]: { type: 'sdk', name: FORGE_MCP_SERVER_ID, instance: forgeServer },
+    },
+    strict,
+  };
 }
