@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./cli": "./src/cli/index.ts",
+    "./sdk": "./src/sdk/index.ts",
     "./forge-mcp": "./src/forge-mcp/index.ts"
   },
   "engines": {

@@ -171,9 +171,33 @@ function mapResultError(message: Record<string, unknown>): AdapterEvent | undefi
   return { type: 'error', code: subtype, message: firstError ?? subtype, retryable: false };
 }
 
+/**
+ * A fresh critic round (found while reviewing this logic's own sibling in the SDK transport, P3,
+ * which mirrors this file) found the original draft dispatched purely on `is_error === true`, missing
+ * a second, real error shape: the SDK's own `SDKResultMessage` doc comment (the identical underlying
+ * producer this CLI transport's own NDJSON output comes from) says `subtype: 'success'` "carries the
+ * final assistant text in `result` -- or, with `is_error` true, the error text when the turn ended on
+ * an API error." Confirmed directly against the real, published SDK's own `SDKResultSuccess` type: it
+ * carries both `is_error: boolean` and `result: string`, with no `errors` array at all -- a
+ * *different* shape from `SDKResultError`'s own dedicated `error_*` subtypes. Dispatching on
+ * `is_error` alone routed this case into `mapResultError`, which reads `subtype`/`errors` (absent or
+ * meaningless on this shape), producing a nonsensical `{code:'success', message:'success'}` instead
+ * of the real error text. `subtype` is now checked first: only `subtype !== 'success'` is genuinely
+ * `SDKResultError`-shaped; `subtype === 'success'` with `is_error: true` is this second, real case,
+ * read from `result` instead of `errors`. `'api_error'` is this piece's own label for it (not a value
+ * literally present in the SDK's own subtype enum, since none exists for this specific case).
+ */
 function mapResult(message: Record<string, unknown>): AdapterEvent | undefined {
-  const isError = message['is_error'];
-  if (isError === true) return mapResultError(message);
+  if (message['subtype'] !== 'success') return mapResultError(message);
+  if (message['is_error'] === true) {
+    const resultText = textOf(message['result']);
+    return {
+      type: 'error',
+      code: 'api_error',
+      message: resultText ?? 'API error',
+      retryable: false,
+    };
+  }
   return mapResultSuccess(message);
 }
 

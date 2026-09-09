@@ -1,13 +1,18 @@
 /**
- * `mapToolGrantToAllowedTools`/`mapPermissionMode` — `07` §7.2's own fail-closed tool-grant mapping.
+ * `mapToolGrantToAllowedTools`/`mapPermissionModeForCli`/`mapPermissionModeForSdk` — `07` §7.2's own
+ * fail-closed tool-grant mapping.
  *
  * @see specs/07 §7.2
  * @see specs/07 §7.3
- * @see PLAN-M7.md P2, P5
+ * @see PLAN-M7.md P2, P3, P5
  */
 import { describe, expect, it } from 'vitest';
 
-import { mapPermissionMode, mapToolGrantToAllowedTools } from '../src/tool-grant.ts';
+import {
+  mapPermissionModeForCli,
+  mapPermissionModeForSdk,
+  mapToolGrantToAllowedTools,
+} from '../src/tool-grant.ts';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 function grant(overrides: Partial<SessionRequest['tools']> = {}): SessionRequest['tools'] {
@@ -77,13 +82,31 @@ describe('mapToolGrantToAllowedTools', () => {
   });
 });
 
-describe('mapPermissionMode', () => {
+describe('mapPermissionModeForCli', () => {
   it.each([
     ['deny-unlisted', 'dontAsk'],
     ['accept-edits', 'acceptEdits'],
     ['auto', 'auto'],
     ['manual', 'manual'],
   ] as const)('%s maps to the real, confirmed --permission-mode value %s', (mode, expected) => {
-    expect(mapPermissionMode(mode)).toBe(expected);
+    expect(mapPermissionModeForCli(mode)).toBe(expected);
+  });
+});
+
+describe('mapPermissionModeForSdk', () => {
+  it.each([
+    ['deny-unlisted', 'dontAsk'],
+    ['accept-edits', 'acceptEdits'],
+    ['auto', 'auto'],
+  ] as const)(
+    '%s maps to the same real, confirmed value as the CLI transport: %s',
+    (mode, expected) => {
+      expect(mapPermissionModeForSdk(mode)).toBe(expected);
+    },
+  );
+
+  it("'manual' maps to the SDK's own real 'default' spelling, NOT the CLI transport's 'manual' -- the one real vocabulary difference between the two transports", () => {
+    expect(mapPermissionModeForSdk('manual')).toBe('default');
+    expect(mapPermissionModeForCli('manual')).toBe('manual');
   });
 });

@@ -204,6 +204,25 @@ describe('parseCliEventLine', () => {
     });
   });
 
+  it('result success with is_error:true (a real, distinct SDKResultSuccess error shape, not SDKResultError) -> error, read from result, not errors', () => {
+    // A fresh critic round found the original draft dispatched purely on `is_error === true`,
+    // routing this real case into the `errors`-array-shaped `mapResultError` instead -- confirmed
+    // directly against the real SDK's own `SDKResultSuccess` type, which carries `is_error` AND
+    // `result: string` together with no `errors` field at all.
+    const line = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'the API returned a 529 overloaded error mid-turn',
+    });
+    expect(parseCliEventLine(line)).toEqual({
+      type: 'error',
+      code: 'api_error',
+      message: 'the API returned a 529 overloaded error mid-turn',
+      retryable: false,
+    });
+  });
+
   it('system/api_retry (grounded in the real SDK SDKAPIRetryMessage field names, never observed live) -> retry', () => {
     const line = JSON.stringify({
       type: 'system',

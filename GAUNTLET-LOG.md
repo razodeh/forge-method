@@ -6518,3 +6518,67 @@ field; confirmed the live-vs-SDK-grounded provenance distinction is honest throu
 without `FORGE_LIVE=1`) all clean after every fix — re-verified live once more after the execa-hang fix
 (`FORGE_LIVE=1` against the real installed CLI, real API key) to confirm the happy path still works
 after the short-circuit branch was added.
+
+---
+
+## M7 P3 — `@forge/adapter-claude-code` SDK transport (`07` §7.3)
+
+**Rounds: 1 (fresh critic finding two real bugs — one shared with already-committed P2 code — and one
+recurring dangling citation caught before commit; all fixed; no separate verify round run). Outcome:
+WON.**
+
+`buildSdkOptions` (the `07` §7.3 mapping table's SDK column), `mapSdkMessage` (one real `SDKMessage`
+union member -> zero or more `AdapterEvent`s, deliberately mirroring P2's own `parseCliEventLine`
+one-for-one), and `runSdkQuery` (wraps the real `query()` call). Unlike P2, this piece did not make a
+fresh live capture up front — every mapping is grounded in the real, published
+`@anthropic-ai/claude-agent-sdk@0.3.266`'s own `.d.ts` field names, justified by confirmed (not
+assumed) evidence that the CLI and SDK share the same underlying producer. One real, live `query()`
+call proved the end-to-end wiring. Mid-build, discovered a real vocabulary split between the two
+transports' own permission-mode values (the SDK has no `'manual'`; its own equivalent is `'default'`)
+and split the previously-shared `mapPermissionMode` (P2) into `mapPermissionModeForCli`/
+`mapPermissionModeForSdk` accordingly, while confirming `mapToolGrantToAllowedTools` (P2) stays
+genuinely, correctly shared. See `SPEC-QUESTIONS.md` Q115 for the full record.
+
+### Round 1 — fresh critic (no context on plan/log): two real bugs, one recurring gap, all fixed
+
+1. **REAL BUG, shared with already-committed P2 code.** `mapResult` (in both this piece's own
+   `map-message.ts` and P2's already-shipped `parse-event.ts`) dispatched purely on
+   `is_error === true`, missing a second, real error shape the SDK's own `SDKResultMessage` doc
+   comment names directly: `subtype: 'success'` can *also* carry `is_error: true`, with the real error
+   text in `result` instead of an `errors` array (`SDKResultError`'s own dedicated shape). The
+   `is_error`-only dispatch routed this case into the wrong mapper, producing a nonsensical
+   `{code: 'success', message: 'success'}`. **Fixed in both files** (a real, justified touch to
+   already-committed P2 code, not scope creep — the identical bug, found once, fixed everywhere it
+   lives): `subtype` is now checked first, with the `result`-field case read correctly and labelled
+   `'api_error'`. New regression tests in both `map-message.test.ts` and `parse-event.test.ts`.
+2. **REAL BUG.** `runSdkQuery`'s own event generator had no `try`/`catch` around the SDK's own async
+   iterator at all — unlike P2's execa-backed iteration (a documented `reject: false`/"never throws"
+   contract), the real SDK exports a real `AbortError` class and its own runtime can plausibly reject
+   the iterator rather than cleanly ending it, which would have skipped `session.ended` entirely.
+   **Fixed**: wrapped in `try`/`catch`, folded into the same reason computation the clean-completion
+   path already uses. A new, injectable `queryFn` seam (mirroring `process.ts`'s own established DI
+   convention, P1) let the fix be proven deterministically with a fake rejecting iterator, no live
+   call needed.
+3. **Recurring documentation gap, caught before commit this time.** Every new file in this piece cited
+   `SPEC-QUESTIONS.md` Q115 before it had been written — the exact mistake Q114's own text records
+   happening in P2. Caught and fixed while writing this entry, before the critic round could catch it
+   a second time.
+
+The critic independently re-verified five separate claims directly against the real, installed `.d.ts`
+files rather than trusting this piece's own comments: the real `PermissionMode` union genuinely has no
+`'manual'` member; `settingSources: []` is really documented as "SDK isolation mode" with no literal
+`bare` field anywhere on `Options`; `outputFormat`'s real shape matches exactly; `maxTurns` is real and
+native, confirming the capability asymmetry with the CLI transport is genuine, not assumed; `Query`
+really extends `AsyncGenerator<SDKMessage, void>` with a real `interrupt()`. All five held. The critic
+also confirmed no leftover reference to the old, unsplit `mapPermissionMode` name survives anywhere in
+the package after the rename.
+
+A benign false-positive surfaced during this round: the critic's own report was flagged by the harness's
+content-safety layer as "instruction-shaped" (its own `<` characters escaped) purely because the report
+legitimately discussed `bypassPermissions` as a real SDK enum value — not an actual embedded
+instruction. Flagged to the coordinator directly per standing instruction; recorded in
+`SPEC-QUESTIONS.md` Q115 rather than treated as a real incident.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (111 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after every fix — re-verified live once more (both the SDK
+and CLI transports together) after the fixes to confirm the happy paths still work.

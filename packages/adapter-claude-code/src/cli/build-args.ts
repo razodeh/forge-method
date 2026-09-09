@@ -9,7 +9,7 @@
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
-import { mapPermissionMode, mapToolGrantToAllowedTools } from '../tool-grant.ts';
+import { mapPermissionModeForCli, mapToolGrantToAllowedTools } from '../tool-grant.ts';
 
 /**
  * No exact limit is enforced here — a real stdin-piped fallback for an oversized prompt (`07` §7.3:
@@ -40,7 +40,7 @@ export function buildCliArgs(
   }
 
   args.push('--model', req.model);
-  args.push('--permission-mode', mapPermissionMode(req.permissionMode));
+  args.push('--permission-mode', mapPermissionModeForCli(req.permissionMode));
 
   const allowedTools = mapToolGrantToAllowedTools(req.tools);
   args.push('--allowedTools', allowedTools.join(' '));

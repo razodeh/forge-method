@@ -19,4 +19,8 @@ export { claudeCodeAdapterConfigSchema, type ClaudeCodeAdapterConfig } from './c
 export { MINIMUM_CLAUDE_CLI_VERSION, probeCliVersion, type CliVersionProbe } from './version.ts';
 export { probeAuthAvailability, type AuthAvailability } from './auth.ts';
 export { realClaudeCliRunner, type ClaudeCliRunner, type ClaudeCliResult } from './process.ts';
-export { mapPermissionMode, mapToolGrantToAllowedTools } from './tool-grant.ts';
+export {
+  mapPermissionModeForCli,
+  mapPermissionModeForSdk,
+  mapToolGrantToAllowedTools,
+} from './tool-grant.ts';

@@ -8420,3 +8420,74 @@ flag — not live-verified, since confirming it costs a real API call for an edg
 severity not to warrant one). See `GAUNTLET-LOG.md`'s own M7 P2 entry for the full critic round,
 including the dangling `SPEC-QUESTIONS.md` citation the critic caught: every file in this piece cited
 this exact entry before it had actually been written.
+
+## Q115 — M7 P3's `@forge/adapter-claude-code` SDK transport: grounded in `.d.ts` reading rather than a
+fresh live capture, the real CLI/SDK permission-mode vocabulary split, and a real result-shape bug
+found in both transports at once
+
+Unlike P2 (the CLI transport, built against three real, live `claude -p` captures), this piece did not
+make a fresh live capture of raw SDK output to design `mapSdkMessage` against. Instead, every mapping
+is grounded directly in the real, published `@anthropic-ai/claude-agent-sdk@0.3.266`'s own `.d.ts` type
+declarations — justified because the CLI and SDK are confirmed, not merely assumed, to share the same
+underlying producer: `SDKAssistantMessage`'s own real doc comment explicitly describes CLI streaming
+behaviour ("While a response streams the CLI emits one assistant message per completed content
+block"), and `Options` itself exposes `pathToClaudeCodeExecutable`/`executable`-shaped fields — the SDK
+is a typed wrapper that spawns the identical Claude Code process the CLI transport invokes directly,
+not a separate implementation with its own independent event shapes. One real, live `query()` call
+(gated, using a real API key) proved the end-to-end wiring works; the critic round independently
+re-verified this "same producer" framing by reading the real `.d.ts` files directly rather than trusting
+the claim, and found it well-supported, not overstated.
+
+**The CLI and SDK transports genuinely use different permission-mode vocabularies for the identical
+FORGE `'manual'` concept.** Discovered mid-build, while checking the SDK's own real `PermissionMode`
+type against the CLI transport's already-shipped `mapPermissionMode` (P2): the SDK's own type
+(`'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'`, confirmed against
+`sdk.d.ts`) has no `'manual'` member at all, while the CLI's own real `--permission-mode` choices
+(confirmed against `--help`) do. The one shared function P2 originally shipped was split into
+`mapPermissionModeForCli`/`mapPermissionModeForSdk` — a real, transport-specific vocabulary difference,
+not an arbitrary rename — while `mapToolGrantToAllowedTools` (P2) stays genuinely shared unmodified,
+since `Options.allowedTools` (confirmed: a real `string[]`) and the CLI's own joined `--allowedTools`
+value both start from the identical array this one function already produces.
+
+**A real, confirmed capability asymmetry between the two transports, not merely assumed:**
+`Options.maxTurns?: number` is real and native (confirmed against `sdk.d.ts:1773`); P2's own CLI
+transport has no `--max-turns` flag on the real, installed CLI at all (Q114). The SDK transport
+therefore enforces `limits.maxTurns` for real; the CLI transport still does not.
+
+**A real bug the critic round found in `mapResult`, present in *both* transports at once (P3's own
+`map-message.ts`, and inherited verbatim into P2's already-committed `parse-event.ts`).** The real SDK's
+own `SDKResultMessage` doc comment says `subtype: 'success'` "carries the final assistant text in
+`result` — or, with `is_error` true, the error text when the turn ended on an API error." Confirmed
+directly: `SDKResultSuccess` genuinely carries both `is_error: boolean` and `result: string` together,
+with no `errors` array at all — a second, real error-signalling shape distinct from `SDKResultError`'s
+own dedicated `error_during_execution`/`error_max_turns`/`error_max_budget_usd`/
+`error_max_structured_output_retries` subtypes. Both mapping functions dispatched purely on
+`is_error === true`, routing this real case into the `errors`-array-shaped error mapper instead — which
+reads `subtype` (gets the literal string `"success"`) and `errors` (absent on this shape, so falls back
+to `subtype` again), producing the nonsensical `{code: 'success', message: 'success'}` in place of the
+real error text. **Fixed in both files**: `subtype` is checked first — only `subtype !== 'success'` is
+genuinely `SDKResultError`-shaped; `subtype === 'success'` with `is_error: true` is the second case,
+read from `result` instead. `'api_error'` is this codebase's own label for it (not a value literally
+present in the SDK's own subtype enum, since none exists for this specific in-between case). A second
+real bug, found only in the new P3 code (`run-query.ts`), was fixed alongside it: the SDK's own
+`query()` async iterator has no "never rejects" guarantee the way `spawnClaudeCli`'s own execa-backed
+iteration does (P2's own `reject: false` contract) — an uncaught rejection would have skipped
+`session.ended` entirely. Both fixes shipped with real regression tests; the `run-query.ts` fix needed a
+new, injectable `queryFn` seam (mirroring `process.ts`'s own established DI convention) to prove the
+catch deterministically, without a live call.
+
+**A dangling documentation citation recurred verbatim from P2 — this time caught before commit, not
+after.** Every new file in this piece cited `SPEC-QUESTIONS.md` Q115 before this entry had actually been
+written, the exact mistake Q114's own text records happening (and being critic-caught) in P2. Caught
+this time by deliberately checking the file's own real tail against every number used in code before
+finalizing, rather than only after a critic round flagged it again.
+
+**A benign false-positive worth recording, not a real incident.** The critic subagent's own report for
+this round was flagged by the harness's own content-safety layer as "instruction-shaped" and had its `<`
+characters escaped before reaching this session — caused by the report legitimately discussing
+`bypassPermissions` as a real SDK enum value (a security-flavoured term, not an actual embedded
+instruction). Flagged to the coordinator directly per this session's own standing instruction to
+surface suspected prompt-injection rather than silently act on or ignore it; the underlying findings
+were genuine and are recorded above.
+
+See `GAUNTLET-LOG.md`'s own M7 P3 entry for the full critic round.
