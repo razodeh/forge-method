@@ -25,8 +25,13 @@ import { mapPermissionModeForCli, mapToolGrantToAllowedTools } from '../tool-gra
 export function buildCliArgs(
   req: SessionRequest,
   config: ClaudeCodeAdapterConfig,
+  resumeSessionId?: string,
 ): readonly string[] {
   const args: string[] = ['-p', '--verbose', '--name', req.stepId];
+  // `07` §7.3's own mapping table: `session resume -> --resume <sessionId>` (confirmed against the
+  // real CLI's own `--help`: `-r, --resume [value]`). P4's own job, added here rather than in P2 --
+  // P2's own `SessionRequest`-only signature had no session id to resume in the first place.
+  if (resumeSessionId !== undefined) args.push('--resume', resumeSessionId);
 
   if (req.outputSchema !== undefined) {
     // `07` §7.3's own mapping table names this combination; the real CLI's own `--output-format`
@@ -34,6 +39,22 @@ export function buildCliArgs(
     // against `--help` (no combined "streamed, schema-validated" mode is documented). A real,
     // deliberate trade-off for this one session: no incremental `text`/`tool.call` events, only the
     // final structured result, when the caller asked for schema-validated output.
+    //
+    // A fresh critic round (P4) found this trade-off is currently *worse* than intended: neither
+    // `parse-event.ts`'s own `mapResultSuccess` (this file's own sibling) nor `map-message.ts`'s SDK
+    // equivalent reads the real `result`/`structured_output` fields off the final `result` message at
+    // all -- only `usage`/`total_cost_usd`. In this exact mode there is no other event that could
+    // carry the final text either (no streaming `assistant`/`stream_event` lines are ever emitted
+    // here), so a session run this way currently returns `SessionResult.finalText: ''` and
+    // `structured: undefined` even on real success -- not merely a missing-structured-payload gap,
+    // but the *entire* model output silently discarded. `AdapterCapabilities.structuredOutput` is
+    // `false` to match (`capabilities.ts`'s own doc comment). Fixing this for real needs
+    // `parseCliEventLine`/`mapSdkMessage` to support more than one `AdapterEvent` per `result`
+    // message (the SDK side's own `mapSdkMessage` already returns an array in principle, but every
+    // inner mapper -- including `mapResultSuccess` -- still only ever produces one candidate; the CLI
+    // side's `parseCliEventLine` returns a single `AdapterEvent | undefined` outright) -- real,
+    // contained, but bigger than this piece's own scope; recorded in `SPEC-QUESTIONS.md` Q116 for a
+    // dedicated future piece rather than rushed through here.
     args.push('--output-format', 'json', '--json-schema', JSON.stringify(req.outputSchema));
   } else {
     args.push('--output-format', 'stream-json', '--include-partial-messages');

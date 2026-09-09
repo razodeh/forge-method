@@ -135,6 +135,21 @@ describe('buildCliArgs', () => {
     expect(args.at(-2)).toBe('--');
   });
 
+  it('includes --resume <sessionId> when a resumeSessionId is given (P4)', () => {
+    const args = buildCliArgs(
+      baseRequest(),
+      claudeCodeAdapterConfigSchema.parse({}),
+      'session-abc',
+    );
+    const index = args.indexOf('--resume');
+    expect(args[index + 1]).toBe('session-abc');
+  });
+
+  it('omits --resume entirely for a fresh (non-resumed) session', () => {
+    const args = buildCliArgs(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(args).not.toContain('--resume');
+  });
+
   it('a prompt beginning with a dash is still passed as literal text, guarded by --, not misread as a flag', () => {
     // A fresh critic round flagged this as a real, if low-severity, risk an earlier draft left
     // unguarded. Not live-verified against the real CLI (see build-args.ts's own doc comment), but

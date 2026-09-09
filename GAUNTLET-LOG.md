@@ -6582,3 +6582,107 @@ instruction. Flagged to the coordinator directly per standing instruction; recor
 `tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (111 tests, 2 correctly
 skipped without `FORGE_LIVE=1`) all clean after every fix — re-verified live once more (both the SDK
 and CLI transports together) after the fixes to confirm the happy paths still work.
+
+---
+
+## M7 P4 — `ClaudeCodeAdapter`: transport selection, `startSession`/`resumeSession`, `capabilities`,
+`preflight`, `listModels` (`07` §7.2, §7.3)
+
+**Rounds: 1 (fresh critic finding eight real issues — one high-severity correctness bug, one high-
+severity capability-honesty/plumbing gap, two synchronous-throw/eager-start correctness bugs, one
+redundant-probe bug, two deliberately-documented-not-fixed trade-offs, and the same recurring dangling-
+citation gap Q114/Q115 already record; six fixed for real with new regression tests, two recorded as
+flagged trade-offs; no separate verify round run). Outcome: WON.**
+
+The real `PlatformAdapter` implementation tying P1 (config/version/auth), P2 (CLI transport), and P3
+(SDK transport) together. Six new supporting modules built alongside it this piece
+(`session-handle.ts`, `session-result.ts`, `capabilities.ts`, `preflight.ts`, `list-models.ts`,
+`changed-files.ts`), each with its own dedicated test file, plus `adapter.test.ts` for the class
+itself — all fixture-driven, no live calls. See `SPEC-QUESTIONS.md` Q116 for the full design record
+(deferred-`import()` transport selection, the two distinct session-id spaces, and a real cross-
+transport secret-leak risk found and fixed while building this piece, not inherited from an earlier
+one: the SDK's own `Options.env` field silently inherits the whole process's ambient environment when
+omitted, a materially more dangerous default than the CLI transport's own `extendEnv: false`).
+
+### Round 1 — fresh critic (no context on plan/log): eight real findings
+
+What the critic caught that I missed, most severe first:
+
+1. **REAL BUG.** `SessionResult.ok` never inspected `session.ended.reason` — an aborted session (or
+   one that hit a transport-internal error with no matching explicit `'error'` event, a real path on
+   both transports) reported `ok: true`, indistinguishable from a clean success, with zero test
+   coverage of the abort path's own `result.ok`. **Fixed** in `session-result.ts`: `'aborted'`/
+   `'error'` now flip `ok` false; `'complete'`/`'limit'` do not (matching `@forge/testkit`'s own
+   `FakePlatformAdapter` precedent: a respected resource limit is not a failure). Four new regression
+   tests in `session-result.test.ts`, one more in `adapter.test.ts`'s own end-to-end `stop()` test.
+2. **REAL, PRE-EXISTING GAP, newly surfaced.** Structured output (`SessionRequest.outputSchema`)
+   never reaches `SessionResult.structured` on either transport, on any environment — neither
+   `mapResultSuccess` mapping function reads the real `result`/`structured_output` fields at all. For
+   the CLI transport specifically, this also silently discards `finalText` entirely in schema mode (no
+   streaming lines are ever emitted there either). **Fixed the honesty of the claim**:
+   `AdapterCapabilities.structuredOutput` now stays `false` even once `confirmedCapabilities` runs
+   (it used to flip `true`) — a false capability claim is worse than a documented gap. **Did not fix
+   the full plumbing**: closing it for real needs `parseCliEventLine` to support more than one
+   `AdapterEvent` per NDJSON line and `mapSdkMessage`'s own inner mappers to do the same — real,
+   contained, but bigger than this piece's own ~400-line budget; documented explicitly in
+   `build-args.ts` and `capabilities.ts` for a dedicated future piece.
+3. **Real, deliberately documented trade-off, not fixed.** `this.sessions` grows without bound for
+   this adapter instance's lifetime, retaining each session's own granted secrets (`request.env`)
+   indefinitely. `session.ended` cannot be the eviction trigger (a resume happens *after* a turn
+   ends); no other trigger is named anywhere in `07` §7.2's own `resumeSession` contract.
+   `@forge/testkit`'s own `FakePlatformAdapter` already accepted the identical trade-off for its own
+   two sibling maps (M4 P5, unchanged since). Documented explicitly rather than given an invented
+   eviction policy nothing in scope calls for.
+4. **REAL BUG.** `resumeSession`, a plain method returning `Promise.resolve(this.startOnTransport(...))`,
+   could throw *synchronously* instead of rejecting, since `startOnTransport(...)` is evaluated as a
+   normal argument before `Promise.resolve` ever runs — a real, reachable trigger (`spawnCli` itself
+   throwing; proven directly in a new regression test). **Fixed** with an explicit `try`/`catch`
+   around the method body (not `async`, which would have tripped `@typescript-eslint/require-await`
+   with no genuine `await` inside), mirroring the identical, already-documented hazard
+   `@forge/testkit`'s own `FakePlatformAdapter` (M4 P5) already guards against for caller-supplied
+   code. New regression test proving a clean rejection, not an escaping exception.
+5. **REAL BUG.** The `cli` and `sdk` transports disagreed on when a session's real work begins: `cli`
+   spawned the real process eagerly, before `startSession` ever returned; `sdk` deferred the real
+   `query()` call until the caller's first `.events`/`.result()` pump — invisible to a caller (transport
+   selection is this adapter's own internal detail) and a real resource-orphan risk for `cli`
+   specifically if a caller defers consumption. **Fixed** by splitting the `sdk` path into an eager
+   half (`startSdkQuery`, called synchronously from `startOnTransport`) and a lazy half
+   (`runSdkSessionFromOutcome`, which only awaits the already-in-flight outcome once pumped) — both
+   transports now genuinely start at the same synchronous point. New regression test proving the real
+   `runSdkQuery` call has already happened before `startSession`'s own promise even resolves.
+6. **REAL BUG, fixed as a consequence of #5's own restructuring.** A redundant, independently-fallible
+   second SDK-load probe (`resolveTransport()`'s own, and the former `runSdkSession`'s own), paired
+   with a diagnostic message that falsely claimed its failure branch was only reachable when pinned
+   explicitly. **Fixed**: `resolveTransport()` now returns the loaded module alongside its decision,
+   threaded through as `preloadedSdk` so auto-select probes exactly once; the message now names both
+   of its two real reachability paths honestly. New regression test asserting the loader is called
+   exactly once for an auto-select session that resolves to `sdk`.
+7. **Real, deliberately documented trade-off, not fixed.** No guard against calling `resumeSession`
+   again for the same session id while a prior handle for it is still active — would put two real
+   transports against the identical real Claude Code session id at once. The same class of hazard
+   `makeSessionHandle`'s own concurrent-drain guard already covers for a *single* handle, just not
+   mirrored across handles here. Left as a documented caller responsibility: no real caller of this
+   class exists yet (engine integration is a later milestone) to make the added state machinery worth
+   building ahead of an actual need.
+8. **The recurring dangling-citation gap, a third time.** Every new P4 file cited `SPEC-QUESTIONS.md`
+   Q116 before it had been written — the same mistake Q114 records for P2 and Q115 records recurring
+   for P3, this time caught by the critic again rather than self-caught before commit as hoped.
+   Resolved by writing the real Q116 entry (this file's own companion).
+
+The critic independently verified several claims directly rather than trusting this piece's own
+comments: read the real SDK's own `sdk.d.ts` and confirmed both the `resume`/`env` field claims this
+piece's own doc comments make (`env`'s own "replaces entirely, inherits `process.env` when omitted"
+wording, `resume?: string`); traced `resumeSession`'s own field-carry-forward across a *chain* of
+repeated resumes and confirmed `cwd`/`model`/`tools`/`systemPrompt`/`env`/`outputSchema` never drift;
+confirmed the env-merge precedence and its application to *both* transports and *both*
+`startSession`/`resumeSession` was already correct (no finding there); confirmed no unsafe `as`/`any`/
+`@ts-expect-error` anywhere in the reviewed files.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (173 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after every fix, including three new regression tests each
+proving one of findings 4/5/6 specifically (a synchronous-throw-through-resume, an eager-vs-lazy-start
+timing check, and a call-count assertion on the sdk loader). Full monorepo `tsc --build`/`eslint .`
+clean; the full monorepo test suite is green apart from one, then two, unrelated real-SIGKILL/git-
+worktree E2E flakes in `packages/engine`/`packages/cli` (pre-existing, already-committed M5/M6 tests
+with randomised kill timing — confirmed flaky, not a regression, by a clean retry of the first one in
+isolation; neither touches any file this piece changed).

@@ -24,3 +24,15 @@ export {
   mapPermissionModeForSdk,
   mapToolGrantToAllowedTools,
 } from './tool-grant.ts';
+export { staticCapabilities, confirmedCapabilities } from './capabilities.ts';
+export { runPreflight } from './preflight.ts';
+export { listClaudeCodeModels } from './list-models.ts';
+export { computeChangedFiles } from './changed-files.ts';
+export { makeSessionHandle } from './session-handle.ts';
+export { accumulateSessionResult, type AccumulateSessionResultOptions } from './session-result.ts';
+export {
+  ClaudeCodeAdapter,
+  type ClaudeCodeAdapterOptions,
+  type SdkTransportModule,
+  type LoadSdkTransport,
+} from './adapter.ts';

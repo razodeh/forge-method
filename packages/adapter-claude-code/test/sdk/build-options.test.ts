@@ -138,4 +138,18 @@ describe('buildSdkOptions', () => {
     const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
     expect(options.outputFormat).toBeUndefined();
   });
+
+  it('sets resume to the given resumeSessionId (P4)', () => {
+    const options = buildSdkOptions(
+      baseRequest(),
+      claudeCodeAdapterConfigSchema.parse({}),
+      'session-abc',
+    );
+    expect(options.resume).toBe('session-abc');
+  });
+
+  it('omits resume entirely for a fresh (non-resumed) session', () => {
+    const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(options.resume).toBeUndefined();
+  });
 });

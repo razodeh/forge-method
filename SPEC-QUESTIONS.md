@@ -8491,3 +8491,140 @@ surface suspected prompt-injection rather than silently act on or ignore it; the
 were genuine and are recorded above.
 
 See `GAUNTLET-LOG.md`'s own M7 P3 entry for the full critic round.
+
+## Q116 — M7 P4's `ClaudeCodeAdapter`: deferred-import transport selection, two session-id spaces, a
+real cross-transport env-leak fix found mid-build, and eight critic findings (six fixed for real, two
+recorded as deliberate, flagged trade-offs)
+
+**Transport selection is a genuine dynamic `import()`, not a static one, specifically so "the SDK
+isn't installed" is a real, catchable failure rather than a whole-module crash.** `adapter.ts` never
+statically imports `./sdk/build-options.ts`/`./sdk/run-query.ts` (both pull in the real
+`@anthropic-ai/claude-agent-sdk`) — it does `await import('./sdk/index.ts')` behind an injectable
+`loadSdkTransport` seam, deferred to first real use. `spawnCli` gets the identical injectable-seam
+treatment for the CLI transport. This package's own "inject the real dependency, default to the real
+implementation" convention (`ClaudeCliRunner`, P1; `queryFn`, P3; `now`, this piece's own
+`session-result.ts`) now has five instances, not three. `config.transport === 'cli' | 'sdk'` pins that
+transport *unconditionally*, including staying on `'sdk'` even when it later, genuinely fails to load
+(a loud, typed per-session error, never a silent downgrade); only `config.transport === undefined`
+(auto-select) falls back to `cli` on a real load failure. `resolveTransport()` is deliberately **not**
+memoized across calls — a transient failure should not permanently lock the adapter onto `cli` for its
+whole process lifetime — a design choice `resumeSession`'s own Checks (`PLAN-M7.md` P4) rely on being
+provably true in a fixture (this adapter's own auto-select preference can genuinely change between a
+session's original start and a later resume of it).
+
+**Two deliberately distinct session-id spaces.** `SessionHandle.sessionId` is a local, per-instance
+monotonic counter (`claude-code-N`) — never `crypto.randomUUID()`: R10 forbids an uninjected random
+source in production code (confirmed directly against `eslint.config.js`'s own
+`no-restricted-imports`/`no-restricted-syntax`, both of which name `randomUUID` explicitly), and this
+id only needs to not collide within one adapter instance, which a counter already guarantees — the
+same pattern `@forge/testkit`'s own `FakePlatformAdapter.startSession` (M4 P5) and `@forge/core/fs`'s
+own `tempPathFor` (M1 P4) already use for the identical reason. The real Claude-Code-assigned session
+id (a UUID `system/init` reports) is learned separately, only once a real `session.started` event has
+actually arrived, and is what `resumeSession` actually passes to `--resume`/`options.resume` — looked
+up from the FORGE-level id via an internal `Map`, never exposed directly as `SessionHandle.sessionId`.
+
+**A real, cross-transport secret-leak risk found and fixed while building this piece, not inherited
+from an earlier one.** The real, published SDK's own `Options.env` field (confirmed directly against
+`sdk.d.ts`) is documented as "REPLACES the subprocess environment entirely... When omitted, the
+subprocess inherits `process.env`" — a materially more dangerous default than the CLI transport's own
+`extendEnv: false` (P2), which already guarantees the spawned child sees *only* what is explicitly
+passed. `buildSdkOptions` (P3, already committed) never set `.env` at all, meaning the SDK transport
+would have silently leaked this whole Node process's own ambient environment into every session it
+ran — a real C13 ("no secret leak") violation risk, caught before it ever shipped rather than after.
+Fixed here, not in `buildSdkOptions` itself: `adapter.ts` computes one merged `sessionEnv` (this
+adapter's own constructor-supplied ambient snapshot, plus the request's own grant-scoped `env`, the
+request always winning on an overlapping key) and sets it explicitly on both transports — `spawnCli`'s
+own `env` option for `cli`, `options.env` for `sdk` — since the ambient-vs-grant merge is this
+adapter's own policy decision, not something a pure `SessionRequest`-only mapping function
+(`buildCliArgs`/`buildSdkOptions`) has the inputs to make itself.
+
+**`capabilities()`'s own real fidelity gap against `07` §7.3's "feature-detect via the `capabilities`
+array" framing** is documented directly in `capabilities.ts`'s own doc comment, not repeated here: the
+one real value this milestone ever captured live (`['interrupt_receipt_v1']`) names nothing
+corresponding to `partialText`/`sessionResume`/`structuredOutput`, so "a real session from this
+install has started" is this adapter's own honest trigger, not genuine per-flag array inspection.
+
+**A fresh critic subagent, given this file plus every module it wires together plus `adapter.test.ts`
+plus the real SDK's own `.d.ts`, found eight real issues.** Six were fixed for real, with new
+regression tests; two were deliberately left as documented, flagged trade-offs rather than invented,
+speculative machinery nothing in this piece's own scope calls for:
+
+1. **(Fixed) `SessionResult.ok` never inspected `session.ended.reason` at all** — an aborted session
+   (or one that hit a transport-internal error with no matching explicit `'error'` `AdapterEvent`, a
+   real path on both transports: `spawn.ts`'s own synthesized `reason: 'error'` on a bare non-zero
+   exit, and `run-query.ts`'s own caught-but-silent `sawError` from an uncaught SDK iterator
+   rejection) reported `ok: true` — indistinguishable from a clean success. Fixed in
+   `session-result.ts`: `'aborted'`/`'error'` both flip `ok` false; `'complete'`/`'limit'` do not,
+   matching the real precedent `@forge/testkit`'s own `FakePlatformAdapter` already established (a
+   respected resource *limit* stays `ok: true`; an abort does not).
+2. **(Fixed, capability claim; left open, full plumbing) Structured output never surfaces end to end,
+   on either transport, on any environment** — neither `mapResultSuccess` (CLI, `parse-event.ts`) nor
+   its SDK sibling (`map-message.ts`) reads the real `result`/`structured_output` fields off the
+   final `result` message at all, only `usage`/`total_cost_usd`; `accumulateSessionResult` has no
+   input channel that could carry either even if they did. For the CLI transport specifically, this is
+   worse than a missing-structured-payload gap: in `--output-format json` mode (used whenever
+   `outputSchema` is set) there are no streaming `assistant` lines either, so `finalText` also stays
+   `''` on a real, successful, schema-requesting session — the entire model output silently discarded.
+   `AdapterCapabilities.structuredOutput` is now `false` even once `confirmedCapabilities` runs (it
+   used to flip `true`) — a false capability claim is worse than an honest gap, matching this
+   function's own sibling doc comment's own standard ("must never claim a capability nothing backs
+   up"). The full fix needs `parseCliEventLine` to return more than one `AdapterEvent` per NDJSON line
+   (currently a single `AdapterEvent | undefined`) and `mapSdkMessage`'s own inner mappers (it already
+   returns an array at the outer layer, but every inner mapper, `mapResultSuccess` included, still
+   only ever produces one candidate) to do the same — real, contained, but bigger than this piece's
+   own scope; left as a named, documented gap (`build-args.ts`'s own doc comment, `capabilities.ts`'s
+   own doc comment) for a dedicated future piece, not rushed through here.
+3. **(Documented, not fixed) `this.sessions` grows without bound for this adapter instance's whole
+   lifetime, including each entry's own retained `request.env` (that session's granted secrets)** —
+   real, but `session.ended` cannot be the eviction trigger (a resume happens precisely *after* a turn
+   ends), and no other real trigger is named anywhere in `07` §7.2's own `resumeSession` contract. The
+   identical trade-off `@forge/testkit`'s own `FakePlatformAdapter` already accepted for its own two
+   sibling maps (M4 P5, unchanged since). Documented explicitly on `this.sessions`'s own doc comment
+   rather than either silently left unaddressed or given an invented, speculative eviction policy this
+   piece's own scope does not call for.
+4. **(Fixed) `resumeSession` could throw synchronously instead of rejecting** — a plain method
+   returning `Promise.resolve(this.startOnTransport(...))` still evaluates `startOnTransport(...)` as
+   a normal argument *before* `Promise.resolve` ever runs, so a synchronous throw inside it (a real,
+   reachable one: `buildCliArgs`'s own `JSON.stringify(req.outputSchema)` on a circular object, or —
+   proven directly in `adapter.test.ts`'s own new regression test — `spawnCli` itself throwing) would
+   have escaped `resumeSession()` directly, breaking the `Promise<SessionHandle>` contract. Fixed with
+   an explicit `try`/`catch` around the method body, mirroring `@forge/testkit`'s own
+   `FakePlatformAdapter` (M4 P5), which documents the identical hazard for caller-supplied code; not
+   simply marked `async`, since a real `async` method with no genuine `await` inside would itself trip
+   this project's own `@typescript-eslint/require-await` rule.
+5. **(Fixed) The `cli` and `sdk` transports disagreed on when a session's real work actually
+   begins** — `cli`'s own real `execa` spawn happened eagerly, synchronously, before `startSession`
+   ever returned; `sdk`'s own real `query()` call was deferred until the caller's first
+   `.events`/`.result()` pump (calling an async generator function only constructs it; nothing in its
+   body runs until first `.next()`). Invisible to a caller (transport selection is this adapter's own
+   internal detail) and a real resource-orphan risk specifically for `cli` if a caller obtains a
+   handle and defers consuming it. Fixed by splitting the `sdk` path into an eager half
+   (`startSdkQuery`, an `async` method called synchronously from `startOnTransport` so its own dynamic
+   import/`runSdkQuery` call genuinely begins immediately) and a lazy half
+   (`runSdkSessionFromOutcome`, an async generator that only awaits the already-in-flight outcome once
+   pumped) — both transports now genuinely start at the same synchronous point.
+6. **(Fixed, as a consequence of #5's own restructuring) A redundant, independently-fallible second
+   SDK-load probe, paired with a misleading diagnostic message** — `resolveTransport()`'s own probe
+   and the (former) `runSdkSession`'s own probe were two separate `loadSdk()` calls that could
+   genuinely disagree; the yielded error message falsely claimed the failure branch was "only
+   reachable when pinned explicitly." Fixed by having `resolveTransport()` return the loaded module
+   alongside its decision and threading it through as `preloadedSdk`, so the auto-select path now
+   probes exactly once; the error message now names both of its two real reachability paths (an
+   explicit pin, or a resume of an originally-`sdk` session whose real availability has since
+   regressed) instead of overclaiming just one.
+7. **(Documented, not fixed) No guard against calling `resumeSession` again for the same session id
+   before a still-active prior handle for it has finished draining** — would put two real transports
+   against the identical real Claude Code session id at once, with nothing in this adapter able to
+   reconcile the result. The same class of hazard `makeSessionHandle`'s own concurrent-drain guard
+   exists for on a *single* handle, just not mirrored across handles here. Left as a documented caller
+   responsibility on `resumeSession`'s own doc comment: nothing in `PlatformAdapter`'s own interface
+   states this constraint either way, and no real caller of this class exists yet (this milestone's
+   own engine-integration wiring is a later piece) to make tracking "is a handle for this id still
+   active" worth the added state machinery before anything actually needs it.
+8. **(Resolved by this entry's own existence)** Every new P4 file cited this exact `SPEC-QUESTIONS.md`
+   Q116 entry before it had actually been written — the identical mistake Q114 records for P2 and Q115
+   records recurring, uncaught, for P3. Caught by the critic a third time, not self-caught before
+   commit as P3's own entry hoped would happen going forward; recorded honestly rather than silently
+   fixed without acknowledging the pattern kept recurring.
+
+See `GAUNTLET-LOG.md`'s own M7 P4 entry for the full critic round.

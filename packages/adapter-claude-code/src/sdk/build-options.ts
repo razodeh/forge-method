@@ -13,10 +13,19 @@ import type { SessionRequest } from '@forge/adapter-kit';
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
 import { mapPermissionModeForSdk, mapToolGrantToAllowedTools } from '../tool-grant.ts';
 
-export function buildSdkOptions(req: SessionRequest, config: ClaudeCodeAdapterConfig): Options {
+export function buildSdkOptions(
+  req: SessionRequest,
+  config: ClaudeCodeAdapterConfig,
+  resumeSessionId?: string,
+): Options {
   const options: Options = {
     cwd: req.cwd,
     model: req.model,
+    // `07` §7.3's own mapping table: `session resume -> --resume <sessionId>` on the CLI column
+    // (`build-args.ts`, P4); the SDK's own real, confirmed equivalent field is `Options.resume:
+    // string` (confirmed directly against the real `.d.ts`, same discipline as every other field
+    // here).
+    ...(resumeSessionId === undefined ? {} : { resume: resumeSessionId }),
     // `Options.allowedTools` already wants a plain `string[]` -- no `.join(' ')` needed here, unlike
     // the CLI transport's own single `--allowedTools` flag value (`build-args.ts`, P2). The identical
     // shared function `mapToolGrantToAllowedTools` (P2) produces the right shape for both transports
