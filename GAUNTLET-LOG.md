@@ -6335,3 +6335,58 @@ commands/run/resume.test.ts`'s own real, `SIGKILL`-driven crash-resume test — 
 resource-contention flake M6 C5/C6/C7's own log entries already name for tests in the same family,
 recurring here with yet another distinct real git-worktree-race error text under the now-larger
 308-file full-suite parallelism.
+
+## M6 C9 — `@forge/cli` real CLI dispatcher and the milestone's own exit-test harness (`03` §3.1)
+
+Built the first real `argv`-to-command dispatcher in this repository (`packages/cli/src/bin.ts` +
+`packages/cli/bin/forge.mjs`, a thin `node --experimental-strip-types` launcher mirroring `scripts/
+run-tests.mjs`'s own spawn-child pattern), deliberately scoped to exactly the commands C9's own `E1
+init` exit test exercises (`agent validate --all`, `workflow validate --all`, `template validate --all`,
+`status`) rather than a general-purpose dispatcher for all ~50 already-built command functions — a
+documented scope boundary, not an oversight. Added `packages/cli/src/commands/template.ts` (new
+`templateList`/`templateValidateAll`, correctly distinguishing 15 real "full" artifact templates from 6
+one-off entry "stub" snippets with no `type` field), a real `{v:1,...}` JSON contract checker (`scripts/
+lib/json-contract.mjs`) for the new `RunStatusReport` envelope, and `E1 init` (`packages/cli/test/e2e/
+init.test.ts`) — a real, end-to-end `runInit` driven through every C1-C8 validation surface at once
+for the first time. Built solo, continuing the standing order to work M6's own pieces in dependency
+order; this is `PLAN-M6.md`'s own final, integrating piece. See `SPEC-QUESTIONS.md` Q112 for the full
+design record — the no-prior-dispatcher gap and scope decision, a real cross-spec inconsistency between
+`specs/10` and `specs/18` §18.7 found via `forge workflow validate --all` (left deliberately unfixed,
+documented as a spec-authoring defect), and three real pre-existing bugs `E1 init` surfaced.
+
+### Bugs found via `E1 init`'s own first end-to-end drive through C1-C8's combined validation surfaces
+
+1. `kb/schema/tree.ts`'s `GENERATED_FILE_NAMES` skip-set only knew `index.md`; a bare `forge init`'s
+   own front-matter-free `docs/forge/kb/README.md` crashed `kbLint` with a real "no front matter found"
+   error. **Fixed** by adding `'README.md'` to the same skip-set — the identical fix shape Q110 already
+   established for `listSpecArtifacts`.
+2. Even after that fix, `checkKbLint` still failed: a signal-less greenfield project's own default
+   proposed level (L3) needs real architecture diagrams a bare `init` structurally cannot produce.
+   **Fixed** in the test, not the product — `E1 init` passes an explicit `level: 'L0'`, documented inline.
+3. `upgrade/backup.ts`'s `createBackup` called `fs.cp({recursive: true})` with no retry; the coordinator's
+   own direct full-suite run surfaced a real, transient `ENOTEMPTY` from this call under heavy parallel
+   filesystem contention — isolated re-runs of the affected test passed cleanly (5.5s), confirming a real
+   robustness gap, not a logic bug. **Fixed** with a bounded retry (`copyWithRetry`, 3 attempts, 25ms
+   backoff, transient codes only — `ENOTEMPTY`/`EBUSY`), mirroring this session's own established git-
+   worktree TOCTOU retry precedent (`run/context.ts`). A new regression test
+   (`packages/cli/test/commands/upgrade/backup-retry.test.ts`) injects a real, mocked transient failure
+   via `vi.mock('node:fs/promises', ...)` and proves both the retry-then-succeed and no-retry-for-real-
+   errors paths directly. Re-verified: the full `run-upgrade.test.ts` + `backup.test.ts` suite (15 tests,
+   including the originally-flagged "is idempotent" test) passed cleanly after the fix.
+
+### Round 1 — fresh critic (no context on plan/log)
+
+Findings included the misleading `bin.ts` error message for an unwired `--all`-only command (fixed to
+say "needs --all" rather than the generic "not wired in" text for a command that *is* real, just not yet
+given a single-id form) and the `checkJsonContract` top-level-only walk missing bugs nested inside
+`RunStatusReport`'s own real, one-level-nested shape (fixed to walk recursively; two new regression tests
+added). Both fixed; `bin.test.ts` gained a dedicated regression test for the message-text fix.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (`bin.test.ts`, `template.test.ts`, `e2e/init.test.ts`,
+`json-contract.test.ts`, `backup-retry.test.ts`, plus every touched existing suite) all clean after every
+fix. Two full-suite runs each surfaced exactly one of the two already-documented flaky tests
+(`crash-resume.test.ts`, `run/resume.test.ts`) — never both, never a new failure — and `crash-resume.
+test.ts` was re-run in isolation 3 times at the coordinator's own explicit request, passing cleanly all
+three times, confirming this is the same pre-existing resource-contention flake class M6 C5-C8's own log
+entries already name, not a regression from this piece's own shared-infra changes (`kb/schema/tree.ts`,
+root `tsconfig.json`).

@@ -8202,3 +8202,94 @@ own M6 C8 entry for the full account.
 project trees — including one real invocation against the actual `modules/` roster at the repo root,
 not a fixture — real git repositories, real spec/KB/ADR documents, and a real cost-ledger event log via
 `@forge/telemetry`'s own `appendEvent` — never a mocked engine internal) all clean after every fix.
+
+## Q112 — M6 C9's own real CLI dispatcher and exit-test harness (`03` §3.1's own literal exit commands),
+a genuine cross-spec inconsistency, and three real pre-existing bugs found via the first end-to-end init
+
+**No real `argv` dispatcher existed anywhere in this repository before C9** — confirmed exhaustively: no
+`bin` field in any `package.json`, no `cli.ts`/`bin.ts` file anywhere, and `parse-global-flags.ts`'s own
+`parseGlobalFlags` only classifies known global flags into `positionals`, never dispatches on them. Every
+prior C1-C8 piece exposed its own real command functions directly to tests, never through a real `forge
+<verb>` shell invocation. This piece's own exit test (`E1 init`, `03` §3.1) is written as literal shell
+text (`forge init ...`), which cannot run at all without something that turns `process.argv` into a real
+command dispatch.
+
+**Deliberately built the narrowest dispatcher that makes the milestone's own literal exit-test commands
+real, not a general-purpose CLI for all ~50 already-built command functions.** `packages/cli/src/bin.ts`
+wires exactly `agent validate --all`, `workflow validate --all`, `template validate --all`, and `status`
+— the commands C9's own exit tests exercise — behind a real `node --experimental-strip-types` launcher
+(`packages/cli/bin/forge.mjs`, mirroring `scripts/run-tests.mjs`'s own established spawn-child pattern,
+since Node 20.19+, this repo's own floor per root `package.json`'s `engines`, backports that flag). Every
+other real command stays reachable only by direct import, as it already was through C8 — this is a scope
+boundary, documented in `bin.ts`'s own doc comment, not an oversight; building a full dispatcher for every
+command was judged out of proportion to what C9's own exit tests actually require.
+
+**A second real gap, closed alongside the first:** `@forge/templates`' own 21 shipped artifact templates
+had no validation surface at all — `packages/cli/src/commands/template.ts` (new) adds `templateList`/
+`templateValidateAll`, which run `validateArtifact` per-type — but 6 of the 21 (`Risk`, `Assumption`,
+`OpenQuestion`, `Waiver`, `Environment`, `HandoffRecord`) are genuinely different: one-off entry "stub"
+snippets meant to be copied into a collection register file, with no `type` field, not a document meant
+to pass the normal per-type schema path. `templateValidateAll` classifies each by `frontMatter['type'] ===
+undefined` and only schema-validates the 15 real "full" templates, skipping stubs by design rather than
+reporting a false failure against content that was never meant to carry a `type` field.
+
+**A genuine, pre-existing, real inconsistency between two spec documents, found by `forge workflow
+validate --all` against the real, already-shipped `T1-T5` workflow content, and deliberately left
+unfixed.** `specs/10`'s own real worked examples use artifact types `StagePlan`/`ReviewReport`; `specs/
+18` §18.7's own canonical, explicitly "transcribed verbatim" artifact-type registry table (backing
+`packages/schemas/src/registry/artifact-types.ts`) never defines either. Read both sections directly,
+verbatim, to confirm this is real, not a misreading. Neither the registry (inventing entries would
+violate its own stated verbatim-transcription invariant) nor the shipped `T1-T5` content (renaming would
+diverge it from `specs/10`'s own literal worked text) was changed — this is recorded here as a real,
+unresolved, cross-document authoring defect for a spec owner to reconcile, not a code bug. `E1 init`'s own
+test asserts this exact, bounded set of 3 known findings (all `unknown-artifact-type`, matching
+`StagePlan`/`ReviewReport`) rather than a blanket zero, with an inline comment explaining why.
+
+**Three real, pre-existing bugs found only because C9's own `E1 init` test is the first place in this
+codebase a bare, real `runInit` output is driven end-to-end through every other C1-C8 validation surface
+at once** (`checkKbLint`, `agentValidateAll`, `templateValidateAll`, `workflowValidateAll` together,
+against one real project tree — no prior piece's own tests combined all four):
+
+1. `packages/kb/src/schema/tree.ts`'s `GENERATED_FILE_NAMES` skip-set only knew `index.md`, so a bare
+   `forge init`'s own `docs/forge/kb/README.md` (written front-matter-free by `writeDocsSkeleton`) crashed
+   `kbLint`/`parseKbTree` with a real `kb:schema` "no front matter found" error. **Fixed** by adding
+   `'README.md'` to the same skip-set, mirroring the identical fix shape Q110 already established for
+   `listSpecArtifacts`.
+2. Even after that fix, `checkKbLint` still failed for a real, different reason: a signal-less
+   greenfield project's own default proposed level (`resolveInitLevel`'s conservative default, L3) needs
+   real architecture diagrams (`diagram:required`'s own "System context diagram is required at level L3")
+   that a bare `init` structurally cannot produce — diagrams are authored content, not scaffold. **Fixed**
+   in the test itself, not the product: `E1 init` now passes an explicit `level: 'L0'`, documented inline.
+3. `packages/cli/src/commands/upgrade/backup.ts`'s `createBackup` called Node's own `fs.cp({recursive:
+   true})` with no retry, and the coordinator's own direct full-suite run surfaced a real, transient
+   `ENOTEMPTY` from exactly this call under heavy parallel filesystem contention — the identical class of
+   OS-level race this session's own git-worktree TOCTOU retries (`packages/cli/src/commands/run/
+   context.ts`) already guard against, applied here to `fs.cp` instead of `git worktree add`. Isolated
+   re-runs of the affected test passed cleanly (5.5s), confirming this is not a deterministic logic bug.
+   **Fixed** with a bounded retry (`copyWithRetry`, 3 attempts, 25ms/attempt backoff, only for real
+   `ENOTEMPTY`/`EBUSY` codes — everything else still propagates on the first attempt, unchanged). A new
+   regression test (`packages/cli/test/commands/upgrade/backup-retry.test.ts`) injects a real, mocked
+   transient failure via `vi.mock('node:fs/promises', ...)` (the same interception shape `context-
+   ancestor-walk.test.ts` already established, since a real fixture cannot reliably reproduce this race
+   on demand) and proves both the retry-then-succeed path and the no-retry-for-real-errors path directly.
+
+**`scripts/lib/json-contract.mjs`'s own `checkJsonContract`, added to give C9's own new `RunStatusReport`
+envelope (see below) a real, reusable `{v:1,...}` contract checker matching `03` §3.5's convention (already
+established for `DoctorReport`/`UpgradeReport`), had its own real bug caught by the critic round: the
+original walked only top-level fields for serialization bugs (a literal `"undefined"` string, a non-finite
+number), but `RunStatusReport`'s own real shape nests everything one level under `status` — the top-level-
+only version would miss a real bug anywhere inside it. **Fixed** to walk recursively through nested
+objects and arrays; two new regression tests prove it catches a bug nested inside a `RunStatusReport`-
+shaped envelope and inside a `DoctorReport`-shaped array element.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (`packages/cli/test/bin.test.ts`,
+`packages/cli/test/commands/template.test.ts`, `packages/cli/test/e2e/init.test.ts`, `scripts/
+json-contract.test.ts`, plus the three real bug-fix regression tests above — real subprocess execution via
+`execFileSync` for the CLI dispatcher itself, a real `runInit`-produced project tree for `E1 init`, never a
+mocked engine internal) all clean after every fix. The full suite's own two remaining failures across
+repeated runs (`packages/engine/test/e2e/crash-resume.test.ts`, `packages/cli/test/commands/run/
+resume.test.ts`) are the identical, already-documented flaky-test class M6 C5-C8's own log entries name
+(real `SIGKILL`/git-worktree-race tests under heavy parallel resource contention) — confirmed once again
+here via 3 clean, isolated re-runs of `crash-resume.test.ts` at the coordinator's own explicit request,
+not a regression introduced by this piece's own changes to shared infra (`kb/schema/tree.ts`,
+root `tsconfig.json`).
