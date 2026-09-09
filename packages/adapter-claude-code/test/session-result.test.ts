@@ -248,4 +248,63 @@ describe('accumulateSessionResult', () => {
       { token: 'FORGE_CONFLICT', reason: 'two agents touched the same file' },
     ]);
   });
+
+  it("07 §7.6's own C10 row: a real FORGE_ASK line in a non-partial text event is also live-emitted as its own real control AdapterEvent, alongside (not instead of) the original text event", async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      { type: 'text', text: 'FORGE_ASK:which database?|Postgres,SQLite', partial: false },
+    ];
+    const { events } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect(events).toEqual([
+      { type: 'text', text: 'FORGE_ASK:which database?|Postgres,SQLite', partial: false },
+      {
+        type: 'control',
+        token: 'FORGE_ASK',
+        payload: { question: 'which database?', options: ['Postgres', 'SQLite'] },
+      },
+    ]);
+  });
+
+  it('a control-token line inside a partial:true chunk is never live-emitted -- the same "only non-partial" guard finalText accumulation already uses', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      { type: 'text', text: 'FORGE_CONFLICT: partial only, never repeated', partial: true },
+      { type: 'text', text: 'a real, unrelated final block', partial: false },
+    ];
+    const { events } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect(events.some((event) => event.type === 'control')).toBe(false);
+  });
+
+  it('multiple real control tokens across multiple non-partial text events are each live-emitted, in order, right after their own text event', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      { type: 'text', text: 'FORGE_HANDOFF: reviewer needs a second look', partial: false },
+      { type: 'text', text: 'some plain narration with no token at all', partial: false },
+      { type: 'text', text: 'FORGE_REQUEST_CHANGE: specs/07 the table is stale', partial: false },
+    ];
+    const { events } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      'text',
+      'control',
+      'text',
+      'text',
+      'control',
+    ]);
+    expect(events[1]).toEqual({
+      type: 'control',
+      token: 'FORGE_HANDOFF',
+      payload: { role: 'reviewer', reason: 'needs a second look' },
+    });
+    expect(events[4]).toEqual({
+      type: 'control',
+      token: 'FORGE_REQUEST_CHANGE',
+      payload: { target: 'specs/07', reason: 'the table is stale' },
+    });
+  });
 });

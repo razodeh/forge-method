@@ -122,6 +122,27 @@ const IGNORED_PATHS = new Set([
   // sets, confirmed by the *other* real floor check in this file (`every source file in the
   // repository is typechecked`) still finding it.
   'packages/cli/bin',
+  // `packages/adapter-claude-code/test/conformance/fixtures/mcp-server.ts` (PLAN-M7.md P9): a real,
+  // standalone MCP stdio server *process* -- C16 (MCP grant fidelity)'s own conformance fixture,
+  // spawned directly by the real Claude Code CLI/SDK under test (`command: process.execPath, args:
+  // ['--experimental-strip-types', thisFile]`), never imported by any `*.test.ts` file and never run
+  // as a vitest suite itself. Unlike the other entries in this set, this one *is* typechecked (a real
+  // `.ts` file matched by `test/**/*.ts`) -- it is listed here only because it still needs the
+  // identical "outside src/" exemption `run-child.ts` below already establishes, for the identical
+  // "real child process run via `node --experimental-strip-types`, unrecognised by `TEST_FILE`'s
+  // naming heuristic" reason.
+  'packages/adapter-claude-code/test/conformance/fixtures/mcp-server.ts',
+  // `packages/adapter-claude-code/test/conformance/live-gate.ts`,
+  // `packages/adapter-claude-code/test/conformance/fixture-options.ts`, and
+  // `packages/adapter-claude-code/test/conformance/create-warmed-adapter.ts` (PLAN-M7.md P9): three
+  // shared, importable helper modules -- the live-run gate, the real `ConformanceOptions` fixture
+  // builder, and the warm-up-session adapter factory -- imported by both `sdk.conformance.test.ts`
+  // and `cli.conformance.test.ts`, never run as a suite of their own. The identical "shared,
+  // importable module, not a runnable suite" shape `packages/kb/test/lint/factories.ts` above already
+  // establishes, for the identical reason unrecognised by `TEST_FILE`'s naming heuristic.
+  'packages/adapter-claude-code/test/conformance/live-gate.ts',
+  'packages/adapter-claude-code/test/conformance/fixture-options.ts',
+  'packages/adapter-claude-code/test/conformance/create-warmed-adapter.ts',
 ]);
 
 /**

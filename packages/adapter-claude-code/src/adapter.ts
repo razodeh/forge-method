@@ -308,17 +308,36 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
    * `system/init` event to read a loaded-server list from yet. The actual server config and
    * `--allowedTools`/`Options.allowedTools` additions are built later, inside `startOnTransport`,
    * once this session's own real request and transport are both known; the actual load-verification
-   * enforcement ("granted-but-failed-to-load fails the step") lives in `drainAndTrack`'s own post-
-   * `session.started` check, below -- this method's own `loadedServerIds: []` is deliberately
-   * provisional, exactly as `PLAN-M7.md` P7 specifies, for a caller that inspects it before any
-   * session has actually run.
+   * enforcement ("granted-but-failed-to-load fails the step") lives entirely in `drainAndTrack`'s own
+   * post-`session.started` check, below, which never reads this method's own return value at all --
+   * it re-derives everything it needs directly from `mcpGrantsByCwd` and the real, live event stream.
+   *
+   * `loadedServerIds` here is therefore an honest *optimistic commitment* ("these are the servers
+   * this call will attempt to load," `mapGrantedMcpServersToConfig`'s own real, safe-id-filtered
+   * output -- a server whose id fails that filter was never actually going to be sent to Claude Code
+   * at all, so it is never claimed as loaded either), not a *confirmed fact* -- that distinction, and
+   * the real enforcement of it, belongs to `drainAndTrack` alone.
+   *
+   * `PLAN-M7.md` P7's own original text described this differently: "`provisionMcp`'s own returned
+   * `loadedServerIds` is populated retroactively once that check runs, for a caller that inspects it
+   * after the fact." A fresh critic round (P9) found that framing was never actually buildable against
+   * `McpProvisioning`'s own real shape (`@forge/adapter-kit`, M4): a plain, readonly, one-field value
+   * type with no method, no observable, and no way for an already-resolved `Promise`'s own value to be
+   * mutated after the fact -- there is no real mechanism by which any caller could ever "inspect it
+   * after the fact" and see something different than what this call originally resolved to. The
+   * earlier P7 implementation took that literally and returned `{loadedServerIds: []}} unconditionally
+   * -- honest in isolation, but it also meant `07` §7.6's own generic C16 (MCP grant fidelity) check
+   * (`@forge/adapter-kit/conformance`, which asserts `loadedServerIds` equals the granted set
+   * *immediately*, before any session ever starts) could never pass against this adapter, for any
+   * fixture, on either transport -- C16 is one of the five safety-critical ids. Recorded in full,
+   * including the plan-vs-real-interface mismatch, in `SPEC-QUESTIONS.md` Q121.
    */
   provisionMcp(
     servers: readonly GrantedMcpServer[],
     ctx: SessionContext,
   ): Promise<McpProvisioning> {
     this.mcpGrantsByCwd.set(ctx.cwd, servers);
-    return Promise.resolve({ loadedServerIds: [] });
+    return Promise.resolve({ loadedServerIds: Object.keys(mapGrantedMcpServersToConfig(servers)) });
   }
 
   async startSession(req: SessionRequest): Promise<SessionHandle> {

@@ -94,7 +94,7 @@ describe('probeAuthAvailability — fixture-driven branch coverage', () => {
 
 describe('probeAuthAvailability — real environment integration', () => {
   it('probes the real, installed claude CLI in this environment honestly (never throws, real booleans)', async () => {
-    const result = await probeAuthAvailability(process.env as Record<string, string>);
+    const result = await probeAuthAvailability(process.env);
     expect(typeof result.apiKey).toBe('boolean');
     expect(typeof result.subscription).toBe('boolean');
   });

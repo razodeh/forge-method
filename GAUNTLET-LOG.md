@@ -6961,3 +6961,88 @@ test run was also clean, aside from one pre-existing, unrelated flaky test in
 `packages/cli/test/commands/run/resume.test.ts` (a git branch-name collision under full-suite
 concurrency -- the same class of pre-existing flake as P7's own `crash-resume.test.ts` one, confirmed
 by re-running it alone successfully) -- untouched by this piece and not a regression it introduced.
+
+## M7 P9 — adapter conformance suite wiring, both transports, dual auth-mode aware (`07` §7.6)
+
+**Rounds: 1 (fresh critic finding three genuinely severe issues -- two of them meaning the check would
+fail even if a live run had been attempted, not merely "never run" -- plus two minor ones; all five
+addressed). Outcome: WON.**
+
+`07` §7.6's own generic 16-test suite (already built by M4) wired for real against `ClaudeCodeAdapter`:
+two real fixture files (`{sdk,cli}.conformance.test.ts`), a shared `ConformanceOptions` of genuine
+natural-language prompts (`fixture-options.ts`), a real, standalone MCP stdio server fixture for C16,
+and a real, shared live-run gate (`live-gate.ts`/`live-gate.test.ts`) that never attempted a network
+call in this environment -- confirmed both by construction (a local counter) and because this exact
+development machine turned out to carry a real, active Claude subscription login, discovered via a
+safe, read-only check *before* writing any test file, making an actual `FORGE_LIVE=1` run in this
+environment a real, billed action deliberately never taken. See `SPEC-QUESTIONS.md` Q121 for the full
+record, including a real R10 exemption-glob boundary this piece discovered the hard way (a nested
+package `test/` directory is not the same as the repo-root `test/` directory) and a small, correctly-
+scoped cross-piece fix to P1's `auth.ts`.
+
+### Round 1 — fresh critic (no context on plan/log, told to read the generic suite's own source first
+and verify every fixture against what each real `checkC*` function actually asserts): three severe
+findings, two minor
+
+What the critic caught that I missed, most severe first:
+
+1. **[HIGH, safety-critical] C16 was structurally unpassable against this adapter, for any fixture at
+   all.** `checkC16McpGrantFidelity` (`adapter-kit`) asserts `provisionMcp`'s own returned
+   `loadedServerIds` equals the granted server set *immediately*, before any session starts.
+   `ClaudeCodeAdapter.provisionMcp` (P7) always returned `{loadedServerIds: []}` -- an honest reading
+   of "confirmed loaded," but incompatible with what the check needs, and locked in by an existing P7
+   test. Tracing `PLAN-M7.md` P7's own original text surfaced the deeper cause: it described
+   `loadedServerIds` as "populated retroactively... for a caller that inspects it after the fact," a
+   mechanism `McpProvisioning`'s own real shape (a plain, readonly, one-field value with no method or
+   observable) never actually supported -- a plan-vs-real-interface mismatch, not an implementation
+   bug in isolation. **Fixed**: `provisionMcp` now returns the safe-id-filtered granted set as an
+   honest optimistic commitment, reusing already-tested P7 mapping logic directly
+   (`Object.keys(mapGrantedMcpServersToConfig(servers))`); `drainAndTrack`'s own real load-verification
+   enforcement (P7) never read this return value in the first place, so the real safety property is
+   completely unaffected by this change. The existing P7 test was updated to match, plus a new test for
+   the unsafe-id-filtering edge case.
+2. **[HIGH] The C16 fixture's own `allowedToolName`/`deniedToolName` used the bare tool name, not the
+   real, qualified `mcp__<server-id>__<tool>` form `AdapterEvent.tool.call.name` actually reports**
+   (confirmed against this same package's own `mcp.ts`, P7 -- I built the very naming convention this
+   fixture then got wrong). Beyond simply failing the "allowed succeeds" assertion, this made the
+   "denied fails" half pass *vacuously* regardless of whether the real deny path works -- silently
+   weakening half of a safety-critical check. **Fixed**: both names, and the prompt itself, now use the
+   qualified form; `GrantedMcpServer.grantedTools` correctly stays bare (a genuinely different, already-
+   correct contract).
+3. **[MEDIUM] C10 was structurally unpassable on either transport: neither ever emits a live `control`
+   event at all.** `accumulateSessionResult` (P4) only ever parsed `FORGE_*` tokens once, at the very
+   end, from the fully-accumulated `finalText` -- real for `SessionResult.controlTokens`, invisible to
+   any live stream consumer, unlike `@forge/testkit`'s own reference `FakePlatformAdapter`, which
+   already promotes a live token to a real event. **Fixed**: every non-partial `text` event is now also
+   scanned for `FORGE_*` lines as it streams, yielding a real `control` event alongside the original
+   `text` event; three new tests in `session-result.test.ts` cover the live-emission, the
+   partial-chunk-never-emits case, and multiple tokens across multiple events. One honest, narrow gap
+   left open rather than hidden: a token line split across two separate `text` events would be found by
+   the final `finalText` parse (concatenation rejoins it) but not live-emitted -- no live evidence this
+   ever actually happens, not assumed impossible either.
+4. **[LOW] The real MCP fixture server was a plain, untyped `.mjs` script with zero compiler coverage
+   anywhere in the repository**, confirmed empirically against both `tsconfig.json`s' own include
+   globs. This repository has an established convention for exactly this case -- a real TypeScript
+   fixture run via `node --experimental-strip-types`, matching `packages/cli/test/commands/run/
+   fixtures/run-child.ts`'s own precedent, which gets it real `tsc` coverage through the package's own
+   `test/**/*.ts` include glob. **Fixed**: renamed to `mcp-server.ts`, re-verified standalone (a real
+   client round-trip) after the rename.
+5. **[LOW, deliberate, not fixed] `live-gate.test.ts`'s own static-source "no per-id skip" check only
+   recognizes the quoted-string-literal form of an id** (`'C13'`/`"C13"`) -- a template-literal or
+   other non-quoted per-id special case would slip past. Already explicitly documented as a deliberate
+   narrowing by that check's own doc comment (a blanket substring ban was tried first and rejected --
+   it broke on this very file's own doc comment naming the constant in prose); the critic's own
+   explicit judgment was that this is a minor, already-acknowledged gap, not a required fix. Left as is.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (281 tests, 4 correctly
+skipped without `FORGE_LIVE=1`) all clean after every fix. `test/workspace-floor.test.ts` (a repo-wide
+structural-invariant suite, unrelated to Claude Code specifically) needed four new `IGNORED_PATHS`
+entries for this piece's own non-`.test.ts` helper files under a nested package `test/` directory --
+a real, necessary fix this piece's own new files triggered, not a pre-existing gap. A full monorepo
+`tsc --build`/`eslint .`/test run was clean twice over this piece's own two full runs (once before the
+`mcp-server.ts` rename, once after), aside from one pre-existing, unrelated flaky test each time -- a
+git-worktree/branch-name collision under full-suite concurrency, the identical class already seen in
+P7/P8, but landing on a *different* specific test file each time (`crash-resume.test.ts`, then
+`resume.test.ts`, then `crash-resume.test.ts` again) -- itself further evidence this is a genuine,
+load-timing-dependent pre-existing flake rather than anything caused by this piece, each instance
+re-confirmed passing cleanly alone.

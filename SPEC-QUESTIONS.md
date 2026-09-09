@@ -9013,3 +9013,164 @@ extras case, preserve-existing-grant case, reserved-id-supersedes case, `strict`
 this function's own logic from the rest of the adapter for faster, more exhaustive coverage.
 
 See `GAUNTLET-LOG.md`'s own M7 P8 entry for the full critic round.
+
+## Q121 — M7 P9's adapter conformance suite wiring: a real capabilities-caching mismatch found and
+worked around, a real R10 exemption-glob boundary discovered the hard way, and a live run deliberately
+never attempted
+
+**`07` §7.6's own 16-test suite (already built generically by M4) is now wired for real against
+`ClaudeCodeAdapter`** — two real fixture files (`packages/adapter-claude-code/test/conformance/
+{sdk,cli}.conformance.test.ts`), a shared, real `ConformanceOptions` (`fixture-options.ts`) whose every
+prompt is genuine natural language meant to elicit a specific behaviour from an actual Claude Code
+session (not `@forge/testkit`'s own sentinel-string fixtures, which only need to match a scripted fake
+adapter's exact-string dispatch), and a real, minimal, standalone MCP stdio server
+(`fixtures/mcp-server.mjs`, spawned as a genuine subprocess — verified standalone, via a real client
+round-trip, before ever being wired into the suite itself) for C16.
+
+**A real, structural mismatch found between this adapter's own design and the generic suite's own
+design, resolved without touching either:** `runAdapterConformanceSuite`'s own `beforeAll` calls
+`adapter.capabilities()` exactly once and caches that single snapshot for the whole suite's run — but
+`ClaudeCodeAdapter`'s own `capabilities()` (P4) only reports `sessionResume`/`partialText` as `true`
+once a real `session.started` event has actually been observed on that instance. Without
+intervention, C9 (resume) would be *permanently* and *silently* skipped on every future live run of
+this suite, forever, regardless of whether resume genuinely works — the cached snapshot would always
+reflect the pre-session, conservative values, since nothing ever re-queries `capabilities()` after that
+one `beforeAll` call. Neither `adapter-kit`'s own already-shipped, already-gauntlet-tested generic
+suite (out of this piece's own scope to modify) nor `ClaudeCodeAdapter`'s own already-committed P4
+design (a deliberate, already-reviewed choice, matching `07` §7.3's own "feature-detect... rather than
+comparing version strings" framing) is the right thing to change here. **Resolved** entirely within
+this piece's own factory function: `createWarmedAdapter` runs one real, cheap "say hello" session
+first, fully drained via `handle.result()`, *before* returning the adapter instance `beforeAll` then
+calls `capabilities()` on — by the time the generic suite captures its one snapshot, this adapter's
+own `sawSessionStarted` flag is already `true`, so the cached capabilities genuinely reflect what this
+environment's real, installed CLI/SDK actually confirmed. A warm-up failure is never swallowed:
+if even a trivial "say hello" session cannot complete, every other check would fail for the same
+underlying reason anyway, so letting it propagate and fail `beforeAll` loudly is correct, not an
+oversight.
+
+**A real R10 boundary discovered the hard way, not assumed:** `eslint.config.js`'s own R10 exemption
+glob is `'test/**/*.ts'` (among others) — this pattern anchors `test/` to the *root* of wherever the
+config resolves paths from, matching only a repository-root-level `test/` directory (confirmed: the
+repo's own root-level `test/workspace-floor.test.ts` etc.), **not** a `test/` directory nested inside
+a package (`packages/adapter-claude-code/test/conformance/`). Every plain, non-`*.test.ts` helper this
+piece needed (`live-gate.ts`, `fixture-options.ts`, `create-warmed-adapter.ts`) therefore remains fully
+governed by R10, exactly like production code, even though it lives under a `test/` path — a first
+draft of `create-warmed-adapter.ts`/`fixture-options.ts` read `process.env`/`Date.now()`/`node:os`'s
+`tmpdir()` directly and failed real lint (`no-restricted-syntax`/`no-restricted-imports`). **Fixed** by
+threading every such ambient fact through as an explicit parameter from the one place genuinely exempt
+(the two real `*.test.ts` entry files themselves), the identical dependency-injection discipline
+`src/auth.ts`'s own `probeAuthAvailability` already established for `env` specifically.
+
+**A small, real, cross-piece fix to P1's already-committed `src/auth.ts`, made in passing:**
+`probeAuthAvailability`'s own `env` parameter was typed `Readonly<Record<string, string>>`, but its
+own body (`hasApiKeyCredential`) was already defensively written to tolerate `undefined` values — a
+real type-signature/body mismatch this piece's own most natural real caller (passing `process.env`
+itself, whose real type is `NodeJS.ProcessEnv` with `string | undefined` values) hit immediately.
+**Fixed**: widened to `Readonly<Record<string, string | undefined>>`, filtering to a fully-`string`
+snapshot internally before handing anything down to the unchanged, narrower `ClaudeCliRunner`. Backward
+compatible — every existing caller passing a plain `Record<string, string>` remains valid.
+
+**A self-caught test-design bug, fixed before any critic round:** the first draft of
+`live-gate.test.ts`'s own static-source check for "no additional per-id skip logic" banned the bare
+string `SAFETY_CRITICAL_CONFORMANCE_IDS` from appearing anywhere in `live-gate.ts`'s own source — which
+immediately failed against `live-gate.ts`'s own doc comment, which *names that exact constant in prose*
+to explain this very property. **Fixed** by narrowing that one file's own check to the same
+quoted-string-literal form (`'C13'`/`"C13"`) already used everywhere else in the same test, rather than
+a blanket identifier ban — a real per-id skip condition could only ever be written in that quoted form,
+and prose explaining the property is not a skip condition.
+
+**Deliberately, explicitly never attempted: an actual live run.** Before writing any of this piece's
+own conformance test files, a real, read-only, side-effect-free check (`claude auth status --json`, the
+identical command `probeAuthAvailability` itself already runs unconditionally) confirmed this
+development environment carries a **real, active Claude subscription login**. Setting `FORGE_LIVE=1`
+here would therefore not merely test the gating logic — it would trigger a genuine, billed, 16-test
+conformance run against a real account, on both transports, exactly the "deliberate, explicit,
+jointly-supervised step" `PLAN-M7.md`'s own closing section says must be taken once real credentials
+exist, "not something this plan's own pieces attempt unsupervised." This piece's own live-branch logic
+(`planLiveRuns` returning a non-empty list) is therefore verified only indirectly: exhaustively, via
+`live-gate.test.ts`'s own pure, fabricated-input unit tests of the underlying decision function, and by
+direct code inspection of the two real conformance files' own simple, unconditional wiring — never by
+actually exercising that branch against this real, present credential. The real prompts themselves
+(`fixture-options.ts`) are, to the identical extent, unverified against a genuine model response: real,
+honest, live-verification-dependent risks include C2's own exact-string content match (a real Claude
+Code file-write tool adding a trailing newline the prompt's own wording tries, but cannot guarantee, to
+prevent), C15's skill-activation heuristic (whether Claude Code's own native skill-matching genuinely
+surfaces a `.claude/skills/`-provisioned skill for this exact description/prompt pairing), and C13's
+secret-probe prompt (whether a plain "print this env var" request could ever be model-refused rather
+than attempted). None of these can be resolved without the live run itself — recorded honestly here,
+matching this whole milestone's own repeated refusal to fabricate confidence a real, live call alone
+could confirm (`SPEC-QUESTIONS.md` Q114's identical stance on the stdin-piping mechanism).
+
+**A fresh critic round, told to read `adapter-kit`'s own generic suite source first and verify every
+fixture against what each `checkC*` function actually asserts (not just trust this piece's own fixture
+values), found three genuinely severe issues — two of which mean the real check would have failed even
+if a live run had been attempted, not merely "never tried":**
+
+1. **[HIGH, safety-critical] C16 was structurally unpassable against this adapter, for any fixture.**
+   `checkC16McpGrantFidelity` (`adapter-kit`) asserts `provisionMcp`'s own returned `loadedServerIds`
+   equals the granted server id set *immediately*, before any session ever starts. `ClaudeCodeAdapter.
+   provisionMcp` (P7) unconditionally returned `{loadedServerIds: []}` — an honest reading of
+   `McpProvisioning` as "confirmed loaded," locked in by an existing P7 test. Re-reading `PLAN-M7.md`
+   P7's own original text ("`loadedServerIds` is populated retroactively once that check runs, for a
+   caller that inspects it after the fact") revealed the deeper cause: that framing was never actually
+   buildable against `McpProvisioning`'s own real shape (`@forge/adapter-kit`, M4) — a plain, readonly,
+   one-field value with no method and no way for an already-resolved `Promise`'s value to be mutated
+   after the fact. A real plan-vs-real-interface mismatch, not a P7 implementation bug in isolation.
+   **Fixed**: `provisionMcp` now returns `loadedServerIds` as an honest *optimistic commitment*
+   (`Object.keys(mapGrantedMcpServersToConfig(servers))` — the same safe-id-filtered set that will
+   actually be sent to Claude Code, reusing already-tested P7 logic directly) rather than a confirmed
+   fact. This does not weaken the real safety property at all: `drainAndTrack`'s own post-session
+   load-verification check (P7) never reads `provisionMcp`'s return value in the first place — it
+   re-derives everything from `mcpGrantsByCwd` and the real, live `session.started` event, unaffected
+   by this change. The existing, locked-in P7 test was updated to match (now also covering the
+   unsafe-id-filtering case); the doc comment records the plan-vs-interface mismatch honestly rather
+   than silently papering over it.
+2. **[HIGH] The C16 fixture's own reported tool names were wrong — the bare form, not the real,
+   qualified `mcp__<server-id>__<tool>` form Claude Code actually reports on every real `tool.call`
+   event** (confirmed against this same package's own `mcp.ts`, P7). `checkC16McpGrantFidelity` looks
+   up outcomes by exactly the name `AdapterEvent.tool.call.name` carries — the bare form would never
+   match, failing the "allowed succeeds" half outright and, worse, making the "denied fails" half pass
+   *vacuously* regardless of whether the real deny path works at all, silently weakening half of a
+   safety-critical check. **Fixed**: `allowedToolName`/`deniedToolName` (and the prompt itself, so the
+   model is told the same real, qualified name it will actually see in its own tool list) now use the
+   qualified form; `GrantedMcpServer.grantedTools` correctly stays bare, a genuinely different real
+   contract `mapGrantedMcpServersToAllowedTools` already qualifies internally.
+3. **[MEDIUM] C10 was structurally unpassable on either transport: neither transport ever emits a
+   live `control` `AdapterEvent` at all.** `07` §7.6's own C10 row requires one; `@forge/testkit`'s own
+   reference `FakePlatformAdapter` already implements this live-promotion correctly (the real precedent
+   this adapter diverged from). This adapter's own `FORGE_*` parsing (`parseControlTokens`) previously
+   ran exactly once, at the very end of `accumulateSessionResult`, on the fully-accumulated `finalText`
+   — real for `SessionResult.controlTokens`, but invisible to any caller watching the live event stream,
+   which is exactly what C10 (and any real, live consumer wanting to react to a control token as it
+   happens, not only after the whole session ends) needs. **Fixed**: every non-partial `text` event's
+   own text is now scanned for real `FORGE_*` lines as it arrives, yielding a real `control` event for
+   each one found, live, alongside (never instead of) the original `text` event — new tests in
+   `session-result.test.ts` prove this, including that a token confined to a `partial: true` chunk is
+   correctly never live-emitted (mirroring the existing `finalText` accumulation discipline exactly).
+   One honest, narrow gap this fix does not close, recorded rather than hidden: a control-token line
+   split across two separate `text` events (e.g. straddling a real content-block boundary) would still
+   be found by the final, authoritative `finalText`-based parse (concatenation rejoins it), but would
+   never be live-emitted — no live evidence exists of this ever actually happening (content blocks are
+   confirmed, live-captured to split on much coarser boundaries), but it is not assumed impossible.
+
+**Two further findings, addressed and left as a documented trade-off respectively:**
+
+4. **[LOW] The real MCP fixture server (`fixtures/mcp-server.mjs`) was a plain, untyped `.mjs` script
+   with zero compiler coverage anywhere in the repository** — confirmed empirically (`tsc --listFiles`
+   against both the package's own `tsconfig.json` and the root one; neither's `.mjs` globs reached this
+   path). This repository has an established, deliberate convention for exactly this situation (a real,
+   standalone fixture *process* that must run with no build step): write it as real TypeScript, run via
+   `node --experimental-strip-types` (`packages/cli/test/commands/run/fixtures/run-child.ts`'s own
+   precedent), which gets it real, ordinary `tsc` coverage through the package's own `test/**/*.ts`
+   include glob. **Fixed**: renamed to `mcp-server.ts`, spawned with the `--experimental-strip-types`
+   flag prepended; re-verified standalone (a real client round-trip against the real, spawned process)
+   after the rename, not merely assumed to still work.
+5. **[LOW, deliberate, not fixed] `live-gate.test.ts`'s own static source-scanning check
+   (`containsQuotedId`) only recognizes the quoted-string-literal form of a per-id skip condition**
+   (`'C13'`/`"C13"`) — a per-id special case written as a template literal or any non-quoted form would
+   slip past undetected. Already explicitly documented, by this same check's own doc comment, as a
+   deliberate narrowing (a bare substring ban was tried first and rejected — Q121's own earlier draft
+   hit this directly, see above) rather than an oversight; the critic's own explicit judgment was that
+   this is a minor, already-acknowledged robustness gap, not a required fix, and it was left as is.
+
+See `GAUNTLET-LOG.md`'s own M7 P9 entry for the full critic round.

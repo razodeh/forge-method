@@ -480,21 +480,44 @@ describe('ClaudeCodeAdapter — session environment', () => {
 });
 
 describe('ClaudeCodeAdapter — provisionMcp()/MCP load-verification', () => {
-  it('provisionMcp() records the grant and returns the provisional {loadedServerIds: []} immediately, before any session has run', async () => {
+  it('provisionMcp() records the grant and immediately returns loadedServerIds as an optimistic echo of the granted, safe-id server set -- before any session has run', async () => {
     const adapter = new ClaudeCodeAdapter({
       config: claudeCodeAdapterConfigSchema.parse({}),
       env: {},
       now: () => 0,
     });
     const result = await adapter.provisionMcp(
-      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      [
+        { id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' },
+        { id: 'b', transport: 'stdio', command: 'server-b', grantedTools: '*' },
+      ],
       {
         runId: 'run-1',
         stepId: 'implement-story-1',
         cwd: '/tmp/forge-adapter-claude-code-test-mcp-provisional',
       },
     );
-    expect(result).toEqual({ loadedServerIds: [] });
+    expect(result).toEqual({ loadedServerIds: ['a', 'b'] });
+  });
+
+  it("provisionMcp()'s own optimistic echo never claims a server whose id fails mcp.ts's own safety filter -- it was never actually going to be sent to Claude Code, so it is never claimed as loaded either", async () => {
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({}),
+      env: {},
+      now: () => 0,
+    });
+    const result = await adapter.provisionMcp(
+      [
+        { id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' },
+        { id: 'evil)Bash(*', transport: 'stdio', command: 'server-evil', grantedTools: '*' },
+      ],
+      {
+        runId: 'run-1',
+        stepId: 'implement-story-1',
+        cwd: '/tmp/forge-adapter-claude-code-test-mcp-unsafe-id',
+      },
+    );
+    expect(result).toEqual({ loadedServerIds: ['a'] });
   });
 
   it("a session granted only server 'a' is accepted when the real init event reports 'a' plus an extra, unrequested 'b' -- 07 §7.3's own Check names only missing servers as a failure", async () => {

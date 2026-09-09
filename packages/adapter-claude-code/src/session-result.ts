@@ -2,17 +2,51 @@
  * `accumulateSessionResult` — wraps a transport's own raw `AsyncIterable<AdapterEvent>` (either
  * `spawnClaudeCli`'s or `runSdkQuery`'s) into the real `AsyncGenerator<AdapterEvent, SessionResult>`
  * shape `makeSessionHandle` needs: every event is re-yielded unchanged (so a real caller consuming
- * `SessionHandle.events` sees the identical stream either transport produces), while this function
- * accumulates enough to build a real final `SessionResult` once the stream ends.
+ * `SessionHandle.events` sees the identical stream either transport produces, plus this function's own
+ * synthesized `control` events -- see below), while this function accumulates enough to build a real
+ * final `SessionResult` once the stream ends.
+ *
+ * A fresh critic round (`PLAN-M7.md` P9) found `07` §7.6's own C10 (control tokens) row -- "A prompt
+ * instructing `FORGE_ASK` produces a parsed `control` event" -- was structurally unpassable against
+ * this adapter on either transport: neither `parse-event.ts` (CLI) nor `map-message.ts` (SDK) ever
+ * constructs a real `{type: 'control', ...}` `AdapterEvent` at all; the only place `FORGE_*` tokens were
+ * ever parsed was here, once, on the fully-accumulated `finalText`, after the stream had already ended
+ * -- a real caller watching `SessionHandle.events` live (rather than only reading `SessionResult.
+ * controlTokens` after the fact) never actually saw one. **Fixed**: every non-partial `text` event's
+ * own text is scanned for real `FORGE_*` lines as it arrives, and a real `control` event is yielded for
+ * each one found, live, in addition to (never instead of) the original `text` event -- `@forge/testkit`
+ * own `FakePlatformAdapter` already established this exact live-promotion precedent (`SPEC-QUESTIONS.md`
+ * M4 critic round); this brings the real adapter's own behaviour in line with it.
+ *
+ * A known, honest, narrow gap this fix does not close: a control-token *line* split across two
+ * separate `text` events (e.g. straddling a real content-block boundary) would still be found by the
+ * final, authoritative `finalText`-based parse below (concatenation rejoins it), but would never be
+ * live-emitted (neither individual event's own text contains the whole line). No live evidence exists
+ * of this ever actually happening -- content blocks are confirmed, live-captured to split on much
+ * coarser boundaries (a whole assistant turn, a tool call) -- but it is recorded here rather than
+ * silently assumed impossible.
  *
  * @see specs/07 §7.2
+ * @see specs/07 §7.6
  * @see SPEC-QUESTIONS.md Q116
+ * @see SPEC-QUESTIONS.md Q121
  * @see PLAN-M7.md P4
+ * @see PLAN-M7.md P9
  */
 import { parseControlTokens } from '@forge/adapter-kit/control-tokens';
-import type { AdapterEvent, SessionResult } from '@forge/adapter-kit';
+import type { AdapterEvent, ParsedControlToken, SessionResult } from '@forge/adapter-kit';
 
 import { computeChangedFiles } from './changed-files.ts';
+
+/** `AdapterEvent`'s own `control` variant carries `token`/`payload` separately (`payload` loosely
+ * typed, since a live-streamed event is not schema-validated the way `SessionResult.controlTokens`'
+ * own fully-parsed `ParsedControlToken[]` is) -- this splits a real, already-parsed token into exactly
+ * that shape, `token` pulled out and everything else folded into `payload`, uniformly across every one
+ * of the union's seven real members. */
+function toControlEvent(parsed: ParsedControlToken): AdapterEvent {
+  const { token, ...payload } = parsed;
+  return { type: 'control', token, payload };
+}
 
 export interface AccumulateSessionResultOptions {
   readonly sessionId: string;
@@ -44,8 +78,12 @@ export async function* accumulateSessionResult(
         // Only non-partial (complete) text blocks are accumulated -- a `partial: true` chunk is a
         // strict prefix-in-progress of the same content a later non-partial block (or the final
         // consolidated one) already carries in full; double-counting both would duplicate text in
-        // `finalText`.
-        if (!event.partial) finalText += event.text;
+        // `finalText`, and double-emit any live control event this same guard also gates below.
+        if (!event.partial) {
+          finalText += event.text;
+          const { tokens: liveTokens } = parseControlTokens(event.text);
+          for (const parsed of liveTokens) yield toControlEvent(parsed);
+        }
         break;
       case 'tool.call':
         toolCallCount += 1;

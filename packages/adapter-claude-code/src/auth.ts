@@ -29,7 +29,7 @@ export interface AuthAvailability {
   readonly subscription: boolean;
 }
 
-function hasApiKeyCredential(env: Readonly<Record<string, string>>): boolean {
+function hasApiKeyCredential(env: Readonly<Record<string, string | undefined>>): boolean {
   return API_KEY_ENV_VARS.some((name) => {
     const value = env[name];
     return value !== undefined && value.length > 0;
@@ -67,12 +67,22 @@ async function probeSubscriptionLogin(
  * costs nothing (`claude auth status` reads local session state; it does not call the model), so
  * unlike every conformance/live-smoke test this milestone gates behind `FORGE_LIVE`, this one runs in
  * every ordinary test run.
+ *
+ * `env`'s own values are `string | undefined` (not just `string`) — a real `PLAN-M7.md` P9 caller
+ * passes `process.env` itself directly (`NodeJS.ProcessEnv`'s own real, standard-library type), which
+ * `probeSubscriptionLogin`/`ClaudeCliRunner` (both narrower, unchanged) never receive directly: this
+ * function is the one place that filters out unset keys before handing a real, fully-`string`-valued
+ * snapshot down to either.
  */
 export async function probeAuthAvailability(
-  env: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string | undefined>>,
   runner: ClaudeCliRunner = realClaudeCliRunner,
 ): Promise<AuthAvailability> {
   const apiKey = hasApiKeyCredential(env);
-  const subscription = await probeSubscriptionLogin(env, runner);
+  const definedEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) definedEnv[key] = value;
+  }
+  const subscription = await probeSubscriptionLogin(definedEnv, runner);
   return { apiKey, subscription };
 }
