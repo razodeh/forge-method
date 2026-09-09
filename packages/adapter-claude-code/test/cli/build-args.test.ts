@@ -176,6 +176,47 @@ describe('buildCliArgs', () => {
     expect(args).not.toContain('--resume');
   });
 
+  it('mcp.allowedTools (P7) is merged into the same single --allowedTools occurrence as the plain ToolGrant-derived entries, still entirely before the trailing -- guard', () => {
+    const args = buildCliArgs(
+      baseRequest({ tools: { read: true, write: false, exec: false, network: 'none' } }),
+      claudeCodeAdapterConfigSchema.parse({}),
+      undefined,
+      { allowedTools: ['mcp__github__get_issue'], serverConfig: {}, strict: true },
+    );
+    const index = args.indexOf('--allowedTools');
+    expect(args.slice(index + 1, index + 3)).toEqual(['Read', 'mcp__github__get_issue']);
+    expect(args.indexOf('--')).toBeGreaterThan(index + 2);
+  });
+
+  it('mcp.serverConfig (P7) is passed as a JSON string via --mcp-config, and --strict-mcp-config is included when mcp.strict is true', () => {
+    const args = buildCliArgs(baseRequest(), claudeCodeAdapterConfigSchema.parse({}), undefined, {
+      allowedTools: [],
+      serverConfig: { github: { type: 'stdio', command: 'npx' } },
+      strict: true,
+    });
+    const index = args.indexOf('--mcp-config');
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(args[index + 1] ?? '{}')).toEqual({
+      github: { type: 'stdio', command: 'npx' },
+    });
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('--strict-mcp-config is omitted when mcp.strict is false (config.mcp.adoptHostServers)', () => {
+    const args = buildCliArgs(baseRequest(), claudeCodeAdapterConfigSchema.parse({}), undefined, {
+      allowedTools: [],
+      serverConfig: {},
+      strict: false,
+    });
+    expect(args).not.toContain('--strict-mcp-config');
+  });
+
+  it('--mcp-config/--strict-mcp-config are both omitted entirely when no mcp extras are given at all -- no provisionMcp call ever ran for this session', () => {
+    const args = buildCliArgs(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(args).not.toContain('--mcp-config');
+    expect(args).not.toContain('--strict-mcp-config');
+  });
+
   it('a prompt beginning with a dash is still passed as literal text, guarded by --, not misread as a flag', () => {
     // A fresh critic round flagged this as a real, if low-severity, risk an earlier draft left
     // unguarded. Not live-verified against the real CLI (see build-args.ts's own doc comment), but

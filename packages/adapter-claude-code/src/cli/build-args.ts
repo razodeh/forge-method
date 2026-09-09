@@ -9,6 +9,7 @@
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
+import type { McpSessionExtras } from '../mcp.ts';
 import { mapPermissionModeForCli, mapToolGrantToAllowedTools } from '../tool-grant.ts';
 
 /**
@@ -26,6 +27,7 @@ export function buildCliArgs(
   req: SessionRequest,
   config: ClaudeCodeAdapterConfig,
   resumeSessionId?: string,
+  mcp?: McpSessionExtras,
 ): readonly string[] {
   const args: string[] = ['-p', '--verbose', '--name', req.stepId];
   // `07` §7.3's own mapping table: `session resume -> --resume <sessionId>` (confirmed against the
@@ -85,11 +87,31 @@ export function buildCliArgs(
   // `--allowedTools` is never left as a bare, valueless flag -- the identical "always pass it
   // explicitly, even for a fully-denied grant" contract this function's own top-of-file doc comment
   // already establishes.
-  const allowedTools = mapToolGrantToAllowedTools(req.tools);
+  //
+  // `mcp?.allowedTools` (P7) is merged in *here*, as part of building this one, single
+  // `--allowedTools` occurrence -- not appended separately later, since everything in this argv list
+  // must come before the trailing `--`/prompt guard at the very end, which only this function
+  // controls the position of.
+  const allowedTools = [...mapToolGrantToAllowedTools(req.tools), ...(mcp?.allowedTools ?? [])];
   if (allowedTools.length === 0) {
     args.push('--allowedTools', '');
   } else {
     args.push('--allowedTools', ...allowedTools);
+  }
+
+  // `07` §7.3's own MCP-grant path (P7): `--mcp-config <configs...>` real, confirmed against the
+  // installed CLI's own `--help` text to accept "JSON files or strings" -- a JSON *string* is used
+  // directly here, never a temp file, since the real flag already supports it and this avoids the
+  // filesystem-write/cleanup/boundary-safety concerns a file-based approach would otherwise need
+  // (`skills.ts`, P6, already needed real symlink-escape hardening for an analogous file write inside
+  // the lane; a string value sidesteps that whole class of risk here). `--strict-mcp-config` (real,
+  // confirmed) is the actual mechanism behind "never adopt the user's own ambient `.mcp.json` unless
+  // `config.mcp.adoptHostServers`" (`15` §15.5.2) -- `--bare`'s own help text is not fully explicit
+  // about whether it alone already excludes ambient MCP config, so this is passed unconditionally
+  // (whenever not adopting) rather than relying on an inferred, unconfirmed side effect of `--bare`.
+  if (mcp !== undefined) {
+    args.push('--mcp-config', JSON.stringify(mcp.serverConfig));
+    if (mcp.strict) args.push('--strict-mcp-config');
   }
 
   if (req.systemPrompt.mode === 'append') {

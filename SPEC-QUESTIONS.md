@@ -8792,3 +8792,99 @@ data to act on regardless, a completeness gap in the upstream type, not somethin
 itself drops.
 
 See `GAUNTLET-LOG.md`'s own M7 P6 entry for the full critic round.
+
+## Q119 — M7 P7's MCP provisioning + load-verification: the real permission mechanism confirmed, a
+plausible false-positive found and fixed, and several honestly-unclosed live-verification gaps
+
+**`15` §15.6's MCP-grant path resolves to the same permission-rule mechanism `tool-grant.ts` already
+builds on, not a separate channel.** Anthropic's own official permissions docs
+(`code.claude.com/docs/en/permissions`, fetched during this piece) confirm MCP tools are governed by
+the identical `--allowedTools`/`Options.allowedTools` system as every other tool, via a real, documented
+`mcp__<server>__<tool>` naming convention. The *server* half (which servers load at all) is the real,
+confirmed `Options.mcpServers: Record<string, McpServerConfig>` / CLI `--mcp-config <configs...>`
+("Load MCP servers from JSON files **or strings**," confirmed against the installed CLI's own `--help`
+text — a JSON string is passed directly, no temp file). `--strict-mcp-config` /
+`Options.strictMcpConfig` (its own doc comment: "Maps to the CLI `--strict-mcp-config` flag," a direct,
+confirmed 1:1 correspondence) is the real mechanism behind "never adopt the user's own ambient
+`.mcp.json` unless `config.mcp.adoptHostServers`."
+
+**Load verification is checked by presence-by-name alone against the real `system/init` event's own
+`mcp_servers: {name, status}[]` field (confirmed at `sdk.d.ts` ~line 5188) — deliberately not also by
+each entry's own `status` value.** This milestone has never actually granted a real MCP server in any
+live (non-fixture) call, so there is no live-captured evidence of what a real failed server's own
+`status` string even reads as — checking presence alone is the honest, evidence-grounded half of `07`
+§7.3's own load-verification mandate this piece can actually implement without guessing at an unverified
+string. Extra, unrequested servers the host reports beyond what was granted are never a failure — `07`
+§7.3's own Check names only missing servers.
+
+**A fresh critic round, given the piece plus its own tests and told to independently trace both
+transports' real teardown behavior against the real SDK's own `.d.ts`, found two substantive issues and
+several test-coverage gaps:**
+
+1. **(MEDIUM, plausible false positive) The original draft re-ran the load-verification check against
+   *every* `session.started` event in the stream, not only the first.** The real SDK's own doc comment
+   describes `SDKSystemMessage` as metadata "the CLI emits at the start of **each turn**" — and this
+   codebase's own `session-result.ts` (P4) already treats a single non-resumed session as potentially
+   spanning several internal turns (its own `turns: toolCallCount + 1` heuristic, grounded in a real,
+   live-captured `num_turns: 2` call). If `system/init`/`session.started` genuinely recurs mid-session
+   (never confirmed either way — no live MCP grant has ever been made), a granted server that loaded
+   fine at real session start but was merely absent from a *later* turn's own snapshot would retroactively
+   fail an already-succeeding session — a false positive well outside `07` §7.3's own "confirm...
+   actually loaded" wording, which reads as a one-time, at-startup fact, not an ongoing liveness probe.
+   **Fixed**: `drainAndTrack` now checks only the first `session.started` event it ever sees per session;
+   a later recurrence (if the real CLI/SDK ever produces one) updates `claudeSessionId` tracking as
+   before but is never re-checked against the grant. A new adversarial test
+   (`adapter.test.ts`: "only the first session.started event... is checked") proves a second recurrence
+   reporting an empty `mcp_servers` list does not retroactively fail a session already verified at its
+   real first start.
+2. **(LOW-MEDIUM, doc-accuracy + defense-in-depth) `mapGrantedMcpServersToConfig`'s original `{}`
+   accumulator had a real, if very narrow, gap: a granted server id of exactly `'__proto__'` is not
+   rejected by `isSafeMcpNameSegment` (it contains none of `(`, `)`, `,`), but `config[server.id] = ...`
+   on an ordinary object literal with that exact key never creates an own property at all — it invokes
+   `Object.prototype`'s own legacy `__proto__` setter, silently reassigning the map's own prototype
+   instead.** Traced both real consumers (`JSON.stringify` in `build-args.ts`, object-spread in
+   `build-options.ts`): both only read own-enumerable keys, so nothing already leaked, and since the
+   server was never actually sent to Claude Code, `findMissingGrantedServers` would already, correctly,
+   fail the session closed for it appearing "missing" — not a live security bug, but an accidental
+   fail-closed outcome resting on every future consumer of this map happening to stay prototype-agnostic
+   forever, not a deliberate contract. **Fixed**: the accumulator is now `Object.create(null)` (cast once,
+   at construction, to keep the function's own return type honest), which has no inherited `__proto__`
+   accessor to trigger at all — a granted server literally named `__proto__` now becomes a normal, safe
+   own key instead. A new regression test proves this directly (`mcp.test.ts`: the `__proto__` case).
+
+**Three findings were explicitly not treated as new defects, and are recorded here rather than acted
+on:**
+
+- **The abort-without-drain design in `drainAndTrack`'s mismatch path is very likely safe for both
+  transports, but rests on reading each transport's own vendor documentation, not an executable proof.**
+  On a mismatch, `abortController.abort()` is called and `inner` (the wrapped per-transport generator)
+  is never drained further — no `.next()`, no `.return()`. For `cli`, `spawn.ts`'s own real `execa`
+  `cancelSignal` kills the real subprocess independent of whether anything keeps consuming its events.
+  For `sdk`, the real `Options.abortController` doc comment states aborting it makes "the query... stop
+  and clean up resources" itself — the identical signal-driven, not consumption-driven, cleanup model.
+  The critic also correctly pointed out the original doc comment's framing ("mirrors `SessionHandle.
+  stop()`'s own precedent") overstated the equivalence: `stop()`'s abandonment only ever happens because
+  an *external caller* chose to stop pumping, while this abandons `inner` unconditionally from inside the
+  adapter's own code, even while a caller is actively draining via `.result()`. The doc comment is
+  corrected to state this distinction plainly rather than assert an equivalence that does not fully
+  hold. No executable test can currently distinguish "the real subprocess/query actually tore down" from
+  "it merely looks fine because the fakes never model real teardown" — this codebase's fakes
+  (`fakeSpawnCli`/`fakeSdkModule`) don't hold a real OS resource either way, and the generic cross-adapter
+  C5 (abort) conformance check (`@forge/adapter-kit`) is only a settle-time proxy, not wired to trigger an
+  MCP mismatch at all. Left as an honest, unclosed gap rather than a fabricated test that would not
+  actually prove real resource cleanup.
+- **A granted server or tool name containing `(`, `)`, or `,` is silently dropped, not surfaced as an
+  error, from both the config map and the allowed-tools list** — the same fail-closed choice
+  `tool-grant.ts`'s own `safeBashRule`/`safeWebFetchDomainRule` already make for a sibling risk (Q117/
+  Q118); a caller currently has no way to learn *which* servers were dropped this way versus genuinely
+  absent from FORGE's own registry. Not fixed here — no real caller of `provisionMcp` exists yet in this
+  codebase to say what surfacing this back to should even look like.
+- **This piece's own guarantees end where `ToolGrant.extra` begins.** `tool-grant.ts`'s pre-existing
+  `grant.extra` field is pushed verbatim into `--allowedTools`/`Options.allowedTools` with no character
+  validation and no relationship to `provisionMcp` at all — a caller could already push a raw
+  `mcp__server__tool` string through that pre-existing escape hatch, bypassing both
+  `isSafeMcpNameSegment` and `drainAndTrack`'s own load-verification entirely. Pre-existing, untouched by
+  this piece, and not something this piece could reasonably be asked to close — recorded here only so a
+  future reader knows the actual boundary of what P7 guarantees.
+
+See `GAUNTLET-LOG.md`'s own M7 P7 entry for the full critic round.

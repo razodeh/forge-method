@@ -1,18 +1,22 @@
 /**
  * `ClaudeCodeAdapter` — the real `PlatformAdapter` implementation tying P1 (config/version/auth),
- * P2 (CLI transport), P3 (SDK transport), and P6 (`provisionSkills`) together: transport selection
- * with a documented preference order, `startSession`/`resumeSession` over whichever transport a given
- * session actually used, `capabilities`/`preflight`/`listModels`, and native skill materialisation.
+ * P2 (CLI transport), P3 (SDK transport), P6 (`provisionSkills`), and P7 (`provisionMcp`) together:
+ * transport selection with a documented preference order, `startSession`/`resumeSession` over
+ * whichever transport a given session actually used, `capabilities`/`preflight`/`listModels`, native
+ * skill materialisation, and MCP grant provisioning with real load verification.
  *
  * @see specs/07 §7.2
  * @see specs/07 §7.3
  * @see specs/15 §15.6
  * @see SPEC-QUESTIONS.md Q116
- * @see PLAN-M7.md P4, P6
+ * @see SPEC-QUESTIONS.md Q119
+ * @see PLAN-M7.md P4, P6, P7
  */
 import type {
   AdapterCapabilities,
   AdapterEvent,
+  GrantedMcpServer,
+  McpProvisioning,
   ModelInfo,
   PlatformAdapter,
   PreflightContext,
@@ -32,6 +36,13 @@ import { spawnClaudeCli } from './cli/spawn.ts';
 import { confirmedCapabilities, staticCapabilities } from './capabilities.ts';
 import type { ClaudeCodeAdapterConfig } from './config.ts';
 import { listClaudeCodeModels } from './list-models.ts';
+import {
+  findMissingGrantedServers,
+  mapGrantedMcpServersToAllowedTools,
+  mapGrantedMcpServersToConfig,
+  readMcpServerNames,
+} from './mcp.ts';
+import type { McpSessionExtras } from './mcp.ts';
 import { runPreflight } from './preflight.ts';
 import { makeSessionHandle } from './session-handle.ts';
 import { accumulateSessionResult } from './session-result.ts';
@@ -54,6 +65,7 @@ export interface SdkTransportModule {
     req: SessionRequest,
     config: ClaudeCodeAdapterConfig,
     resumeSessionId?: string,
+    mcp?: McpSessionExtras,
   ) => SdkOptions;
   readonly runSdkQuery: (
     prompt: string,
@@ -186,6 +198,14 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
    * `sessions`, below, rather than exposing it directly as `SessionHandle.sessionId`.
    */
   private sessionCounter = 0;
+  /**
+   * Keyed by `cwd`, not `runId`/`stepId` -- `15` §15.6's own "scoped to `ctx.cwd`" framing for the
+   * MCP-grant path, and the natural key given `provisionMcp` and the later `startSession` call for
+   * the same step both carry the identical lane worktree path (`SessionContext.cwd`/
+   * `SessionRequest.cwd`). Never evicted, for the identical reason `sessions` (above) is not --
+   * `SPEC-QUESTIONS.md` Q119 has the record for this map specifically.
+   */
+  private readonly mcpGrantsByCwd = new Map<string, readonly GrantedMcpServer[]>();
   /** Flips `true` the moment any session this instance has started actually observes a real
    * `session.started` event (`drainAndTrack`, below) -- `capabilities()`'s own pre/post-session
    * distinction (`PLAN-M7.md` P4's own Checks). Process-lifetime, not per-session: once this
@@ -260,6 +280,26 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     ctx: SessionContext,
   ): Promise<SkillProvisioning> {
     return provisionSkillsImpl(skills, ctx);
+  }
+
+  /**
+   * `15` §15.6's own MCP-grant path. Only *remembers* the real grant here, keyed by `ctx.cwd` --
+   * `provisionMcp` runs before any session exists, so there is no real transport, no real
+   * `SessionRequest`, and (per `07` §7.3's own design, recorded in `SPEC-QUESTIONS.md` Q119) no real
+   * `system/init` event to read a loaded-server list from yet. The actual server config and
+   * `--allowedTools`/`Options.allowedTools` additions are built later, inside `startOnTransport`,
+   * once this session's own real request and transport are both known; the actual load-verification
+   * enforcement ("granted-but-failed-to-load fails the step") lives in `drainAndTrack`'s own post-
+   * `session.started` check, below -- this method's own `loadedServerIds: []` is deliberately
+   * provisional, exactly as `PLAN-M7.md` P7 specifies, for a caller that inspects it before any
+   * session has actually run.
+   */
+  provisionMcp(
+    servers: readonly GrantedMcpServer[],
+    ctx: SessionContext,
+  ): Promise<McpProvisioning> {
+    this.mcpGrantsByCwd.set(ctx.cwd, servers);
+    return Promise.resolve({ loadedServerIds: [] });
   }
 
   async startSession(req: SessionRequest): Promise<SessionHandle> {
@@ -375,6 +415,19 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     // merge, not just the CLI one.
     const sessionEnv: Readonly<Record<string, string>> = { ...this.env, ...req.env };
 
+    // `15` §15.6's own MCP-grant path (P7): `undefined` when no `provisionMcp` call ever ran for this
+    // exact `cwd` -- both builders treat that identically to "no MCP grant at all," so a session that
+    // never provisioned MCP behaves exactly as it did before this piece existed.
+    const grantedServers = this.mcpGrantsByCwd.get(req.cwd);
+    const mcpExtras: McpSessionExtras | undefined =
+      grantedServers === undefined
+        ? undefined
+        : {
+            allowedTools: mapGrantedMcpServersToAllowedTools(grantedServers),
+            serverConfig: mapGrantedMcpServersToConfig(grantedServers),
+            strict: !this.config.mcp.adoptHostServers,
+          };
+
     // Both branches below do their transport's own real "session actually starts" work right here,
     // synchronously (or, for `sdk`, at least *kicked off* synchronously), before this method ever
     // returns -- never deferred into the generator `createGenerator` produces, which only starts
@@ -388,9 +441,16 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     // immediately; `sdk` calls `this.startSdkQuery(...)` immediately, which itself calls
     // `this.loadSdk()`/`sdk.runSdkQuery(...)` synchronously up to its own first `await` -- the actual
     // dynamic import and (once loaded) the real `query()` call both genuinely begin here, not later.
+    // Hoisted above both branches: `drainAndTrack`'s own load-verification path (P7, below) needs a
+    // real `startedAt` to compute an honest `durationMs` if it ends the session early, and the `cli`
+    // branch had no such reference of its own before this piece (unlike `sdk`, which already needed
+    // one for its *other* early-failure path in `runSdkSessionFromOutcome`) -- one clock read, shared
+    // by whichever branch actually runs, exactly mirroring `sessionEnv`'s own "computed once, reused"
+    // rationale just above.
+    const startedAt = this.now();
     let createGenerator: () => AsyncGenerator<AdapterEvent, SessionResult>;
     if (transport === 'cli') {
-      const args = buildCliArgs(req, this.config, resumeClaudeSessionId);
+      const args = buildCliArgs(req, this.config, resumeClaudeSessionId, mcpExtras);
       const spawned = this.spawnCli(args, {
         cwd: req.cwd,
         env: sessionEnv,
@@ -403,18 +463,28 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
         this.drainAndTrack(
           sessionId,
           accumulateSessionResult(spawned.events, { sessionId, cwd: req.cwd, now: this.now }),
+          grantedServers,
+          abortController,
+          startedAt,
         );
     } else {
-      const startedAt = this.now();
       const outcomePromise = this.startSdkQuery(
         req,
         resumeClaudeSessionId,
         abortController.signal,
         sessionEnv,
         preloadedSdk,
+        mcpExtras,
       );
       createGenerator = () =>
-        this.runSdkSessionFromOutcome(sessionId, req.cwd, startedAt, outcomePromise);
+        this.runSdkSessionFromOutcome(
+          sessionId,
+          req.cwd,
+          startedAt,
+          outcomePromise,
+          grantedServers,
+          abortController,
+        );
     }
 
     return makeSessionHandle(sessionId, createGenerator, () => {
@@ -439,6 +509,7 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     abortSignal: AbortSignal,
     sessionEnv: Readonly<Record<string, string>>,
     preloadedSdk: SdkTransportModule | undefined,
+    mcpExtras: McpSessionExtras | undefined,
   ): Promise<SdkQueryOutcome> {
     const sdk = preloadedSdk ?? (await this.loadSdk());
     if (sdk === undefined) {
@@ -459,7 +530,7 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
         },
       };
     }
-    const options = sdk.buildSdkOptions(req, this.config, resumeClaudeSessionId);
+    const options = sdk.buildSdkOptions(req, this.config, resumeClaudeSessionId, mcpExtras);
     // `buildSdkOptions` (P3) is a pure function of `SessionRequest` alone and has no ambient snapshot
     // to merge with `req.env` itself -- set here, by the one caller that actually holds both halves
     // of the merge, exactly mirroring how `startOnTransport`'s own `cli` branch supplies `env` to
@@ -479,6 +550,8 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     cwd: string,
     startedAt: number,
     outcomePromise: Promise<SdkQueryOutcome>,
+    grantedServers: readonly GrantedMcpServer[] | undefined,
+    abortController: AbortController,
   ): AsyncGenerator<AdapterEvent, SessionResult> {
     const outcome = await outcomePromise;
     if (!outcome.ok) {
@@ -498,6 +571,9 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
     return yield* this.drainAndTrack(
       sessionId,
       accumulateSessionResult(outcome.running.events, { sessionId, cwd, now: this.now }),
+      grantedServers,
+      abortController,
+      startedAt,
     );
   }
 
@@ -505,13 +581,50 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
    * The one place both transports' own raw event streams are actually consumed: re-yields every event
    * unchanged (so callers see the identical stream either transport produces, `accumulateSessionResult`'s
    * own contract), while watching for the real `session.started` event to (a) learn this session's own
-   * real Claude Code session id, for a later `resumeSession` to use, and (b) flip `sawSessionStarted`
-   * for `capabilities()`'s own pre/post-session distinction.
+   * real Claude Code session id, for a later `resumeSession` to use, (b) flip `sawSessionStarted` for
+   * `capabilities()`'s own pre/post-session distinction, and (c) run `07` §7.3's own MCP
+   * load-verification Check (P7): a session that granted specific MCP servers (`provisionMcp`, above)
+   * but whose real `system/init` event does not report every one of them back by name failed to load
+   * what it was promised, and must not silently proceed as if it had everything it was granted.
+   *
+   * `grantedServers` is `undefined` when no `provisionMcp` call ever ran for this session's own `cwd`
+   * -- the check below is skipped entirely in that case, identical to this method's own pre-P7
+   * behaviour. The check itself only ever runs once, against the *first* `session.started` event seen
+   * -- a fresh critic round noted the real SDK's own doc comment describes `SDKSystemMessage` as
+   * metadata "the CLI emits at the start of each turn," and this codebase's own `session-result.ts`
+   * (P4) already treats a single non-resumed session as potentially spanning several internal turns
+   * (its own `turns: toolCallCount + 1` heuristic). Re-running this Check against every recurrence
+   * (the original P7 draft's behaviour) risked a false positive strictly outside `07` §7.3's own
+   * mandate -- its own wording ("confirm... actually loaded") is a one-time, at-startup fact, not an
+   * ongoing liveness probe -- if a later turn's own metadata snapshot ever omitted a server that
+   * genuinely loaded fine at real session start (never live-confirmed either way: no live call this
+   * milestone has made has ever granted a real MCP server, `SPEC-QUESTIONS.md` Q119). Checking once
+   * removes that entire risk at zero real cost: the fact this Check cares about (did the granted
+   * server load) is settled the moment the session actually starts.
+   *
+   * On a genuine mismatch, `abortController` is aborted and `inner` is deliberately abandoned without
+   * further draining, rather than synthesizing a throwaway `SessionResult` just to satisfy
+   * `AsyncGenerator.return`'s own required argument. This is *not* quite the same shape as
+   * `SessionHandle.stop()`'s own identical-looking abandonment (a fresh critic round's own correction
+   * to this comment's original framing): `stop()`'s abandonment only ever happens because the
+   * *external caller* chose to stop pumping after calling it, whereas this abandons `inner`
+   * unconditionally, from inside this adapter's own code, even while a caller is actively draining via
+   * `.result()`. In practice this is very likely safe for both transports -- `spawn.ts`'s own real
+   * `execa` `cancelSignal` kills the real CLI subprocess independent of whether anything keeps
+   * consuming its events, and the real SDK's own `Options.abortController` doc comment states aborting
+   * it makes "the query... stop and clean up resources" itself, matching the identical signal-driven
+   * (not consumption-driven) cleanup model -- but that conclusion rests on reading each side's own
+   * documentation, not on an executable proof this codebase can produce without a live MCP grant
+   * (recorded honestly in `SPEC-QUESTIONS.md` Q119 rather than asserted as fully proven).
    */
   private async *drainAndTrack(
     sessionId: string,
     inner: AsyncGenerator<AdapterEvent, SessionResult>,
+    grantedServers: readonly GrantedMcpServer[] | undefined,
+    abortController: AbortController,
+    startedAt: number,
   ): AsyncGenerator<AdapterEvent, SessionResult> {
+    let mcpLoadChecked = false;
     let step = await inner.next();
     while (!step.done) {
       if (step.value.type === 'session.started') {
@@ -519,6 +632,40 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
         const tracked = this.sessions.get(sessionId);
         if (tracked !== undefined) {
           this.sessions.set(sessionId, { ...tracked, claudeSessionId: step.value.sessionId });
+        }
+
+        if (grantedServers !== undefined && !mcpLoadChecked) {
+          mcpLoadChecked = true;
+          const missing = findMissingGrantedServers(
+            grantedServers,
+            readMcpServerNames(step.value.meta),
+          );
+          if (missing.length > 0) {
+            abortController.abort();
+            // The real `session.started` event is still yielded first -- a genuine session did start
+            // (this adapter's own real session id, model, and tool list are all real), it just failed
+            // this Check's own load contract; swallowing it here would hide real information a caller
+            // or telemetry pipeline would otherwise see for every other early-failure path.
+            yield step.value;
+            const message = `granted MCP server(s) failed to load in Claude Code: ${missing.join(', ')}.`;
+            yield {
+              type: 'error',
+              code: 'ADP-CLAUDE-CODE-MCP-LOAD-FAILED',
+              message,
+              retryable: false,
+            };
+            yield { type: 'session.ended', reason: 'error' };
+            return {
+              sessionId,
+              ok: false,
+              finalText: '',
+              usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+              durationMs: this.now() - startedAt,
+              changedFiles: [],
+              controlTokens: [],
+              error: { code: 'ADP-CLAUDE-CODE-MCP-LOAD-FAILED', message },
+            };
+          }
         }
       }
       yield step.value;

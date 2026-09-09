@@ -6824,3 +6824,80 @@ official docs name, a completeness gap in the upstream type this piece cannot ac
 skipped without `FORGE_LIVE=1`) all clean after every fix, including new adversarial tests for each of
 the five findings — one of which (the symlink test) caught a real bug in its own fix before this
 entry was even written.
+
+## M7 P7 — `@forge/adapter-claude-code` MCP server provisioning + load-verification (`07` §7.3, `15` §15.6)
+
+**Rounds: 1 (fresh critic finding two substantive issues plus several test-coverage gaps; all fixed;
+no separate verify round run). Outcome: WON.**
+
+`ClaudeCodeAdapter.provisionMcp` (new), a new `mcp.ts` module (`mapGrantedMcpServersToConfig`/
+`mapGrantedMcpServersToAllowedTools`/`findMissingGrantedServers`/`readMcpServerNames`), and extensions
+to `buildCliArgs`/`buildSdkOptions` (a new, optional 4th `mcp?: McpSessionExtras` parameter each) and
+`drainAndTrack` (the real post-`session.started` load-verification Check). Confirmed against the real
+permissions docs (`code.claude.com/docs/en/permissions`, fetched during this piece) and the real,
+installed `@anthropic-ai/claude-agent-sdk`'s own `.d.ts` rather than assumed. See `SPEC-QUESTIONS.md`
+Q119 for the full record.
+
+### Round 1 — fresh critic (no context on plan/log, told to trace both transports' real teardown
+behaviour against the real SDK's own `.d.ts` and think adversarially about excess-access/false-positive
+risk): two substantive findings plus test-coverage gaps
+
+What the critic caught that I missed, most severe first:
+
+1. **[MEDIUM, plausible false positive] The original draft re-checked the load-verification Check
+   against *every* `session.started` event, not only the first.** The real SDK's own doc comment
+   describes this message as emitted "at the start of each turn," and this codebase's own
+   `session-result.ts` (P4) already treats one non-resumed session as potentially spanning several
+   internal turns. Re-running the Check on every recurrence risked failing an already-succeeding,
+   multi-turn session over a later turn's own transient/incomplete metadata snapshot — real scope creep
+   beyond `07` §7.3's own "confirm... actually loaded" wording, which reads as a one-time, at-startup
+   fact. **Fixed**: a local `mcpLoadChecked` flag now restricts the Check to the first `session.started`
+   event only. New adversarial test proves a second recurrence reporting an empty server list does not
+   retroactively fail a session already verified at its real first start.
+2. **[LOW-MEDIUM, defense-in-depth] `mapGrantedMcpServersToConfig`'s `{}` accumulator had a narrow gap:
+   a granted server id of exactly `'__proto__'` isn't rejected by `isSafeMcpNameSegment` (no `(`, `)`,
+   or `,`), but assigning to that exact key on an ordinary object literal never creates an own property
+   — it invokes `Object.prototype`'s own legacy `__proto__` setter, silently reassigning the map's own
+   prototype instead of adding an entry.** Traced both real consumers (`JSON.stringify`, object-spread):
+   neither leaks today, and the vanished server would already fail closed via `findMissingGrantedServers`
+   reporting it "missing" — not a live exploit, but an accidental, fragile fail-closed outcome rather
+   than a deliberate one. **Fixed**: the accumulator is now `Object.create(null)`, which has no
+   inherited `__proto__` accessor to trigger. New regression test proves the id now becomes a normal,
+   safe own key.
+3. **[Doc-accuracy] The original comment framed `drainAndTrack`'s abort-without-drain mismatch path as
+   "mirroring `SessionHandle.stop()`'s own precedent."** The critic correctly noted this overstates the
+   equivalence: `stop()`'s abandonment happens only because an external caller chose to stop pumping,
+   while this new path abandons the wrapped generator unconditionally, from inside the adapter's own
+   code, even while a caller is actively draining. **Fixed**: the comment now states the distinction
+   plainly and is explicit that "this is safe" rests on reading each transport's own vendor
+   documentation (`execa`'s `cancelSignal`, the SDK's own `Options.abortController` doc comment), not
+   an executable proof — recorded honestly in `SPEC-QUESTIONS.md` Q119 rather than asserted as fully
+   verified.
+4. **Test-coverage gaps, all closed with new tests**: no test called `provisionMcp` twice for the same
+   `cwd` (added — proves the second grant fully replaces the first, not merges); the "unprovisioned
+   session behaves exactly as before" contract was only proven for the `cli` transport (added the `sdk`
+   equivalent); no test exercised `SessionHandle.stop()` after the session had already internally
+   aborted via the MCP-mismatch path, both sharing one `AbortController` (added — proves the shared,
+   spec-idempotent `abort()` is safe); two existing tests (`adoptHostServers` defaults-to-false and
+   `adoptHostServers: true`) granted a server but used a fixture reporting no servers loaded at all,
+   silently tripping this same piece's own load-verification as an unasserted side effect — the tests
+   still proved what they named (captured args/options, taken synchronously before any of that), but
+   didn't represent the genuine clean-success scenario their own names claimed. **Fixed**: both fixtures
+   now report the granted server as loaded, with an explicit `result.ok === true` assertion added to
+   make that honest.
+
+Three things the critic raised were deliberately left as recorded, unclosed gaps rather than fixed —
+each already an accepted trade-off or genuinely outside this piece's own scope; see `SPEC-QUESTIONS.md`
+Q119 for the full reasoning on each: the abort-without-drain design's real-resource-cleanup claim rests
+on vendor docs, not an executable proof (no live MCP grant has ever been made this milestone, and this
+codebase's own fakes don't hold a real OS resource either way); an unsafe server/tool name is silently
+dropped rather than surfaced as an error (mirrors `tool-grant.ts`'s own established choice for a sibling
+risk); and `tool-grant.ts`'s own pre-existing `grant.extra` field already bypasses this whole piece's
+guarantees entirely, unrelated to and untouched by P7.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (242 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after every fix, including five new tests directly targeting
+the critic's own findings. A full monorepo `tsc --build`/`eslint .`/test run was also clean, aside from
+one pre-existing, unrelated flaky test in `packages/engine/test/e2e/crash-resume.test.ts` (a git-
+worktree-lock contention race under full-suite concurrency, confirmed by re-running it alone
+successfully) — untouched by this piece and not a regression it introduced.

@@ -11,12 +11,14 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
+import type { McpSessionExtras } from '../mcp.ts';
 import { mapPermissionModeForSdk, mapToolGrantToAllowedTools } from '../tool-grant.ts';
 
 export function buildSdkOptions(
   req: SessionRequest,
   config: ClaudeCodeAdapterConfig,
   resumeSessionId?: string,
+  mcp?: McpSessionExtras,
 ): Options {
   const options: Options = {
     cwd: req.cwd,
@@ -29,8 +31,9 @@ export function buildSdkOptions(
     // `Options.allowedTools` already wants a plain `string[]` -- no `.join(' ')` needed here, unlike
     // the CLI transport's own single `--allowedTools` flag value (`build-args.ts`, P2). The identical
     // shared function `mapToolGrantToAllowedTools` (P2) produces the right shape for both transports
-    // as-is.
-    allowedTools: [...mapToolGrantToAllowedTools(req.tools)],
+    // as-is. `mcp?.allowedTools` (P7) is merged in here too, mirroring `build-args.ts`'s own identical
+    // merge.
+    allowedTools: [...mapToolGrantToAllowedTools(req.tools), ...(mcp?.allowedTools ?? [])],
     permissionMode: mapPermissionModeForSdk(req.permissionMode),
     includePartialMessages: true,
     // `07` §7.3's own mapping table names `--bare` for the CLI transport; the SDK has no literal
@@ -40,6 +43,13 @@ export function buildSdkOptions(
     // "When omitted, all sources are loaded (matches CLI defaults)" for the non-bare case. This is the
     // real SDK-side equivalent of the CLI's own `--bare`/non-bare split, not a guess.
     ...(config.bare ? { settingSources: [] } : {}),
+    // `07` §7.3's own MCP-grant path (P7): the real, confirmed `Options.mcpServers`/`strictMcpConfig`
+    // fields -- `strictMcpConfig`'s own doc comment says verbatim "Maps to the CLI
+    // `--strict-mcp-config` flag," confirming this is genuinely the same real mechanism
+    // `build-args.ts` uses, not an independently-invented SDK-side equivalent.
+    ...(mcp === undefined
+      ? {}
+      : { mcpServers: { ...mcp.serverConfig }, strictMcpConfig: mcp.strict }),
   };
 
   // `07` §7.3's own mapping table names this combination for the CLI transport

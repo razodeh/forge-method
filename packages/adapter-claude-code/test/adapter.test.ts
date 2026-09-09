@@ -478,6 +478,425 @@ describe('ClaudeCodeAdapter — session environment', () => {
   });
 });
 
+describe('ClaudeCodeAdapter — provisionMcp()/MCP load-verification', () => {
+  it('provisionMcp() records the grant and returns the provisional {loadedServerIds: []} immediately, before any session has run', async () => {
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({}),
+      env: {},
+      now: () => 0,
+    });
+    const result = await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      {
+        runId: 'run-1',
+        stepId: 'implement-story-1',
+        cwd: '/tmp/forge-adapter-claude-code-test-mcp-provisional',
+      },
+    );
+    expect(result).toEqual({ loadedServerIds: [] });
+  });
+
+  it("a session granted only server 'a' is accepted when the real init event reports 'a' plus an extra, unrequested 'b' -- 07 §7.3's own Check names only missing servers as a failure", async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-extra-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: fakeSpawnCli(log, {
+        events: [
+          {
+            type: 'session.started',
+            sessionId: 'mcp-extra-test',
+            model: 'm',
+            tools: [],
+            meta: {
+              mcp_servers: [
+                { name: 'a', status: 'connected' },
+                { name: 'b', status: 'connected' },
+              ],
+            },
+          },
+          { type: 'session.ended', reason: 'complete' },
+        ],
+      }),
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { events, result } = await drain(handle);
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(result.ok).toBe(true);
+  });
+
+  it("a session granted servers 'a' and 'b' ends the step with a real, typed error naming 'b' specifically when the real init event reports only 'a' -- cli transport", async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-missing-lane-cli';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: fakeSpawnCli(log, {
+        events: [
+          {
+            type: 'session.started',
+            sessionId: 'mcp-missing-test-cli',
+            model: 'm',
+            tools: [],
+            meta: { mcp_servers: [{ name: 'a', status: 'connected' }] },
+          },
+          { type: 'session.ended', reason: 'complete' },
+        ],
+      }),
+    });
+    await adapter.provisionMcp(
+      [
+        { id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' },
+        { id: 'b', transport: 'stdio', command: 'server-b', grantedTools: '*' },
+      ],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { events, result } = await drain(handle);
+    expect(events.map((event) => event.type)).toEqual([
+      'session.started',
+      'error',
+      'session.ended',
+    ]);
+    const errorEvent = events.find((event) => event.type === 'error');
+    expect(errorEvent).toMatchObject({ code: 'ADP-CLAUDE-CODE-MCP-LOAD-FAILED' });
+    expect((errorEvent as { message: string }).message).toContain('b');
+    expect(events.at(-1)).toEqual({ type: 'session.ended', reason: 'error' });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('ADP-CLAUDE-CODE-MCP-LOAD-FAILED');
+    expect(result.error?.message).toContain('b');
+  });
+
+  it("the identical missing-server Check applies on the sdk transport too -- drainAndTrack's own load-verification is transport-agnostic", async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-missing-lane-sdk';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'sdk' }),
+      env: {},
+      now: () => 0,
+      loadSdkTransport: () =>
+        Promise.resolve({
+          buildSdkOptions: () => ({}),
+          runSdkQuery: () => {
+            log.push('sdk');
+            return {
+              events: eventsOf([
+                {
+                  type: 'session.started',
+                  sessionId: 'mcp-missing-test-sdk',
+                  model: 'm',
+                  tools: [],
+                  meta: { mcp_servers: [] },
+                },
+                { type: 'session.ended', reason: 'complete' },
+              ]),
+              interrupt: () => Promise.resolve(),
+            };
+          },
+        }),
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { result } = await drain(handle);
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('ADP-CLAUDE-CODE-MCP-LOAD-FAILED');
+    expect(result.error?.message).toContain('a');
+  });
+
+  it('a session whose cwd never had provisionMcp() called for it behaves exactly as before this piece existed -- no MCP-related error, no --mcp-config threaded', async () => {
+    const log: string[] = [];
+    const capturedArgs: (readonly string[])[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-unprovisioned-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: (args, options) => {
+        capturedArgs.push(args);
+        return fakeSpawnCli(log)(args, options);
+      },
+    });
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { result } = await drain(handle);
+    expect(result.ok).toBe(true);
+    expect(capturedArgs[0]).not.toContain('--mcp-config');
+    expect(capturedArgs[0]).not.toContain('--strict-mcp-config');
+  });
+
+  it('config.mcp.adoptHostServers defaults to false, proven end to end: a granted session passes --strict-mcp-config on the cli transport and strictMcpConfig:true on the sdk transport with no override at all', async () => {
+    const log: string[] = [];
+    const capturedArgs: (readonly string[])[] = [];
+    const cliCwd = '/tmp/forge-adapter-claude-code-test-mcp-strict-default-cli';
+    const cliAdapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: (args, options) => {
+        capturedArgs.push(args);
+        // A fresh critic round noted the original draft here used `fakeSpawnCli(log)`'s own default
+        // fixture, whose `meta: {}` reports no loaded servers at all -- silently tripping this same
+        // piece's own MCP load-verification for the server granted below, so the session this test
+        // drained had actually already failed for an unrelated, unasserted reason. Harmless to what
+        // was asserted (`capturedArgs` is captured synchronously at spawn time, before any of that),
+        // but this test's own name claims a clean, successful "end to end" grant -- an honest fixture
+        // (server `a` genuinely reported loaded) is needed to actually be that, not merely to pass.
+        return fakeSpawnCli(log, {
+          events: [
+            {
+              type: 'session.started',
+              sessionId: 'strict-default-cli',
+              model: 'm',
+              tools: [],
+              meta: { mcp_servers: [{ name: 'a', status: 'connected' }] },
+            },
+            { type: 'session.ended', reason: 'complete' },
+          ],
+        })(args, options);
+      },
+    });
+    await cliAdapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd: cliCwd },
+    );
+    const cliResult = await drain(await cliAdapter.startSession(baseRequest({ cwd: cliCwd })));
+    expect(cliResult.result.ok).toBe(true);
+    expect(capturedArgs[0]).toContain('--strict-mcp-config');
+
+    // `fakeSdkModule`'s own default `buildSdkOptions: () => ({})` ignores every argument (it exists to
+    // let other tests capture what `runSdkQuery` received, not what `buildSdkOptions` itself was
+    // called with) -- this test needs the latter, so it defines its own minimal stub that echoes back
+    // the real `mcp` parameter `startOnTransport` (adapter.ts, P7) computed and passed in, the one
+    // piece of new adapter-level logic no build-options.test.ts-level unit test can reach.
+    const capturedMcpArg: unknown[] = [];
+    const sdkCwd = '/tmp/forge-adapter-claude-code-test-mcp-strict-default-sdk';
+    const sdkAdapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'sdk' }),
+      env: {},
+      now: () => 0,
+      loadSdkTransport: () =>
+        Promise.resolve({
+          buildSdkOptions: (..._args: unknown[]) => {
+            capturedMcpArg.push(_args[3]);
+            return {};
+          },
+          runSdkQuery: () => {
+            log.push('sdk');
+            return {
+              events: eventsOf([
+                {
+                  type: 'session.started',
+                  sessionId: 'strict-default-sdk',
+                  model: 'm',
+                  tools: [],
+                  meta: { mcp_servers: [{ name: 'a', status: 'connected' }] },
+                },
+                { type: 'session.ended', reason: 'complete' },
+              ]),
+              interrupt: () => Promise.resolve(),
+            };
+          },
+        }),
+    });
+    await sdkAdapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd: sdkCwd },
+    );
+    const sdkResult = await drain(await sdkAdapter.startSession(baseRequest({ cwd: sdkCwd })));
+    expect(sdkResult.result.ok).toBe(true);
+    expect((capturedMcpArg[0] as { strict: boolean }).strict).toBe(true);
+  });
+
+  it('config.mcp.adoptHostServers: true omits --strict-mcp-config on the cli transport', async () => {
+    const log: string[] = [];
+    const capturedArgs: (readonly string[])[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-adopt-host-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({
+        transport: 'cli',
+        mcp: { adoptHostServers: true },
+      }),
+      env: {},
+      now: () => 0,
+      spawnCli: (args, options) => {
+        capturedArgs.push(args);
+        return fakeSpawnCli(log, {
+          events: [
+            {
+              type: 'session.started',
+              sessionId: 'adopt-host-cli',
+              model: 'm',
+              tools: [],
+              meta: { mcp_servers: [{ name: 'a', status: 'connected' }] },
+            },
+            { type: 'session.ended', reason: 'complete' },
+          ],
+        })(args, options);
+      },
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const { result } = await drain(await adapter.startSession(baseRequest({ cwd })));
+    expect(result.ok).toBe(true);
+    expect(capturedArgs[0]).not.toContain('--strict-mcp-config');
+  });
+
+  it('a second provisionMcp() call for the same cwd replaces the first grant entirely, not merges with it', async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-replace-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: fakeSpawnCli(log, {
+        events: [
+          {
+            type: 'session.started',
+            sessionId: 'mcp-replace-test',
+            model: 'm',
+            tools: [],
+            // Only 'b' genuinely loaded -- if the first grant (below, for 'a') were still in effect
+            // (a merge bug) rather than fully replaced, this session would incorrectly fail for a
+            // missing 'a' that was never actually granted the second time around.
+            meta: { mcp_servers: [{ name: 'b', status: 'connected' }] },
+          },
+          { type: 'session.ended', reason: 'complete' },
+        ],
+      }),
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    await adapter.provisionMcp(
+      [{ id: 'b', transport: 'stdio', command: 'server-b', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { events, result } = await drain(handle);
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(result.ok).toBe(true);
+  });
+
+  it('the sdk transport also threads no mcpServers/strictMcpConfig at all when provisionMcp() was never called for that cwd -- the identical "no behavioural change" contract already proven for the cli transport above', async () => {
+    const capturedMcpArg: unknown[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-unprovisioned-lane-sdk';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'sdk' }),
+      env: {},
+      now: () => 0,
+      loadSdkTransport: () =>
+        Promise.resolve({
+          buildSdkOptions: (..._args: unknown[]) => {
+            capturedMcpArg.push(_args[3]);
+            return {};
+          },
+          runSdkQuery: () => ({
+            events: eventsOf([
+              {
+                type: 'session.started',
+                sessionId: 'unprovisioned-sdk',
+                model: 'm',
+                tools: [],
+                meta: {},
+              },
+              { type: 'session.ended', reason: 'complete' },
+            ]),
+            interrupt: () => Promise.resolve(),
+          }),
+        }),
+    });
+    const { result } = await drain(await adapter.startSession(baseRequest({ cwd })));
+    expect(result.ok).toBe(true);
+    expect(capturedMcpArg[0]).toBeUndefined();
+  });
+
+  it('SessionHandle.stop() is safe to call after the session already ended itself via the internal MCP-mismatch abort -- both routes share the identical abortController, and AbortController.abort() is spec-idempotent', async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-stop-after-abort-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: fakeSpawnCli(log, {
+        events: [
+          {
+            type: 'session.started',
+            sessionId: 'mcp-stop-after-abort-test',
+            model: 'm',
+            tools: [],
+            meta: { mcp_servers: [] },
+          },
+          { type: 'session.ended', reason: 'complete' },
+        ],
+      }),
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { result } = await drain(handle);
+    expect(result.ok).toBe(false);
+    await expect(handle.stop('cleanup after the session already ended')).resolves.toBeUndefined();
+  });
+
+  it('only the first session.started event in a stream is checked against the grant -- a later recurrence reporting a mismatch does not retroactively fail an already-verified session', async () => {
+    const log: string[] = [];
+    const cwd = '/tmp/forge-adapter-claude-code-test-mcp-second-turn-lane';
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({ transport: 'cli' }),
+      env: {},
+      now: () => 0,
+      spawnCli: fakeSpawnCli(log, {
+        events: [
+          // First turn: 'a' genuinely reported loaded -- the grant is satisfied here.
+          {
+            type: 'session.started',
+            sessionId: 'mcp-second-turn-test',
+            model: 'm',
+            tools: [],
+            meta: { mcp_servers: [{ name: 'a', status: 'connected' }] },
+          },
+          { type: 'text', text: 'working...', partial: false },
+          // A second, real `session.started` recurrence (the real SDK's own doc comment describes
+          // this message as emitted "at the start of each turn") whose own snapshot would fail the
+          // Check if re-run against it -- must not retroactively fail a session already verified at
+          // its real, first start.
+          {
+            type: 'session.started',
+            sessionId: 'mcp-second-turn-test',
+            model: 'm',
+            tools: [],
+            meta: { mcp_servers: [] },
+          },
+          { type: 'session.ended', reason: 'complete' },
+        ],
+      }),
+    });
+    await adapter.provisionMcp(
+      [{ id: 'a', transport: 'stdio', command: 'server-a', grantedTools: '*' }],
+      { runId: 'run-1', stepId: 'implement-story-1', cwd },
+    );
+    const handle = await adapter.startSession(baseRequest({ cwd }));
+    const { events, result } = await drain(handle);
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'session.ended', reason: 'complete' });
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('ClaudeCodeAdapter — SessionHandle.stop()', () => {
   it('takes effect even when called before the caller has begun consuming events, ending the session as aborted', async () => {
     function abortAwareSpawnCli(): typeof spawnClaudeCli {

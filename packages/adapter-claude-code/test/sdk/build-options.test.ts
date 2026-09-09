@@ -152,4 +152,49 @@ describe('buildSdkOptions', () => {
     const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
     expect(options.resume).toBeUndefined();
   });
+
+  it('mcp.allowedTools (P7) is merged into the same allowedTools array as the plain ToolGrant-derived entries', () => {
+    const options = buildSdkOptions(
+      baseRequest({ tools: { read: true, write: false, exec: false, network: 'none' } }),
+      claudeCodeAdapterConfigSchema.parse({}),
+      undefined,
+      { allowedTools: ['mcp__github__get_issue'], serverConfig: {}, strict: true },
+    );
+    expect(options.allowedTools).toEqual(['Read', 'mcp__github__get_issue']);
+  });
+
+  it('sets mcpServers and strictMcpConfig from the real, confirmed field names when mcp extras are given', () => {
+    const options = buildSdkOptions(
+      baseRequest(),
+      claudeCodeAdapterConfigSchema.parse({}),
+      undefined,
+      {
+        allowedTools: [],
+        serverConfig: { github: { type: 'stdio', command: 'npx' } },
+        strict: true,
+      },
+    );
+    expect(options.mcpServers).toEqual({ github: { type: 'stdio', command: 'npx' } });
+    expect(options.strictMcpConfig).toBe(true);
+  });
+
+  it('strictMcpConfig reflects mcp.strict:false (config.mcp.adoptHostServers) rather than always being true', () => {
+    const options = buildSdkOptions(
+      baseRequest(),
+      claudeCodeAdapterConfigSchema.parse({}),
+      undefined,
+      {
+        allowedTools: [],
+        serverConfig: {},
+        strict: false,
+      },
+    );
+    expect(options.strictMcpConfig).toBe(false);
+  });
+
+  it('mcpServers/strictMcpConfig are both omitted entirely when no mcp extras are given at all', () => {
+    const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(options.mcpServers).toBeUndefined();
+    expect(options.strictMcpConfig).toBeUndefined();
+  });
 });
