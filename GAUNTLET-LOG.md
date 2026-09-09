@@ -6122,3 +6122,67 @@ LOW bug, one real accepted limitation
 run against real git repositories, real fixture workflows dispatched through the real `runWorkflow`
 pipeline, real `Story`/`Defect` artifacts, real materialized `.forge/agents/*.yaml` roster files, and a
 real `FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix.
+
+---
+
+## M6 C6 — `@forge/cli` `forge doctor` (`03` §3.7)
+
+**Rounds: 1 (fresh critic finding one real HIGH bug — the rest of its own report held up under
+scrutiny with no real defects found; no separate verify round run). Outcome: WON.**
+
+`@forge/cli`'s sixth piece: `forge doctor`, assembling sixteen real, independent health checks
+(environment: Node/pnpm/npm/git version/git identity/platform-adapter-preflight/disk-space; project:
+config validity/manifest structure/KB lint/spec graph; locks-and-worktrees: stale lock/orphaned
+worktrees/dangling lane branches; diagrams: complexity budget and reference/orphan validity; secrets:
+`${secret:NAME}` reference existence, never values) into one real `DoctorReport`. Deliberately scoped
+down from `03` §3.7's own ~19-bullet checklist to roughly 13-16 real, buildable checks — every omitted
+bullet (manifest checksum drift, diagram-generation drift, MCP handshakes, tool-ceiling-expiry
+enforcement, skill-validation-CLI wiring) is a verified, no-real-mechanism-exists gap, not an
+oversight. Built solo, continuing the standing order to work M6's own pieces in dependency order. See
+`SPEC-QUESTIONS.md` Q109 for the full design record — the scope-down reasoning per omitted bullet, a
+third (and fourth) real TOCTOU-race variant found in the already-shipped `context.ts` fix while
+building this piece, and the crashed-check-degradation fix below.
+
+### Round 1 — fresh critic (no context on plan/log): one real HIGH bug; the TOCTOU fix and secrets
+handling held up with no real defects found
+
+1. **HIGH.** `runDoctor` assembled all sixteen checks' promises via a bare `Promise.all` — any *one*
+   check throwing instead of returning would abort the entire report rather than degrading gracefully,
+   directly contradicting the point of a health-check tool. The critic found four real, previously
+   untested throw paths: `checkDiagrams` hands a diagram's raw `source:` text straight to the real
+   Mermaid parser with no try/catch, which genuinely throws `ForgeError('KB-001', ...)` for unparseable
+   Mermaid — nothing upstream validates the embedded text, only the sidecar's own structural front
+   matter; `checkDanglingLaneBranches`/`checkOrphanedWorktrees` shell out to real git with no
+   try/catch, unlike every check in `environment.ts`, which already wraps its own I/O correctly; and
+   `checkStaleLock` does a bare `JSON.parse` on `.forge/state/lock.json` with no try/catch, so a
+   corrupted lock file throws a raw `SyntaxError`. **Fixed**: each check's own promise is now wrapped
+   individually, degrading a crash to its own real, `hard`-severity `DoctorCheck` entry rather than
+   taking down every other check's own result — chosen over a bare `Promise.allSettled` plus
+   index-correlation, which would have needed a non-null assertion or an unreachable-by-construction
+   guard branch neither `eslint`'s own `no-non-null-assertion` rule nor real coverage could accept.
+   The crash message reuses `@forge/core`'s own already-tested, shared `renderCause` rather than a
+   second, only-partially-testable local `instanceof Error` ternary. A new regression test in
+   `run-doctor.test.ts` proves a genuinely crashing `checkDiagrams` (an intentionally invalid `source:`
+   fixture) degrades to its own failed entry while every other real check — including `node-version` —
+   still runs and reports its own real result.
+2. **Investigated, no defect found.** The critic traced the `context.ts` TOCTOU fix
+   (`isTargetRegisteredWorktree`, `recoverFromWorktreeAddFailure`, `realpathOfDeepestExistingAncestor`)
+   in detail against porcelain-parsing correctness, the ancestor-walk loop's termination guard, and
+   Case 1/Case 2 disambiguation — found it correctly structural (never message-substring matching) and
+   the new `context-ancestor-walk.test.ts` genuinely non-hollow. The one residual window it named (a
+   second, near-simultaneous racer failing the retry itself, with no recursive re-recovery) is the same,
+   already-documented, deliberately out-of-scope branch-ref-collision race Q108/Q109 already name as not
+   occurring in this codebase's real single-lock-serialized architecture.
+3. **Investigated, no defect found.** `checkSecretReferences` only ever tests `Object.hasOwn(env,
+   name)` and reports missing *names* — confirmed via a real test asserting the actual env value never
+   appears in the check's own message.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/doctor/`
+against real temp git repositories and real fixture KB/spec/diagram/manifest content, plus mocked-`execa`/
+`node:fs/promises` tests for the handful of branches — an unparseable `git --version` string, a version
+tied exactly at the 2.30 floor, `statfs` throwing, free space below the 500MB floor — no real machine can
+be forced into on demand) all clean after the fix. One unrelated, pre-existing flake observed during
+full-suite runs and confirmed not caused by this piece: `packages/engine/test/e2e/crash-resume.test.ts`'s
+own real, `SIGKILL`-driven 20-point fuzz test failed once under 291-file parallel contention, passed
+cleanly in isolation both before and after — the identical class of resource-contention flake M6 C5's own
+log entry already names for a different test in the same family.

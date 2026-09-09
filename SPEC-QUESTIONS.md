@@ -7899,6 +7899,103 @@ exported for exactly this reason, the identical justification `@forge/vcs`'s own
 already gives) rather than relying on the real, but inherently flaky-to-reproduce-on-demand, crash-
 resume race alone.
 
+## Q109 — M6 C6's `@forge/cli` `forge doctor`: scoping `03` §3.7's checklist down to real mechanisms, a
+third TOCTOU variant found in an already-shipped C4/C5 fix, and crashed-check degradation
+
+**Why `forge doctor` covers roughly 13-16 of `03` §3.7's ~19 named sub-bullets, not all of them.** Every
+omitted bullet is a genuine, verified "no real mechanism exists anywhere in this codebase" gap, not an
+oversight — confirmed by reading the real, concrete implementation each remaining bullet would need to
+call, not by assumption:
+- **Manifest checksum drift** (`checkManifest`, `project.ts`) is structural-only (`version`/`modules[]`
+  shape and field types), not full drift detection against this installation's *current* real module
+  source content. Real drift detection needs the identical "locate my own source content at runtime"
+  resolver `forge init`'s own `RunInitDeps.modulesDir` is itself caller-injected for — no concrete
+  resolver exists anywhere in this codebase yet, the same shape of gap already documented for
+  `PlatformAdapter` (below). Inventing a second, parallel modulesDir-resolution convention just for this
+  one check would not be honest; reporting the real, present, well-formed manifest as a real pass is.
+- **Generated-diagram drift** (`checkDiagrams`, `diagrams.ts`) covers complexity budget and
+  reference/orphan validity (`lintDiagram`'s own real, self-contained checks) but not drift itself:
+  `checkDrift`'s own real signature needs a `generatorInput` per diagram, which nothing about a
+  standalone `forge doctor` invocation has any way to supply — the same real gap `forge diagram sync`'s
+  own caller-supplied `generatorInputs: ReadonlyMap<string, unknown>` already makes explicit for a
+  different command.
+- **No MCP handshake checks, no tool-ceiling-escalation-expiry checks, no skill-validation-CLI checks.**
+  Confirmed via direct code search: no real mechanism for any of these three exists anywhere in this
+  codebase yet — nothing to call, nothing to fake calling.
+- **`checkPlatformAdapter`** reports "no adapter configured" as a real, honest `warning` when none is
+  injected — no concrete `PlatformAdapter` implementation exists anywhere in this codebase yet, the
+  identical, already-documented gap `@forge/cli/init`'s own `RunInitDeps.candidateAdapters` and
+  `@forge/cli/commands/run`'s own `buildRunEngineContext` (C4) already carry forward, not new to C6.
+- Genuinely real and buildable, so built despite needing small amounts of new logic with no existing
+  precedent to reuse: `checkGitVersion` (a real `git --version` parse + `>= 2.30` comparison — `@forge/
+  vcs`'s own `assertGitAvailable` only ever confirms `git --version` succeeds, it never reads the
+  reported version), `checkGitIdentity`, `checkDiskSpace` (a real `fs.statfs` call, `MIN_FREE_BYTES` =
+  500 MB chosen as a defensible concrete floor since `03` gives no exact number, the same "pick a
+  defensible concrete value when the spec gives none" precedent `@forge/engine/plan`'s own
+  `DEFAULT_LIMITS` already sets), and `checkDanglingLaneBranches` (genuinely new: `@forge/vcs` has no
+  detector of this shape at all — `listOrphanedWorktrees` only ever finds the reverse, a worktree with
+  no known lane, never a *branch* with no worktree — so this cross-references `git branch --list
+  'forge/*'` against `git worktree list --porcelain`'s own branch column directly).
+
+**A third, distinct real git `worktree add` TOCTOU race variant, found in `context.ts`'s already-shipped
+C4 fix while building C6 — not part of C6's own new surface.** Q107/Q108 above already record two real
+variants of this same underlying race (`'<path>' already exists` — a concurrent winner finishing first;
+a branch-ref lock collision — confirmed, and deliberately left unhandled, as not occurring in this
+codebase's real single-lock-serialized architecture). Running the full suite repeatedly while building
+C6 surfaced a **third**, genuinely different real git error: `'<path>' is a missing but already
+registered worktree; use 'add -f' to override, or 'prune' or 'remove' to clear` — root-caused via a
+direct, standalone `/tmp` git reproduction (create a real worktree, delete only its directory, retry the
+identical `add`) before writing any fix: a crashed process's own earlier, incomplete `git worktree add`
+leaves a real `.git/worktrees/<name>` registration behind with no real directory behind it, a state the
+first two fix variants never anticipated. **Fixed**: `recoverFromWorktreeAddFailure` now distinguishes,
+structurally (never by message substring), three real outcomes via `isTargetRegisteredWorktree` +
+`pathExists`: registered and present (a real, concurrent winner — return it), not registered at all
+(re-throw, an unrelated real failure), or registered but absent (safe to `git worktree remove --force` +
+`git worktree prune` + retry the original `add` once, since nothing valid could be destroyed when
+nothing exists there). Writing a deterministic regression test for this third case surfaced a *fourth*,
+silent bug in the same fix: `isTargetRegisteredWorktree`'s own `realpath(...).catch(() => path.resolve
+(...))` fallback (from the Q108 fix) returns the *unresolved* path once `target` no longer exists —
+`realpath` throws for a missing path — while git's own `--porcelain` report of the identical (now also
+missing) path still resolves through symlinks at the OS level, so the two sides of the comparison
+mismatched on macOS (`/var/folders/...` vs. git's own `/private/var/folders/...`) even though both
+named the same real, if currently-nonexistent, path. **Fixed** by implementing a real
+`realpathOfDeepestExistingAncestor` (walks up to the nearest ancestor that still exists, `realpath`s
+that ancestor alone, rejoins the missing suffix) — mirroring, deliberately, `@forge/core/fs/paths.ts`'s
+own private, unexported function of the identical name and purpose, confirmed correct via a standalone
+`/tmp` debug script before trusting it, then via `context-ancestor-walk.test.ts`'s own real regression
+test (mirroring `packages/core/test/fs/paths-ancestor-walk.test.ts`'s own `vi.mock`-on-`access`
+technique, the one form of interception that reaches a named import's own live binding) proving the
+walk's root-reached guard actually terminates rather than looping. A deliberately adversarial, maximally
+concurrent synthetic test (`Promise.all` of two simultaneous `ensureIntegrationWorktree` calls) was
+tried and removed during this investigation: it reliably reproduces the branch-ref-lock race Q108/this
+entry already name as out of scope, a harder scenario than this codebase's real, lock-serialized
+architecture (`.forge/state/lock.json`) ever actually produces — documented directly in `context.ts`'s
+own comment rather than either keeping a test for an impossible scenario or building unneeded defenses
+against it.
+
+**Why `runDoctor` degrades a crashing check to its own failed `DoctorCheck` entry instead of letting it
+abort the whole report.** `runDoctor` assembles all sixteen checks' promises together; a fresh critic
+round caught that four of them — `checkDiagrams` (a malformed/unparseable Mermaid `source:` string
+throws a real `ForgeError('KB-001', ...)` straight out of `@forge/diagrams`'s own parser, confirmed
+directly against its doc comment; nothing upstream validates the embedded Mermaid text before this
+point, only the `.mmd.yaml` sidecar's own structural front matter), `checkDanglingLaneBranches` and
+`checkOrphanedWorktrees` (real git failures), and `checkStaleLock` (a corrupted `.forge/state/lock.json`
+throws a bare `JSON.parse` `SyntaxError`) — could each throw instead of returning, while every other
+check in `environment.ts` already correctly wraps its own real I/O in try/catch. A health-check tool
+whose own health check crashes entirely on unhealthy project state is a real design failure, not a
+nitpick — a single malformed diagram someone was mid-editing would silently hide every *other* real
+check's own result too. **Fixed**: each check's own promise is now wrapped individually (`try { return
+await promise } catch (cause) { return a real, hard-severity DoctorCheck describing the crash }`) rather
+than switching to a bare `Promise.allSettled` plus index-correlation (which would have needed either a
+non-null assertion or an unreachable-by-construction guard branch neither `eslint`'s
+`no-non-null-assertion` rule nor real coverage could accept) — the cause is rendered via `@forge/core`'s
+own already-tested, shared `renderCause` rather than a second, local, only-partially-testable
+`instanceof Error` ternary (a literal `throw undefined` is the only real way to reach `renderCause`'s
+own `undefined` branch, not a shape any real check in this module produces, so no local fallback branch
+was added just to chase coverage over it). A new regression test in `run-doctor.test.ts` proves a
+crashing `checkDiagrams` degrades to its own failed entry while every other real check — including
+`node-version` — still runs and reports its own real result.
+
 `tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/loop/`,
 run against real git repositories, real fixture workflows, real `Story`/`Defect` artifacts, and a real
 `FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix; see
