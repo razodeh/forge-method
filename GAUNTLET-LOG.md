@@ -7046,3 +7046,72 @@ P7/P8, but landing on a *different* specific test file each time (`crash-resume.
 `resume.test.ts`, then `crash-resume.test.ts` again) -- itself further evidence this is a genuine,
 load-timing-dependent pre-existing flake rather than anything caused by this piece, each instance
 re-confirmed passing cleanly alone.
+
+## M7 P10 — the live-smoke test, M7's own second exit test (`specs/22`, `PLAN-M7.md`'s closing section)
+
+**Rounds: 1 (fresh critic finding two genuinely severe, structural bugs that would fail even a
+perfect live run, plus a doc-accuracy issue and a minor naming nit; all four addressed, each fix
+verified by actually compiling/running the workflow, not re-reasoned about). Outcome: WON.**
+
+`test/live-smoke.test.ts` (repository root -- `@forge/engine` has no boundary edge to any concrete
+adapter package, the identical reasoning `test/workflows.test.ts` already established): one real,
+minimal workflow (`init` command → one non-fanned-out `agent` story step → `merge` → a trivially-
+passing gate) driven end to end through the real, already-built `runEngine` against a real
+`ClaudeCodeAdapter`, gated by P9's already-built `planLiveRuns`. The root `package.json` gained
+`@forge/adapter-claude-code`/`execa` as new `devDependencies` (this is the one file needing both
+packages together, and the root previously declared neither). See `SPEC-QUESTIONS.md` Q122 for the
+full record, including a real, two-part plan-vs-real-tooling mismatch in the plan's own literal exit
+command (confirmed by actually running it) and a pre-existing, unrelated 138-file `prettier` drift
+discovered during verification and deliberately left untouched.
+
+### Round 1 — fresh critic (no context on plan/log, told to verify whether the live branch would
+actually work end to end rather than trust the code's own structure): two severe findings, one
+doc-accuracy issue, one minor nit
+
+What the critic caught that I missed, most severe first:
+
+1. **[HIGH] `finalState.stepStatuses.get('init')` (and `'implement'`/`'verify'`) used the wrong key.**
+   Confirmed by actually running `parseWorkflow`/`compileRunPlan` against the exact workflow source:
+   every compiled `StepNode.id` is qualified as `${workflowId}:${stepId}` by `compile.ts`'s own
+   `compileStepId`, applied uniformly regardless of step kind — the real keys are
+   `forge-m7-live-smoke:init`, not bare `init`. `Map.get()` accepts any string, so TypeScript could not
+   catch this; the original draft's very first assertion would have thrown on `undefined`, before the
+   real, live Claude Code call's own success or failure ever mattered. **Fixed**: a small `STEP_IDS`
+   map, built once, matching the qualified-key convention `packages/engine/test/run/run-engine.test.ts`
+   already establishes.
+2. **[HIGH] The artifact-validation read targeted the wrong path — would have thrown `ENOENT` even on
+   a perfect live run.** An `agent`-kind step always runs inside its own dedicated git-worktree lane;
+   its own produced file only reaches `projectRoot` once a real `merge`-kind step actually runs. The
+   original three-step workflow (`init` → `implement` → `verify`) had no `merge` step at all, so the
+   story file's real location was `<projectRoot>/.forge/state/worktrees/<laneId>/live-smoke-story.txt`,
+   never `projectRoot`. Confirmed both ways: the critic reproduced it directly (a real, temporary
+   script driving the original workflow through the real `runEngine` against a scripted fake adapter,
+   confirmed the `ENOENT`), and I re-confirmed the *fix* the same way before writing it into the real
+   file. **Fixed**: added a real `merge` step (`dependsOn: [implement]`) between `implement` and
+   `verify`, matching `packages/engine/test/e2e/fixture-workflow.ts`'s own already-proven shape for a
+   single, non-fanned-out predecessor lane.
+3. **[Doc-accuracy] The already-fixed `--grep`→`--testNamePattern` recipe still didn't work as
+   documented, through `pnpm test` specifically.** The root `package.json`'s own `"test"` script is a
+   three-command `&&`-chain; `pnpm test -- <args>` only appends to the *last* command in it, so the
+   documented recipe would run the entire, unfiltered main suite first (confirmed directly — it took
+   minutes and was itself derailed by an unrelated flaky test before the filtered command ever ran),
+   not the narrow, isolated run intended. **Fixed**: the real, working recipe bypasses `pnpm test`'s
+   own wrapper (`FORGE_LIVE=1 node scripts/run-tests.mjs run --testNamePattern "live smoke"`),
+   re-verified directly (zero other tests executed, a few seconds).
+4. **[Minor nit]** A concurrency-limits constant named `UNLIMITED_CONCURRENCY` was actually
+   `{global: 1, ...}` (copied from the fixture's own differently-named constant, only partly edited) —
+   harmless for this strictly linear workflow, but misleading. **Fixed**: renamed to
+   `SEQUENTIAL_CONCURRENCY_LIMITS`.
+
+`tsc --build`, `eslint .`, `prettier --check` (this piece's own files), and the full monorepo test
+suite (6008-6009 tests, 5 correctly skipped without `FORGE_LIVE=1`, run twice) all clean after every
+fix, aside from the identical pre-existing, unrelated `crash-resume.test.ts` git-worktree-collision
+flake already documented in every prior M7 piece's own entry, re-confirmed passing alone both times.
+`test/live-smoke.test.ts`'s own skip path (the only branch this piece could safely exercise -- see
+`SPEC-QUESTIONS.md` Q121/Q122 for why the live branch was never attempted, in this or any environment)
+was re-verified after every fix, including via the real, corrected `--testNamePattern` recipe directly.
+
+M7 is now feature-complete: P1 through P10 are all committed. The milestone's own explicit checkpoint
+-- a real, jointly-supervised live run (`FORGE_LIVE=1`, both transports, both auth modes once
+available) exercising both P9's conformance suite and this piece's own live-smoke test -- is the
+deliberate, deferred next step, not attempted by any piece in this milestone unsupervised.

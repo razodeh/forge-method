@@ -9174,3 +9174,119 @@ if a live run had been attempted, not merely "never tried":**
    this is a minor, already-acknowledged robustness gap, not a required fix, and it was left as is.
 
 See `GAUNTLET-LOG.md`'s own M7 P9 entry for the full critic round.
+
+## Q122 — M7 P10's live-smoke test: a real plan-vs-real-tooling flag mismatch confirmed by actually
+running it, a minimal one-story workflow deliberately narrower than the crash-resume fixture, and a
+pre-existing, unrelated repo-wide formatting drift discovered but left untouched
+
+**`PLAN-M7.md`'s own literal exit command does not work, in two independent ways.** `FORGE_LIVE=1 pnpm
+test -- --grep "live smoke"` — the plan's own verbatim text — fails outright against the real,
+installed `vitest@4.1.11`: `--grep` is not a flag this version's CLI recognizes at all (`CACError:
+Unknown option --grep`, confirmed by actually running it, not assumed). The real, documented
+equivalent, confirmed against `vitest run --help`'s own real output, is `-t`/`--testNamePattern
+<pattern>`. A fresh critic round found a *second*, independent problem with the recipe even after that
+fix: the root `package.json`'s own `"test"` script is a three-command `&&`-chain (the main suite, the
+coverage ratchet, then a second, differently-configured vitest run for boundary coverage) — `pnpm test
+-- <args>` only ever appends `<args>` to the *last* command in that chain, so `pnpm test --
+--testNamePattern "live smoke"` runs the entire, unfiltered main suite first (confirmed directly: it
+took minutes and was itself derailed by an unrelated flaky test elsewhere in the suite before the
+filtered command ever ran), not the narrow, isolated run the recipe intends. The real, working command
+bypasses `pnpm test`'s own wrapper entirely: `FORGE_LIVE=1 node scripts/run-tests.mjs run
+--testNamePattern "live smoke"` — verified directly, with `FORGE_LIVE` unset, to filter every other
+test file in the whole monorepo down to zero executed tests and run only this one file's own single,
+real, appropriately-named test, in a few seconds. The same class of plan-vs-real-tooling mismatch this
+milestone has repeatedly found (Q114's CLI flags, Q121's `provisionMcp` interface mismatch) — recorded
+here rather than silently corrected without a trace, and stated plainly in the test file's own
+top-of-file doc comment so a future reader following the plan's own literal text does not hit either,
+identical, avoidable error.
+
+**A fresh critic round, told to verify whether the live branch would actually work end to end rather
+than trusting the code's own structure, found two further, genuinely severe, structural bugs — both
+confirmed by actually compiling and running the workflow, not re-reasoned about abstractly — that
+would have failed this test deterministically even on a perfect live run, for reasons having nothing
+to do with Claude Code's own real behaviour:**
+
+1. **[Wrong key] Every compiled `StepNode.id` is qualified as `${workflowId}:${stepId}` by
+   `compile.ts`'s own `compileStepId`, applied uniformly to every step regardless of kind — confirmed
+   by actually running `parseWorkflow`/`compileRunPlan` against the exact workflow source and printing
+   the real node ids (`forge-m7-live-smoke:init`, not bare `init`). The original draft's
+   `finalState.stepStatuses.get('init')` was therefore always `undefined` — TypeScript cannot catch
+   this, since `Map.get()` accepts any string — failing the very first assertion regardless of whether
+   the real live call succeeded perfectly. The established, working precedent
+   (`packages/engine/test/run/run-engine.test.ts`) already keys by the qualified form; this file now
+   matches it, via a small `STEP_IDS` map built once rather than repeating the string concatenation.
+2. **[Wrong path] An `agent`-kind step always runs inside its own dedicated git-worktree lane, never
+   `ctx.projectRoot` directly** (`runLaneLifecycle`/`runAgentWork`, `packages/engine/src/dispatch/
+   steps.ts`) — its own produced file only ever reaches `projectRoot` once a real `merge`-kind step
+   actually runs (`runMergeStep`/`ctx.mergeQueue.process`, the only real caller of
+   `ctx.vcs.removeLane`). The original, three-step workflow (`init` → `implement` → `verify`, no
+   `merge`) meant the story file's own real location was `<projectRoot>/.forge/state/worktrees/
+   <laneId>/live-smoke-story.txt`, never `projectRoot` — the original artifact-validation `readFile`
+   would have thrown `ENOENT` unconditionally, confirmed directly (a real, temporary script drove the
+   original workflow through the real `runEngine` against a scripted fake adapter and reproduced
+   exactly this). **Fixed** by adding a real `merge` step (`dependsOn: [implement]`, matching the exact
+   shape `packages/engine/test/e2e/fixture-workflow.ts`'s own already-proven pattern establishes for a
+   single, non-fanned-out predecessor lane) between `implement` and `verify` — both fixes verified
+   together afterward, the same way: a real, temporary script driving the revised, four-step workflow
+   through the real `runEngine`, confirming both the qualified step ids and the story file's own real
+   presence at `projectRoot` once the merge genuinely ran, before either fix was written into the real
+   file.
+
+One minor nit from the same round, also fixed: a concurrency-limits constant named
+`UNLIMITED_CONCURRENCY` was actually set to `{global: 1, ...}` (copied from the fixture's own
+identically-shaped, differently-named constant and only partly edited) — harmless for this workflow's
+own strictly linear four-step shape (never more than one step ready at once regardless of the limit),
+but a misleading name. Renamed to `SEQUENTIAL_CONCURRENCY_LIMITS`, matching what it actually is.
+
+**The real workflow is deliberately narrower than `packages/engine/test/e2e/fixture-workflow.ts`'s own
+crash-resume fixture, not a reuse of it.** That fixture fans out over two items specifically to exercise
+real concurrent scheduling (`06` §6.3) — exactly right for its own purpose, but it would mean this
+smoke test's own real, live cost is at least two billed Claude Code calls, not the "one real init + one
+story" the plan's own text asks for verbatim. A fresh, independent, single-item workflow was written
+instead (`init` command step → one non-fanned-out `agent` step → a `merge` step → a trivially-passing
+gate — the `merge` step itself added only after the fresh critic round above found it was structurally
+required for the story's own artifact to ever reach `projectRoot` at all, not part of the original
+design), keeping the real, eventual live cost to exactly one Claude Code call. The crash-resume
+fixture's own `FakePlatformAdapter`
+(`.script(...)`-driven) is also structurally incompatible with a real `ClaudeCodeAdapter` regardless,
+so reusing its own `fixtureAdapter()` was never an option either way — only the *pattern* of
+`fixtureRunEngineContext` (a real `RunEngineContext` built from real, `@forge/engine/dispatch`-exported
+facade constructors bound to a real tmp-dir git repository) was followed, using the package's own
+public export surface directly rather than importing that test-only fixture file cross-package.
+
+**`RunEngineContext.adapter` is a single, real `PlatformAdapter` instance, not a registry keyed by
+name** — confirmed directly against `fixtureRunEngineContext`'s own real shape, not guessed. This
+makes injecting a real `ClaudeCodeAdapter` here exactly as direct as injecting `@forge/testkit`'s own
+`FakePlatformAdapter` already is for every other `@forge/engine` test — no new engine-side plumbing was
+needed at all.
+
+**A real, necessary root `package.json` change, not scope creep:** this is the one file in the whole
+milestone that needs both `@forge/engine` and `@forge/adapter-claude-code` together, and the repository
+root had neither `@forge/adapter-claude-code` nor `execa` declared as a dependency at all (confirmed:
+`tsc` failed to resolve either import before the fix). Added both as `devDependencies` (matching the
+existing `@forge/engine`/`@forge/templates` entries' own convention exactly), then ran a real `pnpm
+install` — confirmed via `git diff pnpm-lock.yaml` that no other package's own resolved version moved
+as a side effect, including `prettier`'s own (checked specifically, given the next finding).
+
+**Deliberately, explicitly never attempted: an actual live run — the identical stance as P9, for the
+identical, confirmed reason** (this exact development machine carries a real, active Claude
+subscription login). This file's own gating reuses P9's already-built, already-tested `planLiveRuns`
+directly rather than a second, independently-written gate — verified only via its own skip path
+(instant, zero real adapter/workflow construction) in this environment.
+
+**A real, pre-existing, repository-wide formatting drift was discovered during this piece's own full
+verification pass, entirely unrelated to this piece's own changes, and deliberately left untouched.**
+A full `prettier --check .` (required to verify this piece's own two changed files cleanly) flagged
+138 files across `packages/kb`, `packages/telemetry`, `packages/testkit`, and `packages/vcs` — none of
+them touched by this piece, this milestone, or (per `git log`) recently at all. Confirmed pre-existing
+and unrelated by three independent checks: `git status` shows every flagged file byte-identical to
+`HEAD` (no working-tree change from this session at all); the diffs themselves are ordinary line-
+wrapping reformatting (e.g. a long `if` condition or ternary prettier would now wrap that the committed
+version does not), not anything specific to this piece; and `git diff pnpm-lock.yaml` confirms this
+piece's own `pnpm install` never touched `prettier`'s own resolved version. Left entirely alone —
+fixing 138 files across four unrelated packages this piece never touched, based on a formatting tool
+disagreement whose root cause (a prettier version/config change at some undetermined earlier point)
+this piece did not investigate, would be real, unauthorized scope creep, not a fix. Recorded here so a
+future reader (or the coordinator) knows this exists and is real, rather than discovering it cold.
+
+See `GAUNTLET-LOG.md`'s own M7 P10 entry for the full critic round.

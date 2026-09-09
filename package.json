@@ -25,6 +25,7 @@
   "devDependencies": {
     "@changesets/cli": "2.31.1",
     "@eslint/js": "9.39.5",
+    "@forge/adapter-claude-code": "workspace:*",
     "@forge/engine": "workspace:*",
     "@forge/methods": "workspace:*",
     "@forge/schemas": "workspace:*",
@@ -36,6 +37,7 @@
     "@vitest/coverage-v8": "4.1.11",
     "eslint": "9.39.5",
     "eslint-config-prettier": "10.1.8",
+    "execa": "9.6.1",
     "gray-matter": "4.0.3",
     "handlebars": "4.7.9",
     "prettier": "3.9.6",
