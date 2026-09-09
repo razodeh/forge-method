@@ -6258,3 +6258,80 @@ unrelated, pre-existing flakes observed during full-suite runs and confirmed not
 `SIGKILL`-driven fuzz test, and `packages/cli/test/commands/run/resume.test.ts`'s own real crash-resume
 test — the identical class of resource-contention flake M6 C5's and C6's own log entries already name
 for tests in the same family.
+
+---
+
+## M6 C8 — `@forge/cli` meta and customization commands (`03` §3.2.7, §3.2.8)
+
+**Rounds: 1 (fresh critic finding one real HIGH bug and four real MEDIUM/LOW bugs, all fixed; no
+separate verify round run). Outcome: WON.**
+
+`@forge/cli`'s eighth piece, and its largest single-round build: thirteen command groups —
+`forge agent <list|show|new|validate|compile|override|diff|reset>` (`05` §5.9/§5.10's own real
+schema-validity/kb-write-overlap/file-ownership-overlap/framework-existence/skill-existence/ceiling
+checks, plus real `installAssets` roster compilation), `forge workflow <list|show|validate|graph|new>`
+(a real `WorkflowExistenceOracle` built from real project state), `forge config <get|set|list|explain|
+edit>` (real dot-path get/set/list/explain against `@forge/schemas/config`'s own `configLeafPaths`/
+`CONFIG_KEY_DOCS`), `forge module <list|info|add|remove|update>`, `forge cost` (a real report over
+`@forge/telemetry`'s own cost ledger), `forge export <target>` (real `markdown-bundle`/`html`
+renderers), `forge help`, `forge customize`, `forge compile [--check]`/`forge overlay explain`/
+`forge preset <list|show|apply|eject>` (thin wrappers over `@forge/extensions`' own already-built
+compile/resolve/presets surface, M2), `forge skill <list|validate>`, `forge mcp validate` (thin
+wrappers over `@forge/extensions/skills`/`@forge/extensions/mcp`, M2). Built solo, continuing the
+standing order to work M6's own pieces in dependency order. See `SPEC-QUESTIONS.md` Q111 for the full
+design record — `forge agent validate`'s own real §5.9 scope decisions, `forge workflow validate`'s
+template-aware oracle, two real pre-existing defects found in already-shipped `10 §10.5` workflow
+content, a real pre-existing bug found and fixed in already-shipped C2 code (`generatedHeader`), and
+this round's own five critic findings.
+
+Verified directly, via a real, standalone `runInit` against the real `modules/` roster at the repo
+root (not a fixture): `forge agent validate --all` passes with **zero real findings** against the
+real, complete 28-agent roster — this milestone's own literal exit-test line, proven real and green.
+
+### Round 1 — fresh critic (no context on plan/log): one real HIGH bug, three real MEDIUM bugs, one
+real LOW bug
+
+1. **HIGH.** `export.ts`'s `gatherSections` hardcoded `body: ''` for every real KB entry, ADR, and
+   runbook it exported — the equivalent spec-document path correctly carried real body text, but every
+   real KB-tree document a project accumulates was silently exported as a bare title with no content,
+   contradicting this piece's own doc comment claiming "every real spec/KB document" with real content.
+   The existing test only asserted the *title* string appeared in the bundle, never the real body text,
+   so the bug passed unnoticed. **Fixed**: `body` is now read from its own real, kind-specific location
+   — `entry.body` (a top-level field on `@forge/kb`'s own `KbParsedEntry` union) for `adr`/`runbook`,
+   `entry.value.body` for `kb-entry` — two genuinely different real shapes, confirmed directly against
+   `@forge/kb/schema`'s own `tree.ts`. The test was strengthened to assert real body text, not just a
+   title, is present.
+2. **MEDIUM.** `config.ts`'s `configSet` called `YAML.parse(rawValue)` with no try/catch — a genuinely
+   malformed raw value (`forge config set foo "[1,2"`) threw a raw, uncaught `YAMLParseError` instead
+   of the same real, actionable `USR-002` this module already raises for every other malformed-CLI-
+   value case. **Fixed**: wrapped, raising `USR-002` for a parse failure distinctly from the existing
+   `CFG-001` this function already raises when a value parses fine but fails schema revalidation.
+3. **MEDIUM.** `mcp.ts`'s `mcpValidate` read `.forge/config.yaml` with no existence guard, so a project
+   with no real config file yet got a generic `RUN-034` I/O failure instead of `config.ts`'s own real,
+   specific `CFG-020` ("No real .forge/config.yaml found... Run `forge init` first") for the identical
+   precondition on the identical file. **Fixed**: added the same guard `config.ts` already has.
+4. **MEDIUM.** `agent.ts`'s own `ceilingFindings` silently skipped the network-ceiling comparison
+   entirely for the real, schema-accepted `tools.network: true` shape — the normalization only handled
+   `false -> 'none'`, leaving `true` as a boolean the comparison's own `typeof === 'string'` guard then
+   excluded outright, so an agent declaring unrestricted network access with a real, restrictive
+   ceiling would report no finding at all. Not exercised by the real, shipped roster today (every real
+   agent uses `network: false` only), but a real, reachable gap in a function whose whole job is
+   exhaustive enforcement. **Fixed**: `true` now normalizes to `'full'`, the ceiling vocabulary's own
+   equivalent "unrestricted" value. A new regression test proves the finding now fires.
+5. **LOW.** `skill.ts`'s `skillList` had no existence guard before listing `.forge/skills/`, unlike
+   every sibling list function in this same piece (`agent.ts`'s `agentList`, `workflow.ts`'s
+   `workflowList`, both check existence and return `[]`) — an inconsistent pattern within the piece's
+   own conventions. **Fixed** to match; a new regression test proves the real, missing-directory case
+   returns `[]` rather than throwing.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (64 new test files under `packages/cli/test/
+commands/`, run against real `runInit`-produced project trees — including one real invocation against
+the actual `modules/` roster at the repo root — real git repositories, real spec/KB/ADR documents via
+`specNew`/`adrNew`/a shared KB-entry fixture, and a real cost-ledger event log via `@forge/telemetry`'s
+own `appendEvent` — never a mocked engine internal) all clean after every fix. One unrelated,
+pre-existing flake observed during full-suite runs and confirmed not caused by this piece (passes
+cleanly in isolation, and a separate full run completed with 308/308 clean): `packages/cli/test/
+commands/run/resume.test.ts`'s own real, `SIGKILL`-driven crash-resume test — the identical class of
+resource-contention flake M6 C5/C6/C7's own log entries already name for tests in the same family,
+recurring here with yet another distinct real git-worktree-race error text under the now-larger
+308-file full-suite parallelism.

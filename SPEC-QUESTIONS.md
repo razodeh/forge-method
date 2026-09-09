@@ -8091,3 +8091,114 @@ and `packages/cli/test/commands/shared.test.ts`, run against a real `runInit`-pr
 git repositories, real spec documents via `specNew`, and synthetic migration fixtures for the real,
 currently-empty `MIGRATIONS` registry — never a mocked engine internal) all clean after every fix; see
 `GAUNTLET-LOG.md`'s own M6 C7 entry for the critic round.
+
+## Q111 — M6 C8's `@forge/cli` meta and customization commands: `forge agent validate`'s real §5.9
+scope decisions, `forge workflow validate`'s template-aware oracle, a real pre-existing bug found in
+already-shipped `write-tree.ts`, and two real, pre-existing defects in already-shipped workflow content
+
+**`forge agent validate`'s own real, scoped interpretation of `05` §5.9's five checks**, each a
+deliberate decision recorded here rather than left implicit:
+- **"No KB write overlap... unless declared `shared`."** The real, currently-shipped `AgentDefinition`
+  schema (`@forge/agents/schema`, A1) has no `shared`-declaration field anywhere — confirmed directly
+  against `agentDefinitionSchema`. There is therefore no way for this check to ever *not* report a real
+  `kb_write` overlap; every overlap is reported unconditionally. This is a real, load-bearing scope
+  decision, not an oversight: adding a `shared` field would be a schema change belonging to A1's own
+  future revision, not something this piece invents unilaterally. Confirmed harmless against the real,
+  shipped roster: every real agent's own `kb_write` entries are already disjoint (`grep`-verified
+  directly against every `modules/fm-core/agents/*.agent.yaml`).
+- **"Tool grants don't exceed the module's ceiling."** No separate "module-level ceiling" structure
+  exists anywhere in the real schema — each agent carries its own optional `ceiling` field. This check
+  is therefore scoped to comparing an agent's own `tools` against its own `ceiling.tools`, when present,
+  rather than a module-wide concept that has no real backing. Further scoped to the real, scalar
+  `write`/`network`/`deploy` fields only: `exec` pattern subsumption (is every real `tools.exec` entry
+  actually covered by a broader `ceiling.tools.exec` pattern) needs real glob-subsumption logic beyond
+  `@forge/engine/plan`'s own `globsOverlap` (an intersection test, not a subsumption test) — a real,
+  separate piece of work, not attempted here.
+- **"Prompts referenced exist" / "MCP server... exists."** Real, shipped agent definitions reference
+  real prompt file paths (`prompts/architect.system.md`-shaped strings) that genuinely do not exist
+  anywhere in this codebase — no `prompts/` directory ships in `@forge/templates` at all (prompt
+  *compilation*, A5, was itself a later piece; the paths are named but never populated). A real
+  existence check here would report every real, shipped agent as invalid for a gap this piece did not
+  create and cannot close. Deliberately not attempted, the same "cannot verify, refuse to fabricate a
+  failure for a gap outside this piece's own scope" stance `forge workflow validate`'s own
+  `briefExists` already takes (below) for the structurally identical situation. MCP-server-reference
+  existence is similarly not attempted: no project-level "list of configured MCP servers" registry
+  mechanism exists anywhere (`@forge/extensions/mcp` only ever parses+validates a caller-supplied
+  document, confirmed directly — see `mcp.ts`'s own doc comment).
+- Verified directly, via a real, standalone `runInit` against the real `modules/` at the repo root (not
+  a fixture): the real, complete 28-agent roster validates with **zero findings** through this exact
+  mechanism — this milestone's own literal exit-test line (`pnpm forge agent validate --all`) is
+  provably real and green today, not merely wired up.
+
+**`forge workflow validate`'s own real oracle, built from real project state** (`.forge/agents/`,
+`.forge/checks/`, `.forge/workflows/`, `@forge/schemas`'s own `ARTIFACT_TYPES`) rather than a second,
+parallel existence-checking mechanism. Two deliberate "cannot verify, refuse to fabricate a failure"
+exemptions, both real, both load-bearing:
+- **`briefExists` always returns `true`.** Real, shipped workflows reference real `briefs/<name>.md`
+  paths (confirmed against every real `packages/templates/templates/workflows/*.workflow.yaml`), but no
+  real brief *content* has ever been written anywhere in this codebase — `readWorkflowFiles`'s own
+  `WORKFLOW_INDEX` only ever copies the workflow documents themselves, never a `briefs/` directory, and
+  none exists in `@forge/templates` at all. A real check here would report every real, shipped workflow
+  invalid for a pre-existing gap this piece has no way to close.
+- **A `{{...}}`-shaped reference is treated as unverifiable, not nonexistent**, across every oracle
+  method (`agentExists`/`gateExists`/`workflowExists`). `validateWorkflow` (`@forge/engine/workflow`,
+  already built) checks `step.agent`/etc. as literal ids with no template awareness of its own (its own
+  doc comment: "nothing in this piece parses that mini-syntax"); real, shipped workflows genuinely use
+  `{{ownerRole}}`/`{{item.owner_role}}` for `step.agent`, resolved only at real plan-compilation time a
+  bare `forge workflow validate <id>` invocation has no `ExpressionContext` to perform. Without this
+  exemption, `implement-story`/`build-stage` (both real, shipped, template-using workflows) would report
+  spurious `unknown-agent` findings for every templated step. A fresh critic round confirmed the
+  detection itself (`value.includes('{{')`) has one real, narrow gap — it cannot distinguish a genuine
+  template reference from a malformed/unclosed one or a coincidental literal containing the same two
+  characters — not exercised by any currently-shipped content, so left as a documented limitation rather
+  than built around.
+
+**Two real, pre-existing defects in already-shipped `10 §10.5` workflow content, found (not
+introduced, not fixed) by running the real validator against it.** `build-stage.workflow.yaml` and
+`implement-story.workflow.yaml` both reference artifact types (`"StagePlan"`, `"ReviewReport"`) that
+were never registered in `@forge/schemas`'s own `ARTIFACT_TYPES` list (confirmed directly: neither
+string appears anywhere in `registry/artifact-types.ts`). `forge workflow validate --all` reports both
+real, honestly — this is the validator doing its job, surfacing a genuine upstream content defect, not
+something this piece should suppress to make its own output look cleaner. Left unfixed here
+deliberately: registering a new artifact type (a real path template, id prefix, id width) or correcting
+the workflow content to reference an existing type is a real decision belonging to whichever piece owns
+`T1-T5`'s own template content, not C8's own remit.
+
+**A real, pre-existing bug in already-shipped C2 code (`generatedHeader`/`writeGenerated`,
+`init/write-tree.ts`), found only because this piece's own test fixtures drove real, materialized
+project content through a real front-matter parser for the first time.** Every regenerable file this
+codebase writes gets a comment header prepended before its own content (`03` §3.3's own idempotency
+rule). For a `.md` file, the header is HTML-comment-shaped (`<!-- forge:generated ... -->`) — correct
+for an ordinary Markdown file, but genuinely wrong for the two real, already-shipped kinds of
+regenerable Markdown that themselves carry real YAML front matter: `.forge/skills/<id>/SKILL.md` and
+`.forge/templates/<Type>.md`. Prepending an HTML comment before a document's own `---` opening line
+moves that delimiter off line one, and every real front-matter parser in this codebase requires it
+literally first — `parseSkillPackage` (backing `forge skill validate`, this piece's own new surface)
+threw `CFG-005`, "no front matter found," against the real, materialized `.forge/skills/` content
+`forge init` itself had just written. **Fixed**: `withGeneratedHeader` (new) detects when content
+itself opens with `---` and inserts the header as a real YAML `#`-comment line *inside* the
+front-matter block instead, regardless of the file's own extension; every other regenerable file keeps
+`generatedHeader`'s own existing, already-tested prepend behaviour unchanged. New regression tests
+prove both the ordinary case (unchanged) and the front-matter case (header inserted correctly, the
+result still valid YAML) directly.
+
+**A fresh critic round's own five real findings, all fixed.** The single highest-severity one:
+`forge export markdown-bundle`/`forge export html`'s own `gatherSections` hardcoded `body: ''` for
+every real KB entry, ADR, and runbook — every one of those real document kinds was exported as a bare
+title with no content at all, while the equivalent spec-document path correctly carried real body text.
+**Fixed** by reading `body` from its own real, kind-specific location (`entry.body` for `adr`/`runbook`,
+`entry.value.body` for `kb-entry` — two genuinely different real shapes in `@forge/kb`'s own
+`KbParsedEntry` union). The other four (`config.ts`'s `configSet` letting a malformed raw value throw
+an uncaught `YAMLParseError` instead of a real `USR-002`; `mcp.ts`'s `mcpValidate` raising a generic
+`RUN-034` instead of the same real `CFG-020` `config.ts` already raises for an identically-missing
+`.forge/config.yaml`; `agent.ts`'s own ceiling check silently skipping the real, schema-accepted
+`tools.network: true` shape because only `false` was normalized; `skill.ts`'s `skillList` throwing
+instead of returning `[]` for a real, not-yet-materialized `.forge/skills/` directory, inconsistent with
+every sibling list function in this same piece) are each real, narrower fixes — see `GAUNTLET-LOG.md`'s
+own M6 C8 entry for the full account.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (64 new/touched test files under
+`packages/cli/test/commands/` and `packages/cli/test/init/`, run against real `runInit`-produced
+project trees — including one real invocation against the actual `modules/` roster at the repo root,
+not a fixture — real git repositories, real spec/KB/ADR documents, and a real cost-ledger event log via
+`@forge/telemetry`'s own `appendEvent` — never a mocked engine internal) all clean after every fix.
