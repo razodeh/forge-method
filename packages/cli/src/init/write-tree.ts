@@ -20,7 +20,7 @@ import {
   readWorkflowFiles,
   type ContentFile,
 } from './content.ts';
-import { generatedHeader } from './generated-header.ts';
+import { withGeneratedHeader } from './generated-header.ts';
 import { sha256 } from './hash.ts';
 import { buildManifest } from './manifest.ts';
 import type { InitOptions, WrittenFile } from './types.ts';
@@ -44,8 +44,8 @@ async function writeGenerated(
   file: ContentFile,
 ): Promise<WrittenFile> {
   const hash = sha256(file.content);
-  const header = generatedHeader(destRelPath, MANIFEST_VERSION, hash);
-  await writeFileAtomic(target.resolveWithin(destRelPath), header + file.content);
+  const withHeader = withGeneratedHeader(file.content, destRelPath, MANIFEST_VERSION, hash);
+  await writeFileAtomic(target.resolveWithin(destRelPath), withHeader);
   return { path: destRelPath, generated: true };
 }
 

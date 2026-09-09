@@ -855,6 +855,18 @@ export const ERROR_CODES = {
       `Cannot migrate ${show(d.path)}: ${show(d.detail)}`,
     remedy: 'Fix the migration registry (a gap or an invalid reversible/down pairing), then retry.',
   },
+  // `@forge/cli`'s own `forge config get/set/list/explain` (`03` §3.2.7, `PLAN-M6.md` C8). Next free
+  // `CFG-*` slot after `CFG-019`. Distinct from `CFG-017` (`forge upgrade`'s own missing-manifest
+  // check): a project can genuinely have `.forge/manifest.yaml` but no `.forge/config.yaml` (a
+  // partially-written init that failed before its own final step -- `writeInitTree`'s own doc comment
+  // records `config.yaml` as deliberately written last), so reusing `CFG-017`'s own manifest-specific
+  // message here would name the wrong missing file.
+  'CFG-020': {
+    severity: 'fatal',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: () => 'No real .forge/config.yaml found -- this project has never been initialized.',
+    remedy: 'Run `forge init` first.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

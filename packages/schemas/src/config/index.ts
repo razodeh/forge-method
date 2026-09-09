@@ -7,3 +7,4 @@
 export { CONFIG_KEY_DOCS, type ConfigKeyPath } from './docs.ts';
 export { DEFAULT_CONFIG } from './defaults.ts';
 export { configSchema, type ForgeConfig } from './schema.ts';
+export { configLeafPaths } from './walk.ts';
