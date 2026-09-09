@@ -30,6 +30,7 @@ export { listClaudeCodeModels } from './list-models.ts';
 export { computeChangedFiles } from './changed-files.ts';
 export { makeSessionHandle } from './session-handle.ts';
 export { accumulateSessionResult, type AccumulateSessionResultOptions } from './session-result.ts';
+export { provisionSkills } from './skills.ts';
 export {
   ClaudeCodeAdapter,
   type ClaudeCodeAdapterOptions,

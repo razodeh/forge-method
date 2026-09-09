@@ -8710,3 +8710,85 @@ Flagged to the coordinator directly per standing instruction; the underlying fin
 are recorded above in full.
 
 See `GAUNTLET-LOG.md`'s own M7 P5 entry for the full critic round.
+
+## Q118 — M7 P6's `provisionSkills`: a real, confirmed skill-directory convention, five critic-found
+gaps (one of them security-relevant), and a self-caught bug in the fix for the security-relevant one
+
+**`.claude/skills/<id>/SKILL.md` is confirmed directly against Anthropic's own official Claude Code
+skills documentation** (`code.claude.com/docs/en/skills`, fetched during this piece, not assumed from
+the plan's own already-correct guess): one path segment per skill, directly under `.claude/skills`,
+a single `SKILL.md` file whose own YAML frontmatter needs only `description` to be useful ("Claude
+uses this to decide when to auto-invoke the skill"). `ResolvedSkill.summary`/`body` map onto
+`description:`/the file's own body content, one-to-one.
+
+**A fresh critic round, given the piece plus its own tests plus `describeGrant`'s already-gauntlet-
+tested escaping precedent, and told to independently re-verify every documentation claim itself, found
+five real issues:**
+
+1. **(HIGH, security) No symlink-escape defence at all.** The original draft's own containment check
+   was purely lexical (`path.resolve`/`path.relative`, mirroring `@forge/testkit`'s own
+   `resolveInsideCwd`) — but `resolveInsideCwd`'s own doc comment explicitly disclaims this for real
+   adapters: "the attacker this defends against is a script authored within the same test process,
+   not a hostile filesystem — real adapters' own symlink-escape defence is `@forge/core`'s job." A
+   lane worktree is not trusted-by-construction: an earlier step in the same lane can run arbitrary
+   shell commands against it, including planting `.claude`/`.claude/skills` as a symlink before this
+   step's own `provisionSkills` call ever runs — which the lexical check alone cannot see. **Fixed**
+   by duplicating `@forge/core/src/fs/paths.ts`'s own `realpathOfDeepestExistingAncestor` (no
+   boundary edge to import it) — but the *first* attempt at this fix had a real bug of its own, found
+   by the new adversarial test written to prove it: comparing the symlink-resolved target against a
+   *similarly* symlink-resolved version of `.claude/skills` itself, which can never detect an escape
+   when `.claude/skills` is the very thing that got planted as a symlink (both sides of the comparison
+   follow the same symlink, so the escaped target is always still trivially "inside" the escaped
+   root). Corrected to anchor the real-path comparison at `cwd` itself — the lane's own actual trust
+   boundary, matching `@forge/core`'s own choice to anchor `resolveWithin` at the real *project root*,
+   never at any intermediate segment.
+2. **(HIGH) No `try`/`catch` around the real `mkdir`/`writeFile` calls**, contradicting the function's
+   own documented "one bad skill never blocks the others" contract. One id with a NUL byte, a
+   Windows-reserved device name, or simply too long for the filesystem threw uncaught, aborting the
+   whole call and silently leaving whichever earlier skills had already been written with no way for
+   the caller to know. **Fixed** with a `try`/`catch` around the write, treating a real filesystem
+   failure exactly like a `resolveSkillFile` rejection: skip this one skill, continue the batch.
+3. **(HIGH, spec-fidelity) A skill id containing `/` or `\` was accepted and written successfully,
+   but produces a file real Claude Code's own one-level-deep skill discovery will never find** — not
+   a boundary escape (it stays inside `.claude/skills`), but a wrong-file bug: a perfectly plausible,
+   non-adversarial namespaced id (`'frontend/review'`) would be silently "provisioned" (written,
+   counted as success) while being invisible to the tool it was meant for. **Fixed**: `resolveSkillFile`
+   now refuses any id containing a path separator.
+4. **(MEDIUM-HIGH, doc-accuracy) The YAML-safety claim was measurably inaccurate.** The original doc
+   comment claimed `JSON.stringify` escapes "every quote/backslash/newline," matching `describeGrant`'s
+   own convention — but the critic actually *ran* it rather than trusting the JSON spec's own prose,
+   and found `JSON.stringify` leaves three real Unicode line-terminator-like code points (U+2028 LINE
+   SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+0085 NEXT LINE) as literal, unescaped characters — exactly
+   the additional line breaks YAML 1.1-flavored parsers recognise beyond `\n`/`\r`, including inside a
+   double-quoted scalar. Separately, the critic noted `describeGrant`'s own precedent solves a
+   *different* problem (an audit log line only ever compared to itself, never parsed by an external
+   grammar) — borrowing its credibility for a value a real third-party YAML parser actually parses
+   was itself an overstatement of confidence, independent of whether Claude Code's own parser is
+   affected in practice. **Fixed**: a new `yamlSafeQuoted` helper explicitly escapes all three code
+   points after `JSON.stringify`, using the same `\uXXXX` form YAML's own double-quoted scalar syntax
+   already supports — written entirely from hex code points (`0x2028`, `0x2029`, `0x0085`), never as
+   literal characters anywhere in the source, specifically because a literal invisible/near-invisible
+   character in the source text is itself unverifiable by reading it (confirmed the hard way: an
+   earlier draft of this exact fix used literal characters as object keys and a regex character
+   class, and silently corrupted at least one of them in a way that was invisible on inspection and
+   caused `Edit`'s own exact-string matching to fail against text that looked, to the eye, identical).
+5. **(MEDIUM) Silent overwrite, including *within* a single call.** Two skills sharing an id in the
+   same `skills` array both reported success in `provisionedSkillIds` (a duplicate entry), while only
+   the second's content actually survived on disk — the return value literally claimed two skills
+   were provisioned when one file, with one skill's content, existed. **Fixed**: a `Set` of ids
+   already provisioned this call; the first occurrence wins, a later duplicate is skipped entirely.
+   Silent overwrite *across separate calls* (a step re-run provisioning the same id into the same
+   `cwd` again) is a real, deliberately accepted gap, left undecided: no real caller of this method
+   exists yet in this codebase to say what re-run semantics should even be, and nothing in this
+   piece's own scope names a versioning/staleness concept for a materialised skill file.
+
+**Two low-severity notes, both accepted without a code change:** `appliesTo` (a `ResolvedSkill` field
+this file never reads) is confirmed, from its own doc comment, to exist for the *other* degradation
+strategy (`skills: 'none'` → `'bodies-injected'`, picking which bodies fit a size budget) — genuinely
+not this native path's concern, not a silently dropped field. `ResolvedSkill` also carries no field
+for `allowed-tools`/`disallowed-tools` — real, and real frontmatter fields the official docs flag
+directly as security-relevant ("a skill can grant itself broad tool access") — but this piece has no
+data to act on regardless, a completeness gap in the upstream type, not something `provisionSkills`
+itself drops.
+
+See `GAUNTLET-LOG.md`'s own M7 P6 entry for the full critic round.

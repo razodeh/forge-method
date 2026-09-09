@@ -6760,3 +6760,67 @@ concepts. Flagged to the coordinator directly; findings treated as genuine, not 
 `tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (186 tests, 2 correctly
 skipped without `FORGE_LIVE=1`) all clean after the fix, including the direct adversarial regression
 test proving the self-introduced bypass is closed.
+
+---
+
+## M7 P6 — `provisionSkills`, real skill-directory materialisation (`07` §7.3, `15` §15.6)
+
+**Rounds: 1 (fresh critic finding five real issues, one of them security-relevant; all fixed — the
+security-relevant fix's own first attempt had a real bug of its own, self-caught by the new
+adversarial test written to prove the fix worked; no separate verify round run). Outcome: WON.**
+
+`ClaudeCodeAdapter.provisionSkills`, a thin delegation to a new `skills.ts`: materialises each
+`ResolvedSkill` as a real `.claude/skills/<id>/SKILL.md` file, confirmed against Anthropic's own
+official skills documentation (fetched directly, not assumed) rather than only the plan's own
+already-correct guess. See `SPEC-QUESTIONS.md` Q118 for the full record.
+
+### Round 1 — fresh critic (no context on plan/log, told to independently re-verify every doc claim
+and execute the real function against each adversarial scenario): five real findings
+
+What the critic caught that I missed, most severe first:
+
+1. **[HIGH, security] No symlink-escape defence at all.** The original containment check was purely
+   lexical, mirroring `@forge/testkit`'s own test-only `resolveInsideCwd` — whose own doc comment
+   explicitly says real adapters need `@forge/core`'s own defence instead, not this one. A lane
+   worktree is not trusted-by-construction (an earlier step can plant a symlink before this one
+   runs), so `.claude`/`.claude/skills` being a symlink pointing outside the lane would have been
+   followed, transparently writing wherever it actually pointed. **Fixed** by duplicating
+   `@forge/core`'s own `realpathOfDeepestExistingAncestor` (no boundary edge to import it) — and the
+   fix's own *first* draft had a real bug: it compared the symlink-resolved target against a
+   similarly-resolved version of `.claude/skills` itself, which can never detect an escape when
+   `.claude/skills` is the thing that got planted as the symlink (both sides of the comparison follow
+   the identical symlink). **Self-caught**: the new adversarial symlink test (written to prove the
+   fix) failed against the first draft, revealing the bug directly; corrected to anchor the
+   comparison at `cwd` itself, matching how `@forge/core`'s own `resolveWithin` anchors at the real
+   project root rather than any intermediate segment.
+2. **[HIGH] No `try`/`catch` around the real `mkdir`/`writeFile` calls**, contradicting the function's
+   own documented "one bad skill never blocks the others" contract — a NUL byte, a Windows-reserved
+   device name, or an overlong path in one id threw uncaught and aborted the whole call, silently
+   leaving whatever had already been written. **Fixed** with a `try`/`catch` per skill.
+3. **[HIGH, spec-fidelity] A multi-segment id (`'frontend/review'`) was accepted, written
+   successfully, and reported as provisioned — but produces a file real Claude Code's own one-level-
+   deep skill discovery never finds.** Not a boundary escape; a wrong-file bug on a perfectly
+   plausible, non-adversarial input. **Fixed**: any id containing `/` or `\` is now refused.
+4. **[MEDIUM-HIGH, doc-accuracy] The YAML-safety claim was measurably wrong.** The critic actually ran
+   `JSON.stringify` rather than trusting its own spec's prose, and found it leaves three real Unicode
+   line-terminator-like code points (U+2028, U+2029, U+0085) unescaped — exactly what YAML
+   1.1-flavored parsers can treat as a real line break inside a double-quoted scalar, undermining the
+   frontmatter-injection defence this piece claimed to have. **Fixed** with an explicit post-`JSON.
+   stringify` escape pass, written entirely from hex code points rather than literal characters in
+   the source (an earlier attempt at *that* fix used literal invisible characters as object/regex
+   keys and silently corrupted at least one in a way invisible on inspection — caught only because
+   `Edit`'s own exact-string matching then failed against text that looked, to the eye, identical).
+5. **[MEDIUM] Two same-id skills in one call both reported success while only the second's content
+   survived on disk.** **Fixed**: first occurrence wins; a later duplicate id in the same call is
+   skipped. Cross-call overwrite (a step re-run) stays a deliberately accepted, undecided gap — no
+   real caller exists yet to say what re-run semantics should be.
+
+Two low-severity notes accepted without a code change: `appliesTo` is confirmed (from its own type's
+doc comment) to belong to the *other* degradation strategy, not this native path; `ResolvedSkill` has
+no field for the real, security-relevant `allowed-tools`/`disallowed-tools` frontmatter keys the
+official docs name, a completeness gap in the upstream type this piece cannot act on regardless.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (201 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after every fix, including new adversarial tests for each of
+the five findings — one of which (the symlink test) caught a real bug in its own fix before this
+entry was even written.

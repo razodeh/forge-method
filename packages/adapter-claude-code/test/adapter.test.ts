@@ -10,7 +10,7 @@
  * @see SPEC-QUESTIONS.md Q116
  * @see PLAN-M7.md P4
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -192,6 +192,26 @@ describe('ClaudeCodeAdapter — preflight()/listModels()', () => {
       now: () => 0,
     });
     expect(await adapter.listModels()).toEqual(listClaudeCodeModels());
+  });
+
+  it("provisionSkills() delegates to skills.ts's own provisionSkills, real filesystem write included", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-adapter-claude-code-adapter-skills-'));
+    scratchDirs.push(dir);
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({}),
+      env: {},
+      now: () => 0,
+    });
+    const result = await adapter.provisionSkills(
+      [{ id: 'deploy', summary: 'Deploys.', body: 'Do the deploy.', appliesTo: [] }],
+      { runId: 'r', stepId: 's', cwd: dir },
+    );
+    expect(result).toEqual({ strategy: 'native', provisionedSkillIds: ['deploy'] });
+    const content = await readFile(
+      path.join(dir, '.claude', 'skills', 'deploy', 'SKILL.md'),
+      'utf8',
+    );
+    expect(content).toContain('Do the deploy.');
   });
 });
 

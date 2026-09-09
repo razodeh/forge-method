@@ -1,13 +1,14 @@
 /**
  * `ClaudeCodeAdapter` — the real `PlatformAdapter` implementation tying P1 (config/version/auth),
- * P2 (CLI transport), and P3 (SDK transport) together: transport selection with a documented
- * preference order, `startSession`/`resumeSession` over whichever transport a given session actually
- * used, and `capabilities`/`preflight`/`listModels`.
+ * P2 (CLI transport), P3 (SDK transport), and P6 (`provisionSkills`) together: transport selection
+ * with a documented preference order, `startSession`/`resumeSession` over whichever transport a given
+ * session actually used, `capabilities`/`preflight`/`listModels`, and native skill materialisation.
  *
  * @see specs/07 §7.2
  * @see specs/07 §7.3
+ * @see specs/15 §15.6
  * @see SPEC-QUESTIONS.md Q116
- * @see PLAN-M7.md P4
+ * @see PLAN-M7.md P4, P6
  */
 import type {
   AdapterCapabilities,
@@ -16,10 +17,13 @@ import type {
   PlatformAdapter,
   PreflightContext,
   PreflightResult,
+  ResolvedSkill,
   ResumeRequest,
+  SessionContext,
   SessionHandle,
   SessionRequest,
   SessionResult,
+  SkillProvisioning,
 } from '@forge/adapter-kit';
 import type { Options as SdkOptions } from '@anthropic-ai/claude-agent-sdk';
 
@@ -32,6 +36,7 @@ import { runPreflight } from './preflight.ts';
 import { makeSessionHandle } from './session-handle.ts';
 import { accumulateSessionResult } from './session-result.ts';
 import type { RunSdkQueryOptions, RunningSdkQuery } from './sdk/run-query.ts';
+import { provisionSkills as provisionSkillsImpl } from './skills.ts';
 import { mapPermissionModeForCli, mapPermissionModeForSdk } from './tool-grant.ts';
 
 const FORGE_PERMISSION_MODES: readonly SessionRequest['permissionMode'][] = [
@@ -245,6 +250,16 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
 
   listModels(): Promise<readonly ModelInfo[]> {
     return Promise.resolve(listClaudeCodeModels());
+  }
+
+  /** `15` §15.6's own native-skills path (`capabilities().skills === 'native'`) — thin delegation to
+   * `skills.ts`'s own `provisionSkills`, kept as a standalone, independently-testable function rather
+   * than inlined here, matching every other piece of this class's own construction. */
+  provisionSkills(
+    skills: readonly ResolvedSkill[],
+    ctx: SessionContext,
+  ): Promise<SkillProvisioning> {
+    return provisionSkillsImpl(skills, ctx);
   }
 
   async startSession(req: SessionRequest): Promise<SessionHandle> {
