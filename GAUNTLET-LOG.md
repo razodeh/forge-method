@@ -6049,3 +6049,76 @@ at 272-file parallelism, not reproducible in isolation or smaller combined runs.
 and `packages/engine/src/interaction/dispatch-agent-step.ts` are already below the coverage floor on
 `main`, confirmed via a clean-stash baseline run before this piece's own changes — pre-existing, outside
 `@forge/cli`'s own scope, flagged to the coordinator rather than fixed here.
+
+---
+
+## M6 C5 — `@forge/cli` engineering-loop and collaboration commands (`03` §3.2.5, §3.2.6)
+
+**Rounds: 1 (fresh critic finding one real HIGH bug, two real MEDIUM bugs, one real LOW bug, and one
+real minor/documented limitation, all fixed or accepted; no separate verify round run). Outcome:
+WON.**
+
+`@forge/cli`'s fifth piece: `forge implement <storyId>`, `forge debug <symptom|--from-failure
+<runId>>`, `forge refactor <target> --goal <text>`, `forge deploy <env>` (all four real, thin dispatch
+to a named `10` §10.5 workflow via C4's own `runWorkflow`), `forge review [--diff <range>]`/`forge
+panel <question> --roles ...` (both real dispatch to A6's own already-built `dispatchAgentStep`,
+outside any workflow), and `forge test <sub>`/`forge ask <question>`/`forge session <sub>` (real,
+named `USR-003` refusals — no mechanism exists anywhere in this codebase for any of them). Built solo,
+continuing the standing order to work M6's own pieces in dependency order. See `SPEC-QUESTIONS.md` Q108
+for the full design record — the `dispatchAgentStep`-direct design for `review`/`panel`, the `USR-003`
+scope boundary for `test`/`ask`/`session`, all three new error codes, and a real bug found in an
+already-shipped C4 fix while investigating this round's own findings.
+
+### Round 1 — fresh critic (no context on plan/log): one real HIGH bug, two real MEDIUM bugs, one real
+LOW bug, one real accepted limitation
+
+1. **HIGH.** `context.ts`'s `ensureIntegrationWorktree` (a TOCTOU-race fix added mid-C4's own critic
+   round, immediately before this piece began) trusted a plain-English substring match against a real
+   git error message alone as proof a concurrent process's `git worktree add` had genuinely finished —
+   the critic caught that a *losing* process's own `git worktree add` can produce the identical
+   "already exists" text while the winner's own operation is still mid-flight (git creates the target
+   directory before it finishes real registration), or a stray, unrelated directory could produce it
+   too, either way returning an `integrationPath` to the caller that was never actually a real,
+   checked-out worktree. **Fixed**: re-verified against `git worktree list --porcelain` (via
+   `@forge/vcs`'s own exported `parseWorktreeBlocks`) before trusting the race is over. Writing a real,
+   direct regression test for this fix (rather than relying on the inherently flaky-to-reproduce
+   crash-resume race alone) surfaced a *second*, silent bug in the same fix: comparing paths with a
+   bare `path.resolve` rather than a real `realpath` silently and permanently failed the check on
+   macOS (`git worktree list --porcelain` reports already-canonicalised paths; `ProjectPaths.
+   resolveState`'s own output is not) — the identical "`os.tmpdir()` is a symlink on macOS" class of
+   mismatch `@forge/vcs`'s own `resolveCwd` already documents for a different function. Both fixed
+   together; `isTargetRegisteredWorktree` exported specifically so this stays directly, deterministically
+   testable, the identical justification `@forge/vcs`'s own `parseWorktreeBlocks` already gives.
+2. **MEDIUM.** `implement.ts`'s `findStoryOwnerRole` reused `KB-015` ("No KB entry, ADR, diagram or
+   runbook with id X") for a missing *Story* artifact — a spec-tree document, not a KB-tree one at
+   all, and `KB-015`'s own remedy ("run `forge kb list`") would point a user at a command that can
+   never contain a Story id. **Fixed**: a new `SPEC-024`, with its own accurate message and remedy
+   (`forge spec list`); the same lookup was also tightened to require `type === 'Story'`, not merely a
+   matching `id`, so a same-id non-Story artifact elsewhere in the spec tree cannot be silently treated
+   as one (a new regression test proves this specifically).
+3. **MEDIUM.** The same function cast `owner_role` straight from front matter to `string` unchecked —
+   `ArtifactDocument.parse` only validates well-formed YAML, not the `Story` schema's own required
+   fields, so a hand-edited or legacy Story file missing `owner_role` would have silently threaded the
+   literal string `"undefined"` into the dispatched workflow instead of failing at the one point the
+   real problem was still nameable. **Fixed**: a new `SPEC-025`, thrown when `owner_role` is not a
+   real, non-empty string.
+4. **LOW.** `debug.ts`'s `findFailedStep` (backing `forge debug --from-failure`) derived "the" failed
+   step from `RunState.stepStatuses`' own map — whose iteration order is *scheduling* order, not
+   failure order — so a run where two independently-running steps both genuinely failed would pick
+   whichever was scheduled first, not necessarily the one that actually failed first or is the real
+   root cause. **Fixed**: scans the append-only event log itself, in its own real, durable order, for
+   the chronologically first real `StepFailed` event — an honest claim about what happened, not an
+   accident of plan shape, and a simpler, single-pass implementation besides.
+5. **Accepted, documented, not fixed.** `forge review`/`forge panel` each generate a fresh `runId` and
+   drive real `telemetry.emit` calls the same durable way `forge run` does, but neither writes a
+   manifest or `last-run.json`, and nothing prunes the resulting `.forge/state/runs/<runId>/`
+   directories afterward — a real, unbounded, silent source of directory growth over many ad-hoc
+   invocations. Harmless to correctness (`forge status`/`forge resume` only ever look up an explicit
+   runId or `last-run.json`, neither of which these commands ever become), and a real cleanup
+   mechanism is `forge doctor`'s own explicit remit (C6, not yet built) — documented directly in both
+   files' own doc comments rather than silently left unaddressed.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/loop/`,
+run against real git repositories, real fixture workflows dispatched through the real `runWorkflow`
+pipeline, real `Story`/`Defect` artifacts, real materialized `.forge/agents/*.yaml` roster files, and a
+real `FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix.

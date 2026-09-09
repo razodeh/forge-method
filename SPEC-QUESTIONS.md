@@ -7818,3 +7818,88 @@ resource exhaustion under heavy parallel load).
 run against real git repositories, real spawned-and-`SIGKILL`'d child processes, and a real
 `FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix; see
 `GAUNTLET-LOG.md`'s own M6 C4 entry for the critic round.
+
+---
+
+## Q108 — M6 C5's `@forge/cli` engineering-loop and collaboration commands: `forge review`/`forge
+panel`'s real `dispatchAgentStep` dispatch, `forge test`/`forge ask`/`forge session`'s real refusals,
+and three new error codes
+
+**Why `forge review` calls `@forge/engine/interaction`'s `dispatchAgentStep` directly, with a
+hand-built `StepNode`, rather than through `runWorkflow`.** `03` §3.2.5 names `forge review [--diff
+<range>]` alongside `implement`/`debug`/`refactor`/`deploy`, all four of which map to a real `10`
+§10.5 workflow — but `10` §10.5's own 20-workflow table has no standalone `review` workflow at all:
+`review` is only ever an inner-loop *step* inside `implement-story.workflow.yaml` (`agent: reviewer,
+mode: swarm-review`), never its own top-level workflow document. There is therefore no real workflow
+file `runWorkflow`/`runEngine` could compile and run for a standalone `forge review` invocation to
+target. `@forge/engine/interaction`'s own `dispatchAgentStep` (A6, already built and critic-reviewed)
+is the real mechanism `review`/`swarm-review` steps actually run through inside a workflow — calling
+it directly, with a synthetic, hand-built `StepNode` this piece constructs itself (`ad-hoc-step.ts`),
+is the identical "a real, already-built mechanism exists; call it directly" treatment `PLAN-M6.md` C5's
+own Mandate text already gives `forge panel` as its one named exception to `session`/`ask`'s refusal.
+Confirmed directly against `dispatch-agent-step.ts`'s own real code that this is safe: the only
+`StepNode` fields its real code path ever reads for `swarm-review`/`panel` are `id`/`brief`/`limits`,
+all three real and correctly populated by the hand-built node; nothing downstream reads any of the
+node's other, empty/no-op-default fields (`inputs`, `produces`, etc.) for this path, so there is no
+place a synthetic (never `compileRunPlan`-produced) node could silently misrepresent itself as a real
+compiled one.
+
+**Why the real diff/question text is embedded directly into `StepNode.brief`, not passed via
+`inputs`.** `dispatchAgentStep` itself never resolves a step's own `inputs` (`diff:lane`, `artifact:X`)
+— that is `@forge/agents`' own context-packing (`05` §5.4), which runs *before* a real compiled step
+ever reaches dispatch inside a real workflow run, and has no standalone entry point of its own either.
+A bare `forge review`/`forge panel` invocation has no lane and no compiled workflow to pack context
+for regardless, so the real diff text (`forge review`, via a real `git diff <range>` call) and the real
+question text (`forge panel`) are embedded directly into the synthetic node's own `brief` — the one
+field `runParticipantSession`'s own real code actually reads for the prompt, confirmed directly.
+
+**Why `forge test`'s six subcommands, `forge ask`, and `forge session`'s four subcommands are all real
+`USR-003` refusals.** No test-execution/coverage/flaky-tracking mechanism, no KB-grounded-retrieval-
+with-citations mechanism, and no facilitated-collaboration-session mechanism (`16`) exists anywhere in
+this codebase yet — `16` is not named in `22`'s own M6 Build line at all. `PLAN-M6.md` C5's own Mandate
+text records this as a real, deliberate scope boundary for `session`/`ask` specifically (ship as real
+CLI command surface — parsing, flags, `--json` shape — with a clearly-marked "not yet implemented"
+error, rather than silently building `16`'s own engine ahead of its own milestone, or omitting the
+command from `--help` entirely) and the identical discipline `SPEC-QUESTIONS.md` Q106/Q107 already
+established for `forge adopt`/`forge discover`/`forge plan data,testing`/`forge merge --abort` covers
+`forge test`'s own six subcommands for the identical shape of gap.
+
+**Three new error codes**, all distinguishing a situation an existing code's own documented meaning did
+not actually describe — a fresh critic round caught this piece's own first draft making exactly this
+mistake twice, the identical class of bug `SPEC-QUESTIONS.md` Q107 already named for `RUN-045`/
+`ENV-004` in the previous piece: `SPEC-024` (`forge implement <storyId>` names a story id with no real
+Story artifact — distinct from `KB-015`, whose own message, "No KB entry, ADR, diagram or runbook,"
+is factually wrong for a spec-tree artifact and would misdirect a user to `forge kb list`, a command
+that can never contain a Story id), `SPEC-025` (a real Story artifact exists but its own `owner_role`
+field is missing or malformed — `ArtifactDocument.parse` only validates well-formed YAML, not the
+`Story` schema's own required fields, so an earlier draft cast the field unchecked and would have
+silently threaded the literal string `"undefined"` into the dispatched workflow instead of failing
+here, at the one point the real problem is still nameable), and `RUN-056`/`RUN-057` (`loadProjectAgent`
+finding no usable `.forge/agents/<id>.yaml`, and `forge debug --from-failure <runId>` finding no failed
+step in the named run's own event log, respectively — both real, previously-unnamed situations, not
+code reuse).
+
+**A real bug in an already-shipped piece (`PLAN-M6.md` C4), found and fixed while investigating this
+same critic round's own TOCTOU findings, not part of this piece's own new surface.**
+`ensureIntegrationWorktree`'s own TOCTOU-race recovery (added mid-C4's own critic round, before this
+piece began) initially trusted a plain-English substring match against a real git error message alone
+as proof a concurrent process's `git worktree add` had genuinely finished — this piece's own critic
+round caught that a losing process's `git worktree add` can produce the identical "already exists"
+text while the *winning* process's own operation is still mid-flight (git creates the target directory
+before it finishes real registration), or a stray, unrelated directory could produce it too. **Fixed**:
+re-verified against `git worktree list --porcelain` (via `@forge/vcs`'s own exported
+`parseWorktreeBlocks` parser) before trusting the race is over — which itself surfaced a second, real,
+silent bug while writing the direct regression test for that fix: comparing the two paths with a bare
+`path.resolve` (rather than a real `realpath`) silently and permanently failed the check on macOS,
+since `git worktree list --porcelain` reports paths already canonicalised while `ProjectPaths.
+resolveState`'s own output is not — the identical "`os.tmpdir()` itself is a symlink on macOS" class of
+mismatch `@forge/vcs`'s own `resolveCwd` doc comment already names for a different function. Both real,
+found only because the fix was made directly, deterministically testable (`isTargetRegisteredWorktree`
+exported for exactly this reason, the identical justification `@forge/vcs`'s own `parseWorktreeBlocks`
+already gives) rather than relying on the real, but inherently flaky-to-reproduce-on-demand, crash-
+resume race alone.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/loop/`,
+run against real git repositories, real fixture workflows, real `Story`/`Defect` artifacts, and a real
+`FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix; see
+`GAUNTLET-LOG.md`'s own M6 C5 entry for the critic round.
