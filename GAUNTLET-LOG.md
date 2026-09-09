@@ -6186,3 +6186,75 @@ full-suite runs and confirmed not caused by this piece: `packages/engine/test/e2
 own real, `SIGKILL`-driven 20-point fuzz test failed once under 291-file parallel contention, passed
 cleanly in isolation both before and after — the identical class of resource-contention flake M6 C5's own
 log entry already names for a different test in the same family.
+
+---
+
+## M6 C7 — `@forge/cli` `forge upgrade` (`03` §3.4)
+
+**Rounds: 1 (fresh critic finding two real HIGH bugs and two real MEDIUM bugs, all fixed; no separate
+verify round run). Outcome: WON.**
+
+`@forge/cli`'s seventh piece: `runUpgrade`, `03` §3.4's own seven-step upgrade procedure — read the
+manifest, compute a migration path, refuse a downgrade, back up `.forge/` + `specsRoot`, apply
+per-artifact-document schema migrations (reusing `@forge/schemas/migrations`' own already-built engine
+directly), regenerate the regenerable `.forge/` content directories (reusing C2's own `writeInitTree`
+logic, newly exported as `writeRegenerableContent`), rebuild the manifest, and re-run `forge doctor`
+(C6). Built solo, continuing the standing order to work M6's own pieces in dependency order. See
+`SPEC-QUESTIONS.md` Q110 for the full design record — the two deliberately-unconflated version axes,
+why no `tar` dependency was added, a real pre-existing bug found in already-shipped C3 code
+(`listSpecArtifacts`), and all three critic-round fixes below.
+
+### Round 1 — fresh critic (no context on plan/log): two real HIGH bugs, two real MEDIUM bugs, one real
+accepted limitation
+
+1. **HIGH.** `createBackup` (`backup.ts`) originally copied only `.forge/` into the real backup
+   directory — but the one step that actually rewrites real content on disk, `applyArtifactMigrations`,
+   mutates `specsRoot`, entirely outside `.forge/`. A "backup" step that protects the one tree the rest
+   of the pipeline never touches, and nothing at all for the one it does, is not a real safety net.
+   **Fixed**: `createBackup` now takes `specsRoot` and copies it into the same timestamped backup
+   directory too, at its own real, collision-free subpath, before `applyArtifactMigrations` ever runs.
+   A new regression test proves a real spec document written via `specNew` is present in the real
+   backup.
+2. **HIGH.** `applyArtifactMigrations` (`migrate-artifacts.ts`) originally migrated and wrote each real
+   document to disk inside one single loop pass — a real migration failure partway through a batch
+   (document 3 of 5 failing) left documents 1-2 already rewritten in their new schema version on disk
+   while 3-5 stayed untouched: a genuinely worse, partially-migrated state than before the command ran.
+   **Fixed**: split into two real passes — `migrateOneDocument` resolves every real document fully in
+   memory first (throwing `CFG-019` before any write happens if any one of them fails), and only once
+   every document in the batch has succeeded does a second pass write any of them to disk. A new
+   regression test (a migration whose own `up()` always throws) proves `applyArtifactMigrations` itself
+   now throws `CFG-019` rather than a bare, unhandled error, and no partial writes reach disk.
+3. **MEDIUM.** `readManifest` (`run-upgrade.ts`) originally trusted a bare `YAML.parse(...) as Manifest`
+   cast with no structural validation. A real manifest that is *present* but corrupted (a merge-conflict
+   marker left in, a truncated write, a missing `modules` field) reached `installedVersionFrom`'s own
+   `manifest.modules.find(...)` as a raw, unhandled `TypeError` instead of a clean `ForgeError` — a
+   materially worse failure mode than every other real error path in this module, and the one place
+   this piece didn't reuse `forge doctor`'s own already-built `checkManifest` (C6) structural-validity
+   discipline. **Fixed**: a real, local structural check before trusting the parse, raising the
+   identical `CFG-017` a wholly missing manifest already raises. A new regression test (a real, present
+   but `modules`-less manifest) proves this.
+4. **MEDIUM.** `listSpecArtifacts`'s own real bug fix (found mid-C7 itself, not part of this critic
+   round's own findings — see `SPEC-QUESTIONS.md` Q110's own detailed account) had a real regression in
+   its *first* attempt: skipping a file whenever its raw content did not start with the literal bytes
+   `---` silently mis-skips a real, valid, BOM-prefixed artifact document (`ArtifactDocument`'s own
+   parser strips a leading BOM before checking for `---`; the raw-string check did not), and silently
+   swallows any *other* real corruption (unterminated front matter, invalid YAML) that used to surface
+   loudly. **Fixed**: catch specifically `readArtifact`'s own `CFG-005` error code and skip only that;
+   every other real error still propagates. Three new regression tests in `shared.test.ts` prove all
+   three cases directly.
+5. **Accepted, documented, not fixed.** `createBackup`'s per-entry `cp()` loop has no rollback if a
+   later top-level `.forge/` entry's own copy fails partway through — a partially-written backup
+   directory would be left on disk, itself occupying one of the real "last 5" retention slots on the
+   next run. Low-likelihood (no real, injectable `cp` failure exists to force this deterministically)
+   and the identical shape of residual risk every other best-effort writer in this codebase already
+   carries (`writeRegenerableContent` itself has the same shape) — documented rather than built around.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/upgrade/`
+and `packages/cli/test/commands/shared.test.ts`, run against a real `runInit`-produced project tree, real
+git repositories, real spec documents via `specNew`, and synthetic migration fixtures for the real,
+currently-empty `MIGRATIONS` registry — never a mocked engine internal) all clean after every fix. Two
+unrelated, pre-existing flakes observed during full-suite runs and confirmed not caused by this piece
+(both pass cleanly in isolation): `packages/engine/test/e2e/crash-resume.test.ts`'s own real,
+`SIGKILL`-driven fuzz test, and `packages/cli/test/commands/run/resume.test.ts`'s own real crash-resume
+test — the identical class of resource-contention flake M6 C5's and C6's own log entries already name
+for tests in the same family.

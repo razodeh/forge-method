@@ -8000,3 +8000,94 @@ crashing `checkDiagrams` degrades to its own failed entry while every other real
 run against real git repositories, real fixture workflows, real `Story`/`Defect` artifacts, and a real
 `FakePlatformAdapter` session — never a mocked engine internal) all clean after every fix; see
 `GAUNTLET-LOG.md`'s own M6 C5 entry for the critic round.
+
+## Q110 — M6 C7's `@forge/cli` `forge upgrade`: two deliberately-unconflated version axes, reusing the
+real `@forge/schemas/migrations` engine, a real pre-existing bug found in already-shipped `listSpecArtifacts`,
+and three critic-round fixes to the backup/atomicity design
+
+**Why `forge upgrade` tracks two entirely separate "version" concepts, never conflating them.** `03`
+§3.4's own seven-step procedure names both "the migration path from installed version to CLI version"
+(step 2) and "apply schema migrations to artifacts" (step 4) in the same breath, but these are real,
+structurally distinct axes once the actually-built code is read closely:
+- The **project/manifest "installed version"** (`version.ts`'s `compareVersions`; `run-upgrade.ts`'s
+  `installedVersionFrom`) — every real module row in `.forge/manifest.yaml` carries the identical
+  `version` string, stamped from `@forge/agents`'s own installed package version at manifest-build
+  time (`buildManifest`'s own existing behaviour, unchanged). `runUpgrade` compares this against a
+  target (`--to`, or the currently-running `@forge/agents` version) and refuses a downgrade (`CFG-018`).
+  **There is no `forgeVersion` field anywhere in the real, already-shipped `Manifest` interface** (`03`
+  §3.4 step 1's own worked example names one; the real `manifest.ts` — C2, already shipped — never
+  added it) — rather than retrofitting a new persisted field into every already-shipped reader/writer
+  of `.forge/manifest.yaml` (`buildManifest`, `checkManifest` in C6, this fixture's own literal), this
+  piece derives "installed version" from the manifest's own real, already-present module rows, honest
+  given this milestone's own real, undramatic version history (every real workspace package here is
+  currently `0.0.0` — proven directly in `run-upgrade.test.ts`'s own downgrade test, which has to
+  hand-raise a fixture manifest to `9.0.0` first since no two real, different package versions exist
+  anywhere in this repository yet to make "downgrade" naturally reachable).
+- The **per-artifact-document `schemaVersion`** (`18` §18.6/§18.9) — real, already-built machinery in
+  `@forge/schemas/migrations` (`planMigrations`/`applyMigrations`/`MIGRATIONS`/`validateMigrationRegistry`,
+  M1's own P10), reused directly by `migrate-artifacts.ts` rather than reimplemented. `MIGRATIONS` is a
+  real, currently-empty array (no real migration has ever shipped — every type starts at `schemaVersion`
+  `1`), so `latestSchemaVersionFor` (the highest `to` any registered migration declares for a type,
+  derived from the registry itself rather than a second source of truth) resolves every real document
+  today to a real, honest no-op plan. The full chain-resolution/apply mechanism is proven instead
+  against a synthetic, test-only two-step migration fixture injected via `deps.migrations` — the
+  identical "pass a fixture array" precedent `planMigrations` itself already documents for its own tests.
+
+**Why `createBackup` writes a plain recursive directory copy, not a literal `.tar.gz`.** No `tar`/
+archive library exists anywhere in this workspace. `forge uninstall` (already shipped, `03` §3.2.1)
+resolved the identical "backup tarball" wording the identical way already: Node's own built-in `fs.cp`
+into a timestamped directory is a real, restorable backup without a new dependency. Reused directly
+rather than re-litigating the same dependency question a second time.
+
+**A real, pre-existing bug found in already-shipped C3 code (`listSpecArtifacts`, `shared.ts`), only
+surfaced because this piece's own test fixtures drive real code through a real `runInit`-produced
+project tree rather than a hand-built minimal fixture.** `forge init`'s own real `writeDocsSkeleton`
+(C2, already shipped) writes a hand-authored `<specsRoot>/README.md` with no front matter at all into
+every real project `forge init` ever produces. `listSpecArtifacts` (backing `forge spec
+list/show/validate/trace/matrix/orphans`, all already shipped in C3) called `readArtifact`
+unconditionally on every file under `specsRoot`, which throws `CFG-005` for exactly this real file —
+meaning every one of those six already-shipped commands would have crashed outright against any real,
+`forge init`-produced project with a spec tree, a defect invisible to every existing test for any of
+them because none of their own fixtures ever call the real `writeDocsSkeleton`. **First fix attempt
+(rejected by this piece's own critic round):** skip a file whenever its raw content does not start with
+the literal bytes `---`. This over-corrects: `ArtifactDocument`'s own `splitFrontMatter` strips a
+leading UTF-8 BOM before checking for `---`, so a real, valid, BOM-prefixed artifact document (the kind
+some Windows editors/git configurations produce) would be silently skipped by the raw-string check even
+though `readArtifact` itself parses it correctly — and, more broadly, a genuinely corrupted document
+(unterminated front matter, invalid YAML) would also be silently dropped from every caller's output
+instead of surfacing loudly as the `CFG-006`/`CFG-007` it always used to. **Real fix**: catch specifically
+`readArtifact`'s own `CFG-005` (via `ForgeError`'s real `code` field) and skip only that; every other
+real error propagates exactly as before. A new `shared.test.ts` regression suite proves all three real
+cases directly: a README.md is skipped, a real BOM-prefixed document is still included, and a real
+truncated document still throws `CFG-006` loudly.
+
+**Three critic-round fixes to the backup/migration design, none present in the first draft.**
+1. **`createBackup` originally backed up only `.forge/`**, while the one step that actually rewrites
+   real content on disk (`applyArtifactMigrations`) mutates `specsRoot` — entirely outside `.forge/`.
+   A "backup" step protecting the one tree the rest of the pipeline never touches, and nothing at all
+   for the one it does, is not a real safety net. **Fixed**: `createBackup` now also copies `specsRoot`
+   into the same timestamped backup directory, at its own real, collision-free subpath, before
+   `applyArtifactMigrations` ever runs.
+2. **`applyArtifactMigrations` originally wrote each migrated document to disk inside its own single
+   loop pass** — a real migration failure partway through a batch (document 3 of 5) left documents 1-2
+   already rewritten in their new schema version while 3-5 stayed untouched: a genuinely worse,
+   partially-migrated state than before the command ran, with (per finding 1, before its own fix) no
+   real backup to recover from either. **Fixed**: split into two real passes — every document is
+   migrated in memory first, and only once every one of them has succeeded does a second pass write any
+   of them to disk, so a real failure anywhere in the batch leaves every real document exactly as it
+   was.
+3. **`readManifest` originally trusted a bare `YAML.parse(...) as Manifest` cast.** A real manifest that
+   is *present* but structurally corrupted (a merge-conflict marker left in, a truncated write, a
+   missing `modules` field) reached `installedVersionFrom`'s own `manifest.modules.find(...)` as a raw,
+   unhandled `TypeError` — a materially worse failure mode than every other real error path in this
+   module, and the one place this piece didn't reuse `forge doctor`'s own already-built `checkManifest`
+   (C6) structural-validity check. **Fixed**: a real, local structural check (`version === 1`, `modules`
+   a real array of well-typed rows) before trusting the parse, raising the identical `CFG-017` a wholly
+   *missing* manifest already raises rather than inventing a fourth code for what is, from a caller's
+   point of view, the identical "this project's own manifest cannot be trusted" situation.
+
+`tsc`, `eslint`, `prettier`, and the full-repo suite (new tests in `packages/cli/test/commands/upgrade/`
+and `packages/cli/test/commands/shared.test.ts`, run against a real `runInit`-produced project tree, real
+git repositories, real spec documents via `specNew`, and synthetic migration fixtures for the real,
+currently-empty `MIGRATIONS` registry — never a mocked engine internal) all clean after every fix; see
+`GAUNTLET-LOG.md`'s own M6 C7 entry for the critic round.
