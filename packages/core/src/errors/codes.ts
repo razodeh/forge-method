@@ -174,6 +174,29 @@ export const ERROR_CODES = {
     remedy:
       'Rename all but one acceptance criterion so each id is unique across the whole project.',
   },
+  'SPEC-024': {
+    // `@forge/cli`'s own `forge implement <storyId>` (`03` §3.2.5): distinct from `KB-015`, whose own
+    // message ("No KB entry, ADR, diagram or runbook") is factually wrong for a missing Story -- a
+    // spec-tree artifact (`docs/forge/specs/**`), not a KB-tree one at all -- a critic round caught an
+    // earlier version of this piece reusing `KB-015` for exactly this different situation, which would
+    // point a user at `forge kb list`, a command that can never contain the id they are looking for.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) => `No Story with id ${show(d.id)}.`,
+    remedy: 'Run `forge spec list` to see every real spec-tree artifact id, Story included.',
+  },
+  'SPEC-025': {
+    // `@forge/cli`'s own `forge implement <storyId>`: `ArtifactDocument.parse` only validates that
+    // front matter is well-formed YAML, not that it satisfies the `Story` schema's own required
+    // fields (`09` §9.3) -- a critic round caught the previous code casting `owner_role` straight
+    // through unchecked, so a hand-edited or legacy Story file missing it would silently thread the
+    // literal string `"undefined"` into the dispatched workflow instead of failing here, at the one
+    // point the real problem is still nameable.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) => `Story ${show(d.id)} has no real, valid owner_role.`,
+    remedy: 'Set a real owner_role (a real agent role id) on this Story, then retry.',
+  },
   'KB-005': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -632,6 +655,26 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.failure,
     message: (d: { detail: string }) => `git worktree operation failed: ${show(d.detail)}.`,
     remedy: 'Fix the underlying repository state named above, then retry.',
+  },
+  'RUN-056': {
+    // `@forge/cli`'s own `loadProjectAgent` (`forge review`/`forge panel`, `03` §3.2.5/§3.2.6):
+    // `.forge/agents/<id>.yaml` is `forge init`'s own real write target (`readResolvedAgents`) -- a
+    // missing or corrupt file here means the project's own roster was never written, or was hand-edited
+    // into an invalid shape, not a code bug in this piece.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { agentId: string; path: string }) =>
+      `No usable agent ${show(d.agentId)} at ${show(d.path)}.`,
+    remedy: 'Run `forge init` (or `forge agent validate`) to restore a real, valid roster file.',
+  },
+  'RUN-057': {
+    // `@forge/cli`'s own `forge debug --from-failure <runId>` (`03` §3.2.5): the named run's own
+    // reconstructed state has no failed step at all to build a real `Defect` from.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { runId: string }) => `Run ${show(d.runId)} has no failed step to debug from.`,
+    remedy:
+      'Run `forge status` to confirm the run actually failed, or pass a real symptom instead.',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather

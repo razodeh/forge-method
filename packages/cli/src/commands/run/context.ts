@@ -10,6 +10,9 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+
 import { execa } from 'execa';
 import { ForgeError, SYSTEM_CLOCK, renderCause, type Clock } from '@forge/core';
 import { pathExists, type ProjectPaths } from '@forge/core/fs';
@@ -22,7 +25,7 @@ import {
 } from '@forge/engine/dispatch';
 import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
-import { resolveRevision } from '@forge/vcs';
+import { parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
 import type { ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 
@@ -76,10 +79,14 @@ function isSpawnNotFound(error: unknown): boolean {
 
 /** Runs a real `git` subcommand, translating a genuine "binary not found" into `ENV-004` and any
  * other real git failure into `RUN-055` — carrying the real underlying message rather than the
- * `ENV-004` template's misleading "install git" remedy for a git that is plainly already working. */
+ * `ENV-004` template's misleading "install git" remedy for a git that is plainly already working.
+ * `LC_ALL`/`LANG` pinned to `C`: `ensureIntegrationWorktree`'s own TOCTOU recovery below matches
+ * plain-English substrings against a real git error message, which git localises under a non-English
+ * `LANG`/`LC_ALL` — pinning here is what keeps that match reliable regardless of the host's own
+ * locale, rather than silently failing to recognise the race on a non-English system. */
 async function runGitOrThrow(args: readonly string[], cwd: string): Promise<string> {
   try {
-    const result = await execa('git', args, { cwd });
+    const result = await execa('git', args, { cwd, env: { LC_ALL: 'C', LANG: 'C' } });
     return result.stdout;
   } catch (cause) {
     if (isSpawnNotFound(cause)) {
@@ -87,6 +94,37 @@ async function runGitOrThrow(args: readonly string[], cwd: string): Promise<stri
     }
     throw new ForgeError('RUN-055', { detail: renderCause(cause) ?? 'unknown failure' }, { cause });
   }
+}
+
+/** Whether `target` is genuinely a registered worktree right now — read from `git worktree list
+ * --porcelain`, the same real source of truth `@forge/vcs`'s own (private) `isRegisteredWorktree`
+ * already uses for the identical "is this real, or just a directory that happens to exist" question,
+ * built locally from `@forge/vcs`'s own exported `parseWorktreeBlocks` parser rather than depending on
+ * an unexported function. Never a bare filesystem existence check, which cannot tell a genuinely
+ * registered worktree from a stray directory, or from a losing process's own `git worktree add` that
+ * created the directory but has not finished registering it yet. Exported — not just used locally — so
+ * this is directly, deterministically testable against a real repository's own real registered/
+ * unregistered state, the identical "exported so this is directly testable" reason `@forge/vcs`'s own
+ * `parseWorktreeBlocks` already gives (the real race this backs `ensureIntegrationWorktree`'s own
+ * TOCTOU recovery for is not reliably reproducible on demand in a test).
+ *
+ * Both sides resolved through a real `realpath` before comparing, not a bare `path.resolve`: `git`
+ * itself reports every `worktree` line in `worktree list --porcelain` already canonicalised, but
+ * `target` here (built from `ProjectPaths.resolveState`, never realpath'd) is not — confirmed
+ * empirically (the same "`os.tmpdir()` itself is a symlink on macOS" fact `@forge/vcs`'s own
+ * `resolveCwd` doc comment already names) that comparing the two with plain `path.resolve` alone
+ * silently and permanently returns `false` on macOS, `@forge/vcs`'s own established fix for the
+ * identical class of mismatch. */
+export async function isTargetRegisteredWorktree(
+  projectRoot: string,
+  target: string,
+): Promise<boolean> {
+  const listing = await runGitOrThrow(['worktree', 'list', '--porcelain'], projectRoot);
+  const resolvedTarget = await realpath(target);
+  const paths = await Promise.all(
+    parseWorktreeBlocks(listing).map((block) => realpath(block.path).catch(() => block.path)),
+  );
+  return paths.some((worktreePath) => path.resolve(worktreePath) === resolvedTarget);
 }
 
 /**
@@ -122,7 +160,39 @@ export async function ensureIntegrationWorktree(
         await resolveRevision(projectRoot, base),
       ];
 
-  await runGitOrThrow(args, projectRoot);
+  try {
+    await runGitOrThrow(args, projectRoot);
+  } catch (error) {
+    // A real, reproducible TOCTOU race the `pathExists(target)` pre-check above cannot fully close:
+    // a *different* real process (a killed-and-resumed `forge run` in particular — confirmed directly
+    // against `resume.test.ts`'s own real crash-then-resume proof) can create the identical target
+    // between this call's own `pathExists` check and this `git worktree add` actually running. Git's
+    // own real, stable error text for exactly that race quotes the real target *path* itself —
+    // `'<target>' already exists.` — deliberately distinguished from the differently-worded "a branch
+    // named '<name>' already exists" (a real, different failure this same call can also hit, which
+    // must still propagate: the target directory was never created in that case, so silently
+    // returning it here would be a lie the rest of this run believes) by requiring the message to
+    // name the real target path, not merely the substring "already exists".
+    //
+    // The message match alone is not trusted as proof the *other* process's own `git worktree add`
+    // actually finished: `git worktree add` creates the target directory before it finishes real
+    // registration (writing `.git/worktrees/<name>`), so a losing process could hit this identical
+    // text while the winner's own operation is still mid-flight, or a stray directory could be sitting
+    // at `target` for an unrelated reason entirely. `isTargetRegisteredWorktree` below re-checks
+    // against `git worktree list --porcelain` — the same real source of truth `@forge/vcs`'s own
+    // `isRegisteredWorktree` already uses for the identical "is this real, or just a directory that
+    // happens to exist" question — before trusting the race is over; a critic round caught the
+    // original version of this fix trusting the string match alone.
+    if (
+      error instanceof Error &&
+      error.message.includes(target) &&
+      error.message.includes('already exists') &&
+      (await isTargetRegisteredWorktree(projectRoot, target))
+    ) {
+      return target;
+    }
+    throw error;
+  }
   return target;
 }
 

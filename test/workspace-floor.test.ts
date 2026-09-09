@@ -100,6 +100,10 @@ const IGNORED_PATHS = new Set([
   // `packages/engine/test/e2e/fixtures/run-engine-child.ts` above already establishes, for the
   // identical reason unrecognised by `TEST_FILE`'s naming heuristic.
   'packages/cli/test/commands/run/fixtures/run-child.ts',
+  // `packages/cli/test/commands/loop/helpers.ts` (PLAN-M6.md C5): the identical shape as
+  // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
+  // fixture-workflow/Story/agent scaffolding for `test/commands/loop/*.test.ts`.
+  'packages/cli/test/commands/loop/helpers.ts',
 ]);
 
 /**

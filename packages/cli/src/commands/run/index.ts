@@ -7,6 +7,7 @@
 export {
   buildRunEngineContext,
   ensureIntegrationWorktree,
+  isTargetRegisteredWorktree,
   type BuildRunContextInput,
 } from './context.ts';
 export { abortRun, assertStopped, pauseRun, type StopResult } from './control.ts';

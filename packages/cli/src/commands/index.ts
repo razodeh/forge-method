@@ -64,3 +64,4 @@ export {
 } from './spec.ts';
 export { uninstall, type UninstallOptions, type UninstallResult } from './uninstall.ts';
 export * from './run/index.ts';
+export * from './loop/index.ts';

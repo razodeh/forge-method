@@ -7,6 +7,9 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
@@ -14,6 +17,7 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import {
   buildRunEngineContext,
   ensureIntegrationWorktree,
+  isTargetRegisteredWorktree,
 } from '../../../src/commands/run/context.ts';
 import {
   CHECKS_ROOT,
@@ -114,6 +118,40 @@ describe('ensureIntegrationWorktree', () => {
       'main',
     );
     expect(second).toBe(first);
+  });
+
+  // A genuinely simultaneous pair of calls (fired via `Promise.all` in one process) was tried here and
+  // deliberately removed: it reliably reproduces a real, but *different* and more adversarial race
+  // than this function's own fix targets — a branch-ref lock collision ("cannot lock ref ...
+  // reference already exists"), git's own failure mode when *two* callers race the `-b` branch
+  // creation itself, not just the worktree directory. That scenario does not occur in this codebase's
+  // own real architecture: `ensureIntegrationWorktree` is only ever reached through
+  // `buildRunEngineContext`, itself only ever called by one real `forge run`/`forge resume`
+  // invocation at a time (serialized by `.forge/state/lock.json`, `lock.ts`) — the one real exception
+  // being the exact resume-after-crash window this fix targets, where a killed process's own
+  // already-in-flight `git worktree add` can still be finishing as the resuming process starts a
+  // fresh one. `resume.test.ts`'s own real crash-then-resume test is the real regression proof for
+  // that actual scenario, run against a genuinely `SIGKILL`'d process, not a synthetic same-process
+  // race harder than production ever produces.
+});
+
+describe('isTargetRegisteredWorktree', () => {
+  it('is true for a real, genuinely registered worktree', async () => {
+    const project = await createTestProject();
+    const target = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    expect(await isTargetRegisteredWorktree(project.dir, target)).toBe(true);
+  });
+
+  it('is false for a real directory that merely exists but was never registered by git', async () => {
+    const project = await createTestProject();
+    const strayTarget = path.join(project.dir, '.forge/state/worktrees/not-a-real-worktree');
+    await mkdir(strayTarget, { recursive: true });
+    expect(await isTargetRegisteredWorktree(project.dir, strayTarget)).toBe(false);
   });
 });
 
