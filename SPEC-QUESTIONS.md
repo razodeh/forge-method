@@ -8293,3 +8293,65 @@ resume.test.ts`) are the identical, already-documented flaky-test class M6 C5-C8
 here via 3 clean, isolated re-runs of `crash-resume.test.ts` at the coordinator's own explicit request,
 not a regression introduced by this piece's own changes to shared infra (`kb/schema/tree.ts`,
 root `tsconfig.json`).
+
+## Q113 — M7 P1's `@forge/adapter-claude-code` scaffold: `AuthAvailability`'s two independent booleans
+(not a mode enum), `MINIMUM_CLAUDE_CLI_VERSION`'s own real basis, the Bedrock/Vertex/Foundry gap, and
+the `zod` peer-dependency override
+
+M7 is the first milestone whose own package must interact with a real, external platform binary, and
+several of this piece's own design choices were settled by directly probing the real, installed
+`claude` CLI in this environment (`claude --help`, `claude --version`, `claude auth status --json`)
+rather than inferred from `07` §7.3's prose alone — each recorded here rather than silently assumed.
+
+**`AuthAvailability` is two independent booleans (`apiKey`, `subscription`), not a mutually-exclusive
+`AuthMode` enum.** An early draft of `PLAN-M7.md` P1 used an enum; corrected after actually running
+`claude auth status --json` in this environment and getting `{"loggedIn": true, ...}` with no
+`ANTHROPIC_API_KEY` set at all — a real, concrete case where a subscription login is available and an
+API key is not, but the reverse (an API key present with no subscription login) is equally real on a
+CI machine. `07` §7.3's own `--bare` flag description, confirmed verbatim against the real CLI's own
+`--help` text, settles the actual relationship: bare mode's own auth is "strictly `ANTHROPIC_API_KEY` or
+`apiKeyHelper`... OAuth and keychain are never read," while non-bare (default) mode can use *either* a
+real subscription login or an API key. Two independent facts, not alternatives — collapsing them into
+one enum would have made "both are available" (this environment's own real state, once the coordinator
+supplies an API key) unrepresentable.
+
+**`MINIMUM_CLAUDE_CLI_VERSION = '2.0.0'` is a documented judgment call, not a value the spec gives.**
+No exact minimum appears anywhere in the spec pack. The real criterion (does this CLI version actually
+support `--bare`/`--output-format stream-json --verbose --include-partial-messages`/`--permission-mode`/
+`--resume`) is a compatibility question this build has no historical CLI changelog access to answer
+precisely, so a conservative full-major-version floor beneath the real, confirmed-working version this
+milestone was built against (`2.1.266`) is the honest choice over a fabricated precise cutoff. Revisit
+if a real older-CLI incompatibility is ever found.
+
+**Bedrock/Vertex/Foundry credential env vars are a real, acknowledged gap, not guessed at.** `07` §7.3's
+own text says bare mode's third-party providers "use their own credentials" but names no specific env
+var for any of the three, and the real CLI's own `--help` text is equally silent on exact names. Rather
+than guessing plausible-sounding AWS/GCP/Azure-style env var names (which could produce a false
+`apiKey: true` for a provider that was never actually configured correctly — worse than an honest gap),
+`probeAuthAvailability` checks only `ANTHROPIC_API_KEY`, the one credential the CLI's own text names
+unambiguously. A caller with a real Bedrock/Vertex/Foundry setup needs a config override once this gap
+is closed with a grounded source for the real env var names.
+
+**The `zod` peer-dependency override (`root package.json`'s own `pnpm.peerDependencyRules.
+allowedVersions`) is narrowly scoped and verified safe, not a blanket workaround.** `@anthropic-ai/
+claude-agent-sdk` (P3's own SDK transport dependency) declares a real `zod: ^4.0.0` peer dependency,
+while every other package in this monorepo is pinned to `zod@3.25.76`. Confirmed directly (not assumed):
+the SDK's own real, installed `package.json` lists this peer requirement, and its own `.d.ts` files
+genuinely import from `zod/v4`/`zod/v3` subpaths — but the installed `zod@3.25.76` ships forward-
+compatible `./v3`/`./v4` subpath exports those imports actually resolve against, so pinning the override
+to exactly `"@anthropic-ai/claude-agent-sdk>zod": "3"` (not a workspace-wide `strict-peer-dependencies:
+false`) is real, verified-safe, and scoped to the one edge that needs it — any *other* future peer-dep
+mismatch anywhere else in the workspace still fails loudly. Recorded here, and in
+`packages/adapter-claude-code/src/index.ts`'s own top-of-file doc comment (a fresh critic round found
+the reasoning was only in this piece's own author's head, not written down anywhere, despite every
+other judgment call in this same piece being heavily commented) — a gap now closed in both places.
+
+Full local verification (24 tests, `tsc`, `eslint`, `prettier`) all clean after the critic round's own
+three real findings were fixed: `test/process.test.ts`'s first test hardcoded `exitCode: 0` against the
+real installed `claude` binary, which this repo's own CI never installs (confirmed by the critic via a
+real reproduction: stripping `claude` from `PATH` made the original assertion fail exactly as predicted)
+— fixed to the same structural-only pattern `version.test.ts`/`auth.test.ts` already use; a real,
+already-defensive-but-untested code path (`probeSubscriptionLogin`'s own non-object-JSON guard) gained a
+real regression test (`null`, a bare array, a bare number, a bare string); the `zod` override's own
+reasoning, described above, was written down in both places once the critic flagged it as undocumented.
+See `GAUNTLET-LOG.md`'s own M7 P1 entry for the full critic round.

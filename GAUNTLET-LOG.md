@@ -6390,3 +6390,69 @@ test.ts` was re-run in isolation 3 times at the coordinator's own explicit reque
 three times, confirming this is the same pre-existing resource-contention flake class M6 C5-C8's own log
 entries already name, not a regression from this piece's own shared-infra changes (`kb/schema/tree.ts`,
 root `tsconfig.json`).
+
+---
+
+# M7 — Claude Code adapter and the first real run
+
+M6 is fully complete (29 pieces across five packages, `@forge/methods`/`@forge/catalog`/
+`@forge/templates`/`@forge/agents`/`@forge/cli`) and closed at its own milestone boundary. M7, kicked
+off explicitly by the coordinator, builds `@forge/adapter-claude-code` — the first package this build
+has that must interact with a real external platform. `PLAN-M7.md` records the full nine-piece plan and
+the coordinator's own explicit dual-auth-mode requirement (bare+API-key and non-bare+subscription, both
+real and both eventually live-tested, not just one).
+
+## M7 P1 — Package scaffold, adapter config schema, version probing, auth-mode detection (`07` §7.3)
+
+**Rounds: 1 (fresh critic finding three real findings — one a genuine CI-breaking bug, confirmed by
+reproduction — all fixed; no separate verify round run). Outcome: WON.**
+
+`@forge/adapter-claude-code`'s first piece: `claudeCodeAdapterConfigSchema` (this adapter's own config
+shape, read from `@forge/schemas/config`'s own opaque `adapterConfig['claude-code']` blob per
+`SPEC-QUESTIONS.md` Q16/Q25), `probeCliVersion` (`claude --version`, parsed and compared against a
+documented minimum), `probeAuthAvailability` (two independent real credential facts — an API key, an
+ambient subscription login — rather than a mutually-exclusive mode), and `ClaudeCliRunner` (the
+injectable seam every probe in this package goes through, matching this codebase's own established
+dependency-injection convention). Several design choices were settled by directly probing the real,
+installed `claude` CLI in this environment (confirmed live: v2.1.266, a real subscription login, no
+`ANTHROPIC_API_KEY`) rather than inferred from spec prose alone — see `SPEC-QUESTIONS.md` Q113 for the
+full record.
+
+### Round 1 — fresh critic (no context on plan/log): three real findings, all fixed
+
+1. **REAL BUG, would have broken CI.** `test/process.test.ts`'s own first test hardcoded
+   `expect(result.exitCode).toBe(0)` against the real, installed `claude` binary — but this repo's own
+   CI never installs one (only the unrelated `@anthropic-ai/claude-agent-sdk` *library* is a
+   package.json dependency anywhere). The critic reproduced the failure directly: stripping `claude`
+   from `PATH` made the exact assertion fail (`expected -1 to be +0`), confirming this was a real,
+   not-merely-theoretical portability gap — and one this same piece's own *other* two "real environment
+   integration" tests (`version.test.ts`, `auth.test.ts`) had already correctly avoided by asserting
+   only structural properties (`typeof result.ok === 'boolean'`), matching
+   `packages/cli/test/commands/doctor/environment.test.ts`'s own `checkPackageManager` precedent.
+   **Fixed**: rewritten to the identical structural-only pattern.
+2. **Real, untested defensive code.** `probeSubscriptionLogin`'s own non-object-JSON guard
+   (`typeof parsed === 'object' && parsed !== null`) was correct but had no test actually reaching it —
+   only a syntactically-invalid string was tested, which `JSON.parse` itself rejects before the guard
+   ever runs. **Fixed**: a new regression test feeds `null`, a bare array, a bare number, and a bare
+   string — all valid JSON, all non-object — through the real function.
+3. **Undocumented judgment call.** The root `package.json`'s own `pnpm.peerDependencyRules.
+   allowedVersions` override (letting `@anthropic-ai/claude-agent-sdk`'s real `zod: ^4.0.0` peer
+   requirement resolve against this monorepo's own pinned `zod@3.25.76`) had real, verified-safe
+   reasoning behind it (the SDK's own `.d.ts` files import `zod/v3`/`zod/v4` subpaths the installed
+   `zod@3.25.76` genuinely ships) but the reasoning existed only in the implementer's own head, unlike
+   every other judgment call in this same piece. **Fixed**: recorded in both `SPEC-QUESTIONS.md` Q113
+   and a new top-of-file doc comment in `packages/adapter-claude-code/src/index.ts`.
+
+The critic independently re-verified several claims against the real, live environment rather than
+trusting the code's own comments: ran `claude --version`/`claude auth status --json`/`claude --help`
+directly and confirmed the code's quoted CLI text and observed behavior matched exactly; confirmed
+`compareVersions`'s own numeric-vs-lexicographic test case (`10.0.0` vs the real minimum `2.0.0`) is a
+genuine discriminating case, not a contrived one; confirmed `realClaudeCliRunner`'s "never throws"
+contract holds for both a nonexistent binary and a real `EACCES` permission error; confirmed the
+`AuthAvailability` two-boolean design is genuinely justified (this exact environment has
+`apiKey: false`/`subscription: true` simultaneously — a real state a mode enum could not express);
+confirmed the privacy claim (`probeAuthAvailability` never reads/returns `email`/`orgId`/`orgName`)
+holds by reading the code directly, not just the comment.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (24 tests) all clean after
+every fix.
