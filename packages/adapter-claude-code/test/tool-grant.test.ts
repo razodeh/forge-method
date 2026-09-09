@@ -32,6 +32,15 @@ describe('mapToolGrantToAllowedTools', () => {
     expect(mapToolGrantToAllowedTools(grant({ write: true }))).toEqual(['Edit', 'Write']);
   });
 
+  it("write:false produces an --allowedTools set containing no edit/write-capable real tool name -- cross-checked against every write-capable name Claude Code's own docs confirm (Edit, Write, NotebookEdit), not just the two this mapping happens to grant", () => {
+    const result = mapToolGrantToAllowedTools(
+      grant({ read: true, exec: ['pnpm test*'], network: 'full' }),
+    );
+    for (const writeTool of ['Edit', 'Write', 'NotebookEdit']) {
+      expect(result).not.toContain(writeTool);
+    }
+  });
+
   it("07 §7.3's own worked example: exec:['pnpm test*'] maps to Bash(pnpm test*)", () => {
     expect(mapToolGrantToAllowedTools(grant({ exec: ['pnpm test*'] }))).toEqual([
       'Bash(pnpm test*)',
@@ -56,22 +65,99 @@ describe('mapToolGrantToAllowedTools', () => {
     ]);
   });
 
-  it("network:'allowlist' is treated fail-closed, identically to 'none' -- no confirmed per-host syntax exists", () => {
+  it("network:'allowlist' maps each allowlistHosts entry to its own WebFetch(domain:host) rule -- a real, confirmed Claude Code permission-rule syntax (SPEC-QUESTIONS.md Q117), not the fail-closed [] this piece originally shipped before finding it", () => {
     expect(
       mapToolGrantToAllowedTools(grant({ network: 'allowlist', allowlistHosts: ['example.com'] })),
-    ).toEqual([]);
+    ).toEqual(['WebFetch(domain:example.com)']);
+  });
+
+  it("network:'allowlist' with multiple hosts produces one rule per host, in order", () => {
+    expect(
+      mapToolGrantToAllowedTools(
+        grant({ network: 'allowlist', allowlistHosts: ['a.example.com', 'b.example.com'] }),
+      ),
+    ).toEqual(['WebFetch(domain:a.example.com)', 'WebFetch(domain:b.example.com)']);
+  });
+
+  it("network:'allowlist' with zero allowlistHosts maps to the empty list -- the most restrictive real primitive, never silently promoted to 'full'", () => {
+    expect(mapToolGrantToAllowedTools(grant({ network: 'allowlist', allowlistHosts: [] }))).toEqual(
+      [],
+    );
+    expect(mapToolGrantToAllowedTools(grant({ network: 'allowlist' }))).toEqual([]);
+  });
+
+  it("network:'allowlist' never grants WebSearch -- no analogous domain-scoped rule form exists for it, so it stays fail-closed even with real hosts granted", () => {
+    const result = mapToolGrantToAllowedTools(
+      grant({ network: 'allowlist', allowlistHosts: ['example.com'] }),
+    );
+    expect(result).not.toContain('WebSearch');
+  });
+
+  it('a real, documented WebFetch domain wildcard passes through unmodified', () => {
+    expect(
+      mapToolGrantToAllowedTools(
+        grant({ network: 'allowlist', allowlistHosts: ['*.example.com'] }),
+      ),
+    ).toEqual(['WebFetch(domain:*.example.com)']);
+  });
+
+  it("an allowlistHosts entry of exactly '*' is the intentional degenerate wildcard case (matches every domain) and passes through, mirroring how exec: ['*'] is already treated as an intentional unrestricted grant, not a bypass", () => {
+    expect(
+      mapToolGrantToAllowedTools(grant({ network: 'allowlist', allowlistHosts: ['*'] })),
+    ).toEqual(['WebFetch(domain:*)']);
+  });
+
+  it('a crafted allowlistHosts entry containing "(", ")", "," or the empty string is refused -- no real DNS hostname ever legitimately contains any of them', () => {
+    for (const host of ['example.com)WebFetch(domain:evil.com', 'a,b.com', '(evil.com', '']) {
+      expect(
+        mapToolGrantToAllowedTools(grant({ network: 'allowlist', allowlistHosts: [host] })),
+      ).toEqual([]);
+    }
   });
 
   it('extra tool names pass through verbatim', () => {
     expect(mapToolGrantToAllowedTools(grant({ extra: ['CustomTool'] }))).toEqual(['CustomTool']);
   });
 
-  it('a crafted exec pattern containing a literal ")" is refused, not smuggled into a second rule', () => {
+  it('a crafted exec pattern containing a literal ")" or "(" is refused, not smuggled into a second rule', () => {
     expect(mapToolGrantToAllowedTools(grant({ exec: ['echo hi) Edit('] }))).toEqual([]);
   });
 
-  it('a crafted exec pattern containing a literal "(" is refused', () => {
+  it("REGRESSION: an unbalanced-paren exec pattern designed to escape its own Bash(...) wrap and inject a second, unrestricted rule is refused entirely -- a fresh critic round found a brief P5-era relaxation of the paren refusal (justified only by the docs' *balanced*-usage example, e.g. Edit(./Finance (2024)/**)) reintroduced exactly this: Claude Code's own documented parser is depth-aware ('--allowedTools \"Bash(git *) Edit\"' splits into two rules from one value), so 'pytest) WebFetch(domain:*' would have wrapped to 'Bash(pytest) WebFetch(domain:*)' and been read as Bash(pytest) PLUS a second, unrestricted WebFetch(domain:*) rule never authorized by network:'none'", () => {
+    expect(
+      mapToolGrantToAllowedTools(grant({ exec: ['pytest) WebFetch(domain:*'], network: 'none' })),
+    ).toEqual([]);
+    // The identical injection shape, attempted against a *different* trailing rule, is refused too.
+    expect(mapToolGrantToAllowedTools(grant({ exec: ['x) Bash(*'] }))).toEqual([]);
+  });
+
+  it('a crafted exec pattern containing a literal "(" alone (no matching ")") is refused', () => {
     expect(mapToolGrantToAllowedTools(grant({ exec: ['echo (hi'] }))).toEqual([]);
+  });
+
+  it('a crafted exec pattern containing a literal "," is refused', () => {
+    expect(mapToolGrantToAllowedTools(grant({ exec: ['git log --format=%h,%s'] }))).toEqual([]);
+  });
+
+  it('an empty exec pattern is refused -- it can never correspond to a real command a caller meant to grant', () => {
+    expect(mapToolGrantToAllowedTools(grant({ exec: [''] }))).toEqual([]);
+  });
+
+  it('a legitimate exec pattern containing no parens or comma is unaffected by the hardening pass', () => {
+    expect(mapToolGrantToAllowedTools(grant({ exec: ['git log --oneline'] }))).toEqual([
+      'Bash(git log --oneline)',
+    ]);
+  });
+
+  it('exec:false denies all exec capability regardless of an adversarially-crafted extra field -- extra is a deliberate, separate escape hatch, not something exec:false gates', () => {
+    // 07 §7.2's own "MUST fail closed" mandate is about the *exec* field's own denial being total;
+    // `extra` is a documented, verbatim-passthrough escape hatch for tool names the four-field grant
+    // vocabulary cannot express at all (config/role-level, not a second, informally-adversarial exec
+    // channel) -- confirmed here to still pass through exactly as designed, not silently gated by an
+    // unrelated exec:false, and not itself hardened by this pass (it is not a pattern this function
+    // parses or wraps at all).
+    const result = mapToolGrantToAllowedTools(grant({ exec: false, extra: ['Bash', 'Bash(*)'] }));
+    expect(result).toEqual(['Bash', 'Bash(*)']);
   });
 
   it('a full grant combines every category in a stable order', () => {

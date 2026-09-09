@@ -8628,3 +8628,85 @@ speculative machinery nothing in this piece's own scope calls for:
    fixed without acknowledging the pattern kept recurring.
 
 See `GAUNTLET-LOG.md`'s own M7 P4 entry for the full critic round.
+
+## Q117 — M7 P5's tool-grant hardening pass: a real `WebFetch(domain:host)` mechanism found, a real
+self-introduced permission-bypass found and reverted in the same piece, and the exact reasoning error
+that produced it
+
+**A real per-host network-scoping mechanism exists, closing `SPEC-QUESTIONS.md` Q114's own "no
+documented per-host scoping syntax was found" note.** Fetched and read Anthropic's own official
+Claude Code permissions documentation (`code.claude.com/docs/en/permissions`) directly during this
+pass — not merely re-checked `--help` text, which is what Q114 and P2 had only ever done. It documents
+`WebFetch(domain:host)` explicitly: "WebFetch rules use a `domain:` prefix and match against the
+hostname of the requested URL. Matching is case-insensitive, supports `*` wildcards... `WebFetch
+(domain:*.example.com)` matches any subdomain at any depth... `WebFetch(domain:*)` matches every
+domain." `network: 'allowlist'` now maps each `allowlistHosts` entry to its own such rule, instead of
+this piece's own original, always-`[]` fail-closed answer. Two real gaps remain, both genuinely
+unclosable by this mapping and documented as such rather than silently absorbed: `WebSearch` has no
+analogous domain-scoped rule form anywhere in the docs, so `'allowlist'` never grants it at all; and
+Claude Code's own docs state directly that "using WebFetch alone doesn't prevent network access. If
+Bash is allowed, Claude can still use curl, wget, or other tools to reach any URL" — closing *that*
+needs Claude Code's own sandboxing feature (`Options.sandbox`, confirmed real in `sdk.d.ts`), which
+this milestone builds no support for at all, a real, separate, larger feature this mapping cannot
+retrofit into `--allowedTools` alone.
+
+**A real, self-introduced permission-bypass, found and reverted within this same piece — recorded
+here in full rather than quietly folded away, since the reasoning error that produced it is the more
+important thing to leave a trace of.** The same documentation fetch that surfaced `WebFetch
+(domain:...)` also contained: "Permission rules follow the format `Tool` or `Tool(specifier)`.
+Parentheses inside the specifier are literal, so a command or path that contains them needs no
+escaping," with a worked example, `Edit(./Finance (2024)/**)`, matching a folder literally named
+`Finance (2024)`. Read in isolation, this looks like direct, official confirmation that `safeBashRule`
+'s own long-standing (since P2), never-live-verified refusal of any `(`/`)` in an `exec` pattern was an
+unwarranted over-restriction — so this piece removed it, kept only the comma refusal (reasoning that
+comma had a *different*, real, but *weaker* justification: `--help`'s own "comma or space-separated
+list" wording for the `--allowedTools` flag itself), and shipped it with new tests asserting parens
+were now allowed, including a `git log --pretty=format:"(%h) %s"`-shaped example.
+
+**A fresh critic round, given this exact diff and told to independently re-verify every documentation
+claim rather than trust the summary, found the reasoning error directly**: the *same* documentation
+page's *other* worked example — `--allowedTools` accepting `"Bash(git *) Edit"` as one value that
+splits into two rules — proves the real parser is depth-aware: it closes a rule the instant a paren-
+tracked depth returns to zero, and resumes scanning for a *second* rule immediately afterward. The
+"parentheses are literal, no escaping needed" quote is true of *balanced* usage (one open, one close,
+nested, as in `Finance (2024)`); it says nothing about the *adversarial*, *unbalanced* case, and the
+depth-aware mechanism the other example proves is exactly what makes an unbalanced pattern dangerous.
+Concretely: `exec: ['pytest) WebFetch(domain:*']`, once `safeBashRule` (relaxed) wraps it, becomes the
+single string `'Bash(pytest) WebFetch(domain:*)'` — which the identical depth-tracking parses as
+`Bash(pytest)` *plus* a second, genuinely independent `WebFetch(domain:*)` rule granting unrestricted
+fetch access, regardless of what the caller's own `network` field actually said. The critic
+additionally found the closest internal precedent for this exact mistake already on record in a
+sibling file: `@forge/adapter-kit/src/grants/describe.ts`'s own doc comment documents an earlier
+gauntlet round catching an identical "a crafted pattern's own text closes the real boundary and starts
+a different one" bug in a different string-building function in this same package family — the
+lesson from that earlier catch was not re-applied here when the parens refusal was relaxed.
+
+**Fixed by reverting `safeBashRule` to refuse `(`, `)`, and `,` unconditionally again** — the exact
+pre-P5 behavior, restored rather than replaced with a cleverer "reject only genuinely unbalanced
+parens" check: a depth-counting variant was considered (reject when a running open/close count ever
+goes negative or ends nonzero) and rejected as unwarranted added complexity in a security-relevant
+function, when the simpler, already-once-proven-safe check costs only some rare real commands that
+happen to contain a literal paren or comma. `safeWebFetchDomainRule` (the new `WebFetch(domain:...)`
+helper) never had the relaxation in the first place — it already refused `(`, `)`, and `,` in a host
+string from when it was first written — so the new mapping was never itself vulnerable to this
+specific injection shape; only the pre-existing `exec` mapping was. A new, explicit regression test
+(`tool-grant.test.ts`) proves the exact adversarial pattern the critic found is refused outright, not
+merely that ordinary parens usage is refused the way the original P2-era tests already showed.
+
+**Two secondary findings from the same critic round, both accepted, neither treated as blocking:**
+an `allowlistHosts` entry of exactly `'*'` is the intentional degenerate wildcard (matches every
+domain) and passes through unrefused — mirroring `@forge/adapter-kit/grants`'s own already-accepted
+`exec: ['*']` convention ("an adapter author granting the wildcard degenerate case is granting the
+unrestricted case, not some narrower one-character match"), documented explicitly on
+`safeWebFetchDomainRule`'s own doc comment rather than left as silent, undocumented behavior; and an
+empty `exec` pattern or `allowlistHosts` entry is now refused outright (it could never correspond to a
+real command or hostname a caller meant to grant), closing a small, previously-untested edge case.
+
+**A benign harness content-safety false-positive recurred a third time this milestone** (after Q113
+and Q115): the critic's own report was flagged "instruction-shaped" (`bypass-permissions` pattern,
+`<` characters escaped) purely because the report legitimately discusses `bypassPermissions` and
+permission-rule syntax as real, documented Claude Code concepts — not an actual injection attempt.
+Flagged to the coordinator directly per standing instruction; the underlying findings were genuine and
+are recorded above in full.
+
+See `GAUNTLET-LOG.md`'s own M7 P5 entry for the full critic round.

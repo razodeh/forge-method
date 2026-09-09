@@ -20,23 +20,71 @@
  * @see specs/07 §7.2
  * @see specs/07 §7.3
  * @see SPEC-QUESTIONS.md Q114
+ * @see SPEC-QUESTIONS.md Q117
  * @see PLAN-M7.md P2, P3, P5
  */
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 /**
- * A crafted `exec` pattern containing a literal `)` could otherwise close the `Bash(...)` permission
- * rule early and inject trailing text Claude Code's own parser would read as a *second*, attacker-
- * controlled rule — the identical "a pattern's own text closes the real boundary and starts a
- * different one" risk `@forge/adapter-kit/grants`' own `describeGrant` doc comment already names for
- * a different string-building function in this same package family (P5's own hardening mandate).
- * Refuses (returns `undefined`, meaning "grant nothing for this pattern") rather than attempting to
- * escape it, since Claude Code's own `Bash(...)` syntax has no documented escape mechanism to rely on.
+ * A crafted `exec` pattern containing a literal `(`, `)`, or `,` is refused (never wrapped) rather
+ * than escaped, since Claude Code's own `Bash(...)` syntax has no documented escape mechanism.
+ *
+ * P5's own dedicated hardening pass briefly relaxed the `(`/`)` half of this refusal, reasoning from
+ * the official docs' own "Parentheses inside the specifier are literal, so a command or path that
+ * contains them needs no escaping" -- true, but a claim about *balanced*, single-rule usage
+ * (`Edit(./Finance (2024)/**)`is the docs' own worked example: one open, one close, nested and
+ * matched). A fresh critic round caught the real, adversarial case that claim does not cover: the
+ * docs' *other* worked example -- `--allowedTools` accepting `"Bash(git *) Edit"` as one value that
+ * splits into *two* rules -- proves Claude Code's own parser is depth-aware, closing a rule the
+ * instant its own paren depth returns to zero and resuming to look for a *second* rule afterward. An
+ * *unbalanced* pattern exploits exactly that mechanism: `exec: ['pytest) WebFetch(domain:*']` wraps
+ * to `Bash(pytest) WebFetch(domain:*)` -- which the identical depth-tracking closes as `Bash(pytest)`
+ * at the first `)`, then re-opens and parses ` WebFetch(domain:*)` as a genuine second rule, granting
+ * unrestricted fetch access a `network: 'none'` grant never authorized. This is precisely the same
+ * "a crafted pattern's own text closes the real boundary and starts a different one" risk
+ * `@forge/adapter-kit/grants`'s own `describeGrant` doc comment already names for a sibling
+ * string-building function in this same package family -- found there once already, and reproduced
+ * here by the same relaxation this file's own history briefly introduced. Restored to refusing all
+ * three characters unconditionally: distinguishing "balanced" from "unbalanced" parens was considered
+ * (reject only when a running open/close count ever goes negative or ends nonzero) and rejected as
+ * unwarranted complexity in a security-relevant function when this simpler, already-proven-correct
+ * check costs only some rare, real commands that happen to contain a literal paren or comma.
+ * `SPEC-QUESTIONS.md` Q117 has the full record of both the relaxation and this reversal.
+ *
+ * An empty pattern is refused too: `''` can never correspond to a real shell command a caller
+ * actually meant to grant, and wrapping it as `Bash()` is untested, unconfirmed behaviour this
+ * milestone found no reason to rely on.
  */
 function safeBashRule(pattern: string): string | undefined {
-  if (pattern.includes(')') || pattern.includes('(')) return undefined;
+  if (pattern.length === 0) return undefined;
+  if (pattern.includes(')') || pattern.includes('(') || pattern.includes(',')) return undefined;
   return `Bash(${pattern})`;
+}
+
+/**
+ * `domain:` values are real DNS hostnames (optionally with a real, documented `*` wildcard form,
+ * confirmed against the official docs) -- never legitimately containing `(`, `)`, `,`, or the empty
+ * string, so refusing all four costs no real host while closing the identical rule-boundary-injection
+ * risk `safeBashRule` (above) was found to have reintroduced: a crafted `allowlistHosts` entry like
+ * `'evil.com) Bash(*'` would wrap to `WebFetch(domain:evil.com) Bash(*)` -- an unrestricted `Bash`
+ * rule smuggled in the exact same way, if this function allowed it.
+ *
+ * A host that is exactly `'*'` is the degenerate case of the real, documented wildcard (matching
+ * every domain, confirmed: `WebFetch(domain:*)` "matches every domain") and is passed through
+ * unrefused, granting real, unrestricted fetch access -- the identical "an adapter author granting
+ * the wildcard degenerate case is granting the unrestricted case, not some narrower one-character
+ * match" reading `@forge/adapter-kit/grants`'s own `isExecAllowed` doc comment already establishes
+ * for `exec: ['*']`. Intentional here for the same reason, not a bypass this function should close --
+ * an `allowlistHosts` caller who writes `'*'` is choosing that explicitly. Called out because
+ * `WebFetch(domain:*)` also differs from a bare `WebFetch` rule in one real way the official docs
+ * confirm (only the `domain:` form additionally widens the sandbox's own allowed-domain list) -- a
+ * consequence real enough to name, not to silently absorb into "matches everything, same as `full`."
+ */
+function safeWebFetchDomainRule(host: string): string | undefined {
+  if (host.length === 0) return undefined;
+  if (host.includes(')') || host.includes('(') || host.includes(',')) return undefined;
+  return `WebFetch(domain:${host})`;
 }
 
 /**
@@ -45,12 +93,20 @@ function safeBashRule(pattern: string): string | undefined {
  * `--allowedTools` lets the platform's own default tool set apply, which is the opposite of fail-
  * closed for a grant that means to deny everything.
  *
- * `network` has no direct Claude Code tool-permission equivalent for `'allowlist'` specifically — no
- * documented per-host scoping syntax was found inside `--allowedTools` on the real, installed CLI.
- * Resolved fail-closed rather than guessed: `'allowlist'` is treated identically to `'none'` (both
- * exclude `WebFetch`/`WebSearch` entirely) until a real, confirmed host-scoping mechanism is found —
- * recorded as a real fidelity gap in `SPEC-QUESTIONS.md` Q114, P5's own hardening piece to close for
- * real once (if ever) Claude Code documents one.
+ * `network: 'allowlist'` maps to one real `WebFetch(domain:host)` rule per `allowlistHosts` entry --
+ * a real, confirmed Claude Code permission-rule syntax P5's own dedicated hardening pass found (not
+ * merely assumed absent, the way P2's own original text left it): "WebFetch rules use a `domain:`
+ * prefix and match against the hostname of the requested URL," confirmed against the official docs
+ * (`code.claude.com/docs/en/permissions`), superseding `SPEC-QUESTIONS.md` Q114's own "no documented
+ * per-host scoping syntax was found" note -- see `SPEC-QUESTIONS.md` Q117 for the full record,
+ * including the one real fidelity gap this mapping still cannot close: `WebSearch` has no analogous
+ * domain-scoped rule form documented anywhere, so `'allowlist'` never grants it at all (fail closed,
+ * matching `'none'` for that one tool specifically), and a granted `exec` capability can still reach
+ * any host via `curl`/`wget` regardless of this `network` grant -- Claude Code's own docs name this
+ * exact caveat directly ("using WebFetch alone doesn't prevent network access. If Bash is allowed,
+ * Claude can still use curl, wget, or other tools to reach any URL"), not something this mapping (or
+ * any `--allowedTools`-only mechanism) can close without sandboxing, a wholly separate, opt-in
+ * Claude Code feature this milestone does not build any support for.
  */
 export function mapToolGrantToAllowedTools(grant: SessionRequest['tools']): readonly string[] {
   const tools: string[] = [];
@@ -62,7 +118,14 @@ export function mapToolGrantToAllowedTools(grant: SessionRequest['tools']): read
       if (rule !== undefined) tools.push(rule);
     }
   }
-  if (grant.network === 'full') tools.push('WebFetch', 'WebSearch');
+  if (grant.network === 'full') {
+    tools.push('WebFetch', 'WebSearch');
+  } else if (grant.network === 'allowlist') {
+    for (const host of grant.allowlistHosts ?? []) {
+      const rule = safeWebFetchDomainRule(host);
+      if (rule !== undefined) tools.push(rule);
+    }
+  }
   if (grant.extra !== undefined) tools.push(...grant.extra);
   return tools;
 }

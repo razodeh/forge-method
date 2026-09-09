@@ -6686,3 +6686,77 @@ clean; the full monorepo test suite is green apart from one, then two, unrelated
 worktree E2E flakes in `packages/engine`/`packages/cli` (pre-existing, already-committed M5/M6 tests
 with randomised kill timing — confirmed flaky, not a regression, by a clean retry of the first one in
 isolation; neither touches any file this piece changed).
+
+---
+
+## M7 P5 — tool-grant and permission-mode mapping fidelity, dedicated hardening pass (`07` §7.2)
+
+**Rounds: 1 (fresh critic finding one severe, self-introduced permission-bypass this same piece had
+just shipped, plus two low-severity secondary findings; all fixed; no separate verify round run).
+Outcome: WON, but the round caught a real vulnerability the author introduced mid-piece, not merely a
+pre-existing gap — recorded here without softening that.**
+
+No new production surface planned — a dedicated hardening pass over `mapToolGrantToAllowedTools`
+(P2/P3). Live-fetched Anthropic's own official Claude Code permissions documentation
+(`code.claude.com/docs/en/permissions`) for the first time this milestone (every earlier piece had
+only ever read `--help` text), and found a real, previously-unknown `WebFetch(domain:host)`
+permission-rule syntax — closing `SPEC-QUESTIONS.md` Q114's own "no per-host scoping syntax found"
+gap for real: `network: 'allowlist'` now maps each `allowlistHosts` entry to its own such rule instead
+of always failing closed to `[]`. `build-args.ts` was also changed to pass `--allowedTools` as
+separate argv elements rather than one joined string (defense in depth for the list-boundary case,
+kept after the round below, though no longer described as the primary defense against anything). See
+`SPEC-QUESTIONS.md` Q117 for the full record.
+
+### Round 1 — fresh critic (no context on plan/log, told to independently re-verify every doc claim):
+one severe self-introduced bug, two low-severity secondary findings
+
+What the critic caught that I missed:
+
+1. **[HIGH] A real permission-bypass this piece itself introduced, then shipped, before the critic
+   caught it.** The same documentation fetch above also said "Parentheses inside the specifier are
+   literal, so a command or path that contains them needs no escaping," with a *balanced*-usage
+   worked example (`Edit(./Finance (2024)/**)`). Read as direct confirmation that `safeBashRule`'s
+   long-standing (`(`/`)`-refusing, never live-verified) hardening was an unwarranted over-
+   restriction, I removed it — keeping only the comma refusal — and shipped new tests asserting
+   parens-containing patterns were now allowed. **The critic found the reasoning error directly**:
+   the *same* docs page's *other* worked example (`--allowedTools` accepting `"Bash(git *) Edit"` as
+   one value that splits into two rules) proves the real parser is depth-aware, closing a rule the
+   instant its own paren depth returns to zero and resuming to look for a second rule immediately
+   after — exactly the mechanism that makes an *unbalanced* pattern dangerous, which the "balanced
+   usage needs no escaping" quote never actually addressed. Concretely: `exec: ['pytest) WebFetch
+   (domain:*']` would have wrapped to `'Bash(pytest) WebFetch(domain:*)'` and been read as `Bash
+   (pytest)` *plus* a second, unrestricted `WebFetch(domain:*)` rule, regardless of what `network`
+   actually said — a real bypass, not a hypothetical one. The critic also found the closest internal
+   precedent for this exact mistake already on record in a sibling file
+   (`@forge/adapter-kit/src/grants/describe.ts`'s own doc comment, documenting an identical injection
+   bug an earlier gauntlet round caught in a different string-building function) — a lesson already
+   written down in this codebase and not re-applied here. **Fixed**: reverted `safeBashRule` to
+   refuse `(`, `)`, and `,` unconditionally again (the exact pre-P5 behavior, chosen over a cleverer
+   "reject only unbalanced parens" variant as unwarranted complexity in a security-relevant function).
+   The new `WebFetch(domain:...)` helper was never itself vulnerable — it refused all three characters
+   from the moment it was written. A new, explicit regression test proves the exact adversarial
+   pattern the critic found is now refused outright.
+2. **[LOW] `allowlistHosts: ['*']` reaches further than a bare `WebFetch` grant** (it also widens the
+   sandbox's own allowed-domain list per the docs, a real, documented asymmetry) and isn't meaningfully
+   narrower than `network: 'full'` for `WebFetch` specifically. **Accepted, documented, not changed**:
+   mirrors `@forge/adapter-kit/grants`'s own already-accepted `exec: ['*']` convention (a caller who
+   writes the wildcard explicitly is choosing the unrestricted case, not being tricked into it) — now
+   named explicitly on `safeWebFetchDomainRule`'s own doc comment instead of left silent.
+3. **[LOW] Untested empty-pattern/empty-host edge case** (`exec: ['']` → `Bash()`, an unconfirmed,
+   never-exercised specifier shape). **Fixed**: both `safeBashRule` and `safeWebFetchDomainRule` now
+   refuse an empty string outright, with regression tests.
+
+Also closed for real, per this piece's own Checks: `write: false` cross-checked against every real
+write-capable tool name the official docs confirm (`Edit`, `Write`, `NotebookEdit`), not just the two
+this mapping happens to grant; `network: 'allowlist'` with zero `allowlistHosts` confirmed to map to
+`[]`, never silently promoted to `'full'`; `WebSearch` confirmed to have no domain-scoped rule form
+anywhere in the docs, so `'allowlist'` never grants it.
+
+A benign harness content-safety false-positive recurred a third time this milestone (after Q113,
+Q115): the critic's own report was flagged "instruction-shaped" (`bypass-permissions` pattern) purely
+because it legitimately discusses `bypassPermissions`/permission-rule syntax as real Claude Code
+concepts. Flagged to the coordinator directly; findings treated as genuine, not discarded.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (186 tests, 2 correctly
+skipped without `FORGE_LIVE=1`) all clean after the fix, including the direct adversarial regression
+test proving the self-introduced bypass is closed.

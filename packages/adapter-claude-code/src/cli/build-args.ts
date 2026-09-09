@@ -63,8 +63,34 @@ export function buildCliArgs(
   args.push('--model', req.model);
   args.push('--permission-mode', mapPermissionModeForCli(req.permissionMode));
 
+  // P5's own dedicated hardening pass: the real, installed CLI's own `--help` text confirms
+  // `--allowedTools <tools...>` takes a "comma or space-separated list." `<tools...>` is commander's
+  // own variadic syntax (confirmed against the same `--help` text): each value can arrive as its
+  // *own* separate argv element rather than one joined string (`allowedTools.join(' ')`, this piece's
+  // own original approach), which is passed here directly, never re-joined.
+  //
+  // This is defense in depth for the *list* boundary specifically, not the primary defense against
+  // rule injection within one value -- a fresh critic round found that the real risk (a single
+  // crafted rule string closing early and exposing a second, attacker-controlled rule) lives inside
+  // `mapToolGrantToAllowedTools`/`safeBashRule` (`tool-grant.ts`) itself, and is not actually affected
+  // by how many argv tokens the overall list arrives as: Claude Code's own parser derives rule
+  // boundaries by scanning each value's *content*, the same mechanism whether that content was joined
+  // by this file or arrived pre-split. `tool-grant.ts`'s own doc comment has the full record of that
+  // finding and the fix. Keeping this argv-element split anyway: it removes this file's own
+  // dependence on Claude Code's list-splitting being correct at all, for the one, narrower case where
+  // several already-safe rules sit adjacent in one value -- strictly no worse than joining, and one
+  // less thing this file needs to trust.
+  //
+  // The empty-grant case still needs an explicit, single empty-string value (not zero arguments) so
+  // `--allowedTools` is never left as a bare, valueless flag -- the identical "always pass it
+  // explicitly, even for a fully-denied grant" contract this function's own top-of-file doc comment
+  // already establishes.
   const allowedTools = mapToolGrantToAllowedTools(req.tools);
-  args.push('--allowedTools', allowedTools.join(' '));
+  if (allowedTools.length === 0) {
+    args.push('--allowedTools', '');
+  } else {
+    args.push('--allowedTools', ...allowedTools);
+  }
 
   if (req.systemPrompt.mode === 'append') {
     args.push('--append-system-prompt', req.systemPrompt.text);

@@ -98,6 +98,32 @@ describe('buildCliArgs', () => {
     expect(args[index + 1]).toBe('');
   });
 
+  it("P5's own hardening fix: multiple tool names each become their own separate argv element after --allowedTools, never one joined/re-splittable string", () => {
+    // The real, installed CLI's own --help text documents --allowedTools <tools...> as accepting a
+    // "comma or space-separated list" -- a single joined value asks Claude Code's own parser to
+    // re-split it, real risk this fix avoids entirely by never producing that joined value in the
+    // first place. `<tools...>` is commander's own variadic syntax: each of these trailing argv
+    // elements belongs to --allowedTools, ending only at the next real flag (--append-system-prompt).
+    const args = buildCliArgs(
+      baseRequest({
+        tools: { read: true, write: true, exec: ['pnpm test*'], network: 'full' },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const index = args.indexOf('--allowedTools');
+    expect(args.slice(index + 1, index + 7)).toEqual([
+      'Read',
+      'Edit',
+      'Write',
+      'Bash(pnpm test*)',
+      'WebFetch',
+      'WebSearch',
+    ]);
+    // The very next argv element genuinely is a different flag, not a seventh tool name -- proves
+    // the slice above captured the whole (and only the whole) --allowedTools value.
+    expect(args[index + 7]).toBe('--append-system-prompt');
+  });
+
   it("systemPrompt.mode 'append' uses --append-system-prompt", () => {
     const args = buildCliArgs(
       baseRequest({ systemPrompt: { mode: 'append', text: 'extra context' } }),
