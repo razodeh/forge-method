@@ -10,12 +10,12 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
-import { realpath } from 'node:fs/promises';
+import { access, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError, SYSTEM_CLOCK, renderCause, type Clock } from '@forge/core';
-import { pathExists, type ProjectPaths } from '@forge/core/fs';
+import { pathExists, type AbsolutePath, type ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import {
   createGateEvaluator,
@@ -96,6 +96,38 @@ async function runGitOrThrow(args: readonly string[], cwd: string): Promise<stri
   }
 }
 
+/** Resolves `candidate` to its real, symlink-free path by walking up to its deepest *existing*
+ * ancestor and realpath-ing that — `@forge/core/fs`'s own (private) `realpathOfDeepestExistingAncestor`
+ * (`paths.ts`) already establishes this exact pattern for the identical "the leaf may not exist yet,
+ * but the comparison still needs to be symlink-correct" problem; reimplemented locally (async, over
+ * `node:fs/promises`) since that one is not exported. A bare `realpath(candidate).catch(() =>
+ * path.resolve(candidate))` fallback — tried first — is *not* enough here: when `candidate` itself is
+ * missing, that fallback returns the raw, *unresolved* path, which still silently fails to match a
+ * git-reported path through a symlinked ancestor (`os.tmpdir()` itself is a symlink on macOS) —
+ * confirmed directly, this is exactly what let a real, deterministic reproduction of `ensureIntegrationWorktree`'s
+ * own "missing but already registered" repair path fail even after `isTargetRegisteredWorktree` was
+ * already fixed once for the identical class of mismatch on the *existing*-path case. */
+async function pathExistsRaw(candidate: string): Promise<boolean> {
+  try {
+    await access(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function realpathOfDeepestExistingAncestor(candidate: string): Promise<string> {
+  let probe = candidate;
+  while (!(await pathExistsRaw(probe))) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const realAncestor = await realpath(probe);
+  const suffix = path.relative(probe, candidate);
+  return suffix === '' ? realAncestor : path.join(realAncestor, suffix);
+}
+
 /** Whether `target` is genuinely a registered worktree right now — read from `git worktree list
  * --porcelain`, the same real source of truth `@forge/vcs`'s own (private) `isRegisteredWorktree`
  * already uses for the identical "is this real, or just a directory that happens to exist" question,
@@ -108,23 +140,27 @@ async function runGitOrThrow(args: readonly string[], cwd: string): Promise<stri
  * `parseWorktreeBlocks` already gives (the real race this backs `ensureIntegrationWorktree`'s own
  * TOCTOU recovery for is not reliably reproducible on demand in a test).
  *
- * Both sides resolved through a real `realpath` before comparing, not a bare `path.resolve`: `git`
- * itself reports every `worktree` line in `worktree list --porcelain` already canonicalised, but
- * `target` here (built from `ProjectPaths.resolveState`, never realpath'd) is not — confirmed
- * empirically (the same "`os.tmpdir()` itself is a symlink on macOS" fact `@forge/vcs`'s own
+ * Both sides resolved through `realpathOfDeepestExistingAncestor` before comparing, not a bare
+ * `path.resolve`: `git` itself reports every `worktree` line in `worktree list --porcelain` already
+ * canonicalised, but `target` here (built from `ProjectPaths.resolveState`, never realpath'd) is not —
+ * confirmed empirically (the same "`os.tmpdir()` itself is a symlink on macOS" fact `@forge/vcs`'s own
  * `resolveCwd` doc comment already names) that comparing the two with plain `path.resolve` alone
- * silently and permanently returns `false` on macOS, `@forge/vcs`'s own established fix for the
- * identical class of mismatch. */
+ * silently and permanently returns `false` on macOS. `target` (and, for the "missing but already
+ * registered" case, git's own reported path too) may not exist on disk at all, so a bare
+ * `realpath` — which requires its full argument to exist — is not enough either; both sides go through
+ * `realpathOfDeepestExistingAncestor` instead, which only needs the *deepest existing* ancestor to be
+ * real. */
 export async function isTargetRegisteredWorktree(
   projectRoot: string,
   target: string,
 ): Promise<boolean> {
   const listing = await runGitOrThrow(['worktree', 'list', '--porcelain'], projectRoot);
-  const resolvedTarget = await realpath(target);
-  const paths = await Promise.all(
-    parseWorktreeBlocks(listing).map((block) => realpath(block.path).catch(() => block.path)),
-  );
-  return paths.some((worktreePath) => path.resolve(worktreePath) === resolvedTarget);
+  const resolvedTarget = await realpathOfDeepestExistingAncestor(target);
+  for (const block of parseWorktreeBlocks(listing)) {
+    const resolvedBlockPath = await realpathOfDeepestExistingAncestor(block.path);
+    if (resolvedBlockPath === resolvedTarget) return true;
+  }
+  return false;
 }
 
 /**
@@ -162,37 +198,57 @@ export async function ensureIntegrationWorktree(
 
   try {
     await runGitOrThrow(args, projectRoot);
+    return target;
   } catch (error) {
-    // A real, reproducible TOCTOU race the `pathExists(target)` pre-check above cannot fully close:
-    // a *different* real process (a killed-and-resumed `forge run` in particular — confirmed directly
-    // against `resume.test.ts`'s own real crash-then-resume proof) can create the identical target
-    // between this call's own `pathExists` check and this `git worktree add` actually running. Git's
-    // own real, stable error text for exactly that race quotes the real target *path* itself —
-    // `'<target>' already exists.` — deliberately distinguished from the differently-worded "a branch
-    // named '<name>' already exists" (a real, different failure this same call can also hit, which
-    // must still propagate: the target directory was never created in that case, so silently
-    // returning it here would be a lie the rest of this run believes) by requiring the message to
-    // name the real target path, not merely the substring "already exists".
-    //
-    // The message match alone is not trusted as proof the *other* process's own `git worktree add`
-    // actually finished: `git worktree add` creates the target directory before it finishes real
-    // registration (writing `.git/worktrees/<name>`), so a losing process could hit this identical
-    // text while the winner's own operation is still mid-flight, or a stray directory could be sitting
-    // at `target` for an unrelated reason entirely. `isTargetRegisteredWorktree` below re-checks
-    // against `git worktree list --porcelain` — the same real source of truth `@forge/vcs`'s own
-    // `isRegisteredWorktree` already uses for the identical "is this real, or just a directory that
-    // happens to exist" question — before trusting the race is over; a critic round caught the
-    // original version of this fix trusting the string match alone.
-    if (
-      error instanceof Error &&
-      error.message.includes(target) &&
-      error.message.includes('already exists') &&
-      (await isTargetRegisteredWorktree(projectRoot, target))
-    ) {
-      return target;
-    }
-    throw error;
+    return recoverFromWorktreeAddFailure(projectRoot, target, args, error);
   }
+}
+
+/**
+ * A real, reproducible TOCTOU race the `pathExists(target)` pre-check in `ensureIntegrationWorktree`
+ * cannot fully close — confirmed directly, twice, against `resume.test.ts`'s own real crash-then-
+ * resume proof, in two genuinely different real shapes git itself reports with two genuinely
+ * different error messages:
+ *
+ * 1. A *concurrent* process's own `git worktree add` finishes between this call's own `pathExists`
+ *    check and this `git worktree add` actually running — the target now genuinely exists as a real,
+ *    valid worktree, and git's own error names the real target path directly ("'<target>' already
+ *    exists").
+ * 2. A *crashed* process's own earlier, incomplete `git worktree add` left a real registration in
+ *    `.git/worktrees/<name>` with no real directory behind it — `pathExists(target)` correctly found
+ *    nothing (there is nothing there), but git still refuses a fresh `add` at that exact path
+ *    ("is a missing but already registered worktree").
+ *
+ * Both are told apart by real, structural checks — never by matching git's own exact wording (a
+ * critic round caught an earlier version of this fix trusting a message substring alone, which a
+ * *different*, unrelated failure sharing the same words could also produce) — rather than which of
+ * git's own many possible phrasings this particular failure happened to use: case 1 is `pathExists(
+ * target) && isTargetRegisteredWorktree(...)` (a real, live, valid worktree — never touched, only
+ * confirmed and reused); case 2 is `!pathExists(target) && isTargetRegisteredWorktree(...)` (a stale
+ * registration with no real directory to protect — safe to clear via `git worktree remove --force`
+ * and retry the original `add` once for real, since nothing valid could be destroyed). Any other
+ * shape (not registered at all) is a genuinely different failure and always propagates.
+ */
+async function recoverFromWorktreeAddFailure(
+  projectRoot: string,
+  target: AbsolutePath,
+  args: readonly string[],
+  originalError: unknown,
+): Promise<string> {
+  const registered = await isTargetRegisteredWorktree(projectRoot, target);
+  if (!registered) throw originalError;
+
+  if (await pathExists(target)) {
+    // Case 1: a concurrent winner's own real, valid worktree.
+    return target;
+  }
+
+  // Case 2: a stale registration with nothing real behind it — safe to clear and retry. Real
+  // failures here are not swallowed: if `remove`/`prune` themselves fail, that is itself a real,
+  // worth-reporting problem, more informative than a confusing retry-`add` failure that follows one.
+  await runGitOrThrow(['worktree', 'remove', '--force', target], projectRoot);
+  await runGitOrThrow(['worktree', 'prune'], projectRoot);
+  await runGitOrThrow(args, projectRoot);
   return target;
 }
 

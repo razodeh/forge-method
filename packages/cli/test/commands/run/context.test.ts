@@ -7,7 +7,7 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -118,6 +118,35 @@ describe('ensureIntegrationWorktree', () => {
       'main',
     );
     expect(second).toBe(first);
+  });
+
+  it('repairs a real "missing but already registered" worktree — a crashed process’s own stale registration outliving its own directory', async () => {
+    // Deterministically reproduced (unlike the two-live-process race below): create a real worktree,
+    // then delete only its real directory, leaving git's own `.git/worktrees/<name>` registration
+    // behind — the exact real state a `SIGKILL`'d process's own incomplete `git worktree add` leaves,
+    // confirmed directly with a real, hand-run `git worktree add` reproduction before this test was
+    // written.
+    const project = await createTestProject();
+    const first = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await rm(first, { recursive: true, force: true });
+
+    const repaired = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    expect(repaired).toBe(first);
+    expect(await isTargetRegisteredWorktree(project.dir, repaired)).toBe(true);
+    const { stdout } = await execa('git', ['worktree', 'list', '--porcelain'], {
+      cwd: project.dir,
+    });
+    expect(stdout).toContain(repaired);
   });
 
   // A genuinely simultaneous pair of calls (fired via `Promise.all` in one process) was tried here and
