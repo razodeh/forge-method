@@ -108,6 +108,10 @@ const IGNORED_PATHS = new Set([
   // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
   // config/manifest fixture scaffolding for `test/commands/doctor/*.test.ts`.
   'packages/cli/test/commands/doctor/helpers.ts',
+  // `packages/cli/test/commands/upgrade/helpers.ts` (PLAN-M6.md C7): the identical shape as
+  // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real
+  // `runInit`-produced project fixture scaffolding for `test/commands/upgrade/*.test.ts`.
+  'packages/cli/test/commands/upgrade/helpers.ts',
 ]);
 
 /**

@@ -9,7 +9,8 @@
     "./output": "./src/output/index.ts",
     "./init": "./src/init/index.ts",
     "./commands": "./src/commands/index.ts",
-    "./doctor": "./src/commands/doctor/index.ts"
+    "./doctor": "./src/commands/doctor/index.ts",
+    "./upgrade": "./src/commands/upgrade/index.ts"
   },
   "engines": {
     "node": ">=20.10"

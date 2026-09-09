@@ -8,7 +8,7 @@
  * @see specs/03 §3.2.2
  */
 import { type ArtifactDocument, readArtifact } from '@forge/core/artifacts';
-import { IdAllocator, SYSTEM_CLOCK, type Clock } from '@forge/core';
+import { ForgeError, IdAllocator, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { listDirEntriesSorted, pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { KbParsedEntry } from '@forge/kb/schema';
 import { TEMPLATE_INDEX, type TemplateArtifactTypeId } from '@forge/templates';
@@ -30,7 +30,10 @@ const templatesPaths = new ProjectPaths(resolvePackageRoot('@forge/templates'));
  */
 const idAllocatorsByRoot = new Map<string, IdAllocator>();
 
-export function getSharedIdAllocator(paths: ProjectPaths, clock: Clock = SYSTEM_CLOCK): IdAllocator {
+export function getSharedIdAllocator(
+  paths: ProjectPaths,
+  clock: Clock = SYSTEM_CLOCK,
+): IdAllocator {
   const root = paths.resolveWithin('.');
   let allocator = idAllocatorsByRoot.get(root);
   if (allocator === undefined) {
@@ -44,7 +47,19 @@ export function getSharedIdAllocator(paths: ProjectPaths, clock: Clock = SYSTEM_
  * own real content: `docs/forge/specs/**`'s real Vision/Capability/NFR/Epic/Story/Task/
  * InterfaceContract/DataModel documents. A plain recursive directory walk, not `renderArtifactPath`
  * reversed — every real path template under `specs/` nests by a real hierarchy this function does
- * not need to know, it only needs every file that is there. */
+ * not need to know, it only needs every file that is there.
+ *
+ * Skips a file specifically when `readArtifact` reports `CFG-005` ("no front matter at all") for
+ * it — not, as an earlier version of this fix did, whenever the file's raw content merely doesn't
+ * start with the literal bytes `---`. `forge init`'s own real `writeDocsSkeleton` (`03` §3.3) writes a
+ * hand-authored `<specsRoot>/README.md` with no front matter at all into every real project this
+ * command ever runs against; deferring to `readArtifact`'s own real parser (via `CFG-005` specifically,
+ * not a raw string check) is what correctly tells that file apart from a real, valid, BOM-prefixed
+ * artifact document (`ArtifactDocument`'s own `splitFrontMatter` strips a leading BOM before checking
+ * for `---`, so a raw `content.startsWith('---')` check — this fix's own first attempt — silently
+ * mis-skipped one) *and* from a real corrupted document (unterminated front matter, invalid YAML,
+ * `CFG-006`/`CFG-007`), which still propagates loudly here exactly as it always has, rather than being
+ * silently swallowed alongside the merely-not-an-artifact case. */
 export async function listSpecArtifacts(
   paths: ProjectPaths,
   specsRoot: string,
@@ -53,7 +68,12 @@ export async function listSpecArtifacts(
   const relPaths = await walkFiles(paths, specsRoot, '');
   const docs: ArtifactDocument[] = [];
   for (const relPath of relPaths) {
-    docs.push(await readArtifact(paths, relPath));
+    try {
+      docs.push(await readArtifact(paths, relPath));
+    } catch (cause) {
+      if (cause instanceof ForgeError && cause.code === 'CFG-005') continue;
+      throw cause;
+    }
   }
   return docs;
 }

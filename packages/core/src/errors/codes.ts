@@ -814,6 +814,47 @@ export const ERROR_CODES = {
     remedy:
       'Split the expression into smaller pieces, or reduce how many terms are combined with && or || in one condition.',
   },
+  // `@forge/cli`'s own `forge upgrade` (`03` §3.4, `PLAN-M6.md` C7). Next free `CFG-*` slot after
+  // `CFG-016` — project-state/config-validity is the closest existing prefix's own real scope
+  // (`CFG-001`-`CFG-016` already cover config/manifest/front-matter validity broadly), so these three
+  // fold into it rather than opening an eleventh, single-command-scoped prefix in the closed
+  // `ErrorCodePrefix` union.
+  'CFG-017': {
+    // No real `.forge/manifest.yaml` at all: `forge upgrade` has nothing to compute a migration path
+    // from — the identical "never initialized" situation `checkManifest`/`checkConfigValidity`
+    // (`forge doctor`, C6) already name for their own checks, but for a command that needs to *read*
+    // the manifest, not merely report on it.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: () => 'No real .forge/manifest.yaml found -- this project has never been initialized.',
+    remedy: 'Run `forge init` first.',
+  },
+  'CFG-018': {
+    // `03` §3.4 step 2's own "a downgrade attempt is refused with a real, typed error." `--to
+    // <version>` naming a version older than the manifest's own installed version is refused outright
+    // rather than attempted -- this piece never reverses a migration chain it did not itself plan for
+    // going forward, and the real per-artifact `down` migrations `@forge/schemas/migrations` supports
+    // are a distinct, per-document mechanism `forge upgrade` does not expose as a bare version
+    // downgrade.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { installed: string; requested: string }) =>
+      `Refusing to downgrade from ${show(d.installed)} to ${show(d.requested)}.`,
+    remedy:
+      'Pass a --to version at or after the installed version, or omit --to to upgrade to latest.',
+  },
+  'CFG-019': {
+    // `@forge/schemas/migrations`' own `planMigrations`/`validateMigrationRegistry` returning a real
+    // failure (a registry with a reversible-without-down step, a duplicate step, or a genuine chain
+    // gap between two schema versions) for at least one artifact document `forge upgrade` needs to
+    // migrate. Distinct from CFG-018: this is a real defect in the migration chain itself, not a
+    // refused version direction.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; detail: string }) =>
+      `Cannot migrate ${show(d.path)}: ${show(d.detail)}`,
+    remedy: 'Fix the migration registry (a gap or an invalid reversible/down pairing), then retry.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

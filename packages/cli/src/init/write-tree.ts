@@ -85,7 +85,11 @@ async function writeConfigYaml(target: ProjectPaths, config: ForgeConfig): Promi
   return { path: '.forge/config.yaml', generated: false };
 }
 
-async function writeRegenerableContent(
+/** Exported for `@forge/cli/upgrade` (C7, `03` §3.4 step 5: "regenerate the regenerable directories,
+ * reusing C2's own file-writing logic, not a duplicate") — idempotent, safe to call again on an
+ * existing project (every file it writes goes through `writeGenerated`'s unconditional overwrite; see
+ * `writeInitTree`'s own doc comment for why `.forge/config.yaml` alone is excluded from this set). */
+export async function writeRegenerableContent(
   target: ProjectPaths,
   modulesDir: string,
 ): Promise<readonly WrittenFile[]> {

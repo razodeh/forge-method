@@ -103,6 +103,8 @@ const SAMPLE_DETAILS = {
   laneId: 'run-014-implement-a1b2c3d4',
   workflowId: 'plan-stage',
   runId: 'run-014-implement',
+  installed: '1.2.0',
+  requested: '1.0.0',
 } satisfies Record<string, unknown> as never;
 
 /**
