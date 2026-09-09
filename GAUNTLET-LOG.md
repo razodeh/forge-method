@@ -6456,3 +6456,65 @@ holds by reading the code directly, not just the comment.
 
 `tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (24 tests) all clean after
 every fix.
+
+---
+
+## M7 P2 — `@forge/adapter-claude-code` CLI transport (`07` §7.3)
+
+**Rounds: 1 (fresh critic finding two real bugs and one dangling-citation gap across every file, all
+fixed — one fix's own regression test then surfaced a second, more serious bug the same round; no
+separate verify round run). Outcome: WON.**
+
+Built against three real, live `claude -p --output-format stream-json` calls (billed Anthropic API
+calls, made with the coordinator's own explicit, separately-confirmed permission) rather than inferred
+from spec prose alone: `buildCliArgs` (the full `07` §7.3 mapping table, CLI column), `parseCliEventLine`
+(one raw NDJSON line -> zero or one real `AdapterEvent`, every mapped shape grounded in either a real
+live capture or the real, published SDK's own `.d.ts` field names), `spawnClaudeCli` (the real `execa`
+spawn, synthesising a final `session.ended` event once the child process actually exits — `-p` mode
+never emits one of its own), and `mapToolGrantToAllowedTools`/`mapPermissionMode` (shared with the
+not-yet-built P3, so the two transports cannot silently diverge on this security-relevant mapping). See
+`SPEC-QUESTIONS.md` Q114 for the full record of real, live-confirmed findings: no `--max-turns` flag
+exists on the real, installed CLI at all (a genuine spec-vs-CLI drift); `--bare` mode still loads the
+user's own globally-installed agents/skills/slash-commands; the real incremental-streaming
+(`stream_event`/`content_block_delta`) mechanism was missing from an early draft entirely until a third,
+longer live capture revealed it (self-caught, not a critic finding).
+
+### Round 1 — fresh critic (no context on plan/log): two real bugs, one dangling citation, all fixed
+
+1. **REAL BUG.** `spawn.ts`'s own `session.ended` reason logic only set its internal `stopped` flag
+   from the exposed `.stop()` closure, missing the equally real, documented `options.abortSignal` path
+   — a caller that cancels purely via the signal it already passed in (never separately calling
+   `.stop()`) was misreported as `reason: 'error'` instead of `'aborted'`. **Fixed**: also listens for
+   the signal's own `abort` event. Writing this fix's own regression test (an already-aborted signal,
+   for a fully deterministic proof with no timing race against a real process) then **found a second,
+   more serious bug by actually hanging the test runner**: passing an already-aborted signal straight
+   through to execa's own `cancelSignal` hangs indefinitely rather than failing fast — a real execa
+   quirk, not a mistake in the test. **Fixed** by short-circuiting before `execa` is ever invoked at
+   all when the signal is already aborted, returning a synthetic, immediate `session.ended` event.
+2. **Dangling documentation citation, every new file.** All six new source/test files cited
+   `SPEC-QUESTIONS.md` Q114 as "the full record" of this piece's own judgment calls — but Q114 did not
+   exist yet at the time the critic reviewed; the file ended at Q113 (P1's own entry). The identical
+   class of gap Q113 itself describes fixing for P1 ("the reasoning was only in this piece's own
+   author's head, not written down anywhere"), recurring at larger scale. **Fixed**: Q114 written with
+   the full record every citation was already pointing at.
+3. **Low-severity, honestly-undertested gap.** The trailing positional prompt had no guard against a
+   `req.prompt` beginning with `-`/`--` being misread as a flag by the CLI's own commander-based
+   parser — every other field is safe (consumed as a named flag's own mandatory next-token value), only
+   this one positional was at risk. **Fixed**: a standard `--` end-of-options guard now precedes it: not
+   live-verified (confirming costs a real API call for an edge case judged too low-severity to warrant
+   one), but strictly no worse than the unguarded version for the common case.
+
+The critic independently re-verified several claims directly rather than trusting this piece's own
+comments: ran `claude --help` and confirmed no `--max-turns`/turn-limit flag and no per-host
+`--allowedTools` network-scoping syntax exist; read execa 9.6.1's own real `.d.ts` files and confirmed
+`Subprocess` is genuinely async-iterable "by line" and `cancelSignal` (not `signal`) is the real option
+name; confirmed `extendEnv: false` genuinely excludes ambient `process.env` (C13's own no-secret-leak
+guarantee); read the real SDK's own `.d.ts` and confirmed `SDKResultError.errors`/`SDKAPIRetryMessage`'s
+own field names match exactly what this piece's never-observed-live mappings claim; confirmed every
+event object this piece builds satisfies `@forge/adapter-kit`'s own `.strict()` zod schemas field-for-
+field; confirmed the live-vs-SDK-grounded provenance distinction is honest throughout, never conflated.
+
+`tsc`, `eslint`, `prettier`, and the `packages/adapter-claude-code` suite (78 tests, 1 correctly skipped
+without `FORGE_LIVE=1`) all clean after every fix — re-verified live once more after the execa-hang fix
+(`FORGE_LIVE=1` against the real installed CLI, real API key) to confirm the happy path still works
+after the short-circuit branch was added.

@@ -8355,3 +8355,68 @@ already-defensive-but-untested code path (`probeSubscriptionLogin`'s own non-obj
 real regression test (`null`, a bare array, a bare number, a bare string); the `zod` override's own
 reasoning, described above, was written down in both places once the critic flagged it as undocumented.
 See `GAUNTLET-LOG.md`'s own M7 P1 entry for the full critic round.
+
+## Q114 — M7 P2's `@forge/adapter-claude-code` CLI transport: three real, live-confirmed spec-vs-CLI
+gaps, the `--max-turns` flag that does not exist, and an execa quirk this piece's own critic round found
+by actually hanging
+
+This piece was built against **three real, live `claude -p --output-format stream-json` calls**
+(billed Anthropic API calls, made with the coordinator's explicit, separately-confirmed permission —
+two under non-bare/subscription auth, one under bare mode with a real `ANTHROPIC_API_KEY` the
+coordinator supplied directly in conversation) rather than inferred purely from `07` §7.3's prose. Every
+real finding below came from those captures or from reading the real, installed CLI's own `--help` text
+and the real, published `@anthropic-ai/claude-agent-sdk` npm package's own `.d.ts` files directly.
+
+**No `--max-turns` flag exists on the real, installed CLI (`2.1.266`) at all.** `07` §7.3's own mapping
+table names it; `claude --help` has no such flag, confirmed by grepping its full output for "turn" and
+"limit" — a real spec-vs-real-CLI drift on this specific version, not a gap this piece invented. A
+client-side turn-counting approximation was considered and rejected: a real captured multi-tool-use
+example showed the CLI's own final `result` line reporting `num_turns: 2`, but nothing in the *stream
+itself* — short of counting `result` lines, which a `-p` invocation never emits more than one of —
+cleanly signals a turn boundary as it happens. Shipping a heuristic that might silently stop a
+legitimate session early (or fail to stop a runaway one) was judged worse than an honest gap: the CLI
+transport does not enforce `limits.maxTurns` at all; the SDK transport (P3) will, via its own real,
+confirmed `Options.maxTurns` field — a genuine, accepted capability asymmetry between the two
+transports on this exact CLI version, per `07` §7.3's own "unknown/older versions degrade capabilities
+rather than crashing" precedent.
+
+**No confirmed per-host `--allowedTools` network-scoping syntax exists**, so `ToolGrant.network:
+'allowlist'` collapses to the identical fail-closed behaviour as `'none'` (excluding `WebFetch`/
+`WebSearch` entirely) rather than guessing at an unconfirmed mechanism. P5 (the dedicated tool-grant
+hardening piece) is where a real mechanism, if Claude Code ever documents one, would close this gap.
+
+**`--bare` mode still loads the invoking user's own globally-installed agents/skills/slash-commands.**
+Its own `--help` text promises only to skip "hooks, LSP, plugin sync, attribution, auto-memory,
+background prefetches, keychain reads, and CLAUDE.md auto-discovery" — confirmed, by directly comparing
+a non-bare and a bare capture's own `tools`/`skills`/`slash_commands` fields side by side, that
+user-level `~/.claude/`-installed customization is a separate layer bare mode does not touch. Real,
+machine-dependent bleed `07` §7.3's own "reproducible across machines" framing for `--bare` does not
+fully cover — recorded here rather than silently assumed away.
+
+**The real incremental-streaming mechanism (`stream_event`/`content_block_delta`) was missing from an
+early draft entirely.** The first two live captures (short, single-block responses) never happened to
+trigger one; only the third (bare mode, `--model haiku`, a response long enough to stream in visible
+chunks) revealed `stream_event` lines wrapping `content_block_delta`/`text_delta` — the actual mechanism
+`--include-partial-messages` provides, which `AdapterEvent.text`'s own `partial: boolean` field exists
+for. Fixed before this piece's own critic round ran (a self-caught gap, not a critic finding) once the
+third capture made the omission obvious; recorded here as a reminder that "no live captures ever showed
+X" is evidence bounded by how much was actually elicited, not proof X cannot happen.
+
+**A real execa quirk this piece's own critic-round regression test found by actually hanging the test
+runner**: passing an *already-aborted* `AbortSignal` straight through to execa's own `cancelSignal`
+option hangs indefinitely rather than failing fast — confirmed directly (the test itself hung until
+killed) while adding a regression test for a related, real critic finding (a caller that cancels purely
+via `abortSignal`, never calling the exposed `.stop()`, was being misreported as `session.ended` reason
+`'error'` instead of `'aborted'`). The real fix short-circuits before `execa` is ever invoked at all
+when `options.abortSignal?.aborted` is already `true` at call time, returning a synthetic, immediate
+`session.ended{reason:'aborted'}` — proven by a test needing no `cwd`/`PATH`/process at all, since
+nothing is ever spawned in that branch.
+
+Two real bugs from the critic round were fixed (the `abortSignal`-only cancellation misreporting, found
+by the critic; the execa already-aborted hang, self-caught while writing that fix's own regression
+test) and one low-severity, honestly-undertested gap was closed defensively (the trailing positional
+prompt now has a `--` end-of-options guard against a prompt beginning with a dash being misread as a
+flag — not live-verified, since confirming it costs a real API call for an edge case judged low enough
+severity not to warrant one). See `GAUNTLET-LOG.md`'s own M7 P2 entry for the full critic round,
+including the dangling `SPEC-QUESTIONS.md` citation the critic caught: every file in this piece cited
+this exact entry before it had actually been written.
