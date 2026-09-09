@@ -1,0 +1,36 @@
+# forge:generated v=1 hash=b4310569e90e9fb73aae8de93e2822cb92daecf5f44eb96706f95b5a479638f4 — edits will be overwritten; use overrides/
+id: G-Ready
+name: Ready gate
+phase: P5
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: story:dor
+      run: 'forge spec validate --rule definition-of-ready --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: story:file-claim-overlap
+      run: 'forge spec validate --rule file-claim-overlap --json'
+      failOn: 'errors > 0'
+    - id: story:unbound-acceptance-criteria
+      run: 'forge spec validate --rule unbound-acceptance-criteria --json'
+      failOn: 'errors > 0'
+    - id: story:oversized
+      run: 'forge spec validate --rule oversized-stories --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: stage-plan-review
+      agent: critic
+      brief: briefs/critique-stage-plan.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: Epic(*)
+  - artifact: Story(*)
+onReject:
+  action: replan
+  target: P5

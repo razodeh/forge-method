@@ -1,0 +1,25 @@
+# forge:generated v=1 hash=e231381c746b32c85c11d375b09fed2b37a3532089786858e7d39ecfd6c07450 — edits will be overwritten; use overrides/
+id: discover
+name: Discovery
+version: 1.0.0
+description: Frames the problem, users, competitive landscape, and success metrics (10 §10.2 P1).
+levels: [L2, L3, L4]
+steps:
+  - id: frame-problem
+    kind: agent
+    agent: analyst
+    brief: briefs/frame-problem.md
+    inputs: ['kb:constraints/**']
+    outputs: [{ type: Assumption, cardinality: many }]
+
+  - id: define-metrics
+    kind: agent
+    agent: pm
+    brief: briefs/define-success-metrics.md
+    dependsOn: [frame-problem]
+    outputs: [{ type: NFR, cardinality: many }]
+
+  - id: problem-gate
+    kind: gate
+    gate: G-Problem
+    dependsOn: [define-metrics]

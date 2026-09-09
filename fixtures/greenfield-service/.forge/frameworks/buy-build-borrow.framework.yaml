@@ -1,0 +1,42 @@
+# forge:generated v=1 hash=5ec3f9a81a48bd6c9764a680afa7ccdee52b171d967fbed9d7cb034ddfa36aca — edits will be overwritten; use overrides/
+id: buy-build-borrow
+name: Buy vs build vs borrow
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/buy-build-borrow.md }
+inputs:
+  required: [kb:constraints/**]
+questions:
+  - id: capability_is_undifferentiated
+    text: 'Is this capability undifferentiated heavy lifting (auth, email delivery, payments, search infra, observability backends)?'
+    type: boolean
+  - id: capability_is_core_value_prop
+    text: "Does this capability represent a significant part of the product's core value proposition?"
+    type: boolean
+options:
+  - id: buy-managed-service
+  - id: borrow-open-source-library
+  - id: build-in-house
+criteria:
+  - id: total-cost-of-ownership
+    weight: 0.25
+  - id: operational-burden
+    weight: 0.2
+  - id: data-residency-and-licence-fit
+    weight: 0.15
+  - id: maturity-and-maintenance-signal
+    weight: 0.15
+  - id: exit-cost
+    weight: 0.15
+  - id: core-value-proposition-share
+    weight: 0.1
+scoring: hybrid
+rules:
+  # "never build undifferentiated heavy lifting ... at L2/L3 without an ADR that justifies it" (11
+  # §11.2) -- this framework's own produced ADR is that justification vehicle, so the rule stops short
+  # of eliminating build-in-house outright and only rules it out for the case that is doubly clear:
+  # undifferentiated AND not a core value-proposition driver.
+  - if: 'capability_is_undifferentiated && !capability_is_core_value_prop'
+    then: { eliminate: [build-in-house] }
+output_template: templates/adr-buy-build-borrow.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/vendor-integration.yaml

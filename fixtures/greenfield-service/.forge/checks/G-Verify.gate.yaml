@@ -1,0 +1,38 @@
+# forge:generated v=1 hash=72ec500ba934926232fa60743e88b4c83686824eda9ee8db9e53cc2d6e97ebea — edits will be overwritten; use overrides/
+id: G-Verify
+name: Verify gate
+phase: P7
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: test:run
+      run: 'forge test run --json'
+      parser: forge-json
+      failOn: 'failed > 0'
+    - id: story:ac-coverage
+      run: 'forge test coverage --rule acceptance-criteria --json'
+      failOn: 'coverage < 100'
+    - id: test:coverage
+      run: 'forge test coverage --json'
+      failOn: 'coverage < 80'
+    - id: test:lint
+      run: 'forge test run --rule lint --json'
+      failOn: 'errors > 0'
+    - id: test:typecheck
+      run: 'forge test run --rule typecheck --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: verification-review
+      agent: critic
+      brief: briefs/critique-verification.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: GateReport
+onReject:
+  action: replan
+  target: P7

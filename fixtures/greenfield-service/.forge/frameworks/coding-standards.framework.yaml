@@ -1,0 +1,30 @@
+# forge:generated v=1 hash=4e4e1869f0639c6fab4aa54dedb371e2b70b56f1f2e2085fb722bd4ba70e8dc1 — edits will be overwritten; use overrides/
+id: coding-standards
+name: Coding standards and quality tooling selection
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: engineering/standards.md }
+inputs:
+  required: [kb:constraints/**]
+questions:
+  - id: type_checking_strictness
+    text: 'How strict should type checking be?'
+    type: choice
+    options: [loose, standard, strict]
+options:
+  - id: minimal-lint
+  - id: standard-lint-format
+  - id: strict-lint-format-typecheck
+criteria:
+  - id: agent-checkability
+    weight: 0.4
+  - id: team-friction
+    weight: 0.3
+  - id: onboarding-simplicity
+    weight: 0.3
+scoring: rubric
+rules:
+  - if: 'type_checking_strictness == "strict"'
+    then: { prefer: strict-lint-format-typecheck }
+output_template: templates/adr-coding-standards.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/coding-standards-ci-wiring.yaml

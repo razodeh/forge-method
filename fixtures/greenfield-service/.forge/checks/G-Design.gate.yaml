@@ -1,0 +1,47 @@
+# forge:generated v=1 hash=9bf5061b13b383438668f15919ff7bd3eb0eaf52d0a01e682eb14d14a1d5f324 — edits will be overwritten; use overrides/
+id: G-Design
+name: Design gate
+phase: P3
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: spec:validate
+      run: 'forge spec validate --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: kb:lint
+      run: 'forge kb lint --json'
+      failOn: 'errors > 0'
+    - id: adr:coverage
+      run: 'forge kb lint --rule adr-coverage --json'
+      failOn: 'errors > 0'
+    - id: interfaces:frozen
+      run: 'forge spec interfaces --check-frozen --json'
+      failOn: 'undefined_refs > 0'
+    - id: nfr:numeric
+      run: 'forge spec validate --rule nfr-numeric --json'
+      failOn: 'errors > 0'
+    - id: diagram:validate
+      run: 'forge diagram validate --gate G-Design --json'
+      failOn: 'errors > 0' # syntax, required coverage, ADR diagram coverage, node refs, captions
+    - id: diagram:drift
+      run: 'forge diagram generate --all --check --json'
+      failOn: 'drifted > 0'
+  advisory:
+    - id: architect-review
+      agent: critic
+      brief: briefs/critique-architecture.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: ArchitectureSpec
+  - artifact: ADR(*)
+  - artifact: DataModel
+  - artifact: ThreatModel
+onReject:
+  action: replan
+  target: P3

@@ -1,0 +1,33 @@
+# forge:generated v=1 hash=3375f4f523b51f771d8e22972b639cd761960d82e9b2a8a448cb121859bfd806 — edits will be overwritten; use overrides/
+id: G-Product
+name: Product gate
+phase: P2
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: capability:acceptance
+      run: 'forge spec validate --rule capability-acceptance --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: nfr:numeric
+      run: 'forge spec validate --rule nfr-numeric --json'
+      failOn: 'errors > 0'
+    - id: oq:blocking
+      run: 'forge spec validate --rule blocking-open-questions --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: product-review
+      agent: critic
+      brief: briefs/critique-product-definition.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: Capability(*)
+  - artifact: NFR(*)
+onReject:
+  action: replan
+  target: P2

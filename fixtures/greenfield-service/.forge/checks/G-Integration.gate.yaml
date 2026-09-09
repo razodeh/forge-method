@@ -1,0 +1,35 @@
+# forge:generated v=1 hash=e0d469c28311d6f767b844561031413172c79b63bbed582985cbe054b0709e30 — edits will be overwritten; use overrides/
+id: G-Integration
+name: Integration gate
+# L4-only (10 §10.2's own level-mapping sentence: "L4 adds G-Integration ... in P3") -- see
+# SPEC-QUESTIONS.md Q91 for why `phase: P3` is this piece's own resolution of an otherwise-unstated
+# phase assignment, not a value the spec states directly the way it does for the other nine gates.
+phase: P3
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: contract:cross-service
+      run: 'forge test run --rule contract --json'
+      parser: forge-json
+      failOn: 'failed > 0'
+    - id: version:skew
+      run: 'forge spec validate --rule version-skew --json'
+      failOn: 'errors > 0'
+    - id: migration:order
+      run: 'forge spec validate --rule migration-order-violations --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: integration-review
+      agent: critic
+      brief: briefs/critique-integration.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: InterfaceContract(*)
+onReject:
+  action: replan
+  target: P3

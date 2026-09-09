@@ -1,0 +1,39 @@
+# forge:generated v=1 hash=3ae133aa1c7f1497c5ecf95e332b89823b82052a658680e274ab7da528e9938c — edits will be overwritten; use overrides/
+id: deliver-stage
+name: Deliver Stage
+version: 1.0.0
+description: Pipeline, environments, deploy, smoke tests, and rollback rehearsal (10 §10.2 P9).
+levels: [L2, L3, L4]
+steps:
+  - id: design-pipeline
+    kind: agent
+    agent: sre
+    brief: briefs/design-cicd-pipeline.md
+    outputs: [{ type: ADR }]
+
+  - id: design-deployment
+    kind: agent
+    agent: sre
+    brief: briefs/design-deployment-strategy.md
+    dependsOn: [design-pipeline]
+    outputs: [{ type: ADR }]
+
+  - id: deploy
+    kind: command
+    run: 'forge deploy run --json'
+    dependsOn: [design-deployment]
+
+  - id: smoke-test
+    kind: command
+    run: 'forge deploy smoke-test --json'
+    dependsOn: [deploy]
+
+  - id: rehearse-rollback
+    kind: command
+    run: 'forge deploy rollback --dry-run --json'
+    dependsOn: [smoke-test]
+
+  - id: deliver-gate
+    kind: gate
+    gate: G-Deliver
+    dependsOn: [rehearse-rollback]

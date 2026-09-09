@@ -15,6 +15,7 @@
     "test/**/*.mjs",
     "scripts/**/*.mjs",
     "scripts/**/*.ts",
+    "packages/cli/bin/**/*.mjs",
     "*.config.ts",
     "*.config.js"
   ]

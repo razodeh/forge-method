@@ -1,0 +1,40 @@
+# forge:generated v=1 hash=a7347cf7350e1efce4934060b8f128bba2ae1ebf39900cca912e254ab1c109d6 — edits will be overwritten; use overrides/
+id: debug
+name: Debug
+version: 1.0.0
+description: >-
+  Runs 13 §13.2's own F-DEBUG-1 autonomous RCA loop (intake -> reproduce -> isolate -> hypothesise ->
+  falsify -> diagnose -> fix -> prove -> prevent -> record) via @forge/methods' framework executor;
+  this workflow's own job is invoking that framework and gating on its result, not re-implementing the
+  state machine as workflow steps.
+levels: [L0, L1, L2, L3, L4]
+inputs:
+  - name: defectId
+    type: string
+    required: true
+steps:
+  - id: run-rca
+    kind: agent
+    agent: diagnostician
+    brief: briefs/run-rca-framework.md
+    inputs: ['artifact:Defect({{defectId}})']
+    outputs: [{ type: RCA }]
+    limits: { maxTurns: 45 }
+
+  - id: fix
+    kind: agent
+    agent: backend
+    brief: briefs/fix-defect.md
+    dependsOn: [run-rca]
+    retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+
+  - id: prove-fix
+    kind: command
+    run: 'forge story verify --json'
+    dependsOn: [fix]
+
+  - id: record
+    kind: command
+    run: 'forge kb sync'
+    inline: true
+    dependsOn: [prove-fix]

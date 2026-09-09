@@ -1,0 +1,34 @@
+# forge:generated v=1 hash=4961ce6e568237fd211dacda8400b0ccf127545079a2fe1be80122938601d65e — edits will be overwritten; use overrides/
+id: consistency-transaction-design
+name: Consistency, CAP and transaction design
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/consistency.md }
+inputs:
+  required: [kb:constraints/**, kb:data/storage.md]
+questions:
+  - id: spans_distributed_stores
+    text: 'Does this operation need to touch more than one store or service transactionally?'
+    type: boolean
+options:
+  - id: strong
+  - id: read-your-writes
+  - id: monotonic
+  - id: eventual
+criteria:
+  - id: user-visible-correctness-need
+    weight: 0.4
+  - id: latency-cost
+    weight: 0.3
+  - id: implementation-complexity
+    weight: 0.3
+scoring: hybrid
+rules:
+  # "Distributed transactions: forbidden by default. Use outbox + at-least-once + idempotent
+  # consumers, or a saga with explicit compensations." (12 §12.1) -- a distributed operation cannot
+  # honestly claim `strong` consistency without 2PC (which itself requires a human-approved ADR), so
+  # this framework's own default nudge for that case is the weaker, honestly-achievable posture.
+  - if: 'spans_distributed_stores'
+    then: { prefer: eventual }
+output_template: templates/adr-consistency-transaction-design.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/concurrency-control-tests.yaml

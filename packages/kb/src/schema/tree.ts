@@ -44,8 +44,15 @@ export const DEFAULT_KB_ROOT = 'docs/forge/kb';
 
 /** Files this piece deliberately does not attempt to parse — see `SPEC-QUESTIONS.md` Q51: `index.md`
  * (both the KB root's and `decisions/`'s own) is "generated," not hand-authored content with a
- * schema to validate against. */
-const GENERATED_FILE_NAMES = new Set(['index.md']);
+ * schema to validate against. `README.md` joins it for the identical reason, found only once a real
+ * caller (`forge doctor`'s own `kb-lint` check, driven against a real `forge init`-produced project
+ * for the first time by `PLAN-M6.md` C9's own `"E1 init"` test) parsed a real, materialized KB tree
+ * rather than a hand-built minimal fixture with no README: `forge init`'s own real `writeDocsSkeleton`
+ * (`03` §3.3) writes a hand-authored `<kbRoot>/README.md` with no front matter at all into every real
+ * project this codebase ever produces, and this function had no way to tell it apart from a real,
+ * malformed KB entry — the identical shape of bug `@forge/cli/commands/shared.ts`'s own
+ * `listSpecArtifacts` already had for the `<specsRoot>/README.md` case (`SPEC-QUESTIONS.md` Q110). */
+const GENERATED_FILE_NAMES = new Set(['index.md', 'README.md']);
 
 export interface KbParseError {
   readonly path: string;
@@ -55,10 +62,19 @@ export interface KbParseError {
 export type KbParsedEntry =
   | { readonly path: string; readonly kind: 'adr'; readonly value: ADR; readonly body: string }
   | { readonly path: string; readonly kind: 'diagram'; readonly value: Diagram }
-  | { readonly path: string; readonly kind: 'runbook'; readonly value: Runbook; readonly body: string }
+  | {
+      readonly path: string;
+      readonly kind: 'runbook';
+      readonly value: Runbook;
+      readonly body: string;
+    }
   | { readonly path: string; readonly kind: 'risks-file'; readonly value: RisksFile }
   | { readonly path: string; readonly kind: 'assumptions-file'; readonly value: AssumptionsFile }
-  | { readonly path: string; readonly kind: 'open-questions-file'; readonly value: OpenQuestionsFile }
+  | {
+      readonly path: string;
+      readonly kind: 'open-questions-file';
+      readonly value: OpenQuestionsFile;
+    }
   | { readonly path: string; readonly kind: 'environments-file'; readonly value: EnvironmentsFile }
   | { readonly path: string; readonly kind: 'components-file'; readonly value: ComponentsFile }
   | { readonly path: string; readonly kind: 'kb-entry'; readonly value: KbEntry };
@@ -135,7 +151,12 @@ async function parseOneFile(
       // `body` carries the ADR's real Context/Decision/Consequences prose — a P9 gauntlet round
       // found `adrSchema` itself has no body field at all (front matter only), so a declared-input
       // ADR had no way to surface its own substantive content into a context pack without this.
-      return { path: relativePath, kind: 'adr', value: adrSchema.parse(frontMatter), body: doc.body };
+      return {
+        path: relativePath,
+        kind: 'adr',
+        value: adrSchema.parse(frontMatter),
+        body: doc.body,
+      };
     case 'runbook':
       return {
         path: relativePath,
@@ -174,7 +195,10 @@ async function parseOneFile(
       // never returns anything but a non-null, non-array object — it throws `CFG-007` instead, which
       // the caller of `parseOneFile` already catches. `kbEntrySchema.parse` itself still validates
       // every field's real shape; this cast only makes the object spreadable.
-      const entry = kbEntrySchema.parse({ ...(frontMatter as Record<string, unknown>), body: doc.body });
+      const entry = kbEntrySchema.parse({
+        ...(frontMatter as Record<string, unknown>),
+        body: doc.body,
+      });
       const expectedSection = directoryImpliedSection(relativePath);
       if (expectedSection !== undefined && entry.section !== expectedSection) {
         throw new Error(

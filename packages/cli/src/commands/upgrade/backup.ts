@@ -25,6 +25,46 @@ import {
 
 const RETAIN_BACKUPS = 5;
 
+/** Real, transient race error codes Node's own `fs.cp({recursive: true})` can genuinely raise when a
+ * directory tree it is still walking is concurrently modified — not by this function's own caller
+ * (`createBackup` never runs two copies of the same tree concurrently with itself), but by real,
+ * unrelated OS-level contention: a heavily-parallel test run on one shared disk, or, in production, a
+ * concurrent `forge doctor`/editor tool touching the same real `.forge/` tree mid-copy. A gauntlet
+ * critic caught a real, observed `ENOTEMPTY` from exactly this call under full-suite parallelism —
+ * the identical class of transient filesystem race this codebase's own git-worktree TOCTOU fixes
+ * (`packages/cli/src/commands/run/context.ts`) already retry around, applied here to `fs.cp` instead
+ * of `git worktree add`. */
+const TRANSIENT_CP_ERROR_CODES = new Set(['ENOTEMPTY', 'EBUSY']);
+const MAX_CP_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 25;
+
+function isTransientCpError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    TRANSIENT_CP_ERROR_CODES.has((error as NodeJS.ErrnoException).code ?? '')
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** `fs.cp` with a real, bounded retry over the one class of failure that is genuinely worth retrying
+ * — everything else (a real permission error, a real missing source) propagates immediately, on the
+ * first attempt, exactly as `cp` alone would. */
+async function copyWithRetry(source: string, destination: string): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_CP_ATTEMPTS; attempt++) {
+    try {
+      await cp(source, destination, { recursive: true });
+      return;
+    } catch (error) {
+      if (attempt === MAX_CP_ATTEMPTS || !isTransientCpError(error)) throw error;
+      await delay(RETRY_DELAY_MS * attempt);
+    }
+  }
+}
+
 /** Everything real backups exclude: `.forge/state/` (`06` §6.4's own runtime state, never a project
  * asset to restore) and `.forge/backups/` itself (a backup of backups is never useful and would let
  * `pruneOldBackups`' own retention count silently include itself). */
@@ -75,14 +115,12 @@ export async function createBackup(
   const entries = await listDirEntriesSorted(forgeRoot as AbsolutePath);
   for (const entry of entries) {
     if (EXCLUDED_TOP_LEVEL.has(entry.name)) continue;
-    await cp(path.join(forgeRoot, entry.name), path.join(backupDir, entry.name), {
-      recursive: true,
-    });
+    await copyWithRetry(path.join(forgeRoot, entry.name), path.join(backupDir, entry.name));
   }
 
   const specsSource = path.join(projectRoot, specsRoot);
   if (await pathExists(specsSource as AbsolutePath)) {
-    await cp(specsSource, path.join(backupDir, specsRoot), { recursive: true });
+    await copyWithRetry(specsSource, path.join(backupDir, specsRoot));
   }
 
   await pruneOldBackups(paths);

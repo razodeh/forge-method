@@ -1,0 +1,66 @@
+# forge:generated v=1 hash=ccd462a257700c822696832f1d9b4164f40187c4b39089a31ef5ebc3cd3e4a05 — edits will be overwritten; use overrides/
+id: nfr-strategy
+name: NFR strategy (mechanism and verification)
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/nfr-strategy.md }
+inputs:
+  required: [kb:constraints/**, artifact:NFR(*)]
+questions:
+  - id: nfr_category
+    text: 'Which NFR category is this decision for?'
+    type: choice
+    options:
+      [
+        performance,
+        scalability,
+        availability,
+        security,
+        privacy,
+        maintainability,
+        operability,
+        cost,
+        accessibility,
+      ]
+# 11 §11.2's own F-ARCH-5 table names one verification approach per NFR category -- this options list
+# is that table's own "Verification" column, transcribed directly, since the framework's real job (per
+# category) is choosing and recording which verification mechanism proves the chosen mechanism decision.
+options:
+  - id: benchmark-test
+  - id: load-test-profile
+  - id: chaos-fault-injection-drill
+  - id: sast-dependency-authz-scan
+  - id: data-map-audit-deletion-test
+  - id: architecture-lint-coverage
+  - id: dashboard-and-runbook-check
+  - id: cost-model-budget-alarm
+  - id: automated-accessibility-tests
+criteria:
+  - id: category-fit
+    weight: 0.4
+  - id: verification-rigor
+    weight: 0.3
+  - id: cost-to-implement
+    weight: 0.3
+scoring: hybrid
+rules:
+  - if: 'nfr_category == "performance"'
+    then: { prefer: benchmark-test }
+  - if: 'nfr_category == "scalability"'
+    then: { prefer: load-test-profile }
+  - if: 'nfr_category == "availability"'
+    then: { prefer: chaos-fault-injection-drill }
+  - if: 'nfr_category == "security"'
+    then: { prefer: sast-dependency-authz-scan }
+  - if: 'nfr_category == "privacy"'
+    then: { prefer: data-map-audit-deletion-test }
+  - if: 'nfr_category == "maintainability"'
+    then: { prefer: architecture-lint-coverage }
+  - if: 'nfr_category == "operability"'
+    then: { prefer: dashboard-and-runbook-check }
+  - if: 'nfr_category == "cost"'
+    then: { prefer: cost-model-budget-alarm }
+  - if: 'nfr_category == "accessibility"'
+    then: { prefer: automated-accessibility-tests }
+output_template: templates/adr-nfr-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/nfr-verification.yaml

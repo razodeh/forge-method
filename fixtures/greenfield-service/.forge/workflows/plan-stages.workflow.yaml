@@ -1,0 +1,22 @@
+# forge:generated v=1 hash=41b972ae2f01b4ee7f0f7e12b001712148be5853e7c8b84b0c0eec6458af133e — edits will be overwritten; use overrides/
+id: plan-stages
+name: Stage Planning
+version: 1.0.0
+description: Decomposes the product into independently deployable, demonstrable stages (10 §10.4).
+levels: [L2, L3, L4]
+requires:
+  gates_passed: [G-Product]
+  artifacts: [Capability]
+steps:
+  - id: decompose-stages
+    kind: agent
+    agent: pm
+    brief: briefs/decompose-stages.md
+    inputs: ['artifact:Capability(*)']
+    outputs: [{ type: HandoffRecord, subtype: stage-plan }]
+
+  - id: review-stages
+    kind: agent
+    agent: em
+    brief: briefs/review-stage-plan.md
+    dependsOn: [decompose-stages]

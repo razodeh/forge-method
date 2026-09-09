@@ -1,0 +1,35 @@
+# forge:generated v=1 hash=e9b8be3c12e32c5c401cf48328e0119a0f2f3728e604a46a0313cbf50419b248 — edits will be overwritten; use overrides/
+id: G-Foundation
+name: Foundation gate
+phase: P4
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: repo:clean-build
+      run: 'forge doctor --rule clean-build --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: repo:reproducible-install
+      run: 'forge doctor --rule reproducible-install --json'
+      failOn: 'errors > 0'
+    - id: ci:skeleton
+      run: 'forge doctor --rule ci-skeleton --json'
+      failOn: 'errors > 0'
+    - id: test:command
+      run: 'forge doctor --rule test-command --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: foundation-review
+      agent: critic
+      brief: briefs/critique-project-foundation.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: Environment(*)
+onReject:
+  action: replan
+  target: P4

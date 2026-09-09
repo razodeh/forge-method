@@ -1,0 +1,18 @@
+# forge:generated v=1 hash=b325ed36379e79bd01423aa923d44ea8c5478f0aa82c5d581b355605803ddb06 — edits will be overwritten; use overrides/
+id: review-perspectives
+name: Review perspectives
+owner_agent: reviewer
+produces: { adr_category: process, kb_section: engineering/review.md }
+inputs:
+  required: [kb:constraints/**, artifact:Story(*)]
+# 13 §13.3's own F-REVIEW-1 is a fixed set of eight review perspectives (spec conformance, design,
+# correctness, security, performance, testing, operability, documentation), each a separate pass with
+# its own checklist -- not a choice among named alternatives; a real `swarm-review` runs all eight, it
+# does not pick one. One option, no criteria/rules, the same "execution step, not a decision" shape
+# already established.
+options:
+  - id: run-swarm-review-perspectives
+scoring: rules
+output_template: templates/adr-review-perspectives.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/review-finding-remediation.yaml

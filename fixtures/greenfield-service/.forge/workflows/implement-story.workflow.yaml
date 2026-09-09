@@ -1,0 +1,93 @@
+# forge:generated v=1 hash=1bae0385fffe5e24fe1cec49c71ce3324e3a94835c13ff005bb947b6a363e0ee — edits will be overwritten; use overrides/
+id: implement-story
+name: Implement a single story
+version: 1.0.0
+description: >-
+  The canonical inner loop (10 §10.6): plan, red, green, refactor, self-verify, review, document,
+  commit, merge -- one story at a time, with the test-writer/implementer and reviewer/implementer
+  separations enforced structurally, not by convention.
+levels: [L0, L1, L2, L3, L4]
+requires:
+  artifacts: [Story]
+inputs:
+  - name: storyId
+    type: string
+    required: true
+  - name: ownerRole
+    type: string
+    required: true
+
+steps:
+  # Step 1 ("context") is not its own DSL step: 05 §5.4's context-packing (story, ACs, interfaces,
+  # data model, standards, relevant KB, prior art) runs automatically for every agent session below,
+  # not as an explicit workflow node.
+
+  - id: plan
+    kind: agent
+    agent: '{{ownerRole}}'
+    brief: briefs/plan-story.md
+    inputs:
+      ['artifact:Story({{storyId}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
+    outputs: [{ type: HandoffRecord, subtype: implementation-plan }]
+
+  - id: red
+    kind: agent
+    agent: sdet
+    brief: briefs/write-failing-tests.md
+    dependsOn: [plan]
+    inputs: ['artifact:Story({{storyId}})', 'artifact:HandoffRecord']
+    produces: ['{{run.testPaths}}']
+
+  - id: green
+    kind: agent
+    agent: '{{ownerRole}}'
+    brief: briefs/implement-story.md
+    dependsOn: [red]
+    inputs:
+      ['artifact:Story({{storyId}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
+    produces: '{{run.filesExpected}}'
+    retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
+    onFailure: escalate
+
+  - id: refactor
+    kind: agent
+    agent: '{{ownerRole}}'
+    brief: briefs/refactor-story.md
+    dependsOn: [green]
+    inputs: ['diff:lane']
+
+  - id: self-verify
+    kind: command
+    run: 'forge story verify {{storyId}} --json'
+    dependsOn: [refactor]
+
+  - id: review
+    kind: agent
+    agent: reviewer
+    mode: swarm-review
+    perspectives: [design, security, testing, performance]
+    dependsOn: [self-verify]
+    inputs: ['diff:lane', 'artifact:Story({{storyId}})']
+    outputs: [{ type: ReviewReport }]
+    retry: { maxAttempts: 2, retryOn: [validation] }
+    onFailure: escalate
+
+  - id: document
+    kind: agent
+    agent: '{{ownerRole}}'
+    brief: briefs/document-story.md
+    dependsOn: [review]
+    inputs: ['diff:lane']
+
+  - id: commit
+    kind: checkpoint
+    dependsOn: [document]
+
+  - id: merge
+    kind: merge
+    over: 'storyId'
+    dependsOn: [commit]
+    policy: { conflict: agent, preChecks: fast, postChecks: full }
+
+onFailure:
+  default: escalate

@@ -1,0 +1,29 @@
+# forge:generated v=1 hash=d0b710a4e6605c6bd1d75c7ce188967783989ea8541229338700b5f9cea8bd06 — edits will be overwritten; use overrides/
+id: test-data-strategy
+name: Test data strategy
+owner_agent: test-architect
+produces: { adr_category: process, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**, kb:data/storage.md]
+questions:
+  - id: tests_run_in_parallel_workers
+    text: 'Do tests in this layer run across multiple parallel workers against a shared database?'
+    type: boolean
+options:
+  - id: transaction-rollback
+  - id: truncate-between-tests
+  - id: fresh-schema-per-worker
+criteria:
+  - id: isolation-strength
+    weight: 0.4
+  - id: speed
+    weight: 0.35
+  - id: operational-simplicity
+    weight: 0.25
+scoring: hybrid
+rules:
+  - if: 'tests_run_in_parallel_workers'
+    then: { prefer: fresh-schema-per-worker }
+output_template: templates/adr-test-data-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/fixture-factories.yaml

@@ -1,0 +1,49 @@
+# forge:generated v=1 hash=a4cd862d85ebbfeeefb8268e1329d69cc939f7cb8fbb8432c2f59bed1e5bd042 — edits will be overwritten; use overrides/
+id: pattern-selection
+name: Architectural and design pattern selection
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/patterns.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+questions:
+  - id: needs_independent_read_write_scaling
+    text: 'Do reads and writes for this boundary need to scale or evolve independently?'
+    type: boolean
+  - id: needs_full_audit_history
+    text: 'Does this boundary need a full, replayable history of every state change, not just the current state?'
+    type: boolean
+# 11 §11.2's own F-ARCH-4 catalog (application/domain, programming-paradigm, data/analytics, and
+# observability patterns) is data this piece's own Mandate assigns elsewhere
+# (`catalog/patterns/*.entry.yaml`, @forge/catalog) -- this options list is a curated subset of the
+# application/domain patterns this framework's own worked decision (which pattern, if any, does one
+# specific boundary need) most directly compares, per the spec's own "Normative rule -- pattern
+# justification" paragraph naming CQRS/Event Sourcing as the two patterns with their own extra
+# recording requirements.
+options:
+  - id: no-additional-pattern
+  - id: hexagonal-ports-adapters
+  - id: cqrs
+  - id: event-sourcing
+  - id: saga-process-manager
+  - id: outbox-inbox
+  - id: anti-corruption-layer
+  - id: strangler-fig
+  - id: circuit-breaker
+criteria:
+  - id: problem-fit
+    weight: 0.3
+  - id: precondition-satisfied
+    weight: 0.25
+  - id: operational-cost-accepted
+    weight: 0.25
+  - id: simpler-alternative-rejected
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'needs_full_audit_history'
+    then: { prefer: event-sourcing }
+  - if: 'needs_independent_read_write_scaling'
+    then: { prefer: cqrs }
+output_template: templates/adr-pattern-selection.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/pattern-adoption.yaml

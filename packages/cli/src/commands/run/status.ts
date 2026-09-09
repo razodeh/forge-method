@@ -58,6 +58,24 @@ export async function runStatus(
   };
 }
 
+export interface RunStatusReport {
+  readonly v: 1;
+  readonly status: RunStatusView;
+}
+
+/** `forge --json status` — `03` §3.5's own real `{"v":1,...}` envelope contract, wrapping `runStatus`'s
+ * own real view. The same real envelope shape `DoctorReport`/`UpgradeReport` already carry as their
+ * own top-level fields; this piece keeps `status` nested (rather than flattening `v` alongside
+ * `RunStatusView`'s own fields) since `runStatus` is already a real, independently-typed return value
+ * this wrapper should not have to redeclare field-for-field. */
+export async function runStatusJson(
+  paths: ProjectPaths,
+  projectRoot: string,
+  runId: string | undefined,
+): Promise<RunStatusReport> {
+  return { v: 1, status: await runStatus(paths, projectRoot, runId) };
+}
+
 export interface LaneView {
   readonly laneId: string;
   readonly status: string;

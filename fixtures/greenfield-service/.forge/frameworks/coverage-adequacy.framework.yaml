@@ -1,0 +1,17 @@
+# forge:generated v=1 hash=968fd6b9c635b9d33245a18ba54f15f840ea1fedadd13e0996bb9aa248a206f9 — edits will be overwritten; use overrides/
+id: coverage-adequacy
+name: Coverage and adequacy policy
+owner_agent: test-architect
+produces: { adr_category: process, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**]
+# 13 §13.1's own F-TEST-5 is normative, not a choice among named alternatives: line/branch coverage is
+# a ratcheted floor, AC coverage is the binding metric, mutation testing runs nightly on core domain
+# packages. One option, no criteria/rules, the same "execution step, not a decision" shape already
+# established for F-TEST-1.
+options:
+  - id: adopt-coverage-adequacy-policy
+scoring: rules
+output_template: templates/adr-coverage-adequacy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/coverage-ratchet-wiring.yaml

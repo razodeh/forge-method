@@ -1,0 +1,40 @@
+# forge:generated v=1 hash=5c7500b27bbb9abee40b7c0cd6d428ac470b9ad857ecedce18170d8c64e4b8f7 — edits will be overwritten; use overrides/
+id: plan-stage
+name: Plan One Stage
+version: 1.0.0
+description: Epics, stories, test plan, and run-plan DAG for a single stage (10 §10.2 P5).
+levels: [L1, L2, L3, L4]
+inputs:
+  - name: stageId
+    type: string
+    required: true
+steps:
+  - id: write-epics
+    kind: agent
+    agent: po
+    brief: briefs/write-epics.md
+    outputs: [{ type: Epic, cardinality: many }]
+
+  - id: write-stories
+    kind: agent
+    agent: po
+    brief: briefs/write-stories.md
+    dependsOn: [write-epics]
+    outputs: [{ type: Story, cardinality: many }]
+
+  - id: write-test-plan
+    kind: agent
+    agent: test-architect
+    brief: briefs/write-test-plan.md
+    dependsOn: [write-stories]
+    outputs: [{ type: HandoffRecord, subtype: test-plan }]
+
+  - id: derive-run-plan
+    kind: command
+    run: 'forge plan run-plan {{stageId}} --json'
+    dependsOn: [write-test-plan]
+
+  - id: ready-gate
+    kind: gate
+    gate: G-Ready
+    dependsOn: [derive-run-plan]

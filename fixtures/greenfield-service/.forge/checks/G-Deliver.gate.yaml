@@ -1,0 +1,46 @@
+# forge:generated v=1 hash=0aea5768e3c60cef041a7a21e1c63785e411cff185c08d2ade8056b8ddde7c4d — edits will be overwritten; use overrides/
+id: G-Deliver
+name: Deliver gate
+phase: P9
+# 10 §10.3's own gate rule 5: "G-Deliver for a production environment is `alwaysHuman` by default and
+# cannot be set otherwise without an explicit config flag plus a typed acknowledgement." This shipped
+# file is that default -- a project's own config is what actually supplies the flag/acknowledgement
+# rule 5 requires to override it, not this content file.
+autonomyOverride: alwaysHuman
+checks:
+  deterministic:
+    - id: deploy:dry-run
+      run: 'forge deploy --dry-run --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: deploy:rollback-rehearsed
+      run: 'forge deploy --rollback-check --json'
+      failOn: 'errors > 0'
+    - id: secrets:resolved
+      run: 'forge doctor --rule secrets-resolved --json'
+      failOn: 'errors > 0'
+    - id: test:smoke
+      run: 'forge test run --rule smoke --json'
+      failOn: 'failed > 0'
+    - id: diagram:validate
+      run: 'forge diagram validate --gate G-Deliver --json'
+      failOn: 'errors > 0' # deployment topology and pipeline diagrams present and current
+    - id: diagram:drift
+      run: 'forge diagram generate --all --check --json'
+      failOn: 'drifted > 0'
+  advisory:
+    - id: delivery-review
+      agent: critic
+      brief: briefs/critique-delivery-readiness.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: Environment(*)
+  - artifact: Runbook(*)
+onReject:
+  action: replan
+  target: P9

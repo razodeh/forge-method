@@ -112,6 +112,16 @@ const IGNORED_PATHS = new Set([
   // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real
   // `runInit`-produced project fixture scaffolding for `test/commands/upgrade/*.test.ts`.
   'packages/cli/test/commands/upgrade/helpers.ts',
+  // `packages/cli/bin/` (PLAN-M6.md C9): the real `forge` CLI's own launcher, `bin/forge.mjs` — a
+  // thin process-spawn wrapper (the identical shape `scripts/run-tests.mjs` already establishes at
+  // the repo root), deliberately outside `src/` since it is not itself covered code (nothing calls
+  // into it as a module; it only ever spawns a real child process) and, unlike `scripts/`, it lives
+  // inside a real workspace package, so this walk would otherwise flag it as a stray. Still real,
+  // typechecked source — `tsconfig.json`'s own root `include` array covers it directly, the identical
+  // "typechecked by the root project, not a package project" precedent `scripts/**/*.mjs` already
+  // sets, confirmed by the *other* real floor check in this file (`every source file in the
+  // repository is typechecked`) still finding it.
+  'packages/cli/bin',
 ]);
 
 /**

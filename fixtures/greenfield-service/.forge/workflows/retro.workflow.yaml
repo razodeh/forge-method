@@ -1,0 +1,18 @@
+# forge:generated v=1 hash=f77d929a8c0279a9637562a743c813a332db323994baf1606896c4b3eb0dff12 — edits will be overwritten; use overrides/
+id: retro
+name: Retrospective
+version: 1.0.0
+description: A structured retrospective with knowledge-body write-back.
+levels: [L0, L1, L2, L3, L4]
+steps:
+  - id: run-retro
+    kind: agent
+    agent: em
+    brief: briefs/run-retro.md
+    outputs: [{ type: SessionRecord, subtype: retrospective }]
+
+  - id: write-back-kb
+    kind: command
+    run: 'forge kb sync'
+    inline: true
+    dependsOn: [run-retro]

@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { runLanes, runLogs, runStatus } from '../../../src/commands/run/status.ts';
+import { runLanes, runLogs, runStatus, runStatusJson } from '../../../src/commands/run/status.ts';
 import type { ForgeEvent } from '@forge/telemetry/events';
 import { runWorkflow } from '../../../src/commands/run/run.ts';
 import {
@@ -49,6 +49,14 @@ describe('runStatus', () => {
     expect(status.stepCounts['succeeded']).toBe(3);
     // The lock was already released when the run finished — no live lock to report.
     expect(status.lock).toBeUndefined();
+  });
+
+  it('runStatusJson wraps the identical real status in the real {"v":1,...} envelope', async () => {
+    const project = await runFixture('run-status-json');
+    const report = await runStatusJson(project.paths, project.dir, 'run-status-json');
+    expect(report.v).toBe(1);
+    expect(report.status.runId).toBe('run-status-json');
+    expect(report.status.runStatus).toBe('completed');
   });
 
   it('resolves an omitted runId via the real last-run.json pointer', async () => {

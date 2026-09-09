@@ -1,0 +1,17 @@
+# forge:generated v=1 hash=8a386112ed10970b283bf656f575cfd6667c80247bc8fe3618e910545ebeb028 — edits will be overwritten; use overrides/
+id: decomposition-boundaries
+name: Decomposition and boundaries
+owner_agent: architect
+produces: { adr_category: architecture, kb_section: architecture/components.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+# 11 §11.2's own F-ARCH-2 text is a fixed procedure (identify capabilities -> nouns/aggregates ->
+# cluster by change reason and data ownership -> propose components -> validate against the four
+# named tests), not a choice among named alternatives the way F-ARCH-1 is -- one option, no
+# criteria/rules, matching F-INIT-7's own identical "execution step, not a decision" shape.
+options:
+  - id: propose-component-decomposition
+scoring: rules
+output_template: templates/adr-decomposition-boundaries.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/component-boundary-enforcement.yaml

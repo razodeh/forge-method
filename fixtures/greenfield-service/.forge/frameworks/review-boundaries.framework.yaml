@@ -1,0 +1,17 @@
+# forge:generated v=1 hash=4c0ea8dd8b8372316b1e7d63bb470cb44bfd1d0bbad1e7145673375b60440dc4 — edits will be overwritten; use overrides/
+id: review-boundaries
+name: What review is not allowed to be
+owner_agent: reviewer
+produces: { adr_category: process, kb_section: engineering/review.md }
+inputs:
+  required: [kb:constraints/**]
+# 13 §13.3's own F-REVIEW-2 is a fixed set of boundary rules (advisory to gates only, a reviewer may
+# never approve its own authored work -- CFG-501, an empty review must say what it checked), not a
+# choice among named alternatives. One option, no criteria/rules, the same "execution step, not a
+# decision" shape already established for review-perspectives.framework.yaml.
+options:
+  - id: enforce-review-boundaries
+scoring: rules
+output_template: templates/adr-review-boundaries.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/review-authorship-check.yaml

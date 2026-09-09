@@ -424,6 +424,17 @@ export default tseslint.config(
     },
   },
   {
+    // `packages/cli/src/bin.ts` — the real, minimal `forge` CLI entry point (`PLAN-M6.md` C9):
+    // printing real command output/errors to stdout/stderr is this one file's own real job, the
+    // identical "command entry points print to the console" carve-out `scripts/*.mjs` already gets
+    // above, narrowed to this exact file by name rather than a `packages/cli/src/**` glob that would
+    // silently relax the rule for every other real command module in this package too.
+    files: ['packages/cli/src/bin.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
     // Build-time config only. `test/workspace-floor.test.ts` asserts no workspace package ships
     // `.js`/`.jsx` source, so this exemption cannot silently cover production code the way the
     // `**/*.mjs` one did.

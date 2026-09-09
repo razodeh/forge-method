@@ -1,0 +1,17 @@
+# forge:generated v=1 hash=c928a11d476707e74f42d9927206dd2fa52ecd9e35e2b40dd92fef0baea6dad8 — edits will be overwritten; use overrides/
+id: test-pyramid-shape
+name: Test strategy and pyramid shape
+owner_agent: test-architect
+produces: { adr_category: process, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**, artifact:Capability(*)]
+# 13 §13.1's own F-TEST-1 gives one canonical budget table (unit/integration/contract/e2e/NFR shares
+# and speed budgets) plus five normative rules -- it is not a choice among named alternative pyramid
+# shapes, it is adopting THE budgeted pyramid and enforcing it. One option, no criteria/rules, the
+# same "execution step, not a decision" shape already established for F-INIT-7 and others.
+options:
+  - id: adopt-budgeted-test-pyramid
+scoring: rules
+output_template: templates/adr-test-pyramid-shape.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/test-layer-commands.yaml

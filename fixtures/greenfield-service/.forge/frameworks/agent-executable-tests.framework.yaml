@@ -1,0 +1,17 @@
+# forge:generated v=1 hash=ffa2715293f3d70c2607ede395b6b1d0a93a81b179c711359ae136f8aa0be33e — edits will be overwritten; use overrides/
+id: agent-executable-tests
+name: Making tests agent-executable
+owner_agent: test-architect
+produces: { adr_category: process, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**]
+# 13 §13.1's own F-TEST-7 is a fixed checklist of design requirements (one command per layer,
+# machine-readable output, diagnosable-from-text failures, determinism, selectability, a fast
+# `test:affected` tier), not a choice among named alternatives. One option, no criteria/rules, the
+# same "execution step, not a decision" shape already established.
+options:
+  - id: adopt-agent-executability-requirements
+scoring: rules
+output_template: templates/adr-agent-executable-tests.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/test-reporter-normalisation.yaml

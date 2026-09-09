@@ -1,0 +1,31 @@
+# forge:generated v=1 hash=5fa71630ce35f00489c6208f5647097aa9aad1b080c9f9ad653504928f6fc26f — edits will be overwritten; use overrides/
+id: operate
+name: Operate
+version: 1.0.0
+description: Observability, SLOs, runbooks, and alerting live for a delivered stage (10 §10.2 P10).
+levels: [L2, L3, L4]
+steps:
+  - id: instrument-observability
+    kind: agent
+    agent: sre
+    brief: briefs/instrument-observability.md
+    outputs: [{ type: HandoffRecord, subtype: observability-plan }]
+
+  - id: define-slos
+    kind: agent
+    agent: sre
+    brief: briefs/define-slos.md
+    dependsOn: [instrument-observability]
+    outputs: [{ type: NFR, cardinality: many }]
+
+  - id: write-runbooks
+    kind: agent
+    agent: sre
+    brief: briefs/write-runbooks.md
+    dependsOn: [define-slos]
+    outputs: [{ type: Runbook, cardinality: many }]
+
+  - id: operate-gate
+    kind: gate
+    gate: G-Operate
+    dependsOn: [write-runbooks]

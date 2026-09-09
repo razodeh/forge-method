@@ -1,0 +1,38 @@
+# forge:generated v=1 hash=c0017f63fadd6e7c3bda9292a7000cd3a19a50b835ec522dd2bc0da1a1d77355 — edits will be overwritten; use overrides/
+id: quick-fix
+name: Quick Fix
+version: 1.0.0
+description: L0's own fast path -- reproduce, test, fix, verify, commit, with no stage machinery.
+levels: [L0]
+inputs:
+  - name: defectId
+    type: string
+    required: true
+steps:
+  - id: reproduce
+    kind: agent
+    agent: diagnostician
+    brief: briefs/reproduce-defect.md
+    inputs: ['artifact:Defect({{defectId}})']
+
+  - id: write-failing-test
+    kind: agent
+    agent: sdet
+    brief: briefs/write-failing-tests.md
+    dependsOn: [reproduce]
+
+  - id: fix
+    kind: agent
+    agent: backend
+    brief: briefs/fix-defect.md
+    dependsOn: [write-failing-test]
+    retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+
+  - id: verify
+    kind: command
+    run: 'forge story verify --json'
+    dependsOn: [fix]
+
+  - id: commit
+    kind: checkpoint
+    dependsOn: [verify]

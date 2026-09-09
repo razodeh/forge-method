@@ -1,0 +1,32 @@
+# forge:generated v=1 hash=320e8e13023d5d6d42b2fb47e3572b58c8770e00a6355be9aec853e2dff44f57 — edits will be overwritten; use overrides/
+id: verify-stage
+name: Verify Stage
+version: 1.0.0
+description: Full test execution, coverage, NFR verification, and traceability (10 §10.2 P7).
+levels: [L1, L2, L3, L4]
+steps:
+  - id: run-tests
+    kind: command
+    run: 'forge test run --json'
+
+  - id: check-coverage
+    kind: command
+    run: 'forge test coverage --json'
+    dependsOn: [run-tests]
+
+  - id: verify-nfrs
+    kind: agent
+    agent: test-architect
+    brief: briefs/verify-nfrs.md
+    dependsOn: [check-coverage]
+    outputs: [{ type: HandoffRecord, subtype: nfr-verification }]
+
+  - id: verify-traceability
+    kind: command
+    run: 'forge spec matrix --json'
+    dependsOn: [verify-nfrs]
+
+  - id: verify-gate
+    kind: gate
+    gate: G-Verify
+    dependsOn: [verify-traceability]

@@ -1,0 +1,6 @@
+
+# FORGE
+.forge/config.local.yaml
+.forge/overrides.local/
+.forge/secrets.local.yaml
+.forge/state/

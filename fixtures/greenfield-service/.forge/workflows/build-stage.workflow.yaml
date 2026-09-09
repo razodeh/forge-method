@@ -1,0 +1,108 @@
+# forge:generated v=1 hash=df3c6cf083d8a4ba4e4fafd88d80caf22044276d216b9706dfb7f1fcb38b615d — edits will be overwritten; use overrides/
+id: build-stage
+name: Implement a stage
+version: 1.0.0
+description: Takes a planned stage to a verified, deployable state.
+levels: [L1, L2, L3, L4] # which scale levels this applies to
+requires:
+  gates_passed: [G-Ready]
+  artifacts: [StagePlan]
+inputs:
+  - name: stageId
+    type: string
+    required: true
+
+vars:
+  integration_branch: 'forge/integration/{{stageId}}'
+
+steps:
+  - id: prepare
+    kind: command
+    run: 'git switch -c {{vars.integration_branch}} || git switch {{vars.integration_branch}}'
+    inline: true
+
+  - id: freeze-contracts
+    kind: agent
+    agent: architect
+    brief: briefs/freeze-contracts.md
+    inputs: ['artifact:StagePlan', 'kb:architecture/**', 'kb:data/**']
+    outputs:
+      - type: InterfaceContract
+        cardinality: many
+    gateEvidence: [G-Design]
+
+  - id: contracts-gate
+    kind: gate
+    gate: G-Design
+    dependsOn: [freeze-contracts]
+
+  - id: generate-tests
+    kind: fanout
+    over: 'stage.stories'
+    itemKey: '{{item.id}}'
+    dependsOn: [contracts-gate]
+    step:
+      kind: agent
+      agent: sdet
+      brief: briefs/write-failing-tests.md
+      inputs: ['artifact:Story({{item.id}})', 'artifact:TestPlan']
+      produces: ['{{item.test_paths}}']
+      limits: { maxTurns: 25, maxCostUsd: 1.5 }
+
+  - id: implement
+    kind: fanout
+    over: 'stage.stories'
+    itemKey: '{{item.id}}'
+    dependsOn: ['generate-tests:{{item.id}}'] # per-item dependency
+    step:
+      kind: agent
+      agent: '{{item.owner_role}}'
+      brief: briefs/implement-story.md
+      inputs:
+        ['artifact:Story({{item.id}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
+      produces: '{{item.files_expected}}'
+      retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
+      onFailure: escalate
+
+  - id: review
+    kind: fanout
+    over: 'stage.stories'
+    dependsOn: ['implement:{{item.id}}']
+    step:
+      kind: agent
+      agent: reviewer
+      mode: swarm-review
+      perspectives: [design, security, testing, performance]
+      inputs: ['diff:lane', 'artifact:Story({{item.id}})']
+      outputs: [{ type: ReviewReport }]
+
+  - id: merge
+    kind: merge
+    over: 'stage.stories'
+    dependsOn: ['review:{{item.id}}']
+    policy: { conflict: agent, preChecks: fast, postChecks: full }
+
+  - id: verify
+    kind: gate
+    gate: G-Verify
+    dependsOn: [merge]
+
+  - id: deliver
+    kind: subworkflow
+    workflow: deliver-stage
+    dependsOn: [verify]
+
+onFailure:
+  default: block
+  escalations:
+    - when: 'failures.test-failure > 2'
+      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md }
+
+onComplete:
+  - kind: agent
+    agent: em
+    brief: briefs/stage-retro.md
+    outputs: [{ type: SessionRecord, subtype: retrospective }]
+  - kind: command
+    run: 'forge kb sync && forge spec matrix'
+    inline: true

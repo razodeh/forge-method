@@ -1,0 +1,35 @@
+# forge:generated v=1 hash=b634caa05db4347bafbe41b9b9e97fa751ac98fa83d6a4b23c40972b23d3286d — edits will be overwritten; use overrides/
+id: data-lifecycle-privacy-retention
+name: Data lifecycle, privacy and retention
+owner_agent: data-architect
+produces: { adr_category: data, kb_section: data/privacy-retention.md }
+inputs:
+  required: [kb:constraints/**, artifact:DataModel]
+questions:
+  - id: pii_classification
+    text: 'What is the strongest PII classification present in this field/entity?'
+    type: choice
+    options: [none, personal, sensitive, regulated]
+  - id: deletion_must_be_provable_absent_recovery
+    text: 'Must deletion make the data unrecoverable even from backups within a bounded window (vs merely inaccessible)?'
+    type: boolean
+options:
+  - id: hard-delete
+  - id: crypto-shred
+  - id: anonymise
+criteria:
+  - id: legal-sufficiency
+    weight: 0.4
+  - id: operational-cost
+    weight: 0.3
+  - id: data-utility-retained
+    weight: 0.3
+scoring: hybrid
+rules:
+  - if: 'pii_classification == "none"'
+    then: { prefer: hard-delete }
+  - if: 'deletion_must_be_provable_absent_recovery'
+    then: { prefer: crypto-shred }
+output_template: templates/adr-data-lifecycle-privacy-retention.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/deletion-verification-test.yaml

@@ -1,0 +1,46 @@
+# forge:generated v=1 hash=87204e13d647e50799a87a7026d4cbd8c49df0a2ecded4a561fb53b318c46b92 — edits will be overwritten; use overrides/
+id: test-oracle-design
+name: Test oracle design
+owner_agent: test-architect
+produces: { adr_category: process, kb_section: engineering/testing.md }
+inputs:
+  required: [kb:constraints/**, artifact:Story(*)]
+questions:
+  - id: ac_states_concrete_expected_value
+    text: 'Does the AC state a concrete expected result that can be computed by hand?'
+    type: boolean
+  - id: is_encoder_or_serializer
+    text: 'Is the code under test an encoder, serialiser, or migration (round-trippable)?'
+    type: boolean
+  - id: is_refactor_or_migration
+    text: 'Is this test guarding a refactor or migration against an existing, trusted implementation?'
+    type: boolean
+# 13 §13.1's own F-TEST-2 table, "strongest first," transcribed as this framework's own options --
+# the framework's real job is picking the STRONGEST oracle actually available for a given AC, per the
+# spec's own "requires the strongest oracle available ... and records why weaker ones were rejected."
+options:
+  - id: specified-value
+  - id: inverse-round-trip
+  - id: metamorphic-relation
+  - id: property-invariant
+  - id: differential
+  - id: reference-implementation
+  - id: golden-file
+  - id: smoke
+criteria:
+  - id: oracle-strength
+    weight: 0.6
+  - id: applicability-to-this-ac
+    weight: 0.4
+scoring: hybrid
+rules:
+  # "The AC states a concrete expected result -- always prefer this" (13 §13.1's own table, rank 1).
+  - if: 'ac_states_concrete_expected_value'
+    then: { prefer: specified-value }
+  - if: 'is_encoder_or_serializer'
+    then: { prefer: inverse-round-trip }
+  - if: 'is_refactor_or_migration'
+    then: { prefer: differential }
+output_template: templates/adr-test-oracle-design.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/oracle-lint-check.yaml

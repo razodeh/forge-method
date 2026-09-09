@@ -1,0 +1,36 @@
+# forge:generated v=1 hash=37b9e57e0c5f119929e6b2bab5adaee38d20826be01c8f1f26b614bf4ddbdedb — edits will be overwritten; use overrides/
+id: environment-strategy
+name: Environment strategy
+owner_agent: sre
+produces: { adr_category: delivery, kb_section: delivery/environments.md }
+inputs:
+  required: [kb:constraints/**, artifact:ArchitectureSpec]
+questions:
+  - id: has_migration_or_integration_needing_rehearsal
+    text: 'Does this system have a migration or external integration risky enough to need a rehearsal environment before production?'
+    type: boolean
+# 14 §14.1's own environment-matrix table, transcribed as this framework's own options -- the real
+# decision is which environments beyond the minimum viable matrix (local + ci + production, per the
+# spec's own rule 2) this project actually needs.
+options:
+  - id: local
+  - id: ci
+  - id: preview
+  - id: staging
+  - id: production
+criteria:
+  - id: stated-purpose
+    weight: 0.4
+  - id: cost-of-existence
+    weight: 0.3
+  - id: rehearsal-value
+    weight: 0.3
+scoring: hybrid
+rules:
+  # "The minimum viable matrix is local + ci + production. Staging is added when a migration or an
+  # integration makes rehearsal necessary." (14 §14.1)
+  - if: 'has_migration_or_integration_needing_rehearsal'
+    then: { prefer: staging }
+output_template: templates/adr-environment-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/environment-provisioning.yaml

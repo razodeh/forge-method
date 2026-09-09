@@ -1,0 +1,38 @@
+# forge:generated v=1 hash=092afe238bb6e60578beedc0da652c0dc1742df33d10da5a65d39a4e7ede0d2b — edits will be overwritten; use overrides/
+id: migrate
+name: Migrate
+version: 1.0.0
+description: Schema, platform, or framework migration using an expand-contract sequence.
+levels: [L3, L4]
+inputs:
+  - name: migrationGoal
+    type: string
+    required: true
+steps:
+  - id: plan-migration
+    kind: agent
+    agent: architect
+    brief: briefs/plan-migration.md
+    outputs: [{ type: ADR }]
+
+  - id: expand
+    kind: agent
+    agent: backend
+    brief: briefs/migration-expand.md
+    dependsOn: [plan-migration]
+
+  - id: migrate-data
+    kind: command
+    run: 'forge migrate run --phase expand --json'
+    dependsOn: [expand]
+
+  - id: contract
+    kind: agent
+    agent: backend
+    brief: briefs/migration-contract.md
+    dependsOn: [migrate-data]
+
+  - id: verify-migration
+    kind: command
+    run: 'forge test run --json'
+    dependsOn: [contract]

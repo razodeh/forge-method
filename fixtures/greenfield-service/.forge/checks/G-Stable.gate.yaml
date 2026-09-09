@@ -1,0 +1,33 @@
+# forge:generated v=1 hash=93d5111bf750c5816aec0d20c4a59eaea4200c9695c1376b8a9fb6794a53e18f — edits will be overwritten; use overrides/
+id: G-Stable
+name: Stable gate
+phase: P8
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: defect:open-severe
+      run: 'forge spec validate --rule open-sev1-sev2-defects --json'
+      parser: forge-json
+      failOn: 'errors > 0'
+    - id: test:flaky
+      run: 'forge test flaky --json'
+      failOn: 'flaky > 0'
+    - id: rca:unresolved
+      run: 'forge spec validate --rule unresolved-rca --json'
+      failOn: 'errors > 0'
+  advisory:
+    - id: stability-review
+      agent: critic
+      brief: briefs/critique-stabilization.md
+      # advisory results NEVER fail the gate; they populate open questions
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: RCA(*)
+  - artifact: Defect(*)
+onReject:
+  action: replan
+  target: P8

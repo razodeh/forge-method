@@ -1,0 +1,32 @@
+# forge:generated v=1 hash=99d1d73248ee4f9d13dd0fbd1337f35214c244a319a892e5dfa10ad11fd026dc — edits will be overwritten; use overrides/
+id: refactor
+name: Refactor
+version: 1.0.0
+description: A test-guarded refactor against an explicit goal and invariant set -- no behaviour change.
+levels: [L0, L1, L2, L3, L4]
+inputs:
+  - name: goal
+    type: string
+    required: true
+steps:
+  - id: state-invariants
+    kind: agent
+    agent: architect
+    brief: briefs/state-refactor-invariants.md
+    outputs: [{ type: HandoffRecord, subtype: refactor-invariants }]
+
+  - id: refactor-code
+    kind: agent
+    agent: backend
+    brief: briefs/refactor.md
+    dependsOn: [state-invariants]
+    retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+
+  - id: verify-invariants
+    kind: command
+    run: 'forge test run --json'
+    dependsOn: [refactor-code]
+
+  - id: commit
+    kind: checkpoint
+    dependsOn: [verify-invariants]

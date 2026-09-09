@@ -19,7 +19,8 @@
     "changeset": "changeset",
     "coverage:ratchet": "node scripts/check-coverage-ratchet.mjs",
     "emit-schemas": "node scripts/emit-schemas.mjs",
-    "schema-drift": "node scripts/assert-schema-drift.mjs"
+    "schema-drift": "node scripts/assert-schema-drift.mjs",
+    "forge": "node packages/cli/bin/forge.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "2.31.1",

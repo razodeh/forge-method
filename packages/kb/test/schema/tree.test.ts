@@ -84,13 +84,15 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     const environments = tree.entries.find((entry) => entry.kind === 'environments-file');
     const components = tree.entries.find((entry) => entry.kind === 'components-file');
     expect(risks?.kind === 'risks-file' && risks.value.risks.length).toBe(2);
-    expect(assumptions?.kind === 'assumptions-file' && assumptions.value.assumptions.length).toBe(2);
+    expect(assumptions?.kind === 'assumptions-file' && assumptions.value.assumptions.length).toBe(
+      2,
+    );
     expect(
       openQuestions?.kind === 'open-questions-file' && openQuestions.value.open_questions.length,
     ).toBe(2);
-    expect(environments?.kind === 'environments-file' && environments.value.environments.length).toBe(
-      2,
-    );
+    expect(
+      environments?.kind === 'environments-file' && environments.value.environments.length,
+    ).toBe(2);
     expect(components?.kind === 'components-file' && components.value.components.length).toBe(2);
   });
 
@@ -112,6 +114,19 @@ describe('parseKbTree — fixtures/greenfield-service', () => {
     const paths_ = [...tree.entries.map((entry) => entry.path), ...tree.errors.map((e) => e.path)];
     expect(paths_).not.toContain('index.md');
     expect(paths_).not.toContain('decisions/index.md');
+  });
+
+  it('never attempts to parse a real, hand-authored README.md with no front matter (forge init’s own writeDocsSkeleton output)', async () => {
+    const paths = freshProject();
+    const root = paths.resolveWithin('.');
+    write(root, 'docs/forge/kb/README.md', '# Knowledge base\n');
+    const tree = await parseKbTree(paths);
+    const allPaths = [
+      ...tree.entries.map((entry) => entry.path),
+      ...tree.errors.map((e) => e.path),
+    ];
+    expect(allPaths).not.toContain('README.md');
+    expect(tree.errors).toEqual([]);
   });
 });
 
@@ -255,7 +270,10 @@ describe('parseKbTree — never throws, even when the KB root does not exist yet
 
   it('returns an empty result for a configured kbRoot that does not exist', async () => {
     const paths = freshProject();
-    await expect(parseKbTree(paths, 'somewhere-else')).resolves.toEqual({ entries: [], errors: [] });
+    await expect(parseKbTree(paths, 'somewhere-else')).resolves.toEqual({
+      entries: [],
+      errors: [],
+    });
   });
 
   it('reports a tree-level KbParseError, rather than throwing, when kbRoot is a file, not a directory', async () => {

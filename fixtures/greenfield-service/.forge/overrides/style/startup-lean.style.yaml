@@ -1,0 +1,14 @@
+id: startup-lean-style
+language: en
+tone: concise, pragmatic, no ceremony
+person: third
+banned_phrases: []
+artifact_conventions:
+  headings: sentence-case
+  dates: ISO-8601
+  code_fences: always-annotated
+  diagrams: mermaid
+commit_style: conventional
+doc_length:
+  adr: ≤ 1 page
+  story: ≤ 1 page

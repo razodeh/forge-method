@@ -1,0 +1,38 @@
+# forge:generated v=1 hash=520a945e0deb83915b83b96959a5c57b95f2a7423c7e9db2afc68d93332b3c70 — edits will be overwritten; use overrides/
+id: build-artifact-strategy
+name: Build and artifact strategy
+owner_agent: platform
+produces: { adr_category: delivery, kb_section: delivery/build-artifact.md }
+inputs:
+  required: [kb:constraints/**, kb:delivery/build.md]
+questions:
+  - id: target_is_serverless_faas
+    text: 'Is the deployment target a serverless/FaaS platform?'
+    type: boolean
+  - id: target_needs_multi_arch
+    text: 'Must the artifact run on more than one CPU architecture?'
+    type: boolean
+options:
+  - id: container-image
+  - id: zip-lambda-bundle
+  - id: native-binary
+  - id: package
+  - id: static-bundle
+criteria:
+  - id: deployment-target-fit
+    weight: 0.35
+  - id: build-reproducibility
+    weight: 0.25
+  - id: registry-and-signing-support
+    weight: 0.2
+  - id: cold-start-and-size
+    weight: 0.2
+scoring: hybrid
+rules:
+  - if: 'target_is_serverless_faas'
+    then: { prefer: zip-lambda-bundle }
+  - if: '!target_is_serverless_faas'
+    then: { prefer: container-image }
+output_template: templates/adr-build-artifact-strategy.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/sbom-and-signing.yaml
