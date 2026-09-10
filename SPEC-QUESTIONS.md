@@ -9415,3 +9415,36 @@ See `GAUNTLET-LOG.md`'s M8 P3 entry for the full critic round these corrections 
 blocking, five major findings, all in the reporter's own outcome-mapping and error-handling —
 distinct from the three tooling corrections recorded here, which were made before any critic saw the
 diff).
+
+## Q126 — M8 P5: `test:oracle-lint` is a hand-rolled source-text scanner, not an ESLint plugin
+package; F-TEST-2's fifth banned pattern is a permanent, undecidable gap
+
+**Q (P5's own BUILD phase).** F-TEST-2 (`specs/13` §13.1) bans five oracle-quality anti-patterns in
+tests. Two design questions: (1) what should actually implement the four syntactic ones, and (2)
+what to do about the fifth, which is not syntactic at all.
+
+1. **Implementation choice: a lightweight, directly-unit-testable source-text scanner
+   (`oracle-lint.ts`), not a new `@forge/eslint-plugin-forge-oracle` package.** A real ESLint plugin
+   (AST-based, with its own rule-testing harness, a new workspace package, and a new dependency edge
+   from every project's own lint config) is the "correct" long-term shape for this kind of check, but
+   is disproportionate scaffolding for four patterns that are overwhelmingly syntactic and already
+   fully expressible against raw source text once regex/string/comment/template-literal content is
+   excluded from consideration. **Resolved:** a plain scanner function, `runOracleLint(paths)`,
+   consumed the same way `runTypecheckRule`/`runLintRule` already consume `tsc`/`eslint`'s own
+   output — one more `--rule` on the same `forge test run` dispatcher, needing no `testCommands`
+   entry at all. Revisit if a sixth syntactic pattern is ever added and the hand-rolled scanner's own
+   maintenance cost starts to exceed a real plugin's setup cost.
+2. **F-TEST-2's fifth banned pattern — "asserting on a value read from the same code path that
+   produced it" (e.g. asserting against a variable the function under test itself just returned,
+   with no independently-computed expected value) — is not implemented, and is not a stub either.**
+   Telling "the test independently recomputed the expected value" apart from "the test reused the
+   implementation's own output" is undecidable from source text alone: both look like `expect(x).
+   toBe(y)` with no syntactic distinction whatsoever; it needs real dataflow analysis (tracing
+   whether `y`'s value ever passed through a call to the code under test) that neither a regex
+   scanner nor a plain ESLint AST rule can perform without a real type/data-flow graph. **Resolved:**
+   a documented, permanent gap — recorded here and in `oracle-lint.ts`'s own file-header doc comment
+   — not attempted, and not silently left implying coverage it doesn't have.
+
+See `GAUNTLET-LOG.md`'s M8 P5 entry for the full critic round (two blocking, four major findings, all
+in the scanner's own body-extraction and per-call assertion-strength logic — distinct from the two
+design questions recorded here, which were settled before any critic saw the diff).

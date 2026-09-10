@@ -7435,3 +7435,59 @@ added.
 monorepo test suite (6110 tests, 5 correctly skipped) all clean after every fix, aside from the
 identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
 throughout this build, re-confirmed passing alone.
+
+## M8 P5 — `forge test run --rule oracle-lint`: F-TEST-2 banned oracle patterns, `G-Verify`-wired
+
+**Mandate:** `test:oracle-lint` — the last of `G-Verify.gate.yaml`'s non-coverage, non-flake checks.
+A deterministic source-text scanner over a project's own test files, deliberately not a new ESLint
+plugin package: F-TEST-2's four detectable banned patterns (weak-only `toBeDefined()`/`toBeTruthy()`
+assertions, an empty `catch {}`, an unconditional `expect(true).toBe(true)`, an unapproved
+`toMatchSnapshot()`) are overwhelmingly syntactic, so a lightweight, directly-unit-testable scanner is
+proportionate scaffolding. The fifth banned pattern ("asserting on a value read from the same code
+path that produced it") is a known, permanent gap — undecidable from source text alone without real
+dataflow analysis — recorded in `SPEC-QUESTIONS.md`, not attempted.
+
+### Round 1 — fresh critic (given only the diff, F-TEST-2, the exact shipped `G-Verify.gate.yaml`,
+and every prior M8 piece's own GAUNTLET-LOG entry; told nothing else; adversarially fuzzed the real
+scanner against ordinary, non-exotic JS test shapes before reporting anything): two blocking, four
+major findings
+
+1. **[BLOCKING] Vitest's own documented test-context destructuring form
+   (`test('name', ({ expect }) => { ... })`) defeated body extraction entirely.** The first draft's
+   "find the next `{` at all" heuristic matched the destructured parameter's own brace, not the real
+   function body, silently scanning nothing — meaning every banned pattern inside a test written this
+   way went completely undetected. **Fixed:** a new `findCallbackBodyStart` locates the real
+   `=> {` arrow-body start explicitly, skipping past any parameter list (destructured or not) first.
+   New regression test.
+2. **[BLOCKING] An ordinary regex literal with an odd brace count truncated the scanned test body.**
+   Confirmed directly: `/\}/` contains one real, un-stringed `}` — the original brace-matcher had no
+   regex-literal awareness at all and closed the "test body" right there, hiding every assertion after
+   it (a false clean pass). **Fixed:** `findMatchingDelimiter` now recognises regex-literal contexts
+   via the classic division-vs-regex heuristic (nearest preceding non-whitespace character) and skips
+   over them, mirroring the existing string/template/comment skipping. New regression test.
+3. **[MAJOR] Two separate weak-only `expect()` calls in the same test passed through undetected.**
+   The first draft's "exactly one `expect()` call total, and it's weak" heuristic let a test with
+   *two* weak calls and no strong assertion anywhere through clean — exactly what F-TEST-2 bans,
+   regardless of how many separate weak calls exist. **Fixed:** `detectWeakAssertion` now iterates
+   every real `expect(...)` call individually and flags the test only if every one it saw was weak
+   AND at least one was seen. New regression test.
+4. **[MAJOR] Every real I/O failure (a directory this process could not read, for a reason other than
+   "does not exist") was silently swallowed into a clean, empty result — indistinguishable from
+   "scanned everything and found nothing wrong."** `OracleLintResult` had no way to report this at
+   all. **Fixed:** a new `problems?: readonly string[]` field, mirroring `TestRunResult.problems`'s
+   own already-established principle exactly; `discoverTestFiles`/`readTextFileRelative` now
+   accumulate real problems (via `isRealErrnoCode`, tolerating only genuine `ENOENT`) instead of
+   discarding them, and `run.ts`'s `runOracleLintRule` forwards them into `TestRunResult.problems`
+   (this last forwarding step was itself missing on the first pass and fixed in the same round). New
+   regression test (a real, unreadable subtree via `chmod 000`).
+5. **[MAJOR] The module's own `testRun`-sibling TSDoc comment was misattached** — sitting above the
+   wrong function after an earlier edit, the same defect class P4 already hit once. **Fixed.**
+6. **[MAJOR] No exported symbol in the new file carried its own TSDoc** — a shared file-header comment
+   is not a substitute, the identical defect class P1/P3/P4 each already hit and fixed. **Fixed:**
+   every export now has its own doc comment.
+
+`tsc --build`, `eslint .` (zero warnings, after fixing one irregular-whitespace character a doc
+comment's own literal `*/` example introduced), `prettier --check .`, `pnpm run boundaries`, and the
+full monorepo test suite (6132 tests, 5 correctly skipped) all clean after every fix, aside from the
+identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
+throughout this build, re-confirmed passing alone.
