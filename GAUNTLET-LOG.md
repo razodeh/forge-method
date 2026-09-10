@@ -7359,3 +7359,79 @@ entry (the `node:test`/`node:process`/directory-listing/bare-builtin bans) activ
 monorepo test suite (6086 tests, 5 correctly skipped) all clean after every fix, aside from the
 identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
 throughout this build, re-confirmed passing alone.
+
+## M8 P4 — `forge test run` (+ `--rule lint`/`--rule typecheck`), CLI-wired (F-TEST-7)
+
+**Mandate:** `test:run`/`test:lint`/`test:typecheck` — every `G-Verify.gate.yaml` check that isn't
+coverage- or flake-related. The default rule aggregates every declared `unit`/`integration`/
+`contract`/`e2e` `testCommands` layer (NFR deliberately excluded — F-TEST-1's own "out-of-band,
+nightly") through P3's `runAndNormalize`; `--rule lint` sums eslint's own real `--format json`
+`errorCount`; `--rule typecheck` counts `tsc`'s own real diagnostic lines (no JSON mode exists at
+all — confirmed directly).
+
+### Round 1 — fresh critic (given only the diff, both F-TEST-1/F-TEST-7, the exact shipped
+`G-Verify.gate.yaml`, and P3's own GAUNTLET-LOG entry; told nothing else; independently reproduced
+every finding against the real, running code before reporting it): two blocking, four major findings
+
+1. **[BLOCKING] A command that ran but matched zero test files was reported as a clean, complete
+   pass.** Confirmed directly: a typo'd glob run through real vitest exits with `testResults: []`
+   — `runAndNormalize` (P3) never inspects this, `runDefaultRule` recorded no problem for it, and
+   `{failed: 0, errors: 0}` would pass the real, shipped `test:run` check (`failOn: 'failed > 0'`)
+   despite nothing having been verified at all — directly contradicting this piece's own doc comment
+   ("a layer with no command reports as unable to verify, never as passing"), which only enforced
+   that guarantee for "no command"/"tool-error," not "ran but collected nothing." **Fixed:** an
+   empty-outcomes result from a declared, executed layer is now a real `problems` entry, forcing
+   `failed >= 1`. New regression test (a real vitest invocation against a glob matching nothing).
+2. **[BLOCKING] `--rule lint`'s shell command was built by blind string concatenation, breaking —
+   silently, as either a false pass or a false failure — on any `testCommands.lint` value
+   containing shell chaining.** Confirmed directly: `"<eslint> . && echo done"` (an entirely
+   ordinary chained `package.json`-script pattern) misroutes `--format json` onto `echo`, producing
+   `JSON.parse("done --format json")` → a **false-positive** `errors: 1` on a project with zero real
+   lint errors. The identical defect exists in P3's own `runVitest`/`runPytest` (`--reporter=json`/
+   `--junitxml` appended the same way) — fixed there too as part of this round, since it is the same
+   defect class discovered while fixing this piece's own sibling. **Fixed:** a new, shared
+   `containsShellChaining` helper (`shell-safety.ts`) detects `&&`/`||`/`;`/`|`/redirection/command
+   substitution before any flag-appending in all three call sites, reporting a real `problems` entry
+   instead of running and misreading the result. New regression tests in all three places.
+
+Also major, all fixed:
+
+3. **`testRun` — the module's single most important export, the one function every `G-Verify` check
+   actually calls — had no TSDoc on its own declaration**, the identical defect class this
+   milestone's immediately preceding piece (P3) already hit and fixed. **Fixed**, along with the
+   other three under-documented exports (`TestCommands`, `TestRunContext`, `TestRunOptions`).
+4. **A typo'd `--rule` value was silently swallowed and fell through to running the entire default
+   suite**, unlike the sibling `spec validate --rule` flag (P2), which validates strictly. `forge
+   test run --rule typecheckk` ran the whole unit/integration/contract/e2e suite with zero signal
+   anything was wrong — meaning a `test:typecheck` gate check with a typo'd rule would always report
+   `errors: 0` regardless of how many real type errors exist. **Fixed:** `findRawTestRuleFlag`
+   returns the raw value; `bin.ts`'s own dispatch now rejects an unrecognised one with exit `2` and
+   a message naming every valid rule, mirroring `spec validate`'s own precedent exactly. New
+   real-subprocess regression test.
+5. **`tsc`'s own global/config-level diagnostics (no file:line prefix) were silently dropped from
+   the error count whenever at least one other, correctly-prefixed diagnostic also existed in the
+   same run.** Confirmed directly: a broken `tsconfig.json` `"extends"` path alongside a real type
+   error in an included file produces both `error TS5083: Cannot read file ...` (no prefix) and
+   `a.ts(1,7): error TS2322: ...` (prefixed) — the original regex only matched the second shape,
+   silently under-counting a mixed run (though the isolated-config-error case was already handled
+   correctly by the existing exit-code fallback). **Fixed:** the regex's leading file:line group is
+   now optional. New regression test reproducing the exact mixed case.
+6. **The plan's own explicitly required end-to-end check — running `evaluateGate` against the real,
+   shipped `G-Verify.gate.yaml` and this real command — had no test anywhere in the diff.**
+   `run.test.ts`/`bin.test.ts` each stopped at `testRun`'s own JSON envelope; neither proved the gate
+   definition → real check execution → correct `passed`/`failed` integration point the plan's own
+   Checks section names verbatim. **Fixed:** a new `gate-integration.test.ts` loads the real,
+   committed `G-Verify.gate.yaml` verbatim (via a tiny real `forge` wrapper script prepended onto
+   `PATH`, since this environment has no `forge` binary linked — `@forge/cli` is not a workspace-root
+   dependency) and runs `evaluateGate` against a real, clean and a real, failing vitest fixture,
+   asserting the real `test:run` check's own `passed` outcome both ways.
+
+Also fixed, minor: a bare `throw new Error` inside `countEslintErrors` (R2) — refactored to return
+`undefined` instead of throwing, with the caller reporting the problem itself; the "no typecheck
+command configured" path had no test even though its "no lint command configured" sibling did —
+added.
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6110 tests, 5 correctly skipped) all clean after every fix, aside from the
+identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
+throughout this build, re-confirmed passing alone.
