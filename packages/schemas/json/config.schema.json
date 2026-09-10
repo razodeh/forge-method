@@ -203,6 +203,24 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "testCommands": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "unit",
+              "integration",
+              "contract",
+              "e2e",
+              "nfr",
+              "lint",
+              "typecheck"
+            ]
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -212,7 +230,8 @@
         "retainLaneWorktrees",
         "integrationBranch",
         "conflictPolicy",
-        "sharedMutablePaths"
+        "sharedMutablePaths",
+        "testCommands"
       ],
       "type": "object"
     },

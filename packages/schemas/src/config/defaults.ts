@@ -48,6 +48,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     integrationBranch: 'forge/integration/{stage}',
     conflictPolicy: 'agent',
     sharedMutablePaths: [],
+    testCommands: {},
   },
   budget: {
     perRunUsd: 25,

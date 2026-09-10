@@ -90,6 +90,21 @@ const sharedMutablePathSchema = z
   })
   .strict();
 
+// `13` §13.1 F-TEST-1 rule 4: "every layer has a single command... recorded in the KB" — a record,
+// not a fixed-shape object with seven optional fields: `packages/schemas/src/config/walk.ts`'s own
+// `configLeafPaths` walker recurses into every `ZodObject` field individually (each would need its
+// own `CONFIG_KEY_DOCS` entry and its own resolvable `DEFAULT_CONFIG` value, exactly the "leaf" shape
+// this field is not), but explicitly stops at a `ZodRecord` — the identical "its own keys are data,
+// not schema" treatment `platform.perAgent`/`execution.autonomyByGate` already get. A project need
+// not declare every layer at once; an absent key (not present, not `undefined`) means "this layer has
+// no real command yet," a real, typed finding a rule that needs it reports rather than silently
+// treating as passing. The KB write F-TEST-1 names is this schema's own human-readable *description*,
+// not its machine source of truth — the same "structured config for machines, KB for rationale" split
+// every other machine-consumed value in this codebase already follows (gates, workflows, frameworks).
+// See `SPEC-QUESTIONS.md`.
+const TEST_LAYERS = ['unit', 'integration', 'contract', 'e2e', 'nfr', 'lint', 'typecheck'] as const;
+const testCommandsSchema = z.record(z.enum(TEST_LAYERS), z.string().min(1));
+
 const executionSchema = z
   .object({
     concurrency: z.union([z.literal('auto'), z.number().int().positive()]),
@@ -101,6 +116,7 @@ const executionSchema = z
     integrationBranch: z.string().min(1),
     conflictPolicy: z.enum(['agent', 'human', 'abort']),
     sharedMutablePaths: z.array(sharedMutablePathSchema),
+    testCommands: testCommandsSchema,
   })
   .strict();
 

@@ -70,6 +70,7 @@ function goldenConfig(): Record<string, unknown> {
         { glob: 'pnpm-lock.yaml', strategy: 'regenerate', command: 'pnpm install --lockfile-only' },
         { glob: 'CHANGELOG.md', strategy: 'append-only' },
       ],
+      testCommands: { unit: 'vitest run', lint: 'eslint .', typecheck: 'tsc --noEmit' },
     },
     budget: {
       perRunUsd: 25,
@@ -145,6 +146,35 @@ describe('configSchema — unknown keys are refused, with the offending path', (
     });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['project']);
+  });
+});
+
+describe('configSchema — execution.testCommands (PLAN-M8.md P3)', () => {
+  it('rejects an unrecognised test layer key', () => {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      execution: { ...config.execution, testCommands: { foo: 'bar' } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty-string command', () => {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      execution: { ...config.execution, testCommands: { unit: '' } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a real subset of layers, leaving the rest absent', () => {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    const result = configSchema.safeParse({
+      ...config,
+      execution: { ...config.execution, testCommands: { unit: 'vitest run' } },
+    });
+    expect(result.success).toBe(true);
   });
 });
 

@@ -359,6 +359,56 @@ export default tseslint.config(
     },
   },
   {
+    // `createSystemTempPath` (`PLAN-M8.md` P3) is the identical injected-boundary split
+    // `clock.ts` above already establishes, for "a real OS temp path" instead of "now" —
+    // `runAndNormalize`'s pytest branch takes it as an injected function; this is the one file that
+    // reads `crypto.randomUUID()`/`os.tmpdir()` directly. Narrowly by name, not by directory, and
+    // narrowed to *just* the two entries this file actually needs off (a fresh critic round found
+    // the first draft turned the whole rule off here, silently also lifting the `node:test`/
+    // `node:process`/directory-listing/bare-builtin bans this file has no reason to need lifted).
+    files: ['**/src/commands/loop/test/system-temp.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:test',
+              message: 'specs/02 §2.1: node:test is not used; tests are written with vitest.',
+            },
+            {
+              name: 'node:perf_hooks',
+              importNames: ['performance'],
+              message: 'R10: take the time from an injected clock, not perf_hooks.',
+            },
+            {
+              name: 'node:fs/promises',
+              importNames: LISTING_NAMES,
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:fs',
+              importNames: ['readdir', 'readdirSync', 'opendir', 'opendirSync', 'glob', 'globSync'],
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:process',
+              message: 'R10: read configuration through the config layer, not node:process.',
+            },
+          ],
+          patterns: [
+            {
+              regex: `^(${BARE_BUILTINS.join('|')})(/.*)?$`,
+              message: 'Import Node builtins with the node: protocol (specs/02 §2.1).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The test harness and the launcher are the layer that *pins* the clock, the locale and the
     // environment, so they are the one place that must read and write them directly, and the one
     // place that lists directories before @forge/core/fs exists. R10 constrains production code.

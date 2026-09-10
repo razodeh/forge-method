@@ -39,6 +39,7 @@ export type ConfigKeyPath =
   | 'execution.integrationBranch'
   | 'execution.conflictPolicy'
   | 'execution.sharedMutablePaths'
+  | 'execution.testCommands'
   | 'budget.perRunUsd'
   | 'budget.perStepUsdDefault'
   | 'budget.dailyUsd'
@@ -132,6 +133,8 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'execution.conflictPolicy': 'Who resolves a merge conflict between lanes.',
   'execution.sharedMutablePaths':
     'Paths multiple lanes may touch, and how conflicts on them resolve.',
+  'execution.testCommands':
+    'The real shell command for each test layer (unit/integration/contract/e2e/nfr/lint/typecheck) — a layer with no command reports as unable to verify, never as passing.',
   'budget.perRunUsd': 'Maximum spend, in USD, for one run.',
   'budget.perStepUsdDefault': 'Default maximum spend, in USD, for one step.',
   'budget.dailyUsd': 'Maximum spend, in USD, per day across all runs.',

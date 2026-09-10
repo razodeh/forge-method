@@ -234,28 +234,44 @@ test *` piece reads from.
   | 'unknown'>` — real filesystem probe (`package.json` vs. `pyproject.toml`/`pytest.ini`/`setup.cfg`),
   never guesses from file extensions alone.
 - `packages/cli/src/commands/loop/test/reporter.ts`: `runAndNormalize(command, cwd, ecosystem):
-  Promise<NormalizedTestReport>` — shells the given `testCommands` entry via the already-shared
-  `runShellCommand` (reused, not reimplemented — `@forge/cli` already depends on `@forge/engine`), reads
-  the tool's own JSON output (vitest's `--reporter=json`; pytest's `--json-report` via
-  `pytest-json-report`, both real, standard, already-documented reporter formats for each ecosystem —
-  confirmed against each tool's own real `--help`/docs during build, not assumed), and normalises into
-  `NormalizedTestReport = { readonly outcomes: readonly TestOutcome[] }` where `TestOutcome = { readonly
-  name: string; readonly acId: string | undefined; readonly status: 'pass' | 'fail' | 'skip' }`.
+  Promise<NormalizedTestReport>` — shells the given `testCommands` entry (with the machine-output flag
+  this function appends itself, not something the project's own configured command needs to already
+  carry) via the already-shared `runShellCommand`, and normalises into `NormalizedTestReport = {
+  readonly outcomes: readonly TestOutcome[] }` where `TestOutcome = { readonly name: string; readonly
+  acId: string | undefined; readonly status: 'pass' | 'fail' | 'skip' }`. **Corrected during build**
+  against the two tools' own real, confirmed behaviour in this environment (running each for real, not
+  assuming from docs): JS/TS appends ` --reporter=json` (vitest's own real, built-in JSON reporter,
+  confirmed shape: `testResults[].assertionResults[].{title, status}` where `status` is
+  `'passed'|'failed'|'skipped'`); Python appends ` --junitxml=<tmp file>` (pytest's own **built-in**
+  JUnit-XML writer, needing no plugin at all) rather than the plan's first-draft `--json-report`, since
+  `pytest-json-report` is a third-party plugin **not installed in this environment** (confirmed via
+  `python3 -c "import pytest_jsonreport"` failing) and adding Python package management to a Node-
+  centric monorepo's own test fixtures for one reporter is disproportionate when a zero-dependency,
+  equally-real alternative already exists. Parses the real JUnit XML via a new, small
+  `fast-xml-parser` dependency (added to `@forge/cli`, not hand-rolled via regex — a real, structured
+  format deserves a real parser) — `<testcase name="...">` present with no child element is a pass, a
+  child `<failure>` is a fail, a child `<skipped>` is a skip.
 - `packages/cli/src/commands/loop/test/ac-binding.ts`: `extractAcId(testName: string): string |
-  undefined` — the "generic fallback" `09` §9.5 explicitly sanctions: a real regex pull of a leading
-  `AC-\d{3,4}-\d+` token, the *same* pattern `@forge/core/graph`'s own `TEST_NAME_AC_IDS` regex already
-  uses (confirmed identical, not reinvented) so a name that satisfies the graph's own `proves` edge also
-  satisfies this reporter.
+  undefined`. **Corrected during build**: the plan's first draft assumed this could reuse
+  `@forge/core/graph`'s own `TEST_NAME_AC_IDS` regex (hyphenated `AC-\d{3,4}-\d+`) verbatim — true for
+  `Story.tests[]` entries (free-form, human-authored strings a story author can hyphenate freely), but
+  a **real pytest function name cannot contain a hyphen at all** (confirmed directly: `test_AC_014_2_
+  returns_422...`, not `test-AC-014-2-...` — Python identifier rules, not a framework choice). This
+  function tries the hyphenated form first (covers JS/TS test names and any AC id embedded in a
+  docstring rather than the function name), then an underscore-separated `AC_\d{3,4}_\d+` form
+  (converted to the canonical hyphenated id) so a real, idiomatic Python test name binds too — still
+  exactly `09` §9.5's own "generic fallback," just accounting for what a real Python identifier can
+  contain.
 - Writes `docs/forge/reports/test-results.json` (`{ v: 1, outcomes: [...] }`) via `@forge/core`'s
   already-built atomic FS write helpers.
 
 **Checks:**
 - A real vitest fixture project run through `runAndNormalize` with `--reporter=json` produces outcomes
   whose `acId` correctly extracts from a name like `"AC-014-2 returns 422 for an empty invoice"` and is
-  `undefined` for a name with no AC prefix.
-- A real pytest fixture project (`@pytest.mark.forge_ac("AC-014-2")`-annotated AND a plain
-  AC-prefixed-name test with no marker) both bind correctly — the marker path and the regex-fallback
-  path each get their own fixture.
+  `undefined` for a name with no AC prefix; a real, deliberately failing test reports `status: 'fail'`.
+- A real pytest fixture project run through `runAndNormalize`'s own `--junitxml` path, with a test
+  named `test_AC_014_2_...` (the real, idiomatic Python-safe form) and a plain-named test with no AC
+  prefix, both bind correctly (or don't) via the underscore-form fallback.
 - `testCommands.unit` undefined on a real config produces a typed `missing-command` result, not a
   thrown exception or a silent empty report.
 - `docs/forge/reports/test-results.json` round-trips: written then re-read produces the identical

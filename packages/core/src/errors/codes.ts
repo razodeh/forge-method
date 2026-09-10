@@ -676,6 +676,19 @@ export const ERROR_CODES = {
     remedy:
       'Run `forge status` to confirm the run actually failed, or pass a real symptom instead.',
   },
+  'RUN-058': {
+    // `@forge/cli`'s own `readNormalizedReport` (`09` §9.5, `PLAN-M8.md` P3): `docs/forge/reports/
+    // test-results.json` is written only by this package's own `writeNormalizedReport` -- a fresh
+    // critic round found the read side had no shape check at all (an uncommented `as` cast straight
+    // into the caller's hands), so a hand-edited, truncated, or future-schema-version file would
+    // either throw an untyped `SyntaxError` or silently hand back a value that only claims to be a
+    // `NormalizedTestReport`.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; detail: string }) =>
+      `${show(d.path)} is not a real test-results report: ${show(d.detail)}.`,
+    remedy: 'Re-run `forge test run` to regenerate it, rather than hand-editing this file.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type
