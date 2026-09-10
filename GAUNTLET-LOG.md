@@ -7115,3 +7115,73 @@ M7 is now feature-complete: P1 through P10 are all committed. The milestone's ow
 -- a real, jointly-supervised live run (`FORGE_LIVE=1`, both transports, both auth modes once
 available) exercising both P9's conformance suite and this piece's own live-smoke test -- is the
 deliberate, deferred next step, not attempted by any piece in this milestone unsupervised.
+
+## M8 P1 — `@forge/methods/dod`: Definition of Ready/Done profile schema and evaluator (`09` §9.8)
+
+**Mandate:** `09` §9.8's profile-based, machine-checked DoR/DoD system, as real, loadable, evaluable
+data — the foundation `G-Ready`'s own already-shipped `story:dor` check (`forge spec validate --rule
+definition-of-ready --json`, M8 P2) sits on. `loadDodProfile`/`readDodProfile` mirror
+`@forge/methods/schema`'s own `loadFramework`/`readFramework` discriminated-result shape exactly;
+`evaluateDodProfile` is pure, checking one story against one profile's `ready` or `done` list.
+
+The plan's own first draft (`PLAN-M8.md` P1, written before this piece's BUILD phase) assumed `{
+check: id }` entries name a small, closed set of known ids (`spec:story-refs-resolve`,
+`spec:no-blocking-open-questions` — the only two the `ready` list's own worked example names) that
+this package could resolve internally. Re-reading `09` §9.8's *full* worked example during BUILD (not
+just the `ready` list quoted in the plan's own preamble) found the real `backend-default.done` list
+names **nine** further check ids (`build:typecheck`, `spec:ac-coverage --story`,
+`review:blocking-findings == 0`, …) that are themselves other gates' own deterministic checks — an
+open-ended space no one package could enumerate, several carrying real qualifier syntax (a space-
+separated flag, an inline comparison) baked into the id string itself. Corrected before writing any
+code: `{ check: id }` resolution is answered entirely by a caller-supplied `resolveCheck` function,
+never a hardcoded dispatch table; `@forge/methods/dod` stays fully decoupled from knowing what any
+check id means. See `SPEC-QUESTIONS.md` Q123 for the full record, including the `testCommands`-in-
+`ForgeConfig` question this same milestone-preamble investigation surfaced.
+
+**Spec:** `09` §9.8.
+
+### Round 1 — fresh critic (given only the diff, `09` §9.8, `QUALITY-BAR.md`, and `expr.ts`; told
+nothing of the plan, log, or git history): three major findings, no blocking findings
+
+1. **[MAJOR] The fixture claimed to be "verbatim" and the plan's own Checks claimed a full round-trip
+   proof — neither was true.** The `done`-list fixture had silently stripped every check id's own real
+   qualifier syntax down to a bare id (`test:unit --scope story` → `test:unit`, `spec:ac-coverage
+   --story` → `spec:ac-coverage`, `review:blocking-findings == 0` → `review:blocking-findings`). The
+   schema and evaluator both already handled the real strings correctly (`{ check: id }` is validated
+   only as a non-empty string, never parsed for semantics), so this was never a runtime bug — but the
+   test suite's own claim to have proven whitespace/flags/comparisons round-trip was simply false,
+   which the critic judged worse than not claiming it at all, since a future reader would trust it.
+   **Fixed:** the fixture now reproduces `09` §9.8's own worked example byte-for-byte, including every
+   qualifier; `load.test.ts`'s round-trip assertion now checks all nine `done`-list entries verbatim,
+   not just the first.
+2. **[MAJOR] Four of the module's exported types carried no TSDoc at all** (`DodPhase`,
+   `DodProfileFile`, `DodParseResult`, `DodViolation` in `types.ts`) — a real R8 gap, not cosmetic:
+   `DodViolation.check`'s own ambiguity (raw expression text, or a bare `check:` id — never
+   disambiguated on the type itself) was genuinely undocumented anywhere. **Fixed:** added a real
+   TSDoc block to each, stating what a reader cannot otherwise infer from the signature alone.
+3. **[MAJOR] Both new test files reached directly into internal submodule files
+   (`../../src/dod/load.ts`, `../../src/dod/evaluate.ts`) instead of the package's own declared public
+   entry point** (`./dod` → `src/dod/index.ts` in `package.json`) — a clean, mechanical R5 "no" as the
+   rubric is literally written. The critic disclosed, for honesty, that every *other* existing test in
+   this package does the identical thing (a pre-existing, package-wide convention this piece did not
+   introduce) — but judged the piece cold against the rubric text regardless. **Fixed:** both test
+   files now import exclusively through `../../src/dod/index.ts`; the wider, pre-existing convention
+   across the rest of `@forge/methods`'s own test suite is out of this piece's scope to fix.
+
+Also flagged, minor, fixed: `readDodProfile`'s two real failure paths (`CFG-003` path-escape via
+`resolveWithin`, `RUN-034` missing file via `readTextFile`) had zero test coverage — the only I/O entry
+point in the diff, tested only on the happy path. **Fixed:** two new tests assert both codes directly
+via `.rejects.toMatchObject({ code: ... })`, the same pattern `packages/cli/test/commands/*.test.ts`
+already establishes repo-wide.
+
+One design note the critic raised explicitly as *not* gating: an unknown `profileId` and a genuinely
+unmet `ready` condition both surface through the same `DodViolation[]` channel, distinguishable only
+by string-matching `message`. Left as-is — already deliberately tested as intended behaviour, and a
+program-legible discriminator is real, additional surface no current caller (P2) needs yet.
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6021-6023 tests) all clean after every fix, aside from the identical pre-existing,
+unrelated worktree-concurrency flake (this time in `crash-resume.test.ts` rather than `resume.test.ts`
+— same root cause, same family, already documented in every M7 piece's own entry), re-confirmed
+passing alone. One new `test/workspace-floor.test.ts` `IGNORED_PATHS` entry for the new shared fixture
+file, matching the already-established `repo-strategy.ts` precedent exactly.

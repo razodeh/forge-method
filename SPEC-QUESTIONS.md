@@ -9290,3 +9290,56 @@ this piece did not investigate, would be real, unauthorized scope creep, not a f
 future reader (or the coordinator) knows this exists and is real, rather than discovering it cold.
 
 See `GAUNTLET-LOG.md`'s own M7 P10 entry for the full critic round.
+
+## Q123 — M8's kickoff: the shipped gate YAML is the authoritative CLI contract, `{ check: id }` is
+open-ended not closed, `testCommands` needs a real home in `ForgeConfig`, and G-Verify is missing
+three checks its own `13` §13.4 gate-integration table requires
+
+**Q (kickoff investigation, before P1's own BUILD phase).** `specs/22`'s M8 Build line
+("the test-strategy and oracle frameworks as executable content... the normalised test-result reporter
+and AC binding... coverage ratchet; oracle lint; flake detection and quarantine; the `forge debug` RCA
+state machine... `swarm-review` with the eight perspectives") is prose describing outcomes, not a
+concrete CLI/data contract. Four concrete design questions had to be resolved before any piece could
+be planned:
+
+1. **Which check-id spelling is authoritative when spec prose and already-shipped YAML disagree?**
+   `13` §13.4's gate-integration table and `09` §9.4's own gate-check names (`spec:ac-coverage`) differ
+   from what `packages/templates/templates/checks/{G-Ready,G-Verify,G-Stable}.gate.yaml` already ship
+   (`story:ac-coverage`, `test:lint`, `test:typecheck`, `story:dor`, etc.). **Resolved:** the shipped
+   YAML wins — it is already committed, already real data a real `evaluateGate` call reads, and
+   changing it to match spec prose would be authoring a *new* gate contract dressed up as a "fix."
+   Every M8 piece's own CLI surface (`forge spec validate --rule <name>`, `forge test
+   run|coverage|flaky`) matches the shipped YAML's field names (`errors`, `failed`, `coverage`,
+   `flaky`) exactly.
+2. **Is `{ check: id }` in a DoD profile a closed set `@forge/methods/dod` resolves internally, or
+   open-ended?** Resolved during P1's own BUILD (see `GAUNTLET-LOG.md`'s M8 P1 entry) — open-ended,
+   caller-resolved. `09` §9.8's full worked example names nine check ids in `backend-default.done`
+   alone, several carrying real qualifier syntax, and no package could enumerate the full space of
+   every gate's own deterministic checks without an upward dependency this package's own boundary-graph
+   position forbids anyway.
+3. **Where does `forge test run`'s "one command per layer" (F-TEST-1 rule 4) actually live?** `13`
+   §13.1 says "recorded in the KB," but every other machine-consumed value in this codebase (gates,
+   workflows, frameworks) lives in structured YAML/config, with the KB reserved for human-readable
+   rationale — and `executionSchema.sharedMutablePaths[].command` already stores a literal shell-
+   command string in `ForgeConfig` as direct precedent. **Recommended and proceeding on:** P3 adds a
+   `testCommands` field to `configSchema` (`{ unit?, integration?, contract?, e2e?, nfr?, lint?,
+   typecheck? }`, all optional shell-command strings) as the real, machine-parseable source of truth;
+   the test-strategy framework's own KB write becomes the human-readable *description* of the same
+   commands, not the thing `forge test run` actually parses. Not yet built as of P1 — recorded here so
+   P3 does not silently redecide it.
+4. **`13` §13.4's own gate-integration table requires more of `G-Verify` than the shipped YAML has.**
+   The table's `G-Verify` row lists five conditions; the shipped `G-Verify.gate.yaml` only has
+   deterministic checks for two of them (`test:run`↔"all layers pass", the two coverage checks↔"AC
+   coverage 100%"/coverage-adequacy-adjacent) — "coverage ratchet not violated," "oracle lint clean,"
+   and "quarantine count under cap" have **no corresponding check anywhere in the shipped file**.
+   **Recommended and proceeding on:** `PLAN-M8.md`'s own P5/P6/P7 each add exactly one new deterministic
+   check to `G-Verify.gate.yaml` (`coverage:ratchet`, `test:oracle-lint`, `test:quarantine-cap`) as part
+   of building the mechanism each check calls — closing the gap the table itself demands, not
+   inventing new scope. F-TEST-1 rule 5's own "exceeding the E2E share triggers a *warning*, not a hard
+   floor" is deliberately excluded from this list and will land as an **advisory** check, never
+   deterministic, when/if a later piece builds pyramid-shape measurement.
+
+See `PLAN-M8.md`'s own preamble for the full, citation-backed inventory this investigation produced
+(what M6/M5 already built that M8 reuses rather than re-invents), and `GAUNTLET-LOG.md`'s M8 P1 entry
+for the one correction (`{ check: id }`, item 2 above) that surfaced only once real code was written
+against the plan's first draft.
