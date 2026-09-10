@@ -13,9 +13,47 @@ import { runShellCommand } from '@forge/engine/dispatch';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { detectEcosystem } from './ecosystem.ts';
+import {
+  readFlakyState,
+  recordFlakeOutcome,
+  writeFlakyState,
+  DEFAULT_FLAKE_CONFIG,
+  type FlakeConfig,
+  type FlakyState,
+  type FlakyTestRecord,
+} from './flaky.ts';
 import { runOracleLint } from './oracle-lint.ts';
 import { runAndNormalize, writeNormalizedReport, type TestOutcome } from './reporter.ts';
 import { containsShellChaining } from './shell-safety.ts';
+
+function describeCause(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+/** `flaky.json`'s own real key for one outcome — never `outcome.name` alone. A fresh critic round
+ * reproduced directly that two different tests sharing a literal title in two different files (an
+ * entirely ordinary occurrence — `test_serialize`/`test_init`/etc. recur across real test suites
+ * constantly) were silently conflated under a bare-name key: a real, deterministic failure in one
+ * file was misclassified as "flaky" because a same-named *passing* test in another file made the
+ * (then also name-only) retry-in-isolation step report a false pass, permanently quarantining a real
+ * regression. `outcome.file` (`TestOutcome`'s own doc comment) is `undefined` only for the rare case
+ * neither ecosystem's own tool output named a real file — falls back to the bare name there, the
+ * same coarse identity this whole subsystem already inherited from `09` §9.5's AC-binding convention. */
+function flakyKey(outcome: TestOutcome): string {
+  return outcome.file === undefined ? outcome.name : `${outcome.file}::${outcome.name}`;
+}
+
+/** A hard ceiling on how many isolated retries one `forge test run` invocation will attempt — F-TEST-6
+ * mandates retrying *each individual failure* once, not re-running the whole suite an unbounded
+ * number of times. A fresh critic round measured this directly: retries scale linearly with failure
+ * count (no cap, no per-retry timeout, fully sequential), so a single broken shared fixture that fails
+ * hundreds of tests at once turns one `forge test run` into hundreds of extra full-suite-adjacent
+ * subprocess spawns — on a suite that takes even a minute, a real, measured multi-hour stall. Beyond
+ * this cap, remaining first-pass failures still count toward `failed` exactly as before (retrying is
+ * never required for a failure to count); they are simply left unclassified for `flaky.json` this run
+ * (any existing record for one of them is left untouched, not overwritten with a guess) rather than
+ * silently treated as "not a flake." */
+const MAX_RETRIES_PER_RUN = 50;
 
 /** `execution.testCommands`'s own real, inferred shape (`configSchema`, `PLAN-M8.md` P3) — a record
  * keyed by F-TEST-1's seven layer names, each an optional shell-command string. Derived from
@@ -30,6 +68,10 @@ export interface TestRunContext {
   readonly paths: ProjectPaths;
   readonly projectRoot: string;
   readonly testCommands: TestCommands;
+  /** `quality.flake` — F-TEST-6's own rolling-window/threshold/quarantine-cap config. Defaults to
+   * `DEFAULT_FLAKE_CONFIG` (F-TEST-6's own literal defaults) when a caller has no real project config
+   * to hand — a real caller (`bin.ts`) always passes the target project's own, already-read value. */
+  readonly flakeConfig?: FlakeConfig;
 }
 
 /** `rule` selects which of `G-Verify.gate.yaml`'s checks this call answers: absent runs the
@@ -81,6 +123,18 @@ async function runDefaultRule(
   const outcomes: TestOutcome[] = [];
   const problems: string[] = [];
   let declaredAny = false;
+  // F-TEST-6's own retry-in-isolation classification (P7): flakyKey(outcome) -> whether the isolated
+  // retry passed (a real flake occurrence) — populated only for outcomes that failed on the first
+  // pass, retried through the *same* layer's own command, scoped to the *same* originating file
+  // (`outcome.file`) whenever known. Never consulted for `realFailures` below (a first-pass failure
+  // always counts there, retried or not — "retries are never used to make a gate pass," F-TEST-6's
+  // own explicit rule); only `docs/forge/reports/flaky.json`'s own rolling window, further down, reads
+  // it. A key absent here (the retry cap below was hit) means "not retried this run" — deliberately
+  // distinct from "retried and reproduced," so this run's own flaky.json update can leave that test's
+  // existing record untouched rather than guessing.
+  const flakeOccurrence = new Map<string, boolean>();
+  let retriesUsed = 0;
+  let retryCapHit = false;
 
   for (const layer of DEFAULT_RUN_LAYERS) {
     const command = ctx.testCommands[layer];
@@ -103,6 +157,42 @@ async function runDefaultRule(
       continue;
     }
     outcomes.push(...result.report.outcomes);
+
+    for (const outcome of result.report.outcomes) {
+      if (outcome.status !== 'fail') continue;
+      if (retriesUsed >= MAX_RETRIES_PER_RUN) {
+        retryCapHit = true;
+        continue;
+      }
+      retriesUsed += 1;
+      const retry = await runAndNormalize(
+        command,
+        ctx.projectRoot,
+        ecosystem,
+        createTempPath,
+        outcome.name,
+        outcome.file,
+      );
+      if (retry.outcome === 'tool-error') {
+        problems.push(
+          `could not retry "${outcome.name}" in isolation to classify it: ${retry.message}`,
+        );
+      }
+      const retryPassed =
+        retry.outcome === 'ran' &&
+        retry.report.outcomes.some(
+          (candidate) =>
+            candidate.name === outcome.name &&
+            candidate.status === 'pass' &&
+            (outcome.file === undefined || candidate.file === outcome.file),
+        );
+      flakeOccurrence.set(flakyKey(outcome), retryPassed);
+    }
+  }
+  if (retryCapHit) {
+    problems.push(
+      `more than ${String(MAX_RETRIES_PER_RUN)} tests failed on their first pass — retry-in-isolation classification was skipped for the rest this run (still counted as real failures below).`,
+    );
   }
 
   if (!declaredAny) {
@@ -113,7 +203,81 @@ async function runDefaultRule(
 
   await writeNormalizedReport(ctx.paths, { outcomes });
 
-  const realFailures = outcomes.filter((outcome) => outcome.status === 'fail').length;
+  // F-TEST-6's own rolling flake tracking — a real, separate durable-state file from
+  // `test-results.json` above. A present-but-unusable `flaky.json` degrades to the empty state
+  // rather than blocking `forge test run` itself (a different job than flake tracking), but is still
+  // a real `problems` entry, never silently discarded — and, per `testCollectionWasClean` below,
+  // never persisted over the top of a real, prior state it could not actually read.
+  const testCollectionWasClean = problems.length === 0;
+  let flakyState: FlakyState;
+  try {
+    flakyState = await readFlakyState(ctx.paths);
+  } catch (cause) {
+    problems.push(`could not read docs/forge/reports/flaky.json: ${describeCause(cause)}`);
+    flakyState = { v: 1, tests: {} };
+  }
+  // F-TEST-6: "excluded from the gate" — a test already quarantined *before* this run started never
+  // counts toward this invocation's own `failed`, regardless of whether it failed again just now. A
+  // test crossing the threshold *during* this run is not excluded until the next one ("marked
+  // quarantined... on the next forge test run" — F-TEST-6's own explicit phrasing) — read once, here,
+  // before this run's own updates below. Keyed by `flakyKey`, not a bare test name — `flaky.ts`'s own
+  // `FlakyState` doc comment has the fuller reasoning.
+  const quarantinedAtStart = new Set(
+    Object.entries(flakyState.tests)
+      .filter(([, record]) => record.quarantined)
+      .map(([key]) => key),
+  );
+
+  const seenThisRun = new Set(outcomes.map(flakyKey));
+  // `Object.create(null)`, not a plain object literal: a fresh critic round reproduced directly that
+  // a test literally named `__proto__` (a real, if unusual, string — nothing forbids it) silently
+  // mutated the object's own prototype instead of adding an own key, when assigned via `obj[key] =`
+  // on an ordinary `{}`. A null-prototype object has no such special key at all.
+  const nextTests: Record<string, FlakyTestRecord> = Object.create(null) as Record<
+    string,
+    FlakyTestRecord
+  >;
+  // A fresh critic round reproduced directly that carrying `...flakyState.tests` forward
+  // unconditionally lets a deleted/renamed test's own stale (possibly quarantined) record accumulate
+  // forever — nothing else in this system ever removes one, and a quarantined-but-nonexistent test
+  // permanently blocks both `test:flaky` and `test:quarantine-cap` with no way to fix it short of a
+  // hand edit. Pruned here to exactly this run's own real outcomes — but **only** when this run's own
+  // test collection was itself completely clean (`testCollectionWasClean`, captured before flaky.json
+  // was even touched): a transient tool failure (a crashed layer, an undeclared command) must never
+  // be misread as "this test no longer exists," which would prune away a real, still-valid latch.
+  for (const [key, record] of Object.entries(flakyState.tests)) {
+    if (seenThisRun.has(key) || !testCollectionWasClean) nextTests[key] = record;
+  }
+  const flakeConfig = ctx.flakeConfig ?? DEFAULT_FLAKE_CONFIG;
+  for (const outcome of outcomes) {
+    // A `skip`ped test was not actually exercised this run — nothing real to record either way.
+    if (outcome.status === 'skip') continue;
+    const key = flakyKey(outcome);
+    // Not retried this run (the cap above was hit) — leave any existing record untouched rather than
+    // guessing at a classification nothing actually observed.
+    if (outcome.status === 'fail' && !flakeOccurrence.has(key)) continue;
+    const isFlakeOccurrence = outcome.status === 'fail' && (flakeOccurrence.get(key) ?? false);
+    nextTests[key] = recordFlakeOutcome(nextTests[key], isFlakeOccurrence, flakeConfig);
+  }
+  // Persisted only when nothing above already forced a `problems` entry: a present-but-unusable
+  // `flaky.json` must never be silently overwritten with this run's own data computed against the
+  // empty stand-in `readFlakyState`'s own failure degraded to — the identical "an unusable durable
+  // state file is never the source a fresh write gets built from" principle `coverage.ts`'s own
+  // `runRatchetCoverage` already establishes for its own baseline file, for the identical reason (a
+  // fresh critic round reproduced this directly here too: doing otherwise let a real regression's own
+  // quarantine latch get destroyed on the very run that discovered the file was unusable, laundered
+  // clean on the next one).
+  if (problems.length === 0) {
+    try {
+      await writeFlakyState(ctx.paths, { v: 1, tests: nextTests });
+    } catch (cause) {
+      problems.push(`could not write docs/forge/reports/flaky.json: ${describeCause(cause)}`);
+    }
+  }
+
+  const realFailures = outcomes.filter(
+    (outcome) => outcome.status === 'fail' && !quarantinedAtStart.has(flakyKey(outcome)),
+  ).length;
   const failed = problems.length > 0 ? Math.max(realFailures, 1) : realFailures;
   return problems.length > 0
     ? { failed, errors: 0, outcomes, problems }

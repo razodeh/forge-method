@@ -293,4 +293,21 @@ describe('forge (real subprocess dispatch)', () => {
 
     expect(result.status).toBe(2);
   });
+
+  it('runs `forge test flaky --json` for real end to end, exiting 0 against a real, clean project', async () => {
+    // `PLAN-M8.md` P7's own Checks section: proves the full real pipeline (readFlakyState -> JSON
+    // envelope -> exit code), not merely that `testFlaky` the library function works in isolation
+    // (`test/flaky.test.ts` already covers that thoroughly).
+    const dir = await realProject();
+
+    const result = run(['test', 'flaky', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly flaky: number;
+      readonly quarantined: number;
+    };
+    expect(parsed.flaky).toBe(0);
+    expect(parsed.quarantined).toBe(0);
+  });
 });

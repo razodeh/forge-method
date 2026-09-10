@@ -7,13 +7,18 @@
  * @see PLAN-M8.md P4
  */
 import { createRequire } from 'node:module';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { ProjectPaths } from '@forge/core/fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import {
+  readFlakyState,
+  writeFlakyState,
+  type FlakyState,
+} from '../../../../src/commands/loop/test/flaky.ts';
 import { testRun, type TestCommands } from '../../../../src/commands/loop/test/run.ts';
 
 function resolveRealBinEntry(pkgName: string, binName: string): string {
@@ -308,5 +313,220 @@ describe('testRun — --rule oracle-lint (F-TEST-2)', () => {
     const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
 
     expect(result.errors).toBe(0);
+  });
+});
+
+/** Finds `state.tests`' own real entry for `testName` by qualified-key suffix — the real key is
+ * `<file>::<name>` (`run.ts`'s own `flakyKey`), and `file` is vitest's own real, possibly
+ * realpath-resolved absolute path (which need not match a plain `path.join(dir, ...)` literally on
+ * every platform) — matching by suffix avoids hardcoding that exact value in these tests. */
+function findFlakyRecord(
+  state: Awaited<ReturnType<typeof readFlakyState>>,
+  testName: string,
+): FlakyState['tests'][string] | undefined {
+  const entry = Object.entries(state.tests).find(([key]) => key.endsWith(`::${testName}`));
+  return entry?.[1];
+}
+
+describe('testRun — default rule, F-TEST-6 retry-in-isolation and flake tracking (P7)', () => {
+  it('retrying a genuinely, consistently-failing test never removes it from failed, and records it as a real (non-flaky) pass in flaky.json', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'always-fails.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-910-1 always fails', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    expect(result.failed).toBe(1);
+    const flakyState = await readFlakyState(new ProjectPaths(dir));
+    // Retried, found consistent, and therefore recorded as "pass" (not flaky) — this rolling window
+    // measures flakiness specifically, not raw first-pass reliability (`flaky.ts`'s own doc comment).
+    const record = findFlakyRecord(flakyState, 'AC-910-1 always fails');
+    expect(record?.outcomes).toEqual(['pass']);
+    expect(record?.quarantined).toBe(false);
+  });
+
+  it('records a real flake occurrence (fails on the first pass, passes on the isolated retry) as "fail" in flaky.json, without affecting failed', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    // A real, deterministic flake fixture: fails on this process's first real invocation only (a
+    // file-based counter), passes on the second — the isolated retry `run.ts` performs is a genuinely
+    // separate subprocess invocation, confirmed directly to reload this module fresh.
+    await writeFile(
+      path.join(dir, 'flakes.test.js'),
+      `
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { test, expect } from 'vitest';
+const counterPath = './counter.txt';
+const count = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) + 1 : 1;
+writeFileSync(counterPath, String(count));
+test('AC-910-2 flakes on the first real invocation only', () => {
+  expect(count).toBeGreaterThan(1);
+});
+`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    // "Retries are never used to make a gate pass" (F-TEST-6) — the original failing run still
+    // counts, even though the isolated retry itself passed.
+    expect(result.failed).toBe(1);
+    const flakyState = await readFlakyState(new ProjectPaths(dir));
+    const record = findFlakyRecord(flakyState, 'AC-910-2 flakes on the first real invocation only');
+    expect(record?.outcomes).toEqual(['fail']);
+  });
+
+  it('excludes a test already quarantined before this run started from the failed count', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'quarantined.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-910-3 is already quarantined', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+    const paths = new ProjectPaths(dir);
+    // A real coverage/test collector records real, symlink-resolved paths — `realpath(dir)` mirrors
+    // that here (`coverage.test.ts`'s own identical precedent), since `mkdtemp`'s own `dir` can itself
+    // sit behind a symlink (macOS's `/var` -> `/private/var`).
+    const realFile = path.join(await realpath(dir), 'quarantined.test.js');
+    await writeFlakyState(paths, {
+      v: 1,
+      tests: {
+        [`${realFile}::AC-910-3 is already quarantined`]: {
+          outcomes: ['fail', 'pass', 'pass', 'pass'],
+          quarantined: true,
+        },
+      },
+    });
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    // F-TEST-6: "excluded from the gate" — a real first-pass failure, but already quarantined before
+    // this run started, so it never reaches `failed`.
+    expect(result.failed).toBe(0);
+  });
+
+  it('crosses the quarantine threshold on the run that reaches it, but only excludes it from failed on the NEXT run (F-TEST-6: "on the next forge test run")', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'crosses.test.js'),
+      `
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { test, expect } from 'vitest';
+const counterPath = './counter.txt';
+const count = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) + 1 : 1;
+writeFileSync(counterPath, String(count));
+test('AC-910-4 crosses the threshold this run', () => {
+  expect(count).toBeGreaterThan(1);
+});
+`,
+      'utf8',
+    );
+    const paths = new ProjectPaths(dir);
+    const realFile = path.join(await realpath(dir), 'crosses.test.js');
+    // 19 real, prior flake occurrences already recorded — one more (this run's own) crosses the 2%
+    // default threshold (1/20 = 5%).
+    await writeFlakyState(paths, {
+      v: 1,
+      tests: {
+        [`${realFile}::AC-910-4 crosses the threshold this run`]: {
+          outcomes: Array(19).fill('pass') as readonly ('pass' | 'fail')[],
+          quarantined: false,
+        },
+      },
+    });
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    expect(result.failed).toBe(1);
+    const flakyState = await readFlakyState(paths);
+    const record = findFlakyRecord(flakyState, 'AC-910-4 crosses the threshold this run');
+    expect(record?.quarantined).toBe(true);
+  });
+
+  it('does not misclassify a real, deterministic failure as a flake when a DIFFERENT file has a passing test of the identical name', async () => {
+    // A fresh critic round reproduced this directly: `TestOutcome.name` is not unique across files,
+    // and the first draft's retry-in-isolation matched purely by name — a same-named passing test in
+    // a different file made the isolated retry (unscoped to any one file) report a false pass,
+    // permanently quarantining the real, broken test and silently excluding it from every later run's
+    // own `failed` count.
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'broken.test.js'),
+      `import { test, expect } from 'vitest'; test('handles empty input', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'healthy.test.js'),
+      `import { test, expect } from 'vitest'; test('handles empty input', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+
+    const run1 = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+    expect(run1.failed).toBe(1);
+    const stateAfterRun1 = await readFlakyState(new ProjectPaths(dir));
+    const brokenRecord = findFlakyRecord(stateAfterRun1, 'handles empty input');
+    // The real, broken test's own qualified record — never conflated with the healthy one's.
+    expect(brokenRecord?.outcomes).toEqual(['pass']);
+    expect(brokenRecord?.quarantined).toBe(false);
+
+    // A second, independent run: the real failure must still count — never silently excluded because
+    // an earlier run wrongly latched a quarantine.
+    const run2 = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+    expect(run2.failed).toBe(1);
+  });
+
+  it('prunes a stale, quarantined record for a test that no longer exists, on a clean run', async () => {
+    // A fresh critic round reproduced this directly: nothing else in this system ever removes a
+    // `flaky.json` entry, so a deleted or renamed test's own quarantine latch (if it had one)
+    // otherwise accumulates forever — permanently blocking `test:quarantine-cap`/`test:flaky` on a
+    // test that does not exist any more, with no way to fix it short of a hand edit.
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'current.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-910-5 still exists', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+    const paths = new ProjectPaths(dir);
+    await writeFlakyState(paths, {
+      v: 1,
+      tests: {
+        'some/deleted/file.test.js::a test that was removed long ago': {
+          outcomes: ['fail'],
+          quarantined: true,
+        },
+      },
+    });
+
+    await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    const flakyState = await readFlakyState(paths);
+    expect(Object.keys(flakyState.tests)).not.toContain(
+      'some/deleted/file.test.js::a test that was removed long ago',
+    );
+  });
+
+  it('does NOT prune a stale record when this run had a real problem (a tool failure must never be read as "this test no longer exists")', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    const paths = new ProjectPaths(dir);
+    const staleKey = 'some/deleted/file.test.js::a test that was removed long ago';
+    await writeFlakyState(paths, {
+      v: 1,
+      tests: { [staleKey]: { outcomes: ['fail'], quarantined: true } },
+    });
+
+    // No declared layer command at all — a real, guaranteed `problems` entry (`!declaredAny`).
+    await testRun(ctx(dir, {}), {}, UNUSED_TEMP_PATH);
+
+    const flakyState = await readFlakyState(paths);
+    expect(Object.keys(flakyState.tests)).toContain(staleKey);
   });
 });

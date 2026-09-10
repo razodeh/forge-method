@@ -8,7 +8,7 @@
  * @see PLAN-M8.md P3
  */
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -195,6 +195,39 @@ test('AC-202-2 genuinely fails', () => { expect(1).toBe(2); });
     );
     expect(result.outcome).toBe('tool-error');
   });
+
+  it('testNameFilter + fileFilter (P7 retry-in-isolation) selects only the one real test in the one real file, even when a different file has a same-named test', async () => {
+    // A fresh critic round (M8 P7) reproduced this directly: a name-only filter (no `fileFilter`)
+    // would match a same-named test in *either* file, silently retrying the wrong one.
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'a.test.js'),
+      `import { test, expect } from 'vitest'; test('dup name', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'b.test.js'),
+      `import { test, expect } from 'vitest'; test('dup name', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+
+    // A real vitest invocation always reports a realpath-resolved absolute file path (confirmed
+    // directly) — `realpath(dir)` here mirrors that, since `mkdtemp`'s own real temp directories can
+    // themselves sit behind a symlink (macOS's `/tmp` -> `/private/tmp`).
+    const realFile = path.join(await realpath(dir), 'a.test.js');
+    const result = await runAndNormalize(
+      `${process.execPath} ${REAL_VITEST_ENTRY} run --root .`,
+      dir,
+      'js',
+      UNUSED_TEMP_PATH,
+      'dup name',
+      realFile,
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]?.status).toBe('fail');
+  });
 });
 
 describe('runAndNormalize — python (real pytest)', () => {
@@ -295,6 +328,60 @@ def test_AC_301_1_passes():
       path.join(dir, 'junit'),
     );
     expect(result.outcome).toBe('tool-error');
+  });
+
+  it('testNameFilter + fileFilter (P7 retry-in-isolation) addresses a real, exact pytest node id — even a same-named test in a DIFFERENT file', async () => {
+    // A fresh critic round (M8 P7) reproduced this directly against the first draft's own `-k <name>`
+    // substring match: it selected every test whose name merely *contained* the given name, including
+    // a same-named test in a different file entirely.
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'test_a.py'), `def test_dup():\n    assert 1 == 0\n`, 'utf8');
+    await writeFile(path.join(dir, 'test_b.py'), `def test_dup():\n    assert 1 == 1\n`, 'utf8');
+
+    const result = await runAndNormalize(
+      'pytest -q',
+      dir,
+      'python',
+      () => path.join(dir, 'junit'),
+      'test_dup',
+      'test_a',
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]?.status).toBe('fail');
+  });
+
+  it('testNameFilter + fileFilter correctly addresses a real, parametrized test id containing brackets and a space — the exact shape that broke the old -k expression parser', async () => {
+    // A fresh critic round (M8 P7) reproduced this directly: `-k "test_param[a b]"` is a real pytest
+    // parse error (a space inside `[...]` is not valid `-k` expression syntax) — pytest still exits
+    // with a *valid*, empty junit-xml in that failure case, which the first draft silently read as
+    // "ran, found nothing to retry" rather than a real problem.
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'test_param.py'),
+      `
+import pytest
+
+@pytest.mark.parametrize("x", ["a b"])
+def test_param(x):
+    assert x == "a b"
+`,
+      'utf8',
+    );
+
+    const result = await runAndNormalize(
+      'pytest -q',
+      dir,
+      'python',
+      () => path.join(dir, 'junit'),
+      'test_param[a b]',
+      'test_param',
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]?.status).toBe('pass');
   });
 });
 

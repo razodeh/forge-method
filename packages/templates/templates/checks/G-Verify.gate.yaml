@@ -26,6 +26,9 @@ checks:
     - id: coverage:ratchet
       run: 'forge test coverage --rule ratchet --json'
       failOn: 'regressions > 0'
+    - id: test:quarantine-cap
+      run: 'forge test flaky --json'
+      failOn: 'quarantined > 5'
   advisory:
     - id: verification-review
       agent: critic

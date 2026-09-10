@@ -38,6 +38,7 @@ import { readConfig } from './commands/config.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
+import { testFlaky } from './commands/loop/test/flaky.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
 import { testRun } from './commands/loop/test/run.ts';
 import { runStatus, runStatusJson } from './commands/run/status.ts';
@@ -196,7 +197,12 @@ async function runTestRunCommand(
   json: boolean,
 ): Promise<number> {
   const config = await readConfig(paths);
-  const ctx = { paths, projectRoot, testCommands: config.execution.testCommands };
+  const ctx = {
+    paths,
+    projectRoot,
+    testCommands: config.execution.testCommands,
+    flakeConfig: config.quality.flake,
+  };
   const options = rule === undefined ? {} : { rule };
   const result = await testRun(ctx, options, () => createSystemTempPath('forge-test-run'));
   if (json) {
@@ -247,6 +253,38 @@ async function runTestCoverageCommand(
     result.regressions > 0 ||
     (rule === undefined && result.coverage < 80) ||
     (rule === 'acceptance-criteria' && result.coverage < 100)
+    ? 1
+    : 0;
+}
+
+/** `test:flaky` (`G-Stable`, `failOn: 'flaky > 0'`) and `test:quarantine-cap` (`G-Verify`,
+ * `failOn: 'quarantined > 5'`, `quality.flake.quarantineCap`'s own literal default) both shell the
+ * identical `forge test flaky --json` — `testFlaky`'s own return value always carries both fields
+ * together (the same "both always present, only one is semantically meaningful per caller" shape
+ * `TestRunResult`/`TestCoverageResult` already establish), so one real invocation answers both
+ * already-shipped checks with no `--rule` needed at all — a bare `--rule` on this command is always
+ * rejected (exit 2), the same strict-unrecognised-flag discipline `test run`/`test coverage` already
+ * apply, rather than the first draft's own silent no-op for one. This command's own bare exit code
+ * (for a human running it directly, outside either gate) fails on *either* condition, since it has no
+ * way to know which gate is asking. */
+async function runTestFlakyCommand(paths: ProjectPaths, json: boolean): Promise<number> {
+  const config = await readConfig(paths);
+  const flakeConfig = config.quality.flake;
+  const result = await testFlaky(paths, flakeConfig);
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if ((result.problems ?? []).length > 0) {
+    for (const problem of result.problems ?? []) console.error(problem);
+  } else {
+    console.log(
+      `forge test flaky: flaky=${String(result.flaky)} quarantined=${String(result.quarantined)}.`,
+    );
+    for (const name of result.flakyTests ?? []) console.error(`flaky: ${name}`);
+    for (const name of result.quarantinedTests ?? []) console.error(`quarantined: ${name}`);
+  }
+  return (result.problems ?? []).length > 0 ||
+    result.flaky > 0 ||
+    result.quarantined > flakeConfig.quarantineCap
     ? 1
     : 0;
 }
@@ -315,6 +353,17 @@ async function main(): Promise<number> {
       return 2;
     }
     return runTestCoverageCommand(paths, projectRoot, rawRule, flags.json);
+  }
+  if (command === 'test' && sub === 'flaky') {
+    // A fresh critic round found the first draft silently accepted (and ignored) any `--rule` value
+    // here, including a real typo of the plan's own first-drafted `--rule quarantine-cap` form —
+    // `test flaky` has no real rule distinction at all (this doc comment's own fuller reasoning is on
+    // `runTestFlakyCommand`), so any `--rule` at all is a real, reportable error, not a silent no-op.
+    if (findRuleFlag(rest) !== undefined) {
+      console.error('forge: "test flaky" takes no --rule at all — it answers every rule already.');
+      return 2;
+    }
+    return runTestFlakyCommand(paths, flags.json);
   }
 
   console.error(

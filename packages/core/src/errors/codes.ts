@@ -689,6 +689,26 @@ export const ERROR_CODES = {
       `${show(d.path)} is not a real test-results report: ${show(d.detail)}.`,
     remedy: 'Re-run `forge test run` to regenerate it, rather than hand-editing this file.',
   },
+  'RUN-059': {
+    // `@forge/cli`'s own `readFlakyState` (F-TEST-6, `PLAN-M8.md` P7): `docs/forge/reports/
+    // flaky.json` is written only by this package's own `writeFlakyState`, matching RUN-058's own
+    // identical `test-results.json` precedent — but a fresh critic round found reusing RUN-058
+    // outright for this file too was actively misleading: RUN-058's own message names "a
+    // test-results report" specifically, and its own remedy ("re-run `forge test run` to regenerate
+    // it") is actively wrong here since `run.ts`'s own default rule deliberately never persists over
+    // a present-but-unusable `flaky.json` (doing so would silently destroy every real quarantine
+    // latch) — re-running `forge test run` reports the identical failure again, forever, rather than
+    // "regenerating" anything. A real, disclosed remedy instead: fix the file's own shape by hand, or
+    // delete it to start over from a real, empty rolling-window state (a real, disclosed escape
+    // hatch — `flaky.json` has no other one, `SPEC-QUESTIONS.md` Q128).
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; detail: string }) =>
+      `${show(d.path)} is not a real flake-tracking state file: ${show(d.detail)}.`,
+    remedy:
+      'Fix this file’s own JSON shape by hand, or delete it to reset flake tracking to empty — ' +
+      're-running `forge test run` will not regenerate it while it stays unusable.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

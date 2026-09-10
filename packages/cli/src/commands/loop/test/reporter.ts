@@ -7,7 +7,8 @@
  * @see specs/09 §9.5
  * @see PLAN-M8.md P3
  */
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, realpath, rm } from 'node:fs/promises';
+import path from 'node:path';
 
 import { ForgeError } from '@forge/core';
 import { readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
@@ -19,11 +20,20 @@ import { containsShellChaining } from './shell-safety.ts';
 
 /** One test's own real outcome — `09` §9.5's own binding rule made concrete. `acId` is `undefined`
  * when `extractAcId` finds no AC id in `name` at all (not every test proves an AC; F-TEST-1's own
- * pyramid has plenty of tests with no AC binding). */
+ * pyramid has plenty of tests with no AC binding). `file` — vitest's own real absolute file path, or
+ * pytest's own real junit-xml `classname` attribute (a dotted module path, e.g. `sub.dir.test_foo`
+ * for `sub/dir/test_foo.py`) — qualifies `name`, which is **not** unique on its own: a fresh critic
+ * round (P7) reproduced directly that two different tests sharing a literal title/name in two
+ * different files (an entirely ordinary occurrence — `test_serialize`/`test_init`/etc. recur across
+ * real Python test modules constantly) were silently conflated by every consumer that keyed off
+ * `name` alone, letting a real, deterministic failure in one file get misclassified as "flaky" by a
+ * same-named passing test in another. `file` is `undefined` only when the underlying tool's own
+ * output did not name a real file for this outcome (an edge case, not the common path). */
 export interface TestOutcome {
   readonly name: string;
   readonly acId: string | undefined;
   readonly status: 'pass' | 'fail' | 'skip';
+  readonly file?: string;
 }
 
 /** `runAndNormalize`'s own real, normalised result — the one shape both ecosystems produce. */
@@ -78,6 +88,7 @@ function mapVitestStatus(status: unknown): 'pass' | 'fail' | 'skip' {
 function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly TestOutcome[] {
   const assertions = Array.isArray(fileResult.assertionResults) ? fileResult.assertionResults : [];
   const fileFailed = fileResult.status === 'failed';
+  const fileName = typeof fileResult.name === 'string' ? fileResult.name : undefined;
   // A genuine hook-level exception (verified directly): the file's own `message` is non-empty. An
   // ordinary file where *some other* test simply failed also reports the file `status` as
   // `'failed'` (the aggregate reflects its worst test), but leaves `message` empty — the
@@ -90,13 +101,16 @@ function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly Te
     if (!fileFailed) return [];
     // The whole file failed to load (an unresolved import, a syntax error) — every AC any of its
     // tests would have proven is unverifiable, not silently absent from the report.
-    const name = typeof fileResult.name === 'string' ? fileResult.name : '(unknown file)';
     const detail =
       typeof fileResult.message === 'string' && fileResult.message !== ''
         ? fileResult.message
         : 'failed to load';
-    const outcomeName = `${name} (file failed to load: ${detail})`;
-    return [{ name: outcomeName, acId: extractAcId(outcomeName), status: 'fail' }];
+    const outcomeName = `${fileName ?? '(unknown file)'} (file failed to load: ${detail})`;
+    return [
+      fileName === undefined
+        ? { name: outcomeName, acId: extractAcId(outcomeName), status: 'fail' }
+        : { name: outcomeName, acId: extractAcId(outcomeName), status: 'fail', file: fileName },
+    ];
   }
 
   const outcomes: TestOutcome[] = [];
@@ -109,7 +123,11 @@ function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly Te
           : '';
     let status = mapVitestStatus(assertion.status);
     if (status === 'skip' && hookThrew) status = 'fail';
-    outcomes.push({ name, acId: extractAcId(name), status });
+    outcomes.push(
+      fileName === undefined
+        ? { name, acId: extractAcId(name), status }
+        : { name, acId: extractAcId(name), status, file: fileName },
+    );
   }
   return outcomes;
 }
@@ -124,9 +142,20 @@ function outcomesFromVitestJson(raw: string): readonly TestOutcome[] {
   return outcomes;
 }
 
+/** Escapes every real JS regex metacharacter in `text` — vitest's own real `-t`/`--testNamePattern`
+ * flag (confirmed directly against a real run in this environment during this piece's own build)
+ * takes the raw string as a **regex**, not a literal substring: a test name containing any of these
+ * characters (an ordinary `expect(x)`-shaped title, e.g.) silently matches nothing at all — reported
+ * as `status: "skipped"`, not an error — unless every metacharacter is escaped first. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function runVitest(
   command: string,
   cwd: string,
+  testNameFilter?: string,
+  fileFilter?: string,
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -141,7 +170,31 @@ async function runVitest(
       message: `testCommands value ("${command}") contains shell chaining (&&, ||, ;, |, redirection, or command substitution) — cannot safely append --reporter=json to it.`,
     };
   }
-  const result = await runShellCommand(`${command} --reporter=json`, cwd);
+  // `testNameFilter` (P7's own retry-in-isolation, `run.ts`) is anchored (`^...$`) and regex-escaped
+  // so it matches this one exact test name, verbatim — confirmed directly against a real run: an
+  // un-anchored, un-escaped pattern can match more than the one intended test (a shorter test name
+  // that is itself a substring of a longer one, e.g.), silently retrying the wrong set. `fileFilter`
+  // (`TestOutcome.file`, when known — a real absolute path) additionally scopes the run to just that
+  // one real file — a fresh critic round reproduced directly that a name-only `-t` filter alone still
+  // matches every file sharing that literal test title, silently retrying the wrong one. Passed to
+  // vitest as a path *relative to `cwd`*, not the absolute path verbatim: a second, separate critic
+  // reproduction confirmed directly that vitest treats a positional file argument as a pattern
+  // matched against paths relative to its own `--root`, not a literal absolute path — an absolute
+  // path positional silently matched zero files (`numTotalTests: 0`), not an error. `cwd` is
+  // realpath-resolved before computing that relative path: a *third* reproduction (the identical
+  // symlink-mismatch class `coverage.ts`'s own `fileCoverageCountsFrom` already documents for
+  // `PLAN-M8.md` P6) confirmed vitest's own `fileResult.name` is always realpath-resolved, while
+  // `cwd` (`run.ts`'s own `ctx.projectRoot`) is not guaranteed to be — on macOS, where `/tmp`/`/var`
+  // are themselves symlinks (exactly what `mkdtemp`'s own real temp directories sit behind), the
+  // un-resolved mismatch produced a `path.relative` result matching zero real files, silently
+  // defaulting every retry on that host to "not a flake" with no error at all.
+  const fileArg =
+    fileFilter === undefined
+      ? ''
+      : ` ${shellQuote(path.relative(await realpath(cwd), fileFilter))}`;
+  const filterFlag =
+    testNameFilter === undefined ? '' : ` -t ${shellQuote(`^${escapeRegExp(testNameFilter)}$`)}`;
+  const result = await runShellCommand(`${command}${fileArg} --reporter=json${filterFlag}`, cwd);
   try {
     return { ok: true, outcomes: outcomesFromVitestJson(result.stdout) };
   } catch (cause) {
@@ -168,6 +221,7 @@ async function runVitest(
  * of the two fields this code checked was ever set. */
 interface JunitTestCase {
   readonly '@_name'?: unknown;
+  readonly '@_classname'?: unknown;
   readonly failure?: unknown;
   readonly error?: unknown;
   readonly skipped?: unknown;
@@ -205,7 +259,16 @@ function outcomesFromJunitXml(xml: string): readonly TestOutcome[] {
           : testcase.skipped !== undefined
             ? 'skip'
             : 'pass';
-      outcomes.push({ name, acId: extractAcId(name), status });
+      // `@_classname` — a real, dotted module path (`sub.dir.test_foo` for `sub/dir/test_foo.py`) —
+      // qualifies `name`, which pytest itself never guarantees unique across files (`TestOutcome`'s
+      // own doc comment has the fuller reasoning).
+      const file =
+        typeof testcase['@_classname'] === 'string' ? testcase['@_classname'] : undefined;
+      outcomes.push(
+        file === undefined
+          ? { name, acId: extractAcId(name), status }
+          : { name, acId: extractAcId(name), status, file },
+      );
     }
   }
   return outcomes;
@@ -220,10 +283,22 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/** Converts `TestOutcome.file`'s own real, dotted junit `classname` (`sub.dir.test_foo`) back into a
+ * real, addressable pytest file path (`sub/dir/test_foo.py`) — the reverse of what pytest's own
+ * junit-xml writer does going the other way. A real, disclosed edge case: a directory or module name
+ * that itself contains a literal `.` would round-trip incorrectly (indistinguishable from a package
+ * separator) — accepted as out of scope, matching this codebase's own "a real, disclosed limitation,
+ * not a silent guess" convention elsewhere in this file. */
+function classnameToPath(classname: string): string {
+  return `${classname.replaceAll('.', '/')}.py`;
+}
+
 async function runPytest(
   command: string,
   cwd: string,
   createTempPath: () => string,
+  testNameFilter?: string,
+  fileFilter?: string,
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -234,9 +309,29 @@ async function runPytest(
       message: `testCommands value ("${command}") contains shell chaining (&&, ||, ;, |, redirection, or command substitution) — cannot safely append --junitxml to it.`,
     };
   }
+  // `testNameFilter` (P7's own retry-in-isolation, `run.ts`) is addressed by a real, exact pytest
+  // node id (`<file>::<name>`) whenever `fileFilter` (`TestOutcome.file`) is also known — a fresh
+  // critic round reproduced directly that the first draft's `-k <name>` substring/expression match
+  // (a) selects every test whose name merely *contains* `name` as a substring, not just the one
+  // intended, (b) fails outright with a real pytest parse error for an entirely ordinary parametrized
+  // test id containing `[`/`]`/a space (`test_param[a b]`), and pytest still exits with a *valid*,
+  // empty junit-xml in that failure case — silently recorded as "not flaky" rather than a real
+  // problem. A node id has none of these failure modes: it is matched as a literal path, never
+  // parsed as an expression. Falls back to the old `-k` form only when `fileFilter` is unavailable
+  // (an edge case — `TestOutcome.file` is populated for every real junit-xml `testcase` this codebase
+  // has ever observed, confirmed directly against real pytest 8.4.2 output). */
   const xmlPath = `${createTempPath()}.xml`;
+  const filterFlag =
+    testNameFilter === undefined
+      ? ''
+      : fileFilter === undefined
+        ? ` -k ${shellQuote(testNameFilter)}`
+        : ` ${shellQuote(`${classnameToPath(fileFilter)}::${testNameFilter}`)}`;
   try {
-    const result = await runShellCommand(`${command} --junitxml=${shellQuote(xmlPath)}`, cwd);
+    const result = await runShellCommand(
+      `${command} --junitxml=${shellQuote(xmlPath)}${filterFlag}`,
+      cwd,
+    );
     let xml: string;
     try {
       xml = await readTextFileAt(xmlPath);
@@ -291,18 +386,25 @@ function truncate(text: string): string {
  * a real command run and its output blindly parsed as vitest JSON. Resolving what to do about an
  * unrecognised ecosystem is a real, project-facing decision that belongs to this function's own
  * caller (the `forge test run` CLI layer, `PLAN-M8.md` P4), not something this function should ever
- * see as a valid input to guess through. */
+ * see as a valid input to guess through.
+ *
+ * `testNameFilter`/`fileFilter`, when given, scope this exact invocation to the one real test named,
+ * in the one real file named (`TestOutcome.file`) — `run.ts`'s own retry-in-isolation step
+ * (`PLAN-M8.md` P7, F-TEST-6) is this pair's only real caller. `fileFilter` alone (with no
+ * `testNameFilter`) is never a real call shape and is ignored. */
 export async function runAndNormalize(
   command: string | undefined,
   cwd: string,
   ecosystem: 'js' | 'python',
   createTempPath: () => string,
+  testNameFilter?: string,
+  fileFilter?: string,
 ): Promise<RunAndNormalizeResult> {
   if (command === undefined) return { outcome: 'missing-command' };
   const result =
     ecosystem === 'python'
-      ? await runPytest(command, cwd, createTempPath)
-      : await runVitest(command, cwd);
+      ? await runPytest(command, cwd, createTempPath, testNameFilter, fileFilter)
+      : await runVitest(command, cwd, testNameFilter, fileFilter);
   if (!result.ok) return { outcome: 'tool-error', message: result.message };
   return { outcome: 'ran', report: { outcomes: result.outcomes } };
 }
@@ -324,7 +426,8 @@ function isTestOutcome(value: unknown): value is TestOutcome {
     (candidate['acId'] === undefined || typeof candidate['acId'] === 'string') &&
     (candidate['status'] === 'pass' ||
       candidate['status'] === 'fail' ||
-      candidate['status'] === 'skip')
+      candidate['status'] === 'skip') &&
+    (candidate['file'] === undefined || typeof candidate['file'] === 'string')
   );
 }
 
