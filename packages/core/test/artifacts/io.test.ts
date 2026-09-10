@@ -59,7 +59,9 @@ describe('writeArtifact', () => {
     doc.set(['title'], 'Goodbye');
     await writeArtifact(paths, doc);
 
-    expect(readFileSync(absolute, 'utf8')).toBe('---\nid: X\ntitle: Goodbye\n---\nbody\n');
+    // A real string value is always rendered double-quoted now (`stringifyScalar`'s own doc
+    // comment in `edit.ts` — a real `YAML.stringify` corruption class this guarantees against).
+    expect(readFileSync(absolute, 'utf8')).toBe('---\nid: X\ntitle: "Goodbye"\n---\nbody\n');
   });
 
   it('round-trips: read, write with no edits, byte-identical file', async () => {
@@ -85,6 +87,6 @@ describe('writeArtifact', () => {
     doc.set(['title'], 'Written');
     await writeArtifact(paths, doc);
 
-    expect(readFileSync(absolute, 'utf8')).toContain('title: Written');
+    expect(readFileSync(absolute, 'utf8')).toContain('title: "Written"');
   });
 });

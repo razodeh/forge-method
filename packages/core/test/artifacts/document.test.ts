@@ -129,7 +129,9 @@ describe('ArtifactDocument.set', () => {
     const changedLines = before
       .map((line, i) => [i, line, after[i]] as const)
       .filter(([, a, b]) => a !== b);
-    expect(changedLines).toEqual([[2, 'title: "Old Title"', 'title: New Title']]);
+    // A real string value is now always rendered double-quoted (`stringifyScalar`'s own doc comment
+    // — a real `YAML.stringify` corruption class this guarantees against, not a stylistic choice).
+    expect(changedLines).toEqual([[2, 'title: "Old Title"', 'title: "New Title"']]);
   });
 
   it("preserves an untouched key's trailing comment when a different key is set", () => {
@@ -161,6 +163,39 @@ describe('ArtifactDocument.set', () => {
     expect(doc.get(['tags'])).toEqual([]);
   });
 
+  it('sets a long plain-scalar string without corrupting every field that follows it', () => {
+    // `PLAN-M8.md` P9 reproduced this directly: `YAML.stringify`'s own default ~80-column line width
+    // wraps a long, unquoted string value across two physical lines; `spliceValue` splices that
+    // multi-line text in with no re-indentation of its own, and the wrapped second line lands back at
+    // or before the enclosing key's own indent — not a valid plain-scalar continuation, corrupting the
+    // very next real `set()` call against a field that is, in the raw text, still sitting right there.
+    const doc = ArtifactDocument.parse(source, 'x.md');
+    const long =
+      "a genuinely long, real sentence describing what happened — well past eighty columns of plain text, the exact shape that used to trigger YAML.stringify's own default line wrap";
+    doc.set(['title'], long);
+    expect(doc.get(['title'])).toBe(long);
+    // The field declared after `title` in this fixture (`nested.x`) must still resolve — proof the
+    // document was not corrupted by the long value written just above it.
+    doc.set(['nested', 'x'], 99);
+    expect(doc.get(['nested', 'x'])).toBe(99);
+  });
+
+  it('sets a string containing a real, embedded newline without corrupting every field that follows it', () => {
+    // A fresh critic round (`PLAN-M8.md` P9) reproduced this directly as a *second*, separate
+    // corruption path the `lineWidth: 0` fix above did not close: a value that already contains a
+    // literal `\n` (an entirely ordinary shape for LLM-authored prose, or a raw multi-line failure
+    // message threaded through unmodified) gets rendered as a multi-line block-literal scalar (`|-`)
+    // by `YAML.stringify` regardless of `lineWidth` — the identical "second line lands at or before
+    // the enclosing key's own indent" corruption, reproduced with the value read back as an empty
+    // string (silent data loss) and the very next `set()` call throwing.
+    const doc = ArtifactDocument.parse(source, 'x.md');
+    const multiline = 'first sentence of a root cause.\nsecond sentence, on its own line.';
+    doc.set(['title'], multiline);
+    expect(doc.get(['title'])).toBe(multiline);
+    doc.set(['nested', 'x'], 7);
+    expect(doc.get(['nested', 'x'])).toBe(7);
+  });
+
   it('round-trips through toString(): a document re-parsed after set() still gets the real value', () => {
     const doc = ArtifactDocument.parse(source, 'x.md');
     doc.set(['tags'], ['re-parsed']);
@@ -186,7 +221,9 @@ describe('ArtifactDocument.set', () => {
       const doc = ArtifactDocument.parse('---\nrun:\nfoo: bar\n---\nbody\n', 'x.md');
       doc.set(['run'], 'run_01H');
       expect(doc.get(['run'])).toBe('run_01H');
-      expect(doc.toString()).toBe('---\nrun: run_01H\nfoo: bar\n---\nbody\n');
+      // A real string value is always rendered double-quoted now (`stringifyScalar`'s own doc
+      // comment) — `.get()` still reads back the real, unquoted plain value either way.
+      expect(doc.toString()).toBe('---\nrun: "run_01H"\nfoo: bar\n---\nbody\n');
     });
 
     it('sets "key: " with one trailing space and no comment', () => {

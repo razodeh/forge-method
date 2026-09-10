@@ -68,7 +68,7 @@ checks:
 openQuestionsPolicy: warn
 `;
 
-function agentYaml(id: string, name: string): string {
+export function agentYaml(id: string, name: string): string {
   return `id: ${id}
 name: ${name}
 version: 1.0.0

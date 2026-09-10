@@ -245,7 +245,10 @@ describe('KbWriter.propose', () => {
       paths.resolveWithin('docs/forge/kb/architecture/topic.md'),
       'utf8',
     );
-    expect(written).toMatch(/updated: 2026-01-05/);
+    // A real string value is always rendered double-quoted now (`stringifyScalar`'s own doc comment
+    // in `@forge/core/artifacts/edit.ts` — a real `YAML.stringify` corruption class this guarantees
+    // against, `PLAN-M8.md` P9).
+    expect(written).toMatch(/updated: "2026-01-05"/);
   });
 
   it('rejects a proposal with no sources (KB-004)', async () => {

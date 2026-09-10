@@ -38,9 +38,30 @@ export function getValue(text: string, path: FrontMatterPath): unknown {
  * corrupting the document this way). Flow style (`[item]`) is unaffected for an actual scalar (a
  * string/number/boolean/null stringifies identically either way), so this is safe for every existing
  * caller and correct for the one this had no test covering before.
+ *
+ * A real *string* value is rendered via `JSON.stringify`, not `YAML.stringify` — confirmed directly,
+ * across two separate rounds, that `YAML.stringify` cannot be trusted to produce a guaranteed
+ * single-physical-line result no matter which options are passed: its default ~80-column line width
+ * wraps a long, unquoted plain scalar across two lines (`lineWidth: 0` alone was tried and fixes only
+ * this one case); separately, a value that already *contains* a literal `\n` (an entirely ordinary
+ * shape for LLM-authored prose or a raw multi-line failure message — `13` §13's own RCA `symptom`/
+ * `reproduction`/`root_cause`/`fix` fields, `PLAN-M8.md` P9) is rendered with a *real* embedded line
+ * break rather than an escaped `\n` sequence even with `lineWidth: 0` *and* `defaultStringType:
+ * 'QUOTE_DOUBLE'` both set — confirmed directly this is a real, content-dependent heuristic inside the
+ * library's own double-quoted-scalar writer, not something either option reliably overrides. `spliceValue`
+ * below has no re-indentation logic of its own, so *any* multi-line stringified value corrupts every
+ * field the document declares after it the identical way, regardless of which of these two mechanisms
+ * produced it. `JSON.stringify`'s own double-quoted string syntax is a strict, YAML-1.2-compatible
+ * subset (YAML's core schema accepts JSON directly) that *never* emits a real line break for any input,
+ * confirmed directly by round-tripping it back through a real `YAML.parseDocument` for embedded
+ * newlines, tabs, unicode, backslashes, and quotes — a deterministic guarantee `YAML.stringify` itself
+ * does not make. Every non-string value (an array, a number, a boolean, `null`) still goes through
+ * `YAML.stringify(..., { flow: true })`, unaffected — only a string's own *rendering strategy* changes,
+ * never a non-string one.
  */
 function stringifyScalar(value: unknown): string {
-  return YAML.stringify(value, { flow: true }).trimEnd();
+  if (typeof value === 'string') return JSON.stringify(value);
+  return YAML.stringify(value, { flow: true, lineWidth: 0 }).trimEnd();
 }
 
 /** Whether `text` uses CRLF line endings — checked once, from whichever line ending appears first. */
