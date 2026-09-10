@@ -7803,3 +7803,126 @@ zero new coverage errors — every `ERROR:` line the coverage-ratchet stage repo
 13 pre-existing files above, none touched by P8 or by this remediation. `@forge/engine/rca`'s own
 90%/85% correctness-critical floor is included in that clean result (97.77% statements / 89.11%
 branches, scoped to `packages/engine/src/rca/**`).
+
+## M8 P9 — `forge debug` CLI integration: real RCA-### artifacts, real lane fixes (F-DEBUG-1 steps 7/8/10)
+
+**Mandate:** wire P8's engine to the real world — a real defect in, a real fix committed to a real lane,
+a real `RCA-###` artifact out. `debug.ts` rewritten to call `runRcaLoop` directly (the identical "a real,
+already-built mechanism exists; call it directly" precedent `forge review` already set) instead of a
+synthetic `debug.workflow.yaml`. A real git lane (`@forge/vcs`) backs the FIX phase specifically; every
+other phase runs a real, read-only adapter session against that same lane. On `'recorded'`: a real
+`RCA-###` artifact is written and schema-validated, the source `Defect`'s own `status` is closed
+(structurally closing the gap `SPEC-QUESTIONS.md` Q124 named — nothing before this piece ever wrote a
+real closed value), and the fix is committed to a real lane branch. Ten real design decisions this piece
+had to make (P8 deliberately left the FIX-phase lane mechanics open) are recorded in `SPEC-QUESTIONS.md`
+Q130.
+
+### Round 1 — fresh critic (given only the diff, F-DEBUG-1 steps 7/8/10, `03` §3.2.5, and explicit
+instruction to adversarially reproduce real bugs by actually running the code — real git repos, a real
+shimmed `forge` CLI subprocess, a real `FakePlatformAdapter` — not by reading and speculating): one
+blocking, three major findings, every one reproduced directly, none merely suspected
+
+1. **[BLOCKING] A real, general bug in `@forge/core/artifacts` — the `lineWidth: 0` fix this piece**
+   **itself had already made to `edit.ts`'s own `stringifyScalar` (found and fixed during this piece's**
+   **own BUILD phase, before the critic round) did not cover a value already containing a literal `\n`.**
+   Reproduced directly: `YAML.stringify` renders an embedded newline as a real, multi-line block-literal
+   scalar regardless of `lineWidth` (and, on further direct reproduction, regardless of
+   `defaultStringType: 'QUOTE_DOUBLE'` too) — the identical "second line lands at or before the enclosing
+   key's own indent" corruption the `lineWidth: 0` fix was written to close, for a second, separate real
+   cause. Directly in scope for this piece: `recordRca`'s own sequential `.set()` calls on real RCA prose
+   fields (`symptom`/`reproduction`/`root_cause`/`fix`) — and even `scaffoldDefect`'s own, unchanged
+   `observed`/`title` writes, now exercised with realistic multi-line failure-message text for the first
+   time — could crash RECORD outright with an uncaught `RangeError` on any real run whose diagnosis prose
+   happened to contain a line break. **Fixed:** `stringifyScalar` now renders any string value via
+   `JSON.stringify` directly (a strict, YAML-1.2-compatible, deterministically-single-line subset,
+   verified by round-tripping embedded newlines/tabs/unicode/backslashes/quotes back through a real
+   `YAML.parseDocument`), not `YAML.stringify` — a guarantee no combination of `YAML.stringify`'s own
+   options was found to make. A second, verified regression test (confirmed to fail even with the
+   `lineWidth: 0`-only fix in place) guards this specific case; three pre-existing `document.test.ts`/
+   `io.test.ts` assertions were updated to match the new, always-double-quoted-string output — a real,
+   intended behavioural change (every `.set()` string is now quoted, not just one needing it), not a
+   stale-test accident.
+2. **[MAJOR] The committed "fix" always included unrelated test-run bookkeeping files, not just the**
+   **real code change.** Reproduced directly against the real, unmodified happy path: `commitInLane`'s
+   own unconditional `git add -A` stages everything dirty in the lane at commit time, and PROVE's own
+   real `forge test run` re-check (run inside the same lane, to verify the accepted fix, *after* the FIX
+   session's own diff was already computed) unconditionally writes `docs/forge/reports/test-results.json`
+   /`flaky.json` and a real vitest cache — none gitignored by a real target project. The real, committed
+   lane held `fixed.marker` (the real fix) plus three unrelated test-harness byproducts — directly
+   contradicting F-DEBUG-1's own "a real fix committed to a real lane." **Fixed:** a new
+   `FixState.lastDiff` tracker records the exact diff text of whichever FIX attempt `loop.ts` ultimately
+   accepts; on `'recorded'`, the lane is reset back to `baseSha` and *only* that tracked diff is
+   re-applied (`applyDiff`, real `execa` with `input`, never a shell-interpolated string) immediately
+   before the real commit — discarding every real side effect PROVE's own verification left behind. A
+   real, second bug surfaced and fixed while building this: `runShellCommand`'s own `stdout` (`execa`'s
+   default) strips the diff's own trailing newline, which `git apply` then rejected outright as "corrupt
+   patch" until `realDiff` explicitly restored it. A new regression test confirms the final committed
+   tree contains exactly, and only, the one real file the FIX session actually wrote.
+3. **[MAJOR] A rejected (hash-colliding) FIX attempt's own changes leaked into the fresh round's**
+   **read-only phases that follow it.** Reproduced directly against the real `runRcaLoop`: on a hash
+   collision, `loop.ts` returns straight to a fresh ISOLATE round with no reset of its own — only
+   `runFixSession` ever reset the lane, and only at the top of its own *next* call — so every read-only
+   phase of the fresh round ran against a lane still holding the rejected attempt's own uncommitted
+   changes. Contradicted this file's own header doc comment's claim that every phase sees "the lane's
+   *current* real state," true only for the next FIX call. **Fixed:** `runReadOnlySession` now resets
+   the lane unconditionally too, at the top of every call — the identical harmless-when-already-clean
+   reset `runFixSession` already made. Disclosed, not directly tested: proving this specific fix
+   end-to-end would need a read-only session's own scripted response to reflect real, intermediate
+   filesystem state, which `FakePlatformAdapter`'s own static, request-matched scripts cannot do — judged
+   disproportionate new test infrastructure for what is otherwise a direct, one-line application of an
+   already-tested, already-established pattern.
+4. **[MAJOR] `blast_radius`/`fix`'s own description, and separately `kb_writes`, could never be**
+   **populated by a real run.** Reproduced directly: the FIX session requested no `outputSchema` at all
+   (reasoning the diff was synthesised anyway), and `runFixSession` unconditionally overwrote
+   `session.structured` with just `{ diff }` — but `loop.ts` reads `description`/`blastRadius` from that
+   same object, permanently empty/falling back on every real run. A related second gap in the same pass:
+   `OUTPUT_SCHEMAS.prevent` requested only `actions`, though `loop.ts` also reads `kbWrites` from the same
+   PREVENT session — `kb_writes` had the identical permanent-`[]` fate. **Fixed:** a real
+   `FIX_OUTPUT_SCHEMA` now requests `description`/`blastRadius` alongside the write tools already
+   granted (`SessionRequest.tools`/`outputSchema` are independent — a session can write real files *and*
+   report real structured JSON in the same turn, confirmed directly); `runFixSession` merges the
+   session's own reported fields with its own computed `diff`. `OUTPUT_SCHEMAS.prevent` now requests
+   `kbWrites` too. New assertions in the happy-path test confirm all three fields land in the real,
+   written RCA artifact.
+
+Also confirmed clean by the critic round, no fix needed: `realDiff`'s own `git add -A` + `git diff`
+correctly reports tracked-file modifications and deletions, not just new-file creation; `RcaLoopDeps.cwd
+= lane.path` is threaded consistently into every real `runShell`/session call with no divergence; a
+read-only session's own `tools.write: false` cannot be bypassed via `exec` (`DEFAULT_TOOLS` sets
+`exec: false`); lane cleanup on a thrown `RUN-060` mid-loop refusal genuinely works (a real, dedicated
+test now covers it, since `createTestProject()`'s own default `retainLaneWorktrees: 'always'` had left
+this path entirely untested before); `debug.workflow.yaml` "superseded but not deleted" checked against
+real remaining references and confirmed accurate; `installForgeShim`'s own `process.env.PATH` mutation
+is properly scoped per test file, with no cross-test leakage.
+
+Full findings and fixes recorded in `SPEC-QUESTIONS.md` Q130 (items 11-14 there record the critic
+round's own corrections against the original build-phase decisions in items 1-10).
+
+A fifth, real discrepancy surfaced during post-critic re-verification, self-caught rather than found by
+the critic round: `tsc --build` (this session's own stand-in for "typecheck clean" throughout every M8
+piece) is **not** the real `pnpm typecheck` floor. `pnpm typecheck`'s own real script runs each
+package's own `tsc -p <tsconfig> --noEmit` *standalone*, against other packages' *emitted* `.d.ts`
+files — not the same as `tsc --build`'s single, whole-graph, source-based compilation. `test/
+workspace-floor.test.ts`'s own dedicated per-tsconfig check (mirroring `turbo run typecheck`'s real
+behaviour) caught a real gap `tsc --build` — even a fully clean, forced rebuild — never surfaced: a
+discriminated-union narrowing (`RcaSessionRequest.phase`, imported across the real `@forge/engine` →
+`@forge/cli` project-reference boundary) that type-checked under `tsc --build` failed outright under
+the real, standalone check, for both a ternary and an explicit `if`/`else`. **Fixed:** the narrowing
+attempt (a `ReadOnlyPhase`-typed parameter on `runReadOnlySession`, meant to close one dead branch via a
+type-level proof) is reverted to a plain `RcaSessionRequest` parameter and `OUTPUT_SCHEMAS: Partial<...>`
+with its own real `? {} : {...}` spread — the exact shape being closed, restored because the proof does
+not hold across this specific project boundary. `SPEC-QUESTIONS.md` Q130 finding 15 has the full record;
+a saved process note now directs this session's own future verification to `pnpm typecheck` directly,
+never `tsc --build` alone.
+
+A second, real cross-package regression surfaced by the same full-suite run: `packages/kb/test/write/
+writer.test.ts`'s own `bumps updated on a successful proposal` test asserted an unquoted `updated: `
+date — a real, pre-existing test this piece's own `edit.ts` fix (P8's log entry, finding 1) had not
+reached during that piece's own, narrower re-verification scope. Updated to expect the new, correct,
+always-double-quoted-string output.
+
+`pnpm typecheck` (all 18 packages, real per-package standalone checks), `eslint .` (zero warnings),
+`prettier --check .`, and `pnpm run boundaries` all clean after every fix. `pnpm test` (the real,
+authoritative floor) re-run in full: 6267 of 6268 real tests passed outright (5 correctly skipped); the
+one failure was the identical, already-documented, non-deterministic SIGKILL/worktree-concurrency flake
+P6/P7/P8's own log entries already record (`crash-resume.test.ts`), re-confirmed passing alone.
