@@ -16,8 +16,17 @@
  * Surface text names only `forge template validate --all` and `scripts/assert-json-contract.mjs`, not
  * a general CLI. See `SPEC-QUESTIONS.md` for the full record of this decision.
  *
+ * `spec validate --rule <name> --json` was added in M8 P2 — narrowly, because
+ * `G-Ready.gate.yaml`/`G-Stable.gate.yaml` (already-shipped `@forge/templates` data) name it as a
+ * real `execa`-shelled command a gate check runs, which makes it unreachable until it is a real,
+ * invocable subcommand, unlike every other still-unwired command above (each of which is reachable
+ * only through this package's own exported functions today, never through a shipped gate). The rest
+ * of `spec`/`test` remain exactly as unwired as the paragraph above still says.
+ *
  * @see specs/22 M6
+ * @see specs/22 M8
  * @see PLAN-M6.md C9
+ * @see PLAN-M8.md P2
  */
 import { isForgeError } from '@forge/core/errors';
 import { ProjectPaths } from '@forge/core/fs';
@@ -26,11 +35,18 @@ import { agentValidateAll } from './commands/agent.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { runStatus, runStatusJson } from './commands/run/status.ts';
+import {
+  specValidateRule,
+  VALIDATE_RULE_IDS,
+  type ValidateRuleId,
+} from './commands/spec/validate-rules.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 
 const AGENTS_ROOT = '.forge/agents';
 const WORKFLOWS_ROOT = '.forge/workflows';
 const CHECKS_ROOT = '.forge/checks';
+const SPECS_ROOT = 'docs/forge/specs';
+const KB_ROOT = 'docs/forge/kb';
 
 async function runAgentValidate(paths: ProjectPaths, json: boolean): Promise<number> {
   const findings = await agentValidateAll({ paths, agentsRoot: AGENTS_ROOT });
@@ -94,6 +110,46 @@ async function runStatusCommand(
   return 0;
 }
 
+function isValidateRuleId(value: string | undefined): value is ValidateRuleId {
+  return value !== undefined && (VALIDATE_RULE_IDS as readonly string[]).includes(value);
+}
+
+/** `--rule <name>` is not a global flag (`parseGlobalFlags`' own `KNOWN_FLAGS` has no entry for it),
+ * so it survives into `rest` verbatim — found and validated here rather than adding it to the shared
+ * global-flags parser, matching `requireAllFlag`'s own precedent of parsing a command-specific flag
+ * out of `rest` locally instead of widening a parser every other command also goes through. */
+function findRuleFlag(rest: readonly string[]): string | undefined {
+  const index = rest.indexOf('--rule');
+  if (index === -1) return undefined;
+  return rest[index + 1];
+}
+
+/** `story:dor`/`story:file-claim-overlap`/etc. (`G-Ready.gate.yaml`/`G-Stable.gate.yaml`) each shell
+ * `forge spec validate --rule <name> --json` and read a top-level numeric `errors` field back
+ * (`failOn: 'errors > 0'`) — `specValidateRule`'s own return value carries the full `violations` list
+ * instead (real callers want to know *what*, `@forge/methods/dod`'s own doc comment gives the fuller
+ * reasoning), so this is the one place that numeric field is actually produced. */
+async function runSpecValidateRule(
+  paths: ProjectPaths,
+  rule: ValidateRuleId,
+  json: boolean,
+): Promise<number> {
+  const ctx = { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+  const result = await specValidateRule(ctx, rule);
+  if (json) {
+    console.log(
+      JSON.stringify({ v: 1, errors: result.violations.length, violations: result.violations }),
+    );
+  } else if (result.violations.length === 0) {
+    console.log(`forge spec validate --rule ${rule}: no real violations.`);
+  } else {
+    for (const violation of result.violations) {
+      console.error(`${violation.subject}: ${violation.message}`);
+    }
+  }
+  return result.violations.length > 0 ? 1 : 0;
+}
+
 async function main(): Promise<number> {
   const flags = parseGlobalFlags(process.argv.slice(2));
   const [command, sub, ...rest] = flags.positionals;
@@ -125,6 +181,17 @@ async function main(): Promise<number> {
   }
   if (command === 'status') {
     return runStatusCommand(paths, projectRoot, flags.json);
+  }
+  if (command === 'spec' && sub === 'validate') {
+    const ruleFlag = findRuleFlag(rest);
+    if (!isValidateRuleId(ruleFlag)) {
+      console.error(
+        `forge: "spec validate" needs a real --rule <name> (one of: ${VALIDATE_RULE_IDS.join(', ')}); ` +
+          `got ${JSON.stringify(ruleFlag)}. The bare, no-rule form of "spec validate" is not wired here yet.`,
+      );
+      return 2;
+    }
+    return runSpecValidateRule(paths, ruleFlag, flags.json);
   }
 
   console.error(

@@ -8,7 +8,7 @@
  * @see PLAN-M6.md C9
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,44 @@ async function realProject(): Promise<string> {
     { candidateAdapters: [new FakePlatformAdapter()], env: {}, modulesDir: REAL_MODULES_DIR },
   );
   return dir;
+}
+
+/** A minimal, real, schema-valid `Story` written directly (not via `specNew`'s id allocator, which
+ * this file has no need of) — just enough front matter for `oversized-stories`
+ * (`spec/validate-rules.ts`, M8 P2) to have something real to evaluate against a real subprocess. */
+async function writeOversizedStory(dir: string): Promise<void> {
+  const relPath = 'docs/forge/specs/stories/STORY-001-fixture.md';
+  await mkdir(path.dirname(path.join(dir, relPath)), { recursive: true });
+  const content = `---
+id: STORY-001
+type: Story
+schemaVersion: 1
+title: Fixture story
+status: ready
+created: 2026-01-01
+updated: 2026-01-01
+revision: 1
+author: po
+changelog: []
+epic: EPIC-001
+capability: CAP-001
+storyType: feature
+size: L
+owner_role: backend
+depends_on: []
+blocked_by: []
+interfaces: []
+data: []
+files_expected: []
+context_refs: []
+acceptance: []
+tests: []
+dod_profile: backend-default
+---
+
+Fixture body.
+`;
+  await writeFile(path.join(dir, relPath), content, 'utf8');
 }
 
 function run(args: readonly string[]): {
@@ -97,5 +135,33 @@ describe('forge (real subprocess dispatch)', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('needs --all');
     expect(result.stderr).not.toContain('not wired into');
+  });
+
+  it('runs `forge spec validate --rule oversized-stories --json` for real against a real violation, exiting 1 with a numeric errors field the real G-Ready gate can read', async () => {
+    // `PLAN-M8.md` P2's own Checks section: this exact command is what `G-Ready.gate.yaml`'s real,
+    // already-shipped `story:oversized` check shells out to (`failOn: 'errors > 0'`) — proven here as
+    // a real subprocess, not merely a library-function call, since that is the one thing a unit test
+    // against `specValidateRule` directly can never prove on its own.
+    const dir = await realProject();
+    await writeOversizedStory(dir);
+    const result = run(['spec', 'validate', '--rule', 'oversized-stories', '--json', '-C', dir]);
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly errors: number };
+    expect(parsed.errors).toBe(1);
+  });
+
+  it('runs `forge spec validate --rule oversized-stories --json` for real against a clean project, exiting 0', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'validate', '--rule', 'oversized-stories', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly errors: number };
+    expect(parsed.errors).toBe(0);
+  });
+
+  it('exits 2 with a real, specific message naming every valid --rule for an unrecognised one', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'validate', '--rule', 'not-a-real-rule', '-C', dir]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('oversized-stories');
   });
 });

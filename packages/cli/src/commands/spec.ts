@@ -22,13 +22,21 @@ export interface SpecCommandContext {
   readonly paths: ProjectPaths;
   readonly specsRoot: string;
   readonly kbRoot: string;
+  // Optional, defaulted inside `validate-rules.ts` rather than here: only the `open-sev1-sev2-defects`/
+  // `unresolved-rca`/`definition-of-ready` rule checks need either root, and every existing caller of
+  // this context (every command in this file) predates them — making these required would break every
+  // one of those callers for a need only `spec/validate-rules.ts` has.
+  readonly reportsRoot?: string;
+  readonly sessionsRoot?: string;
   readonly clock?: Clock;
 }
 
 /** Every real document `forge spec trace/matrix/orphans` needs `SpecGraph` built from — `docs/forge/
  * specs/**`'s own documents plus `docs/forge/kb/decisions/**`'s ADRs, since `09` §9.4's own edge
- * table includes ADR nodes and this package has no way to build a graph missing them. */
-async function loadGraphDocs(ctx: SpecCommandContext): Promise<readonly ArtifactDocument[]> {
+ * table includes ADR nodes and this package has no way to build a graph missing them. Exported for
+ * `spec/validate-rules.ts`'s own `definition-of-ready`/`unbound-acceptance-criteria` rules, which need
+ * the identical real graph, not a second construction of it. */
+export async function loadGraphDocs(ctx: SpecCommandContext): Promise<readonly ArtifactDocument[]> {
   const specDocs = await listSpecArtifacts(ctx.paths, ctx.specsRoot);
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
   // `KbParsedEntry.path` is relative to `kbRoot` (`parseKbTree`'s own convention), while
