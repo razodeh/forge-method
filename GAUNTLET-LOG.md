@@ -7571,3 +7571,82 @@ own "never runs coverage collection itself" mandate rather than solved by it.
 `tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
 monorepo test suite (6164 tests, 5 correctly skipped) all clean after every fix, including the
 previously-flaky `crash-resume.test.ts` passing clean in this same full run.
+
+## M8 P7 — `forge test flaky`: retry-in-isolation classification, rolling-window tracking, and
+quarantine, `G-Stable`/`G-Verify`-wired (F-TEST-6)
+
+**Mandate:** `test:flaky` (`G-Stable`, already shipped) and the still-missing `test:quarantine-cap`
+(`G-Verify`, per `13` §13.4). Extends `run.ts`'s default rule with a real retry-in-isolation step: any
+outcome that fails on the first pass is re-run alone; a genuine flake (fails, then passes on retry) is
+recorded into a rolling 20-run window in `docs/forge/reports/flaky.json`, while the original failure
+still counts toward `test:run`'s own `failed` — "retries are never used to make a gate pass"
+(F-TEST-6's own explicit rule). A test whose rolling rate crosses the 2% default threshold is
+quarantined, excluding its own failures from later runs' `failed` count.
+
+### Round 1 — fresh critic (given only the diff, F-TEST-6, the exact shipped `G-Stable.gate.yaml`/
+`G-Verify.gate.yaml`, and every prior M8 piece's own GAUNTLET-LOG entry, with explicit instruction to
+adversarially fuzz the code and reproduce anything BLOCKING/MAJOR against the real code first): two
+blocking, eight major findings — the largest, most consequential critic round of this milestone
+
+1. **[BLOCKING] `TestOutcome`'s own identity was a bare test name, not unique across files —**
+   **letting a real, deterministic failure get permanently quarantined and silently excluded from**
+   **the gate.** Reproduced directly, both ecosystems: two files each declaring a test with the
+   identical title (one genuinely, permanently broken; one healthy) — the first draft's name-only
+   retry match found the *healthy* test's own passing outcome, reported a false "retry passed," and
+   quarantined the broken one on the very first run; every later `forge test run` then silently
+   excluded its real failure from `failed`, reporting a clean pass on an unfixed regression. **Fixed:**
+   `TestOutcome` gained an optional `file` field (vitest's own real absolute path; pytest's own real
+   junit-xml `classname`); `flaky.json`'s own key and the retry's own match are both now qualified by
+   it, and the retry command itself is scoped to that one file (not just that one test name). New
+   regression test reproducing the exact two-file, two-run scenario end to end.
+2. **[BLOCKING] `testFlaky` failed *open* on its own unreadable `flaky.json`.** Reproduced directly
+   against the real `evaluateGate`: the first draft's own `{flaky: 0, quarantined: 0, problems: [...]}`
+   made both `test:flaky` (`failOn: 'flaky > 0'`) and `test:quarantine-cap` (`failOn: 'quarantined >
+   5'`) report a clean pass on a check that could not actually be verified — `evaluateGate` reads only
+   the numeric `failOn` fields, never `problems`, unlike every sibling in this milestone which already
+   forces its own count toward the failing direction on a real problem. **Fixed:** both counts are now
+   forced past their own real thresholds. New regression test asserting both counts directly.
+
+Six further major findings, each reproduced directly and fixed, each recorded with its own fuller
+reasoning in `SPEC-QUESTIONS.md` Q128 (findings 2, 6, 7, 8, 10, 11 there): quarantine triggered on a
+single flake occurrence instead of requiring a full rolling window (contradicting F-TEST-6's own
+explicit "2% *over 20 runs*"); `flaky.json` was persisted over an unusable prior state, destroying real
+quarantine latches (the identical fail-open class P6's own critic round already found and fixed for the
+coverage ratchet — recurred here because P7 was built before that fix's own pattern had propagated);
+stale records for deleted/renamed tests accumulated forever with no prune mechanism, permanently
+deadlocking both checks on a test that no longer exists; retries were fully unbounded and sequential
+(a single broken shared fixture failing hundreds of tests could stall one `forge test run` for hours);
+`quality.flake`'s own real, already-shipped config (`maxRatePct`/`window`/`quarantineCap`) was never
+actually read, hardcoded instead; and pytest's own `-k` substring match — not a real Python-identifier
+guarantee, contrary to this same entry's own first-drafted claim — broke outright on an entirely
+ordinary parametrized test id containing a space (`test_param[a b]`, a genuine pytest expression-parser
+error pytest itself reports via a *valid, empty* junit-xml, silently read as "nothing to retry" rather
+than a real problem); fixed by addressing the retry via a real, exact pytest node id instead.
+
+A **third** reproduction, found while fixing finding 1 above: vitest's own file-scoping positional
+argument needs a path *relative to `cwd`*, not an absolute path (an absolute positional silently
+matched zero files); a **fourth**, found while fixing that: `cwd` itself needs realpath-resolving
+first, since vitest's own reported paths are always realpath-resolved while `ctx.projectRoot` is not
+guaranteed to be — the identical symlink-mismatch class `coverage.ts`'s own `fileCoverageCountsFrom`
+already documents for `PLAN-M8.md` P6, recurring here on a different code path. Caught by this piece's
+own test suite (not the critic round) once enough real, symlinked-temp-dir fixtures existed to expose
+it.
+
+Also fixed, minor: `RUN-058` (a reuse of `test-results.json`'s own error code) rendered a misleading
+message and an actively-wrong remedy for `flaky.json` specifically, once finding 7's "never persist
+over unusable state" fix meant "re-run `forge test run` to regenerate it" was no longer even true —
+given its own dedicated `RUN-059`; `test:flaky`/`test:quarantine-cap` share one command with no `--rule`
+needed (`SPEC-QUESTIONS.md` Q128 finding 12), but silently accepted and ignored any `--rule` given
+regardless — now a real, reported error; quarantine had no visibility at all beyond a bare count
+(F-TEST-6's own explicit "quarantine is visible in every gate report") — `testFlaky` now names every
+counted test via `flakyTests`/`quarantinedTests`, printed in non-`--json` output too, the identical
+precedent `TestCoverageResult.missingAcIds` already established in P6.
+
+One finding disclosed, not fixed: `story:ac-coverage` does not know about quarantine at all — a
+quarantined test's own bound AC still counts as "unproven" there even though `test:run` excludes its
+failure from the gate. Recorded in `SPEC-QUESTIONS.md` Q128.
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6201 tests, 5 correctly skipped) all clean after every fix, aside from the two
+identical pre-existing, unrelated SIGKILL/resume worktree-concurrency flakes already documented
+throughout this build (`crash-resume.test.ts`, `resume.test.ts`), re-confirmed passing alone.

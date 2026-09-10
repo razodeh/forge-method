@@ -9517,3 +9517,129 @@ a run is complete is a fact about the *target project's own* `testCommands` conf
 layer deliberately never inspects or second-guesses.
 
 See `GAUNTLET-LOG.md`'s M8 P6 entry for the full critic round.
+
+## Q128 — M8 P7: the rolling flaky.json window records "was this a flake," not "did the first pass
+fail"; quarantine is a permanent one-way latch, only ever considered once a full window exists;
+identity is qualified by file, not a bare test name; retries are capped; `test:flaky`/
+`test:quarantine-cap` share one command with no `--rule`
+
+**Q (P7's own BUILD phase, later corrected by a fresh critic round — both rounds recorded together).**
+F-TEST-6 gives the shape of flake detection (retry once, in isolation, to classify; roll a 20-run
+window; quarantine above 2%; cap quarantine at 5) but leaves several real mechanics unspecified.
+
+1. **What goes into the rolling window is not "did the first pass fail."** F-TEST-6's own language —
+   "consistent failure = real [failure]; passes on retry = flake candidate" — draws a real distinction
+   this piece takes literally: a test that fails, and fails again on an isolated retry, is not flaky at
+   all, it is simply broken (and `test:run`'s own `failed` count already, separately, blocks the gate
+   on it every single invocation). Recording that as a `'fail'` occurrence in the *flake* rate would
+   conflate "how often is this broken" with "how often is this non-deterministic," and a permanently
+   broken test would then accumulate a high flake *rate* and get quarantined — silently excluding a
+   real, unfixed regression from the gate, exactly backwards from what quarantine exists for.
+   **Resolved:** `recordFlakeOutcome`'s own `isFlakeOccurrence` parameter is `true` only for "first
+   pass failed, isolated retry passed"; every other case (a clean pass, or a reproduced failure)
+   records `'pass'`. A known, accepted limitation of this choice: a test with a genuine, rare
+   edge-case bug that fails *sometimes* and whose retry *also* fails on those same occasions, but
+   passes on others (i.e., its own bug is itself somewhat non-deterministic, not fully flaky and not
+   fully consistent) is tracked as a mix of `'pass'`/`'fail'` entries depending on which occasions its
+   own retry happened to catch it — this piece does not attempt to distinguish "a flaky test" from "a
+   test covering genuinely non-deterministic production behavior" any further than F-TEST-6 itself
+   does.
+2. **Quarantine is only ever considered once the rolling window holds a full `config.window` entries
+   — never on a single occurrence.** A fresh critic round reproduced this directly: the first draft's
+   own 1-entry window computes a `100`% rate and latches quarantine immediately, contradicting
+   F-TEST-6's own explicit "2% **over 20 runs**" framing. **Fixed:** `recordFlakeOutcome` only
+   evaluates the threshold once `outcomes.length >= config.window`.
+3. **Quarantine has no exit condition — a permanent, one-way latch.** F-TEST-6 specifies entry
+   (crossing the threshold) but not exit. The "real" exit path F-TEST-6 gestures at (an auto-created
+   `STORY` with a deadline, closed once fixed) is explicitly out of this piece's own scope — no such
+   mechanism exists anywhere yet. **Resolved:** once `quarantined: true`, nothing in this system ever
+   sets it back to `false`; unquarantining requires a real, human hand-edit to `docs/forge/reports/
+   flaky.json` (a real, disclosed escape hatch — `RUN-059`'s own remedy names it directly). Revisit
+   once the auto-created-STORY workflow exists to drive a real exit condition.
+4. **Identity is a qualified `<file>::<name>` key, never a bare `TestOutcome.name`.** A fresh critic
+   round reproduced this directly, as the single most serious finding of its own round: two different
+   tests sharing a literal title in two different files (an entirely ordinary occurrence —
+   `test_serialize`/`test_init`/etc. recur across real test suites constantly) were silently conflated
+   by every consumer that keyed off `name` alone — a real, deterministic failure in one file was
+   misclassified as "flaky" because a same-named *passing* test in a different file made the (then
+   also name-only) retry-in-isolation step report a false pass, permanently quarantining a real
+   regression and silently excluding it from `test:run`'s own `failed` count on every later run.
+   **Fixed:** `TestOutcome` gained an optional `file` field (vitest's own real absolute file path, or
+   pytest's own real junit-xml `classname` — see finding 5); `run.ts`'s own `flakyKey` builds a
+   qualified `flaky.json` key from it, and the retry-in-isolation command itself is now scoped to that
+   one file too (not just the one test name) — for vitest, a file positional argument (converted to a
+   path relative to a **realpath-resolved** `cwd`, a second, separate reproduction of the identical
+   symlink-mismatch class `coverage.ts`'s own `fileCoverageCountsFrom` already documents for
+   `PLAN-M8.md` P6 — vitest's own reported paths are always realpath-resolved, while `ctx.projectRoot`
+   is not guaranteed to be); for pytest, an exact node id (finding 5).
+5. **pytest's own `-k` was never actually safe for retry-in-isolation — a real, disclosed correction
+   to this same entry's own first-drafted claim.** The original text here asserted pytest's `@_name`
+   "can never contain whitespace or `-k`-expression-special characters (a real Python identifier
+   cannot)... confirmed directly." A fresh critic round reproduced directly that this was **false**:
+   pytest's own real, ordinary parametrized test ids (`test_param[a b]`, a space inside brackets) are
+   not bare identifiers at all, and `-k "test_param[a b]"` is a genuine pytest expression-parser error
+   — pytest still exits with a **valid, empty** junit-xml in that failure case, which the first draft
+   silently read as "ran, found nothing to retry" rather than a real problem. **Fixed:** the retry is
+   now addressed by a real, exact pytest **node id** (`<file>::<name>`, matched as a literal path, never
+   parsed as an expression) whenever both the test name and its own file are known — `<file>` is
+   reconstructed from the junit-xml `classname` attribute (`sub.dir.test_foo` → `sub/dir/test_foo.py`;
+   a directory/module name containing a literal `.` would round-trip incorrectly — accepted as a real,
+   disclosed edge case). Falls back to the old `-k <name>` substring form only when no file is known at
+   all.
+6. **Retries are capped at `MAX_RETRIES_PER_RUN` (50), not unbounded.** A fresh critic round measured
+   retries scaling linearly with failure count, fully sequential, no per-retry timeout: a single broken
+   shared fixture failing hundreds of tests at once could turn one `forge test run` into a real,
+   multi-hour stall. **Fixed:** beyond the cap, remaining first-pass failures still count toward
+   `failed` exactly as before; they are simply left unclassified for `flaky.json` this run (an existing
+   record, if any, is left untouched) rather than guessed at, with a real `problems` entry naming that
+   the cap was hit.
+7. **A present-but-unusable `flaky.json` is now never persisted over — the identical fail-open a fresh
+   critic round found (and fixed) in P6's own coverage ratchet.** Persisting `run.ts`'s own computed
+   state even when the read itself had failed (degraded to an empty stand-in) let a real regression's
+   own quarantine latch get silently destroyed and replaced with that run's own data — laundered clean
+   on the very next invocation. **Fixed:** persistence (and pruning, finding 8) is skipped entirely
+   whenever this run had any real `problems` at all.
+8. **Stale `flaky.json` records are pruned, but only on a completely clean run.** A fresh critic round
+   reproduced directly that nothing else in this system ever removed an entry: a deleted or renamed
+   test's own quarantine latch accumulated forever, permanently blocking both `test:flaky` and
+   `test:quarantine-cap` on a test that no longer exists, with no fix short of a hand edit. **Fixed:**
+   `run.ts` prunes any record not seen among this run's own real outcomes — but only when this run's
+   own test collection was itself completely clean (no tool-errors, no undeclared layers): a transient
+   tool failure must never be misread as "this test no longer exists."
+9. **`testFlaky` now fails closed on its own `problems`, not open.** A fresh critic round reproduced
+   directly, against the real `evaluateGate`, that the first draft's own `{flaky: 0, quarantined: 0,
+   problems: [...]}` made both `test:flaky` (`failOn: 'flaky > 0'`) and `test:quarantine-cap`
+   (`failOn: 'quarantined > 5'`) report a clean pass on a check that could not actually be verified —
+   `evaluateGate` reads only the numeric `failOn` fields, never `problems`. **Fixed:** both counts are
+   forced *past* their own real thresholds on a real problem, matching every sibling in this milestone
+   (`TestRunResult.failed`, `TestCoverageResult.coverage`/`regressions`).
+10. **`quality.flake` (`maxRatePct`/`window`/`quarantineCap`) is now actually read from the target
+    project's own config, not hardcoded.** A fresh critic round found the first draft never read this
+    real, already-shipped, already-documented config at all. **Fixed:** `FlakeConfig` is derived from
+    `ForgeConfig` directly (the identical pattern `TestCommands` already establishes); `bin.ts` reads
+    it via `readConfig` and threads it through both `testRun`'s own `TestRunContext` and `testFlaky`.
+11. **`docs/forge/reports/flaky.json`'s own parse/shape errors get a dedicated `RUN-059`, not a reuse
+    of `test-results.json`'s `RUN-058`.** A fresh critic round found reusing RUN-058 rendered a
+    message naming the wrong file kind, with a remedy ("re-run `forge test run` to regenerate it")
+    that is actively wrong for this file specifically, now that finding 7 above means a run
+    deliberately never regenerates it while it stays unusable. **Fixed:** `RUN-059`, with its own
+    accurate message and remedy (fix the file by hand, or delete it to reset to empty).
+12. **`test:flaky` (`G-Stable`) and `test:quarantine-cap` (`G-Verify`) both shell the identical `forge
+    test flaky --json`, with no `--rule` at all** — unlike `test coverage`'s three real, differently-
+    computed rules (P6). `testFlaky`'s own return value always carries both `flaky` and `quarantined`
+    together (the same "both always present" shape `TestRunResult`/`TestCoverageResult` already
+    establish), so there is no real computation difference between the two checks to justify a second
+    invocation shape. **Resolved:** one command, no `--rule` accepted at all (any `--rule` at all is a
+    real, reportable error — a fresh critic round found the first draft silently ignored one, including
+    a real typo of the plan's own first-drafted `--rule quarantine-cap` form); `runTestFlakyCommand`'s
+    own bare exit code (for a human running it directly, outside either gate) fails on *either*
+    threshold, since the command itself has no way to know which gate is asking.
+
+Also disclosed, unchanged by the critic round: `story:ac-coverage` does not know about quarantine at
+all — a quarantined test's own bound AC still counts as "unproven" there even though `test:run`
+excludes its failure from the gate; and quarantine's own visibility is now real (`testFlaky`'s
+`flakyTests`/`quarantinedTests` name every counted test, printed in non-`--json` output too), closing
+F-TEST-6's own explicit "quarantine is visible in every gate report" requirement, which the first
+draft left as a bare count only.
+
+See `GAUNTLET-LOG.md`'s M8 P7 entry for the full critic round.
