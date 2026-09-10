@@ -9643,3 +9643,133 @@ F-TEST-6's own explicit "quarantine is visible in every gate report" requirement
 draft left as a bare count only.
 
 See `GAUNTLET-LOG.md`'s M8 P7 entry for the full critic round.
+
+## Q129 — M8 P8: `@forge/engine/rca`'s own real control-flow decisions F-DEBUG-1/2 leave unspecified
+
+**Q (P8's own BUILD phase, later corrected by a fresh critic round — both rounds recorded together,
+matching Q127/Q128's own pattern).** F-DEBUG-1/F-DEBUG-2 give the ten-phase shape and the bounds
+table, but several real mechanics needed a concrete decision to become runnable code. Items 1-7 are
+the original BUILD-phase decisions; items 8-14 are the critic round's own findings against that first
+draft (3 blocking, 9 major — the largest critic round of the milestone alongside P7's).
+
+1. **A single outer loop, bounded by `MAX_HYPOTHESIS_ROUNDS` (3), governs *every* "return to ISOLATE"
+   trigger** — both a non-convergent HYPOTHESISE/FALSIFY round (F-DEBUG-1 step 5's own explicit rule)
+   and a hash-colliding FIX attempt (F-DEBUG-2's own anti-thrash rule). The spec's own diagram draws
+   one real, bounded-iteration back-edge spanning this whole region, and names only one bound
+   ("Hypothesis rounds | 3") anywhere near it — not two. **Resolved:** one shared counter, not two
+   independent ones; `bounds.ts`'s own doc comment on `MAX_HYPOTHESIS_ROUNDS` records this explicitly.
+2. **PROVE (step 8) is folded directly into each FIX attempt's own success check, not a separate
+   phase with its own session/shell calls.** "The reproduction from step 2 now passes; the full
+   affected test layer passes" is mechanically just two `runShell` calls (re-run the reproduction,
+   run `forge test run`) — there is no real decision a session needs to make here beyond what FIX's
+   own attempt-success determination already needs to answer ("did this attempt work?"). **Resolved:**
+   `loop.ts`'s own FIX-attempt loop runs both checks immediately after a non-colliding, non-forbidden
+   diff is accepted, and only marks the attempt `fixed` once both pass (plus the race-specific revert
+   check below, when applicable) — a separate `RcaSessionRequest['phase']` entry for PROVE was
+   considered and rejected as pure ceremony around two shell calls with no real agent decision in
+   between.
+3. **The race-condition-specific revert check (step 8's own "otherwise the proof proves nothing")
+   uses a real, non-destructive `git worktree add --detach`-based scratch checkout, not `git stash`.**
+   Detecting "is this a race condition" is a real, disclosed heuristic too — a keyword match
+   (`/\brace\b|.../i`) against the root cause and causal chain text, not a structured classification a
+   session reports. The BUILD-phase draft originally used `git stash && (repro) ; ... ; git stash pop`
+   (achievable with only the `runShell` dependency this package already has, no new `@forge/vcs`-backed
+   scratch-worktree dependency) — **superseded by finding 8 below**, which found that draft both unsound
+   and destructive. **Resolved (post-critic):** `revertCheckScript` shells `git worktree add --detach
+   <scratch-dir> <parent-commit>`, runs the reproduction command there, then `git worktree remove
+   --force` — verified directly against three real git-repo scenarios (a confirmed-red parent commit, no
+   parent commit at all, and a non-repo directory) via direct `sh -c` execution *before* being embedded
+   into `loop.ts`, per this session's own established "verify real tool behavior before coding against
+   it" discipline. Still uses only `runShell`, no new dependency. Real, disclosed limitation carried
+   over: a fix that itself touches `.git/` state cannot be cleanly isolated by either mechanism.
+4. **REPRODUCE's own command-proposal session reuses `RcaSessionRequest`'s `'isolate'` phase tag**,
+   not a `'reproduce'` tag of its own. REPRODUCE needs exactly one thing from a session — "propose a
+   command" — and doesn't need its own distinct system-prompt/tool-selection identity the way the six
+   *named* phases (ISOLATE/HYPOTHESISE/FALSIFY/DIAGNOSE/FIX/PREVENT) genuinely do; tagging it
+   `'isolate'` (the closest real phase in spirit — both are "figure out what to look at/run next")
+   avoids a seventh union member whose only real caller is REPRODUCE's own single call site.
+5. **`MAX_WHYS` (5) is a real bound this piece adds beyond F-DEBUG-2's own named table.** DIAGNOSE's
+   own five-whys stop rule (step 6) is condition-based, not depth-based — a condition an injected fake
+   session (or an unproductive real one) might never actually satisfy, which would loop forever with
+   no bound at all otherwise. "Five whys" is the spec's own literal name for the technique; this turns
+   the name into a real ceiling. `bounds.ts`'s own doc comment records this.
+6. **F-DEBUG-2's own two separately-named breach actions ("checkpoint and escalate" for wall-clock,
+   "pause and ask" for cost) both map to this loop's own single `'escalated'` outcome**, distinguished
+   only by `reason`'s own text. `RcaLoopResult`'s own doc comment already establishes "this function
+   only ever reports what happened" — there is no live, interactive "ask" state this loop can hold
+   open; a real "pause and ask a human right now" experience, if ever built, is squarely a P9/CLI-layer
+   concern layered on top of an `'escalated'` result, not something this engine function can itself be.
+7. **`RcaRecordDraft` is every `rcaSchema` field except the fully generic artifact bookkeeping**
+   (`id`/`type`/`schemaVersion`/`status`/`created`/`updated`/`revision`/`author`/`run`/`changelog`) —
+   `title` is kept (not generic; genuinely RCA-specific content the loop itself is best placed to
+   derive from `symptom`). Matches the identical "engine reports, CLI persists" split
+   `@forge/engine/interaction` already establishes for `swarm-review`'s own `ReviewReport`.
+8. **The `git stash`-based revert check (finding 3's own original draft) was both unsound and
+   destructive.** A fresh critic round reproduced directly: the `&&`-chained script silently masked a
+   `git stash` failure (an empty stash, e.g.) as a false "proved" result, and — independent of that —
+   `git stash pop`/`drop` could pop or drop an unrelated stash entry a human already had pending,
+   destroying real, uncommitted work that had nothing to do with this loop. **Fixed:** finding 3's own
+   `git worktree`-based replacement touches nothing in the caller's working tree or stash at all.
+9. **Empty-string session-response fields defeated `.min(1)`-shaped schema validation and the
+   Sev1/Sev2 prevention gate.** A fresh critic round reproduced directly: a session returning
+   `{ claim: "" }` or an empty `prevention: []` array passed every structural check this loop ran
+   (`typeof === 'string'`, `Array.isArray`) while carrying no real content at all — for a Sev1/Sev2
+   defect specifically, F-DEBUG-2's own "prevention is mandatory" rule was silently satisfied by
+   nothing. **Fixed:** `nonEmptyString`/`stringField`/`stringArrayField` reject blank/whitespace-only
+   values, not just wrong types; INTAKE additionally validates `defectId` is non-empty (the original
+   draft checked `observed`/`expected` but not the id itself).
+10. **A mid-FALSIFY budget breach discarded every hypothesis already settled that round from the
+    escalation evidence.** A fresh critic round reproduced directly: `state.hypotheses` was only
+    appended to *after* a full HYPOTHESISE/FALSIFY round completed, so a wall-clock or cost breach
+    partway through FALSIFY lost every already-confirmed-or-refuted hypothesis from that round entirely
+    — an `'escalated'` outcome handed a human less evidence than the loop had actually gathered.
+    **Fixed:** each `RcaHypothesis` is pushed into `state.hypotheses` as FALSIFY settles it, not only
+    after the round.
+11. **A Sev1/Sev2 diagnosis could silently record despite bottoming out at "a typo" after exhausting
+    five-whys, rather than escalating.** F-DEBUG-2's own "escalate rather than accept a shallow root
+    cause for a Sev1/Sev2" intent had no real enforcement — DIAGNOSE simply recorded whatever the
+    session returned once `MAX_WHYS` was reached, typo-shallow or not. **Fixed:** a `bottomedOutAtTypo`
+    flag, set when the five-whys chain terminates in a typo-shaped root cause for a Sev1/Sev2 defect,
+    forces `'escalated'` instead of `'recorded'`; a Sev3/Sev4 defect bottoming out the same way is not
+    forced (a real, disclosed severity-based asymmetry, matching F-DEBUG-2's own).
+12. **Fix attempts were bounded per hypothesis round, not globally — up to 9 real attempts, not the
+    named 3.** A fresh critic round measured this directly: `MAX_FIX_ATTEMPTS` (3) reset at the top of
+    each of the (up to 3) outer hypothesis rounds, silently tripling the real ceiling F-DEBUG-2 names.
+    **Fixed:** `LoopState.totalFixAttempts` is a running total across the whole operation, never reset
+    per round — `bounds.ts`'s own doc comment and `LoopState`'s own doc comment both record this
+    explicitly (the identical "a bound named once must be tracked as a running total, not reset at each
+    sub-loop boundary" lesson this session already learned once in P7, recurring here on a different
+    control-flow shape).
+13. **`hashFixDiff` false-collided across different files, and separately on different string-literal
+    content, due to naive metadata-stripping.** A fresh critic round reproduced both directly: stripping
+    every diff metadata line including the `+++`/`---` file-path headers let a real, substantively
+    different fix applied to a *different* file hash identically to the first attempt, silently refusing
+    it as thrash; separately, naive `//`-comment-stripping applied to raw source text ate everything
+    after a `//` sequence *inside* a real string literal (a URL, e.g.) through to end-of-line, silently
+    dropping real code that followed it on the same line from the hash entirely. **Fixed:** the real
+    `+++`/`---` file-path lines are now prepended onto the normalised content before hashing; every real
+    string literal's own contents are blanked (not merely comment-stripped) *before* comment-stripping
+    runs. Real, disclosed trade-off of the second fix: two attempts differing *only* inside a string's
+    own content now also hash identically, treated the same as a whitespace-only difference — judged the
+    lesser risk against silently losing real code from the hash.
+14. **`detectForbiddenFixPattern` matched against raw comments and string literals, producing false
+    positives on ordinary, legitimate fixes.** A fresh critic round reproduced directly: a comment
+    merely *documenting* why a retry was deliberately not added, a string literal mentioning "please
+    don't sleep on this bug," a doc comment listing the five forbidden words verbatim (the FIX prompt's
+    own warning text), and an unrelated counter increment named `metrics.attempts++` were all flagged as
+    if they were real, added forbidden code; separately, `if (value == null) return;` (loose equality)
+    was *missed* by a strict-equality-only pattern. **Fixed:** every real string literal's own contents
+    and every comment are stripped before matching (the identical pair `hashFixDiff` already uses); the
+    retry pattern was narrowed to exclude a bare `.attempts` identifier; the null-check pattern now
+    requires a bare `return;`/`continue;` (not an arbitrary fallback expression) and matches both `===`/
+    `!==` and `==`/`!=`.
+
+Also disclosed, unchanged by the critic round: `defect.evidence` is now read into an `evidenceHint`
+included in REPRODUCE's own prompts and the needs-more-evidence plan (the first draft never read it at
+all — a critic finding, but a straightforward wiring gap rather than a real design decision);
+`RunRcaSession`/`RunRcaShell` gained their own TSDoc (`QUALITY-BAR.md` R8, the identical gap P5's own
+`oracle-lint.ts` had). Coverage remediation for this piece deliberately used no coverage-ignore pragma
+anywhere (`QUALITY-BAR.md` §3 names adding one a review failure in itself) — every branch closed here
+is closed by a real test or a real type-level fix, never suppressed.
+
+See `GAUNTLET-LOG.md`'s M8 P8 entry for the full critic round.
