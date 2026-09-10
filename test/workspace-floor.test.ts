@@ -143,6 +143,12 @@ const IGNORED_PATHS = new Set([
   'packages/adapter-claude-code/test/conformance/live-gate.ts',
   'packages/adapter-claude-code/test/conformance/fixture-options.ts',
   'packages/adapter-claude-code/test/conformance/create-warmed-adapter.ts',
+  // `packages/methods/test/fixtures/dod-profiles.ts` (PLAN-M8.md P1): the shared verbatim `09` §9.8
+  // `dod-profiles.yaml` `backend-default` worked example, imported by `test/dod/load.test.ts` and
+  // `test/dod/evaluate.test.ts` — the identical "shared, importable module, not a runnable suite"
+  // shape `packages/methods/test/fixtures/repo-strategy.ts` above already establishes, for the same
+  // reason unrecognised by `TEST_FILE`'s naming heuristic.
+  'packages/methods/test/fixtures/dod-profiles.ts',
 ]);
 
 /**
