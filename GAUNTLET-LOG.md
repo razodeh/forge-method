@@ -7264,3 +7264,98 @@ listSpecArtifacts`-per-invocation cost `unbound-acceptance-criteria`'s own dispa
 monorepo test suite (6053 tests, 5 correctly skipped) all clean after every fix — the full suite ran
 completely clean this round, with neither of the two usual pre-existing worktree-concurrency flakes
 (`resume.test.ts`/`crash-resume.test.ts`) surfacing at all.
+
+## M8 P3 — Test-command registry + normalised test-result reporter and AC binding (`09` §9.5)
+
+**Mandate:** `execution.testCommands` in `ForgeConfig` (the real command per F-TEST-1 layer);
+`detectEcosystem` (js/python/unknown); `extractAcId` (the `09` §9.5 generic-fallback regex);
+`runAndNormalize` (shells one `testCommands` entry, normalises vitest's or pytest's real machine
+output into one shared `TestOutcome` shape); `writeNormalizedReport`/`readNormalizedReport`, the
+`docs/forge/reports/test-results.json` round-trip every remaining M8 `forge test *` piece reads from.
+
+Two real corrections during BUILD, before any critic round, both from actually running the real
+tools in this environment rather than trusting documentation: (1) `pytest-json-report` (the plan's
+own first-draft Python reporter) is a third-party plugin **confirmed not installed** here — switched
+to pytest's own built-in `--junitxml`, zero extra dependencies; (2) a real pytest function name
+**cannot contain a hyphen at all** (`test_AC_014_2_...`, never `test-AC-014-2-...`) — `extractAcId`
+tries the canonical hyphenated form first, then a Python-safe underscore form. `testCommandsSchema`
+also changed from the plan's first-drafted fixed-shape object (seven optional fields) to a
+`z.record(z.enum([...]), z.string().min(1))` mid-build: `packages/schemas/src/config/walk.ts`'s own
+`configLeafPaths` walker recurses into every `ZodObject` field individually but stops at a
+`ZodRecord` — the fixed-shape draft would have needed seven individual `CONFIG_KEY_DOCS` entries and
+seven individual `DEFAULT_CONFIG` values for fields that are supposed to be *absent* by default, which
+`packages/schemas/test/config/docs.test.ts`'s own real completeness test caught immediately. See
+`SPEC-QUESTIONS.md` Q125.
+
+### Round 1 — fresh critic (given only the diff, both spec sections, the exact plan text including
+its own "Corrected during build" paragraphs; told nothing else; independently ran real vitest/pytest
+fixtures itself rather than trusting the diff's own claims): three blocking, five major findings
+
+What the critic caught, most severe first — every one confirmed by first reproducing it directly
+against a real subprocess before writing the fix, the same discipline the critic itself used:
+
+1. **[BLOCKING] A pytest setup/fixture/collection error was reported as `pass`.** pytest's own real
+   JUnit-XML writer emits a child `<error>` element (not `<failure>`) for a missing fixture or a
+   collection error — confirmed directly (a missing-fixture fixture produces exactly that). The
+   original code checked only `failure`/`skipped`, so a broken test environment silently passed.
+   **Fixed:** `JunitTestCase` gained an `error` field, treated identically to `failure`. New
+   regression test: a real missing-fixture pytest run, asserting `status: 'fail'`.
+2. **[BLOCKING] `runAndNormalize` silently treated `ecosystem: 'unknown'` as `'js'`.** `Ecosystem` is
+   `'js' | 'python' | 'unknown'`, but the dispatch ternary had no branch for the third value — any
+   project a third test runner (Jest, `go test`) that `detectEcosystem` cannot classify got routed
+   into the vitest branch regardless, parsing arbitrary output as vitest JSON. **Fixed:**
+   `runAndNormalize`'s own `ecosystem` parameter narrowed to `'js' | 'python'` at the type level —
+   `'unknown'` is now a compile-time-impossible input, pushing what to do about it to this function's
+   own caller (`forge test run`, P4), where that real decision belongs.
+3. **[BLOCKING] A command that failed to spawn threw an untyped exception instead of a typed
+   result.** Confirmed directly both ways: a typo'd vitest command produces empty stdout, and
+   `JSON.parse('')` throws `SyntaxError`; a typo'd pytest command never writes the junit-xml file,
+   and the subsequent read throws `ENOENT`. Neither was caught anywhere. **Fixed:** `RunAndNormalize
+   Result` gained a `'tool-error'` variant carrying the real stdout/stderr/exit code; both branches
+   now catch their own parse/read failures and report this instead of throwing. Two new regression
+   tests (one typo'd command per ecosystem).
+
+Also major, all fixed:
+
+4. **A vitest file that failed to *load* (an unresolved import) dropped its tests from the report
+   with zero signal** — `assertionResults: []` with the file's own `status: 'failed'` was silently
+   read as "no tests," not "this file's own ACs are all unverifiable." **Fixed:** an empty-
+   assertions, failed file now synthesises one real `fail` outcome naming the file and its own real
+   load error. New regression test (a real unresolved-import fixture).
+5. **A `beforeAll` hook throwing downgraded every test it wrapped to `skip`, indistinguishable from
+   a deliberate `test.skip()`.** Confirmed directly, then confirmed the fix's own discriminator
+   against a second, adversarial fixture: a file with *both* a real `test.skip()` and an unrelated
+   genuinely-failing test also reports the file's own aggregate `status` as `'failed'` (from the
+   other test), which would have made a naive "file failed → reclassify every skip" fix wrongly
+   flip the deliberate skip too. The real, verified discriminator is the file's own `message` field
+   — non-empty only on a genuine hook-level exception, empty when the aggregate `status` merely
+   reflects an unrelated failing test. **Fixed**, with both fixtures as regression tests (the
+   throwing-hook case now reports `fail`; the mixed skip+failure case still reports the skip as
+   `skip`).
+6. **`readNormalizedReport` had an unguarded, uncommented cast straight into the caller's hands, no
+   shape validation at all.** **Fixed:** added `RUN-058` (a new error code) plus real structural
+   validation (`isTestResultsFile`); two new regression tests (malformed status value, non-JSON
+   content), both asserting the typed code.
+7. **An unquoted, FORGE-constructed temp path was interpolated directly into a shell command
+   string** (R11) — `os.tmpdir()` commonly contains a space on a real per-user temp root. **Fixed:**
+   real POSIX single-quoting (`shellQuote`, escaping an embedded `'` too); a new regression test
+   injects a temp path containing a literal space and confirms the real pytest run still succeeds.
+8. **Six exported symbols carried no TSDoc directly on their own declaration** (only a shared
+   module-banner comment) — the identical defect class two earlier pieces in this same milestone
+   already hit. **Fixed**: real TSDoc added to every one.
+
+Also fixed, minor: no negative test existed for `testCommandsSchema` itself (an unknown layer key, an
+empty-string command) — added, both to the already-hand-verified-safe schema; `system-temp.test.ts`'s
+own test asserted a `/`-literal path prefix, which is itself the R11 failure mode on Windows (`os.
+tmpdir()` returns a backslash, drive-lettered path there) — switched to `path.isAbsolute`;
+`reporter.test.ts`'s own reference to this repo's installed vitest binary used a hand-counted
+`../../../../../../` relative URL, fragile to the test file ever moving — switched to resolving
+`vitest/package.json` via Node's own module resolution and reading its real `bin` field; the
+`system-temp.ts` eslint exemption turned off the *entire* `no-restricted-imports` rule for that file
+rather than just the two entries it needed off — narrowed to exactly those two, keeping every other
+entry (the `node:test`/`node:process`/directory-listing/bare-builtin bans) active.
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6086 tests, 5 correctly skipped) all clean after every fix, aside from the
+identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
+throughout this build, re-confirmed passing alone.

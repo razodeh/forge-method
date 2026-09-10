@@ -9377,3 +9377,41 @@ piece nor any earlier one closes on its own:
 Neither gap blocks M8's own remaining pieces: P3–P7's `test:*` checks and P10's `swarm-review` work
 are unaffected by either; P8/P9's RCA loop is the natural, already-anticipated place to close gap 1
 when it lands.
+
+## Q125 — M8 P3: `execution.testCommands`'s real shape is a record, not the plan's own first-drafted
+fixed-shape object; Python AC binding needs a second, underscore-form regex; `pytest-json-report` is
+not installed in this environment
+
+**Q (P3's own BUILD phase, before any critic round — three real, tooling-driven corrections).**
+
+1. **`testCommandsSchema`'s real shape.** The plan's first draft (`PLAN-M8.md` P3, before this
+   correction) specified `{ unit?: string; integration?: string; ...; typecheck?: string }` — a
+   fixed-shape object with seven optional fields. `packages/schemas/src/config/walk.ts`'s own
+   `configLeafPaths` (the walker `packages/schemas/test/config/docs.test.ts`'s completeness test
+   drives) recurses into every `ZodObject` field individually, stopping only at a `ZodRecord`/
+   `ZodArray` — a fixed-shape object here would need `CONFIG_KEY_DOCS` entries *and* resolvable
+   `DEFAULT_CONFIG` values for all seven fields, even though every one is meant to be *absent* by
+   default (a project need not declare every layer). **Resolved:** `z.record(z.enum(TEST_LAYERS),
+   z.string().min(1))` — the identical "its own keys are data, not schema" treatment
+   `platform.perAgent`/`execution.autonomyByGate` already get, confirmed correct by the real
+   completeness test passing without inventing seven placeholder defaults.
+2. **Python AC binding needs two regexes, not one.** The plan's first draft assumed `extractAcId`
+   could reuse `@forge/core/graph`'s own hyphenated `TEST_NAME_AC_IDS` regex verbatim for both
+   ecosystems. Confirmed directly (a real pytest run in this environment): a Python function name
+   cannot contain a hyphen at all — Python identifier rules, not a framework choice — so a real,
+   idiomatically-named pytest test (`test_AC_014_2_...`) can never match a hyphen-only regex.
+   **Resolved:** `extractAcId` tries the canonical hyphenated form first (still the one
+   `Story.tests[]`'s own free-form, human-authored strings need), then a `AC_\d{3,4}_\d+` underscore
+   form converted to the canonical hyphenated id — still exactly `09` §9.5's own "generic fallback,"
+   accounting for what a real Python identifier can contain.
+3. **`pytest-json-report` is a third-party plugin, confirmed not installed in this environment**
+   (`python3 -c "import pytest_jsonreport"` fails). Adding Python package management to a Node-
+   centric monorepo's own test fixtures for one reporter plugin would be disproportionate scope.
+   **Resolved:** pytest's own **built-in** `--junitxml` writer (no plugin required) — parsed via a
+   new `fast-xml-parser` dependency (a real, structured format deserves a real parser, not hand-
+   rolled regex XML parsing).
+
+See `GAUNTLET-LOG.md`'s M8 P3 entry for the full critic round these corrections fed into (three
+blocking, five major findings, all in the reporter's own outcome-mapping and error-handling —
+distinct from the three tooling corrections recorded here, which were made before any critic saw the
+diff).
