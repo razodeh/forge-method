@@ -1,16 +1,19 @@
 /**
- * `testRun` — `forge test run [--rule lint|typecheck]`, F-TEST-7. The library function
- * `G-Verify.gate.yaml`'s own `test:run`/`test:lint`/`test:typecheck` checks each shell (via
- * `forge test run --json`/`forge test run --rule lint --json`/`--rule typecheck --json`).
+ * `testRun` — `forge test run [--rule lint|typecheck|oracle-lint]`, F-TEST-7. The library function
+ * `G-Verify.gate.yaml`'s own `test:run`/`test:lint`/`test:typecheck`/`test:oracle-lint` (P5) checks
+ * each shell (via `forge test run --json`/`forge test run --rule lint --json`/`--rule typecheck
+ * --json`/`--rule oracle-lint --json`).
  *
  * @see specs/13 §13.1 F-TEST-7
  * @see PLAN-M8.md P4
+ * @see PLAN-M8.md P5
  */
 import type { ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { detectEcosystem } from './ecosystem.ts';
+import { runOracleLint } from './oracle-lint.ts';
 import { runAndNormalize, writeNormalizedReport, type TestOutcome } from './reporter.ts';
 import { containsShellChaining } from './shell-safety.ts';
 
@@ -29,12 +32,14 @@ export interface TestRunContext {
   readonly testCommands: TestCommands;
 }
 
-/** `rule` selects which of `G-Verify.gate.yaml`'s three checks this call answers: absent runs the
+/** `rule` selects which of `G-Verify.gate.yaml`'s checks this call answers: absent runs the
  * default aggregation (`test:run`); `'lint'`/`'typecheck'` shell that one `testCommands` entry
  * directly (`test:lint`/`test:typecheck`) — neither has AC-bound "outcomes" the normalised reporter
- * shape fits, so each gets its own real diagnostic-counting path instead. */
+ * shape fits, so each gets its own real diagnostic-counting path instead. `'oracle-lint'` (`test:
+ * oracle-lint`, P5) needs no `testCommands` entry at all — it scans the project's own test files
+ * directly, never shelling a project-authored command. */
 export interface TestRunOptions {
-  readonly rule?: 'lint' | 'typecheck';
+  readonly rule?: 'lint' | 'typecheck' | 'oracle-lint';
 }
 
 /** `failed`/`errors` are always both present (`test:run`'s own `failOn: 'failed > 0'` and `test:
@@ -219,8 +224,19 @@ function describeShellFailure(stdout: string, stderr: string): string {
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }
 
-/** `forge test run [--rule lint|typecheck]`'s own library function — dispatches to whichever of
- * the three `G-Verify.gate.yaml` checks `options.rule` names. Never throws for an ordinary,
+/** `test:oracle-lint` (P5) needs no `testCommands` entry at all — `runOracleLint` scans the
+ * project's own test files directly, never shelling a project-authored command. Its own real
+ * `problems` (a directory/file this process could not read) are forwarded verbatim, so a scan that
+ * could not fully complete never reads as a silent, clean `errors: 0`. */
+async function runOracleLintRule(ctx: TestRunContext): Promise<TestRunResult> {
+  const result = await runOracleLint(ctx.paths);
+  return result.problems === undefined
+    ? { failed: 0, errors: result.errors }
+    : { failed: 0, errors: result.errors, problems: result.problems };
+}
+
+/** `forge test run [--rule lint|typecheck|oracle-lint]`'s own library function — dispatches to
+ * whichever of `G-Verify.gate.yaml`'s checks `options.rule` names. Never throws for an ordinary,
  * real-world failure (a tool that fails to run, a layer with no configured command, a command that
  * matched zero tests): every one becomes a real `problems` entry with the relevant count forced to
  * at least `1`, never a thrown exception or a silent `0` that would read as a clean pass.
@@ -233,5 +249,6 @@ export async function testRun(
 ): Promise<TestRunResult> {
   if (options.rule === 'lint') return runLintRule(ctx);
   if (options.rule === 'typecheck') return runTypecheckRule(ctx);
+  if (options.rule === 'oracle-lint') return runOracleLintRule(ctx);
   return runDefaultRule(ctx, createTempPath);
 }

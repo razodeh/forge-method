@@ -155,7 +155,7 @@ async function runSpecValidateRule(
   return result.violations.length > 0 ? 1 : 0;
 }
 
-const TEST_RULE_IDS = ['lint', 'typecheck'] as const;
+const TEST_RULE_IDS = ['lint', 'typecheck', 'oracle-lint'] as const;
 type TestRuleId = (typeof TEST_RULE_IDS)[number];
 
 function isTestRuleId(value: string | undefined): value is TestRuleId {

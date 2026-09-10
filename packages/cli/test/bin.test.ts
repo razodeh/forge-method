@@ -243,4 +243,19 @@ describe('forge (real subprocess dispatch)', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('typecheck');
   });
+
+  it('runs `forge test run --rule oracle-lint --json` for real end to end against a real weak-assertion violation', async () => {
+    const dir = await realProject();
+    await writeFile(
+      path.join(dir, 'weak.test.js'),
+      `test('AC-900-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+
+    const result = run(['test', 'run', '--rule', 'oracle-lint', '--json', '-C', dir]);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly errors: number };
+    expect(parsed.errors).toBe(1);
+  });
 });

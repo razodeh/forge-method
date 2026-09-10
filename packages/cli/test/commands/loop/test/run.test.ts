@@ -281,3 +281,32 @@ describe('testRun — --rule typecheck (real tsc)', () => {
     expect(result.errors).toBe(0);
   });
 });
+
+describe('testRun — --rule oracle-lint (F-TEST-2)', () => {
+  it('delegates to runOracleLint and reports a real violation as errors', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'weak.test.js'),
+      `test('AC-900-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
+
+    expect(result.errors).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it('reports errors: 0 for a clean fixture, needing no testCommands entry at all', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'clean.test.js'),
+      `test('AC-900-2 computes the real total', () => { expect(compute()).toBe(110); });`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
+
+    expect(result.errors).toBe(0);
+  });
+});

@@ -20,6 +20,9 @@ checks:
     - id: test:typecheck
       run: 'forge test run --rule typecheck --json'
       failOn: 'errors > 0'
+    - id: test:oracle-lint
+      run: 'forge test run --rule oracle-lint --json'
+      failOn: 'errors > 0'
   advisory:
     - id: verification-review
       agent: critic
