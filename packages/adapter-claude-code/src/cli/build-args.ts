@@ -109,8 +109,21 @@ export function buildCliArgs(
   // `config.mcp.adoptHostServers`" (`15` §15.5.2) -- `--bare`'s own help text is not fully explicit
   // about whether it alone already excludes ambient MCP config, so this is passed unconditionally
   // (whenever not adopting) rather than relying on an inferred, unconfirmed side effect of `--bare`.
+  //
+  // `mcp.serverConfig` itself (`mapGrantedMcpServersToConfig`, `mcp.ts`) is a bare `{serverId: config}`
+  // map -- the real, correct, confirmed shape for the SDK transport's own `Options.mcpServers` field
+  // (`build-options.ts`), but a real `FORGE_LIVE=1` run (M7's own live-run checkpoint) found the real,
+  // installed CLI's own `--mcp-config` flag rejects that identical bare map outright: `Error: Invalid
+  // MCP configuration:\nmcpServers: Invalid input`, exit code 1, the real session never even starting
+  // (no `session.started` event, `session.ended{reason:'error'}` within ~130ms) -- confirmed directly
+  // by spawning the real CLI with these exact args and reading raw stderr, bypassing this adapter's own
+  // NDJSON parsing entirely. The CLI's own real `--mcp-config` schema wants the map wrapped one level
+  // deeper, under a top-level `mcpServers` key -- confirmed by the identical direct-spawn repro
+  // succeeding once wrapped. `mapGrantedMcpServersToConfig` itself stays unchanged (still correct for
+  // the SDK transport); this transport-specific envelope is applied only here, at this transport's own
+  // one real serialization point.
   if (mcp !== undefined) {
-    args.push('--mcp-config', JSON.stringify(mcp.serverConfig));
+    args.push('--mcp-config', JSON.stringify({ mcpServers: mcp.serverConfig }));
     if (mcp.strict) args.push('--strict-mcp-config');
   }
 

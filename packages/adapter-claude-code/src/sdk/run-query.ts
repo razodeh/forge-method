@@ -83,6 +83,17 @@ export function runSdkQuery(
   });
 
   let sawError = false;
+  // The real, live-installed SDK's own `SDKResultError.subtype` (confirmed against `sdk.d.ts`) names
+  // `'error_max_turns'` as its own, dedicated reason a turn stopped early -- distinct from
+  // `'error_during_execution'`/the other genuine-failure subtypes `map-message.ts`'s `mapResultError`
+  // otherwise collapses uniformly into `AdapterEvent{type:'error'}` (via `code: subtype`, unchanged).
+  // A real `FORGE_LIVE=1` run (M7's own live-run checkpoint) found this transport never actually
+  // reported `session.ended.reason: 'limit'` at all -- a genuine `limits.maxTurns` cutoff (which the
+  // SDK's own native `Options.maxTurns`, `build-options.ts`, does really enforce) was always
+  // misreported as a plain `'error'`, indistinguishable from a real execution failure. Tracked here,
+  // not in `map-message.ts`: `code` already carries the raw subtype string unmodified, so reading it
+  // back here needs no change to the shared, already-tested `AdapterEvent` shape at all.
+  let sawMaxTurnsLimit = false;
   /**
    * A fresh critic round found the original draft had no `try`/`catch` around this loop at all --
    * unlike `spawn.ts`'s own execa-subprocess iteration (P2), which can only ever *resolve* (`execa`'s
@@ -92,21 +103,30 @@ export function runSdkQuery(
    * arrives) rather than cleanly ending it. An uncaught rejection here would propagate straight out of
    * this whole generator, and `session.ended` -- the one event every consumer is entitled to rely on
    * always arriving eventually, matching `spawnClaudeCli`'s own identical guarantee -- would never be
-   * emitted. Caught here and folded into the same three-way reason computation the clean-completion
-   * path already uses, rather than left to escape uncaught.
+   * emitted. Caught here and folded into the same reason computation the clean-completion path already
+   * uses, rather than left to escape uncaught.
    */
   async function* events(): AsyncGenerator<AdapterEvent> {
     try {
       for await (const message of activeQuery) {
         for (const event of mapSdkMessage(message)) {
-          if (event.type === 'error') sawError = true;
+          if (event.type === 'error') {
+            sawError = true;
+            if (event.code === 'error_max_turns') sawMaxTurnsLimit = true;
+          }
           yield event;
         }
       }
     } catch {
       sawError = true;
     }
-    const reason = stopped ? 'aborted' : sawError ? 'error' : 'complete';
+    const reason = stopped
+      ? 'aborted'
+      : sawMaxTurnsLimit
+        ? 'limit'
+        : sawError
+          ? 'error'
+          : 'complete';
     yield { type: 'session.ended', reason };
   }
 

@@ -30,6 +30,28 @@ function rejectingQuery(): Query {
   } as unknown as Query;
 }
 
+/** A fake `Query` yielding one real, `SDKResultError`-shaped message (`sdk.d.ts`'s own confirmed
+ * `subtype: 'error_max_turns'` member) then ending -- proves `runSdkQuery`'s own reason derivation
+ * reports `'limit'` for this specific subtype, deterministically, with no live call. */
+function maxTurnsQuery(): Query {
+  return {
+    [Symbol.asyncIterator]: () => {
+      let done = false;
+      return {
+        next: () => {
+          if (done) return Promise.resolve({ value: undefined, done: true });
+          done = true;
+          return Promise.resolve({
+            value: { type: 'result', subtype: 'error_max_turns', is_error: true, errors: [] },
+            done: false,
+          });
+        },
+      };
+    },
+    interrupt: () => Promise.resolve(undefined),
+  } as unknown as Query;
+}
+
 const liveEnv = process.env as Record<string, string>;
 const isLive = liveEnv['FORGE_LIVE'] === '1';
 
@@ -54,6 +76,18 @@ describe('runSdkQuery', () => {
     const events = [];
     for await (const event of handle.events) events.push(event);
     expect(events).toEqual([{ type: 'session.ended', reason: 'error' }]);
+  });
+
+  it("a real result message carrying subtype 'error_max_turns' (the SDK's own dedicated max-turns signal, confirmed against sdk.d.ts) reports session.ended reason: limit, not error", async () => {
+    // A real FORGE_LIVE=1 run (M7's own live-run checkpoint) found this transport never actually
+    // produced reason: 'limit' at all -- a genuine limits.maxTurns cutoff (which Options.maxTurns
+    // does really enforce) was always misreported as a plain 'error', indistinguishable from a real
+    // execution failure. Proven deterministically here via the injectable queryFn seam.
+    const handle = runSdkQuery('irrelevant', {}, { queryFn: maxTurnsQuery });
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    const ended = events.at(-1);
+    expect(ended).toMatchObject({ type: 'session.ended', reason: 'limit' });
   });
 
   it.skipIf(!isLive)(

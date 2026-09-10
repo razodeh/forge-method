@@ -188,7 +188,7 @@ describe('buildCliArgs', () => {
     expect(args.indexOf('--')).toBeGreaterThan(index + 2);
   });
 
-  it('mcp.serverConfig (P7) is passed as a JSON string via --mcp-config, and --strict-mcp-config is included when mcp.strict is true', () => {
+  it('mcp.serverConfig (P7) is passed as a JSON string via --mcp-config, wrapped under a top-level mcpServers key, and --strict-mcp-config is included when mcp.strict is true', () => {
     const args = buildCliArgs(baseRequest(), claudeCodeAdapterConfigSchema.parse({}), undefined, {
       allowedTools: [],
       serverConfig: { github: { type: 'stdio', command: 'npx' } },
@@ -196,8 +196,12 @@ describe('buildCliArgs', () => {
     });
     const index = args.indexOf('--mcp-config');
     expect(index).toBeGreaterThanOrEqual(0);
+    // A real FORGE_LIVE=1 run (M7's own live-run checkpoint) found the real, installed CLI rejects
+    // mcp.serverConfig's own bare {serverId: config} shape outright ("Invalid MCP configuration:
+    // mcpServers: Invalid input") -- the real CLI wants it wrapped one level deeper, under a top-level
+    // mcpServers key, confirmed by a direct repro against the real CLI.
     expect(JSON.parse(args[index + 1] ?? '{}')).toEqual({
-      github: { type: 'stdio', command: 'npx' },
+      mcpServers: { github: { type: 'stdio', command: 'npx' } },
     });
     expect(args).toContain('--strict-mcp-config');
   });
