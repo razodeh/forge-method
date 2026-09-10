@@ -31,7 +31,11 @@ const CONFIG_REL_PATH = '.forge/config.yaml';
  * reject a typo'd key at the one real source of truth, not a second list that could drift from it. */
 const REAL_KEYS: ReadonlySet<string> = new Set(configLeafPaths(configSchema));
 
-async function readConfig(paths: ProjectPaths): Promise<ForgeConfig> {
+/** `@throws {ForgeError}` `CFG-020` if `.forge/config.yaml` does not exist; `CFG-001` if it does not
+ * validate. Exported for `bin.ts`'s own `test run` wiring (`PLAN-M8.md` P4) — the only other real
+ * caller of "the real, validated project config" this codebase has, and the identical read every
+ * other config-aware command in this file already does. */
+export async function readConfig(paths: ProjectPaths): Promise<ForgeConfig> {
   if (!(await pathExists(paths.resolveWithin(CONFIG_REL_PATH)))) {
     throw new ForgeError('CFG-020', undefined);
   }

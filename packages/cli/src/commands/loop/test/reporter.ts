@@ -15,6 +15,7 @@ import { runShellCommand } from '@forge/engine/dispatch';
 import { XMLParser } from 'fast-xml-parser';
 
 import { extractAcId } from './ac-binding.ts';
+import { containsShellChaining } from './shell-safety.ts';
 
 /** One test's own real outcome — `09` §9.5's own binding rule made concrete. `acId` is `undefined`
  * when `extractAcId` finds no AC id in `name` at all (not every test proves an AC; F-TEST-1's own
@@ -130,6 +131,16 @@ async function runVitest(
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
 > {
+  // A fresh critic round (P4) reproduced this directly against this exact append-a-flag pattern: a
+  // real, ordinary `testCommands` value that chains shell commands (`"vitest run && echo done"`)
+  // silently misroutes `--reporter=json` onto whichever command ends up last — `shell-safety.ts`'s
+  // own doc comment has the full reasoning.
+  if (containsShellChaining(command)) {
+    return {
+      ok: false,
+      message: `testCommands value ("${command}") contains shell chaining (&&, ||, ;, |, redirection, or command substitution) — cannot safely append --reporter=json to it.`,
+    };
+  }
   const result = await runShellCommand(`${command} --reporter=json`, cwd);
   try {
     return { ok: true, outcomes: outcomesFromVitestJson(result.stdout) };
@@ -217,6 +228,12 @@ async function runPytest(
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
 > {
+  if (containsShellChaining(command)) {
+    return {
+      ok: false,
+      message: `testCommands value ("${command}") contains shell chaining (&&, ||, ;, |, redirection, or command substitution) — cannot safely append --junitxml to it.`,
+    };
+  }
   const xmlPath = `${createTempPath()}.xml`;
   try {
     const result = await runShellCommand(`${command} --junitxml=${shellQuote(xmlPath)}`, cwd);

@@ -16,24 +16,29 @@
  * Surface text names only `forge template validate --all` and `scripts/assert-json-contract.mjs`, not
  * a general CLI. See `SPEC-QUESTIONS.md` for the full record of this decision.
  *
- * `spec validate --rule <name> --json` was added in M8 P2 — narrowly, because
- * `G-Ready.gate.yaml`/`G-Stable.gate.yaml` (already-shipped `@forge/templates` data) name it as a
- * real `execa`-shelled command a gate check runs, which makes it unreachable until it is a real,
- * invocable subcommand, unlike every other still-unwired command above (each of which is reachable
- * only through this package's own exported functions today, never through a shipped gate). The rest
- * of `spec`/`test` remain exactly as unwired as the paragraph above still says.
+ * `spec validate --rule <name> --json` (M8 P2) and `test run [--rule lint|typecheck] --json`
+ * (M8 P4) were added narrowly, for the identical reason: `G-Ready.gate.yaml`/`G-Verify.gate.yaml`/
+ * `G-Stable.gate.yaml` (already-shipped `@forge/templates` data) name each as a real `execa`-shelled
+ * command a gate check runs, which makes it unreachable until it is a real, invocable subcommand,
+ * unlike every other still-unwired command above (each of which is reachable only through this
+ * package's own exported functions today, never through a shipped gate). The rest of `spec`/`test`
+ * remain exactly as unwired as the paragraph above still says.
  *
  * @see specs/22 M6
  * @see specs/22 M8
  * @see PLAN-M6.md C9
  * @see PLAN-M8.md P2
+ * @see PLAN-M8.md P4
  */
 import { isForgeError } from '@forge/core/errors';
 import { ProjectPaths } from '@forge/core/fs';
 
 import { agentValidateAll } from './commands/agent.ts';
+import { readConfig } from './commands/config.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
+import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
+import { testRun } from './commands/loop/test/run.ts';
 import { runStatus, runStatusJson } from './commands/run/status.ts';
 import {
   specValidateRule,
@@ -150,6 +155,52 @@ async function runSpecValidateRule(
   return result.violations.length > 0 ? 1 : 0;
 }
 
+const TEST_RULE_IDS = ['lint', 'typecheck'] as const;
+type TestRuleId = (typeof TEST_RULE_IDS)[number];
+
+function isTestRuleId(value: string | undefined): value is TestRuleId {
+  return value !== undefined && (TEST_RULE_IDS as readonly string[]).includes(value);
+}
+
+/** `--rule lint|typecheck`, the same "not a global flag, found locally in `rest`" pattern
+ * `findRuleFlag` above already establishes for `spec validate`. Returns the raw value verbatim
+ * (never silently narrowed to `undefined` for an unrecognised one) — a fresh critic round found
+ * the original version collapsed "no `--rule` given" and "a `--rule` given but misspelled" into
+ * the identical `undefined`, so a typo (`--rule typecheckk`) silently ran the entire default test
+ * suite instead of erroring, the same real, reported gap `isValidateRuleId` below already avoids
+ * for `spec validate`. */
+function findRawTestRuleFlag(rest: readonly string[]): string | undefined {
+  const index = rest.indexOf('--rule');
+  return index === -1 ? undefined : rest[index + 1];
+}
+
+/** `test:run`/`test:lint`/`test:typecheck` (`G-Verify.gate.yaml`) each shell `forge test run
+ * [--rule lint|typecheck] --json` and read back a top-level numeric `failed` or `errors` field
+ * (`failOn: 'failed > 0'` / `'errors > 0'`) — `testRun`'s own return value already carries both,
+ * per its own doc comment's reasoning; this wiring just adds the real project config and a real
+ * `createTempPath`. */
+async function runTestRunCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  rule: TestRuleId | undefined,
+  json: boolean,
+): Promise<number> {
+  const config = await readConfig(paths);
+  const ctx = { paths, projectRoot, testCommands: config.execution.testCommands };
+  const options = rule === undefined ? {} : { rule };
+  const result = await testRun(ctx, options, () => createSystemTempPath('forge-test-run'));
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if ((result.problems ?? []).length > 0) {
+    for (const problem of result.problems ?? []) console.error(problem);
+  } else {
+    console.log(
+      `forge test run${rule === undefined ? '' : ` --rule ${rule}`}: failed=${String(result.failed)} errors=${String(result.errors)}.`,
+    );
+  }
+  return result.failed > 0 || result.errors > 0 ? 1 : 0;
+}
+
 async function main(): Promise<number> {
   const flags = parseGlobalFlags(process.argv.slice(2));
   const [command, sub, ...rest] = flags.positionals;
@@ -192,6 +243,17 @@ async function main(): Promise<number> {
       return 2;
     }
     return runSpecValidateRule(paths, ruleFlag, flags.json);
+  }
+  if (command === 'test' && sub === 'run') {
+    const rawRule = findRawTestRuleFlag(rest);
+    if (rawRule !== undefined && !isTestRuleId(rawRule)) {
+      console.error(
+        `forge: "test run --rule" needs a real rule (one of: ${TEST_RULE_IDS.join(', ')}); ` +
+          `got ${JSON.stringify(rawRule)}.`,
+      );
+      return 2;
+    }
+    return runTestRunCommand(paths, projectRoot, rawRule, flags.json);
   }
 
   console.error(

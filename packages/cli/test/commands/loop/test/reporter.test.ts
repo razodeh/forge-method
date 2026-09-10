@@ -183,6 +183,18 @@ test('AC-202-2 genuinely fails', () => { expect(1).toBe(2); });
     );
     expect(result.outcome).toBe('tool-error');
   });
+
+  it('reports a real tool-error for a chained command, rather than misrouting --reporter=json', async () => {
+    // A fresh critic round (P4) reproduced this directly: blindly appending a flag onto a chained
+    // shell command silently misroutes it.
+    const result = await runAndNormalize(
+      `${process.execPath} ${REAL_VITEST_ENTRY} run --root . && echo done`,
+      await tempDir(),
+      'js',
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.outcome).toBe('tool-error');
+  });
 });
 
 describe('runAndNormalize — python (real pytest)', () => {
@@ -275,6 +287,14 @@ def test_AC_301_1_passes():
 
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes.find((o) => o.acId === 'AC-301-1')?.status).toBe('pass');
+  });
+
+  it('reports a real tool-error for a chained pytest command, rather than misrouting --junitxml', async () => {
+    const dir = await tempDir();
+    const result = await runAndNormalize('pytest -q && echo done', dir, 'python', () =>
+      path.join(dir, 'junit'),
+    );
+    expect(result.outcome).toBe('tool-error');
   });
 });
 

@@ -7,14 +7,16 @@
  * @see specs/22 M6
  * @see PLAN-M6.md C9
  */
+import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { FakePlatformAdapter } from '@forge/testkit';
+import * as YAML from 'yaml';
 
 import { runInit } from '../src/init/run-init.ts';
 
@@ -36,6 +38,32 @@ async function realProject(): Promise<string> {
   );
   return dir;
 }
+
+/** Patches a real key under `execution.testCommands` in the project's own real, `forge init`-written
+ * `.forge/config.yaml` — the same file `readConfig` (`commands/config.ts`) reads for `forge test
+ * run`'s own real CLI wiring (`PLAN-M8.md` P4). */
+async function setTestCommand(dir: string, layer: string, command: string): Promise<void> {
+  const configPath = path.join(dir, '.forge/config.yaml');
+  const parsed = YAML.parse(await readFile(configPath, 'utf8')) as {
+    execution: { testCommands: Record<string, string> };
+  };
+  parsed.execution.testCommands[layer] = command;
+  await writeFile(configPath, YAML.stringify(parsed), 'utf8');
+}
+
+function resolveRealVitestEntry(): string {
+  const require = createRequire(import.meta.url);
+  const packageJsonPath = require.resolve('vitest/package.json');
+  const packageJson = require(packageJsonPath) as {
+    readonly bin?: Readonly<Record<string, string>>;
+  };
+  const binRelative = packageJson.bin?.['vitest'];
+  if (binRelative === undefined)
+    throw new Error('vitest/package.json has no real "vitest" bin entry.');
+  return path.join(path.dirname(packageJsonPath), binRelative);
+}
+
+const REAL_VITEST_CMD = `${process.execPath} ${resolveRealVitestEntry()} run --root .`;
 
 /** A minimal, real, schema-valid `Story` written directly (not via `specNew`'s id allocator, which
  * this file has no need of) — just enough front matter for `oversized-stories`
@@ -163,5 +191,56 @@ describe('forge (real subprocess dispatch)', () => {
     const result = run(['spec', 'validate', '--rule', 'not-a-real-rule', '-C', dir]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('oversized-stories');
+  });
+
+  it('runs `forge test run --json` for real end to end, from the real config through a real vitest failure', async () => {
+    // `PLAN-M8.md` P4's own Checks section: proves the full real pipeline (readConfig -> testRun ->
+    // JSON envelope -> exit code), not merely that `testRun` the library function works in
+    // isolation (`test/run.test.ts` already covers that thoroughly).
+    const dir = await realProject();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await setTestCommand(dir, 'unit', REAL_VITEST_CMD);
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `import { test, expect } from 'vitest'; test('fails', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+
+    const result = run(['test', 'run', '--json', '-C', dir]);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly failed: number;
+      readonly errors: number;
+    };
+    expect(parsed.failed).toBe(1);
+  });
+
+  it('runs `forge test run --json` for real end to end against a real, clean vitest fixture, exiting 0', async () => {
+    const dir = await realProject();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await setTestCommand(dir, 'unit', REAL_VITEST_CMD);
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `import { test, expect } from 'vitest'; test('passes', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+
+    const result = run(['test', 'run', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly failed: number };
+    expect(parsed.failed).toBe(0);
+  });
+
+  it('exits 2 with a real, specific message for an unrecognised "test run --rule" value, rather than silently running the default suite', async () => {
+    // A fresh critic round found `findTestRuleFlag`'s first draft collapsed "no --rule given" and
+    // "a --rule given but misspelled" into the identical `undefined`, silently running the entire
+    // default suite for a typo — mirroring the already-existing `spec validate --rule
+    // not-a-real-rule` test above for the identical, already-fixed-once gap.
+    const dir = await realProject();
+    const result = run(['test', 'run', '--rule', 'typecheckk', '-C', dir]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('typecheck');
   });
 });
