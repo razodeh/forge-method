@@ -709,6 +709,24 @@ export const ERROR_CODES = {
       'Fix this file’s own JSON shape by hand, or delete it to reset flake tracking to empty — ' +
       're-running `forge test run` will not regenerate it while it stays unusable.',
   },
+  'RUN-060': {
+    // `@forge/engine/rca`'s own `runRcaLoop` (F-DEBUG-1, `PLAN-M8.md` P8): three real, structural
+    // requirements F-DEBUG-1's own normative text states as hard gates, not shoulds — refused with
+    // this one shared code (disambiguated by `detail`), never a thrown, untyped crash: (1) INTAKE
+    // cannot state a real "expected X, observed Y" pair (step 1's own explicit "refuse to proceed on
+    // a symptom that cannot be stated" this way); (2) HYPOTHESISE proposed fewer than the real,
+    // enforced minimum of three distinct hypotheses (step 4's own explicit "at least three... a
+    // single hypothesis becomes a conclusion"); (3) PREVENT reached RECORD for a Sev1/Sev2 defect with
+    // zero real prevention actions (step 9's own explicit "closing one without a prevention action is
+    // refused").
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { phase: string; detail: string }) =>
+      `RCA loop refused at ${show(d.phase)}: ${show(d.detail)}.`,
+    remedy:
+      'Fix the underlying input/session response rather than retrying unchanged — this is a real, ' +
+      'structural requirement of the RCA loop itself (specs/13 F-DEBUG-1).',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

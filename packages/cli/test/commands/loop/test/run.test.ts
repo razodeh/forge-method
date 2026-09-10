@@ -7,7 +7,7 @@
  * @see PLAN-M8.md P4
  */
 import { createRequire } from 'node:module';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -164,6 +164,41 @@ describe('testRun — default rule (real vitest)', () => {
     expect(result.failed).toBeGreaterThanOrEqual(1);
     expect(result.problems?.some((p) => p.includes('zero tests'))).toBe(true);
   });
+
+  it('does not record a real, deliberate skip into flaky.json — nothing was actually exercised', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `import { test, expect } from 'vitest';
+test('passes', () => { expect(1).toBe(1); });
+test.skip('a deliberate skip', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    expect(result.failed).toBe(0);
+    expect(result.problems).toBeUndefined();
+    const state = await readFlakyState(new ProjectPaths(dir));
+    expect(findFlakyRecord(state, 'a deliberate skip')).toBeUndefined();
+  });
+
+  it('reports a real problem, not a thrown exception, when docs/forge/reports/flaky.json is corrupt', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `import { test, expect } from 'vitest'; test('passes', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+    await mkdir(path.join(dir, 'docs/forge/reports'), { recursive: true });
+    await writeFile(path.join(dir, 'docs/forge/reports/flaky.json'), 'not json', 'utf8');
+
+    const result = await testRun(ctx(dir, { unit: VITEST_CMD }), {}, UNUSED_TEMP_PATH);
+
+    expect(result.problems?.some((p) => p.includes('flaky.json'))).toBe(true);
+  });
 });
 
 describe('testRun — --rule lint (real eslint)', () => {
@@ -210,6 +245,56 @@ describe('testRun — --rule lint (real eslint)', () => {
     );
 
     expect(result.problems?.length).toBeGreaterThan(0);
+  });
+
+  it('reports a real problem, not a thrown exception, when the lint command produces non-JSON output', async () => {
+    // A real, if unusual, misconfiguration — `testCommands.lint` pointed at something that is not
+    // actually eslint at all — is a genuine way a project-authored command can produce output
+    // `--format json`'s own real shape assumption does not hold for; this must degrade to a real
+    // `problems` entry, never a thrown exception or a silently wrong error count.
+    const dir = await tempDir();
+
+    const result = await testRun(
+      // Wrapped in `sh -c '...'`: `runLintRule` always appends ` --format json` by literal string
+      // concatenation, and `node -e`'s own CLI parser rejects a trailing flag-shaped argument
+      // outright (confirmed directly) — the wrapper's inner `sh` absorbs it as an inert extra
+      // positional argument instead, the same technique `reporter.test.ts`'s own header doc
+      // establishes is unnecessary there only because real vitest/pytest tolerate the appended flag
+      // themselves. `NaN` (bare, no string literal needed at all) is real, valid JS whose own
+      // stdout ("NaN") is not valid JSON — no mocking of eslint's own behaviour, just a genuinely
+      // non-JSON-shaped real command, the same real misconfiguration a project could make by
+      // accident.
+      ctx(dir, { lint: `sh -c '${NODE} -e "console.log(NaN)"'` }),
+      { rule: 'lint' },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.problems?.some((p) => p.includes('unparseable'))).toBe(true);
+  });
+
+  it('reports a real problem, not a thrown exception, when the lint command produces valid JSON that is not an array', async () => {
+    const dir = await tempDir();
+
+    const result = await testRun(
+      ctx(dir, { lint: `sh -c '${NODE} -e "console.log(JSON.stringify({ok:1}))"'` }),
+      { rule: 'lint' },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.problems?.some((p) => p.includes('unparseable'))).toBe(true);
+  });
+
+  it('counts a real eslint-shaped file result with no errorCount field as zero, not a thrown exception', async () => {
+    const dir = await tempDir();
+
+    const result = await testRun(
+      ctx(dir, { lint: `sh -c '${NODE} -e "console.log(JSON.stringify([{filePath:1}]))"'` }),
+      { rule: 'lint' },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.errors).toBe(0);
+    expect(result.problems).toBeUndefined();
   });
 });
 
@@ -285,6 +370,22 @@ describe('testRun — --rule typecheck (real tsc)', () => {
 
     expect(result.errors).toBe(0);
   });
+
+  it('reports a real problem, not a thrown exception, when the typecheck command fails to run at all', async () => {
+    // A real, nonexistent command exits nonzero with no real `error TSxxxx:`-shaped diagnostic line
+    // anywhere in its own stdout/stderr — indistinguishable, before this check, from "ran and found
+    // zero real type errors."
+    const dir = await tempDir();
+
+    const result = await testRun(
+      ctx(dir, { typecheck: 'this-command-does-not-exist-at-all' }),
+      { rule: 'typecheck' },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.problems?.length).toBeGreaterThan(0);
+    expect(result.errors).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('testRun — --rule oracle-lint (F-TEST-2)', () => {
@@ -313,6 +414,25 @@ describe('testRun — --rule oracle-lint (F-TEST-2)', () => {
     const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
 
     expect(result.errors).toBe(0);
+  });
+
+  it('forwards a real problem from runOracleLint verbatim, rather than a silent clean pass', async () => {
+    const dir = await tempDir();
+    const blockedDir = path.join(dir, 'blocked');
+    await mkdir(blockedDir, { recursive: true });
+    await writeFile(
+      path.join(blockedDir, 'weak.test.js'),
+      `test('AC-900-3 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+    await chmod(blockedDir, 0o000);
+
+    try {
+      const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
+      expect(result.problems?.length).toBeGreaterThan(0);
+    } finally {
+      await chmod(blockedDir, 0o755);
+    }
   });
 });
 

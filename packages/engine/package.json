@@ -13,6 +13,7 @@
     "./gates": "./src/gates/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./plan": "./src/plan/index.ts",
+    "./rca": "./src/rca/index.ts",
     "./resume": "./src/resume/index.ts",
     "./run": "./src/run/index.ts",
     "./scheduler": "./src/scheduler/index.ts",

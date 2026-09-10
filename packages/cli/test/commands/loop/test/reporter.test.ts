@@ -228,6 +228,55 @@ test('AC-202-2 genuinely fails', () => { expect(1).toBe(2); });
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]?.status).toBe('fail');
   });
+
+  it('falls back to an unqualified name when a file-result JSON shape names no real file at all (a failed-to-load file)', async () => {
+    // `VitestFileResult.name` is `unknown`, not `string` — a real, if never-observed-from-real-vitest,
+    // JSON shape this function's own type signature already admits. Proven here against a real
+    // subprocess (a small, throwaway script file, not `-e`: `runVitest` always appends
+    // ` --reporter=json`, and a real script *file*'s own trailing argv tolerates that harmlessly,
+    // unlike `node -e`'s own stricter CLI parser, confirmed directly) that emits this exact shape —
+    // not a claim about what real vitest itself ever produces.
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'fake-vitest.mjs'),
+      `console.log(JSON.stringify({ testResults: [ { assertionResults: [], status: 'failed', message: 'crashed before naming its own file' } ] }));`,
+      'utf8',
+    );
+
+    const result = await runAndNormalize(
+      `${process.execPath} ${path.join(dir, 'fake-vitest.mjs')}`,
+      dir,
+      'js',
+      UNUSED_TEMP_PATH,
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]?.status).toBe('fail');
+    expect(result.report.outcomes[0]?.file).toBeUndefined();
+    expect(result.report.outcomes[0]?.name).toContain('(unknown file)');
+  });
+
+  it('falls back to an unqualified name when a per-assertion file-result JSON shape names no real file at all', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'fake-vitest.mjs'),
+      `console.log(JSON.stringify({ testResults: [ { assertionResults: [ { title: 'a test with no file name', status: 'passed' } ], status: 'passed', message: '' } ] }));`,
+      'utf8',
+    );
+
+    const result = await runAndNormalize(
+      `${process.execPath} ${path.join(dir, 'fake-vitest.mjs')}`,
+      dir,
+      'js',
+      UNUSED_TEMP_PATH,
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toEqual([
+      { name: 'a test with no file name', acId: undefined, status: 'pass' },
+    ]);
+  });
 });
 
 describe('runAndNormalize — python (real pytest)', () => {

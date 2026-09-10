@@ -60,6 +60,7 @@ const SAMPLE_DETAILS = {
   acId: 'AC-014-2',
   stories: 'STORY-014, STORY-015',
   detail: 'unrecognised operator $appand',
+  phase: 'INTAKE',
   id: 'review',
   role: 'reviewer',
   gateId: 'G-Verify',

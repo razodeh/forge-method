@@ -299,4 +299,201 @@ test('AC-970-1 has no real assertion at all', () => {
       await chmod(blockedDir, 0o755);
     }
   });
+
+  it('reports a real problem, not a silent clean pass, when one real file (not a whole subtree) cannot be read', async () => {
+    // `readTextFileRelative`'s own catch, distinct from `discoverTestFiles`'s — a real, individually
+    // unreadable file (a permissions error on the file itself, listed successfully but not openable)
+    // is a genuinely different failure point than an unlistable directory.
+    const { dir, paths } = await project();
+    const filePath = path.join(dir, 'unreadable.test.js');
+    await writeFile(
+      filePath,
+      `test('AC-981-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+    await chmod(filePath, 0o000);
+
+    try {
+      const result = await runOracleLint(paths);
+      expect(result.problems?.length).toBeGreaterThan(0);
+      expect(result.violations).toEqual([]);
+    } finally {
+      await chmod(filePath, 0o644);
+    }
+  });
+});
+
+describe("runOracleLint — real scanner edge cases (closing this scanner's own coverage floor)", () => {
+  it('recognises a real pytest-convention Python test file by name alone (test_ prefix)', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(dir, 'test_invoice.py', 'def test_computes_total():\n    assert 1 == 1\n');
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+  });
+
+  it('recognises a real pytest-convention Python test file by name alone (_test suffix)', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(dir, 'invoice_test.py', 'def test_computes_total():\n    assert 1 == 1\n');
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+  });
+
+  it('scans a real plain `function` test callback, not only arrow functions', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'plain-function.test.js',
+      `
+test('AC-990-1 uses a plain function callback', function () {
+  expect(doSomething()).toBeDefined();
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+  });
+
+  it('skips a real concise arrow test body with no braces at all, rather than mis-scanning past it', async () => {
+    // No `{` anywhere in the file at all — `findCallbackBodyStart` falls back to `source.indexOf('{',
+    // ...)`, finds none, and `discoverTestBlocks` skips this block rather than reading garbage.
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'concise-body.test.js',
+      `test('AC-991-1 a concise arrow body with no block at all', () => expect(doSomething()).toBeDefined());`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+  });
+
+  it('does not throw on a real truncated file whose test body brace never closes', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'truncated.test.js',
+      `
+test('AC-992-1 a file truncated mid-body', () => {
+  expect(doSomething()).toBeDefined();
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+  });
+
+  it('does not flag a real test whose only expect() call has an unmatched, malformed paren', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'malformed-call.test.js',
+      `
+test('AC-993-1 a malformed expect call with no closing paren', () => {
+  expect(doSomething(
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+  });
+
+  it('correctly scans past a real regex literal containing a character class and flags', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'regex-charclass.test.js',
+      `
+test('AC-994-1 a regex with a character class and flags does not confuse the scanner', () => {
+  const pattern = /[a-z]+/gi;
+  const result = doSomething();
+  expect(result).toBeDefined();
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+  });
+
+  it('bails out of a regex-context slash at a real newline, rather than swallowing the rest of the file', async () => {
+    // `skipRegexLiteral`'s own defensive bail-out: a real regex literal never spans a newline. A
+    // regex-context slash (preceded by `=`) with no closing `/` before the next newline is malformed,
+    // not ordinary code — the scanner is a deliberately minimal source scanner, not a real parser
+    // (this file's own header), and must not silently swallow every real brace after it while looking
+    // for a closing `/` that never comes on that line.
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'regex-newline.test.js',
+      `
+test('AC-995-1 a regex-context slash with no closing slash before its own newline', () => {
+  const bad = /abc
+def/;
+  expect(doSomething()).toBeDefined();
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+  });
+
+  it('correctly scans past a real string literal containing an escaped quote', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'string-escape.test.js',
+      `
+test('AC-996-1 a string with an escaped quote does not confuse the scanner', () => {
+  const label = 'it\\'s a test';
+  const result = doSomething();
+  expect(result).toBeDefined();
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+  });
+
+  it('correctly scans past real line and block comments inside a test body', async () => {
+    // Both comment forms are stripped by `findMatchingDelimiter` itself (not just
+    // `detectEmptyCatch`'s own `stripComments`) — a stray `}` inside either comment form must never
+    // miscount this scanner's own brace/paren depth tracking.
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'comments.test.js',
+      `
+test('AC-997-1 comments containing a stray brace do not confuse the scanner', () => {
+  // a line comment mentioning a stray } brace
+  /* a block comment mentioning a stray } brace too */
+  const result = doSomething();
+  expect(result).toBeDefined();
+});
+`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+  });
 });

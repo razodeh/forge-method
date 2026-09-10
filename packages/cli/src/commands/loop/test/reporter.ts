@@ -391,7 +391,30 @@ function truncate(text: string): string {
  * `testNameFilter`/`fileFilter`, when given, scope this exact invocation to the one real test named,
  * in the one real file named (`TestOutcome.file`) — `run.ts`'s own retry-in-isolation step
  * (`PLAN-M8.md` P7, F-TEST-6) is this pair's only real caller. `fileFilter` alone (with no
- * `testNameFilter`) is never a real call shape and is ignored. */
+ * `testNameFilter`) is never a real call shape and is ignored.
+ *
+ * Overloaded, not one flat `string | undefined` signature: `'missing-command'` is only ever real for
+ * a caller that genuinely does not have a command yet (`run.ts`'s own `command === undefined`
+ * continue-guard runs *before* either of its own two call sites here) — encoding that at the type
+ * level lets a caller who already has a real `string` command narrow `RunAndNormalizeResult` down to
+ * `'ran' | 'tool-error'` itself, rather than needing a defensive `'missing-command'` check of its own
+ * that could never actually fire. */
+export async function runAndNormalize(
+  command: string,
+  cwd: string,
+  ecosystem: 'js' | 'python',
+  createTempPath: () => string,
+  testNameFilter?: string,
+  fileFilter?: string,
+): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>>;
+export async function runAndNormalize(
+  command: string | undefined,
+  cwd: string,
+  ecosystem: 'js' | 'python',
+  createTempPath: () => string,
+  testNameFilter?: string,
+  fileFilter?: string,
+): Promise<RunAndNormalizeResult>;
 export async function runAndNormalize(
   command: string | undefined,
   cwd: string,

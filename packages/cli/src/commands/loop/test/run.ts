@@ -145,7 +145,6 @@ async function runDefaultRule(
       problems.push(`testCommands.${layer} ("${command}") failed to run: ${result.message}`);
       continue;
     }
-    if (result.outcome === 'missing-command') continue;
     // A fresh critic round reproduced this directly: a real command that *runs* but matches zero
     // test files (a typo'd glob, a renamed test directory) reports `outcome: 'ran'` with an empty
     // `outcomes` array — indistinguishable, before this check, from "ran and everything passed."
