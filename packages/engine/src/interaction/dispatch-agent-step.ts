@@ -25,6 +25,7 @@ import type {
   InteractionParticipant,
   ReviewFinding,
   ReviewReport,
+  ReviewSeverity,
 } from './types.ts';
 
 /**
@@ -80,39 +81,127 @@ async function runParticipantSession(
   return session;
 }
 
-/** `10` §10.1's own perspective-review finding schema is not this milestone's to invent (no artifact
- * schema for a single review finding exists in `@forge/schemas` yet) — a perspective session reports
- * its findings as `SessionResult.structured`, a `readonly string[]` of one-line summaries, the same
- * "structured output when the caller actually needs it" mechanism `07` §7.2's own `outputSchema`/
- * `structured` pair already provides generically; a session with no `structured` output (or a
- * malformed one) is read as having reported zero findings rather than thrown away as a hard failure —
- * one participant's own malformed output should not abort the other three perspectives' real findings. */
-function findingsFromSession(session: SessionResult): readonly string[] {
-  if (!Array.isArray(session.structured)) return [];
-  return session.structured.filter((item): item is string => typeof item === 'string');
+/** `13` §13.3's own review-perspective schema is not this milestone's to invent as an `@forge/schemas`
+ * artifact (no artifact schema for a single review finding exists) — a perspective session reports its
+ * output as `SessionResult.structured`, matching `SWARM_REVIEW_OUTPUT_SCHEMA` below: `findings`, each
+ * `{ summary, severity }` (F-REVIEW-1's own "each perspective... produces findings at blocking/major/
+ * minor"), and `checked` (F-REVIEW-2's own "the review report must state what it checked" — what this
+ * perspective actually examined, real evidence an empty `findings` list meant "looked and found
+ * nothing," not "never looked"). A session with no `structured` output (or a malformed one — a missing
+ * `severity`, a `severity` outside the real three-value enum, a non-string `summary`) degrades that one
+ * *entry* to being silently skipped, not the whole session thrown away: one participant's own partially
+ * malformed output should not discard its own other, well-formed findings, matching the identical
+ * per-item tolerance `findingsFromSession`'s own predecessor already established for a whole
+ * malformed array. */
+const REVIEW_SEVERITIES: ReadonlySet<string> = new Set(['blocking', 'major', 'minor']);
+
+/** Case-insensitive on purpose — a fresh critic round reproduced directly that a session reporting the
+ * exact right severity with different casing (`"Blocking"`, a real, plausible shape for structured
+ * output an LLM produces even against a lowercase-only enum schema) was silently *dropped entirely*
+ * under a strict, case-sensitive match — losing a real, possibly-blocking finding outright is a worse
+ * failure than the "under-reporting severity is the one failure mode that matters" policy
+ * `ReviewFinding`'s own doc comment already names; normalising case first keeps a real finding real
+ * without ever needing to guess at an unrecognised value. */
+function normalizeSeverity(value: unknown): ReviewSeverity | undefined {
+  if (typeof value !== 'string') return undefined;
+  const lower = value.toLowerCase();
+  return REVIEW_SEVERITIES.has(lower) ? (lower as ReviewSeverity) : undefined;
+}
+
+interface PerspectiveReviewOutput {
+  readonly findings: readonly { readonly summary: string; readonly severity: ReviewSeverity }[];
+  readonly checked: readonly string[];
+}
+
+function reviewOutputFromSession(session: SessionResult): PerspectiveReviewOutput {
+  const structured = session.structured;
+  if (typeof structured !== 'object' || structured === null) return { findings: [], checked: [] };
+  const raw = structured as Readonly<Record<string, unknown>>;
+  const rawFindings = Array.isArray(raw['findings']) ? raw['findings'] : [];
+  const findings = rawFindings.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const candidate = entry as Readonly<Record<string, unknown>>;
+    const summary = candidate['summary'];
+    const severity = normalizeSeverity(candidate['severity']);
+    if (typeof summary !== 'string' || severity === undefined) return [];
+    return [{ summary, severity }];
+  });
+  const rawChecked = Array.isArray(raw['checked']) ? raw['checked'] : [];
+  const checked = rawChecked.filter((item): item is string => typeof item === 'string');
+  return { findings, checked };
+}
+
+/** `blocking` > `major` > `minor` — the one real ranking `ReviewFinding`'s own doc comment already
+ * establishes the policy for (merge on the *more* severe rating, never the less severe one). */
+const SEVERITY_RANK: Readonly<Record<ReviewSeverity, number>> = { blocking: 3, major: 2, minor: 1 };
+
+function moreSevere(a: ReviewSeverity, b: ReviewSeverity): ReviewSeverity {
+  return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+}
+
+/** F-REVIEW-2's own "'Looks good' with no findings and no evidence of having examined the failure
+ * paths is itself a finding" — a perspective whose own `findings` *and* `checked` are both empty gets
+ * one real, synthetic `minor` finding naming it, so an empty review is visibly empty in the merged
+ * report rather than silently indistinguishable from "reviewed thoroughly, found nothing." A
+ * perspective with real findings, or with zero findings but a real, non-empty `checked` list (it
+ * genuinely looked and found nothing), is not flagged — `13` §13.3's own literal "no findings *and* no
+ * evidence," not either alone. */
+function emptyReviewFinding(perspective: string): ReviewFinding {
+  return {
+    summary: `${perspective} reported no findings and no evidence of what it examined`,
+    severity: 'minor',
+    perspectives: [perspective],
+  };
+}
+
+/** One perspective's own real output, paired with the perspective name that produced it — a plain,
+ * always-populated array, not a `ReadonlyMap` a lookup could come back `undefined` from: `dispatchSwarm
+ * Review`'s own one real caller builds this in the identical loop that ran each session, so every
+ * entry genuinely exists by construction. A `Map` lookup here would need a defensive `?? []` fallback
+ * for a case that cannot actually happen given that construction — the same "real, but unprovable to
+ * the type checker without restructuring" class this session already resolved elsewhere by removing
+ * the possibility structurally rather than disclosing it as dead. */
+interface PerspectiveOutputEntry {
+  readonly perspective: string;
+  readonly output: PerspectiveReviewOutput;
 }
 
 /** `05` §5.7's own "one real, de-duplicated ReviewReport merging every perspective": two perspectives
- * reporting byte-identical finding text collapse into one `ReviewFinding` with both attributions. */
-function mergeReviewReport(
-  perspectives: readonly string[],
-  perParspectiveFindings: ReadonlyMap<string, readonly string[]>,
-): ReviewReport {
-  const findingsBySummary = new Map<string, string[]>();
-  for (const perspective of perspectives) {
-    for (const summary of perParspectiveFindings.get(perspective) ?? []) {
-      const attributions = findingsBySummary.get(summary) ?? [];
-      attributions.push(perspective);
-      findingsBySummary.set(summary, attributions);
+ * reporting byte-identical finding text collapse into one `ReviewFinding` with both attributions, kept
+ * at whichever perspective's own rating was *more* severe (`moreSevere`'s own doc comment has the
+ * fuller policy reasoning). A synthetic empty-review finding (`emptyReviewFinding`) is folded through
+ * this identical merge step too, not appended separately after it — a fresh critic round reproduced
+ * directly that appending it separately let it stand as its own, undeduplicated `ReviewFinding` even
+ * when a *different* perspective's own real finding happened to share its exact summary text, two
+ * entries for one real summary, violating this function's own "de-duplicated" contract. */
+function mergeReviewReport(entries: readonly PerspectiveOutputEntry[]): ReviewReport {
+  const bySummary = new Map<string, { severity: ReviewSeverity; perspectives: string[] }>();
+  const record = (perspective: string, summary: string, severity: ReviewSeverity): void => {
+    const existing = bySummary.get(summary);
+    if (existing === undefined) {
+      bySummary.set(summary, { severity, perspectives: [perspective] });
+    } else {
+      existing.perspectives.push(perspective);
+      existing.severity = moreSevere(existing.severity, severity);
+    }
+  };
+  for (const { perspective, output } of entries) {
+    for (const finding of output.findings) {
+      record(perspective, finding.summary, finding.severity);
+    }
+    if (output.findings.length === 0 && output.checked.length === 0) {
+      const empty = emptyReviewFinding(perspective);
+      record(perspective, empty.summary, empty.severity);
     }
   }
-  const findings: ReviewFinding[] = [...findingsBySummary.entries()].map(
-    ([summary, attributions]) => ({
+  const findings: ReviewFinding[] = [...bySummary.entries()].map(
+    ([summary, { severity, perspectives: attributions }]) => ({
       summary,
+      severity,
       perspectives: attributions,
     }),
   );
-  return { perspectives, findings };
+  return { perspectives: entries.map((entry) => entry.perspective), findings };
 }
 
 /** Every participant session's own prompt opens with the dispatching agent's real identity (`05` §5.3's
@@ -223,6 +312,56 @@ async function dispatchDebate(
   return { outcome, participants };
 }
 
+/** `13` §13.3's own F-REVIEW-1 table, verbatim — each perspective's own real "Asks" column, embedded in
+ * that perspective's own prompt below so a participant session answers the actual checklist question,
+ * not a bare label. A perspective not in this table (an arbitrary caller-supplied one, `pair`/`panel`'s
+ * own free-form use already allows) falls back to a plain, generic framing — a real, disclosed gap for
+ * that case, not a crash: this table is F-REVIEW-1's own fixed eight, not every perspective name this
+ * generic dispatch mechanism could ever be asked to run. */
+const PERSPECTIVE_ASKS: Readonly<Record<string, string>> = {
+  'spec-conformance':
+    "Does this implement the story's ACs, and only them? Is anything out of claim?",
+  design:
+    'Does it fit the architecture and the chosen patterns? Does it add a boundary violation? Is there a simpler shape?',
+  correctness:
+    'Edge cases, off-by-one, null/empty/unicode, concurrency, error paths, resource cleanup.',
+  security:
+    'Input validation, authz on every path, injection, secrets, dependency risk, output encoding.',
+  performance:
+    'N+1 queries, unbounded results, missing index, sync work on a hot path, allocation in loops.',
+  testing: 'Oracle strength, AC binding, failure-path coverage, flake risk, test readability.',
+  operability: 'Logs/metrics for the new path, failure modes, config, migration safety, rollback.',
+  documentation: 'Public API documented, KB updated, diagram updated if structure changed.',
+};
+
+function perspectiveAsks(perspective: string): string {
+  return (
+    PERSPECTIVE_ASKS[perspective] ?? `Review the change from the "${perspective}" perspective.`
+  );
+}
+
+/** `13` §13.3's own real output shape for one perspective session: `findings` (each `{ summary,
+ * severity }`, F-REVIEW-1's own three-level scale) and `checked` (F-REVIEW-2's own "state what it
+ * checked" — `reviewOutputFromSession`'s own doc comment has the fuller reasoning for both). */
+const SWARM_REVIEW_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          severity: { type: 'string', enum: ['blocking', 'major', 'minor'] },
+        },
+        required: ['summary', 'severity'],
+      },
+    },
+    checked: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['findings', 'checked'],
+} as const;
+
 async function dispatchSwarmReview(
   node: StepNode,
   agent: AgentDefinition,
@@ -233,13 +372,22 @@ async function dispatchSwarmReview(
   if (perspectives.length === 0) {
     throw new ForgeError('RUN-046', { stepId: node.id, mode: 'swarm-review' });
   }
+  // F-REVIEW-2's own "a reviewer may not approve a change it authored" — the *runtime* half of the
+  // compile-time `CFG-501` invariant `@forge/extensions/invariants/separation.ts` already enforces
+  // over static overlay configuration alone. Checked, and refused, *before* any real session is
+  // dispatched — zero wasted sessions on a review that was always going to be refused. Only ever
+  // checked when a caller actually supplied `authoringAgentIds` (`DispatchAgentStepOptions`'s own doc
+  // comment has the fuller reasoning for why this dispatch layer cannot determine it unassisted).
+  if (options.authoringAgentIds?.includes(agent.id) === true) {
+    throw new ForgeError('CFG-501', { role: agent.id });
+  }
   // Captured before the perspective-review loop runs, not after: a fresh critic round caught an
   // earlier draft that captured both `startedAt`/`finishedAt` back-to-back once every real session
   // had already completed, so the reported outcome always claimed near-zero duration regardless of
   // how long the N real perspective sessions actually took.
   const startedAt = ctx.now();
   const participants: InteractionParticipant[] = [];
-  const findingsByPerspective = new Map<string, readonly string[]>();
+  const outputEntries: PerspectiveOutputEntry[] = [];
   // `perspectives.length === 0` already threw above, so this loop runs at least once and `firstSession`
   // is always assigned by the time it is read below.
   let firstSession: SessionResult | undefined;
@@ -248,14 +396,14 @@ async function dispatchSwarmReview(
       node,
       ctx,
       `review:${perspective}`,
-      `${roleFraming(agent)}\n\n${node.brief ?? ''}\n\nReview the change from the "${perspective}" perspective. Report findings as a JSON array of one-line summary strings.`,
-      { type: 'array', items: { type: 'string' } },
+      `${roleFraming(agent)}\n\n${node.brief ?? ''}\n\nReview the change from the "${perspective}" perspective. ${perspectiveAsks(perspective)} Report real findings, each with a severity of "blocking", "major", or "minor", plus what you actually checked — an empty findings list with nothing checked reads as "never looked," not "looked and found nothing."`,
+      SWARM_REVIEW_OUTPUT_SCHEMA,
     );
     participants.push({ role: `review:${perspective}`, session });
-    findingsByPerspective.set(perspective, findingsFromSession(session));
+    outputEntries.push({ perspective, output: reviewOutputFromSession(session) });
     firstSession ??= session;
   }
-  const reviewReport = mergeReviewReport(perspectives, findingsByPerspective);
+  const reviewReport = mergeReviewReport(outputEntries);
 
   if (firstSession === undefined) {
     // Unreachable given the guard above (kept as a real, typed fallback rather than a non-null

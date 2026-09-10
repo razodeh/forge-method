@@ -239,24 +239,41 @@ describe('dispatchAgentStep', () => {
     expect(result.participants).toHaveLength(6);
   });
 
-  it("swarm-review's own four 10 §10.1 worked-example perspectives produce one real, de-duplicated ReviewReport", async () => {
+  it("swarm-review's own four 10 §10.1 worked-example perspectives produce one real, de-duplicated ReviewReport — kept at the more severe of two colliding ratings", async () => {
     const projectRoot = await createTempRepo('swarm-review');
     const adapter = new FakePlatformAdapter();
     adapter.script((request) => request.stepId === 'wf:review:review:design', {
       text: ['design review done'],
-      structured: ['inconsistent naming in module X', 'missing error boundary'],
+      structured: {
+        findings: [
+          { summary: 'inconsistent naming in module X', severity: 'minor' },
+          { summary: 'missing error boundary', severity: 'major' },
+        ],
+        checked: ['naming conventions', 'error handling'],
+      },
     });
     adapter.script((request) => request.stepId === 'wf:review:review:security', {
       text: ['security review done'],
-      structured: ['missing error boundary', 'no input sanitization on endpoint Y'],
+      structured: {
+        findings: [
+          { summary: 'missing error boundary', severity: 'blocking' },
+          { summary: 'no input sanitization on endpoint Y', severity: 'blocking' },
+        ],
+        checked: ['input validation', 'error handling'],
+      },
     });
     adapter.script((request) => request.stepId === 'wf:review:review:testing', {
       text: ['testing review done'],
-      structured: ['no test coverage for edge case Z'],
+      structured: {
+        findings: [{ summary: 'no test coverage for edge case Z', severity: 'major' }],
+        checked: ['ac binding'],
+      },
     });
+    // Zero real findings, but a real, non-empty `checked` list — genuinely looked and found nothing,
+    // so this is NOT flagged as an empty review (`13` §13.3's own "no findings *and* no evidence").
     adapter.script((request) => request.stepId === 'wf:review:review:performance', {
       text: ['performance review done'],
-      structured: [],
+      structured: { findings: [], checked: ['hot paths', 'query patterns'] },
     });
     const ctx = createTestContext({ projectRoot, adapter });
     const stepNode = node({
@@ -285,6 +302,218 @@ describe('dispatchAgentStep', () => {
       (f) => f.summary === 'missing error boundary',
     );
     expect(shared?.perspectives).toEqual(['design', 'security']);
+    // design rated it `major`, security rated it `blocking` — the merged finding keeps `blocking`,
+    // the more severe of the two, never the less severe one (a real, deliberate policy: under-
+    // reporting severity is the one failure mode that matters, `ReviewFinding`'s own doc comment).
+    expect(shared?.severity).toBe('blocking');
+  });
+
+  it('swarm-review synthesises a real, minor finding for a perspective reporting no findings and no evidence of what it examined', async () => {
+    const projectRoot = await createTempRepo('swarm-review-empty');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId === 'wf:review:review:design', {
+      structured: { findings: [], checked: [] },
+    });
+    adapter.script((request) => request.stepId === 'wf:review:review:security', {
+      structured: { findings: [{ summary: 'a real finding', severity: 'minor' }], checked: ['x'] },
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review', {
+      perspectives: ['design', 'security'],
+    });
+
+    expect(result.reviewReport?.findings).toHaveLength(2);
+    const empty = result.reviewReport?.findings.find((f) => f.perspectives.includes('design'));
+    expect(empty?.severity).toBe('minor');
+    expect(empty?.summary).toContain('design');
+    expect(empty?.summary).toContain('no findings');
+  });
+
+  it("deduplicates a real finding whose own summary text byte-matches a DIFFERENT perspective's own synthesised empty-review summary, into one finding kept at the more severe rating", async () => {
+    const projectRoot = await createTempRepo('swarm-review-empty-collision');
+    const adapter = new FakePlatformAdapter();
+    // design reports nothing at all -- synthesises `emptyReviewFinding('design')`, whose own exact
+    // summary text is `design reported no findings and no evidence of what it examined`.
+    adapter.script((request) => request.stepId === 'wf:review:review:design', {
+      structured: { findings: [], checked: [] },
+    });
+    // documentation independently reports a REAL finding sharing that identical summary text (a
+    // contrived but real byte-for-byte collision) at a more severe rating than the synthesised `minor`.
+    adapter.script((request) => request.stepId === 'wf:review:review:documentation', {
+      structured: {
+        findings: [
+          {
+            summary: 'design reported no findings and no evidence of what it examined',
+            severity: 'blocking',
+          },
+        ],
+        checked: ['x'],
+      },
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review', {
+      perspectives: ['design', 'documentation'],
+    });
+
+    // One real finding, not two -- the synthesised empty-review summary and documentation's own real
+    // finding collapsed into a single, de-duplicated entry carrying both attributions.
+    expect(result.reviewReport?.findings).toHaveLength(1);
+    const merged = result.reviewReport?.findings[0];
+    expect(merged?.perspectives).toEqual(['design', 'documentation']);
+    // kept at `blocking`, the more severe of the synthesised `minor` and documentation's real `blocking`.
+    expect(merged?.severity).toBe('blocking');
+  });
+
+  it("swarm-review throws CFG-501, dispatching no real session at all, when the reviewing agent is the diff's own authoring agent", async () => {
+    const projectRoot = await createTempRepo('swarm-review-self');
+    const adapter = new FakePlatformAdapter();
+    // No script registered for any request at all -- a real session dispatch would still "succeed"
+    // against the fake's own default script, so a thrown CFG-501 here can only mean the refusal
+    // happened before any session was even attempted.
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    await expect(
+      dispatchAgentStep(stepNode, testAgent({ id: 'engineer' }), ctx, 'swarm-review', {
+        perspectives: ['design'],
+        authoringAgentIds: ['engineer'],
+      }),
+    ).rejects.toMatchObject({ code: 'CFG-501' });
+  });
+
+  it('swarm-review throws CFG-501 when the reviewing agent id appears anywhere in a real, multi-agent authoringAgentIds list (a real multi-lane merge)', async () => {
+    const projectRoot = await createTempRepo('swarm-review-self-multi');
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    await expect(
+      dispatchAgentStep(stepNode, testAgent({ id: 'engineer' }), ctx, 'swarm-review', {
+        perspectives: ['design'],
+        authoringAgentIds: ['architect', 'engineer', 'reviewer'],
+      }),
+    ).rejects.toMatchObject({ code: 'CFG-501' });
+  });
+
+  it('swarm-review dispatches normally when authoringAgentIds is given but does not match the reviewing agent', async () => {
+    const projectRoot = await createTempRepo('swarm-review-not-self');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { structured: { findings: [], checked: ['x'] } });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    const result = await dispatchAgentStep(
+      stepNode,
+      testAgent({ id: 'engineer' }),
+      ctx,
+      'swarm-review',
+      {
+        perspectives: ['design'],
+        authoringAgentIds: ['someone-else'],
+      },
+    );
+    expect(result.participants).toHaveLength(1);
+  });
+
+  it('swarm-review dispatches normally when authoringAgentIds is a real, empty array', async () => {
+    const projectRoot = await createTempRepo('swarm-review-empty-authors');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { structured: { findings: [], checked: ['x'] } });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    const result = await dispatchAgentStep(
+      stepNode,
+      testAgent({ id: 'engineer' }),
+      ctx,
+      'swarm-review',
+      { perspectives: ['design'], authoringAgentIds: [] },
+    );
+    expect(result.participants).toHaveLength(1);
+  });
+
+  it('swarm-review tolerates a real, malformed structured response — a bad entry is skipped, real entries survive it', async () => {
+    const projectRoot = await createTempRepo('swarm-review-malformed');
+    const adapter = new FakePlatformAdapter();
+    // No `structured` at all -- read as zero findings, zero checked, not thrown away.
+    adapter.script((request) => request.stepId === 'wf:review:review:design', { text: ['done'] });
+    // `structured` present but not an object at all (a bare array of strings -- the old, pre-P10
+    // shape); `findings`/`checked` are not real arrays inside it either.
+    adapter.script((request) => request.stepId === 'wf:review:review:security', {
+      structured: ['not the new shape at all'],
+    });
+    // `findings` is a real array, but its own entries are a mix of well-formed and malformed: a
+    // missing `severity`, a `severity` outside the real three-value enum, a non-string `summary`, and
+    // one genuinely well-formed entry that must survive its own malformed siblings.
+    adapter.script((request) => request.stepId === 'wf:review:review:testing', {
+      structured: {
+        findings: [
+          { summary: 'no severity at all' },
+          { summary: 'bad severity', severity: 'catastrophic' },
+          { summary: 42, severity: 'minor' },
+          { summary: 'a real, well-formed finding', severity: 'blocking' },
+        ],
+        checked: ['x', 7, 'y'],
+      },
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review', {
+      perspectives: ['design', 'security', 'testing'],
+    });
+
+    expect(result.participants).toHaveLength(3);
+    // design and security both had zero real findings and zero real "checked" evidence -- both get a
+    // real, synthetic empty-review finding of their own.
+    expect(result.reviewReport?.findings.some((f) => f.perspectives.includes('design'))).toBe(true);
+    expect(result.reviewReport?.findings.some((f) => f.perspectives.includes('security'))).toBe(
+      true,
+    );
+    // testing's one well-formed finding survived its own three malformed siblings.
+    const real = result.reviewReport?.findings.find(
+      (f) => f.summary === 'a real, well-formed finding',
+    );
+    expect(real?.severity).toBe('blocking');
   });
 
   it('swarm-review throws RUN-046 when no perspectives are given', async () => {

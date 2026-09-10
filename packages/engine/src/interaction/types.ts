@@ -16,13 +16,25 @@ import type { SessionResult } from '@forge/adapter-kit';
 
 import type { StepOutcome } from '../dispatch/types.ts';
 
+/** F-REVIEW-1's own real three-level scale — "each perspective... produces findings at `blocking` /
+ * `major` / `minor`," `13` §13.3's own literal wording. */
+export type ReviewSeverity = 'blocking' | 'major' | 'minor';
+
 /** One finding a single perspective's own review session reported, per `10` §10.1's own worked
  * `swarm-review` example. `perspectives` lists every perspective that independently reported an
  * identical `summary` — the real de-duplication `05` §5.7's own "one real, de-duplicated ReviewReport
  * merging every perspective" describes: two perspectives raising the same concern become one finding
- * with two attributions, not two separate findings a reader has to notice are the same thing. */
+ * with two attributions, not two separate findings a reader has to notice are the same thing.
+ * `severity` on a merged, multi-perspective finding is the *more severe* of every perspective's own
+ * real rating for that identical summary — `PLAN-M8.md` P10's own real, deliberate policy: requiring
+ * every perspective to agree on a severity before it counts would silently drop a legitimate
+ * more-severe report the moment even one other perspective rated the same real concern lower;
+ * under-reporting severity is the one failure mode that actually matters here (`13` §13.3's own
+ * "blocking findings must be resolved" — a downgraded blocking finding is a real gate escaping its
+ * own gate, an upgraded minor one is merely a human double-checking something that was already fine). */
 export interface ReviewFinding {
   readonly summary: string;
+  readonly severity: ReviewSeverity;
   readonly perspectives: readonly string[];
 }
 
@@ -70,4 +82,19 @@ export interface DispatchAgentStepOptions {
   /** `debate` only — `05` §5.7's own "≤3 rounds." Defaults to 3; a caller may lower it, never raise it
    * past 3 (clamped), since `05` §5.7's own table gives 3 as the hard ceiling, not a mere default. */
   readonly maxDebateRounds?: number;
+  /** `swarm-review` only — F-REVIEW-2's own "a reviewer may not approve a change it authored (`CFG-
+   * 501`)," the runtime half of that compile-time invariant. `dispatchAgentStep` itself never resolves
+   * a step's own inputs (`review.ts`'s own doc comment has the fuller reasoning) and cannot determine
+   * on its own which real commit — or which agent(s) authored it — the diff under review even came
+   * from; whichever caller *does* know that (`forge review`'s own `reviewChange`, reading real commit
+   * trailers against the real diff range it was given) supplies it here. Plural, not singular: a fresh
+   * critic round reproduced directly that a real merge commit (`@forge/vcs`'s own merge queue, `06`
+   * §6.7) can genuinely carry more than one real agent's own work — a multi-lane merge step processes
+   * several lanes into one merge commit at once, and the merge commit's own message never carries a
+   * `Co-Authored-By` trailer itself (only `Forge-Step`/`Forge-Run`); the real authorship lives on each
+   * merged-in lane's own tip commit instead. Refused if the reviewing agent's own id appears *anywhere*
+   * in this list. Omitted entirely — not merely an empty array — means this specific call site has no
+   * way to know, and no check runs; a real, disclosed non-goal for a caller in that position
+   * (`SPEC-QUESTIONS.md`), not a silent gap. */
+  readonly authoringAgentIds?: readonly string[];
 }

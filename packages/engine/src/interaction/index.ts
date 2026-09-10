@@ -12,4 +12,5 @@ export type {
   InteractionParticipant,
   ReviewFinding,
   ReviewReport,
+  ReviewSeverity,
 } from './types.ts';
