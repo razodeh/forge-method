@@ -7926,3 +7926,98 @@ always-double-quoted-string output.
 authoritative floor) re-run in full: 6267 of 6268 real tests passed outright (5 correctly skipped); the
 one failure was the identical, already-documented, non-deterministic SIGKILL/worktree-concurrency flake
 P6/P7/P8's own log entries already record (`crash-resume.test.ts`), re-confirmed passing alone.
+
+## M8 P10 — `swarm-review`: real eight-perspective review, severity scale, self-authorship refusal (F-REVIEW-1/F-REVIEW-2)
+
+**Mandate:** close the two real gaps `13` §13.3's own inventory found in `forge review`'s existing
+four-perspective, summary-only review mechanism — the real eight `F-REVIEW-1` perspectives (not the
+prior four), and a real `severity` scale plus a real, enforced "a reviewer may not approve a change it
+authored" refusal (`CFG-501`, F-REVIEW-2). The compile-time half of that invariant already existed
+(`@forge/extensions/invariants/separation.ts`); this piece adds the runtime half inside
+`dispatchSwarmReview` (`@forge/engine/interaction`), reusing the identical, already-allocated `CFG-501`
+code rather than allocating a new one. Seven real design decisions this piece had to make are recorded in
+`SPEC-QUESTIONS.md` Q131.
+
+### Round 1 — fresh critic (given only the diff, F-REVIEW-1/F-REVIEW-2, `03` §3.2.5, and explicit
+instruction to adversarially reproduce real bugs by actually running the code — real git repos, real
+merge commits, real multi-trailer commit messages, a real `FakePlatformAdapter` — not by reading and
+speculating): two blocking, two major, one minor finding, every one reproduced directly, none merely
+suspected
+
+1. **[BLOCKING] A real `--no-ff` merge commit's own `Co-Authored-By` trailer never exists at all — the**
+   **self-authorship check silently never fired for the one real shape a merge-queue-produced change**
+   **actually takes.** Reproduced directly: `@forge/vcs`'s own real merge queue
+   (`formatMergeCommitMessage`, `06` §6.7) writes only `Forge-Step`/`Forge-Run` trailers on the merge
+   commit itself, never `Co-Authored-By` — the real agent authorship for a merged lane's own work lives on
+   that lane's own tip commit, the merge commit's *non-first* parent(s), a commit `HEAD`'s own message
+   never contains once merged. The original, `HEAD`-trailer-only check silently never refused a real,
+   agent-authored merge — the one real path production changes actually take. **Fixed:** the singular
+   `authoringAgentId` option became a plural `authoringAgentIds` array (a real merge commit can genuinely
+   carry more than one real agent's own work at once), and a new `realAuthoringAgentIds` in `review.ts`
+   reads `git log -1 --format=%P` for the resolved tip; on 2+ parents it checks every non-first parent
+   (every merged-in lane's own tip), falling back to the tip itself for an ordinary, single-parent commit.
+   `dispatchSwarmReview`'s own `CFG-501` check now refuses when the reviewing agent's id appears anywhere
+   in the list. Two new real tests construct an actual `--no-ff` merge (one confirming the refusal fires
+   off the lane tip's own trailer, one confirming it does not fire for a different agent's trailer).
+2. **[BLOCKING] Only the first of possibly several real `Co-Authored-By` trailers on one commit was ever**
+   **read.** Reproduced directly: the original trailer regex was matched via a non-global `.exec()`,
+   returning only whichever trailer happened to come first in the commit message — a real commit naming
+   two agents silently checked only the first, missing a genuine self-review match whose own trailer
+   simply wasn't first. **Fixed:** the regex gained a global flag; a new `agentTrailersIn` helper collects
+   every match via `matchAll`. A new real test commits a message with the reviewing agent's own trailer
+   deliberately placed *second* of two, confirming the refusal still fires.
+3. **[MAJOR] The self-authorship check always read `HEAD`'s own trailer, regardless of the actual**
+   **`--diff <range>` a caller gave — a real, two-sided bug.** Reproduced directly: an unrelated, later
+   `HEAD` commit authored by the reviewing agent wrongly refused a review of an earlier, different range
+   that never touched that agent's work (a false positive); a range whose own real comparison tip was not
+   `HEAD` at all could never be checked correctly in either direction. **Fixed:** a new `tipRefFor(range)`
+   resolves git's own real range grammar — a two-ref range (`A...B`/`A..B`) always compares against `B`,
+   its own second endpoint; a bare single ref (including the default `'HEAD'`) compares against the
+   current checkout, so its own real tip is always `HEAD` itself, never the named ref. `reviewChange` now
+   threads one shared `range` value into both the real diff read and the real trailer read, so the two are
+   always consistent. Two new real tests use an explicit two-dot range whose own tip differs from `HEAD`
+   — one where the tip carries the trailer (refuses), one where only a different, non-tip commit in the
+   same range does (does not refuse) — proving the fix end to end, not just that `tipRefFor` alone returns
+   the right string.
+4. **[MAJOR] `mergeReviewReport`'s own synthesised "empty review" finding bypassed de-duplication against**
+   **a real finding sharing identical summary text from a different perspective.** Reproduced directly:
+   the synthesised finding was appended straight to the findings array, entirely outside the map every
+   real finding is folded through — two entries for what should have been one real, de-duplicated finding,
+   contradicting this function's own "one real, de-duplicated ReviewReport" contract. **Fixed:** a shared
+   `record(perspective, summary, severity)` helper now backs both the real-findings loop and the
+   empty-review synthesis. A new real test constructs a deliberate summary-text collision between one
+   perspective's synthesised empty-review finding and another perspective's genuine finding, confirming
+   they merge into one entry kept at the more severe of the two ratings.
+5. **[MINOR, one fix applied proactively beyond what the critic strictly required] Severity-value casing**
+   **could silently drop an otherwise well-formed finding entirely, and `ReviewSeverity` was never**
+   **re-exported from the type barrel.** Reproduced directly: the original strict, case-sensitive severity
+   guard treats `"Blocking"`/`"BLOCKING"` — an ordinary casing variance for LLM-produced structured output
+   — as unrecognised, silently discarding the whole finding rather than just its severity. **Fixed:** a
+   new `normalizeSeverity` lowercases the raw value before checking it against the real three-value set;
+   `ReviewSeverity` was added to `@forge/engine/interaction`'s own type barrel alongside its three
+   siblings.
+
+Also confirmed clean by the critic round, no fix needed: `PERSPECTIVE_ASKS`'s own per-perspective prompt
+text matches `13` §13.3's own table verbatim for all eight rows; `reviewChange`'s own unconditional
+`authoringAgentIds` pass-through correctly sends a real, empty array (never omits the field) when no
+agent trailer is found, and an empty array never falsely refuses; the three pre-existing, non-merge-commit
+`CFG-501` tests continued to pass unmodified after every fix above, confirming none of the fixes changed
+behaviour for the ordinary, single-commit case they already covered.
+
+Full findings and fixes recorded in `SPEC-QUESTIONS.md` Q131 (items 8-12 there record the critic round's
+own corrections against the original build-phase decisions in items 1-7).
+
+`pnpm typecheck` (all 18 packages), `eslint .` (zero warnings, zero coverage-ignore pragmas),
+`prettier --check .`, and `pnpm run boundaries` all clean after every fix. Scoped coverage:
+`@forge/engine/interaction` 98.19% statements / 86.11% branches (dispatch-agent-step.ts, the file
+carrying every real code path this piece touched); `review.ts` 100% statements / 100% branches — both
+comfortably clear the 85%/80% correctness-critical floor. `pnpm test` (the real, authoritative floor) run
+in full: all 354 test files / 6283 tests passed (5 correctly skipped) — zero new failures, zero new
+coverage-threshold errors. The coverage-ratchet stage still reports the identical, pre-existing 12-file
+debt P8's own log entry already disclosed in full (`packages/adapter-claude-code/**`,
+`packages/agents/src/{handoff,context}/*.ts`, `validate-rules.ts`, `template.ts`,
+`scripts/assert-json-contract.mjs`, `bin.ts`) — none touched by this piece, confirmed by name against
+this run's own coverage output.
+
+This is the tenth and final M8 piece (P1-P10 all committed) — closing out Milestone 8, "Verification
+depth: testing, debugging, review."

@@ -9985,3 +9985,146 @@ accurate; `installForgeShim`'s own `process.env.PATH` mutation is properly scope
     should use `pnpm typecheck` directly, never `tsc --build` alone, per a new, saved process note.
 
 See `GAUNTLET-LOG.md`'s M8 P9 entry for the full critic round.
+
+## Q131 — M8 P10: `swarm-review` — the real eight perspectives, severity, self-authorship, empty review
+
+**Q (P10's own BUILD phase, later corrected by a fresh critic round — both rounds recorded together,
+matching Q127-Q130's own pattern).** F-REVIEW-1/F-REVIEW-2 (`13` §13.3) give the real perspective table,
+severity scale, and "what review is not allowed to be" rules, but closing every gap the inventory found
+needed several concrete decisions. Items 1-7 are the original BUILD-phase decisions; the critic round's
+own findings (2 blocking, 2 major, 1 minor, all reproduced directly against real git/subprocess behaviour
+and real session dispatch, not read-and-guessed) are recorded as items 8-12 below, each correcting or
+completing one of the items above.
+
+1. **`dispatchSwarmReview` cannot determine "who authored the diff under review" unassisted, so**
+   **`DispatchAgentStepOptions` gains an optional, caller-supplied `authoringAgentId`, not a git read**
+   **inside `dispatch-agent-step.ts` itself.** `review.ts`'s own doc comment already establishes that
+   `dispatchAgentStep` never resolves a step's own inputs — by the time a swarm-review session runs,
+   the diff itself is opaque text already embedded in `node.brief` by an earlier context-packing step,
+   with no real, generic way for this dispatch layer to know which git ref (or which agent) produced
+   it. Only a caller who genuinely knows that — `forge review`'s own `reviewChange`, which resolves a
+   real `--diff` range against a real project root — can supply it. **Resolved:** `authoringAgentId`
+   is entirely optional; omitted (not merely `undefined` — `exactOptionalPropertyTypes` makes the
+   difference real) means "this call site cannot determine authorship," and no `CFG-501` check runs at
+   all for that invocation. `implement-story.workflow.yaml`'s own inner-loop review step does not
+   supply it (a real, disclosed non-goal — wiring lane-authorship resolution for a workflow-embedded
+   review step is a larger, separate concern this piece does not attempt), so self-review protection is
+   real for `forge review` today and not yet extended to the inner-loop case.
+2. **The real authoring-agent id is read from `HEAD`'s own commit trailer, not the diff range's own**
+   **endpoint generically.** `@forge/vcs`'s own real `Co-Authored-By: <role> <role@agents.forge.invalid>`
+   trailer (`agentCoAuthorTrailer`, `06` §6.4 step 3) is the one durable, already-established record of
+   which real agent role authored a commit. `HEAD` is always the tip of whatever `--diff` range is being
+   reviewed (the default `git diff HEAD` reviews uncommitted changes with no commit of their own to
+   check at all — correctly no-ops the whole mechanism, since there is nothing real to attribute yet). A
+   commit with no such trailer (a human's own, or one predating this convention) resolves to
+   `undefined` — matching finding 1's own "nothing to refuse" default, not a false positive.
+3. **A merged finding's own severity on a collision is the *more severe* of the two, never requiring**
+   **agreement.** `13` §13.3's own literal "blocking findings must be resolved" makes under-reporting
+   severity the one failure mode that actually matters: a real, deliberate policy (`ReviewFinding`'s own
+   doc comment has the fuller reasoning), not re-litigated further here per the plan's own Surface text.
+4. **The real eight `F-REVIEW-1` perspectives replace the prior four (`design, security, testing,**
+   **performance`) as `review.ts`'s own fixed default — `spec-conformance, design, correctness,**
+   **security, performance, testing, operability, documentation`, the table's own row order.** Each
+   perspective's own real "Asks" text (the table's own second column, verbatim) is embedded in that
+   perspective's own prompt via a real lookup table (`PERSPECTIVE_ASKS`, `dispatch-agent-step.ts`) keyed
+   by perspective name — not duplicated in `review.ts`, since `dispatchSwarmReview` is the one real place
+   every perspective's own prompt gets built, for any caller. A perspective not in that table (an
+   arbitrary caller-supplied one — `panel`'s own free-form use already allows this) falls back to a
+   plain, generic framing — a real, disclosed gap for that case, not a crash: the table is F-REVIEW-1's
+   own fixed eight, not every perspective name this generic dispatch mechanism could ever be asked to
+   run.
+5. **A perspective session's own structured output becomes `{ findings: [{summary, severity}],**
+   **checked: string[] }`, a real object, not the prior bare `string[]` of summaries.** `findings` is
+   F-REVIEW-1's own three-level scale made real (`reviewOutputFromSession` reads and validates both
+   fields per-entry, tolerantly skipping a malformed individual entry — a missing `severity`, a
+   `severity` outside the real three-value enum, a non-string `summary` — rather than discarding a whole
+   session's other, well-formed findings for one bad entry, the identical per-item tolerance the prior,
+   simpler `findingsFromSession` already established for a malformed array). `checked` is F-REVIEW-2's
+   own "the review report must state what it checked," read the same tolerant way.
+6. **"Empty review is itself a finding" is synthesised per-perspective, not merged with other**
+   **findings.** A perspective whose own `findings` *and* `checked` are both empty gets one real,
+   synthetic `minor` `ReviewFinding` naming it (`emptyReviewFinding`) — F-REVIEW-2's own literal "no
+   findings *and* no evidence," not either alone: a perspective with real findings, or with zero
+   findings but a real, non-empty `checked` list (it genuinely looked and found nothing), is never
+   flagged. Each empty-perspective finding's own summary names that perspective, so two different empty
+   perspectives never collide into one merged, ambiguous finding.
+7. **`mergeReviewReport`'s own signature takes a plain, always-populated array of `{perspective,**
+   **output}` entries, not a `perspectives: string[]` plus a separate `ReadonlyMap` a lookup could come**
+   **back `undefined` from.** The prior, four-perspective-era shape needed a real `?? []` fallback for a
+   `Map.get()` that could never actually miss given `dispatchSwarmReview`'s own one real caller (it
+   populates the map in the identical loop that ran each session) — real, but unprovable to the type
+   checker without restructuring, the identical class of gap `SPEC-QUESTIONS.md` Q130 finding 15 records
+   resolving a different way elsewhere this same milestone (there, reverted to a disclosed branch,
+   because the narrowing did not survive a real project-reference boundary; here, resolved by removing
+   the possibility structurally, since no such boundary is involved). A real coverage gap surfaced this
+   directly: the defensive `?? []` fallback branches were never — and could never be — exercised by any
+   real call.
+
+8. **[BLOCKING] A real `--no-ff` merge commit's own `Co-Authored-By` trailer never exists at all — so**
+   **finding 2's "read `HEAD`'s own commit trailer" never fires for the one real shape a merge-queue-**
+   **produced change actually takes.** A fresh critic round reproduced directly: `@forge/vcs`'s own
+   `formatMergeCommitMessage` (the real merge queue, `06` §6.7) writes only `Forge-Step`/`Forge-Run`
+   trailers on the merge commit itself, never `Co-Authored-By` — the real agent authorship for a merged
+   lane's own work lives on that lane's own tip commit, the merge commit's *non-first* parent(s), a
+   commit `HEAD`'s own message never contains at all once merged. Reading only `HEAD` silently never
+   refused a real, agent-authored merge — the one real path `06` §6.7 describes production changes
+   actually taking. **Fixed:** `authoringAgentId` (singular) becomes `authoringAgentIds` (plural, a real
+   array — `DispatchAgentStepOptions`'s own doc comment has the fuller multi-lane-merge reasoning: a
+   single merge commit can genuinely carry more than one real agent's own work at once), and `review.ts`'s
+   new `realAuthoringAgentIds` reads `git log -1 --format=%P` for the resolved tip; on 2+ parents (a real
+   merge commit) it checks every *non-first* parent (every merged-in lane's own tip), falling back to
+   checking the tip itself for an ordinary, single-parent commit. `dispatchSwarmReview`'s own CFG-501
+   check now refuses when the reviewing agent's id appears *anywhere* in the list, not just at index 0.
+9. **[BLOCKING] Only the first of possibly several real `Co-Authored-By` trailers on one commit was ever**
+   **read.** A fresh critic round reproduced directly: the original `AGENT_CO_AUTHOR_TRAILER` regex was
+   matched via a non-global `.exec()`, returning only the first trailer textually present in the commit
+   message — a real commit naming two agents (or an agent alongside a human co-author using a different
+   trailer shape) silently checked only whichever happened to come first, missing a genuine self-review
+   match whose own trailer simply wasn't first. **Fixed:** the regex gained a global flag and a new
+   `agentTrailersIn` helper collects every match via `matchAll`, returning all distinct real agent roles
+   found — folded into the same `Set` `realAuthoringAgentIds` (finding 8) already builds across every ref
+   it checks.
+10. **[MAJOR] The self-authorship check always read `HEAD`'s own trailer, regardless of the actual**
+    **`--diff <range>` a caller gave — a real, two-sided bug.** A fresh critic round reproduced directly:
+    an unrelated, *later* `HEAD` commit authored by the reviewing agent wrongly refused a review of an
+    *earlier*, different range that never touched that agent's work at all (a false positive); separately,
+    any range whose own real comparison tip was not `HEAD` at all (an explicit two-dot/three-dot range)
+    could never be checked correctly, either direction. **Fixed:** a new `tipRefFor(range)` resolves
+    git's own real range grammar directly — a two-ref range (`A...B`/`A..B`) always compares against `B`,
+    its own second endpoint; a bare single ref (including the default `'HEAD'`) compares that ref against
+    the *current checkout*, so its own real tip for authorship purposes is always `HEAD` itself, never the
+    named ref. `reviewChange` now extracts `range` once and threads the same value into both `realDiff`
+    and `realAuthoringAgentIds`, so the two reads are always consistent with each other.
+11. **[MAJOR] `mergeReviewReport`'s own empty-review synthesis (finding 6) bypassed de-duplication**
+    **against a real finding sharing identical summary text from a *different* perspective.** A fresh
+    critic round reproduced directly: `emptyReviewFinding`'s own result was appended straight to the
+    `findings` array, entirely outside the `bySummary` map every real finding is folded through —
+    a perspective's synthesised "no findings" summary and a genuine, real finding from another
+    perspective that happened to share that exact text landed as two separate `ReviewFinding` entries,
+    violating `mergeReviewReport`'s own "one real, de-duplicated ReviewReport" contract (finding 7's own
+    "no `?? []` needed" rewrite did not, on its own, fix this — a separate bug in the same function).
+    **Fixed:** a shared `record(perspective, summary, severity)` helper now backs both the real-findings
+    loop and the empty-review synthesis, so both paths fold through the identical `bySummary` map.
+12. **[MINOR, proactive — beyond what the critic strictly required as a must-fix] Severity-value casing**
+    **could silently drop an otherwise well-formed finding entirely.** While verifying finding 5's own
+    per-entry tolerance, direct reproduction showed `reviewOutputFromSession`'s original strict,
+    case-sensitive `ReviewSeverity` guard treats `"Blocking"`/`"BLOCKING"` (an entirely ordinary casing
+    variance for LLM-produced structured output against a lowercase-only enum schema) as an unrecognised
+    value — silently discarding the whole finding, not merely its severity, a worse failure than the "one
+    real casing normalisation" fix costs. **Fixed:** a new `normalizeSeverity` lowercases the raw value
+    before checking it against the real three-value set, so a finding's own real severity survives
+    regardless of case; the exact enum values themselves are unchanged. Also fixed in the same pass:
+    `ReviewSeverity` itself was never re-exported from `@forge/engine/interaction`'s own type barrel
+    (`index.ts`) — a caller outside `dispatch-agent-step.ts` importing it directly would have failed to
+    resolve it; added alongside the type's other three siblings.
+
+Also confirmed clean by the critic round, no fix needed: `PERSPECTIVE_ASKS`'s own per-perspective prompt
+text (finding 4) matches `13` §13.3's own table verbatim for all eight rows; the real, unconditional
+`authoringAgentIds` pass-through from `reviewChange` (finding 1's own "always *can* determine this, even
+when the real answer is 'no agent'" design) correctly sends a real, empty array rather than omitting the
+field, and `dispatchSwarmReview`'s own `.includes()` check against an empty array is always `false`,
+never refusing; the three pre-existing, non-merge-commit CFG-501 tests (`review.test.ts`) continued to
+pass unmodified after every fix above, confirming none of the fixes changed behaviour for the ordinary,
+single-commit case they already covered.
+
+See `GAUNTLET-LOG.md`'s M8 P10 entry for the full critic round.
