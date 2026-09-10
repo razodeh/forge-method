@@ -37,6 +37,7 @@ import { agentValidateAll } from './commands/agent.ts';
 import { readConfig } from './commands/config.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
+import { testCoverage } from './commands/loop/test/coverage.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
 import { testRun } from './commands/loop/test/run.ts';
 import { runStatus, runStatusJson } from './commands/run/status.ts';
@@ -122,11 +123,18 @@ function isValidateRuleId(value: string | undefined): value is ValidateRuleId {
 /** `--rule <name>` is not a global flag (`parseGlobalFlags`' own `KNOWN_FLAGS` has no entry for it),
  * so it survives into `rest` verbatim — found and validated here rather than adding it to the shared
  * global-flags parser, matching `requireAllFlag`'s own precedent of parsing a command-specific flag
- * out of `rest` locally instead of widening a parser every other command also goes through. */
+ * out of `rest` locally instead of widening a parser every other command also goes through.
+ *
+ * Returns `''` (never a real rule id), not `undefined`, when `--rule` is present but is the very last
+ * token — a fresh critic round reproduced this directly: `rest[index + 1]` is `undefined` for that
+ * case too, indistinguishable from "no `--rule` at all," so `forge test coverage --rule` (trailing,
+ * no value) silently ran the default rule instead of erroring, the identical gap `findRawTestRuleFlag`
+ * below already exists to close for a *misspelled* value. `''` fails every real rule-id check exactly
+ * like a misspelled one does, with no new branching needed at any call site. */
 function findRuleFlag(rest: readonly string[]): string | undefined {
   const index = rest.indexOf('--rule');
   if (index === -1) return undefined;
-  return rest[index + 1];
+  return rest[index + 1] ?? '';
 }
 
 /** `story:dor`/`story:file-claim-overlap`/etc. (`G-Ready.gate.yaml`/`G-Stable.gate.yaml`) each shell
@@ -168,10 +176,12 @@ function isTestRuleId(value: string | undefined): value is TestRuleId {
  * the original version collapsed "no `--rule` given" and "a `--rule` given but misspelled" into
  * the identical `undefined`, so a typo (`--rule typecheckk`) silently ran the entire default test
  * suite instead of erroring, the same real, reported gap `isValidateRuleId` below already avoids
- * for `spec validate`. */
+ * for `spec validate`. A later critic round (`PLAN-M8.md` P6) found the identical collapse still
+ * happened for a *trailing, valueless* `--rule` (the very last token in `rest`) — `findRuleFlag`'s
+ * own doc comment above has the fuller reasoning for returning `''` rather than `undefined` there. */
 function findRawTestRuleFlag(rest: readonly string[]): string | undefined {
   const index = rest.indexOf('--rule');
-  return index === -1 ? undefined : rest[index + 1];
+  return index === -1 ? undefined : (rest[index + 1] ?? '');
 }
 
 /** `test:run`/`test:lint`/`test:typecheck` (`G-Verify.gate.yaml`) each shell `forge test run
@@ -199,6 +209,46 @@ async function runTestRunCommand(
     );
   }
   return result.failed > 0 || result.errors > 0 ? 1 : 0;
+}
+
+const TEST_COVERAGE_RULE_IDS = ['acceptance-criteria', 'ratchet'] as const;
+type TestCoverageRuleId = (typeof TEST_COVERAGE_RULE_IDS)[number];
+
+function isTestCoverageRuleId(value: string | undefined): value is TestCoverageRuleId {
+  return value !== undefined && (TEST_COVERAGE_RULE_IDS as readonly string[]).includes(value);
+}
+
+/** `story:ac-coverage`/`test:coverage`/`coverage:ratchet` (`G-Verify.gate.yaml`) each shell `forge
+ * test coverage [--rule acceptance-criteria|ratchet] --json` and read back a top-level numeric
+ * `coverage`/`regressions` field (`failOn: 'coverage < 100'`/`'coverage < 80'`/`'regressions > 0'`)
+ * — `testCoverage`'s own return value already carries both, per its own doc comment's reasoning. */
+async function runTestCoverageCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  rule: TestCoverageRuleId | undefined,
+  json: boolean,
+): Promise<number> {
+  const ctx = { paths, projectRoot, specsRoot: SPECS_ROOT };
+  const options = rule === undefined ? {} : { rule };
+  const result = await testCoverage(ctx, options);
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if ((result.problems ?? []).length > 0) {
+    for (const problem of result.problems ?? []) console.error(problem);
+  } else {
+    console.log(
+      `forge test coverage${rule === undefined ? '' : ` --rule ${rule}`}: coverage=${String(result.coverage)} regressions=${String(result.regressions)}.`,
+    );
+    // A fresh critic round found the non-`--json` path told a human "coverage=50" with no way to
+    // learn *which* AC was unproven — `result.missingAcIds` already names every one.
+    for (const acId of result.missingAcIds ?? []) console.error(`${acId}: no passing bound test.`);
+  }
+  return (result.problems ?? []).length > 0 ||
+    result.regressions > 0 ||
+    (rule === undefined && result.coverage < 80) ||
+    (rule === 'acceptance-criteria' && result.coverage < 100)
+    ? 1
+    : 0;
 }
 
 async function main(): Promise<number> {
@@ -254,6 +304,17 @@ async function main(): Promise<number> {
       return 2;
     }
     return runTestRunCommand(paths, projectRoot, rawRule, flags.json);
+  }
+  if (command === 'test' && sub === 'coverage') {
+    const rawRule = findRuleFlag(rest);
+    if (rawRule !== undefined && !isTestCoverageRuleId(rawRule)) {
+      console.error(
+        `forge: "test coverage --rule" needs a real rule (one of: ${TEST_COVERAGE_RULE_IDS.join(', ')}); ` +
+          `got ${JSON.stringify(rawRule)}.`,
+      );
+      return 2;
+    }
+    return runTestCoverageCommand(paths, projectRoot, rawRule, flags.json);
   }
 
   console.error(

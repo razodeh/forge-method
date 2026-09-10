@@ -23,6 +23,9 @@ checks:
     - id: test:oracle-lint
       run: 'forge test run --rule oracle-lint --json'
       failOn: 'errors > 0'
+    - id: coverage:ratchet
+      run: 'forge test coverage --rule ratchet --json'
+      failOn: 'regressions > 0'
   advisory:
     - id: verification-review
       agent: critic

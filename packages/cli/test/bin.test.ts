@@ -258,4 +258,39 @@ describe('forge (real subprocess dispatch)', () => {
     const parsed = JSON.parse(result.stdout) as { readonly errors: number };
     expect(parsed.errors).toBe(1);
   });
+
+  it('runs `forge test coverage --rule acceptance-criteria --json` for real end to end, vacuously exiting 0 with no done stories at all', async () => {
+    // `PLAN-M8.md` P6's own Checks section: proves the full real pipeline (readConfig-free —
+    // `story:ac-coverage` needs no `testCommands` entry — SpecGraph/story load -> JSON envelope ->
+    // exit code), not merely that `testCoverage` the library function works in isolation
+    // (`test/coverage.test.ts` already covers that thoroughly).
+    const dir = await realProject();
+
+    const result = run(['test', 'coverage', '--rule', 'acceptance-criteria', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly coverage: number };
+    expect(parsed.coverage).toBe(100);
+  });
+
+  it('exits 2 with a real, specific message for an unrecognised "test coverage --rule" value', async () => {
+    const dir = await realProject();
+
+    const result = run(['test', 'coverage', '--rule', 'ratchett', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('ratchet');
+  });
+
+  it('exits 2, rather than silently running the default rule, for a real "--rule" with no value at all', async () => {
+    // A fresh critic round found `findRuleFlag`'s own trailing-token case (`--rule` as the very last
+    // token in argv) collapsed to the identical `undefined` "no --rule given" returns — silently
+    // running `test:coverage` (the default rule) instead of erroring, the same collapse
+    // `findRawTestRuleFlag`'s own doc comment already closed for a *misspelled* value.
+    const dir = await realProject();
+
+    const result = run(['test', 'coverage', '-C', dir, '--rule']);
+
+    expect(result.status).toBe(2);
+  });
 });
