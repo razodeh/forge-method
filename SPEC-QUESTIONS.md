@@ -10128,3 +10128,84 @@ pass unmodified after every fix above, confirming none of the fixes changed beha
 single-commit case they already covered.
 
 See `GAUNTLET-LOG.md`'s M8 P10 entry for the full critic round.
+
+## Q132 — M7's own deferred live-run checkpoint, actually executed (post-M8, 2026-09-10)
+
+**Q.** M7's own Acceptance line ("Stop, run a genuine project through it, and let that experience inform
+M8+") named a real, `FORGE_LIVE=1`, jointly-supervised action this milestone's own pieces deliberately
+never took themselves (`test/live-smoke.test.ts`'s own top-of-file doc comment, `SPEC-QUESTIONS.md`
+Q121). The coordinator explicitly directed running it now, after M8 already closed. Real findings below,
+each reproduced directly against the real, installed `claude` CLI/SDK on this real development machine
+(subscription/non-bare mode only — no `ANTHROPIC_API_KEY` in this environment, so bare mode was never
+exercised), not read-and-guessed.
+
+1. **[Confirmed, fixed] `probeAuthAvailability` and the real session spawn used two different,**
+   **inconsistent `env` snapshots — the spawn's own narrower one broke real subscription auth.**
+   `probeAuthAvailability` (`packages/adapter-claude-code/src/auth.ts`) runs `claude auth status`
+   against the *full* ambient `process.env` and correctly reported `subscription: true` on this machine,
+   but both real live-run entry points (`test/live-smoke.test.ts`, `create-warmed-adapter.ts`'s
+   `realAmbientEnv`) build a separate, much narrower `env` for the actual session spawn — `PATH`/`HOME`
+   only. The first real live-smoke run failed in 1.27s with `"Not logged in · Please run /login"`,
+   reproduced directly (`env -i PATH=... HOME=... claude auth status` itself reports `loggedIn: false`
+   on this machine) and bisected against every other plausible candidate (`LOGNAME`/`TMPDIR`/`SHELL`/
+   `LANG`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME`, none of which restored it) — `USER` alone is what this
+   machine's real credential lookup needs beyond `HOME`. **Fixed:** `USER` added to both env-construction
+   sites, unconditionally (not a secret, safe in both bare and non-bare modes). Re-run confirmed: the
+   live smoke test now passes for real (6997ms, a genuine live Claude Code session, vs. the original
+   1269ms auth failure) — one real `init` command step, one real Claude Code `engineer` agent session
+   that actually wrote the requested file, a real `merge` step, a real passing gate, all driven through
+   the real, unmodified `runEngine`.
+2. **[Confirmed, fixed] The adapter conformance suite's own shared `permissionMode: 'auto'` default does**
+   **not actually enforce a `tools` restriction against the real, installed CLI/SDK — a conformance-**
+   **harness bug, not a FORGE production bug.** The first full live conformance run (32 real sessions,
+   both transports) failed C3 (tool restriction), C4 (exec allowlist, sdk only), and C16 (MCP grant
+   fidelity) — all three genuinely safety-relevant checks. Direct investigation found every one of
+   FORGE's own real, restriction-sensitive callers (`@forge/engine/interaction`'s
+   `dispatch-agent-step.ts`, `forge debug`'s read-only RCA phases) already pairs a restrictive `tools`
+   grant with `permissionMode: 'deny-unlisted'`, never the conformance harness's own more permissive
+   `'auto'` default — so a targeted, isolated live repro was run comparing the two directly: under
+   `'deny-unlisted'`, a real `write:false` grant genuinely denied both a direct `Write` tool call *and*
+   the agent's own attempted `Bash` fallback (`"Permission to use Write/Bash has been denied because
+   Claude Code is running in don't ask mode"`); under the harness's own `'auto'` default, the identical
+   grant did not prevent the write. **This is real, good news for FORGE's own actual safety story** — no
+   production code path was ever vulnerable — but the conformance suite itself was testing restriction
+   enforcement under a permission mode that does not enforce it, defeating the point of C3/C4/C16.
+   **Fixed:** `checkC3ToolRestriction`/`checkC4ExecAllowlist` (`packages/adapter-kit/src/conformance/
+   filesystem.ts`) and `checkC16McpGrantFidelity` (`.../capabilities.ts`) now explicitly override
+   `permissionMode: 'deny-unlisted'` in their own `buildRequest` calls, each with a doc comment recording
+   this exact live-verified reasoning. Re-run confirmed: C3 and C4 now pass on both transports; C16 now
+   passes on the sdk transport (still open on cli — item 4 below).
+3. **[Confirmed, fixed] C6's own hard-coded 15s timeout was tighter than every sibling check's 30s, and**
+   **too tight for a genuinely live round trip.** The first full live run's own C6 failure was a plain
+   harness timeout (`"C6: session did not end within 15s"`), not a real assertion failure — every other
+   C1-C16 check already budgets 30s for the identical real-latency reason; C6 alone had a narrower bound
+   with no evidence it ever needed to be tighter. **Fixed:** bumped to 30s
+   (`packages/adapter-kit/src/conformance/session-basics.ts`), matching every sibling check.
+4. **[Found, NOT fixed — disclosed, needs a decision before further live-budget spend] Two failures**
+   **remain after every fix above, each with a plausible but unconfirmed benign explanation, not yet**
+   **root-caused with further live verification:**
+   - **C6 (maxTurns), both transports, after the timeout fix:** the real session now ends well within
+     30s but reports `reason: 'complete'` (cli transport) or `reason: 'error'` (sdk transport) instead of
+     `'limit'`, against a `manyTurnsPrompt` fixture asking for five sequential create-then-read-back file
+     operations (ten real tool calls) under `limits: { maxTurns: 1 }`. One plausible, benign reading:
+     Claude Code's own real notion of a "turn" may allow an unbounded chain of tool calls within a single
+     assistant turn before yielding control back — a sufficiently capable real model completing this
+     whole ten-call sequence without ever needing a *second* turn would correctly report `'complete'`,
+     not a `maxTurns`-enforcement bug at all, just prompt/capability drift since this fixture was
+     originally written. The sdk transport's distinct `'error'` reason is unexplained — no detailed event
+     dump was captured for this specific run to diagnose further.
+   - **C16 (MCP grant fidelity), cli transport only, after the `deny-unlisted` fix:** `okByToolName.get(
+     fixture.allowedToolName)` is `undefined` — the granted MCP tool the agent was asked to call was
+     never attempted at all (not "called and denied"), while the identical check now passes cleanly on
+     sdk transport. Could be ordinary live-run non-determinism (the model took a different real path) or
+     a genuine cli-transport-specific gap in how `deny-unlisted` interacts with an MCP-provisioned tool —
+     not distinguished without at least one more live re-run, not spent here.
+   Both are real, disclosed open items — not re-runs of a flaky harness bug already fixed above, and not
+   silently absorbed as "probably fine."
+
+**Real cost note:** this checkpoint consumed roughly 70 real, live Claude Code sessions against this
+machine's own subscription (two full conformance suite runs at 32 sessions each, the live-smoke test
+twice, plus several small targeted repros) — a real, billed action, not a simulation, exactly as its own
+gating (`shouldRunLive`) and this file's own Q121 always said it would be.
+
+See `GAUNTLET-LOG.md`'s M7 live-run-checkpoint addendum for the full run log.
