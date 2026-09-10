@@ -101,6 +101,18 @@ describe('accumulateSessionResult', () => {
     expect((twoToolResult.result as { usage: { turns: number } }).usage.turns).toBe(3);
   });
 
+  it("turns = toolCallCount alone, with no '+1', when the session ends with reason:'limit' -- a real Options.maxTurns cutoff (M7's own live-run checkpoint, SPEC-QUESTIONS.md Q132) never reaches the final, untruncated response the '+1' otherwise accounts for", async () => {
+    const cwd = await plainCwd();
+    const cutOffInput: AdapterEvent[] = [
+      { type: 'tool.call', id: '1', name: 'write_file' },
+      { type: 'session.ended', reason: 'limit' },
+    ];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(cutOffInput), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect((result as { usage: { turns: number } }).usage.turns).toBe(1);
+  });
+
   it('usage event populates inputTokens/outputTokens/costUsd; costUsd is omitted entirely when never reported', async () => {
     const cwd = await plainCwd();
     const withCost = await drain(

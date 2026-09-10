@@ -38,7 +38,10 @@ import type { AdapterCapabilities } from '@forge/adapter-kit';
  * borne out by what the real array actually contains; recorded in `SPEC-QUESTIONS.md` Q116 rather than
  * silently claiming a finer-grained detection this milestone's own evidence does not support.
  */
-export function staticCapabilities(permissionModes: readonly string[]): AdapterCapabilities {
+export function staticCapabilities(
+  permissionModes: readonly string[],
+  transport: 'cli' | 'sdk',
+): AdapterCapabilities {
   return {
     streaming: true,
     partialText: false,
@@ -64,6 +67,11 @@ export function staticCapabilities(permissionModes: readonly string[]): AdapterC
     bareMode: true,
     skills: 'native',
     toolProxy: false,
+    // Fixed by this adapter's own construction, exactly like every other non-version-dependent field
+    // above -- the real, installed cli's own missing `--max-turns` flag (confirmed against `--help`,
+    // `SPEC-QUESTIONS.md` Q114) is not a remote-environment unknown that could vary by install; the sdk
+    // transport's own `Options.maxTurns` genuinely enforces it, live-confirmed in the same record.
+    turnLimitEnforcement: transport === 'sdk',
   };
 }
 
@@ -88,9 +96,12 @@ export function staticCapabilities(permissionModes: readonly string[]): AdapterC
  * Every other field is unchanged, since nothing about observing one real session changes what this
  * adapter's own code does or does not implement.
  */
-export function confirmedCapabilities(permissionModes: readonly string[]): AdapterCapabilities {
+export function confirmedCapabilities(
+  permissionModes: readonly string[],
+  transport: 'cli' | 'sdk',
+): AdapterCapabilities {
   return {
-    ...staticCapabilities(permissionModes),
+    ...staticCapabilities(permissionModes, transport),
     partialText: true,
     sessionResume: true,
   };

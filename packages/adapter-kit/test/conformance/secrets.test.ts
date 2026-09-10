@@ -60,6 +60,7 @@ const CAPABILITIES: AdapterCapabilities = {
   bareMode: true,
   skills: 'none',
   toolProxy: false,
+  turnLimitEnforcement: true,
 };
 
 function emptyResult(overrides: Record<string, unknown> = {}) {

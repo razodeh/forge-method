@@ -32,6 +32,7 @@ function capabilities(overrides: Partial<AdapterCapabilities> = {}): AdapterCapa
     bareMode: true,
     skills: 'none',
     toolProxy: false,
+    turnLimitEnforcement: true,
     ...overrides,
   };
 }

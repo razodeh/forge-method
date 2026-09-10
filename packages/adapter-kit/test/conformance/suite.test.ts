@@ -253,6 +253,7 @@ class StubAdapter implements PlatformAdapter {
       bareMode: true,
       skills: 'inline',
       toolProxy: false,
+      turnLimitEnforcement: true,
     });
   }
 

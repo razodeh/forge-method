@@ -55,6 +55,7 @@ const CAPABILITIES: AdapterCapabilities = {
   bareMode: true,
   skills: 'inline',
   toolProxy: false,
+  turnLimitEnforcement: true,
 };
 
 function minimalAdapter(overrides: Partial<PlatformAdapter> = {}): PlatformAdapter {

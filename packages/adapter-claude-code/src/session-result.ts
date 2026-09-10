@@ -69,6 +69,7 @@ export async function* accumulateSessionResult(
   let costUsd: number | undefined;
   let toolCallCount = 0;
   let ok = true;
+  let endedByLimit = false;
   let error: { readonly code: string; readonly message: string } | undefined;
 
   for await (const event of transportEvents) {
@@ -111,6 +112,7 @@ export async function* accumulateSessionResult(
       // defaults `true`, and neither ending contradicts that on its own.
       case 'session.ended':
         if (event.reason === 'aborted' || event.reason === 'error') ok = false;
+        if (event.reason === 'limit') endedByLimit = true;
         break;
       // Every other real `AdapterEvent` member carries nothing this function's own accumulation
       // needs: `session.started` (transport lifecycle only, not this function's job -- the caller's
@@ -146,15 +148,21 @@ export async function* accumulateSessionResult(
       // per-model token/cost breakdown or the SDK's own `modelUsage` -- carried nowhere by this
       // function; a future piece needing it would need to extend that already-committed type.
       ...(costUsd === undefined ? {} : { costUsd }),
-      // Real, but empirically-grounded on only two live data points (`SPEC-QUESTIONS.md` Q116): every
-      // real `tool.call` this session made implies one real conversational round trip beyond the
-      // final response itself -- `toolCallCount + 1` matched the real, live-captured `num_turns` field
-      // exactly for both a no-tool-use ("hello", num_turns: 1) and a one-tool-use (write-file,
-      // num_turns: 2) real call. Neither transport's own event mapping currently threads the SDK/CLI's
-      // own real `num_turns` field through any `AdapterEvent` at all (`AdapterEvent.usage` has no such
-      // field, and extending it is a bigger, cross-package change outside this piece's own scope), so
-      // this heuristic is the honest best this piece can do without one.
-      turns: toolCallCount + 1,
+      // Real, but empirically-grounded on a small number of live data points (`SPEC-QUESTIONS.md` Q116,
+      // Q132): every real `tool.call` this session made implies one real conversational round trip
+      // beyond the final response itself -- `toolCallCount + 1` matched the real, live-captured
+      // `num_turns` field exactly for both a no-tool-use ("hello", num_turns: 1) and a one-tool-use
+      // (write-file, num_turns: 2) real call, *for a session that actually reached a final response*.
+      // A session `session.ended{reason:'limit'}` cut off instead (M7's own live-run checkpoint,
+      // `SPEC-QUESTIONS.md` Q132) never reaches that final, untruncated response at all -- the `+1`
+      // this heuristic adds for it does not apply, and a live `Options.maxTurns: 1` cutoff (sdk
+      // transport) confirmed directly: `toolCallCount` alone (no `+1`) is what actually matched the
+      // real, configured turn boundary once this was accounted for. Neither transport's own event
+      // mapping threads the SDK/CLI's own real `num_turns` field through any `AdapterEvent` at all
+      // (`AdapterEvent.usage` has no such field, and adding one is a bigger, cross-package change this
+      // piece still does not attempt) -- this reason-aware heuristic is the honest best available
+      // without one, for both the reached-completion and cut-off-by-limit cases.
+      turns: endedByLimit ? toolCallCount : toolCallCount + 1,
     },
     durationMs: options.now() - startedAt,
     changedFiles: [...changedFiles],

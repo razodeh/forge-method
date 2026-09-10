@@ -57,10 +57,24 @@ export async function checkC1HelloSession(context: ConformanceContext): Promise<
 
 export async function checkC6Limits(context: ConformanceContext): Promise<void> {
   const cwd = await context.options.createScratchDir();
+
+  // `AdapterCapabilities.turnLimitEnforcement` -- a real, live-verified adapter capability
+  // (`SPEC-QUESTIONS.md` Q114, Q132): an adapter honestly reporting it cannot enforce a `maxTurns`
+  // cutoff at all (this milestone's own real, installed `@forge/adapter-claude-code` cli transport,
+  // confirmed against the real CLI's own missing `--max-turns` flag) is not failing this check the way
+  // one that silently ignores a genuinely enforceable limit would be -- the same "a real, disclosed
+  // capability gap is not a bug" treatment `structuredOutput`/`sessionResume` already get elsewhere in
+  // this suite. Checked *before* starting the session, not merely before asserting on its result: a
+  // real `FORGE_LIVE=1` re-run (M7's own live-run checkpoint) found that asserting-only gating still
+  // forced a non-enforcing transport through the full, multi-tool-call `manyTurnsPrompt` task (nothing
+  // ever actually cuts it short) -- genuinely exceeding the shared 30s timeout, an unrelated failure
+  // mode masking the real, already-answered "does this adapter honestly claim the capability" question.
+  // A non-enforcing adapter gets the cheap `helloPrompt` instead and only has to prove it ends cleanly.
+  const enforced = context.getCapabilities().turnLimitEnforcement;
   const handle = await context.getAdapter().startSession(
     context.buildRequest({
       cwd,
-      prompt: context.options.manyTurnsPrompt,
+      prompt: enforced ? context.options.manyTurnsPrompt : context.options.helloPrompt,
       limits: { maxTurns: 1 },
     }),
   );
@@ -77,6 +91,9 @@ export async function checkC6Limits(context: ConformanceContext): Promise<void> 
 
   const endedEvent = events.find(isEndedEvent);
   expect(endedEvent).toBeDefined();
+
+  if (!enforced) return;
+
   expect(endedEvent?.reason).toBe('limit');
   // "maxTurns respected," not only "labelled limit": result.usage.turns is the one independently
   // observable count this interface exposes, so it must not exceed what was actually granted — a

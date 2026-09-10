@@ -279,8 +279,8 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
       transport === 'cli' ? mapPermissionModeForCli(mode) : mapPermissionModeForSdk(mode),
     );
     return this.sawSessionStarted
-      ? confirmedCapabilities(permissionModes)
-      : staticCapabilities(permissionModes);
+      ? confirmedCapabilities(permissionModes, transport)
+      : staticCapabilities(permissionModes, transport);
   }
 
   preflight(ctx: PreflightContext): Promise<PreflightResult> {

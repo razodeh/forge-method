@@ -30,4 +30,13 @@ export interface AdapterCapabilities {
   readonly skills: 'native' | 'inline' | 'none';
   /** `15` §15.6: the adapter can expose FORGE-brokered tools into the session in place of native MCP. */
   readonly toolProxy: boolean;
+  /** Whether a real `SessionRequest.limits.maxTurns` cutoff is actually enforced -- `session.ended` will
+   * genuinely report `reason: 'limit'` (never merely `'complete'`) once the cap is hit, rather than the
+   * session running unbounded to natural completion regardless of the requested cap. A real, live-
+   * verified capability asymmetry (`SPEC-QUESTIONS.md` Q114, Q132): `@forge/adapter-claude-code`'s own
+   * cli transport genuinely cannot enforce this at all on the real, installed CLI (no `--max-turns` flag
+   * exists), while its sdk transport does, via the real SDK's own native `Options.maxTurns`. Mirrors the
+   * same "a real, disclosed capability gap, not silently claimed" discipline this interface's own
+   * `structuredOutput`/`sessionResume` fields already establish. */
+  readonly turnLimitEnforcement: boolean;
 }

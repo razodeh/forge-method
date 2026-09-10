@@ -78,6 +78,7 @@ const CAPABILITIES: AdapterCapabilities = {
   bareMode: true,
   skills: 'none',
   toolProxy: false,
+  turnLimitEnforcement: true,
 };
 
 describe('checkC3ToolRestriction — refusal signalled only via result.ok', () => {

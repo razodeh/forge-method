@@ -82,6 +82,9 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   bareMode: true,
   skills: 'native',
   toolProxy: true,
+  // Genuinely backed up, not a degraded default: `runScriptPhases`'s own `maxTurns` handling below
+  // really does truncate at the granted limit and really does report `reason: 'limit'` when it does.
+  turnLimitEnforcement: true,
 };
 
 const DEFAULT_SCRIPT: FakeSessionScript = {

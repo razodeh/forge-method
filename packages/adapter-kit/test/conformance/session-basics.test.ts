@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { checkC11ErrorSurface } from '../../src/conformance/session-basics.ts';
+import { checkC11ErrorSurface, checkC6Limits } from '../../src/conformance/session-basics.ts';
 import { createConformanceContext } from '../../src/conformance/context.ts';
 import type { ConformanceOptions } from '../../src/conformance/fixtures.ts';
 import type { AdapterCapabilities, PlatformAdapter, SessionResult } from '../../src/types/index.ts';
@@ -49,6 +49,7 @@ const CAPABILITIES: AdapterCapabilities = {
   bareMode: true,
   skills: 'none',
   toolProxy: false,
+  turnLimitEnforcement: true,
 };
 
 function minimalAdapter(overrides: Partial<PlatformAdapter>): PlatformAdapter {
@@ -106,5 +107,59 @@ describe('checkC11ErrorSurface — alternate surfacing shapes', () => {
     });
     const context = await buildContext(adapter);
     await expect(checkC11ErrorSurface(context)).resolves.toBeUndefined();
+  });
+});
+
+function completedSessionAdapter(overrides: Partial<PlatformAdapter> = {}): PlatformAdapter {
+  const result: SessionResult = {
+    sessionId: 's1',
+    ok: true,
+    finalText: 'done',
+    usage: { inputTokens: 0, outputTokens: 0, turns: 5 },
+    durationMs: 0,
+    changedFiles: [],
+    controlTokens: [],
+  };
+  return minimalAdapter({
+    startSession: () =>
+      Promise.resolve({
+        sessionId: 's1',
+        events: {
+          [Symbol.asyncIterator]: () => {
+            let done = false;
+            return {
+              next: () => {
+                if (done) return Promise.resolve({ done: true as const, value: undefined });
+                done = true;
+                return Promise.resolve({
+                  done: false as const,
+                  value: { type: 'session.ended', reason: 'complete' } as const,
+                });
+              },
+            };
+          },
+        },
+        stop: () => Promise.resolve(),
+        result: () => Promise.resolve(result),
+      }),
+    ...overrides,
+  });
+}
+
+describe('checkC6Limits — real, live-verified capability gating (SPEC-QUESTIONS.md Q114, Q132)', () => {
+  it('passes for an adapter that honestly reports turnLimitEnforcement: false, even though it ran the session to natural completion without ever respecting maxTurns', async () => {
+    const adapter = completedSessionAdapter({
+      capabilities: () => Promise.resolve({ ...CAPABILITIES, turnLimitEnforcement: false }),
+    });
+    const context = await buildContext(adapter);
+    await expect(checkC6Limits(context)).resolves.toBeUndefined();
+  });
+
+  it('still fails for an adapter that reports turnLimitEnforcement: true but does not actually enforce it', async () => {
+    const adapter = completedSessionAdapter({
+      capabilities: () => Promise.resolve({ ...CAPABILITIES, turnLimitEnforcement: true }),
+    });
+    const context = await buildContext(adapter);
+    await expect(checkC6Limits(context)).rejects.toThrow();
   });
 });
