@@ -8118,3 +8118,37 @@ dismissed. `SPEC-QUESTIONS.md` Q132 items 5-7 have the full record, including ex
 both rounds. This checkpoint consumed roughly 100+ real, live Claude Code sessions against this machine's
 own real subscription across three full conformance runs, the smoke test (twice), and roughly a dozen
 small, targeted repros — a real, billed action, not a simulation.
+
+### Round 3 — "clear all not cleared issues," both remaining gaps closed on explicit direction
+
+Round 2 left two things open: a narrower, unfixed half of the `usage.turns` approximation, and a
+deliberately-deferred design question (extend `AdapterCapabilities` to properly gate C6 for the cli
+transport, or leave it). Both closed.
+
+**`usage.turns` fix.** `toolCallCount + 1` is correct for a session reaching a real final response, but a
+`session.ended{reason:'limit'}` cutoff never reaches one — there is no trailing response turn to add. Fixed
+by tracking whether the ending reason was `'limit'` and omitting the `+1` in exactly that case, a small,
+reason-aware refinement rather than the larger cross-transport `num_turns`-threading redesign originally
+described. New deterministic regression test added.
+
+**`AdapterCapabilities.turnLimitEnforcement` added**, closing the deferred design question. Real
+construction sites: `@forge/adapter-claude-code`'s `staticCapabilities`/`confirmedCapabilities` now take a
+`transport` parameter and report `transport === 'sdk'`; `@forge/testkit`'s `FakePlatformAdapter` reports
+`true` (verified genuinely backed up by its own real `maxTurns` enforcement). `checkC6Limits` reads the
+capability *before* starting the session, not merely before asserting on the result — a first attempt that
+only gated the assertions still forced a non-enforcing transport through the full `manyTurnsPrompt` task
+with nothing to cut it short, and a live re-run showed it genuinely exceeding the shared 30s timeout (a
+real, distinct failure mode uncovered by fixing the first one). Fixed by switching to the cheap
+`helloPrompt` for a non-enforcing adapter, which only has to prove the session ends cleanly. Two new
+regression tests prove both directions: an honest `turnLimitEnforcement: false` adapter passes even while
+ignoring `maxTurns` entirely; a dishonest `turnLimitEnforcement: true` adapter that doesn't actually
+enforce it still fails.
+
+**Final state: 43 of 43 conformance tests — 41 passed, 2 correctly skipped (bare mode, no API key here),
+zero failed.** Every one of `07` §7.6's 16 checks passes on both transports, or is honestly
+capability-gated where a real, disclosed transport asymmetry exists. The live smoke test passes for real.
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. The full, authoritative
+`pnpm test` passed entirely except for the two already-documented, pre-existing SIGKILL/worktree-
+concurrency flakes (`resume.test.ts`, `crash-resume.test.ts`), each independently re-confirmed passing in
+isolation, neither touched by any change in this checkpoint. `SPEC-QUESTIONS.md` Q132 items 8-9 have the
+full record.

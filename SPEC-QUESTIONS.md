@@ -10258,4 +10258,50 @@ safety-critical capability gap (cli transport, Q114) and a pre-existing, already
 approximation (sdk transport, item 6 above) — real, but neither a newly-introduced bug nor a safety
 concern, and neither silently dismissed.
 
+### Round 3 — "clear all not cleared issues," both remaining gaps closed
+
+The two items round 2 left open (item 7's own deferred `AdapterCapabilities` design question, and item
+6's own turn-counting approximation) were both explicitly authorized and closed.
+
+8. **[Confirmed, fixed] The `usage.turns` approximation (item 6) had a real, narrow, fixable case: a**
+   **session `session.ended{reason:'limit'}` cuts off, so the `+1` the heuristic adds for "the final,
+   untruncated response" never applies.** `toolCallCount + 1` is genuinely correct for a session that
+   reaches a real final response (confirmed, `SPEC-QUESTIONS.md` Q116's own two live data points), but a
+   limit-terminated session never reaches one — the model is cut off mid-sequence, with no trailing
+   response turn to count. **Fixed:** `accumulateSessionResult` now tracks whether `session.ended`'s own
+   `reason` was `'limit'` and omits the `+1` in exactly that case (`turns: endedByLimit ? toolCallCount :
+   toolCallCount + 1`) — a plain, reason-aware refinement of the existing heuristic, not the larger
+   `num_turns`-threading redesign item 6 originally described as the "real" fix. A new, deterministic
+   regression test (`session-result.test.ts`) proves `toolCallCount` alone (no `+1`) for a `reason:
+   'limit'` ending. Re-verified live: the sdk transport's C6 now passes both assertions (`reason` and
+   `usage.turns <= 1`) cleanly.
+9. **[Confirmed, done — the deferred design call] `AdapterCapabilities` gained a real**
+   **`turnLimitEnforcement: boolean` field, closing item 7's own deferred decision.** Construction sites:
+   `@forge/adapter-claude-code`'s own `staticCapabilities`/`confirmedCapabilities` now take a `transport:
+   'cli' | 'sdk'` parameter and report `transport === 'sdk'` (a fixed, non-version-dependent value, per
+   the real, live-confirmed Q114/Q132 asymmetry — mirroring the interface's own existing "fixed by this
+   adapter's own construction, not the remote environment" pattern for most other fields); `@forge/
+   testkit`'s own `FakePlatformAdapter` reports `true` (genuinely backed up — `runScriptPhases`'s own
+   real `maxTurns` truncation logic, confirmed by reading it directly, already reports `reason: 'limit'`
+   correctly). `packages/engine/src/resume/strategy.test.ts`'s own local fixture (the one other real
+   construction site, only ever *reading* the type, not the adapter itself) needed the field added too.
+   `checkC6Limits` (`session-basics.ts`) reads it *before* starting the session, not merely before
+   asserting on the result — a first attempt that only gated the assertions still forced a non-enforcing
+   transport through the full `manyTurnsPrompt` task with nothing to cut it short, genuinely exceeding
+   the shared 30s timeout on a live re-run (a real, distinct failure mode from the one being fixed). A
+   non-enforcing adapter now gets the cheap `helloPrompt` instead and only has to prove the session ends
+   cleanly; an enforcing one keeps the original, full assertions unchanged. Two new regression tests
+   (`session-basics.test.ts`) prove both directions: an honest `turnLimitEnforcement: false` adapter
+   passes even while ignoring `maxTurns` entirely, and a dishonest `turnLimitEnforcement: true` adapter
+   that does not actually enforce it still fails.
+
+**Final state after all three rounds: 43 of 43 conformance tests — 41 passed, 2 correctly skipped**
+**(bare/API-key mode, no `ANTHROPIC_API_KEY` in this environment), zero failed.** Every one of `07`
+§7.6's 16 checks now passes on both transports (or is honestly, capability-gated skipped/relaxed where a
+real, disclosed, transport-level asymmetry exists). The live smoke test passes for real. `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean; the full, authoritative `pnpm test`
+passed entirely except for the two already-documented, pre-existing SIGKILL/worktree-concurrency flakes
+(`resume.test.ts`, `crash-resume.test.ts` — each independently re-confirmed passing in isolation, neither
+touched by any change in this checkpoint).
+
 See `GAUNTLET-LOG.md`'s M7 live-run-checkpoint addendum for the full run log.
