@@ -9343,3 +9343,37 @@ See `PLAN-M8.md`'s own preamble for the full, citation-backed inventory this inv
 (what M6/M5 already built that M8 reuses rather than re-invents), and `GAUNTLET-LOG.md`'s M8 P1 entry
 for the one correction (`{ check: id }`, item 2 above) that surfaced only once real code was written
 against the plan's first draft.
+
+## Q124 — M8 P2: `Defect.status` has no real "closed" value anywhere, and no `dod-profiles.yaml`
+ships by default
+
+**Q (P2's own critic round, `GAUNTLET-LOG.md` M8 P2 findings 2 and 6).** Two real gaps neither this
+piece nor any earlier one closes on its own:
+
+1. **`defectSchema` inherits only `status: z.string().min(1)` from `baseFrontMatterShape` — no enum,
+   unlike `OpenQuestion`'s own closed `'open' | 'resolved'`.** The shipped `Defect.md` template's only
+   real value is `status: open`; nothing anywhere in this codebase (including `forge debug`'s own
+   `Defect`-scaffolding code) ever writes anything else. `open-sev1-sev2-defects`/`unresolved-rca`
+   (M8 P2) now anchor "closed" on "anything other than the literal `'open'`" rather than guessing at a
+   specific closing spelling — correct *and* forward-compatible with whatever spelling a real closing
+   mechanism eventually uses, but that mechanism itself does not exist yet. **Recommended:** M8 P8/P9
+   (the `forge debug` RCA loop's own RECORD step, `PLAN-M8.md`) should be the piece that actually
+   writes a real closing value onto the `Defect` artifact once an `RCA-###` is recorded — until then,
+   `unresolved-rca`/`open-sev1-sev2-defects` have no real project data to ever produce a true positive
+   against, by construction, not by a bug in either check. Whether `Defect.status` ever gets a real
+   enum (closing the same schema gap `OpenQuestion` already closed) is left to whichever piece first
+   needs to enumerate its real values — not decided here.
+2. **No `docs/forge/kb/engineering/dod-profiles.yaml` (or any default DoD profile) is seeded into a
+   new project.** `story:dor`/`definition-of-ready` therefore reports every `ready`-or-later story as
+   "cannot verify readiness" on every real, freshly-`forge init`'d project until an operator hand-
+   authors one — the correct, fail-closed reading of "no profile to check against," not a defect (and
+   already covered by a real test against an unmodified fixture project). **Recommended:** a real
+   default profiles file should ship and be seeded by `forge init` (matching how `.forge/frameworks/
+   *.framework.yaml` is already seeded from `@forge/templates` at init time) — but deciding where
+   default *KB* content (as opposed to `.forge/`-rooted machine config) lives at all, and touching
+   `writeDocsSkeleton`'s own already-tested behaviour, is real, separate work no M8 piece's own Surface
+   text asks for. Left as explicitly deferred, disclosed follow-on work, not silently patched into P2.
+
+Neither gap blocks M8's own remaining pieces: P3–P7's `test:*` checks and P10's `swarm-review` work
+are unaffected by either; P8/P9's RCA loop is the natural, already-anticipated place to close gap 1
+when it lands.

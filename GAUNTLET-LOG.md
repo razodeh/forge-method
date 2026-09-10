@@ -7185,3 +7185,82 @@ unrelated worktree-concurrency flake (this time in `crash-resume.test.ts` rather
 — same root cause, same family, already documented in every M7 piece's own entry), re-confirmed
 passing alone. One new `test/workspace-floor.test.ts` `IGNORED_PATHS` entry for the new shared fixture
 file, matching the already-established `repo-strategy.ts` precedent exactly.
+
+## M8 P2 — `forge spec validate --rule <name>`: the six G-Ready/G-Stable checks, CLI-wired
+
+**Mandate:** every `story:*`/`defect:*`/`rca:*` deterministic check `G-Ready.gate.yaml`/
+`G-Stable.gate.yaml` already ship, real and CLI-invocable — `definition-of-ready` (driving M8 P1's
+`@forge/methods/dod` evaluator directly), `file-claim-overlap`, `unbound-acceptance-criteria`,
+`oversized-stories`, `open-sev1-sev2-defects`, `unresolved-rca`. Discovered mid-build (before any
+critic round) that the shipped gate's own `failOn: 'errors > 0'` requires a bare numeric `errors`
+field in the JSON output — `@forge/engine/expr`'s `length` is a `length(...)` prefix function, not a
+`.length` postfix property — so the library function returns the full `violations` list (every real
+caller wants to know *what*), and `bin.ts`'s own CLI-output layer is what produces the numeric
+`errors` field the gate actually reads. Recorded in `SPEC-QUESTIONS.md` Q123 alongside the milestone's
+other kickoff-time contract questions, not silently guessed at.
+
+### Round 1 — fresh critic (given only the diff, both spec sections, the exact shipped gate YAML, and
+P1's own GAUNTLET-LOG entry; told nothing else): two blocking, four major findings
+
+What the critic caught, most severe first:
+
+1. **[BLOCKING] Zero test coverage of the entire `bin.ts` CLI-wiring surface.** The plan's own Checks
+   section explicitly demanded proof "by actually running `evaluateGate` against the real gate
+   definition and this real command, not by reasoning about the JSON shape in isolation" — and no
+   test of any kind exercised `runSpecValidateRule`/`isValidateRuleId`/`findRuleFlag` or the new
+   dispatch branch in `main()`. **Fixed:** three new real-subprocess tests added to `bin.test.ts`
+   (matching that file's own established `execFileSync`-against-the-real-launcher pattern, not a
+   fourth new pattern): a real violation via `--rule oversized-stories --json` reporting `errors: 1`
+   and exit 1; a clean project reporting `errors: 0` and exit 0; an unrecognised `--rule` value
+   exiting 2 with a message naming every valid id.
+2. **[BLOCKING] `unresolved-rca` was permanently vacuous against any real project.** Both defect
+   checks keyed "closed" off the literal string `'closed'` — but `defectSchema` has no status enum at
+   all (unlike `OpenQuestion`'s own closed `'open' | 'resolved'`), and the *only* value any real writer
+   anywhere in this codebase ever produces is the shipped `Defect.md` template's own `status: open`
+   default. The critic proved this empirically: a Sev1 defect with `status: 'resolved'` and zero RCAs
+   produced zero violations. **Fixed:** both checks now anchor on the one real, confirmed value —
+   "open" means literally `'open'`; anything else counts as closed, regardless of whatever spelling a
+   future closing mechanism actually uses. Two new regression tests (a `'resolved'` defect correctly
+   still flagged by `unresolved-rca`; the identical case for `open-sev1-sev2-defects`).
+3. **[MAJOR] `unresolved-rca` used `.find()` instead of `.some()` against multiple RCAs for one
+   defect** — a closed defect with two real RCAs (one empty-prevention, one real) was reported as
+   *unresolved* whenever the empty one happened to sort first, even though a genuinely valid RCA
+   existed. **Fixed:** `.some(candidate => candidate.defect === id && candidate.prevention.length >
+   0)`, with a new two-RCA regression test.
+4. **[MAJOR] Four exported symbols carried no TSDoc at all** — the identical defect class P1's own
+   critic round already flagged and fixed one piece earlier in this same milestone. **Fixed:** real
+   TSDoc added to `ValidateRuleId`, `RuleViolation`, `RuleValidationResult`, `specValidateRule`.
+5. **[MAJOR] `spec:story-refs-resolve` false-positived on legitimate `DM-###`/`SESSION-###`
+   references** — `collectKnownIds` only consulted `SpecGraph` nodes and KB-tree entries;
+   `build.ts`'s own `NODE_KIND_BY_ARTIFACT_TYPE` has no `DataModel` entry at all, and `SessionRecord`
+   lives under `sessionsRoot`, neither of which the graph or the KB tree ever sees. **Fixed:**
+   `collectKnownIds` now also reads every `specsRoot`/`sessionsRoot` document's own raw front-matter
+   `id` directly; two new regression tests (a real `DM-001`, a real `SESSION-001`, each referenced from
+   a story's `context_refs` and correctly resolving). `WAIVER-###` ids remain unresolved — disclosed
+   directly in the function's own doc comment as a real, deliberate gap (the collection-file shape
+   `reports/waivers.md` actually parses to is not established anywhere else in this codebase this
+   piece could confirm against; guessing at it would be worse than a real, honest violation today).
+6. **[MAJOR] No `dod-profiles.yaml` template ships anywhere**, so `definition-of-ready`/`story:dor`
+   fails closed on every ready story of every real, unmodified project until an operator hand-authors
+   one. Judged as a real, disclosed limitation rather than a defect to silently patch in this piece:
+   fail-closed is the correct, conservative behaviour (already covered by this file's own "cannot
+   verify readiness" test against a fresh project with no profiles file); *seeding* a default is a
+   separate concern (deciding where default KB/config content templates live at all, and wiring
+   `forge init` to copy one) this piece did not investigate and should not decide unilaterally.
+   Recorded in `SPEC-QUESTIONS.md` Q124 as real, deferred follow-on work, not silently dropped.
+
+Also fixed, minor: the `size`/`status` cast in `rawStorySizeStatus` (and its `collectKnownIds`
+sibling) had no comment naming the invariant that makes it sound — added, matching the precedent
+`core/graph/build.ts`'s own analogous cast already sets; `collectEntryIds`'s switch over
+`KbParsedEntry.kind` had no exhaustiveness guard, so a future entry kind would silently contribute
+zero ids with no compiler warning — added the same `const unreachable: never` pattern
+`specValidateRule`'s own dispatch switch already uses. Left as-is, per the critic's own explicit
+non-gating judgement: `validateFileClaimOverlap` reporting one violation per overlapping glob *pair*
+rather than one per conflicting story pair (noisy, not incorrect); the pre-existing double-`
+listSpecArtifacts`-per-invocation cost `unbound-acceptance-criteria`'s own dispatch arm still carries
+(fixed only inside `definition-of-ready`, where this piece was already restructuring the same code).
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6053 tests, 5 correctly skipped) all clean after every fix — the full suite ran
+completely clean this round, with neither of the two usual pre-existing worktree-concurrency flakes
+(`resume.test.ts`/`crash-resume.test.ts`) surfacing at all.

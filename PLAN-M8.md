@@ -532,7 +532,11 @@ a real `RCA-###` artifact out.
   matching `runParticipantSession`'s own established scope) and read-only participant sessions
   otherwise; `runShell` is backed by the real `runShellCommand`.
 - On a `recorded` outcome: writes the real `RCA-###` artifact via `writeArtifact` (schema-validated
-  against `rcaSchema`, not hand-assembled front matter).
+  against `rcaSchema`, not hand-assembled front matter) **and** updates the source `Defect`'s own
+  `status` field to a real closed value — `SPEC-QUESTIONS.md` Q124 (P2) records that nothing anywhere
+  in this codebase writes a closed value onto a `Defect` today, which makes P2's own `open-sev1-sev2-
+  defects`/`unresolved-rca` gate checks structurally unable to ever see a real closed defect; this is
+  the piece that closes that gap, not a new one.
 - On `needs-more-evidence`/`escalated`: writes no RCA artifact; reports the real outcome (instrumentation
   plan / evidence bundle) to the caller — `forge debug`'s own exit code/output distinguishes all three
   outcomes, never collapses `escalated` into a generic failure.
