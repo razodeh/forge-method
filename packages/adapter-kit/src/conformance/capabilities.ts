@@ -178,6 +178,10 @@ export async function checkC16McpGrantFidelity(context: ConformanceContext): Pro
       prompt: fixture.prompt,
       runId: sessionCtx.runId,
       stepId: sessionCtx.stepId,
+      // See filesystem.ts's checkC3ToolRestriction doc comment -- the identical, live-confirmed
+      // reason: grant fidelity (an ungranted tool genuinely denied) is meaningless under
+      // `buildRequest`'s own default `'auto'` permission mode.
+      permissionMode: 'deny-unlisted',
     }),
   );
   const events = await withTimeout(

@@ -66,8 +66,12 @@ export async function checkC6Limits(context: ConformanceContext): Promise<void> 
   );
   const events = await withTimeout(
     collectEvents(handle),
-    15000,
-    'C6: session did not end within 15s',
+    30000,
+    // A real `FORGE_LIVE=1` run (M7's own deferred live-run checkpoint, executed post-M8) found the
+    // original 15s bound too tight for a genuinely live round trip -- every other C1-C16 check already
+    // budgets 30s for the identical reason; C6 alone had its own, tighter bound with no evidence it
+    // needs to be tighter than any sibling check.
+    'C6: session did not end within 30s',
   );
   const result = await withTimeout(handle.result(), 5000, 'C6: result() did not settle within 5s');
 

@@ -202,6 +202,10 @@ if (runs.length === 0) {
           const env: Record<string, string> = {};
           if (liveEnv['PATH'] !== undefined) env['PATH'] = liveEnv['PATH'];
           if (liveEnv['HOME'] !== undefined) env['HOME'] = liveEnv['HOME'];
+          // USER: see create-warmed-adapter.ts's own realAmbientEnv doc comment -- a real, live run
+          // found subscription-mode auth genuinely needs it on top of HOME (a probe/spawn env
+          // inconsistency, confirmed and fixed there first).
+          if (liveEnv['USER'] !== undefined) env['USER'] = liveEnv['USER'];
           if (run.bare && liveEnv['ANTHROPIC_API_KEY'] !== undefined) {
             env['ANTHROPIC_API_KEY'] = liveEnv['ANTHROPIC_API_KEY'];
           }

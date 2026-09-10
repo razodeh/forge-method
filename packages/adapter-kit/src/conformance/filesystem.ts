@@ -94,6 +94,18 @@ export async function checkC3ToolRestriction(context: ConformanceContext): Promi
       cwd,
       prompt: context.options.writeFilePrompt,
       tools: { read: true, write: false, exec: false, network: 'none' },
+      // `buildRequest`'s own default `permissionMode: 'auto'` does not actually enforce a `tools`
+      // restriction against the real, installed Claude Code CLI/SDK -- confirmed directly by a real
+      // `FORGE_LIVE=1` run (M7's own deferred live-run checkpoint, executed post-M8): under `'auto'`,
+      // an agent whose `write` grant was `false` still wrote the marker file for real, on both
+      // transports. `'deny-unlisted'` (Claude Code's own `dontAsk` mode) is what every one of FORGE's
+      // own real, restriction-sensitive callers already pairs `write:false`/`exec:false` with
+      // (`@forge/engine/interaction`'s `dispatch-agent-step.ts`, `forge debug`'s read-only RCA phases)
+      // -- confirmed, in the same live run, to genuinely deny both a direct `Write` call and a `Bash`
+      // fallback attempt. Testing this check under the harness's own more permissive default would
+      // never have caught FORGE's own real callers getting this pairing wrong; it only ever proved
+      // `'auto'` itself doesn't enforce it, a fact about Claude Code, not about this adapter.
+      permissionMode: 'deny-unlisted',
     }),
   );
   const events = await withTimeout(
@@ -125,6 +137,9 @@ export async function checkC4ExecAllowlist(context: ConformanceContext): Promise
       cwd,
       prompt: context.options.execPrompt,
       tools: { read: true, write: true, exec: ['echo *'], network: 'none' },
+      // See checkC3ToolRestriction's own doc comment -- the identical, live-confirmed reason: an exec
+      // allowlist is meaningless under `buildRequest`'s own default `'auto'` permission mode.
+      permissionMode: 'deny-unlisted',
     }),
   );
   const events = await withTimeout(
