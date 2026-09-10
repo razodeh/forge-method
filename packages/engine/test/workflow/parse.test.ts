@@ -9,7 +9,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { YAMLError } from 'yaml';
 
 import { workflowSchema } from '../../src/workflow/schema.ts';
-import { parseValueAgainstSchema, parseWorkflow, yamlErrorToParseIssue } from '../../src/workflow/parse.ts';
+import {
+  parseValueAgainstSchema,
+  parseWorkflow,
+  yamlErrorToParseIssue,
+} from '../../src/workflow/parse.ts';
 
 /** `10` §10.1's own worked example, transcribed from the spec text (the fenced code block under
  * "## 10.1 Workflow DSL") with one correction: three `inputs:` entries in the spec's own literal text
@@ -132,11 +136,13 @@ onComplete:
 `;
 
 describe('parseWorkflow', () => {
-  it('parses 10 §10.1\'s own worked example cleanly, with every step kind and field intact', () => {
+  it("parses 10 §10.1's own worked example cleanly, with every step kind and field intact", () => {
     const result = parseWorkflow(WORKED_EXAMPLE);
 
     if (!result.success) {
-      throw new Error(`expected a successful parse, got issues: ${JSON.stringify(result.issues, null, 2)}`);
+      throw new Error(
+        `expected a successful parse, got issues: ${JSON.stringify(result.issues, null, 2)}`,
+      );
     }
     expect(result.workflow.id).toBe('build-stage');
     expect(result.workflow.steps).toHaveLength(9);
@@ -153,7 +159,8 @@ describe('parseWorkflow', () => {
     ]);
 
     const fanoutStep = result.workflow.steps.find((step) => step.id === 'generate-tests');
-    if (fanoutStep?.kind !== 'fanout') throw new Error('expected generate-tests to be a fanout step');
+    if (fanoutStep?.kind !== 'fanout')
+      throw new Error('expected generate-tests to be a fanout step');
     expect(fanoutStep.step.kind).toBe('agent');
     if (fanoutStep.step.kind === 'agent') {
       expect(fanoutStep.step.produces).toEqual(['{{item.test_paths}}']);
@@ -165,7 +172,10 @@ describe('parseWorkflow', () => {
     }
     // The bare-string produces shape, not just the array shape generate-tests already covers.
     expect(implementStep.step.produces).toBe('{{item.files_expected}}');
-    expect(implementStep.step.retry).toEqual({ maxAttempts: 3, retryOn: ['transient', 'test-failure', 'validation'] });
+    expect(implementStep.step.retry).toEqual({
+      maxAttempts: 3,
+      retryOn: ['transient', 'test-failure', 'validation'],
+    });
 
     expect(result.workflow.onFailure?.default).toBe('block');
     expect(result.workflow.onFailure?.escalations).toHaveLength(1);
@@ -175,11 +185,13 @@ describe('parseWorkflow', () => {
   });
 
   it('reports a genuine YAML syntax error with a real source line and column, not a bare failure', () => {
-    const malformed = 'id: build-stage\nsteps:\n  - id: prepare\n    kind: command\n  run: "no space before run"\n';
+    const malformed =
+      'id: build-stage\nsteps:\n  - id: prepare\n    kind: command\n  run: "no space before run"\n';
 
     const result = parseWorkflow(malformed);
 
-    if (result.success) throw new Error('expected parseWorkflow to fail on genuinely malformed YAML');
+    if (result.success)
+      throw new Error('expected parseWorkflow to fail on genuinely malformed YAML');
     expect(result.issues.length).toBeGreaterThan(0);
     const issue = result.issues[0];
     expect(issue?.line).toBeGreaterThan(0);
@@ -187,7 +199,8 @@ describe('parseWorkflow', () => {
   });
 
   it('treats a duplicate top-level key (a YAML warning, not an error) as a parse failure', () => {
-    const duplicateKey = 'id: build-stage\nid: build-stage-again\nsteps:\n  - id: a\n    kind: checkpoint\n';
+    const duplicateKey =
+      'id: build-stage\nid: build-stage-again\nsteps:\n  - id: a\n    kind: checkpoint\n';
 
     const result = parseWorkflow(duplicateKey);
 
@@ -207,7 +220,10 @@ describe('parseWorkflow', () => {
 
     const result = parseWorkflow(missingAgent);
 
-    if (result.success) throw new Error('expected parseWorkflow to fail: agent step is missing its required agent field');
+    if (result.success)
+      throw new Error(
+        'expected parseWorkflow to fail: agent step is missing its required agent field',
+      );
     const issue = result.issues.find((candidate) => candidate.message.includes('agent'));
     expect(issue).toBeDefined();
     // The violation is a *missing* field -- no source text of its own to point to (see parse.ts's own
@@ -230,24 +246,41 @@ describe('parseWorkflow', () => {
 
     const result = parseWorkflow(wrongType);
 
-    if (result.success) throw new Error('expected parseWorkflow to fail: inline is not a valid agent-step field');
+    if (result.success)
+      throw new Error('expected parseWorkflow to fail: inline is not a valid agent-step field');
     expect(result.issues.length).toBeGreaterThan(0);
   });
 
   it('resolves the real source line for a present-but-wrong-typed field specifically', () => {
-    const wrongType = ['id: w', 'name: W', 'version: "1.0.0"', 'description: d', 'steps:', '  - id: a', '    kind: command', '    run: 42'].join(
-      '\n',
-    );
+    const wrongType = [
+      'id: w',
+      'name: W',
+      'version: "1.0.0"',
+      'description: d',
+      'steps:',
+      '  - id: a',
+      '    kind: command',
+      '    run: 42',
+    ].join('\n');
 
     const result = parseWorkflow(wrongType);
 
-    if (result.success) throw new Error('expected parseWorkflow to fail: run must be a string, not a number');
+    if (result.success)
+      throw new Error('expected parseWorkflow to fail: run must be a string, not a number');
     const issue = result.issues[0];
     expect(issue?.line).toBe(8);
   });
 
   it('rejects an unrecognised step kind, not silently accepting it', () => {
-    const badKind = ['id: w', 'name: W', 'version: "1.0.0"', 'description: d', 'steps:', '  - id: a', '    kind: not-a-real-kind'].join('\n');
+    const badKind = [
+      'id: w',
+      'name: W',
+      'version: "1.0.0"',
+      'description: d',
+      'steps:',
+      '  - id: a',
+      '    kind: not-a-real-kind',
+    ].join('\n');
 
     const result = parseWorkflow(badKind);
 
@@ -255,7 +288,9 @@ describe('parseWorkflow', () => {
   });
 
   it('rejects a workflow with zero steps', () => {
-    const noSteps = ['id: w', 'name: W', 'version: "1.0.0"', 'description: d', 'steps: []'].join('\n');
+    const noSteps = ['id: w', 'name: W', 'version: "1.0.0"', 'description: d', 'steps: []'].join(
+      '\n',
+    );
 
     const result = parseWorkflow(noSteps);
 
@@ -263,7 +298,15 @@ describe('parseWorkflow', () => {
   });
 
   it('rejects an unknown top-level field under .strict(), catching a likely typo', () => {
-    const typo = ['id: w', 'name: W', 'version: "1.0.0"', 'description: d', 'stpes:', '  - id: a', '    kind: checkpoint'].join('\n');
+    const typo = [
+      'id: w',
+      'name: W',
+      'version: "1.0.0"',
+      'description: d',
+      'stpes:',
+      '  - id: a',
+      '    kind: checkpoint',
+    ].join('\n');
 
     const result = parseWorkflow(typo);
 
@@ -303,7 +346,9 @@ describe('parseWorkflow', () => {
     const result = parseWorkflow(withMergeKey);
 
     if (!result.success) {
-      throw new Error(`expected the merge key to resolve cleanly, got issues: ${JSON.stringify(result.issues)}`);
+      throw new Error(
+        `expected the merge key to resolve cleanly, got issues: ${JSON.stringify(result.issues)}`,
+      );
     }
     expect(result.workflow.steps).toHaveLength(2);
     expect(result.workflow.steps[1]).toEqual({ id: 'b', kind: 'agent', agent: 'engineer' });

@@ -97,11 +97,16 @@ function isUsageRecordedPayload(value: unknown): value is UsageRecordedPayload {
 }
 
 function toLedgerEntry(event: ForgeEvent): LedgerEntry {
-  if (!isNonBlankString(event.stepId) || !isNonBlankString(event.agentId) || !isUsageRecordedPayload(event.payload)) {
+  if (
+    !isNonBlankString(event.stepId) ||
+    !isNonBlankString(event.agentId) ||
+    !isUsageRecordedPayload(event.payload)
+  ) {
     throw new TelemetryError({
       code: 'TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT',
       message: `A "UsageRecorded" event (run "${event.runId}", seq ${String(event.seq)}) is missing/blank stepId or agentId, or has a malformed payload — cannot project it into a ledger entry.`,
-      remedy: 'Ensure every UsageRecorded event is appended with a non-blank stepId, agentId, and a well-formed usage payload.',
+      remedy:
+        'Ensure every UsageRecorded event is appended with a non-blank stepId, agentId, and a well-formed usage payload.',
     });
   }
   return {
@@ -124,7 +129,9 @@ function toLedgerEntry(event: ForgeEvent): LedgerEntry {
  * type (including `BudgetWarning`/`BudgetBreached` — themselves projections of `checkBudget`'s own
  * decision, not additional ledger rows) is not ledger content and is skipped. Takes `AsyncIterable`, not
  * a concrete array, so a caller can pass `readEvents(...)` directly with no intermediate buffering. */
-export async function projectLedger(events: AsyncIterable<ForgeEvent>): Promise<readonly LedgerEntry[]> {
+export async function projectLedger(
+  events: AsyncIterable<ForgeEvent>,
+): Promise<readonly LedgerEntry[]> {
   const entries: LedgerEntry[] = [];
   for await (const event of events) {
     if (event.type !== 'UsageRecorded') continue;
@@ -136,7 +143,9 @@ export async function projectLedger(events: AsyncIterable<ForgeEvent>): Promise<
 /** `20` §20.8's own "reports $6, not $2" rule: every entry for `stepId`, across every retry, summed —
  * never just the latest attempt. */
 export function attributedSpend(entries: readonly LedgerEntry[], stepId: string): number {
-  return entries.filter((entry) => entry.stepId === stepId).reduce((sum, entry) => sum + entry.costUsd, 0);
+  return entries
+    .filter((entry) => entry.stepId === stepId)
+    .reduce((sum, entry) => sum + entry.costUsd, 0);
 }
 
 export interface BudgetCheckInput {
@@ -161,12 +170,17 @@ export interface BudgetCheckInput {
  * one safety decision `S9` rests on, and — unlike a typical internal helper — at least one of them
  * (`cap`) can originate straight from project config this package has no visibility into, with no JSON
  * round-trip or other boundary already guaranteeing it is a sane number by the time it gets here. */
-export function checkBudget({ spent, cap, warningThreshold = 0.8 }: BudgetCheckInput): 'ok' | 'warning' | 'breached' {
+export function checkBudget({
+  spent,
+  cap,
+  warningThreshold = 0.8,
+}: BudgetCheckInput): 'ok' | 'warning' | 'breached' {
   if (!isFiniteNonNegativeNumber(spent) || !isFiniteNonNegativeNumber(cap)) {
     throw new TelemetryError({
       code: 'TELEMETRY-BUDGET-INVALID-INPUT',
       message: `checkBudget requires finite, non-negative spent/cap values; got spent=${String(spent)}, cap=${String(cap)}.`,
-      remedy: 'Ensure the ledger sum and the configured budget cap are both real, non-negative numbers before calling checkBudget.',
+      remedy:
+        'Ensure the ledger sum and the configured budget cap are both real, non-negative numbers before calling checkBudget.',
     });
   }
   if (!Number.isFinite(warningThreshold) || warningThreshold <= 0 || warningThreshold > 1) {
@@ -219,7 +233,8 @@ export function detectRunaway(attempts: readonly RetryAttempt[]): boolean {
       throw new TelemetryError({
         code: 'TELEMETRY-LEDGER-INVALID-NUMBER',
         message: `detectRunaway requires every attempt's totalTokens to be a finite, non-negative number; got ${String(attempt.totalTokens)}.`,
-        remedy: 'Ensure every RetryAttempt.totalTokens is a real, non-negative number before calling detectRunaway.',
+        remedy:
+          'Ensure every RetryAttempt.totalTokens is a real, non-negative number before calling detectRunaway.',
       });
     }
   }

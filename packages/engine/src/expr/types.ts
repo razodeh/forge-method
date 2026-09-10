@@ -74,7 +74,8 @@ export interface LengthExpr {
   readonly operand: Expr;
 }
 
-export type Expr = LiteralExpr | PathExpr | ComparisonExpr | LogicalExpr | NotExpr | InExpr | LengthExpr;
+export type Expr =
+  LiteralExpr | PathExpr | ComparisonExpr | LogicalExpr | NotExpr | InExpr | LengthExpr;
 
 /** Position of a lex/parse error, as a character offset into the original source string — the
  * "position" `PLAN-M5.md` P9's own Surface text asks a parse error to name. An offset rather than a

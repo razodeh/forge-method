@@ -20,7 +20,13 @@ async function createScratchDir(): Promise<string> {
 }
 
 const RECORDED_EVENTS = [
-  { type: 'session.started', sessionId: 'recorded-1', model: 'some-real-model', tools: ['bash'], meta: {} },
+  {
+    type: 'session.started',
+    sessionId: 'recorded-1',
+    model: 'some-real-model',
+    tools: ['bash'],
+    meta: {},
+  },
   { type: 'text', text: 'Hello ', partial: true },
   { type: 'text', text: 'Hello world.', partial: false },
   { type: 'tool.call', id: 'call-1', name: 'read_file', input: { path: 'a.txt' } },
@@ -47,7 +53,9 @@ describe('replayFromNdjson', () => {
 
     expect(replayed).toEqual(RECORDED_EVENTS);
     // Genuinely byte-identical after a round trip, not just deep-equal via vitest's own comparison.
-    expect(replayed.map((event) => JSON.stringify(event))).toEqual(RECORDED_EVENTS.map((event) => JSON.stringify(event)));
+    expect(replayed.map((event) => JSON.stringify(event))).toEqual(
+      RECORDED_EVENTS.map((event) => JSON.stringify(event)),
+    );
   });
 
   it('derives a reasonable SessionResult from the replayed events', async () => {

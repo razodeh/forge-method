@@ -90,9 +90,19 @@ describe('projectLedger', () => {
     const entries = await projectLedger(
       asAsyncIterable([
         { ts: 't', runId: 'run-1', type: 'RunStarted', payload: {} },
-        { ts: 't', runId: 'run-1', type: 'BudgetWarning', payload: { level: 'run', spent: 5, cap: 10 } },
+        {
+          ts: 't',
+          runId: 'run-1',
+          type: 'BudgetWarning',
+          payload: { level: 'run', spent: 5, cap: 10 },
+        },
         usageEvent(),
-        { ts: 't', runId: 'run-1', type: 'BudgetBreached', payload: { level: 'run', spent: 10, cap: 10 } },
+        {
+          ts: 't',
+          runId: 'run-1',
+          type: 'BudgetBreached',
+          payload: { level: 'run', spent: 10, cap: 10 },
+        },
       ]),
     );
 
@@ -112,7 +122,9 @@ describe('projectLedger', () => {
   });
 
   it('marks an adapter-estimated figure as estimated, never silently presented as a reported cost', async () => {
-    const entries = await projectLedger(asAsyncIterable([usageEvent({ payload: usagePayload({ estimated: true }) })]));
+    const entries = await projectLedger(
+      asAsyncIterable([usageEvent({ payload: usagePayload({ estimated: true }) })]),
+    );
 
     expect(entries[0]?.estimated).toBe(true);
   });
@@ -136,7 +148,9 @@ describe('projectLedger', () => {
     }
 
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
   });
@@ -158,7 +172,9 @@ describe('projectLedger', () => {
     }
 
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
   });
@@ -179,32 +195,41 @@ describe('projectLedger', () => {
     ['costUsd wrong type', usagePayload({ costUsd: '0.5' as unknown as number })],
     ['estimated wrong type', usagePayload({ estimated: 'false' as unknown as boolean })],
     ['durationMs wrong type', usagePayload({ durationMs: '1000' as unknown as number })],
-  ])('throws a TelemetryError for a UsageRecorded event whose payload is %s', async (_label, payload) => {
-    let caught: unknown;
-    try {
-      await projectLedger(asAsyncIterable([usageEvent({ payload })]));
-    } catch (error) {
-      caught = error;
-    }
+  ])(
+    'throws a TelemetryError for a UsageRecorded event whose payload is %s',
+    async (_label, payload) => {
+      let caught: unknown;
+      try {
+        await projectLedger(asAsyncIterable([usageEvent({ payload })]));
+      } catch (error) {
+        caught = error;
+      }
 
-    if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
-    }
-    expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
-  });
+      if (!(caught instanceof TelemetryError)) {
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
+      }
+      expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
+    },
+  );
 
   it.each(['inputTokens', 'outputTokens', 'cacheReadTokens', 'costUsd', 'durationMs'] as const)(
     'throws a TelemetryError when %s is NaN, not silently accepted since typeof NaN === "number"',
     async (field) => {
       let caught: unknown;
       try {
-        await projectLedger(asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: NaN }) })]));
+        await projectLedger(
+          asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: NaN }) })]),
+        );
       } catch (error) {
         caught = error;
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
     },
@@ -215,13 +240,17 @@ describe('projectLedger', () => {
     async (field) => {
       let caught: unknown;
       try {
-        await projectLedger(asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: -1 }) })]));
+        await projectLedger(
+          asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: -1 }) })]),
+        );
       } catch (error) {
         caught = error;
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
     },
@@ -232,13 +261,17 @@ describe('projectLedger', () => {
     async (field) => {
       let caught: unknown;
       try {
-        await projectLedger(asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: Infinity }) })]));
+        await projectLedger(
+          asAsyncIterable([usageEvent({ payload: usagePayload({ [field]: Infinity }) })]),
+        );
       } catch (error) {
         caught = error;
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
     },
@@ -248,7 +281,13 @@ describe('projectLedger', () => {
     const entries = await projectLedger(
       asAsyncIterable([
         usageEvent({
-          payload: usagePayload({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, durationMs: 0 }),
+          payload: usagePayload({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            costUsd: 0,
+            durationMs: 0,
+          }),
         }),
       ]),
     );
@@ -262,7 +301,13 @@ describe('projectLedger', () => {
     async (stepId) => {
       const event: NewForgeEvent =
         stepId === undefined
-          ? { ts: 't', runId: 'run-1', type: 'UsageRecorded', agentId: 'engineer', payload: usagePayload() }
+          ? {
+              ts: 't',
+              runId: 'run-1',
+              type: 'UsageRecorded',
+              agentId: 'engineer',
+              payload: usagePayload(),
+            }
           : usageEvent({ stepId });
 
       let caught: unknown;
@@ -273,25 +318,32 @@ describe('projectLedger', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
     },
   );
 
-  it.each(['', '   ', '\t\n'])('throws a TelemetryError for a UsageRecorded event whose agentId is %s', async (agentId) => {
-    let caught: unknown;
-    try {
-      await projectLedger(asAsyncIterable([usageEvent({ agentId })]));
-    } catch (error) {
-      caught = error;
-    }
+  it.each(['', '   ', '\t\n'])(
+    'throws a TelemetryError for a UsageRecorded event whose agentId is %s',
+    async (agentId) => {
+      let caught: unknown;
+      try {
+        await projectLedger(asAsyncIterable([usageEvent({ agentId })]));
+      } catch (error) {
+        caught = error;
+      }
 
-    if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
-    }
-    expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
-  });
+      if (!(caught instanceof TelemetryError)) {
+        throw new Error(
+          `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+        );
+      }
+      expect(caught.code).toBe('TELEMETRY-LEDGER-MALFORMED-USAGE-EVENT');
+    },
+  );
 
   it('does not discard entries already read before a later, malformed event — a mixed stream still throws, but the failure is diagnosable', async () => {
     const good = usageEvent({ payload: usagePayload({ costUsd: 1 }) });
@@ -308,7 +360,9 @@ describe('projectLedger', () => {
     // throws and discards every entry already collected, rather than returning the good ones. The error
     // names which event failed (run + seq) so an operator can actually locate and fix it.
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected projectLedger to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected projectLedger to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.message).toContain('seq 2');
   });
@@ -350,7 +404,10 @@ describe('attributedSpend', () => {
   });
 
   it('does not attribute spend from a different step', () => {
-    const entries = [ledgerEntry({ stepId: 'a', costUsd: 2 }), ledgerEntry({ stepId: 'b', costUsd: 3 })];
+    const entries = [
+      ledgerEntry({ stepId: 'a', costUsd: 2 }),
+      ledgerEntry({ stepId: 'b', costUsd: 3 }),
+    ];
 
     expect(attributedSpend(entries, 'a')).toBe(2);
   });
@@ -413,19 +470,22 @@ describe('checkBudget', () => {
     },
   );
 
-  it.each([0, -0.1, 1.5, NaN])('throws a TelemetryError for a warningThreshold of %s, outside (0, 1]', (warningThreshold) => {
-    let caught: unknown;
-    try {
-      checkBudget({ spent: 5, cap: 10, warningThreshold });
-    } catch (error) {
-      caught = error;
-    }
+  it.each([0, -0.1, 1.5, NaN])(
+    'throws a TelemetryError for a warningThreshold of %s, outside (0, 1]',
+    (warningThreshold) => {
+      let caught: unknown;
+      try {
+        checkBudget({ spent: 5, cap: 10, warningThreshold });
+      } catch (error) {
+        caught = error;
+      }
 
-    if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected checkBudget to throw a TelemetryError, got ${String(caught)}`);
-    }
-    expect(caught.code).toBe('TELEMETRY-BUDGET-INVALID-INPUT');
-  });
+      if (!(caught instanceof TelemetryError)) {
+        throw new Error(`expected checkBudget to throw a TelemetryError, got ${String(caught)}`);
+      }
+      expect(caught.code).toBe('TELEMETRY-BUDGET-INVALID-INPUT');
+    },
+  );
 
   it('accepts a warningThreshold of exactly 1 — degenerate (breach and warning coincide) but not invalid', () => {
     expect(checkBudget({ spent: 9, cap: 10, warningThreshold: 1 })).toBe('ok');
@@ -470,7 +530,9 @@ describe('detectRunaway', () => {
   });
 
   it('fires for a longer strictly-growing, all-unprogressed sequence', () => {
-    expect(detectRunaway([attempt(50), attempt(100), attempt(150), attempt(300), attempt(500)])).toBe(true);
+    expect(
+      detectRunaway([attempt(50), attempt(100), attempt(150), attempt(300), attempt(500)]),
+    ).toBe(true);
   });
 
   it('throws a TelemetryError rather than reporting a false positive when a NaN totalTokens sits between two real, decreasing values', () => {

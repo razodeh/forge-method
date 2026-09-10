@@ -36,21 +36,29 @@ function limits(overrides: Partial<ConcurrencyLimits> = {}): ConcurrencyLimits {
 describe('admitsMoreConcurrency — global limit', () => {
   it('admits when running is below the global limit', () => {
     const candidate = { node: node({ id: 'a' }) };
-    expect(admitsMoreConcurrency(candidate, limits({ global: 2 }), { ...NO_RUNNING, global: 1 })).toBe(true);
+    expect(
+      admitsMoreConcurrency(candidate, limits({ global: 2 }), { ...NO_RUNNING, global: 1 }),
+    ).toBe(true);
   });
 
   it('does not admit when running is already at the global limit', () => {
     const candidate = { node: node({ id: 'a' }) };
-    expect(admitsMoreConcurrency(candidate, limits({ global: 2 }), { ...NO_RUNNING, global: 2 })).toBe(false);
+    expect(
+      admitsMoreConcurrency(candidate, limits({ global: 2 }), { ...NO_RUNNING, global: 2 }),
+    ).toBe(false);
   });
 });
 
-describe('admitsMoreConcurrency — an exclusive agent\'s second ready step is never admitted while the first of that agent runs (06 §6.3\'s own worked example)', () => {
+describe("admitsMoreConcurrency — an exclusive agent's second ready step is never admitted while the first of that agent runs (06 §6.3's own worked example)", () => {
   it('does not admit a second step for an agent already at its own per-agent limit of 1', () => {
     const architect = toAgentId('architect');
     const candidate = { node: node({ id: 'b', agent: architect }) };
     const runningLimits = limits({ global: 10, perAgent: new Map([[architect, 1]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map([[architect, 1]]), perResourceClass: new Map() };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map([[architect, 1]]),
+      perResourceClass: new Map(),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(false);
   });
 
@@ -59,7 +67,11 @@ describe('admitsMoreConcurrency — an exclusive agent\'s second ready step is n
     const reviewer = toAgentId('reviewer');
     const candidate = { node: node({ id: 'b', agent: reviewer }) };
     const runningLimits = limits({ perAgent: new Map([[architect, 1]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map([[architect, 1]]), perResourceClass: new Map() };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map([[architect, 1]]),
+      perResourceClass: new Map(),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(true);
   });
 
@@ -73,7 +85,11 @@ describe('admitsMoreConcurrency — an exclusive agent\'s second ready step is n
   it('does not enforce any per-agent limit when the agent has no entry in the limits map at all', () => {
     const unconfigured = toAgentId('unconfigured');
     const candidate = { node: node({ id: 'a', agent: unconfigured }) };
-    const running: RunningCounts = { global: 1, perAgent: new Map([[unconfigured, 5]]), perResourceClass: new Map() };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map([[unconfigured, 5]]),
+      perResourceClass: new Map(),
+    };
     expect(admitsMoreConcurrency(candidate, limits(), running)).toBe(true);
   });
 });
@@ -82,14 +98,22 @@ describe('admitsMoreConcurrency — per-resource-class limit', () => {
   it('does not admit a step whose own resource class is already at its configured limit', () => {
     const candidate = { node: node({ id: 'a' }), resourceClass: 'migrations' };
     const runningLimits = limits({ perResourceClass: new Map([['migrations', 1]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map(), perResourceClass: new Map([['migrations', 1]]) };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map(),
+      perResourceClass: new Map([['migrations', 1]]),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(false);
   });
 
   it('admits a step with no resource class even when an unrelated resource class is at its own limit', () => {
     const candidate = { node: node({ id: 'a' }) };
     const runningLimits = limits({ perResourceClass: new Map([['migrations', 1]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map(), perResourceClass: new Map([['migrations', 1]]) };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map(),
+      perResourceClass: new Map([['migrations', 1]]),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(true);
   });
 });
@@ -98,14 +122,20 @@ describe('admitsMoreConcurrency — adapter-reported limit', () => {
   it('takes the tighter of global and adapterMax', () => {
     const candidate = { node: node({ id: 'a' }) };
     const runningLimits = limits({ global: 10, adapterMax: 2 });
-    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 2 })).toBe(false);
-    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 1 })).toBe(true);
+    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 2 })).toBe(
+      false,
+    );
+    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 1 })).toBe(
+      true,
+    );
   });
 
   it('is not limited by adapterMax when it is undefined', () => {
     const candidate = { node: node({ id: 'a' }) };
     const runningLimits = limits({ global: 3 });
-    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 2 })).toBe(true);
+    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 2 })).toBe(
+      true,
+    );
   });
 });
 
@@ -118,21 +148,31 @@ describe('admitsMoreConcurrency — a NaN limit value fails safe (denies), match
   it('denies when adapterMax is NaN, rather than corrupting the combined global limit into "unlimited"', () => {
     const candidate = { node: node({ id: 'a' }) };
     const runningLimits = limits({ global: 10, adapterMax: Number.NaN });
-    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 5 })).toBe(false);
+    expect(admitsMoreConcurrency(candidate, runningLimits, { ...NO_RUNNING, global: 5 })).toBe(
+      false,
+    );
   });
 
   it('denies when a configured perAgent limit is NaN, rather than making that agent unlimited', () => {
     const architect = toAgentId('architect');
     const candidate = { node: node({ id: 'a', agent: architect }) };
     const runningLimits = limits({ perAgent: new Map([[architect, Number.NaN]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map([[architect, 50]]), perResourceClass: new Map() };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map([[architect, 50]]),
+      perResourceClass: new Map(),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(false);
   });
 
   it('denies when a configured perResourceClass limit is NaN, rather than making that resource class unlimited', () => {
     const candidate = { node: node({ id: 'a' }), resourceClass: 'migrations' };
     const runningLimits = limits({ perResourceClass: new Map([['migrations', Number.NaN]]) });
-    const running: RunningCounts = { global: 1, perAgent: new Map(), perResourceClass: new Map([['migrations', 50]]) };
+    const running: RunningCounts = {
+      global: 1,
+      perAgent: new Map(),
+      perResourceClass: new Map([['migrations', 50]]),
+    };
     expect(admitsMoreConcurrency(candidate, runningLimits, running)).toBe(false);
   });
 });

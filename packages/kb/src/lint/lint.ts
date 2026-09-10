@@ -29,7 +29,8 @@ export interface LintKbSpecArtifacts {
 // into at all (SPEC-QUESTIONS.md Q56 point 6's own reasoning, applied here to the id-kind space
 // instead of the tag space): only an id shaped like one of these four is ever checked for existence,
 // so a real external reference is never misreported as "dangling".
-const KB_TREE_ID_PATTERN = /^(KB-[A-Z]+-\d{4}(-\d+)?|ADR-\d{3,4}(-\d+)?|RUN-\d{3,4}(-\d+)?|DIAG-\d{3,4}(-\d+)?)$/;
+const KB_TREE_ID_PATTERN =
+  /^(KB-[A-Z]+-\d{4}(-\d+)?|ADR-\d{3,4}(-\d+)?|RUN-\d{3,4}(-\d+)?|DIAG-\d{3,4}(-\d+)?)$/;
 
 // ---- "Front matter valid against schema" -------------------------------------------------------
 
@@ -105,7 +106,10 @@ function checkDanglingRefs(
 /** A supersession cycle (A supersedes B supersedes ... supersedes A), over `supersedes` edges among
  * KB entries and ADRs combined — a genuinely cross-kind cycle (a KB entry supersedes an ADR that
  * supersedes it back) is exactly as real a cycle as a same-kind one. */
-function checkSupersessionCycles(kbEntries: readonly KbEntry[], adrs: readonly ADR[]): readonly KbFinding[] {
+function checkSupersessionCycles(
+  kbEntries: readonly KbEntry[],
+  adrs: readonly ADR[],
+): readonly KbFinding[] {
   const edges = new Map<string, readonly string[]>();
   for (const entry of kbEntries) edges.set(entry.id, entry.supersedes);
   for (const adr of adrs) edges.set(adr.id, adr.supersedes);
@@ -118,7 +122,10 @@ function checkSupersessionCycles(kbEntries: readonly KbEntry[], adrs: readonly A
   // `edges.entries()` below; the recursive one right after the `edges.get(nextId)` dangling check),
   // so `edges.get`'s own `readonly string[] | undefined` return type never needs a `?? []` fallback
   // that nothing could actually reach.
-  function findCycleFrom(startId: string, startOutgoing: readonly string[]): readonly string[] | undefined {
+  function findCycleFrom(
+    startId: string,
+    startOutgoing: readonly string[],
+  ): readonly string[] | undefined {
     const stack: string[] = [startId];
     const onStack = new Set<string>([startId]);
 
@@ -264,7 +271,10 @@ function checkDiagramAdrCoverage(adrs: readonly ADR[]): readonly KbFinding[] {
 
 // ---- "Every CAP-### has ≥1 downstream epic (or is explicitly deferred: priority: wont)" ---------
 
-function checkCapCoverage(capabilities: readonly Capability[], epics: readonly Epic[]): readonly KbFinding[] {
+function checkCapCoverage(
+  capabilities: readonly Capability[],
+  epics: readonly Epic[],
+): readonly KbFinding[] {
   return capabilities
     .filter((cap) => cap.priority !== 'wont')
     .filter((cap) => !epics.some((epic) => epic.capability === cap.id))
@@ -291,7 +301,10 @@ function checkStaleness(kbEntries: readonly KbEntry[], now: Date): readonly KbFi
 
 // ---- "confidence: low entries used as inputs to accepted ADRs" ----------------------------------
 
-function checkLowConfidenceInputs(adrs: readonly ADR[], kbEntries: readonly KbEntry[]): readonly KbFinding[] {
+function checkLowConfidenceInputs(
+  adrs: readonly ADR[],
+  kbEntries: readonly KbEntry[],
+): readonly KbFinding[] {
   const kbEntryById = new Map(kbEntries.map((entry) => [entry.id, entry]));
   const findings: KbFinding[] = [];
 
@@ -355,7 +368,12 @@ function checkOrphans(
   const findings: KbFinding[] = [];
 
   for (const entry of tree.entries) {
-    if (entry.kind !== 'kb-entry' && entry.kind !== 'adr' && entry.kind !== 'diagram' && entry.kind !== 'runbook') {
+    if (
+      entry.kind !== 'kb-entry' &&
+      entry.kind !== 'adr' &&
+      entry.kind !== 'diagram' &&
+      entry.kind !== 'runbook'
+    ) {
       continue;
     }
     if (isRootPath(entry.path)) continue;
@@ -391,10 +409,15 @@ function glossaryTerms(tree: KbTree): ReadonlySet<string> {
 }
 
 function backtickTerms(text: string): readonly string[] {
-  return [...text.matchAll(BACKTICK_TERM_PATTERN)].flatMap((match) => (match[1] !== undefined ? [match[1]] : []));
+  return [...text.matchAll(BACKTICK_TERM_PATTERN)].flatMap((match) =>
+    match[1] !== undefined ? [match[1]] : [],
+  );
 }
 
-function checkGlossaryDrift(tree: KbTree, specArtifacts: LintKbSpecArtifacts): readonly KbFinding[] {
+function checkGlossaryDrift(
+  tree: KbTree,
+  specArtifacts: LintKbSpecArtifacts,
+): readonly KbFinding[] {
   const known = glossaryTerms(tree);
   const findings: KbFinding[] = [];
 

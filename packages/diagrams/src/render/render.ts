@@ -47,7 +47,9 @@ function renderLegend(legend: Readonly<Record<string, string>>): string {
   const entries = Object.entries(legend).sort(([a], [b]) => (a < b ? -1 : 1));
   if (entries.length === 0) return '';
   const items = entries
-    .map(([key, value]) => `      <li><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</li>`)
+    .map(
+      ([key, value]) => `      <li><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</li>`,
+    )
     .join('\n');
   return `\n    <ul class="forge-diagram-legend">\n${items}\n    </ul>`;
 }

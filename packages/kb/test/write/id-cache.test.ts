@@ -77,7 +77,11 @@ describe('readKbIdCache', () => {
 
   it('reads back a well-formed cache', async () => {
     const paths = freshProject();
-    await writeKbIdCache(paths, { validityHash: 'abc', writtenAt: 't0', counters: { architecture: 3 } });
+    await writeKbIdCache(paths, {
+      validityHash: 'abc',
+      writtenAt: 't0',
+      counters: { architecture: 3 },
+    });
     const result = await readKbIdCache(paths);
     expect(result).toEqual({
       kind: 'ok',
@@ -89,7 +93,11 @@ describe('readKbIdCache', () => {
 describe('writeKbIdCache', () => {
   it('writes to .forge/state/kb-ids.json', async () => {
     const paths = freshProject();
-    await writeKbIdCache(paths, { validityHash: 'abc', writtenAt: 't0', counters: { architecture: 1 } });
+    await writeKbIdCache(paths, {
+      validityHash: 'abc',
+      writtenAt: 't0',
+      counters: { architecture: 1 },
+    });
     const raw = readFileSync(paths.resolveState('kb-ids.json'), 'utf8');
     expect(JSON.parse(raw)).toEqual({
       validityHash: 'abc',

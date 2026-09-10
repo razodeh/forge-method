@@ -114,16 +114,21 @@ describe('injectFailure', () => {
 describe('a caller-supplied matcher that itself throws', () => {
   it('startSession rejects instead of throwing synchronously, for a matcher registered via .script()', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script(() => {
-      throw new Error('matcher blew up');
-    }, { text: ['unreachable'] });
+    adapter.script(
+      () => {
+        throw new Error('matcher blew up');
+      },
+      { text: ['unreachable'] },
+    );
     const cwd = await createScratchDir();
 
     // A rejected startSession(...) must reject the returned promise, not throw while this expression is
     // still being evaluated — a synchronous throw here would crash this test with an uncaught exception
     // instead of being captured by .rejects, the same distinction the sessionResume/requiresMcpServer
     // refusal paths must respect.
-    await expect(adapter.startSession(baseRequest({ cwd, prompt: 'anything' }))).rejects.toThrow(/matcher blew up/);
+    await expect(adapter.startSession(baseRequest({ cwd, prompt: 'anything' }))).rejects.toThrow(
+      /matcher blew up/,
+    );
   });
 
   it('startSession rejects instead of throwing synchronously, for a matcher registered via .injectFailure()', async () => {
@@ -140,10 +145,13 @@ describe('a caller-supplied matcher that itself throws', () => {
 
   it('a matcher that throws a non-Error value still rejects startSession with a real Error', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script(() => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately non-Error, to prove startSession normalises it
-      throw 'a plain string, not an Error';
-    }, { text: ['unreachable'] });
+    adapter.script(
+      () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately non-Error, to prove startSession normalises it
+        throw 'a plain string, not an Error';
+      },
+      { text: ['unreachable'] },
+    );
     const cwd = await createScratchDir();
 
     const rejection = adapter.startSession(baseRequest({ cwd, prompt: 'anything' }));

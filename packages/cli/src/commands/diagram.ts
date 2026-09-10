@@ -9,7 +9,12 @@ import type { ProjectPaths } from '@forge/core/fs';
 import { parseKbTree } from '@forge/kb/schema';
 import type { Diagram } from '@forge/schemas';
 import { checkDrift, type DriftResult } from '@forge/diagrams/drift';
-import { GENERATOR_NAMES, runGenerator, type GeneratedDiagram, type GeneratorName } from '@forge/diagrams/generate';
+import {
+  GENERATOR_NAMES,
+  runGenerator,
+  type GeneratedDiagram,
+  type GeneratorName,
+} from '@forge/diagrams/generate';
 import { lintDiagram } from '@forge/diagrams/lint';
 import type { DiagramFinding } from '@forge/diagrams/lint';
 import { parseDiagram } from '@forge/diagrams/parse';
@@ -39,7 +44,9 @@ async function findDiagram(ctx: DiagramCommandContext, id: string): Promise<Diag
 
 export async function diagramList(ctx: DiagramCommandContext): Promise<readonly KbEntrySummary[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  return tree.entries.filter((entry) => entry.kind === 'diagram').map((entry) => summarize(entry, ctx.kbRoot));
+  return tree.entries
+    .filter((entry) => entry.kind === 'diagram')
+    .map((entry) => summarize(entry, ctx.kbRoot));
 }
 
 export async function diagramShow(ctx: DiagramCommandContext, id: string): Promise<Diagram> {

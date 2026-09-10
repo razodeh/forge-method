@@ -9,7 +9,11 @@ import { TelemetryError } from '../src/errors.ts';
 
 describe('TelemetryError', () => {
   it('is a real Error carrying code, message and remedy', () => {
-    const error = new TelemetryError({ code: 'TELEMETRY-TEST', message: 'something went wrong', remedy: 'do the fix' });
+    const error = new TelemetryError({
+      code: 'TELEMETRY-TEST',
+      message: 'something went wrong',
+      remedy: 'do the fix',
+    });
 
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe('TelemetryError');
@@ -20,7 +24,10 @@ describe('TelemetryError', () => {
 
   it('preserves a supplied cause', () => {
     const cause = new Error('root cause');
-    const error = new TelemetryError({ code: 'TELEMETRY-TEST', message: 'wrapped', remedy: 'fix it' }, { cause });
+    const error = new TelemetryError(
+      { code: 'TELEMETRY-TEST', message: 'wrapped', remedy: 'fix it' },
+      { cause },
+    );
 
     expect(error.cause).toBe(cause);
   });

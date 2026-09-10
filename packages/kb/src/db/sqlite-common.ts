@@ -162,7 +162,9 @@ export abstract class BaseSqliteBackend implements KbIndexBackend {
    * same interpretation the JSON backend uses (`SPEC-QUESTIONS.md` Q53 point 4). */
   expand(ids: readonly string[], hops: number): readonly string[] {
     const frontier = new Set(ids);
-    const allLinks = this.db.prepare('SELECT from_id, to_id FROM links').all() as readonly LinkTableRow[];
+    const allLinks = this.db
+      .prepare('SELECT from_id, to_id FROM links')
+      .all() as readonly LinkTableRow[];
 
     for (let hop = 0; hop < hops; hop += 1) {
       const discovered = new Set<string>();

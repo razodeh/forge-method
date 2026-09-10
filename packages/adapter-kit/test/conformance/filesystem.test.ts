@@ -21,7 +21,10 @@ import {
   normalizeReportedPath,
 } from '../../src/conformance/filesystem.ts';
 import { createConformanceContext } from '../../src/conformance/context.ts';
-import { CONFORMANCE_WRITE_FILE_CONTENT, CONFORMANCE_WRITE_FILE_RELATIVE_PATH } from '../../src/conformance/fixtures.ts';
+import {
+  CONFORMANCE_WRITE_FILE_CONTENT,
+  CONFORMANCE_WRITE_FILE_RELATIVE_PATH,
+} from '../../src/conformance/fixtures.ts';
 import type { ConformanceOptions } from '../../src/conformance/fixtures.ts';
 import type { AdapterCapabilities, PlatformAdapter } from '../../src/types/index.ts';
 
@@ -129,30 +132,33 @@ describe('checkC2CwdIsolation — symlink escape', () => {
       preflight: () => Promise.resolve({ ok: true, issues: [] }),
       listModels: () => Promise.resolve([]),
       startSession: (request) =>
-        symlink(outsideFile, path.join(request.cwd, CONFORMANCE_WRITE_FILE_RELATIVE_PATH)).then(() =>
-          Promise.resolve({
-            sessionId: 's1',
-            events: {
-              [Symbol.asyncIterator]: () => ({
-                next: () => Promise.resolve({ done: true as const, value: undefined }),
-              }),
-            },
-            stop: () => Promise.resolve(),
-            result: () =>
-              Promise.resolve({
-                sessionId: 's1',
-                ok: true,
-                finalText: 'wrote it',
-                usage: { inputTokens: 0, outputTokens: 0, turns: 1 },
-                durationMs: 0,
-                changedFiles: [CONFORMANCE_WRITE_FILE_RELATIVE_PATH],
-                controlTokens: [],
-              }),
-          }),
+        symlink(outsideFile, path.join(request.cwd, CONFORMANCE_WRITE_FILE_RELATIVE_PATH)).then(
+          () =>
+            Promise.resolve({
+              sessionId: 's1',
+              events: {
+                [Symbol.asyncIterator]: () => ({
+                  next: () => Promise.resolve({ done: true as const, value: undefined }),
+                }),
+              },
+              stop: () => Promise.resolve(),
+              result: () =>
+                Promise.resolve({
+                  sessionId: 's1',
+                  ok: true,
+                  finalText: 'wrote it',
+                  usage: { inputTokens: 0, outputTokens: 0, turns: 1 },
+                  durationMs: 0,
+                  changedFiles: [CONFORMANCE_WRITE_FILE_RELATIVE_PATH],
+                  controlTokens: [],
+                }),
+            }),
         ),
       resumeSession: () => Promise.reject(new Error('not implemented for this test')),
     };
-    const options = stubOptions({ createScratchDir: () => mkdtemp(path.join(tmpdir(), 'forge-c2-cwd-')) });
+    const options = stubOptions({
+      createScratchDir: () => mkdtemp(path.join(tmpdir(), 'forge-c2-cwd-')),
+    });
     const { context, setAdapter, setCapabilities } = createConformanceContext(options);
     setAdapter(adapter);
     setCapabilities(await adapter.capabilities());
@@ -174,7 +180,9 @@ describe('checkC14DeterminismOfReporting — a file inside a brand-new subdirect
       listModels: () => Promise.resolve([]),
       startSession: (request) =>
         mkdir(path.join(request.cwd, 'newmodule'))
-          .then(() => writeFile(path.join(request.cwd, 'newmodule', 'index.ts'), 'export {};', 'utf8'))
+          .then(() =>
+            writeFile(path.join(request.cwd, 'newmodule', 'index.ts'), 'export {};', 'utf8'),
+          )
           .then(() => ({
             sessionId: 's1',
             events: {
@@ -196,7 +204,9 @@ describe('checkC14DeterminismOfReporting — a file inside a brand-new subdirect
           })),
       resumeSession: () => Promise.reject(new Error('not implemented for this test')),
     };
-    const options = stubOptions({ createScratchDir: () => mkdtemp(path.join(tmpdir(), 'forge-c14-cwd-')) });
+    const options = stubOptions({
+      createScratchDir: () => mkdtemp(path.join(tmpdir(), 'forge-c14-cwd-')),
+    });
     const { context, setAdapter, setCapabilities } = createConformanceContext(options);
     setAdapter(adapter);
     setCapabilities(await adapter.capabilities());

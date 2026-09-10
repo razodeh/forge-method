@@ -10,7 +10,9 @@ import { describe, expect, it } from 'vitest';
 
 import { inboundHandoffFor } from '../../src/handoff/inbound-handoff-for.ts';
 
-function record(overrides: Partial<HandoffRecord> & { readonly id: string; readonly step: string }): HandoffRecord {
+function record(
+  overrides: Partial<HandoffRecord> & { readonly id: string; readonly step: string },
+): HandoffRecord {
   return {
     from: 'architect',
     to: 'platform',

@@ -212,7 +212,11 @@ describe('wrapGitFailure', () => {
   });
 
   it('passes an already-thrown VcsError through unchanged, never double-wrapping it', async () => {
-    const original = new VcsError({ code: 'VCS-ALREADY-CLASSIFIED', message: 'already classified', remedy: 'n/a' });
+    const original = new VcsError({
+      code: 'VCS-ALREADY-CLASSIFIED',
+      message: 'already classified',
+      remedy: 'n/a',
+    });
     const rejection = wrapGitFailure(() => Promise.reject(original), 'doing something');
     await expect(rejection).rejects.toBe(original);
   });
@@ -230,9 +234,9 @@ async function corruptHead(cwd: string): Promise<void> {
 describe('isNoCommitsYetResult', () => {
   it('matches a real "no commits yet" result: exit code 1, empty stderr', async () => {
     const cwd = await createTempRepo();
-    const error: unknown = await execa('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd }).catch(
-      (caught: unknown) => caught,
-    );
+    const error: unknown = await execa('git', ['rev-parse', '--verify', '-q', 'HEAD'], {
+      cwd,
+    }).catch((caught: unknown) => caught);
     expect(isNoCommitsYetResult(error)).toBe(true);
   });
 
@@ -242,9 +246,9 @@ describe('isNoCommitsYetResult', () => {
     await commitAll(cwd, 'initial');
     await corruptHead(cwd);
 
-    const error: unknown = await execa('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd }).catch(
-      (caught: unknown) => caught,
-    );
+    const error: unknown = await execa('git', ['rev-parse', '--verify', '-q', 'HEAD'], {
+      cwd,
+    }).catch((caught: unknown) => caught);
     expect(isNoCommitsYetResult(error)).toBe(false);
   });
 

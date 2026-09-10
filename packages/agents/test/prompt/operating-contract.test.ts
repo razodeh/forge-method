@@ -22,7 +22,8 @@ function extractSpecOperatingContract(): string {
   const specText = readFileSync(path.join(repoRoot, 'specs', '05-agent-system.md'), 'utf-8');
   const startMarker = 'Normative content — every agent receives this verbatim:\n\n';
   const startIndex = specText.indexOf(startMarker);
-  if (startIndex === -1) throw new Error('could not find the §5.5 normative-content marker in specs/05');
+  if (startIndex === -1)
+    throw new Error('could not find the §5.5 normative-content marker in specs/05');
   const bodyStart = startIndex + startMarker.length;
   const nextHeadingIndex = specText.indexOf('\n## ', bodyStart);
   if (nextHeadingIndex === -1) throw new Error('could not find the next heading after §5.5');

@@ -48,7 +48,13 @@ describe('computeReadySet', () => {
   });
 
   it('excludes a node that is already running, succeeded, failed, or skipped', () => {
-    const nodes = [node({ id: 'a' }), node({ id: 'b' }), node({ id: 'c' }), node({ id: 'd' }), node({ id: 'e' })];
+    const nodes = [
+      node({ id: 'a' }),
+      node({ id: 'b' }),
+      node({ id: 'c' }),
+      node({ id: 'd' }),
+      node({ id: 'e' }),
+    ];
     const statuses = new Map<string, StepStatus>([
       ['a', 'running'],
       ['b', 'succeeded'],
@@ -73,7 +79,7 @@ describe('computeReadySet', () => {
     expect(computeReadySet([a], new Map(), ['test/bar.ts'])).toEqual([a]);
   });
 
-  it('treats a step depending on a currently-failed step as never becoming ready -- 06 §6.8\'s own retry/replan decisions are a caller concern, not this function\'s', () => {
+  it("treats a step depending on a currently-failed step as never becoming ready -- 06 §6.8's own retry/replan decisions are a caller concern, not this function's", () => {
     const a = node({ id: 'a' });
     const b = node({ id: 'b', dependsOn: ['a'] });
     const statuses = new Map<string, StepStatus>([['a', 'failed']]);

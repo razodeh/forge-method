@@ -93,7 +93,9 @@ interface Supersedable {
  * gauntlet critic found calling this twice, once per kind, meant a cross-kind pair was silently never
  * checked at all (`byId` never had the other kind's ids in it). `checkSupersessionCycles` (`lint.ts`)
  * already unions both kinds into one edge map for the identical reason. */
-function checkSupersessionStatusConsistency(entries: readonly Supersedable[]): readonly KbFinding[] {
+function checkSupersessionStatusConsistency(
+  entries: readonly Supersedable[],
+): readonly KbFinding[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const findings: KbFinding[] = [];
 
@@ -116,7 +118,10 @@ function checkSupersessionStatusConsistency(entries: readonly Supersedable[]): r
 
 /** Two `accepted` ADRs in the same `category`, whose derived scopes (`adrScope`, `SPEC-QUESTIONS.md`
  * Q56 point 3) overlap, with no `supersedes` link between them in either direction. */
-function checkAdrScopeConflicts(adrs: readonly ADR[], kbEntries: readonly KbEntry[]): readonly KbFinding[] {
+function checkAdrScopeConflicts(
+  adrs: readonly ADR[],
+  kbEntries: readonly KbEntry[],
+): readonly KbFinding[] {
   const findings: KbFinding[] = [];
   const accepted = adrs.filter((adr) => adr.status === 'accepted');
 

@@ -22,7 +22,9 @@ const KB_ID_PATTERN = /^KB-([A-Z]+)-(\d{4})(-\d+)?$/;
 
 /** The `(section, numeric)` a raw `id` string claims, or `undefined` if it is not a `KB-*` id at all,
  * or names a token no registered section uses. */
-function claimedByKbId(id: string): { readonly section: KbSection; readonly numeric: number } | undefined {
+function claimedByKbId(
+  id: string,
+): { readonly section: KbSection; readonly numeric: number } | undefined {
   const match = KB_ID_PATTERN.exec(id);
   const token = match?.[1];
   const digits = match?.[2];
@@ -36,7 +38,10 @@ function claimedByKbId(id: string): { readonly section: KbSection; readonly nume
  * reused directly rather than re-derived. `[]` (not a throw) if `kbRoot` does not exist yet — a
  * project with no KB written at all is the ordinary starting state, the same case `parseKbTree` (P6)
  * was itself fixed to handle gracefully after a gauntlet round found it threw instead. */
-export async function listKbMdFiles(paths: ProjectPaths, kbRoot: string): Promise<readonly string[]> {
+export async function listKbMdFiles(
+  paths: ProjectPaths,
+  kbRoot: string,
+): Promise<readonly string[]> {
   if (!(await pathExists(paths.resolveWithin(kbRoot)))) return [];
   const files = await listKbFiles(paths, kbRoot);
   return files.filter((file) => file.endsWith('.md'));

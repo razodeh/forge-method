@@ -73,9 +73,10 @@ function wait(ms: number): Promise<void> {
  * jsdom-never-implements SVG geometry methods Mermaid's post-render layout step needs, spies on
  * `XMLHttpRequest.prototype.send`, and waits for the bootstrap script's own completion signal
  * (`document.body.dataset.forgeRender`, set by `renderHtml`'s own bootstrap — see `render.ts`). */
-async function runRenderedHtml(
-  html: string,
-): Promise<{ readonly window: InstanceType<typeof JSDOM>['window']; readonly xhrSendCalls: number }> {
+async function runRenderedHtml(html: string): Promise<{
+  readonly window: InstanceType<typeof JSDOM>['window'];
+  readonly xhrSendCalls: number;
+}> {
   const dom = new JSDOM(html, { runScripts: 'dangerously' });
 
   // jsdom implements no real SVG layout engine, so it never implements these two real-browser SVG
@@ -105,14 +106,17 @@ async function runRenderedHtml(
 }
 
 describe('renderHtml', () => {
-  it.each(DIAGRAM_KINDS)('renders a real SVG for a worked %s example with no thrown error', async (kind) => {
-    const html = renderHtml(WORKED_EXAMPLES[kind]);
-    const { window } = await runRenderedHtml(html);
-    expect(window.document.body.getAttribute('data-forge-render')).toBe('ok');
-    const svg = window.document.querySelector('.mermaid svg');
-    expect(svg).not.toBeNull();
-    expect(svg?.outerHTML.length).toBeGreaterThan(0);
-  });
+  it.each(DIAGRAM_KINDS)(
+    'renders a real SVG for a worked %s example with no thrown error',
+    async (kind) => {
+      const html = renderHtml(WORKED_EXAMPLES[kind]);
+      const { window } = await runRenderedHtml(html);
+      expect(window.document.body.getAttribute('data-forge-render')).toBe('ok');
+      const svg = window.document.querySelector('.mermaid svg');
+      expect(svg).not.toBeNull();
+      expect(svg?.outerHTML.length).toBeGreaterThan(0);
+    },
+  );
 
   it.each(DIAGRAM_KINDS)(
     'performs no network I/O at the Node process level while rendering a worked %s example',

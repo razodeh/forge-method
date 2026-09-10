@@ -75,7 +75,13 @@ const NON_AGENT_DEFAULT_MAX_ATTEMPTS = 1;
 const DEFAULT_LIMITS: StepNodeLimits = { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 2.0 };
 const DEFAULT_BACKOFF_MS: readonly [number, number] = [1000, 30_000];
 
-const RETRYABLE_CLASSES: ReadonlySet<string> = new Set<RetryableFailureClass>(['transient', 'tool-error', 'validation', 'test-failure', 'timeout']);
+const RETRYABLE_CLASSES: ReadonlySet<string> = new Set<RetryableFailureClass>([
+  'transient',
+  'tool-error',
+  'validation',
+  'test-failure',
+  'timeout',
+]);
 const ON_FAILURE_VALUES = new Set<StepNodeOnFailure>(['block', 'continue', 'escalate', 'replan']);
 
 function issue(code: string, message: string, stepId?: string): CompileIssue {
@@ -92,7 +98,12 @@ function issue(code: string, message: string, stepId?: string): CompileIssue {
  * reporting a real, independent problem in a sibling item or a different step. Anything that is not a
  * `ForgeError` is rethrown, not swallowed: `resolveTemplate`'s own contract only documents these two
  * codes, so anything else is a genuine bug in this file, not a reachable outcome of any template text. */
-function safeResolveTemplate(template: string, context: ExpressionContext, issues: CompileIssue[], stepId: string): string {
+function safeResolveTemplate(
+  template: string,
+  context: ExpressionContext,
+  issues: CompileIssue[],
+  stepId: string,
+): string {
   try {
     return resolveTemplate(template, context);
   } catch (cause) {
@@ -104,7 +115,12 @@ function safeResolveTemplate(template: string, context: ExpressionContext, issue
   }
 }
 
-function toResourceClaims(value: string | readonly string[] | undefined, context: ExpressionContext, issues: CompileIssue[], stepId: string): readonly string[] {
+function toResourceClaims(
+  value: string | readonly string[] | undefined,
+  context: ExpressionContext,
+  issues: CompileIssue[],
+  stepId: string,
+): readonly string[] {
   if (value === undefined) return [];
   const list = typeof value === 'string' ? [value] : value;
   return list.map((glob) => safeResolveTemplate(glob, context, issues, stepId));
@@ -120,22 +136,46 @@ function toResourceClaims(value: string | readonly string[] | undefined, context
  * in the same workflow's own compiled graph, not scoped to whatever container the referencing step
  * happens to sit inside (`@forge/engine/workflow`'s own `SequenceStep` doc comment: "a child may
  * legitimately still depend on a step outside its own group"). */
-function qualifyDependsOn(raw: readonly string[] | undefined, context: ExpressionContext, env: CompileEnv, issues: CompileIssue[], stepId: string): readonly string[] {
-  return (raw ?? []).map((dep) => `${env.workflowId}:${safeResolveTemplate(dep, context, issues, stepId)}`);
+function qualifyDependsOn(
+  raw: readonly string[] | undefined,
+  context: ExpressionContext,
+  env: CompileEnv,
+  issues: CompileIssue[],
+  stepId: string,
+): readonly string[] {
+  return (raw ?? []).map(
+    (dep) => `${env.workflowId}:${safeResolveTemplate(dep, context, issues, stepId)}`,
+  );
 }
 
-function compileRetry(step: AgentStep | undefined, kind: WorkflowStep['kind'], issues: CompileIssue[], stepId: string): StepNodeRetryPolicy {
-  const defaultMaxAttempts = kind === 'agent' ? AGENT_DEFAULT_MAX_ATTEMPTS : NON_AGENT_DEFAULT_MAX_ATTEMPTS;
+function compileRetry(
+  step: AgentStep | undefined,
+  kind: WorkflowStep['kind'],
+  issues: CompileIssue[],
+  stepId: string,
+): StepNodeRetryPolicy {
+  const defaultMaxAttempts =
+    kind === 'agent' ? AGENT_DEFAULT_MAX_ATTEMPTS : NON_AGENT_DEFAULT_MAX_ATTEMPTS;
   const authored = step?.retry;
   const retryOn: RetryableFailureClass[] = [];
   for (const candidate of authored?.retryOn ?? [...RETRYABLE_CLASSES]) {
     if (RETRYABLE_CLASSES.has(candidate)) {
       retryOn.push(candidate as RetryableFailureClass);
     } else {
-      issues.push(issue('invalid-retry-on-value', `retryOn value "${candidate}" is not one of: ${[...RETRYABLE_CLASSES].join(', ')}.`, stepId));
+      issues.push(
+        issue(
+          'invalid-retry-on-value',
+          `retryOn value "${candidate}" is not one of: ${[...RETRYABLE_CLASSES].join(', ')}.`,
+          stepId,
+        ),
+      );
     }
   }
-  return { maxAttempts: authored?.maxAttempts ?? defaultMaxAttempts, backoffMs: DEFAULT_BACKOFF_MS, retryOn };
+  return {
+    maxAttempts: authored?.maxAttempts ?? defaultMaxAttempts,
+    backoffMs: DEFAULT_BACKOFF_MS,
+    retryOn,
+  };
 }
 
 function compileLimits(step: AgentStep | undefined): StepNodeLimits {
@@ -161,12 +201,26 @@ function compileOnFailure(
   stepId: string,
 ): StepNodeOnFailure {
   if (stepOnFailure !== undefined) {
-    if (ON_FAILURE_VALUES.has(stepOnFailure as StepNodeOnFailure)) return stepOnFailure as StepNodeOnFailure;
-    issues.push(issue('invalid-on-failure-value', `onFailure value "${stepOnFailure}" is not one of: block, continue, escalate, replan.`, stepId));
+    if (ON_FAILURE_VALUES.has(stepOnFailure as StepNodeOnFailure))
+      return stepOnFailure as StepNodeOnFailure;
+    issues.push(
+      issue(
+        'invalid-on-failure-value',
+        `onFailure value "${stepOnFailure}" is not one of: block, continue, escalate, replan.`,
+        stepId,
+      ),
+    );
   }
   if (workflowDefault !== undefined) {
-    if (ON_FAILURE_VALUES.has(workflowDefault as StepNodeOnFailure)) return workflowDefault as StepNodeOnFailure;
-    issues.push(issue('invalid-on-failure-value', `workflow onFailure.default "${workflowDefault}" is not one of: block, continue, escalate, replan.`, stepId));
+    if (ON_FAILURE_VALUES.has(workflowDefault as StepNodeOnFailure))
+      return workflowDefault as StepNodeOnFailure;
+    issues.push(
+      issue(
+        'invalid-on-failure-value',
+        `workflow onFailure.default "${workflowDefault}" is not one of: block, continue, escalate, replan.`,
+        stepId,
+      ),
+    );
   }
   return 'block';
 }
@@ -227,9 +281,14 @@ function buildLeafNode(
   const node: StepNode = {
     id: compiledId,
     kind: step.kind,
-    agent: agentStep !== undefined ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId)) : undefined,
+    agent:
+      agentStep !== undefined
+        ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId))
+        : undefined,
     brief: agentStep?.brief,
-    inputs: (agentStep?.inputs ?? []).map((ref) => safeResolveTemplate(ref, context, issues, compiledId)),
+    inputs: (agentStep?.inputs ?? []).map((ref) =>
+      safeResolveTemplate(ref, context, issues, compiledId),
+    ),
     outputs: agentStep?.outputs ?? [],
     dependsOn,
     produces: toResourceClaims(agentStep?.produces, context, issues, compiledId),
@@ -239,8 +298,16 @@ function buildLeafNode(
     limits: compileLimits(agentStep),
     autonomy: undefined,
     idempotencyKey: compiledId,
-    onFailure: compileOnFailure(agentStep?.onFailure, env.workflowOnFailureDefault, issues, compiledId),
-    run: step.kind === 'command' ? safeResolveTemplate(step.run, context, issues, compiledId) : undefined,
+    onFailure: compileOnFailure(
+      agentStep?.onFailure,
+      env.workflowOnFailureDefault,
+      issues,
+      compiledId,
+    ),
+    run:
+      step.kind === 'command'
+        ? safeResolveTemplate(step.run, context, issues, compiledId)
+        : undefined,
     gate: step.kind === 'gate' ? step.gate : undefined,
     workflow: step.kind === 'subworkflow' ? step.workflow : undefined,
     mergePolicy: step.kind === 'merge' ? step.policy : undefined,
@@ -259,7 +326,12 @@ function compileFanout(
   inheritedDependsOn: readonly string[],
 ): StepCompileOutcome {
   if (step.id === undefined) {
-    return { nodes: [], exitIds: [], issues: [issue('missing-step-id', 'A fanout step must declare its own "id".')], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [issue('missing-step-id', 'A fanout step must declare its own "id".')],
+      groupIds: [],
+    };
   }
   // Hoisted into a plain `string` binding rather than referencing `step.id` from inside the `forEach`
   // callback below: TS does not carry the `=== undefined` narrowing above across a closure boundary, even
@@ -269,7 +341,18 @@ function compileFanout(
 
   const parsed = parseExpression(step.over);
   if (!parsed.success) {
-    return { nodes: [], exitIds: [], issues: [issue('fanout-over-invalid-expression', `fanout "over" ("${step.over}") failed to parse: ${parsed.error.message}`, fanoutId)], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [
+        issue(
+          'fanout-over-invalid-expression',
+          `fanout "over" ("${step.over}") failed to parse: ${parsed.error.message}`,
+          fanoutId,
+        ),
+      ],
+      groupIds: [],
+    };
   }
   // A critic round found this call unwrapped: a syntactically ordinary, non-nested-looking flat `&&`/`||`
   // chain in `over` parses cleanly (`parseExpression`'s own recursion guard never sees this shape) but
@@ -282,10 +365,32 @@ function compileFanout(
     collection = evaluate(parsed.expr, context);
   } catch (cause) {
     if (!(cause instanceof ForgeError)) throw cause;
-    return { nodes: [], exitIds: [], issues: [issue('fanout-over-evaluation-failed', `fanout "over" ("${step.over}") failed to evaluate: ${cause.message}`, fanoutId)], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [
+        issue(
+          'fanout-over-evaluation-failed',
+          `fanout "over" ("${step.over}") failed to evaluate: ${cause.message}`,
+          fanoutId,
+        ),
+      ],
+      groupIds: [],
+    };
   }
   if (!Array.isArray(collection)) {
-    return { nodes: [], exitIds: [], issues: [issue('fanout-over-not-array', `fanout "over" ("${step.over}") did not resolve to an array.`, fanoutId)], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [
+        issue(
+          'fanout-over-not-array',
+          `fanout "over" ("${step.over}") did not resolve to an array.`,
+          fanoutId,
+        ),
+      ],
+      groupIds: [],
+    };
   }
 
   const nodes: StepNode[] = [];
@@ -306,12 +411,22 @@ function compileFanout(
     // fanout, but guarantees uniqueness, which an omitted itemKey would otherwise not: every expanded
     // item still needs a *distinct* compiled id regardless of whether the author gave this fanout a
     // stable natural key to use for it.
-    const itemKey = step.itemKey !== undefined ? safeResolveTemplate(step.itemKey, itemContext, issues, fanoutId) : String(index);
+    const itemKey =
+      step.itemKey !== undefined
+        ? safeResolveTemplate(step.itemKey, itemContext, issues, fanoutId)
+        : String(index);
     const itemBaseId = compileStepId(baseId, fanoutStepId, itemKey);
     const ownDependsOn = qualifyDependsOn(step.dependsOn, itemContext, env, issues, itemBaseId);
     const combinedDependsOn = [...inheritedDependsOn, ...ownDependsOn];
 
-    const childOutcome = compileStepAtDepth(step.step, itemBaseId, false, { ...env, depth: env.depth + 1 }, itemContext, combinedDependsOn);
+    const childOutcome = compileStepAtDepth(
+      step.step,
+      itemBaseId,
+      false,
+      { ...env, depth: env.depth + 1 },
+      itemContext,
+      combinedDependsOn,
+    );
     nodes.push(...childOutcome.nodes);
     exitIds.push(...childOutcome.exitIds);
     issues.push(...childOutcome.issues);
@@ -330,7 +445,17 @@ function compileStepAtDepth(
   inheritedDependsOn: readonly string[],
 ): StepCompileOutcome {
   if (env.depth > MAX_COMPILE_DEPTH) {
-    return { nodes: [], exitIds: [], issues: [issue('excessive-compile-depth', `Workflow step nesting exceeds ${String(MAX_COMPILE_DEPTH)} levels; refusing to compile further.`)], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [
+        issue(
+          'excessive-compile-depth',
+          `Workflow step nesting exceeds ${String(MAX_COMPILE_DEPTH)} levels; refusing to compile further.`,
+        ),
+      ],
+      groupIds: [],
+    };
   }
 
   if (step.kind === 'fanout') {
@@ -347,7 +472,8 @@ function compileStepAtDepth(
     // is allowed to `dependsOn` it directly, per this module's own top-of-file comment, even though
     // resolving *what that means* is explicitly left to P11. `checkPlanConsistency` (called from
     // `compilePlan`) needs this list to tell that deferred, legitimate reference apart from a genuine typo.
-    const groupIds: string[] = requiresOwnId && step.id !== undefined ? [compileStepId(baseId, step.id)] : [];
+    const groupIds: string[] =
+      requiresOwnId && step.id !== undefined ? [compileStepId(baseId, step.id)] : [];
     // The group's own `dependsOn` (WorkflowStepBase gives every kind, including parallel/sequence
     // themselves, one) composes with whatever this group's own caller already inherited -- easy to
     // miss, since the group produces no StepNode of its own to visibly carry it.
@@ -355,7 +481,14 @@ function compileStepAtDepth(
     let nextDependsOn: readonly string[] = [...inheritedDependsOn, ...groupOwnDependsOn];
 
     for (const child of step.steps) {
-      const outcome = compileStepAtDepth(child, baseId, true, { ...env, depth: env.depth + 1 }, context, nextDependsOn);
+      const outcome = compileStepAtDepth(
+        child,
+        baseId,
+        true,
+        { ...env, depth: env.depth + 1 },
+        context,
+        nextDependsOn,
+      );
       nodes.push(...outcome.nodes);
       issues.push(...outcome.issues);
       groupIds.push(...outcome.groupIds);
@@ -385,13 +518,29 @@ function compileStepAtDepth(
   }
 
   if (requiresOwnId && step.id === undefined) {
-    return { nodes: [], exitIds: [], issues: [issue('missing-step-id', `A "${step.kind}" step in this position must declare its own "id".`)], groupIds: [] };
+    return {
+      nodes: [],
+      exitIds: [],
+      issues: [
+        issue(
+          'missing-step-id',
+          `A "${step.kind}" step in this position must declare its own "id".`,
+        ),
+      ],
+      groupIds: [],
+    };
   }
-  const compiledId = requiresOwnId && step.id !== undefined ? compileStepId(baseId, step.id) : baseId;
+  const compiledId =
+    requiresOwnId && step.id !== undefined ? compileStepId(baseId, step.id) : baseId;
   const dependsOnIssues: CompileIssue[] = [];
   const ownDependsOn = qualifyDependsOn(step.dependsOn, context, env, dependsOnIssues, compiledId);
-  const outcome = buildLeafNode(step, compiledId, env, context, [...inheritedDependsOn, ...ownDependsOn]);
-  return dependsOnIssues.length > 0 ? { ...outcome, issues: [...dependsOnIssues, ...outcome.issues] } : outcome;
+  const outcome = buildLeafNode(step, compiledId, env, context, [
+    ...inheritedDependsOn,
+    ...ownDependsOn,
+  ]);
+  return dependsOnIssues.length > 0
+    ? { ...outcome, issues: [...dependsOnIssues, ...outcome.issues] }
+    : outcome;
 }
 
 /** `10` §10.1's own "fanout `over` resolves to an array" validation clause, actually enforced here (not
@@ -414,10 +563,17 @@ function compileStepAtDepth(
  * `undefined` unconditionally, so calling this function directly on a fanout that sits inside a workflow
  * with its own `onFailure.default` produced a different compiled `onFailure` than `compilePlan` would for
  * the exact same step. */
-export function expandFanout(step: FanoutStep, workflowId: string, context: ExpressionContext, workflowOnFailureDefault?: string): CompileResult {
+export function expandFanout(
+  step: FanoutStep,
+  workflowId: string,
+  context: ExpressionContext,
+  workflowOnFailureDefault?: string,
+): CompileResult {
   const env: CompileEnv = { workflowId, workflowOnFailureDefault, depth: 0 };
   const outcome = compileFanout(step, workflowId, env, context, []);
-  return outcome.issues.length > 0 ? { success: false, issues: outcome.issues } : { success: true, nodes: outcome.nodes };
+  return outcome.issues.length > 0
+    ? { success: false, issues: outcome.issues }
+    : { success: true, nodes: outcome.nodes };
 }
 
 /** A critic round found that neither this file nor `@forge/engine/workflow`'s own `validateStructure`
@@ -450,7 +606,10 @@ export function expandFanout(step: FanoutStep, workflowId: string, context: Expr
  * other names a real, schedulable node), and nothing here needs to detect a group id colliding with a
  * node id — no evidence anywhere this can occur outside of a deliberately-contrived fixture, since a
  * group and a leaf can never occupy the same id-producing position in the tree this module walks. */
-function checkPlanConsistency(nodes: readonly StepNode[], groupIds: readonly string[]): readonly CompileIssue[] {
+function checkPlanConsistency(
+  nodes: readonly StepNode[],
+  groupIds: readonly string[],
+): readonly CompileIssue[] {
   const issues: CompileIssue[] = [];
   const seenIds = new Set<string>();
   const duplicateIds = new Set<string>();
@@ -459,14 +618,22 @@ function checkPlanConsistency(nodes: readonly StepNode[], groupIds: readonly str
     seenIds.add(node.id);
   }
   for (const id of duplicateIds) {
-    issues.push(issue('duplicate-compiled-step-id', `More than one compiled step has the id "${id}".`, id));
+    issues.push(
+      issue('duplicate-compiled-step-id', `More than one compiled step has the id "${id}".`, id),
+    );
   }
   if (duplicateIds.size === 0) {
     const resolvableIds = new Set([...seenIds, ...groupIds]);
     for (const node of nodes) {
       for (const dep of node.dependsOn) {
         if (!resolvableIds.has(dep)) {
-          issues.push(issue('dangling-dependency', `Step "${node.id}" depends on "${dep}", which does not match any compiled step's own id.`, node.id));
+          issues.push(
+            issue(
+              'dangling-dependency',
+              `Step "${node.id}" depends on "${dep}", which does not match any compiled step's own id.`,
+              node.id,
+            ),
+          );
         }
       }
     }
@@ -483,7 +650,11 @@ function checkPlanConsistency(nodes: readonly StepNode[], groupIds: readonly str
  * it needs to, the same "generic mechanism now, real content and remaining behaviour later" split
  * `SPEC-QUESTIONS.md` Q62 already established for this milestone's own scope. */
 export function compilePlan(workflow: Workflow, context: ExpressionContext): CompileResult {
-  const env: CompileEnv = { workflowId: workflow.id, workflowOnFailureDefault: workflow.onFailure?.default, depth: 0 };
+  const env: CompileEnv = {
+    workflowId: workflow.id,
+    workflowOnFailureDefault: workflow.onFailure?.default,
+    depth: 0,
+  };
   const nodes: StepNode[] = [];
   const issues: CompileIssue[] = [];
   const groupIds: string[] = [];

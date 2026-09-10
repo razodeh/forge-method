@@ -41,7 +41,11 @@ describe('diffLaneChanges', () => {
     await writeFile(path.join(cwd, 'kept.txt'), 'kept');
     await writeFile(path.join(cwd, 'doomed.txt'), 'doomed');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await writeFile(path.join(handle.path, 'kept.txt'), 'modified');
     await writeFile(path.join(handle.path, 'new.txt'), 'new');
     await rm(path.join(handle.path, 'doomed.txt'));
@@ -56,7 +60,11 @@ describe('diffLaneChanges', () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'a.txt'), 'a');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
 
     expect(await diffLaneChanges(handle, baseSha)).toEqual([]);
   });
@@ -67,7 +75,11 @@ describe('diffLaneChanges', () => {
     await commitAll(cwd, 'seed');
     const { stdout: currentBranchRaw } = await execa('git', ['branch', '--show-current'], { cwd });
     const currentBranch = currentBranchRaw.trim();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: currentBranch });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: currentBranch,
+    });
     await writeFile(path.join(handle.path, 'b.txt'), 'b');
     await commitAll(handle.path, 'lane work');
 
@@ -76,7 +88,11 @@ describe('diffLaneChanges', () => {
 
   it('rejects a flag-shaped baseSha with a VcsError rather than letting it reach git diff unresolved', async () => {
     const cwd = await createTempRepo();
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
 
     await expect(diffLaneChanges(handle, '-q')).rejects.toBeInstanceOf(VcsError);
   });
@@ -84,9 +100,16 @@ describe('diffLaneChanges', () => {
   it('reports a rename as an independent deletion of the old path and addition of the new one, not one collapsed entry', async () => {
     const cwd = await createTempRepo();
     await mkdir(path.join(cwd, 'docs'), { recursive: true });
-    await writeFile(path.join(cwd, 'docs', 'secret_plan.md'), 'a fairly long file so git\'s similarity heuristic sees this as a rename rather than an unrelated delete+add pair\n');
+    await writeFile(
+      path.join(cwd, 'docs', 'secret_plan.md'),
+      "a fairly long file so git's similarity heuristic sees this as a rename rather than an unrelated delete+add pair\n",
+    );
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await mkdir(path.join(handle.path, 'src'), { recursive: true });
     await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], { cwd: handle.path });
     await commitAll(handle.path, 'lane work');
@@ -100,7 +123,11 @@ describe('diffLaneChanges', () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'a.txt'), 'a');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await writeFile(path.join(handle.path, 'café.txt'), 'accented filename');
     await commitAll(handle.path, 'lane work');
 
@@ -111,7 +138,11 @@ describe('diffLaneChanges', () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'a.txt'), 'a');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     // Never committed — the exact shape of an untracked .env file (20 §20.2 point 2) that must not
     // silently pass through unreported.
     await writeFile(path.join(handle.path, '.env'), 'SECRET=1');
@@ -123,7 +154,11 @@ describe('diffLaneChanges', () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'tracked.txt'), 'original');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await writeFile(path.join(handle.path, 'tracked.txt'), 'staged but not committed');
     await execa('git', ['add', 'tracked.txt'], { cwd: handle.path });
 
@@ -136,7 +171,11 @@ describe('diffLaneChanges', () => {
     await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
     await writeFile(path.join(cwd, 'shared.txt'), 'original');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await writeFile(path.join(handle.path, 'shared.txt'), 'lane modified this out of claim');
     await commitAll(handle.path, 'lane work');
 
@@ -162,7 +201,11 @@ describe('enforceClaim', () => {
     await mkdir(path.join(cwd, 'src'), { recursive: true });
     await writeFile(path.join(cwd, 'src', 'existing.ts'), 'original');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     return { cwd, baseSha, handle };
   }
 
@@ -177,7 +220,9 @@ describe('enforceClaim', () => {
 
     expect(result.outOfClaim).toEqual(['docs/readme.md']);
     expect(result.reverted).toEqual([]);
-    await expect(readFile(path.join(handle.path, 'docs', 'readme.md'), 'utf8')).resolves.toBe('out of claim');
+    await expect(readFile(path.join(handle.path, 'docs', 'readme.md'), 'utf8')).resolves.toBe(
+      'out of claim',
+    );
   });
 
   it('strict: reverts a modified out-of-claim file to its exact baseSha content', async () => {
@@ -186,7 +231,11 @@ describe('enforceClaim', () => {
     await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
     await writeFile(path.join(cwd, 'shared.txt'), 'original shared content');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await writeFile(path.join(handle.path, 'shared.txt'), 'lane modified this out of claim');
     await commitAll(handle.path, 'lane work');
 
@@ -194,7 +243,9 @@ describe('enforceClaim', () => {
 
     expect(result.outOfClaim).toEqual(['shared.txt']);
     expect(result.reverted).toEqual(['shared.txt']);
-    await expect(readFile(path.join(handle.path, 'shared.txt'), 'utf8')).resolves.toBe('original shared content');
+    await expect(readFile(path.join(handle.path, 'shared.txt'), 'utf8')).resolves.toBe(
+      'original shared content',
+    );
   });
 
   it('strict: removes a brand new out-of-claim file entirely, since it has no prior state to check out', async () => {
@@ -216,7 +267,11 @@ describe('enforceClaim', () => {
     await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
     await writeFile(path.join(cwd, 'shared.txt'), 'must survive');
     const baseSha = await commitAll(cwd, 'seed');
-    const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: baseSha });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
     await rm(path.join(handle.path, 'shared.txt'));
     await commitAll(handle.path, 'lane work');
 
@@ -224,7 +279,9 @@ describe('enforceClaim', () => {
 
     expect(result.outOfClaim).toEqual(['shared.txt']);
     expect(result.reverted).toEqual(['shared.txt']);
-    await expect(readFile(path.join(handle.path, 'shared.txt'), 'utf8')).resolves.toBe('must survive');
+    await expect(readFile(path.join(handle.path, 'shared.txt'), 'utf8')).resolves.toBe(
+      'must survive',
+    );
   });
 
   it('leaves in-claim files completely untouched under strict, and reports no violation at all', async () => {
@@ -236,7 +293,9 @@ describe('enforceClaim', () => {
 
     expect(result.outOfClaim).toEqual([]);
     expect(result.reverted).toEqual([]);
-    await expect(readFile(path.join(handle.path, 'src', 'existing.ts'), 'utf8')).resolves.toBe('in-claim edit');
+    await expect(readFile(path.join(handle.path, 'src', 'existing.ts'), 'utf8')).resolves.toBe(
+      'in-claim edit',
+    );
   });
 
   it('treats a dotfile inside a claimed directory as in-claim, not a violation', async () => {
@@ -248,7 +307,9 @@ describe('enforceClaim', () => {
 
     expect(result.outOfClaim).toEqual([]);
     expect(result.reverted).toEqual([]);
-    await expect(readFile(path.join(handle.path, 'src', '.eslintrc.json'), 'utf8')).resolves.toBe('{}');
+    await expect(readFile(path.join(handle.path, 'src', '.eslintrc.json'), 'utf8')).resolves.toBe(
+      '{}',
+    );
   });
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
@@ -282,7 +343,9 @@ describe('enforceClaim', () => {
         expect(caught.message).toContain('ccc.txt');
         await expect(access(path.join(handle.path, 'aaa.txt'))).rejects.toThrow();
         await expect(access(path.join(handle.path, 'ccc.txt'))).rejects.toThrow();
-        await expect(readFile(path.join(handle.path, 'locked', 'bbb.txt'), 'utf8')).resolves.toBe('bbb');
+        await expect(readFile(path.join(handle.path, 'locked', 'bbb.txt'), 'utf8')).resolves.toBe(
+          'bbb',
+        );
       } finally {
         await chmod(path.join(handle.path, 'locked'), 0o755);
       }
@@ -322,7 +385,11 @@ describe('applySharedPathStrategy', () => {
   describe('serialize', () => {
     it('is a no-op: makes no change to the lane worktree at all', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'serialize' });
 
@@ -334,7 +401,11 @@ describe('applySharedPathStrategy', () => {
   describe('append-only', () => {
     it('creates .gitattributes with the union merge line when none exists yet', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
 
@@ -345,7 +416,11 @@ describe('applySharedPathStrategy', () => {
 
     it('appends to an existing .gitattributes without disturbing its other lines', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
       await writeFile(path.join(handle.path, '.gitattributes'), '*.bin binary\n');
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
@@ -357,7 +432,11 @@ describe('applySharedPathStrategy', () => {
 
     it('adds a trailing newline before appending when the existing file does not already end in one', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
       await writeFile(path.join(handle.path, '.gitattributes'), '*.bin binary');
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
@@ -369,7 +448,11 @@ describe('applySharedPathStrategy', () => {
 
     it('rethrows a non-ENOENT read failure rather than treating it as "file does not exist"', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
       vi.spyOn(fsp, 'readFile').mockRejectedValueOnce(new Error('unexplained failure'));
 
       await expect(
@@ -379,24 +462,36 @@ describe('applySharedPathStrategy', () => {
 
     it('is idempotent: calling it twice for the same glob does not duplicate the line', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
 
       const content = await readFile(path.join(handle.path, '.gitattributes'), 'utf8');
-      expect(content.split('\n').filter((line) => line === 'CHANGELOG.md merge=union')).toHaveLength(1);
+      expect(
+        content.split('\n').filter((line) => line === 'CHANGELOG.md merge=union'),
+      ).toHaveLength(1);
     });
 
     it('treats an existing line with incidental trailing whitespace as already present, not a near-duplicate to append', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
       await writeFile(path.join(handle.path, '.gitattributes'), 'CHANGELOG.md merge=union \n');
 
       await applySharedPathStrategy(handle, { glob: 'CHANGELOG.md', strategy: 'append-only' });
 
       const content = await readFile(path.join(handle.path, '.gitattributes'), 'utf8');
-      expect(content.split('\n').filter((line) => line.trim() === 'CHANGELOG.md merge=union')).toHaveLength(1);
+      expect(
+        content.split('\n').filter((line) => line.trim() === 'CHANGELOG.md merge=union'),
+      ).toHaveLength(1);
     });
 
     it('lets a real concurrent two-branch edit to the same file merge cleanly, with both additions present', async () => {
@@ -404,22 +499,34 @@ describe('applySharedPathStrategy', () => {
       await writeFile(path.join(cwd, 'CHANGELOG.md'), 'line1\n');
       const baseSha = await commitAll(cwd, 'seed');
 
-      const handleA = await createLaneWorktree(cwd, { runId: 'run-a', stepId: 'a', integrationBase: baseSha });
+      const handleA = await createLaneWorktree(cwd, {
+        runId: 'run-a',
+        stepId: 'a',
+        integrationBase: baseSha,
+      });
       await applySharedPathStrategy(handleA, { glob: 'CHANGELOG.md', strategy: 'append-only' });
       await writeFile(path.join(handleA.path, 'CHANGELOG.md'), 'line1\nadded-by-a\n');
       await commitAll(handleA.path, 'a change');
 
-      const handleB = await createLaneWorktree(cwd, { runId: 'run-b', stepId: 'b', integrationBase: baseSha });
+      const handleB = await createLaneWorktree(cwd, {
+        runId: 'run-b',
+        stepId: 'b',
+        integrationBase: baseSha,
+      });
       await applySharedPathStrategy(handleB, { glob: 'CHANGELOG.md', strategy: 'append-only' });
       await writeFile(path.join(handleB.path, 'CHANGELOG.md'), 'line1\nadded-by-b\n');
       await commitAll(handleB.path, 'b change');
 
-      await execa('git', ['merge', handleB.branch, '--no-edit', '-m', 'merge'], { cwd: handleA.path });
+      await execa('git', ['merge', handleB.branch, '--no-edit', '-m', 'merge'], {
+        cwd: handleA.path,
+      });
 
       const merged = await readFile(path.join(handleA.path, 'CHANGELOG.md'), 'utf8');
       expect(merged).toContain('added-by-a');
       expect(merged).toContain('added-by-b');
-      const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: handleA.path });
+      const { stdout: status } = await execa('git', ['status', '--porcelain'], {
+        cwd: handleA.path,
+      });
       expect(status).toBe('');
     });
   });
@@ -427,7 +534,11 @@ describe('applySharedPathStrategy', () => {
   describe('regenerate', () => {
     it('runs the configured command with cwd set to the lane worktree', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       await applySharedPathStrategy(handle, {
         glob: 'generated.txt',
@@ -435,12 +546,18 @@ describe('applySharedPathStrategy', () => {
         command: 'echo regenerated > generated.txt',
       });
 
-      await expect(readFile(path.join(handle.path, 'generated.txt'), 'utf8')).resolves.toBe('regenerated\n');
+      await expect(readFile(path.join(handle.path, 'generated.txt'), 'utf8')).resolves.toBe(
+        'regenerated\n',
+      );
     });
 
     it('interprets shell operators in the command, proving it runs through a real shell, not a naive split', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       await applySharedPathStrategy(handle, {
         glob: 'x',
@@ -453,17 +570,27 @@ describe('applySharedPathStrategy', () => {
 
     it('rejects with a VcsError, not a raw execa error, when the configured command fails, with a message about the command — not git', async () => {
       const cwd = await createTempRepo();
-      const handle = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
 
       let caught: unknown;
       try {
-        await applySharedPathStrategy(handle, { glob: 'x', strategy: 'regenerate', command: 'exit 1' });
+        await applySharedPathStrategy(handle, {
+          glob: 'x',
+          strategy: 'regenerate',
+          command: 'exit 1',
+        });
       } catch (error) {
         caught = error;
       }
 
       if (!(caught instanceof VcsError)) {
-        throw new Error(`expected applySharedPathStrategy to reject with a VcsError, got ${String(caught)}`);
+        throw new Error(
+          `expected applySharedPathStrategy to reject with a VcsError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('VCS-REGENERATE-COMMAND-FAILED');
       // The bug this guards against: reusing the git-flavoured wrapper's generic remedy text for an

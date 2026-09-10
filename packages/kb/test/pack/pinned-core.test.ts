@@ -19,25 +19,27 @@ import type { PinnedCore } from '../../src/pack/types.ts';
 const FIXTURE_ROOT = path.resolve(import.meta.dirname, '../../../../fixtures/greenfield-service');
 
 function findAdr(entries: readonly KbParsedEntry[]): Extract<KbParsedEntry, { kind: 'adr' }> {
-  const adr = entries.find((entry): entry is Extract<KbParsedEntry, { kind: 'adr' }> => entry.kind === 'adr');
+  const adr = entries.find(
+    (entry): entry is Extract<KbParsedEntry, { kind: 'adr' }> => entry.kind === 'adr',
+  );
   if (adr === undefined) throw new Error('fixture missing an adr entry');
   return adr;
 }
 
 describe('computePinnedCore — fixtures/greenfield-service', () => {
-  it('takes glossary from glossary.md\'s own body, not a fabricated summary', async () => {
+  it("takes glossary from glossary.md's own body, not a fabricated summary", async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const core = computePinnedCore(tree, undefined);
-    expect(core.glossary).toContain('Term definitions for this project\'s domain.');
+    expect(core.glossary).toContain("Term definitions for this project's domain.");
     expect(core.glossary).toContain('**Component**');
   });
 
-  it('takes codingStandards from engineering/standards.md\'s own body', async () => {
+  it("takes codingStandards from engineering/standards.md's own body", async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const core = computePinnedCore(tree, undefined);
-    expect(core.codingStandards).toContain('follows the repository\'s own ESLint configuration');
+    expect(core.codingStandards).toContain("follows the repository's own ESLint configuration");
   });
 
   it('computes constraints as one sorted line per active constraints-section entry', async () => {
@@ -51,7 +53,9 @@ describe('computePinnedCore — fixtures/greenfield-service', () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const core = computePinnedCore(tree, undefined);
-    expect(core.adrIndex).toBe('ADR-0001: Use PostgreSQL as the primary transactional store (accepted)');
+    expect(core.adrIndex).toBe(
+      'ADR-0001: Use PostgreSQL as the primary transactional store (accepted)',
+    );
   });
 
   it('leaves projectIdentity/level/stageGoal undefined when no override is given', async () => {
@@ -114,10 +118,12 @@ describe('computePinnedCore — fixtures/greenfield-service', () => {
           path: 'constraints/draft.md',
           kind: 'kb-entry' as const,
           value: {
-            ...(tree.entries.find((e) => e.path === 'constraints/technical.md') as Extract<
-              (typeof tree.entries)[number],
-              { kind: 'kb-entry' }
-            >).value,
+            ...(
+              tree.entries.find((e) => e.path === 'constraints/technical.md') as Extract<
+                (typeof tree.entries)[number],
+                { kind: 'kb-entry' }
+              >
+            ).value,
             id: 'KB-CON-0002',
             status: 'draft' as const,
             title: 'A not-yet-active constraint',
@@ -201,7 +207,10 @@ describe('computePinnedCore — fixtures/greenfield-service', () => {
     const adr = findAdr(tree.entries);
     const withNonEntryAtGlossaryPath = {
       ...tree,
-      entries: [...tree.entries.filter((e) => e.path !== 'glossary.md'), { ...adr, path: 'glossary.md' }],
+      entries: [
+        ...tree.entries.filter((e) => e.path !== 'glossary.md'),
+        { ...adr, path: 'glossary.md' },
+      ],
     };
     const core = computePinnedCore(withNonEntryAtGlossaryPath, undefined);
     expect(core.glossary).toBe('');

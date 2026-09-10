@@ -60,13 +60,16 @@ export type AutonomyLevel = 'supervised' | 'guided' | 'autonomous';
  * `10` (P8's own `RetryPolicy` has neither field) — `backoffMs` gets this piece's own invented, clearly-
  * placeholder default (`DEFAULT_BACKOFF_MS` in `compile.ts`), `escalate` stays `undefined` for every M5
  * step (nothing authors it yet; the field itself is optional in `06` §6.8's own interface too). */
-export type RetryableFailureClass = 'transient' | 'tool-error' | 'validation' | 'test-failure' | 'timeout';
+export type RetryableFailureClass =
+  'transient' | 'tool-error' | 'validation' | 'test-failure' | 'timeout';
 
 export interface StepNodeRetryPolicy {
   readonly maxAttempts: number;
   readonly backoffMs: readonly [number, number];
   readonly retryOn: readonly RetryableFailureClass[];
-  readonly escalate?: { readonly afterAttempts: number; readonly to: 'stronger-model' | 'human' | 'diagnostician' } | undefined;
+  readonly escalate?:
+    | { readonly afterAttempts: number; readonly to: 'stronger-model' | 'human' | 'diagnostician' }
+    | undefined;
 }
 
 /** `06` §6.2's own inline `limits: { maxTurns: number; wallClockMs: number; maxCostUsd: number }`,
@@ -89,7 +92,16 @@ export interface StepNodeLimits {
  * `compile.ts`'s own top-of-file comment for why those two never become a `StepNode` at all) — so `06`
  * §6.2's own closed `StepNode.kind` union is incomplete relative to the fuller table it's compiled from,
  * the same class of correction `Q70`'s design point 5 already made for `WorkflowExistenceOracle`. */
-export type StepNodeKind = 'agent' | 'command' | 'gate' | 'elicit' | 'session' | 'subworkflow' | 'fanout' | 'merge' | 'checkpoint';
+export type StepNodeKind =
+  | 'agent'
+  | 'command'
+  | 'gate'
+  | 'elicit'
+  | 'session'
+  | 'subworkflow'
+  | 'fanout'
+  | 'merge'
+  | 'checkpoint';
 
 /** `06` §6.2's own closed four-value set — `@forge/engine/workflow`'s own `AgentStep.onFailure?: string`
  * is deliberately loose at the *authoring* level (P8's own doc comment: "the closed set of valid failure
@@ -222,5 +234,10 @@ export interface CriticalPathResult {
  * `compileRunPlan` (the one entry point everything downstream — scheduler, gate evaluation, resume —
  * actually calls, per this piece's own Surface text) never needs to re-derive it from `nodes` by hand. */
 export type RunPlanResult =
-  | { readonly success: true; readonly nodes: readonly StepNode[]; readonly criticalPath: CriticalPathResult; readonly claims: ClaimIntervalMap }
+  | {
+      readonly success: true;
+      readonly nodes: readonly StepNode[];
+      readonly criticalPath: CriticalPathResult;
+      readonly claims: ClaimIntervalMap;
+    }
   | { readonly success: false; readonly issues: readonly CompileIssue[] };

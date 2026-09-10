@@ -51,7 +51,9 @@ function excessiveDepthIssue(code: string): ValidationIssue {
  * added to a caller's result — `walkWithDepthGuard` still unconditionally descends into every frame
  * regardless of its own `collect` flag, which is what lets a `parallel`/`sequence` nested *inside* that
  * same fanout child still have its own children correctly marked `collect: true`, one level further in. */
-function childFrames(step: WorkflowStep): readonly { readonly step: WorkflowStep; readonly collect: boolean }[] {
+function childFrames(
+  step: WorkflowStep,
+): readonly { readonly step: WorkflowStep; readonly collect: boolean }[] {
   if (step.kind === 'fanout') return [{ step: step.step, collect: false }];
   if (step.kind === 'parallel' || step.kind === 'sequence') {
     return step.steps.map((child) => ({ step: child, collect: true }));
@@ -90,9 +92,11 @@ function walkWithDepthGuard(
   collectFilter: (collect: boolean) => boolean,
 ): DepthLimitedWalkResult {
   const visited: WorkflowStep[] = [];
-  const stack: { readonly step: WorkflowStep; readonly depth: number; readonly collect: boolean }[] = roots
-    .map((root) => ({ step: root.step, depth: 0, collect: root.collect }))
-    .reverse();
+  const stack: {
+    readonly step: WorkflowStep;
+    readonly depth: number;
+    readonly collect: boolean;
+  }[] = roots.map((root) => ({ step: root.step, depth: 0, collect: root.collect })).reverse();
   let exceededDepth = false;
 
   while (stack.length > 0) {
@@ -121,7 +125,10 @@ function walkAllSteps(workflow: Workflow): DepthLimitedWalkResult {
   const roots = [
     ...workflow.steps.map((step) => ({ step, collect: true })),
     ...(workflow.onComplete ?? []).map((step) => ({ step, collect: true })),
-    ...(workflow.onFailure?.escalations?.map((escalation) => ({ step: escalation.do, collect: true })) ?? []),
+    ...(workflow.onFailure?.escalations?.map((escalation) => ({
+      step: escalation.do,
+      collect: true,
+    })) ?? []),
   ];
   return walkWithDepthGuard(roots, () => true);
 }
@@ -144,7 +151,10 @@ function collectAddressableSteps(workflow: Workflow): DepthLimitedWalkResult {
   const roots = [
     ...workflow.steps.map((step) => ({ step, collect: true })),
     ...(workflow.onComplete ?? []).map((step) => ({ step, collect: false })),
-    ...(workflow.onFailure?.escalations?.map((escalation) => ({ step: escalation.do, collect: false })) ?? []),
+    ...(workflow.onFailure?.escalations?.map((escalation) => ({
+      step: escalation.do,
+      collect: false,
+    })) ?? []),
   ];
   return walkWithDepthGuard(roots, (collect) => collect);
 }
@@ -159,17 +169,15 @@ function collectAddressableSteps(workflow: Workflow): DepthLimitedWalkResult {
 function checkStepsHaveIds(addressable: readonly WorkflowStep[]): readonly ValidationIssue[] {
   return addressable
     .filter((step) => step.id === undefined)
-    .map(
-      (step): ValidationIssue => ({
-        code: 'missing-step-id',
-        severity: 'error',
-        // `step.kind` -- the one piece of distinguishing information an id-less step actually has --
-        // confirmed empirically that without it, several simultaneously-offending steps produce
-        // byte-for-byte identical issue objects, giving a caller no way to tell "N real problems" from
-        // an accidental duplicate.
-        message: `A "${step.kind}" step in workflow.steps (or a nested parallel/sequence group) has no id.`,
-      }),
-    );
+    .map((step): ValidationIssue => ({
+      code: 'missing-step-id',
+      severity: 'error',
+      // `step.kind` -- the one piece of distinguishing information an id-less step actually has --
+      // confirmed empirically that without it, several simultaneously-offending steps produce
+      // byte-for-byte identical issue objects, giving a caller no way to tell "N real problems" from
+      // an accidental duplicate.
+      message: `A "${step.kind}" step in workflow.steps (or a nested parallel/sequence group) has no id.`,
+    }));
 }
 
 function checkUniqueStepIds(addressable: readonly WorkflowStep[]): readonly ValidationIssue[] {
@@ -232,7 +240,9 @@ function checkNoCycles(addressable: readonly WorkflowStep[]): readonly Validatio
   for (const start of addressable) {
     if (start.id === undefined || state.get(start.id) === 'done') continue;
 
-    const stack: { readonly step: WorkflowStep; dependsOnIndex: number }[] = [{ step: start, dependsOnIndex: 0 }];
+    const stack: { readonly step: WorkflowStep; dependsOnIndex: number }[] = [
+      { step: start, dependsOnIndex: 0 },
+    ];
     state.set(start.id, 'visiting');
 
     while (stack.length > 0) {
@@ -262,7 +272,10 @@ function checkNoCycles(addressable: readonly WorkflowStep[]): readonly Validatio
         // the fallback this once needed is unreachable now). Silently mis-slicing instead of relying on
         // that invariant would risk repeating the same class of bug the depth-guard fix above closes.
         const cycleStartIndex = stack.findIndex((candidate) => candidate.step.id === target.id);
-        const cycle = [...stack.slice(cycleStartIndex).map((candidate) => candidate.step.id), target.id];
+        const cycle = [
+          ...stack.slice(cycleStartIndex).map((candidate) => candidate.step.id),
+          target.id,
+        ];
         issues.push({
           code: 'dependency-cycle',
           severity: 'error',
@@ -314,7 +327,8 @@ function checkProducesGlobs(steps: readonly WorkflowStep[]): readonly Validation
  * by the time any `Workflow` reaches this function; a workflow that fails to parse never reaches
  * `validateStructure` at all, so there is nothing left to independently re-check here. */
 export function validateStructure(workflow: Workflow): readonly ValidationIssue[] {
-  const { visited: addressable, exceededDepth: addressableExceeded } = collectAddressableSteps(workflow);
+  const { visited: addressable, exceededDepth: addressableExceeded } =
+    collectAddressableSteps(workflow);
   const { visited: allSteps, exceededDepth: allExceeded } = walkAllSteps(workflow);
   return [
     ...checkStepsHaveIds(addressable),
@@ -333,7 +347,10 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
  * parses that mini-syntax, and building a parser for it just to validate here would be scope this piece
  * does not own — the same "a capability this package cannot reach yet" shape `SPEC-QUESTIONS.md` Q62
  * uses throughout, most likely `@forge/engine`'s own expression-evaluator piece's job once it exists. */
-export function validateWorkflow(workflow: Workflow, oracle: WorkflowExistenceOracle): readonly ValidationIssue[] {
+export function validateWorkflow(
+  workflow: Workflow,
+  oracle: WorkflowExistenceOracle,
+): readonly ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   function report(code: string, message: string, stepId: string | undefined): void {
     issues.push({ code, severity: 'error', message, ...(stepId === undefined ? {} : { stepId }) });
@@ -341,12 +358,20 @@ export function validateWorkflow(workflow: Workflow, oracle: WorkflowExistenceOr
 
   for (const gateId of workflow.requires?.gates_passed ?? []) {
     if (!oracle.gateExists(gateId)) {
-      report('unknown-gate', `workflow.requires.gates_passed names unknown gate "${gateId}".`, undefined);
+      report(
+        'unknown-gate',
+        `workflow.requires.gates_passed names unknown gate "${gateId}".`,
+        undefined,
+      );
     }
   }
   for (const artifactType of workflow.requires?.artifacts ?? []) {
     if (!oracle.artifactTypeExists(artifactType)) {
-      report('unknown-artifact-type', `workflow.requires.artifacts names unknown artifact type "${artifactType}".`, undefined);
+      report(
+        'unknown-artifact-type',
+        `workflow.requires.artifacts names unknown artifact type "${artifactType}".`,
+        undefined,
+      );
     }
   }
 
@@ -354,10 +379,18 @@ export function validateWorkflow(workflow: Workflow, oracle: WorkflowExistenceOr
   for (const step of steps) {
     if (step.kind === 'agent') {
       if (!oracle.agentExists(step.agent)) {
-        report('unknown-agent', `Step "${step.id ?? '(unidentified)'}" references unknown agent "${step.agent}".`, step.id);
+        report(
+          'unknown-agent',
+          `Step "${step.id ?? '(unidentified)'}" references unknown agent "${step.agent}".`,
+          step.id,
+        );
       }
       if (step.brief !== undefined && !oracle.briefExists(step.brief)) {
-        report('unknown-brief', `Step "${step.id ?? '(unidentified)'}" references unknown brief "${step.brief}".`, step.id);
+        report(
+          'unknown-brief',
+          `Step "${step.id ?? '(unidentified)'}" references unknown brief "${step.brief}".`,
+          step.id,
+        );
       }
       for (const gateId of step.gateEvidence ?? []) {
         if (!oracle.gateExists(gateId)) {
@@ -379,7 +412,11 @@ export function validateWorkflow(workflow: Workflow, oracle: WorkflowExistenceOr
       }
     } else if (step.kind === 'gate') {
       if (!oracle.gateExists(step.gate)) {
-        report('unknown-gate', `Step "${step.id ?? '(unidentified)'}" references unknown gate "${step.gate}".`, step.id);
+        report(
+          'unknown-gate',
+          `Step "${step.id ?? '(unidentified)'}" references unknown gate "${step.gate}".`,
+          step.id,
+        );
       }
     } else if (step.kind === 'subworkflow') {
       if (!oracle.workflowExists(step.workflow)) {

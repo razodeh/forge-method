@@ -19,7 +19,9 @@ describe('scoreByTermOverlap', () => {
   });
 
   it('omits a document with zero overlap entirely', () => {
-    const hits = scoreByTermOverlap('async queue', [{ id: 'a', text: 'completely unrelated text' }]);
+    const hits = scoreByTermOverlap('async queue', [
+      { id: 'a', text: 'completely unrelated text' },
+    ]);
     expect(hits).toEqual([]);
   });
 

@@ -99,11 +99,17 @@ describe('checkC15SkillScoping — precondition guards', () => {
 
   it('throws plainly when the adapter has no provisionSkills method', async () => {
     const options = stubOptions({
-      skill: { skill: { id: 's', summary: '', body: '', appliesTo: [] }, prompt: 'p', expectedFragment: 'f' },
+      skill: {
+        skill: { id: 's', summary: '', body: '', appliesTo: [] },
+        prompt: 'p',
+        expectedFragment: 'f',
+      },
     });
     // provisionSkills omitted entirely — a legitimately optional method left unimplemented.
     const context = await buildContext(minimalAdapter(), options);
-    await expect(checkC15SkillScoping(context)).rejects.toThrow(/provisionSkills is not implemented/);
+    await expect(checkC15SkillScoping(context)).rejects.toThrow(
+      /provisionSkills is not implemented/,
+    );
   });
 
   function skillStrategyAdapter(
@@ -130,7 +136,9 @@ describe('checkC15SkillScoping — precondition guards', () => {
             Promise.resolve({
               sessionId: 's1',
               ok: true,
-              finalText: provisionedStepIds.has(request.stepId) ? 'the-skill-fragment' : 'nothing provisioned',
+              finalText: provisionedStepIds.has(request.stepId)
+                ? 'the-skill-fragment'
+                : 'nothing provisioned',
               usage: { inputTokens: 0, outputTokens: 0, turns: 1 },
               durationMs: 0,
               changedFiles: [],
@@ -180,7 +188,12 @@ describe('checkC15SkillScoping — precondition guards', () => {
 });
 
 describe('checkC16McpGrantFidelity — precondition guards and orphan tool.result', () => {
-  const server = { id: 'server-1', transport: 'stdio' as const, command: 'echo', grantedTools: ['allowed'] };
+  const server = {
+    id: 'server-1',
+    transport: 'stdio' as const,
+    command: 'echo',
+    grantedTools: ['allowed'],
+  };
 
   it('throws plainly when called directly with no mcp fixture supplied', async () => {
     const context = await buildContext(minimalAdapter(), stubOptions());
@@ -193,7 +206,9 @@ describe('checkC16McpGrantFidelity — precondition guards and orphan tool.resul
     });
     // provisionMcp omitted entirely — a legitimately optional method left unimplemented.
     const context = await buildContext(minimalAdapter(), options);
-    await expect(checkC16McpGrantFidelity(context)).rejects.toThrow(/provisionMcp is not implemented/);
+    await expect(checkC16McpGrantFidelity(context)).rejects.toThrow(
+      /provisionMcp is not implemented/,
+    );
   });
 
   it('ignores a tool.result event whose id matches no prior tool.call, rather than crashing', async () => {
@@ -211,7 +226,12 @@ describe('checkC16McpGrantFidelity — precondition guards and orphan tool.resul
             // it must be skipped rather than crash the correlation logic.
             yield { type: 'tool.result' as const, id: 'no-such-call', ok: true, summary: 'orphan' };
             yield { type: 'tool.call' as const, id: 'call-allowed', name: 'allowed' };
-            yield { type: 'tool.result' as const, id: 'call-allowed', ok: true, summary: 'allowed ok' };
+            yield {
+              type: 'tool.result' as const,
+              id: 'call-allowed',
+              ok: true,
+              summary: 'allowed ok',
+            };
             yield { type: 'session.ended' as const, reason: 'complete' as const };
           })(),
           stop: () => Promise.resolve(),

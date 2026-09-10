@@ -100,7 +100,11 @@ describe('buildContextPack — structural retrieval (declared inputs)', () => {
     const tree = await realTree();
     const backend = realBackend(tree);
     const pack = buildContextPack(
-      { declaredInputIds: ['RUN-001'], briefText: 'PostgreSQL container decomposition', budgetTokens: 100_000 },
+      {
+        declaredInputIds: ['RUN-001'],
+        briefText: 'PostgreSQL container decomposition',
+        budgetTokens: 100_000,
+      },
       backend,
       tree,
     );
@@ -114,7 +118,11 @@ describe('buildContextPack — structural retrieval (declared inputs)', () => {
     const backend = realBackend(tree);
     let thrown: unknown;
     try {
-      buildContextPack({ declaredInputIds: ['KB-NOPE-9999'], briefText: '', budgetTokens: 100_000 }, backend, tree);
+      buildContextPack(
+        { declaredInputIds: ['KB-NOPE-9999'], briefText: '', budgetTokens: 100_000 },
+        backend,
+        tree,
+      );
     } catch (error) {
       thrown = error;
     }
@@ -123,7 +131,7 @@ describe('buildContextPack — structural retrieval (declared inputs)', () => {
 });
 
 describe('buildContextPack — lexical retrieval', () => {
-  it('ranks an entry containing more of the brief\'s salient terms above one containing fewer, using the real backend search', async () => {
+  it("ranks an entry containing more of the brief's salient terms above one containing fewer, using the real backend search", async () => {
     const tree = await realTree();
     const backend = realBackend(tree);
     const pack = buildContextPack(
@@ -134,8 +142,14 @@ describe('buildContextPack — lexical retrieval', () => {
     // KB-CON-0001's body contains both "runtime" and "service"; KB-ARCH-0001's body and RUN-001's own
     // title each contain only "service" — tied at a lower score, broken by id ascending (both share
     // the same `updated` date).
-    expect(pack.retrieved.map((entry) => entry.id)).toEqual(['KB-CON-0001', 'KB-ARCH-0001', 'RUN-001']);
-    expect(pack.retrieved[0]?.score).toBeGreaterThan(pack.retrieved[1]?.score ?? Number.POSITIVE_INFINITY);
+    expect(pack.retrieved.map((entry) => entry.id)).toEqual([
+      'KB-CON-0001',
+      'KB-ARCH-0001',
+      'RUN-001',
+    ]);
+    expect(pack.retrieved[0]?.score).toBeGreaterThan(
+      pack.retrieved[1]?.score ?? Number.POSITIVE_INFINITY,
+    );
     expect(pack.retrieved[1]?.score).toBe(pack.retrieved[2]?.score);
   });
 });
@@ -174,9 +188,15 @@ describe('buildContextPack — graph expansion', () => {
     );
     if (adr === undefined || diagram === undefined) throw new Error('fixture missing adr/diagram');
 
-    const older = { ...diagram, value: { ...diagram.value, id: 'TIE-OLDER', updated: '2026-01-01' } };
+    const older = {
+      ...diagram,
+      value: { ...diagram.value, id: 'TIE-OLDER', updated: '2026-01-01' },
+    };
     const newer = { ...adr, value: { ...adr.value, id: 'TIE-NEWER', updated: '2026-06-01' } };
-    const sameAgeA = { ...diagram, value: { ...diagram.value, id: 'TIE-SAME-B', updated: '2026-03-01' } };
+    const sameAgeA = {
+      ...diagram,
+      value: { ...diagram.value, id: 'TIE-SAME-B', updated: '2026-03-01' },
+    };
     const sameAgeB = { ...adr, value: { ...adr.value, id: 'TIE-SAME-A', updated: '2026-03-01' } };
     const syntheticTree: KbTree = {
       entries: [...tree.entries, older, newer, sameAgeA, sameAgeB],
@@ -184,7 +204,11 @@ describe('buildContextPack — graph expansion', () => {
     };
 
     const backend = new FakeBackend([], ['TIE-OLDER', 'TIE-NEWER', 'TIE-SAME-A', 'TIE-SAME-B']);
-    const pack = buildContextPack({ declaredInputIds: [], briefText: '', budgetTokens: 100_000 }, backend, syntheticTree);
+    const pack = buildContextPack(
+      { declaredInputIds: [], briefText: '', budgetTokens: 100_000 },
+      backend,
+      syntheticTree,
+    );
 
     // All four tie on score (0). Recency (updated desc) breaks first: NEWER, then the two SAME-age
     // entries (tied again, broken by id ascending), then OLDER last.
@@ -206,7 +230,10 @@ describe('buildContextPack — graph expansion', () => {
     );
     if (adr === undefined || diagram === undefined) throw new Error('fixture missing adr/diagram');
 
-    const higherId = { ...diagram, value: { ...diagram.value, id: 'TIE-Z', updated: '2026-03-01' } };
+    const higherId = {
+      ...diagram,
+      value: { ...diagram.value, id: 'TIE-Z', updated: '2026-03-01' },
+    };
     const lowerId = { ...adr, value: { ...adr.value, id: 'TIE-A', updated: '2026-03-01' } };
     const syntheticTree: KbTree = { entries: [...tree.entries, higherId, lowerId], errors: [] };
 
@@ -214,7 +241,11 @@ describe('buildContextPack — graph expansion', () => {
     // sort's very first comparator call sees (lower, higher) and must decide "lower belongs first"
     // itself, rather than happening to already be in that order.
     const backend = new FakeBackend([], ['TIE-Z', 'TIE-A']);
-    const pack = buildContextPack({ declaredInputIds: [], briefText: '', budgetTokens: 100_000 }, backend, syntheticTree);
+    const pack = buildContextPack(
+      { declaredInputIds: [], briefText: '', budgetTokens: 100_000 },
+      backend,
+      syntheticTree,
+    );
 
     expect(pack.retrieved.map((entry) => entry.id)).toEqual(['TIE-A', 'TIE-Z']);
   });
@@ -241,7 +272,10 @@ describe('buildContextPack — budget', () => {
     };
 
     const unconstrained = buildContextPack({ ...request, budgetTokens: 100_000 }, backend, tree);
-    expect(unconstrained.retrieved.map((entry) => entry.id)).toEqual(['KB-CON-0001', 'KB-ARCH-0001']);
+    expect(unconstrained.retrieved.map((entry) => entry.id)).toEqual([
+      'KB-CON-0001',
+      'KB-ARCH-0001',
+    ]);
 
     const starved = buildContextPack({ ...request, budgetTokens: 0 }, backend, tree);
     expect(starved.retrieved).toEqual([]);
@@ -273,7 +307,11 @@ describe('buildContextPack — budget', () => {
     const budgetForArch = minimalBudgetFor('KB-ARCH-0001');
     expect(budgetForArch).toBeGreaterThan(budgetForCon);
 
-    const atConBoundary = buildContextPack({ ...request, budgetTokens: budgetForCon }, backend, tree);
+    const atConBoundary = buildContextPack(
+      { ...request, budgetTokens: budgetForCon },
+      backend,
+      tree,
+    );
     expect(atConBoundary.retrieved.map((entry) => entry.id)).toEqual(['KB-CON-0001']);
   });
 
@@ -287,8 +325,14 @@ describe('buildContextPack — budget', () => {
     // Both candidates are `diagram`-kind so pinned core (built from `adr`/`kb-entry` entries only)
     // stays entirely empty here — pinnedCoreTokens is exactly 0, so the budget below is exactly and
     // only "enough for SMALL, not BIG."
-    const big = { ...diagram, value: { ...diagram.value, id: 'BIG', caption: 'x'.repeat(4000), alt_text: '' } };
-    const small = { ...diagram, value: { ...diagram.value, id: 'SMALL', caption: 's', alt_text: '' } };
+    const big = {
+      ...diagram,
+      value: { ...diagram.value, id: 'BIG', caption: 'x'.repeat(4000), alt_text: '' },
+    };
+    const small = {
+      ...diagram,
+      value: { ...diagram.value, id: 'SMALL', caption: 's', alt_text: '' },
+    };
     const syntheticTree: KbTree = { entries: [big, small], errors: [] };
 
     const backend = new FakeBackend(
@@ -299,7 +343,11 @@ describe('buildContextPack — budget', () => {
       [],
     );
     const budgetTokens = estimateTokens('s\n\n'); // exactly SMALL's own content, nothing more
-    const pack = buildContextPack({ declaredInputIds: [], briefText: 'x', budgetTokens }, backend, syntheticTree);
+    const pack = buildContextPack(
+      { declaredInputIds: [], briefText: 'x', budgetTokens },
+      backend,
+      syntheticTree,
+    );
 
     // SMALL alone would fit, but BIG outranks it and doesn't fit, so both are dropped.
     expect(pack.retrieved).toEqual([]);
@@ -313,7 +361,11 @@ describe('buildContextPack — input validation', () => {
     // KB-GLOSS-0001 has no related/supersedes/diagrams/applies_to links in either direction, so graph
     // expansion contributes nothing here — the test stays about deduplication alone, not retrieval.
     const pack = buildContextPack(
-      { declaredInputIds: ['KB-GLOSS-0001', 'KB-GLOSS-0001'], briefText: '', budgetTokens: 100_000 },
+      {
+        declaredInputIds: ['KB-GLOSS-0001', 'KB-GLOSS-0001'],
+        briefText: '',
+        budgetTokens: 100_000,
+      },
       backend,
       tree,
     );
@@ -329,7 +381,11 @@ describe('buildContextPack — input validation', () => {
     const backend = realBackend(tree);
     let thrown: unknown;
     try {
-      buildContextPack({ declaredInputIds: [], briefText: '', budgetTokens: Number.NaN }, backend, tree);
+      buildContextPack(
+        { declaredInputIds: [], briefText: '', budgetTokens: Number.NaN },
+        backend,
+        tree,
+      );
     } catch (error) {
       thrown = error;
     }
@@ -356,7 +412,7 @@ describe('buildContextPack — input validation', () => {
 });
 
 describe('buildContextPack — manifest', () => {
-  it('records exactly the included ids and each one\'s token count, and carries no content of its own', async () => {
+  it("records exactly the included ids and each one's token count, and carries no content of its own", async () => {
     const tree = await realTree();
     const backend = realBackend(tree);
     const pack = buildContextPack(
@@ -369,7 +425,9 @@ describe('buildContextPack — manifest', () => {
     expect(Object.keys(pack.manifest.tokenCounts).sort()).toEqual(
       ['KB-ARCH-0001', 'KB-CON-0001', 'RUN-001'].sort(),
     );
-    expect(pack.manifest.tokenCounts['RUN-001']).toBe(estimateTokens(pack.declaredInputs[0]?.content ?? ''));
+    expect(pack.manifest.tokenCounts['RUN-001']).toBe(
+      estimateTokens(pack.declaredInputs[0]?.content ?? ''),
+    );
     expect(pack.manifest.tokenCounts['KB-CON-0001']).toBe(
       estimateTokens(pack.retrieved.find((entry) => entry.id === 'KB-CON-0001')?.content ?? ''),
     );
@@ -401,7 +459,7 @@ describe('buildContextPack — determinism', () => {
 });
 
 describe('buildContextPack — benchmark (informational, not a gate)', () => {
-  it('assembles a pack over a ~500-entry synthetic KB well inside 21 §21\'s 300ms figure', async () => {
+  it("assembles a pack over a ~500-entry synthetic KB well inside 21 §21's 300ms figure", async () => {
     const tree = await realTree();
     const template = tree.entries.find(
       (entry): entry is Extract<KbParsedEntry, { kind: 'kb-entry' }> => entry.kind === 'kb-entry',
@@ -425,7 +483,11 @@ describe('buildContextPack — benchmark (informational, not a gate)', () => {
 
     const start = performance.now();
     const pack = buildContextPack(
-      { declaredInputIds: ['RUN-001'], briefText: 'runtime service database', budgetTokens: 10_000 },
+      {
+        declaredInputIds: ['RUN-001'],
+        briefText: 'runtime service database',
+        budgetTokens: 10_000,
+      },
       backend,
       bigTree,
     );
@@ -435,7 +497,9 @@ describe('buildContextPack — benchmark (informational, not a gate)', () => {
     // Informational per PLAN-M3.md P9: recorded, not enforced at exactly 300ms — a generous ceiling
     // here only catches a catastrophic algorithmic regression, not ordinary machine variance.
     // eslint-disable-next-line no-console -- deliberate benchmark reporting, not leftover debugging.
-    console.info(`buildContextPack over ${String(bigTree.entries.length)} entries took ${durationMs.toFixed(2)}ms`);
+    console.info(
+      `buildContextPack over ${String(bigTree.entries.length)} entries took ${durationMs.toFixed(2)}ms`,
+    );
     expect(durationMs).toBeLessThan(2_000);
   });
 });

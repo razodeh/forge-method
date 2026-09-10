@@ -51,7 +51,8 @@ describe('emitHandoff', () => {
       'FORGE_HANDOFF: platform the repo scaffold is ready for initialization',
     );
     const handoffToken = tokens[0];
-    if (handoffToken === undefined) throw new Error('expected parseControlTokens to recognize the line');
+    if (handoffToken === undefined)
+      throw new Error('expected parseControlTokens to recognize the line');
     expect(handoffToken.token).toBe('FORGE_HANDOFF');
 
     const { emitted, emitter } = fakeTelemetry();
@@ -74,7 +75,8 @@ describe('emitHandoff', () => {
   it('throws RUN-047 when given a non-FORGE_HANDOFF token', async () => {
     const { tokens } = parseControlTokens('FORGE_ASK: question="pick one" options=[a,b]');
     const askToken = tokens[0];
-    if (askToken === undefined) throw new Error('expected parseControlTokens to recognize the line');
+    if (askToken === undefined)
+      throw new Error('expected parseControlTokens to recognize the line');
     expect(askToken.token).toBe('FORGE_ASK');
 
     const { emitter } = fakeTelemetry();

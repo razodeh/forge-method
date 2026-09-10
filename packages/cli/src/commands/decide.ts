@@ -10,7 +10,13 @@
  * @see specs/11 §11.0
  */
 import { readFramework } from '@forge/methods/schema';
-import { applyRules, killerRisk, score, type EvidenceCell, type ScoredOption } from '@forge/methods/score';
+import {
+  applyRules,
+  killerRisk,
+  score,
+  type EvidenceCell,
+  type ScoredOption,
+} from '@forge/methods/score';
 import { ProjectPaths } from '@forge/core/fs';
 
 import { resolvePackageRoot } from '../init/package-root.ts';

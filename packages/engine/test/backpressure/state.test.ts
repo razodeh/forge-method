@@ -18,7 +18,12 @@ const QUIET_PERIOD_MS = 30_000;
 describe('createBackpressureState', () => {
   it('starts with the effective ceiling equal to the configured one, and no signal recorded', () => {
     const state = createBackpressureState(8);
-    expect(state).toEqual({ configuredCeiling: 8, ceiling: 8, ceilingAtLastSignal: undefined, lastSignalAt: undefined });
+    expect(state).toEqual({
+      configuredCeiling: 8,
+      ceiling: 8,
+      ceilingAtLastSignal: undefined,
+      lastSignalAt: undefined,
+    });
   });
 });
 
@@ -28,7 +33,7 @@ describe('onRateLimitSignal', () => {
     expect(state.ceiling).toBe(4);
   });
 
-  it('halves again from the already-reduced ceiling on a second, immediate signal -- this piece\'s own worked example (8 -> 4 -> 2)', () => {
+  it("halves again from the already-reduced ceiling on a second, immediate signal -- this piece's own worked example (8 -> 4 -> 2)", () => {
     let state = createBackpressureState(8);
     state = onRateLimitSignal(state, 0);
     expect(state.ceiling).toBe(4);

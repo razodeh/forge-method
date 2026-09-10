@@ -39,14 +39,26 @@ describe('checkSeparationOfDuties', () => {
   });
 
   it('permits a review step with no recorded author at all (nothing to compare against yet)', () => {
-    const violation = checkSeparationOfDuties('run-1', 'review-story-1', 'session-alpha', new Map(), 'reviewer');
+    const violation = checkSeparationOfDuties(
+      'run-1',
+      'review-story-1',
+      'session-alpha',
+      new Map(),
+      'reviewer',
+    );
     expect(violation).toBeUndefined();
   });
 
   it('applies identically to all four separation-of-duties roles: critic, diagnostician, test-architect', () => {
     const authoredBy = new Map([['step-1', 'session-alpha']]);
     for (const role of ['critic', 'diagnostician', 'test-architect'] as const) {
-      const violation = checkSeparationOfDuties('run-1', 'step-1', 'session-alpha', authoredBy, role);
+      const violation = checkSeparationOfDuties(
+        'run-1',
+        'step-1',
+        'session-alpha',
+        authoredBy,
+        role,
+      );
       expect(violation?.role).toBe(role);
     }
   });

@@ -137,7 +137,8 @@ export const kbEntrySchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['confidence'],
-        message: 'confidence: "verified" requires a "## Verification" body section with real content.',
+        message:
+          'confidence: "verified" requires a "## Verification" body section with real content.',
       });
     }
   });

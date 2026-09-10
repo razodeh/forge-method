@@ -19,14 +19,16 @@ describe('redactPayload', () => {
     expect(result).toEqual({ apiKey: '[REDACTED]', other: 'unchanged' });
   });
 
-  it('matches a key regardless of the pattern\'s own case sensitivity flag', () => {
+  it("matches a key regardless of the pattern's own case sensitivity flag", () => {
     const result = redactPayload({ 'api-key': 'sk-abc123' }, [API_KEY_PATTERN]);
 
     expect(result).toEqual({ 'api-key': '[REDACTED]' });
   });
 
-  it('redacts a matched key\'s entire value even when it is a nested object, not just a string', () => {
-    const result = redactPayload({ apiKey: { raw: 'sk-abc123', hint: 'sk-***' } }, [API_KEY_PATTERN]);
+  it("redacts a matched key's entire value even when it is a nested object, not just a string", () => {
+    const result = redactPayload({ apiKey: { raw: 'sk-abc123', hint: 'sk-***' } }, [
+      API_KEY_PATTERN,
+    ]);
 
     expect(result).toEqual({ apiKey: '[REDACTED]' });
   });
@@ -38,7 +40,10 @@ describe('redactPayload', () => {
   });
 
   it('recurses into arrays, redacting matching keys inside each element', () => {
-    const result = redactPayload([{ apiKey: 'a' }, { apiKey: 'b' }, { safe: 'c' }], [API_KEY_PATTERN]);
+    const result = redactPayload(
+      [{ apiKey: 'a' }, { apiKey: 'b' }, { safe: 'c' }],
+      [API_KEY_PATTERN],
+    );
 
     expect(result).toEqual([{ apiKey: '[REDACTED]' }, { apiKey: '[REDACTED]' }, { safe: 'c' }]);
   });
@@ -100,7 +105,10 @@ describe('redactPayload', () => {
     // CreateDataProperty internally, not [[Set]]) -- an object literal with a "__proto__" key in source
     // would instead set the prototype at construction time, so this input must come from JSON.parse (or
     // an equivalent) to reproduce the real shape a caller's own JSON-echoed payload would have.
-    const payload = JSON.parse('{"__proto__":{"apiKey":"sk-abc123"},"safe":"kept"}') as Record<string, unknown>;
+    const payload = JSON.parse('{"__proto__":{"apiKey":"sk-abc123"},"safe":"kept"}') as Record<
+      string,
+      unknown
+    >;
 
     const result = redactPayload(payload, [API_KEY_PATTERN]) as Record<string, unknown>;
 
@@ -162,7 +170,10 @@ describe('redactPayload', () => {
   it('does not falsely reject two independent fields that merely share one reference, which is not a cycle', () => {
     const shared = { apiKey: 'sk-abc123' };
 
-    const result = redactPayload({ a: shared, b: shared }, [API_KEY_PATTERN]) as { a: unknown; b: unknown };
+    const result = redactPayload({ a: shared, b: shared }, [API_KEY_PATTERN]) as {
+      a: unknown;
+      b: unknown;
+    };
 
     expect(result).toEqual({ a: { apiKey: '[REDACTED]' }, b: { apiKey: '[REDACTED]' } });
   });

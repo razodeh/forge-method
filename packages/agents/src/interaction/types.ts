@@ -9,13 +9,7 @@
 
 /** `05` §5.7's own seven-row table, verbatim. */
 export type InteractionMode =
-  | 'solo'
-  | 'pair'
-  | 'fan-out'
-  | 'panel'
-  | 'debate'
-  | 'relay'
-  | 'swarm-review';
+  'solo' | 'pair' | 'fan-out' | 'panel' | 'debate' | 'relay' | 'swarm-review';
 
 /** `05` §5.2's own four review/verification-shaped roles a separation-of-duties check applies to —
  * narrowed from A1's own load-time *shape* check (which the M6 A1 critic round narrowed further, to

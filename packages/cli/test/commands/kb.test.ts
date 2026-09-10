@@ -47,15 +47,30 @@ describe('kbList / kbShow', () => {
     await adrNew({ paths: project.paths, kbRoot: KB_ROOT }, 'A fixture decision');
 
     const list = await kbList(ctx(project));
-    expect(list.map((entry) => entry.kind).sort()).toEqual(['adr', 'diagram', 'kb-entry', 'runbook']);
+    expect(list.map((entry) => entry.kind).sort()).toEqual([
+      'adr',
+      'diagram',
+      'kb-entry',
+      'runbook',
+    ]);
   });
 
   it('lists every real collection-register kind too (risks, assumptions, open-questions, environments, components)', async () => {
     const project = await createTestProject();
     await writeCollectionFileFixture(project, 'risks.md', 'Risk', 'risks');
     await writeCollectionFileFixture(project, 'assumptions.md', 'Assumption', 'assumptions');
-    await writeCollectionFileFixture(project, 'open-questions.md', 'OpenQuestion', 'open_questions');
-    await writeCollectionFileFixture(project, 'delivery/environments.md', 'Environment', 'environments');
+    await writeCollectionFileFixture(
+      project,
+      'open-questions.md',
+      'OpenQuestion',
+      'open_questions',
+    );
+    await writeCollectionFileFixture(
+      project,
+      'delivery/environments.md',
+      'Environment',
+      'environments',
+    );
     await writeCollectionFileFixture(
       project,
       'architecture/components.md',

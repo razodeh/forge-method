@@ -125,7 +125,11 @@ function rankedCandidates(
   });
 }
 
-export function buildContextPack(request: PackRequest, backend: KbIndexBackend, tree: KbTree): ContextPack {
+export function buildContextPack(
+  request: PackRequest,
+  backend: KbIndexBackend,
+  tree: KbTree,
+): ContextPack {
   if (Number.isNaN(request.budgetTokens)) {
     throw new ForgeError('KB-014', { budgetTokens: request.budgetTokens });
   }

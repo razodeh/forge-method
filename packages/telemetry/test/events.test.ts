@@ -39,7 +39,11 @@ function eventLogFilePath(projectRoot: string, runId: string): string {
 /** Writes a hand-crafted event log file directly, bypassing `appendEvent` — for constructing corrupt or
  * gapped state `appendEvent` itself would never produce. Creates the parent directory first, since
  * (unlike `appendEvent`) a raw `writeFile` does not. */
-async function writeRawEventLog(projectRoot: string, runId: string, content: string): Promise<void> {
+async function writeRawEventLog(
+  projectRoot: string,
+  runId: string,
+  content: string,
+): Promise<void> {
   const filePath = eventLogFilePath(projectRoot, runId);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content);
@@ -124,7 +128,9 @@ describe('appendEvent', () => {
     }
 
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-PAYLOAD-CIRCULAR');
 
@@ -155,8 +161,16 @@ describe('appendEvent', () => {
     const projectRoot = await createTempProjectRoot();
 
     const [runAResults, runBResults] = await Promise.all([
-      Promise.all(Array.from({ length: 10 }, () => appendEvent(projectRoot, 'run-a', baseEvent({ runId: 'run-a' })))),
-      Promise.all(Array.from({ length: 10 }, () => appendEvent(projectRoot, 'run-b', baseEvent({ runId: 'run-b' })))),
+      Promise.all(
+        Array.from({ length: 10 }, () =>
+          appendEvent(projectRoot, 'run-a', baseEvent({ runId: 'run-a' })),
+        ),
+      ),
+      Promise.all(
+        Array.from({ length: 10 }, () =>
+          appendEvent(projectRoot, 'run-b', baseEvent({ runId: 'run-b' })),
+        ),
+      ),
     ]);
 
     expect(runAResults.map((r) => r.seq).sort((a, b) => a - b)).toEqual(
@@ -199,56 +213,52 @@ describe('appendEvent', () => {
     expect(second.seq).toBe(2);
   });
 
-  it(
-    'a real SIGKILL of the writing process immediately after it signals success does not lose the appended event — see the direct structural proof of the fsync-await ordering below for the specific "fsync itself" guarantee this alone cannot isolate',
-    async () => {
-      // What this test actually proves, and what it does not: a killed *process* never evicts the
-      // OS's own page cache, which this same-machine parent process's own reread draws from — so this
-      // is a real, meaningful proof that the write reaches the OS at all before appendEvent resolves,
-      // but confirmed empirically (via three separate mutations — a fire-and-forget sync, sync removed
-      // entirely, an unawaited write) that it cannot, by construction, distinguish "genuinely fsync'd"
-      // from "merely written to the OS's own buffer" — only a real machine/VM crash or power loss could
-      // do that, which isn't practically testable here. The test directly below this one exists
-      // specifically to close that gap: it proves the `await handle.sync()` ordering structurally,
-      // which is exactly what those three mutations broke.
-      const projectRoot = await createTempProjectRoot();
-      const runId = 'run-fsync-kill';
-      const fixturePath = fileURLToPath(new URL('./fixtures/append-and-hang.ts', import.meta.url));
+  it('a real SIGKILL of the writing process immediately after it signals success does not lose the appended event — see the direct structural proof of the fsync-await ordering below for the specific "fsync itself" guarantee this alone cannot isolate', async () => {
+    // What this test actually proves, and what it does not: a killed *process* never evicts the
+    // OS's own page cache, which this same-machine parent process's own reread draws from — so this
+    // is a real, meaningful proof that the write reaches the OS at all before appendEvent resolves,
+    // but confirmed empirically (via three separate mutations — a fire-and-forget sync, sync removed
+    // entirely, an unawaited write) that it cannot, by construction, distinguish "genuinely fsync'd"
+    // from "merely written to the OS's own buffer" — only a real machine/VM crash or power loss could
+    // do that, which isn't practically testable here. The test directly below this one exists
+    // specifically to close that gap: it proves the `await handle.sync()` ordering structurally,
+    // which is exactly what those three mutations broke.
+    const projectRoot = await createTempProjectRoot();
+    const runId = 'run-fsync-kill';
+    const fixturePath = fileURLToPath(new URL('./fixtures/append-and-hang.ts', import.meta.url));
 
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn('node', ['--experimental-strip-types', fixturePath, projectRoot, runId]);
-        let stderr = '';
-        let killed = false;
-        child.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString();
-        });
-        child.stdout.on('data', (chunk: Buffer) => {
-          if (chunk.toString().includes('APPENDED') && !killed) {
-            killed = true;
-            child.kill('SIGKILL');
-          }
-        });
-        child.on('error', reject);
-        child.on('exit', (code, signal) => {
-          if (killed) {
-            resolve();
-          } else {
-            reject(
-              new Error(
-                `fixture process exited before signaling completion: code ${String(code)}, signal ${String(signal)}, stderr: ${stderr}`,
-              ),
-            );
-          }
-        });
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('node', ['--experimental-strip-types', fixturePath, projectRoot, runId]);
+      let stderr = '';
+      let killed = false;
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
       });
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (chunk.toString().includes('APPENDED') && !killed) {
+          killed = true;
+          child.kill('SIGKILL');
+        }
+      });
+      child.on('error', reject);
+      child.on('exit', (code, signal) => {
+        if (killed) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              `fixture process exited before signaling completion: code ${String(code)}, signal ${String(signal)}, stderr: ${stderr}`,
+            ),
+          );
+        }
+      });
+    });
 
-      const events = await collectEvents(projectRoot, runId);
-      expect(events).toHaveLength(1);
-      expect(events[0]?.seq).toBe(1);
-      expect(events[0]?.payload).toEqual({ marker: 'fsync-durability-check' });
-    },
-    15_000,
-  );
+    const events = await collectEvents(projectRoot, runId);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.seq).toBe(1);
+    expect(events[0]?.payload).toEqual({ marker: 'fsync-durability-check' });
+  }, 15_000);
 
   it('structurally proves appendEvent awaits fsync itself, not merely calling it fire-and-forget', async () => {
     // FileHandle isn't exported from node:fs/promises, so its prototype is reached via a throwaway
@@ -322,7 +332,9 @@ describe('appendEvent', () => {
     }
 
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
     expect(caught.message).toContain('simulated fsync failure');
@@ -338,7 +350,7 @@ describe('appendEvent', () => {
     expect(second.seq).toBe(2);
   });
 
-  it('still surfaces the original fsync failure, not the rollback attempt\'s own failure, when both fail', async () => {
+  it("still surfaces the original fsync failure, not the rollback attempt's own failure, when both fail", async () => {
     const projectRoot = await createTempProjectRoot();
     const runId = 'run-sync-and-truncate-failure';
     const probeFile = path.join(projectRoot, 'probe.txt');
@@ -374,7 +386,9 @@ describe('appendEvent', () => {
     // what a caller actually sees must still be the original, more important diagnostic (why the write
     // was rejected in the first place), never silently replaced by a failure in the cleanup attempt.
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
     expect(caught.message).toContain('simulated fsync failure');
@@ -412,7 +426,9 @@ describe('assertSafeRunId — via appendEvent and readEvents', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-INVALID-RUN-ID');
     },
@@ -429,7 +445,9 @@ describe('assertSafeRunId — via appendEvent and readEvents', () => {
     }
 
     if (!(caught instanceof TelemetryError)) {
-      throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+      throw new Error(
+        `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+      );
     }
     expect(caught.code).toBe('TELEMETRY-INVALID-RUN-ID');
   });
@@ -593,7 +611,9 @@ describe('readEvents', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected readEvents to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected readEvents to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-CORRUPT');
     },
@@ -622,7 +642,9 @@ describe('readEvents', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected readEvents to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected readEvents to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-READ-FAILED');
     },
@@ -652,7 +674,9 @@ describe('appendEvent — resilience', () => {
         firstCaught = error;
       }
       if (!(firstCaught instanceof TelemetryError)) {
-        throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(firstCaught)}`);
+        throw new Error(
+          `expected appendEvent to reject with a TelemetryError, got ${String(firstCaught)}`,
+        );
       }
       // A real, non-ENOENT open() failure in the write path itself (not the read-side, already covered
       // above) — confirmed wrapped into this module's own typed error, not left as a bare Node EACCES.
@@ -689,14 +713,16 @@ describe('appendEvent — resilience', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-READ-FAILED');
     },
   );
 
   it.skipIf(!canTestPermissionFailures)(
-    'a failed mkdir for a brand-new run\'s own directory is wrapped as a TelemetryError, not left as a bare Node error',
+    "a failed mkdir for a brand-new run's own directory is wrapped as a TelemetryError, not left as a bare Node error",
     async () => {
       const projectRoot = await createTempProjectRoot();
       const runsDir = path.join(projectRoot, '.forge', 'state', 'runs');
@@ -715,7 +741,9 @@ describe('appendEvent — resilience', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
     },
@@ -766,7 +794,14 @@ describe('torn trailing write recovery', () => {
   it('readEvents silently skips a torn (no trailing newline) final line without throwing, and does not itself rewrite the file on disk', async () => {
     const projectRoot = await createTempProjectRoot();
     const runId = 'run-torn-read-only';
-    const completeLine = JSON.stringify({ v: 1, seq: 1, ts: 't', runId, type: 'RunStarted', payload: {} });
+    const completeLine = JSON.stringify({
+      v: 1,
+      seq: 1,
+      ts: 't',
+      runId,
+      type: 'RunStarted',
+      payload: {},
+    });
     // No trailing \n -- the shape a crash mid-write leaves behind: never observed as a successful
     // append by anything, including this same module's own reader.
     const tornFragment = '{"v":1,"seq":2,"ts":"t"';
@@ -785,7 +820,14 @@ describe('torn trailing write recovery', () => {
   it('discards a torn final line on the next append, rather than gluing the new line onto the dangling fragment', async () => {
     const projectRoot = await createTempProjectRoot();
     const runId = 'run-torn-write';
-    const completeLine = JSON.stringify({ v: 1, seq: 1, ts: 't', runId, type: 'RunStarted', payload: {} });
+    const completeLine = JSON.stringify({
+      v: 1,
+      seq: 1,
+      ts: 't',
+      runId,
+      type: 'RunStarted',
+      payload: {},
+    });
     const tornFragment = `{"v":1,"seq":2,"ts":"t","runId":"${runId}","type":"RunCom`;
     await writeRawEventLog(projectRoot, runId, `${completeLine}\n${tornFragment}`);
 
@@ -807,7 +849,14 @@ describe('torn trailing write recovery', () => {
     async () => {
       const projectRoot = await createTempProjectRoot();
       const runId = 'run-torn-write-unrecoverable';
-      const completeLine = JSON.stringify({ v: 1, seq: 1, ts: 't', runId, type: 'RunStarted', payload: {} });
+      const completeLine = JSON.stringify({
+        v: 1,
+        seq: 1,
+        ts: 't',
+        runId,
+        type: 'RunStarted',
+        payload: {},
+      });
       const tornFragment = `{"v":1,"seq":2,"ts":"t","runId":"${runId}","type":"RunCom`;
       await writeRawEventLog(projectRoot, runId, `${completeLine}\n${tornFragment}`);
       const filePath = eventLogFilePath(projectRoot, runId);
@@ -825,7 +874,9 @@ describe('torn trailing write recovery', () => {
       }
 
       if (!(caught instanceof TelemetryError)) {
-        throw new Error(`expected appendEvent to reject with a TelemetryError, got ${String(caught)}`);
+        throw new Error(
+          `expected appendEvent to reject with a TelemetryError, got ${String(caught)}`,
+        );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
     },

@@ -67,8 +67,14 @@ export async function checkC13NoSecretLeak(context: ConformanceContext): Promise
   const cwd = await context.options.createScratchDir();
   await initGitRepo(cwd);
 
-  const handle = await context.getAdapter().startSession(context.buildRequest({ cwd, prompt, env: {} }));
-  const events = await withTimeout(collectEvents(handle), 30000, 'C13: session did not end within 30s');
+  const handle = await context
+    .getAdapter()
+    .startSession(context.buildRequest({ cwd, prompt, env: {} }));
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C13: session did not end within 30s',
+  );
   const result = await withTimeout(handle.result(), 5000, 'C13: result() did not settle within 5s');
 
   const observedText = [

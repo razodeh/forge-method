@@ -43,7 +43,9 @@ export function createConformanceContext(options: ConformanceOptions): {
     },
     getCapabilities(): AdapterCapabilities {
       if (capabilities === undefined) {
-        throw new Error('ConformanceContext.getCapabilities() called before beforeAll assigned it.');
+        throw new Error(
+          'ConformanceContext.getCapabilities() called before beforeAll assigned it.',
+        );
       }
       return capabilities;
     },

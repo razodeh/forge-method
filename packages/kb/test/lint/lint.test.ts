@@ -13,7 +13,17 @@ import { describe, expect, it } from 'vitest';
 
 import { lintKb, type LintKbSpecArtifacts } from '../../src/lint/lint.ts';
 import { parseKbTree, type KbTree } from '../../src/schema/tree.ts';
-import { adr, capability, component, componentsFile, diagram, epic, kbEntry, runbook, treeOf } from './factories.ts';
+import {
+  adr,
+  capability,
+  component,
+  componentsFile,
+  diagram,
+  epic,
+  kbEntry,
+  runbook,
+  treeOf,
+} from './factories.ts';
 
 const FIXTURE_ROOT = path.resolve(import.meta.dirname, '../../../../fixtures/greenfield-service');
 const NO_SPEC_ARTIFACTS: LintKbSpecArtifacts = { capabilities: [], epics: [] };
@@ -24,12 +34,15 @@ async function realTree(): Promise<KbTree> {
   return parseKbTree(paths);
 }
 
-function findingsOf(ruleId: string, findings: ReturnType<typeof lintKb>): ReturnType<typeof lintKb> {
+function findingsOf(
+  ruleId: string,
+  findings: ReturnType<typeof lintKb>,
+): ReturnType<typeof lintKb> {
   return findings.filter((finding) => finding.ruleId === ruleId);
 }
 
 describe('lintKb — fixtures/greenfield-service', () => {
-  it('lints clean: no findings against the base fixture (the milestone\'s own exit-test target, Q43)', async () => {
+  it("lints clean: no findings against the base fixture (the milestone's own exit-test target, Q43)", async () => {
     const tree = await realTree();
     const findings = lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW);
     expect(findings).toEqual([]);
@@ -39,19 +52,29 @@ describe('lintKb — fixtures/greenfield-service', () => {
 describe('lintKb — kb:dangling-ref', () => {
   it('flags a related id shaped like a KB-tree id that does not resolve to a real entry', () => {
     const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ related: ['KB-ARCH-0099'] }) }]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('error');
   });
 
   it('does not flag a related id that is not shaped like a KB-tree id at all (an out-of-tree reference)', () => {
     const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ related: ['NFR-0004'] }) }]);
-    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
   });
 
-  it('also checks an ADR\'s own superseded_by field, not just related/supersedes', () => {
-    const tree = treeOf([{ kind: 'adr', value: adr({ status: 'superseded', superseded_by: 'ADR-0099' }) }]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+  it("also checks an ADR's own superseded_by field, not just related/supersedes", () => {
+    const tree = treeOf([
+      { kind: 'adr', value: adr({ status: 'superseded', superseded_by: 'ADR-0099' }) },
+    ]);
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
   });
 
@@ -59,7 +82,10 @@ describe('lintKb — kb:dangling-ref', () => {
     const tree = treeOf([
       { kind: 'kb-entry', value: kbEntry({ related: ['KB-ARCH-0099', 'KB-ARCH-0099'] }) },
     ]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
   });
 
@@ -67,7 +93,10 @@ describe('lintKb — kb:dangling-ref', () => {
     const tree = treeOf([
       { kind: 'kb-entry', value: kbEntry({ sources: [{ kind: 'decision', ref: 'ADR-0099' }] }) },
     ]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
   });
 
@@ -76,14 +105,18 @@ describe('lintKb — kb:dangling-ref', () => {
       { kind: 'adr', value: adr({ id: 'ADR-0001' }) },
       { kind: 'kb-entry', value: kbEntry({ sources: [{ kind: 'decision', ref: 'ADR-0001' }] }) },
     ]);
-    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
   });
 
   it('does not flag a non-decision source, even one shaped like a dangling KB-tree id', () => {
     const tree = treeOf([
       { kind: 'kb-entry', value: kbEntry({ sources: [{ kind: 'human', ref: 'ADR-0099' }] }) },
     ]);
-    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
   });
 });
 
@@ -95,7 +128,10 @@ describe('lintKb — kb:supersession-cycle', () => {
       { kind: 'kb-entry', value: a },
       { kind: 'kb-entry', value: b },
     ]);
-    const findings = findingsOf('kb:supersession-cycle', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:supersession-cycle',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings.length).toBeGreaterThan(0);
   });
 
@@ -106,14 +142,18 @@ describe('lintKb — kb:supersession-cycle', () => {
       { kind: 'kb-entry', value: a },
       { kind: 'kb-entry', value: b },
     ]);
-    expect(findingsOf('kb:supersession-cycle', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('kb:supersession-cycle', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('walks through a dangling supersedes id without crashing or reporting a cycle', () => {
     // KB-ARCH-0002 does not exist at all — a real gap for kb:dangling-ref to catch, not this rule.
     const a = kbEntry({ id: 'KB-ARCH-0001', supersedes: ['KB-ARCH-0002'] });
     const tree = treeOf([{ kind: 'kb-entry', value: a }]);
-    expect(findingsOf('kb:supersession-cycle', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('kb:supersession-cycle', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 });
 
@@ -125,7 +165,9 @@ describe('lintKb — kb:contradiction (antonym tags, via checkContradictions)', 
       { kind: 'kb-entry', value: a },
       { kind: 'kb-entry', value: b },
     ]);
-    expect(findingsOf('kb:contradiction', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)).length).toBe(1);
+    expect(
+      findingsOf('kb:contradiction', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)).length,
+    ).toBe(1);
   });
 });
 
@@ -134,7 +176,10 @@ describe('lintKb — kb:component-coverage', () => {
     const tree = treeOf([
       { kind: 'components-file', value: componentsFile([component({ id: 'component:api' })]) },
     ]);
-    const findings = findingsOf('kb:component-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:component-coverage',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('error');
     expect(findings[0]?.entryId).toBe('component:api');
@@ -142,13 +187,18 @@ describe('lintKb — kb:component-coverage', () => {
 
   it('is clean once a KB entry applies_to it and cites a decision', () => {
     const a = adr({ id: 'ADR-0001' });
-    const entry = kbEntry({ applies_to: ['component:api'], sources: [{ kind: 'decision', ref: 'ADR-0001' }] });
+    const entry = kbEntry({
+      applies_to: ['component:api'],
+      sources: [{ kind: 'decision', ref: 'ADR-0001' }],
+    });
     const tree = treeOf([
       { kind: 'components-file', value: componentsFile([component({ id: 'component:api' })]) },
       { kind: 'adr', value: a },
       { kind: 'kb-entry', value: entry },
     ]);
-    expect(findingsOf('kb:component-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('kb:component-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('a component covered only by a deprecated KB entry is still flagged (a stale citation does not count)', () => {
@@ -163,7 +213,9 @@ describe('lintKb — kb:component-coverage', () => {
       { kind: 'adr', value: a },
       { kind: 'kb-entry', value: entry },
     ]);
-    expect(findingsOf('kb:component-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toHaveLength(1);
+    expect(
+      findingsOf('kb:component-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toHaveLength(1);
   });
 });
 
@@ -175,7 +227,10 @@ describe('lintKb — kb:dangling-ref (component register)', () => {
         value: componentsFile([component({ id: 'component:api', dependsOn: ['component:ghost'] })]),
       },
     ]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.entryId).toBe('component:api');
   });
@@ -185,13 +240,20 @@ describe('lintKb — kb:dangling-ref (component register)', () => {
       { kind: 'components-file', value: componentsFile([component({ id: 'component:api' })]) },
       { kind: 'kb-entry', value: kbEntry({ applies_to: ['component:ghost'] }) },
     ]);
-    const findings = findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:dangling-ref',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
   });
 
   it('does not check applies_to component: tags at all when no components.md exists in the tree', () => {
-    const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ applies_to: ['component:ghost'] }) }]);
-    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    const tree = treeOf([
+      { kind: 'kb-entry', value: kbEntry({ applies_to: ['component:ghost'] }) },
+    ]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
   });
 
   it('is clean once dependsOn/applies_to only ever name real, registered components', () => {
@@ -205,14 +267,19 @@ describe('lintKb — kb:dangling-ref (component register)', () => {
       },
       { kind: 'kb-entry', value: kbEntry({ applies_to: ['component:api', 'component:db'] }) },
     ]);
-    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
   });
 });
 
 describe('lintKb — diagram:required', () => {
   it('flags a missing required diagram at L2+', () => {
     const tree = treeOf([]);
-    const findings = findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'L2', CLEAN_NOW));
+    const findings = findingsOf(
+      'diagram:required',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L2', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(2);
   });
 
@@ -221,24 +288,33 @@ describe('lintKb — diagram:required', () => {
       { kind: 'diagram', value: diagram({ source: 'architecture/views/context.mmd' }) },
       { kind: 'diagram', value: diagram({ source: 'architecture/views/containers.mmd' }) },
     ]);
-    expect(findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'L2', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'L2', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('does not apply below L2', () => {
     const tree = treeOf([]);
-    expect(findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('fails safe (no findings, no throw) for a malformed level string', () => {
     const tree = treeOf([]);
-    expect(findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'not-a-level', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('diagram:required', lintKb(tree, NO_SPEC_ARTIFACTS, 'not-a-level', CLEAN_NOW)),
+    ).toEqual([]);
   });
 });
 
 describe('lintKb — diagram:adr-coverage', () => {
   it('flags a structural ADR (category: architecture) with no diagram', () => {
     const tree = treeOf([{ kind: 'adr', value: adr({ category: 'architecture', diagrams: [] }) }]);
-    const findings = findingsOf('diagram:adr-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'diagram:adr-coverage',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('error');
   });
@@ -247,19 +323,26 @@ describe('lintKb — diagram:adr-coverage', () => {
     const tree = treeOf([
       { kind: 'adr', value: adr({ category: 'architecture', diagrams: ['DIAG-001'] }) },
     ]);
-    expect(findingsOf('diagram:adr-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('diagram:adr-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('does not apply to a non-architecture-category ADR', () => {
     const tree = treeOf([{ kind: 'adr', value: adr({ category: 'data', diagrams: [] }) }]);
-    expect(findingsOf('diagram:adr-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('diagram:adr-coverage', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 });
 
 describe('lintKb — kb:cap-coverage', () => {
   it('flags a capability with no downstream epic', () => {
     const tree = treeOf([]);
-    const artifacts: LintKbSpecArtifacts = { capabilities: [capability({ id: 'CAP-001' })], epics: [] };
+    const artifacts: LintKbSpecArtifacts = {
+      capabilities: [capability({ id: 'CAP-001' })],
+      epics: [],
+    };
     const findings = findingsOf('kb:cap-coverage', lintKb(tree, artifacts, 'L1', CLEAN_NOW));
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('warn');
@@ -287,14 +370,19 @@ describe('lintKb — kb:cap-coverage', () => {
 describe('lintKb — kb:staleness', () => {
   it('flags an entry whose review_by is in the past', () => {
     const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ review_by: '2026-01-01' }) }]);
-    const findings = findingsOf('kb:staleness', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', new Date('2026-06-01')));
+    const findings = findingsOf(
+      'kb:staleness',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', new Date('2026-06-01')),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('warn');
   });
 
   it('does not flag an entry whose review_by has not passed yet', () => {
     const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ review_by: '2026-12-01' }) }]);
-    expect(findingsOf('kb:staleness', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', new Date('2026-06-01')))).toEqual([]);
+    expect(
+      findingsOf('kb:staleness', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', new Date('2026-06-01'))),
+    ).toEqual([]);
   });
 });
 
@@ -306,7 +394,10 @@ describe('lintKb — kb:low-confidence-input', () => {
       { kind: 'kb-entry', value: low },
       { kind: 'adr', value: a },
     ]);
-    const findings = findingsOf('kb:low-confidence-input', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW));
+    const findings = findingsOf(
+      'kb:low-confidence-input',
+      lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe('warn');
   });
@@ -318,7 +409,9 @@ describe('lintKb — kb:low-confidence-input', () => {
       { kind: 'kb-entry', value: low },
       { kind: 'adr', value: a },
     ]);
-    expect(findingsOf('kb:low-confidence-input', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('kb:low-confidence-input', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 
   it('does not flag an accepted ADR drawing on a real, non-low-confidence KB entry', () => {
@@ -328,7 +421,9 @@ describe('lintKb — kb:low-confidence-input', () => {
       { kind: 'kb-entry', value: high },
       { kind: 'adr', value: a },
     ]);
-    expect(findingsOf('kb:low-confidence-input', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
+    expect(
+      findingsOf('kb:low-confidence-input', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW)),
+    ).toEqual([]);
   });
 });
 
@@ -341,7 +436,9 @@ describe('lintKb — kb:orphan', () => {
   });
 
   it('does not flag a root-section entry (glossary.md) even with no inbound link', () => {
-    const tree = treeOf([{ kind: 'kb-entry', value: kbEntry({ section: 'glossary' }), path: 'glossary.md' }]);
+    const tree = treeOf([
+      { kind: 'kb-entry', value: kbEntry({ section: 'glossary' }), path: 'glossary.md' },
+    ]);
     expect(findingsOf('kb:orphan', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual([]);
   });
 
@@ -385,8 +482,11 @@ describe('lintKb — kb:orphan', () => {
 });
 
 describe('lintKb — kb:glossary-drift', () => {
-  it('flags a backtick-quoted term in a capability\'s own text that is not defined in the glossary', () => {
-    const glossary = kbEntry({ section: 'glossary', body: '## Statement\n- **Widget** — a thing.' });
+  it("flags a backtick-quoted term in a capability's own text that is not defined in the glossary", () => {
+    const glossary = kbEntry({
+      section: 'glossary',
+      body: '## Statement\n- **Widget** — a thing.',
+    });
     const tree = treeOf([{ kind: 'kb-entry', value: glossary, path: 'glossary.md' }]);
     const artifacts: LintKbSpecArtifacts = {
       capabilities: [capability({ statement: 'Uses a `Gadget` internally.' })],
@@ -398,7 +498,10 @@ describe('lintKb — kb:glossary-drift', () => {
   });
 
   it('does not flag a backtick-quoted term that is defined in the glossary (case-insensitive)', () => {
-    const glossary = kbEntry({ section: 'glossary', body: '## Statement\n- **Widget** — a thing.' });
+    const glossary = kbEntry({
+      section: 'glossary',
+      body: '## Statement\n- **Widget** — a thing.',
+    });
     const tree = treeOf([{ kind: 'kb-entry', value: glossary, path: 'glossary.md' }]);
     const artifacts: LintKbSpecArtifacts = {
       capabilities: [capability({ statement: 'Uses a `widget` internally.' })],
@@ -412,8 +515,13 @@ describe('lintKb — composing an LLM-shaped semantic finding never elevates sev
   it('a caller-composed warning-severity finding stays warn, by construction', () => {
     const tree = treeOf([]);
     const findings = lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW);
-    const composed = [...findings, { ruleId: 'kb:llm-contradiction', severity: 'warn' as const, message: 'maybe?' }];
-    expect(composed.every((f) => f.ruleId !== 'kb:llm-contradiction' || f.severity === 'warn')).toBe(true);
+    const composed = [
+      ...findings,
+      { ruleId: 'kb:llm-contradiction', severity: 'warn' as const, message: 'maybe?' },
+    ];
+    expect(
+      composed.every((f) => f.ruleId !== 'kb:llm-contradiction' || f.severity === 'warn'),
+    ).toBe(true);
   });
 });
 
@@ -434,8 +542,18 @@ describe('lintKb — determinism (R10)', () => {
     // `KbTree.entries` carries no ordering guarantee for any caller other than `parseKbTree`'s own
     // lexically-sorted walk — a gauntlet critic found this incidental order leaking into finding
     // *content* (which id becomes entryId, message wording), not just list order.
-    const a = kbEntry({ id: 'KB-ARCH-0001', section: 'architecture', applies_to: ['component:api'], tags: ['sync'] });
-    const b = kbEntry({ id: 'KB-ARCH-0002', section: 'architecture', applies_to: ['component:api'], tags: ['async'] });
+    const a = kbEntry({
+      id: 'KB-ARCH-0001',
+      section: 'architecture',
+      applies_to: ['component:api'],
+      tags: ['sync'],
+    });
+    const b = kbEntry({
+      id: 'KB-ARCH-0002',
+      section: 'architecture',
+      applies_to: ['component:api'],
+      tags: ['async'],
+    });
     const forward = treeOf([
       { kind: 'kb-entry', value: a },
       { kind: 'kb-entry', value: b },

@@ -33,7 +33,11 @@ import type { Workflow } from '../workflow/index.ts';
 import { compilePlan } from './compile.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
-import { applyClaimOverlaps, buildClaimIntervalMap, insertContractDependencies } from './dependencies.ts';
+import {
+  applyClaimOverlaps,
+  buildClaimIntervalMap,
+  insertContractDependencies,
+} from './dependencies.ts';
 import type { RunPlanResult } from './types.ts';
 
 /** `06` §6.2's own full plan-compilation pipeline, rules 1–3 and 5–6 (rule 4's own scope boundary is
@@ -78,5 +82,10 @@ export function compileRunPlan(workflow: Workflow, context: ExpressionContext): 
     };
   }
 
-  return { success: true, nodes: withClaims.nodes, criticalPath: computeCriticalPath(withClaims.nodes), claims };
+  return {
+    success: true,
+    nodes: withClaims.nodes,
+    criticalPath: computeCriticalPath(withClaims.nodes),
+    claims,
+  };
 }

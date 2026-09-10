@@ -37,10 +37,12 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 describe('FakeSessionScript.writeFiles', () => {
   it('writes claimed files into the real, given cwd', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script(
-      (r) => r.prompt === 'write',
-      { writeFiles: [{ relativePath: 'a.txt', content: 'hello a' }, { relativePath: 'nested/b.txt', content: 'hello b' }] },
-    );
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [
+        { relativePath: 'a.txt', content: 'hello a' },
+        { relativePath: 'nested/b.txt', content: 'hello b' },
+      ],
+    });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'write' }));
     const result = await handle.result();
@@ -102,10 +104,16 @@ describe('FakeSessionScript.writeFiles', () => {
 
   it('does not write, and reports a refusal, when tools.write is not granted', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script((r) => r.prompt === 'write', { writeFiles: [{ relativePath: 'a.txt', content: 'x' }] });
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [{ relativePath: 'a.txt', content: 'x' }],
+    });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(
-      baseRequest({ cwd, prompt: 'write', tools: { read: true, write: false, exec: false, network: 'none' } }),
+      baseRequest({
+        cwd,
+        prompt: 'write',
+        tools: { read: true, write: false, exec: false, network: 'none' },
+      }),
     );
     const events = [];
     for await (const event of handle.events) events.push(event);

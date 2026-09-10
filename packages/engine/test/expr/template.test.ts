@@ -14,9 +14,11 @@ import type { ExpressionContext } from '../../src/expr/types.ts';
 
 describe('resolveTemplate', () => {
   it('resolves 10 §10.1\'s own "forge/integration/{{stageId}}" worked example', () => {
-    expect(resolveTemplate('forge/integration/{{stageId}}', { stageId: 'mvp' } as unknown as ExpressionContext)).toBe(
-      'forge/integration/mvp',
-    );
+    expect(
+      resolveTemplate('forge/integration/{{stageId}}', {
+        stageId: 'mvp',
+      } as unknown as ExpressionContext),
+    ).toBe('forge/integration/mvp');
   });
 
   it('resolves 10 §10.1\'s own "{{vars.integration_branch}}" worked example', () => {

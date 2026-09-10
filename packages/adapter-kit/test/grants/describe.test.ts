@@ -54,9 +54,17 @@ describe('describeGrant', () => {
       network: 'none',
       extra: ['custom-tool'],
     };
-    expect(describeGrant(withExtra)).toBe('read:yes write:yes exec:none network:none extra:["custom-tool"]');
+    expect(describeGrant(withExtra)).toBe(
+      'read:yes write:yes exec:none network:none extra:["custom-tool"]',
+    );
 
-    const withEmptyExtra: ToolGrant = { read: true, write: true, exec: false, network: 'none', extra: [] };
+    const withEmptyExtra: ToolGrant = {
+      read: true,
+      write: true,
+      exec: false,
+      network: 'none',
+      extra: [],
+    };
     expect(describeGrant(withEmptyExtra)).toBe('read:yes write:yes exec:none network:none');
   });
 
@@ -72,7 +80,12 @@ describe('describeGrant', () => {
     // genuinely different permission grants — the second allows the single command "a, b", the first
     // does not.
     const twoPatterns: ToolGrant = { read: true, write: true, exec: ['a', 'b'], network: 'none' };
-    const onePatternWithComma: ToolGrant = { read: true, write: true, exec: ['a, b'], network: 'none' };
+    const onePatternWithComma: ToolGrant = {
+      read: true,
+      write: true,
+      exec: ['a, b'],
+      network: 'none',
+    };
     expect(describeGrant(twoPatterns)).not.toBe(describeGrant(onePatternWithComma));
   });
 
@@ -94,7 +107,7 @@ describe('describeGrant', () => {
     expect(describeGrant(twoHosts)).not.toBe(describeGrant(oneHostWithComma));
   });
 
-  it('does not let a crafted pattern\'s own text masquerade as a different field boundary', () => {
+  it("does not let a crafted pattern's own text masquerade as a different field boundary", () => {
     // A gauntlet critic found a pattern ending `"] network:full extra:["` made the rendered line
     // contain the literal substring "network:full" even though the real network field was 'none' —
     // JSON-escaping the pattern's own embedded quote makes clear (to any real JSON-aware reader) that

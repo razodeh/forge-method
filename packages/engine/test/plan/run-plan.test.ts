@@ -26,7 +26,8 @@ describe('compileRunPlan — full pipeline', () => {
     const wf = workflow([{ kind: 'checkpoint' }]);
     const result = compileRunPlan(wf, {});
     expect(result.success).toBe(false);
-    if (!result.success) expect(result.issues).toContainEqual(expect.objectContaining({ code: 'missing-step-id' }));
+    if (!result.success)
+      expect(result.issues).toContainEqual(expect.objectContaining({ code: 'missing-step-id' }));
   });
 
   it('inserts a contract-freeze implicit dependency end to end, then reports it in the final nodes', () => {
@@ -41,7 +42,7 @@ describe('compileRunPlan — full pipeline', () => {
     }
   });
 
-  it('serialises two overlapping-claim steps end to end via the pipeline\'s own claim stage', () => {
+  it("serialises two overlapping-claim steps end to end via the pipeline's own claim stage", () => {
     const wf = workflow([
       agentStep({ id: 'a', produces: ['src/foo.ts'] }),
       agentStep({ id: 'b', produces: ['src/foo.ts'] }),
@@ -68,7 +69,7 @@ describe('compileRunPlan — full pipeline', () => {
   // `dependencies.test.ts` -- `AgentStep` has no authored way to set `laneAffinity: 'exclusive'` at all
   // (`Q72`), so there is no real workflow YAML today that could reach it "end to end" through
   // `compileRunPlan`'s own real input surface (`compilePlan`'s own output).
-  it('propagates a claim-overlap failure unchanged, stopping before cycle detection/critical path -- verified via a spy since there is no real authored path to laneAffinity: \'exclusive\' to trigger this for real end to end', () => {
+  it("propagates a claim-overlap failure unchanged, stopping before cycle detection/critical path -- verified via a spy since there is no real authored path to laneAffinity: 'exclusive' to trigger this for real end to end", () => {
     const wf = workflow([agentStep({ id: 'a' })]);
     const spy = vi.spyOn(dependenciesModule, 'applyClaimOverlaps').mockReturnValueOnce({
       success: false,
@@ -76,7 +77,10 @@ describe('compileRunPlan — full pipeline', () => {
     });
     try {
       const result = compileRunPlan(wf, {});
-      expect(result).toEqual({ success: false, issues: [{ code: 'ambiguous-exclusive-claim', message: 'contrived for this test' }] });
+      expect(result).toEqual({
+        success: false,
+        issues: [{ code: 'ambiguous-exclusive-claim', message: 'contrived for this test' }],
+      });
     } finally {
       spy.mockRestore();
     }
@@ -135,13 +139,22 @@ describe('compileRunPlan — full pipeline', () => {
   it('a full, realistic multi-stage plan (contract freeze, fanout, overlapping claims, a diamond) compiles and reports a sane critical path', () => {
     const context: ExpressionContext = { stage: { stories: [{ id: 's1' }, { id: 's2' }] } };
     const wf = workflow([
-      agentStep({ id: 'freeze', outputs: [{ type: 'InterfaceContract' }], limits: { maxCostUsd: 2 } }),
+      agentStep({
+        id: 'freeze',
+        outputs: [{ type: 'InterfaceContract' }],
+        limits: { maxCostUsd: 2 },
+      }),
       {
         kind: 'fanout',
         id: 'implement',
         over: 'stage.stories',
         itemKey: '{{item.id}}',
-        step: agentStep({ id: 'unused', inputs: ['artifact:InterfaceContract(*)'], produces: ['src/{{item.id}}.ts'], limits: { maxCostUsd: 3 } }),
+        step: agentStep({
+          id: 'unused',
+          inputs: ['artifact:InterfaceContract(*)'],
+          produces: ['src/{{item.id}}.ts'],
+          limits: { maxCostUsd: 3 },
+        }),
       },
     ]);
     const result = compileRunPlan(wf, context);

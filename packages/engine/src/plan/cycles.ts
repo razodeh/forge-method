@@ -86,7 +86,9 @@ export function detectCycles(nodes: readonly StepNode[]): CycleResult | undefine
         // wrong silently rather than loudly.
         const cycleStart = stack.findIndex((entry) => entry.id === dep);
         if (cycleStart === -1) {
-          throw new Error(`Internal error: detectCycles lost track of "visiting" node "${dep}" on its own stack.`);
+          throw new Error(
+            `Internal error: detectCycles lost track of "visiting" node "${dep}" on its own stack.`,
+          );
         }
         return { cycle: [...stack.slice(cycleStart).map((entry) => entry.id), dep] };
       }
@@ -124,8 +126,11 @@ export function renderCycleAsMermaid(cycle: readonly string[]): string {
   // rather than a fallback like `?? id` deliberately, so even the unreachable case stays a syntactically
   // harmless bare identifier ("undefined"), never the raw, potentially Mermaid-unsafe `id` this whole
   // function exists to keep out of a bare node-reference position.
-  const render = (id: string): string => `${String(syntheticId.get(id))}[${escapeMermaidLabel(id)}]`;
-  const edges = cycle.slice(0, -1).map((id, index) => `  ${render(id)} --> ${render(cycle[index + 1] ?? id)}`);
+  const render = (id: string): string =>
+    `${String(syntheticId.get(id))}[${escapeMermaidLabel(id)}]`;
+  const edges = cycle
+    .slice(0, -1)
+    .map((id, index) => `  ${render(id)} --> ${render(cycle[index + 1] ?? id)}`);
   return ['graph TD', ...edges].join('\n');
 }
 

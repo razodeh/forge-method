@@ -83,7 +83,9 @@ describe('resumeSession runs the full script phase set, not just text', () => {
     for await (const event of resumed.events) events.push(event);
     const result = await resumed.result();
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
     expect(result.ok).toBe(false);
     expect(result.finalText).not.toContain('should not run');
   });
@@ -106,7 +108,9 @@ describe('resumeSession runs the full script phase set, not just text', () => {
     for await (const event of resumed.events) events.push(event);
     const result = await resumed.result();
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'limit')).toBe(true);
+    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'limit')).toBe(
+      true,
+    );
     expect(result.finalText).toContain('one');
     expect(result.finalText).not.toContain('two');
   });
@@ -140,7 +144,9 @@ describe('resumeSession runs the full script phase set, not just text', () => {
     const adapter = new FakePlatformAdapter();
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
-    adapter.script((r) => r.prompt === 'continue' && r.cwd === cwd, { text: ['matched on remembered cwd'] });
+    adapter.script((r) => r.prompt === 'continue' && r.cwd === cwd, {
+      text: ['matched on remembered cwd'],
+    });
 
     const initial = await adapter.startSession(baseRequest({ cwd, prompt: 'start' }));
     await initial.result();
@@ -172,7 +178,9 @@ describe('resumeSession runs the full script phase set, not just text', () => {
     for await (const event of resumed.events) events.push(event);
     const result = await resumed.result();
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'complete')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'complete'),
+    ).toBe(true);
     expect(result.ok).toBe(true);
     expect(result.finalText).toBe('');
     expect(result.changedFiles).toEqual([]);

@@ -11,11 +11,22 @@
 import { ForgeError } from '@forge/core/errors';
 
 import { evaluate, parseExpression } from '../expr/index.ts';
-import type { CheckRunner, DeterministicCheck, DeterministicCheckResult, GateDefinition, GateEvaluationResult } from './types.ts';
+import type {
+  CheckRunner,
+  DeterministicCheck,
+  DeterministicCheckResult,
+  GateDefinition,
+  GateEvaluationResult,
+} from './types.ts';
 
 const SUPPORTED_PARSERS = new Set(['forge-json', 'json']);
 
-function failed(check: DeterministicCheck, stdout: string, exitCode: number, reason: string): DeterministicCheckResult {
+function failed(
+  check: DeterministicCheck,
+  stdout: string,
+  exitCode: number,
+  reason: string,
+): DeterministicCheckResult {
   return { checkId: check.id, run: check.run, passed: false, stdout, exitCode, reason };
 }
 
@@ -26,13 +37,22 @@ function failed(check: DeterministicCheck, stdout: string, exitCode: number, rea
  * identical "truthy, not strictly boolean" reading `evaluateAtDepth`'s own `&&`/`||` cases already use
  * internally, kept consistent here rather than narrowing to a stricter contract `failOn` itself never
  * promises. */
-async function evaluateDeterministicCheck(check: DeterministicCheck, cwd: string, runner: CheckRunner): Promise<DeterministicCheckResult> {
+async function evaluateDeterministicCheck(
+  check: DeterministicCheck,
+  cwd: string,
+  runner: CheckRunner,
+): Promise<DeterministicCheckResult> {
   let stdout: string;
   let exitCode: number;
   try {
     ({ stdout, exitCode } = await runner(check, cwd));
   } catch (cause) {
-    return failed(check, '', -1, `check runner threw: ${cause instanceof Error ? cause.message : String(cause)}`);
+    return failed(
+      check,
+      '',
+      -1,
+      `check runner threw: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
 
   if (check.parser !== undefined && !SUPPORTED_PARSERS.has(check.parser)) {
@@ -51,7 +71,12 @@ async function evaluateDeterministicCheck(check: DeterministicCheck, cwd: string
 
   const parseResult = parseExpression(check.failOn);
   if (!parseResult.success) {
-    return failed(check, stdout, exitCode, `failOn expression is invalid: ${parseResult.error.message}`);
+    return failed(
+      check,
+      stdout,
+      exitCode,
+      `failOn expression is invalid: ${parseResult.error.message}`,
+    );
   }
 
   let failOnTriggered: unknown;
@@ -78,8 +103,14 @@ async function evaluateDeterministicCheck(check: DeterministicCheck, cwd: string
  * `openQuestionsPolicy` is likewise carried straight through — this piece produces no open-question data
  * of its own for it to police (advisory checks are never actually run here), so there is nothing yet for
  * "block" vs "warn" to act on; propagated for whichever later piece does generate that data. */
-export async function evaluateGate(gate: GateDefinition, cwd: string, runner: CheckRunner): Promise<GateEvaluationResult> {
-  const checks = await Promise.all(gate.checks.deterministic.map((check) => evaluateDeterministicCheck(check, cwd, runner)));
+export async function evaluateGate(
+  gate: GateDefinition,
+  cwd: string,
+  runner: CheckRunner,
+): Promise<GateEvaluationResult> {
+  const checks = await Promise.all(
+    gate.checks.deterministic.map((check) => evaluateDeterministicCheck(check, cwd, runner)),
+  );
   return {
     gateId: gate.id,
     passed: checks.every((check) => check.passed),

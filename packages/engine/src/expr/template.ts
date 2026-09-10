@@ -46,7 +46,11 @@ function isSubstitutable(value: unknown): value is string | number | boolean {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
-function resolvePlaceholder(template: string, placeholder: string, context: ExpressionContext): string {
+function resolvePlaceholder(
+  template: string,
+  placeholder: string,
+  context: ExpressionContext,
+): string {
   const parsed = parseExpression(placeholder);
   if (!parsed.success) {
     throw new ForgeError('CFG-014', { template, placeholder, parseError: parsed.error.message });
@@ -100,7 +104,11 @@ export function resolveTemplate(template: string, context: ExpressionContext): s
       }
       const placeholder = inner.trim();
       if (!closed) {
-        throw new ForgeError('CFG-014', { template, placeholder, parseError: 'Missing closing "}}".' });
+        throw new ForgeError('CFG-014', {
+          template,
+          placeholder,
+          parseError: 'Missing closing "}}".',
+        });
       }
       result += resolvePlaceholder(template, placeholder, context);
       continue;

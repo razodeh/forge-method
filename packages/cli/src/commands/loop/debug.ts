@@ -107,7 +107,8 @@ async function findFailedStep(
   for await (const event of readEvents(projectRoot, runId)) {
     if (event.type !== 'StepFailed' || event.stepId === undefined) continue;
     const payload = event.payload as { readonly message?: unknown } | undefined;
-    const message = typeof payload?.message === 'string' ? payload.message : `step ${event.stepId} failed`;
+    const message =
+      typeof payload?.message === 'string' ? payload.message : `step ${event.stepId} failed`;
     return { stepId: event.stepId, message };
   }
   throw new ForgeError('RUN-057', { runId });

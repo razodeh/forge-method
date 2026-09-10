@@ -45,7 +45,11 @@ export type AdapterEvent =
       readonly summary: string;
       readonly bytes?: number | undefined;
     }
-  | { readonly type: 'file.changed'; readonly path: string; readonly change: 'created' | 'modified' | 'deleted' }
+  | {
+      readonly type: 'file.changed';
+      readonly path: string;
+      readonly change: 'created' | 'modified' | 'deleted';
+    }
   // `07` §7.2's own literal shape: `token` names *which* control token this is; `payload` is that
   // token's own associated data, loosely typed here since a live-streamed event has not necessarily
   // been schema-validated yet (`SessionResult.controlTokens` carries the fully-typed, validated
@@ -65,5 +69,10 @@ export type AdapterEvent =
       readonly cacheReadTokens?: number | undefined;
       readonly costUsd?: number | undefined;
     }
-  | { readonly type: 'error'; readonly code: string; readonly message: string; readonly retryable: boolean }
+  | {
+      readonly type: 'error';
+      readonly code: string;
+      readonly message: string;
+      readonly retryable: boolean;
+    }
   | { readonly type: 'session.ended'; readonly reason: 'complete' | 'aborted' | 'error' | 'limit' };

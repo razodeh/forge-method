@@ -91,7 +91,6 @@ export type KbProposalOutcome =
   | { readonly status: 'applied'; readonly proposal: KbProposal; readonly diff: string }
   | { readonly status: 'conflict'; readonly proposal: KbProposal; readonly currentValue: string };
 
-
 /**
  * Replaces a body section's content with `newValue`, leaving its heading line, every other section,
  * and the surrounding structure untouched. Takes the section's own already-confirmed `range` rather
@@ -153,7 +152,11 @@ export class KbWriter {
     this.paths = deps.paths;
     this.clock = deps.clock;
     this.kbRoot = deps.kbRoot ?? DEFAULT_KB_ROOT;
-    this.idAllocator = new KbIdAllocator({ paths: deps.paths, clock: deps.clock, kbRoot: this.kbRoot });
+    this.idAllocator = new KbIdAllocator({
+      paths: deps.paths,
+      clock: deps.clock,
+      kbRoot: this.kbRoot,
+    });
     this.projectRoot = deps.paths.resolveWithin('.');
   }
 
@@ -224,7 +227,9 @@ export class KbWriter {
       updated: today,
     });
     if (!precheck.success) {
-      const issues = precheck.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+      const issues = precheck.error.issues.map(
+        (issue) => `${issue.path.join('.')}: ${issue.message}`,
+      );
       throw new ForgeError('KB-006', { entryId: path, issues: issues.join('; ') });
     }
 
@@ -250,7 +255,12 @@ export class KbWriter {
     // output together rather than each in isolation.
     const text = `---\n${YAML.stringify(frontMatter)}---\n\n${withTrailingNewline(body)}`;
     await writeFileAtomic(target, text);
-    await appendKbEvent(this.paths, { at: now, kind: 'write', entryId: entry.id, section: entry.section });
+    await appendKbEvent(this.paths, {
+      at: now,
+      kind: 'write',
+      entryId: entry.id,
+      section: entry.section,
+    });
     return entry;
   }
 
@@ -313,6 +323,10 @@ export class KbWriter {
       entryId: proposal.targetId,
       section: target.value.section,
     });
-    return { status: 'applied', proposal, diff: renderDiff(proposal.baseValue, proposal.proposedValue) };
+    return {
+      status: 'applied',
+      proposal,
+      diff: renderDiff(proposal.baseValue, proposal.proposedValue),
+    };
   }
 }

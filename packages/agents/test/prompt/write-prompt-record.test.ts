@@ -65,7 +65,14 @@ function pack(): AgentContextPack {
 }
 
 const CONSTRAINTS: PromptConstraints = {
-  tools: { read: true, write: false, exec: undefined, network: false, git_commit: 'none', deploy: false },
+  tools: {
+    read: true,
+    write: false,
+    exec: undefined,
+    network: false,
+    git_commit: 'none',
+    deploy: false,
+  },
   forbiddenActions: [],
   budget: { max_turns: 1, wall_clock_ms: 1, max_cost_usd: 1 },
   autonomy: 'guided',

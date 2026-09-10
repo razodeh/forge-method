@@ -92,7 +92,9 @@ describe('diagramDiff / diagramSync', () => {
   it('throws KB-003 (from checkDrift itself) for a diagram with no generator declared', async () => {
     const project = await createTestProject();
     await writeDiagramFixture(project);
-    await expect(diagramDiff(ctx(project), 'DIAG-001', {})).rejects.toMatchObject({ code: 'KB-003' });
+    await expect(diagramDiff(ctx(project), 'DIAG-001', {})).rejects.toMatchObject({
+      code: 'KB-003',
+    });
   });
 
   it('sync skips every diagram with no declared generator, returning no results', async () => {

@@ -14,11 +14,15 @@ import type { AdapterEvent } from '../types/events.ts';
 import type { ConformanceContext } from './context.ts';
 import { collectEvents, withTimeout } from './helpers.ts';
 
-function isControlEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'control' }> {
+function isControlEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'control' }> {
   return event.type === 'control';
 }
 
-function isEndedEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'session.ended' }> {
+function isEndedEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'session.ended' }> {
   return event.type === 'session.ended';
 }
 
@@ -40,7 +44,11 @@ export async function checkC5Abort(context: ConformanceContext): Promise<void> {
   // event stream actually completes and result() actually resolves, both within the 5s budget the spec
   // states, rather than hanging (a real adapter that leaked a process would, in the overwhelming
   // majority of real implementations, also be the one whose stream/promise never cleanly settles).
-  const events = await withTimeout(collectEvents(handle), 5000, 'C5: event stream did not settle within 5s of abort');
+  const events = await withTimeout(
+    collectEvents(handle),
+    5000,
+    'C5: event stream did not settle within 5s of abort',
+  );
   await withTimeout(handle.result(), 5000, 'C5: result() did not settle within 5s of abort');
 
   const endedEvent = events.find(isEndedEvent);
@@ -54,7 +62,11 @@ export async function checkC10ControlTokens(context: ConformanceContext): Promis
   const handle = await context
     .getAdapter()
     .startSession(context.buildRequest({ cwd, prompt: context.options.controlTokenPrompt }));
-  const events = await withTimeout(collectEvents(handle), 30000, 'C10: session did not end within 30s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C10: session did not end within 30s',
+  );
   const result = await withTimeout(handle.result(), 5000, 'C10: result() did not settle within 5s');
 
   const controlEvent = events.find((event) => isControlEvent(event) && event.token === 'FORGE_ASK');
@@ -63,7 +75,8 @@ export async function checkC10ControlTokens(context: ConformanceContext): Promis
   // SessionResult.controlTokens carries the fully-parsed, typed shape (PLAN-M4.md P4's own note: "P3's
   // ParsedControlToken, for C10's own expected-shape assertion").
   const parsedAsk = result.controlTokens.find(
-    (token): token is Extract<ParsedControlToken, { readonly token: 'FORGE_ASK' }> => token.token === 'FORGE_ASK',
+    (token): token is Extract<ParsedControlToken, { readonly token: 'FORGE_ASK' }> =>
+      token.token === 'FORGE_ASK',
   );
   expect(parsedAsk).toBeDefined();
   expect(typeof parsedAsk?.question).toBe('string');
@@ -77,6 +90,7 @@ export function registerControlAndAbortTests(context: ConformanceContext): void 
   });
 
   describe('C10 — control tokens', () => {
-    it('a FORGE_ASK-eliciting prompt produces a parsed control event', () => checkC10ControlTokens(context));
+    it('a FORGE_ASK-eliciting prompt produces a parsed control event', () =>
+      checkC10ControlTokens(context));
   });
 }

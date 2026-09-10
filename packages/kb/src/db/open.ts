@@ -70,6 +70,8 @@ export function openKbIndex(paths: ProjectPaths): KbIndexBackend {
   if (nodeSqlite !== undefined) return nodeSqlite;
 
   // eslint-disable-next-line no-console -- 02 §2.1's own "else a JSON-file index with a warning."
-  console.warn('openKbIndex: neither better-sqlite3 nor node:sqlite is available; using the JSON index.');
+  console.warn(
+    'openKbIndex: neither better-sqlite3 nor node:sqlite is available; using the JSON index.',
+  );
   return new JsonBackend(paths.resolveState('index.json'));
 }

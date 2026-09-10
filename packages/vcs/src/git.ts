@@ -149,7 +149,10 @@ export function isNoCommitsYetResult(error: unknown): boolean {
   // string at runtime. The explicit `typeof` check below is a genuine runtime guard, not a formality:
   // it is what makes the subsequent `=== ''` comparison type-correct without asserting the type away.
   return (
-    error instanceof ExecaError && error.exitCode === 1 && typeof error.stderr === 'string' && error.stderr === ''
+    error instanceof ExecaError &&
+    error.exitCode === 1 &&
+    typeof error.stderr === 'string' &&
+    error.stderr === ''
   );
 }
 

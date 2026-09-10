@@ -6,4 +6,9 @@
  * @see specs/06 §6.3
  * @see PLAN-M5.md P13
  */
-export { createBackpressureState, onRateLimitSignal, tick, type BackpressureState } from './state.ts';
+export {
+  createBackpressureState,
+  onRateLimitSignal,
+  tick,
+  type BackpressureState,
+} from './state.ts';

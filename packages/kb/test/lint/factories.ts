@@ -19,7 +19,12 @@ import {
   type Runbook,
 } from '@forge/schemas';
 
-import { componentSchema, componentsFileSchema, type Component, type ComponentsFile } from '../../src/schema/components-file.ts';
+import {
+  componentSchema,
+  componentsFileSchema,
+  type Component,
+  type ComponentsFile,
+} from '../../src/schema/components-file.ts';
 import { kbEntrySchema, type KbEntry } from '../../src/schema/kb-entry.ts';
 import { sectionIdToken, type KbSection } from '../../src/schema/sections.ts';
 import type { KbParsedEntry, KbTree } from '../../src/schema/tree.ts';
@@ -225,7 +230,11 @@ export function treeOf(
   const parsedEntries: KbParsedEntry[] = entries.map((entry) => {
     switch (entry.kind) {
       case 'kb-entry':
-        return { path: entry.path ?? `${entry.kind}/${entry.value.id}.md`, kind: 'kb-entry', value: entry.value };
+        return {
+          path: entry.path ?? `${entry.kind}/${entry.value.id}.md`,
+          kind: 'kb-entry',
+          value: entry.value,
+        };
       case 'adr':
         return {
           path: entry.path ?? `${entry.kind}/${entry.value.id}.md`,
@@ -234,7 +243,11 @@ export function treeOf(
           body: '## Context\nA test decision.',
         };
       case 'diagram':
-        return { path: entry.path ?? `${entry.kind}/${entry.value.id}.md`, kind: 'diagram', value: entry.value };
+        return {
+          path: entry.path ?? `${entry.kind}/${entry.value.id}.md`,
+          kind: 'diagram',
+          value: entry.value,
+        };
       case 'runbook':
         return {
           path: entry.path ?? `${entry.kind}/${entry.value.id}.md`,

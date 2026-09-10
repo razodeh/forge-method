@@ -67,7 +67,12 @@ function sanitizedCeiling(value: number): number {
  * one. */
 export function createBackpressureState(configuredCeiling: number): BackpressureState {
   const ceiling = sanitizedCeiling(configuredCeiling);
-  return { configuredCeiling: ceiling, ceiling, ceilingAtLastSignal: undefined, lastSignalAt: undefined };
+  return {
+    configuredCeiling: ceiling,
+    ceiling,
+    ceilingAtLastSignal: undefined,
+    lastSignalAt: undefined,
+  };
 }
 
 /** The effective ceiling `state` implies *as of* `now`, folding in however much additive restoration would
@@ -81,11 +86,15 @@ export function createBackpressureState(configuredCeiling: number): Backpressure
  * check); this clamp is what keeps `onRateLimitSignal`'s own halving input correct in the scenario just
  * described, which nothing else in this module guards. */
 function ceilingAsOf(state: BackpressureState, now: number): number {
-  if (state.lastSignalAt === undefined || state.ceilingAtLastSignal === undefined) return state.ceiling;
+  if (state.lastSignalAt === undefined || state.ceilingAtLastSignal === undefined)
+    return state.ceiling;
   const elapsed = now - state.lastSignalAt;
   const stepsEarned = Math.floor(elapsed / QUIET_PERIOD_MS);
   if (stepsEarned <= 0) return state.ceiling;
-  const restored = Math.min(state.configuredCeiling, state.ceilingAtLastSignal + stepsEarned * RESTORE_STEP);
+  const restored = Math.min(
+    state.configuredCeiling,
+    state.ceilingAtLastSignal + stepsEarned * RESTORE_STEP,
+  );
   return Math.max(state.ceiling, restored);
 }
 
@@ -144,7 +153,12 @@ export function tick(state: BackpressureState, now: number): BackpressureState {
   const restored = ceilingAsOf(state, now);
   if (restored <= state.ceiling) return state;
   if (restored >= state.configuredCeiling) {
-    return { ...state, ceiling: state.configuredCeiling, ceilingAtLastSignal: undefined, lastSignalAt: undefined };
+    return {
+      ...state,
+      ceiling: state.configuredCeiling,
+      ceilingAtLastSignal: undefined,
+      lastSignalAt: undefined,
+    };
   }
   return { ...state, ceiling: restored };
 }

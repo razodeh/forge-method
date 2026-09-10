@@ -30,20 +30,30 @@ function safeLimit(limit: number): number {
  * of the two is the tighter bound — both describe "how many sessions may run at once," just from two
  * different sources (an operator's own `--concurrency` flag vs. a platform's own reported ceiling), not
  * two independent things to check separately. */
-export function admitsMoreConcurrency(candidate: AdmissionCandidate, limits: ConcurrencyLimits, running: RunningCounts): boolean {
-  const effectiveGlobalLimit = limits.adapterMax !== undefined ? Math.min(limits.global, limits.adapterMax) : limits.global;
+export function admitsMoreConcurrency(
+  candidate: AdmissionCandidate,
+  limits: ConcurrencyLimits,
+  running: RunningCounts,
+): boolean {
+  const effectiveGlobalLimit =
+    limits.adapterMax !== undefined ? Math.min(limits.global, limits.adapterMax) : limits.global;
   if (running.global >= safeLimit(effectiveGlobalLimit)) return false;
 
   const agent = candidate.node.agent;
   if (agent !== undefined) {
     const agentLimit = limits.perAgent.get(agent);
-    if (agentLimit !== undefined && (running.perAgent.get(agent) ?? 0) >= safeLimit(agentLimit)) return false;
+    if (agentLimit !== undefined && (running.perAgent.get(agent) ?? 0) >= safeLimit(agentLimit))
+      return false;
   }
 
   const resourceClass = candidate.resourceClass;
   if (resourceClass !== undefined) {
     const classLimit = limits.perResourceClass.get(resourceClass);
-    if (classLimit !== undefined && (running.perResourceClass.get(resourceClass) ?? 0) >= safeLimit(classLimit)) return false;
+    if (
+      classLimit !== undefined &&
+      (running.perResourceClass.get(resourceClass) ?? 0) >= safeLimit(classLimit)
+    )
+      return false;
   }
 
   return true;

@@ -55,10 +55,16 @@ describe('gitStatusPaths', () => {
     // A real commit is needed first for the `R  old -> new` porcelain line this test exists to parse.
     const dir = await createRepoDir();
     await initGitRepo(dir);
-    await execFileAsync('git', ['config', 'user.email', 'conformance-test@example.com'], { cwd: dir });
+    await execFileAsync('git', ['config', 'user.email', 'conformance-test@example.com'], {
+      cwd: dir,
+    });
     await execFileAsync('git', ['config', 'user.name', 'Conformance Test'], { cwd: dir });
     const oldPath = path.join(dir, 'old-name.txt');
-    await writeFile(oldPath, 'content long enough for git\'s own similarity-based rename detection', 'utf8');
+    await writeFile(
+      oldPath,
+      "content long enough for git's own similarity-based rename detection",
+      'utf8',
+    );
     await execFileAsync('git', ['add', 'old-name.txt'], { cwd: dir });
     await execFileAsync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: dir });
     await rename(oldPath, path.join(dir, 'new-name.txt'));

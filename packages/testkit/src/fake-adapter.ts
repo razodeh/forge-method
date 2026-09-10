@@ -84,7 +84,9 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   toolProxy: true,
 };
 
-const DEFAULT_SCRIPT: FakeSessionScript = { text: ['(no script matched this request; default response)'] };
+const DEFAULT_SCRIPT: FakeSessionScript = {
+  text: ['(no script matched this request; default response)'],
+};
 
 /** The one model id `listModels()` reports — also what `startSession` checks `request.model` against,
  * regardless of which script would otherwise match (an invalid model fails a session no matter what
@@ -171,7 +173,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
   readonly displayName = 'FORGE Fake Adapter';
 
   private readonly caps: AdapterCapabilities;
-  private readonly scripts: { readonly matcher: SessionRequestMatcher; readonly script: FakeSessionScript }[] = [];
+  private readonly scripts: {
+    readonly matcher: SessionRequestMatcher;
+    readonly script: FakeSessionScript;
+  }[] = [];
   private readonly failureInjections: {
     readonly matcher: SessionRequestMatcher;
     readonly failure: FakeFailureKind;
@@ -231,7 +236,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
     return Promise.resolve([]);
   }
 
-  provisionSkills(skills: readonly ResolvedSkill[], ctx: SessionContext): Promise<SkillProvisioning> {
+  provisionSkills(
+    skills: readonly ResolvedSkill[],
+    ctx: SessionContext,
+  ): Promise<SkillProvisioning> {
     const existing = this.getProvisioning(ctx.runId, ctx.stepId);
     this.setProvisioning(ctx.runId, ctx.stepId, {
       skillIds: skills.map((skill) => skill.id),
@@ -239,11 +247,19 @@ export class FakePlatformAdapter implements PlatformAdapter {
     });
     // 15 §15.6's own mapping — the identical one @forge/adapter-kit/conformance's own C15 check
     // (SPEC-QUESTIONS.md Q60 point 5) cross-checks this against.
-    const strategy = this.caps.skills === 'native' ? 'native' : this.caps.skills === 'inline' ? 'inline' : 'bodies-injected';
+    const strategy =
+      this.caps.skills === 'native'
+        ? 'native'
+        : this.caps.skills === 'inline'
+          ? 'inline'
+          : 'bodies-injected';
     return Promise.resolve({ strategy, provisionedSkillIds: skills.map((skill) => skill.id) });
   }
 
-  private doProvisionMcp(servers: readonly GrantedMcpServer[], ctx: SessionContext): Promise<McpProvisioning> {
+  private doProvisionMcp(
+    servers: readonly GrantedMcpServer[],
+    ctx: SessionContext,
+  ): Promise<McpProvisioning> {
     const existing = this.getProvisioning(ctx.runId, ctx.stepId);
     let sawWildcard = false;
     const explicitTools = new Set<string>();
@@ -255,7 +271,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
       for (const tool of server.grantedTools) explicitTools.add(tool);
     }
     const grantedMcpTools: ReadonlySet<string> | true = sawWildcard ? true : explicitTools;
-    this.setProvisioning(ctx.runId, ctx.stepId, { skillIds: existing?.skillIds ?? [], grantedMcpTools });
+    this.setProvisioning(ctx.runId, ctx.stepId, {
+      skillIds: existing?.skillIds ?? [],
+      grantedMcpTools,
+    });
     return Promise.resolve({ loadedServerIds: servers.map((server) => server.id) });
   }
 
@@ -292,7 +311,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
         const [{ failure }] = this.failureInjections.splice(injectionIndex, 1) as [
           { readonly matcher: SessionRequestMatcher; readonly failure: FakeFailureKind },
         ];
-        return Promise.resolve(makeHandle(sessionId, () => this.startInjectedFailure(sessionId, request, failure)));
+        return Promise.resolve(
+          makeHandle(sessionId, () => this.startInjectedFailure(sessionId, request, failure)),
+        );
       }
 
       const matched = this.scripts.find(({ matcher }) => matcher(request));
@@ -312,7 +333,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
         );
       }
 
-      return Promise.resolve(makeHandle(sessionId, () => this.runScript(sessionId, request, script)));
+      return Promise.resolve(
+        makeHandle(sessionId, () => this.runScript(sessionId, request, script)),
+      );
     } catch (error) {
       // A caller-supplied SessionRequestMatcher (registered via .script()/.injectFailure()) can itself
       // throw; startSession is not `async`, so without this guard that throw would propagate
@@ -346,7 +369,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
       tools: { read: true, write: true, exec: false, network: 'none' },
     };
     return Promise.resolve(
-      makeHandle(sessionId, () => this.runResumedScript(sessionId, request, remembered, rememberedContext)),
+      makeHandle(sessionId, () =>
+        this.runResumedScript(sessionId, request, remembered, rememberedContext),
+      ),
     );
   }
 
@@ -366,9 +391,20 @@ export class FakePlatformAdapter implements PlatformAdapter {
     }
     if (failure === 'abort') {
       yield { type: 'session.ended', reason: 'aborted' };
-      return { sessionId, ok: false, finalText: '', usage: emptyUsage(), durationMs: 0, changedFiles: [], controlTokens: [] };
+      return {
+        sessionId,
+        ok: false,
+        finalText: '',
+        usage: emptyUsage(),
+        durationMs: 0,
+        changedFiles: [],
+        controlTokens: [],
+      };
     }
-    const errorInfo = { code: 'INJECTED_FAILURE', message: 'a failure was injected for this request' };
+    const errorInfo = {
+      code: 'INJECTED_FAILURE',
+      message: 'a failure was injected for this request',
+    };
     yield { type: 'error', code: errorInfo.code, message: errorInfo.message, retryable: false };
     yield { type: 'session.ended', reason: 'error' };
     return {
@@ -457,7 +493,11 @@ export class FakePlatformAdapter implements PlatformAdapter {
     if (yield* bailIfAborted()) return outcome('aborted');
     const provisioning = this.getProvisioning(ctx.runId, ctx.stepId);
     if (script.skillVisibleText !== undefined && (provisioning?.skillIds.length ?? 0) > 0) {
-      yield* this.emitTextAndPromoteControlTokens(script.skillVisibleText, finalTextParts, controlTokens);
+      yield* this.emitTextAndPromoteControlTokens(
+        script.skillVisibleText,
+        finalTextParts,
+        controlTokens,
+      );
     }
 
     if (yield* bailIfAborted()) return outcome('aborted');
@@ -568,7 +608,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
     this.rememberedFinalTextBySessionId.set(sessionId, outcome.finalText);
 
     if (script.endReason === 'error') {
-      const errorInfo = script.errorInfo ?? { code: 'SCRIPTED_ERROR', message: 'the script specified an error ending' };
+      const errorInfo = script.errorInfo ?? {
+        code: 'SCRIPTED_ERROR',
+        message: 'the script specified an error ending',
+      };
       yield { type: 'error', code: errorInfo.code, message: errorInfo.message, retryable: false };
       yield { type: 'session.ended', reason: 'error' };
       return {
@@ -595,7 +638,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
       // Gated on structuredOutput too, not just the script's own say-so: a degraded adapter without the
       // capability must behave like a real platform lacking JSON-mode support would — plain text only,
       // never a structured payload, regardless of what the script or the request asked for.
-      ...(script.structured !== undefined && this.caps.structuredOutput ? { structured: script.structured } : {}),
+      ...(script.structured !== undefined && this.caps.structuredOutput
+        ? { structured: script.structured }
+        : {}),
     };
   }
 
@@ -674,7 +719,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
     yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
 
     if (script.endReason === 'error') {
-      const errorInfo = script.errorInfo ?? { code: 'SCRIPTED_ERROR', message: 'the script specified an error ending' };
+      const errorInfo = script.errorInfo ?? {
+        code: 'SCRIPTED_ERROR',
+        message: 'the script specified an error ending',
+      };
       yield { type: 'error', code: errorInfo.code, message: errorInfo.message, retryable: false };
       yield { type: 'session.ended', reason: 'error' };
       return {
@@ -698,7 +746,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
       durationMs: 0,
       changedFiles: outcome.changedFiles,
       controlTokens: outcome.controlTokens,
-      ...(script.structured !== undefined && this.caps.structuredOutput ? { structured: script.structured } : {}),
+      ...(script.structured !== undefined && this.caps.structuredOutput
+        ? { structured: script.structured }
+        : {}),
     };
   }
 }

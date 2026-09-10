@@ -35,7 +35,9 @@ export async function checkC8StructuredOutput(context: ConformanceContext): Prom
   const cwd = await context.options.createScratchDir();
   const handle = await context
     .getAdapter()
-    .startSession(context.buildRequest({ cwd, prompt: fixture.prompt, outputSchema: fixture.schema }));
+    .startSession(
+      context.buildRequest({ cwd, prompt: fixture.prompt, outputSchema: fixture.schema }),
+    );
   await withTimeout(collectEvents(handle), 30000, 'C8: session did not end within 30s');
   const result = await withTimeout(handle.result(), 5000, 'C8: result() did not settle within 5s');
 
@@ -50,8 +52,14 @@ export async function checkC9Resume(context: ConformanceContext): Promise<void> 
 
   const adapter = context.getAdapter();
   const cwd = await context.options.createScratchDir();
-  const initialHandle = await adapter.startSession(context.buildRequest({ cwd, prompt: fixture.initialPrompt }));
-  await withTimeout(collectEvents(initialHandle), 30000, 'C9: initial session did not end within 30s');
+  const initialHandle = await adapter.startSession(
+    context.buildRequest({ cwd, prompt: fixture.initialPrompt }),
+  );
+  await withTimeout(
+    collectEvents(initialHandle),
+    30000,
+    'C9: initial session did not end within 30s',
+  );
   await withTimeout(initialHandle.result(), 5000, 'C9: initial result() did not settle within 5s');
 
   const resumedHandle = await adapter.resumeSession(initialHandle.sessionId, {
@@ -95,13 +103,26 @@ export async function checkC15SkillScoping(context: ConformanceContext): Promise
   // highest-priority skills' bodies up to budget").
   const capabilities = context.getCapabilities();
   const expectedStrategy: SkillProvisioning['strategy'] =
-    capabilities.skills === 'native' ? 'native' : capabilities.skills === 'inline' ? 'inline' : 'bodies-injected';
+    capabilities.skills === 'native'
+      ? 'native'
+      : capabilities.skills === 'inline'
+        ? 'inline'
+        : 'bodies-injected';
   expect(provisioning.strategy).toBe(expectedStrategy);
 
   const handle = await adapter.startSession(
-    context.buildRequest({ cwd, prompt: fixture.prompt, runId: sessionCtx.runId, stepId: sessionCtx.stepId }),
+    context.buildRequest({
+      cwd,
+      prompt: fixture.prompt,
+      runId: sessionCtx.runId,
+      stepId: sessionCtx.stepId,
+    }),
   );
-  const events = await withTimeout(collectEvents(handle), 30000, 'C15: session did not end within 30s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C15: session did not end within 30s',
+  );
   const result = await withTimeout(handle.result(), 5000, 'C15: result() did not settle within 5s');
   expect(textOf(events, result.finalText)).toContain(fixture.expectedFragment);
 
@@ -112,7 +133,9 @@ export async function checkC15SkillScoping(context: ConformanceContext): Promise
   // directory) has no generic, adapter-agnostic path this suite can inspect directly, so it goes
   // unverified by this check; recorded here rather than silently assumed covered.
   const otherCwd = await context.options.createScratchDir();
-  const otherHandle = await adapter.startSession(context.buildRequest({ cwd: otherCwd, prompt: fixture.prompt }));
+  const otherHandle = await adapter.startSession(
+    context.buildRequest({ cwd: otherCwd, prompt: fixture.prompt }),
+  );
   const otherEvents = await withTimeout(
     collectEvents(otherHandle),
     30000,
@@ -150,9 +173,18 @@ export async function checkC16McpGrantFidelity(context: ConformanceContext): Pro
   expect(provisioning.loadedServerIds).toEqual([fixture.server.id]);
 
   const handle = await adapter.startSession(
-    context.buildRequest({ cwd, prompt: fixture.prompt, runId: sessionCtx.runId, stepId: sessionCtx.stepId }),
+    context.buildRequest({
+      cwd,
+      prompt: fixture.prompt,
+      runId: sessionCtx.runId,
+      stepId: sessionCtx.stepId,
+    }),
   );
-  const events = await withTimeout(collectEvents(handle), 30000, 'C16: session did not end within 30s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C16: session did not end within 30s',
+  );
   await withTimeout(handle.result(), 5000, 'C16: result() did not settle within 5s');
 
   const nameByCallId = new Map<string, string>();
@@ -203,14 +235,20 @@ export function registerCapabilityGatedTests(context: ConformanceContext): void 
 
   describe('C15 — skill scoping', () => {
     it('a provisioned skill is visible to its own session and not to an unprovisioned one', async (testCtx) => {
-      testCtx.skip(context.getAdapter().provisionSkills === undefined, 'adapter does not implement provisionSkills');
+      testCtx.skip(
+        context.getAdapter().provisionSkills === undefined,
+        'adapter does not implement provisionSkills',
+      );
       await checkC15SkillScoping(context);
     });
   });
 
   describe('C16 — MCP grant fidelity', () => {
     it('a granted tool succeeds, an ungranted tool is denied, ungranted servers are absent', async (testCtx) => {
-      testCtx.skip(context.getAdapter().provisionMcp === undefined, 'adapter does not implement provisionMcp');
+      testCtx.skip(
+        context.getAdapter().provisionMcp === undefined,
+        'adapter does not implement provisionMcp',
+      );
       await checkC16McpGrantFidelity(context);
     });
   });

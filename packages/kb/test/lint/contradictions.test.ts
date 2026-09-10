@@ -34,7 +34,7 @@ describe('checkContradictions — antonym-pair tag conflicts', () => {
     expect(findings[0]?.severity).toBe('error');
   });
 
-  it('flags the reverse assignment too (first entry carries the pair\'s second tag, second entry the first)', () => {
+  it("flags the reverse assignment too (first entry carries the pair's second tag, second entry the first)", () => {
     const a = kbEntry({ section: 'architecture', applies_to: ['component:api'], tags: ['async'] });
     const b = kbEntry({ section: 'architecture', applies_to: ['component:api'], tags: ['sync'] });
     const findings = checkContradictions([a, b], []);
@@ -54,7 +54,12 @@ describe('checkContradictions — antonym-pair tag conflicts', () => {
   });
 
   it('does not flag a non-active entry, even with an otherwise-conflicting tag', () => {
-    const a = kbEntry({ section: 'architecture', applies_to: ['component:api'], tags: ['sync'], status: 'active' });
+    const a = kbEntry({
+      section: 'architecture',
+      applies_to: ['component:api'],
+      tags: ['sync'],
+      status: 'active',
+    });
     const b = kbEntry({
       section: 'architecture',
       applies_to: ['component:api'],
@@ -76,7 +81,9 @@ describe('checkContradictions — conflicting ADR statuses', () => {
     const a = adr({ id: 'ADR-0002', supersedes: ['ADR-0001'] });
     const b = adr({ id: 'ADR-0001', status: 'accepted', superseded_by: null });
     const findings = checkContradictions([], [a, b]);
-    expect(findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'ADR-0002')).toBe(true);
+    expect(findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'ADR-0002')).toBe(
+      true,
+    );
   });
 
   it('does not flag a consistent supersession pair', () => {
@@ -85,7 +92,7 @@ describe('checkContradictions — conflicting ADR statuses', () => {
     expect(checkContradictions([], [a, b])).toEqual([]);
   });
 
-  it('does not flag a supersedes id that does not resolve to a real entry (that is checkDanglingRefs\' job)', () => {
+  it("does not flag a supersedes id that does not resolve to a real entry (that is checkDanglingRefs' job)", () => {
     const a = adr({ id: 'ADR-0002', supersedes: ['ADR-0099'] });
     expect(checkContradictions([], [a])).toEqual([]);
   });
@@ -104,14 +111,26 @@ describe('checkContradictions — conflicting ADR statuses', () => {
     const a = kbEntry({ id: 'KB-ARCH-0001', supersedes: ['ADR-0001'] });
     const b = adr({ id: 'ADR-0001', status: 'accepted', superseded_by: null });
     const findings = checkContradictions([a], [b]);
-    expect(findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'KB-ARCH-0001')).toBe(true);
+    expect(
+      findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'KB-ARCH-0001'),
+    ).toBe(true);
   });
 });
 
 describe('checkContradictions — determinism: symmetric pair conflicts do not depend on input array order', () => {
   it('reports the identical antonym-tag finding regardless of which entry comes first in the array', () => {
-    const a = kbEntry({ id: 'KB-ARCH-0001', section: 'architecture', applies_to: ['component:api'], tags: ['sync'] });
-    const b = kbEntry({ id: 'KB-ARCH-0002', section: 'architecture', applies_to: ['component:api'], tags: ['async'] });
+    const a = kbEntry({
+      id: 'KB-ARCH-0001',
+      section: 'architecture',
+      applies_to: ['component:api'],
+      tags: ['sync'],
+    });
+    const b = kbEntry({
+      id: 'KB-ARCH-0002',
+      section: 'architecture',
+      applies_to: ['component:api'],
+      tags: ['async'],
+    });
     const forward = checkContradictions([a, b], []);
     const reversed = checkContradictions([b, a], []);
     expect(JSON.stringify(forward)).toBe(JSON.stringify(reversed));
@@ -139,12 +158,24 @@ describe('checkContradictions — two accepted ADRs, same category, overlapping 
       kbEntry({ applies_to: ['component:api'], sources: [{ kind: 'decision', ref: 'ADR-0002' }] }),
     ];
     const findings = checkContradictions(entries, [a, b]);
-    expect(findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'ADR-0001')).toBe(true);
+    expect(findings.some((f) => f.ruleId === 'kb:contradiction' && f.entryId === 'ADR-0001')).toBe(
+      true,
+    );
   });
 
   it('clears once a supersedes link is added between the two', () => {
-    const a = adr({ id: 'ADR-0001', status: 'accepted', category: 'architecture', supersedes: ['ADR-0002'] });
-    const b = adr({ id: 'ADR-0002', status: 'superseded', category: 'architecture', superseded_by: 'ADR-0001' });
+    const a = adr({
+      id: 'ADR-0001',
+      status: 'accepted',
+      category: 'architecture',
+      supersedes: ['ADR-0002'],
+    });
+    const b = adr({
+      id: 'ADR-0002',
+      status: 'superseded',
+      category: 'architecture',
+      superseded_by: 'ADR-0001',
+    });
     const entries = [
       kbEntry({ applies_to: ['component:api'], sources: [{ kind: 'decision', ref: 'ADR-0001' }] }),
       kbEntry({ applies_to: ['component:api'], sources: [{ kind: 'decision', ref: 'ADR-0002' }] }),

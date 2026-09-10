@@ -15,7 +15,12 @@ import type { EvidenceCell } from '@forge/methods/score';
 
 import { decide } from '../../src/commands/decide.ts';
 
-const OPTIONS = ['monorepo-single-package', 'monorepo-workspaces', 'polyrepo', 'meta-repo'] as const;
+const OPTIONS = [
+  'monorepo-single-package',
+  'monorepo-workspaces',
+  'polyrepo',
+  'meta-repo',
+] as const;
 const CRITERIA = [
   'atomic-cross-cutting-change',
   'independent-release-cadence',
@@ -25,7 +30,9 @@ const CRITERIA = [
   'onboarding-simplicity',
 ] as const;
 
-function evenCells(scoreFor: (option: string, criterion: string) => number): readonly EvidenceCell[] {
+function evenCells(
+  scoreFor: (option: string, criterion: string) => number,
+): readonly EvidenceCell[] {
   const cells: EvidenceCell[] = [];
   for (const optionId of OPTIONS) {
     for (const criterionId of CRITERIA) {

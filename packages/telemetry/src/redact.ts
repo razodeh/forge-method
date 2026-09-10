@@ -59,7 +59,8 @@ function assertNotCircular(value: object, ancestors: ReadonlySet<object>): void 
     throw new TelemetryError({
       code: 'TELEMETRY-PAYLOAD-CIRCULAR',
       message: 'Cannot redact an event payload containing a circular reference.',
-      remedy: 'Ensure the event payload is plain, JSON-serialisable data with no self- or mutually-referencing objects.',
+      remedy:
+        'Ensure the event payload is plain, JSON-serialisable data with no self- or mutually-referencing objects.',
     });
   }
 }

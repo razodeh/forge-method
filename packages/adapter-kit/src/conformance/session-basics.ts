@@ -15,15 +15,21 @@ import type { SessionHandle } from '../types/session.ts';
 import type { ConformanceContext } from './context.ts';
 import { collectEvents, withTimeout } from './helpers.ts';
 
-function isEndedEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'session.ended' }> {
+function isEndedEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'session.ended' }> {
   return event.type === 'session.ended';
 }
 
-function isUsageEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'usage' }> {
+function isUsageEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'usage' }> {
   return event.type === 'usage';
 }
 
-function isErrorEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'error' }> {
+function isErrorEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'error' }> {
   return event.type === 'error';
 }
 
@@ -32,7 +38,11 @@ export async function checkC1HelloSession(context: ConformanceContext): Promise<
   const handle = await context
     .getAdapter()
     .startSession(context.buildRequest({ cwd, prompt: context.options.helloPrompt }));
-  const events = await withTimeout(collectEvents(handle), 15000, 'C1: session did not end within 15s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    15000,
+    'C1: session did not end within 15s',
+  );
 
   const textEvents = events.filter((event) => event.type === 'text');
   expect(textEvents.length).toBeGreaterThanOrEqual(1);
@@ -54,7 +64,11 @@ export async function checkC6Limits(context: ConformanceContext): Promise<void> 
       limits: { maxTurns: 1 },
     }),
   );
-  const events = await withTimeout(collectEvents(handle), 15000, 'C6: session did not end within 15s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    15000,
+    'C6: session did not end within 15s',
+  );
   const result = await withTimeout(handle.result(), 5000, 'C6: result() did not settle within 5s');
 
   const endedEvent = events.find(isEndedEvent);
@@ -72,7 +86,11 @@ export async function checkC7UsageReporting(context: ConformanceContext): Promis
   const handle = await context
     .getAdapter()
     .startSession(context.buildRequest({ cwd, prompt: context.options.helloPrompt }));
-  const events = await withTimeout(collectEvents(handle), 15000, 'C7: session did not end within 15s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    15000,
+    'C7: session did not end within 15s',
+  );
 
   const usageEvents = events.filter(isUsageEvent);
   expect(usageEvents.length).toBeGreaterThanOrEqual(1);
@@ -109,9 +127,17 @@ export async function checkC11ErrorSurface(context: ConformanceContext): Promise
     return;
   }
 
-  const events = await withTimeout(collectEvents(handle), 15000, 'C11: session did not end within 15s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    15000,
+    'C11: session did not end within 15s',
+  );
   const errorEvent = events.find(isErrorEvent);
-  const result = await withTimeout(handle.result(), 15000, 'C11: result() did not settle within 15s');
+  const result = await withTimeout(
+    handle.result(),
+    15000,
+    'C11: result() did not settle within 15s',
+  );
 
   const surfaced = errorEvent !== undefined || result.error !== undefined;
   expect(surfaced).toBe(true);
@@ -129,7 +155,8 @@ export function registerSessionBasicsTests(context: ConformanceContext): void {
   describe('C1, C6, C7, C11 — session basics', () => {
     it('C1 — hello session: starts, streams ≥1 text event, ends complete, result().ok', () =>
       checkC1HelloSession(context));
-    it('C6 — limits: maxTurns is respected, session ends with reason limit', () => checkC6Limits(context));
+    it('C6 — limits: maxTurns is respected, session ends with reason limit', () =>
+      checkC6Limits(context));
     it('C7 — usage reporting: usage event(s) present with non-negative token counts', () =>
       checkC7UsageReporting(context));
     it('C11 — error surface: an invalid model produces a typed, non-retryable error, not a hang', () =>

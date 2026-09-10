@@ -12,7 +12,9 @@ import { ForgeError } from '@forge/core/errors';
 import { applyWaiver, isApproved } from '../../src/gates/waiver.ts';
 import type { GateEvaluationResult, Waiver } from '../../src/gates/types.ts';
 
-function result(overrides: Partial<GateEvaluationResult> & { readonly passed: boolean }): GateEvaluationResult {
+function result(
+  overrides: Partial<GateEvaluationResult> & { readonly passed: boolean },
+): GateEvaluationResult {
   return {
     gateId: 'G-Test',
     checks: [],
@@ -27,7 +29,12 @@ function result(overrides: Partial<GateEvaluationResult> & { readonly passed: bo
 const NOW = Date.parse('2026-01-01T00:00:00.000Z');
 
 function waiver(overrides: Partial<Waiver> = {}): Waiver {
-  return { reason: 'known false positive', owner: 'alice', expiresAt: '2026-06-01T00:00:00.000Z', ...overrides };
+  return {
+    reason: 'known false positive',
+    owner: 'alice',
+    expiresAt: '2026-06-01T00:00:00.000Z',
+    ...overrides,
+  };
 }
 
 describe('isApproved', () => {
@@ -68,12 +75,20 @@ describe('isApproved', () => {
   });
 
   it('is false when waiver is set but waiverAppliedAt is missing, or vice versa -- both only ever come from applyWaiver together', () => {
-    expect(isApproved(result({ passed: false, waiver: waiver(), waiverAppliedAt: undefined }))).toBe(false);
-    expect(isApproved(result({ passed: false, waiver: undefined, waiverAppliedAt: NOW }))).toBe(false);
+    expect(
+      isApproved(result({ passed: false, waiver: waiver(), waiverAppliedAt: undefined })),
+    ).toBe(false);
+    expect(isApproved(result({ passed: false, waiver: undefined, waiverAppliedAt: NOW }))).toBe(
+      false,
+    );
   });
 
   it('does not re-check a legitimately-applied waiver\'s own expiry against a later "now" -- once validated by applyWaiver, a gate\'s own evaluation record does not silently flip to unapproved just because more wall-clock time has since passed', () => {
-    const waived = applyWaiver(result({ passed: false }), waiver({ expiresAt: new Date(NOW + 1).toISOString() }), NOW);
+    const waived = applyWaiver(
+      result({ passed: false }),
+      waiver({ expiresAt: new Date(NOW + 1).toISOString() }),
+      NOW,
+    );
     // The waiver above is now, in the real world, long expired -- isApproved must still report true for
     // this already-finalised result; a fresh answer comes from re-evaluating and re-waiving, not from this
     // function silently reappraising an old one.
@@ -106,8 +121,12 @@ describe('applyWaiver', () => {
   });
 
   it('refuses (throws a ForgeError GATE-504) a waiver with a blank reason', () => {
-    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '' }), NOW)).toThrow(ForgeError);
-    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '   ' }), NOW)).toThrow(ForgeError);
+    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '' }), NOW)).toThrow(
+      ForgeError,
+    );
+    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '   ' }), NOW)).toThrow(
+      ForgeError,
+    );
   });
 
   it('refuses a waiver with a blank owner', () => {
@@ -146,7 +165,11 @@ describe('applyWaiver', () => {
   it('refuses (GATE-505, distinct from GATE-504) a well-formed waiver that has already expired', () => {
     let caught: unknown;
     try {
-      applyWaiver(result({ passed: false }), waiver({ expiresAt: '2025-01-01T00:00:00.000Z' }), NOW);
+      applyWaiver(
+        result({ passed: false }),
+        waiver({ expiresAt: '2025-01-01T00:00:00.000Z' }),
+        NOW,
+      );
     } catch (error) {
       caught = error;
     }
@@ -155,31 +178,57 @@ describe('applyWaiver', () => {
   });
 
   it('treats a waiver expiring at exactly "now" as already expired, not valid for one more instant -- the fail-closed direction on a boundary condition', () => {
-    expect(() => applyWaiver(result({ passed: false }), waiver({ expiresAt: new Date(NOW).toISOString() }), NOW)).toThrow(ForgeError);
+    expect(() =>
+      applyWaiver(
+        result({ passed: false }),
+        waiver({ expiresAt: new Date(NOW).toISOString() }),
+        NOW,
+      ),
+    ).toThrow(ForgeError);
   });
 
   it('accepts a waiver expiring one millisecond after "now"', () => {
-    const waived = applyWaiver(result({ passed: false }), waiver({ expiresAt: new Date(NOW + 1).toISOString() }), NOW);
+    const waived = applyWaiver(
+      result({ passed: false }),
+      waiver({ expiresAt: new Date(NOW + 1).toISOString() }),
+      NOW,
+    );
     expect(waived.waiver).toBeDefined();
   });
 
   it('cleanly replaces an already-applied waiver when called a second time, rather than merging or otherwise combining the two', () => {
-    const once = applyWaiver(result({ passed: false }), waiver({ reason: 'first reason', owner: 'alice' }), NOW);
+    const once = applyWaiver(
+      result({ passed: false }),
+      waiver({ reason: 'first reason', owner: 'alice' }),
+      NOW,
+    );
     const twice = applyWaiver(once, waiver({ reason: 'second reason', owner: 'bob' }), NOW);
-    expect(twice.waiver).toEqual({ reason: 'second reason', owner: 'bob', expiresAt: waiver().expiresAt });
+    expect(twice.waiver).toEqual({
+      reason: 'second reason',
+      owner: 'bob',
+      expiresAt: waiver().expiresAt,
+    });
   });
 
   it('refuses a reason/owner made entirely of invisible Unicode characters (a zero-width space, or a NUL byte) as "non-blank" -- a plain .trim() alone does not catch either, since neither is classified as ECMAScript whitespace', () => {
-    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '​​​' }), NOW)).toThrow(ForgeError);
-    expect(() => applyWaiver(result({ passed: false }), waiver({ owner: ' ' }), NOW)).toThrow(ForgeError);
+    expect(() => applyWaiver(result({ passed: false }), waiver({ reason: '​​​' }), NOW)).toThrow(
+      ForgeError,
+    );
+    expect(() => applyWaiver(result({ passed: false }), waiver({ owner: ' ' }), NOW)).toThrow(
+      ForgeError,
+    );
   });
 
   it('still accepts a reason/owner that legitimately contains non-ASCII text, not just ASCII letters', () => {
-    const waived = applyWaiver(result({ passed: false }), waiver({ reason: '误报 (false positive)', owner: '田中' }), NOW);
+    const waived = applyWaiver(
+      result({ passed: false }),
+      waiver({ reason: '误报 (false positive)', owner: '田中' }),
+      NOW,
+    );
     expect(waived.waiver?.reason).toBe('误报 (false positive)');
   });
 
-  it('attaches an independent copy of the waiver, not the caller\'s own object reference -- mutating the original after the call does not affect the already-applied result', () => {
+  it("attaches an independent copy of the waiver, not the caller's own object reference -- mutating the original after the call does not affect the already-applied result", () => {
     // A verify round found the earlier version attached the caller's own, still-mutable object directly:
     // mutating it afterward silently rewrote an already-validated result's own audit-trail content.
     const original: { reason: string; owner: string; expiresAt: string } = { ...waiver() };

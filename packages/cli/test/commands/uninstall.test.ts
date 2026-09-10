@@ -22,9 +22,9 @@ const FIXED_CLOCK = { now: () => '2026-01-01T00:00:00.000Z' };
 describe('uninstall', () => {
   it('refuses to run at all without --yes', async () => {
     const project = await createTestProject();
-    await expect(
-      uninstall(project.paths, project.dir, { yes: false }),
-    ).rejects.toBeInstanceOf(ForgeError);
+    await expect(uninstall(project.paths, project.dir, { yes: false })).rejects.toBeInstanceOf(
+      ForgeError,
+    );
   });
 
   it('removes the real .forge/ directory and backs up its real content first', async () => {
@@ -37,9 +37,9 @@ describe('uninstall', () => {
 
     expect(existsSync(path.join(project.dir, '.forge'))).toBe(false);
     expect(result.removed).toEqual(['.forge']);
-    expect(
-      readFileSync(path.join(result.backupDir, '.forge', 'config.yaml'), 'utf8'),
-    ).toBe('project: {}\n');
+    expect(readFileSync(path.join(result.backupDir, '.forge', 'config.yaml'), 'utf8')).toBe(
+      'project: {}\n',
+    );
   });
 
   it('leaves docs/forge/ untouched unless removeDocs is explicitly true', async () => {

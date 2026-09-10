@@ -50,8 +50,14 @@ export interface PlatformAdapter {
   structured?<T>(req: StructuredRequest<T>): Promise<T>;
 
   /** Materialise the step's resolved skills into the session, scoped to the lane. See `15` §15.6. */
-  provisionSkills?(skills: readonly ResolvedSkill[], ctx: SessionContext): Promise<SkillProvisioning>;
+  provisionSkills?(
+    skills: readonly ResolvedSkill[],
+    ctx: SessionContext,
+  ): Promise<SkillProvisioning>;
 
   /** Configure only the MCP servers/tools granted to this step's role. See `15` §15.6. */
-  provisionMcp?(servers: readonly GrantedMcpServer[], ctx: SessionContext): Promise<McpProvisioning>;
+  provisionMcp?(
+    servers: readonly GrantedMcpServer[],
+    ctx: SessionContext,
+  ): Promise<McpProvisioning>;
 }

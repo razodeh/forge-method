@@ -63,7 +63,9 @@ describe('evaluate — paths', () => {
   });
 
   it('resolves a path continuing past a scalar (not an object) to undefined, not a thrown error', () => {
-    expect(evalExpr('item.owner_role.nested', { item: { owner_role: 'engineer' } })).toBeUndefined();
+    expect(
+      evalExpr('item.owner_role.nested', { item: { owner_role: 'engineer' } }),
+    ).toBeUndefined();
   });
 
   it('resolves a path continuing past null to undefined, not a thrown error', () => {
@@ -83,7 +85,9 @@ describe('evaluate — paths', () => {
   );
 
   it('still resolves a genuine own property named the same as an Object.prototype member -- the fix does not overcorrect into always returning undefined for these names', () => {
-    expect(evalExpr('constructor', { constructor: 'engineer' } as unknown as ExpressionContext)).toBe('engineer');
+    expect(
+      evalExpr('constructor', { constructor: 'engineer' } as unknown as ExpressionContext),
+    ).toBe('engineer');
     expect(evalExpr('item.toString', { item: { toString: 'custom-value' } })).toBe('custom-value');
   });
 });
@@ -235,8 +239,18 @@ describe('evaluate — logical operators', () => {
 
 describe('evaluate — in', () => {
   it('evaluates membership in an array from the context', () => {
-    expect(evalExpr('role in item.assignees', { role: 'reviewer', item: { assignees: ['reviewer', 'engineer'] } } as unknown as ExpressionContext)).toBe(true);
-    expect(evalExpr('role in item.assignees', { role: 'sdet', item: { assignees: ['reviewer', 'engineer'] } } as unknown as ExpressionContext)).toBe(false);
+    expect(
+      evalExpr('role in item.assignees', {
+        role: 'reviewer',
+        item: { assignees: ['reviewer', 'engineer'] },
+      } as unknown as ExpressionContext),
+    ).toBe(true);
+    expect(
+      evalExpr('role in item.assignees', {
+        role: 'sdet',
+        item: { assignees: ['reviewer', 'engineer'] },
+      } as unknown as ExpressionContext),
+    ).toBe(false);
   });
 
   it('evaluates substring membership in a string from the context', () => {
@@ -245,8 +259,15 @@ describe('evaluate — in', () => {
   });
 
   it('reports false, not throwing, when the collection side is not an array or string', () => {
-    expect(evalExpr('role in item.assignees', { role: 'reviewer', item: {} } as unknown as ExpressionContext)).toBe(false);
-    expect(evalExpr('role in item.assignees', { role: 'reviewer' } as unknown as ExpressionContext)).toBe(false);
+    expect(
+      evalExpr('role in item.assignees', {
+        role: 'reviewer',
+        item: {},
+      } as unknown as ExpressionContext),
+    ).toBe(false);
+    expect(
+      evalExpr('role in item.assignees', { role: 'reviewer' } as unknown as ExpressionContext),
+    ).toBe(false);
   });
 });
 

@@ -14,7 +14,12 @@ import type { ProjectPaths } from '@forge/core/fs';
 
 import { sectionIdToken, type KbSection } from '../schema/sections.ts';
 import { DEFAULT_KB_ROOT } from '../schema/tree.ts';
-import { computeKbValidityHash, readKbIdCache, writeKbIdCache, type KbIdIndex } from './id-cache.ts';
+import {
+  computeKbValidityHash,
+  readKbIdCache,
+  writeKbIdCache,
+  type KbIdIndex,
+} from './id-cache.ts';
 import { countKbIdsFromFiles, listKbMdFiles } from './scan.ts';
 
 const KB_ID_WIDTH = 4;
@@ -113,7 +118,9 @@ export class KbIdAllocator {
     const cached = await readKbIdCache(this.paths);
     if (cached.kind === 'corrupt') {
       // eslint-disable-next-line no-console -- mirrors IdAllocator's own corrupt-cache handling.
-      console.warn(`KbIdAllocator: discarding corrupt .forge/state/kb-ids.json (${cached.reason}).`);
+      console.warn(
+        `KbIdAllocator: discarding corrupt .forge/state/kb-ids.json (${cached.reason}).`,
+      );
     }
 
     const scannedFiles = await listKbMdFiles(this.paths, this.kbRoot);

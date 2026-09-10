@@ -24,7 +24,12 @@ export interface SearchableDocument {
  * scorer uses — the two backends should agree on what counts as "a term" even though only one of
  * them does real BM25. */
 export function termsOf(text: string): ReadonlySet<string> {
-  return new Set(text.toLowerCase().split(/\W+/).filter((term) => term.length > 0));
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((term) => term.length > 0),
+  );
 }
 
 export function scoreByTermOverlap(

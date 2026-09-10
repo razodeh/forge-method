@@ -12,5 +12,11 @@ export { loadProjectAgent } from './agent-loader.ts';
 export { panelQuestion, type PanelDeps, type PanelOptions } from './panel.ts';
 export { refactorTarget, type RefactorOptions } from './refactor.ts';
 export { reviewChange, type ReviewDeps, type ReviewOptions } from './review.ts';
-export { sessionList, sessionResume, sessionShow, startSession, type SessionType } from './session.ts';
+export {
+  sessionList,
+  sessionResume,
+  sessionShow,
+  startSession,
+  type SessionType,
+} from './session.ts';
 export { test, type TestSubcommand } from './test.ts';

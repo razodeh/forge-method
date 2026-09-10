@@ -41,7 +41,10 @@ function node(overrides: Partial<StepNode> & { readonly id: string }): StepNode 
 // candidates under test is ever on the critical path, for a reason that has nothing to do with their own
 // relative depth or declaration position.
 function dominant(): StepNode {
-  return node({ id: 'dominant', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1_000_000 } });
+  return node({
+    id: 'dominant',
+    limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1_000_000 },
+  });
 }
 
 describe('orderReadyNodes — rule 1: unblocks the most downstream work', () => {
@@ -66,9 +69,19 @@ describe('orderReadyNodes — rule 2: on the critical path', () => {
     // "dominant" is absent, since proving rule 2 at all means someone has to actually be on the path.
     // Both onPath and offPath have zero dependents of their own (nothing depends on either) -- tied on
     // rule 1 -- and equal cost -- tied on rule 3.
-    const ancestor = node({ id: 'ancestor', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 100 } });
-    const onPath = node({ id: 'onPath', dependsOn: ['ancestor'], limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
-    const offPath = node({ id: 'offPath', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
+    const ancestor = node({
+      id: 'ancestor',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 100 },
+    });
+    const onPath = node({
+      id: 'onPath',
+      dependsOn: ['ancestor'],
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const offPath = node({
+      id: 'offPath',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
     const nodes = [ancestor, onPath, offPath];
     const ordered = orderReadyNodes([offPath, onPath], nodes, 'seed');
     expect(ordered.map((n) => n.id)).toEqual(['onPath', 'offPath']);
@@ -77,14 +90,20 @@ describe('orderReadyNodes — rule 2: on the critical path', () => {
 
 describe('orderReadyNodes — rule 3: lowest estimated cost', () => {
   it('orders a cheaper node before a more expensive one, all else tied', () => {
-    const cheap = node({ id: 'cheap', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
-    const expensive = node({ id: 'expensive', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 10 } });
+    const cheap = node({
+      id: 'cheap',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const expensive = node({
+      id: 'expensive',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 10 },
+    });
     const nodes = [dominant(), cheap, expensive];
     const ordered = orderReadyNodes([expensive, cheap], nodes, 'seed');
     expect(ordered.map((n) => n.id)).toEqual(['cheap', 'expensive']);
   });
 
-  it('does not let a NaN-costed ready node corrupt rule 3\'s own cost comparison -- a critic round found the raw `a.limits.maxCostUsd - b.limits.maxCostUsd` subtraction returns NaN to Array.prototype.sort whenever either side is NaN, with no defined sort behaviour and no determinism guarantee', () => {
+  it("does not let a NaN-costed ready node corrupt rule 3's own cost comparison -- a critic round found the raw `a.limits.maxCostUsd - b.limits.maxCostUsd` subtraction returns NaN to Array.prototype.sort whenever either side is NaN, with no defined sort behaviour and no determinism guarantee", () => {
     // Reuses `@forge/engine/plan`'s own `safeCost`, which treats a NaN cost as 0 -- the least possible
     // *real* cost value (`maxCostUsd` is otherwise always non-negative) -- so "nanCost" is legitimately,
     // and now deterministically, the cheapest of the three regardless of which order the ready array lists
@@ -93,9 +112,18 @@ describe('orderReadyNodes — rule 3: lowest estimated cost', () => {
     // array's own input order -- reproduced here directly against orderReadyNodes with all three
     // declaration orderings, matching that finding's own repro shape, and asserting the full order (not
     // just the winner) is identical every time.
-    const cheap = node({ id: 'cheap', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
-    const nanCost = node({ id: 'nanCost', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.NaN } });
-    const expensive = node({ id: 'expensive', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 10 } });
+    const cheap = node({
+      id: 'cheap',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const nanCost = node({
+      id: 'nanCost',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.NaN },
+    });
+    const expensive = node({
+      id: 'expensive',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 10 },
+    });
     const dominantNode = dominant();
     const nodes = [dominantNode, cheap, nanCost, expensive];
     for (const ready of [
@@ -103,7 +131,11 @@ describe('orderReadyNodes — rule 3: lowest estimated cost', () => {
       [expensive, nanCost, cheap],
       [nanCost, expensive, cheap],
     ]) {
-      expect(orderReadyNodes(ready, nodes, 'seed').map((n) => n.id)).toEqual(['nanCost', 'cheap', 'expensive']);
+      expect(orderReadyNodes(ready, nodes, 'seed').map((n) => n.id)).toEqual([
+        'nanCost',
+        'cheap',
+        'expensive',
+      ]);
     }
   });
 
@@ -116,10 +148,22 @@ describe('orderReadyNodes — rule 3: lowest estimated cost', () => {
     // dethroned by a mere tie" internal choice instead (`Infinity > Infinity` is false, so once found it is
     // never replaced) -- excluding BOTH real candidates from the critical path and leaving them genuinely
     // tied all the way down to rule 3.
-    const decoy = node({ id: 'decoy', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY } });
-    const unboundedA = node({ id: 'unboundedA', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY } });
-    const unboundedB = node({ id: 'unboundedB', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY } });
-    const cheap = node({ id: 'cheap', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
+    const decoy = node({
+      id: 'decoy',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY },
+    });
+    const unboundedA = node({
+      id: 'unboundedA',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY },
+    });
+    const unboundedB = node({
+      id: 'unboundedB',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: Number.POSITIVE_INFINITY },
+    });
+    const cheap = node({
+      id: 'cheap',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
     const nodes = [decoy, unboundedA, unboundedB, cheap];
     for (const ready of [
       [unboundedA, unboundedB, cheap],
@@ -156,7 +200,9 @@ describe('orderReadyNodes — rule 4: stable tie-break by seed + node id', () =>
 
 describe('orderReadyNodes — determinism (21 §21.1, §21.3)', () => {
   it('produces byte-identical output across 1000 repeated calls with the same seed and plan', () => {
-    const nodes = Array.from({ length: 8 }, (_, i) => node({ id: `s${String(i)}`, limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: i } }));
+    const nodes = Array.from({ length: 8 }, (_, i) =>
+      node({ id: `s${String(i)}`, limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: i } }),
+    );
     const first = JSON.stringify(orderReadyNodes(nodes, nodes, 'fixed-seed').map((n) => n.id));
     for (let i = 0; i < 1000; i += 1) {
       const repeat = JSON.stringify(orderReadyNodes(nodes, nodes, 'fixed-seed').map((n) => n.id));
@@ -180,7 +226,9 @@ describe('orderReadyNodes — determinism (21 §21.1, §21.3)', () => {
     // candidates right now" -- shuffling it must never change which one sorts first.
     const nodes = Array.from({ length: 6 }, (_, i) => node({ id: `x${String(i)}` }));
     const forward = orderReadyNodes(nodes, nodes, 'shuffle-seed').map((n) => n.id);
-    const shuffledReady = orderReadyNodes([...nodes].reverse(), nodes, 'shuffle-seed').map((n) => n.id);
+    const shuffledReady = orderReadyNodes([...nodes].reverse(), nodes, 'shuffle-seed').map(
+      (n) => n.id,
+    );
     expect(shuffledReady).toEqual(forward);
   });
 
@@ -250,13 +298,26 @@ describe('orderReadyNodes — combined realistic case', () => {
     // "critical" is on the critical path via a costly downstream sink; "unblocker" has the most
     // transitive dependents but is off the critical path; "cheap"/"pricier" are both leaves, off the
     // critical path, tied on unblocks-count, differing only by cost.
-    const critical = node({ id: 'critical', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
-    const sink = node({ id: 'sink', dependsOn: ['critical'], limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1000 } });
+    const critical = node({
+      id: 'critical',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const sink = node({
+      id: 'sink',
+      dependsOn: ['critical'],
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1000 },
+    });
     const unblocker = node({ id: 'unblocker' });
     const dep1 = node({ id: 'dep1', dependsOn: ['unblocker'] });
     const dep2 = node({ id: 'dep2', dependsOn: ['unblocker'] });
-    const cheap = node({ id: 'cheap', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 } });
-    const pricier = node({ id: 'pricier', limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 5 } });
+    const cheap = node({
+      id: 'cheap',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const pricier = node({
+      id: 'pricier',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 5 },
+    });
     const nodes = [critical, sink, unblocker, dep1, dep2, cheap, pricier];
     const ready = [pricier, cheap, unblocker, critical];
     const ordered = orderReadyNodes(ready, nodes, 'seed').map((n) => n.id);

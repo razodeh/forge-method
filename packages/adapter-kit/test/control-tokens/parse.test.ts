@@ -38,7 +38,9 @@ describe('parseControlTokens', () => {
 
   it('parses FORGE_ASK with no options segment as an empty options list, not a failure', () => {
     const result = parseControlTokens('FORGE_ASK: should we proceed?');
-    expect(result.tokens).toEqual([{ token: 'FORGE_ASK', question: 'should we proceed?', options: [] }]);
+    expect(result.tokens).toEqual([
+      { token: 'FORGE_ASK', question: 'should we proceed?', options: [] },
+    ]);
     expect(result.unknownLines).toEqual([]);
   });
 
@@ -60,7 +62,13 @@ describe('parseControlTokens', () => {
   it('normalizes FORGE_ASSUME confidence case (the model may write Low/HIGH/etc.)', () => {
     const result = parseControlTokens('FORGE_ASSUME: text | HIGH | impact | validation');
     expect(result.tokens).toEqual([
-      { token: 'FORGE_ASSUME', text: 'text', confidence: 'high', impact: 'impact', validateBy: 'validation' },
+      {
+        token: 'FORGE_ASSUME',
+        text: 'text',
+        confidence: 'high',
+        impact: 'impact',
+        validateBy: 'validation',
+      },
     ]);
   });
 
@@ -72,7 +80,9 @@ describe('parseControlTokens', () => {
   });
 
   it('parses FORGE_REQUEST_CHANGE: <target> <reason>', () => {
-    const result = parseControlTokens('FORGE_REQUEST_CHANGE: packages/core/src/index.ts add a new export');
+    const result = parseControlTokens(
+      'FORGE_REQUEST_CHANGE: packages/core/src/index.ts add a new export',
+    );
     expect(result.tokens).toEqual([
       {
         token: 'FORGE_REQUEST_CHANGE',
@@ -83,7 +93,9 @@ describe('parseControlTokens', () => {
   });
 
   it('parses FORGE_CONFLICT: <reason> (05 §5.5 point 9)', () => {
-    const result = parseControlTokens('FORGE_CONFLICT: ADR-004 and ADR-009 disagree on the storage engine');
+    const result = parseControlTokens(
+      'FORGE_CONFLICT: ADR-004 and ADR-009 disagree on the storage engine',
+    );
     expect(result.tokens).toEqual([
       { token: 'FORGE_CONFLICT', reason: 'ADR-004 and ADR-009 disagree on the storage engine' },
     ]);
@@ -91,7 +103,9 @@ describe('parseControlTokens', () => {
 
   it('parses FORGE_LOAD_SKILL: <skillId> (15 §15.4.3)', () => {
     const result = parseControlTokens('FORGE_LOAD_SKILL: error-handling-conventions');
-    expect(result.tokens).toEqual([{ token: 'FORGE_LOAD_SKILL', skillId: 'error-handling-conventions' }]);
+    expect(result.tokens).toEqual([
+      { token: 'FORGE_LOAD_SKILL', skillId: 'error-handling-conventions' },
+    ]);
   });
 
   it('captures a FORGE_-shaped but unregistered token in unknownLines, not thrown, not dropped', () => {

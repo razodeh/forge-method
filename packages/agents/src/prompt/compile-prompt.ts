@@ -203,12 +203,18 @@ export function compilePrompt(
     { index: 4, name: 'Step brief', content: step.brief },
     { index: 5, name: 'Output contract', content: renderOutputContractBlock(agent) },
     { index: 6, name: 'Constraints', content: renderConstraintsBlock(constraints) },
-    { index: 7, name: 'Definition of done', content: renderDefinitionOfDoneBlock(definitionOfDone) },
+    {
+      index: 7,
+      name: 'Definition of done',
+      content: renderDefinitionOfDoneBlock(definitionOfDone),
+    },
     { index: 8, name: 'Skills', content: renderSkillsBlock(pack) },
     { index: 9, name: 'House style + appended guidance', content: renderHouseStyleBlock(options) },
   ];
 
-  const text = blocks.map((block) => `## [${String(block.index)}] ${block.name}\n\n${block.content}`).join('\n\n');
+  const text = blocks
+    .map((block) => `## [${String(block.index)}] ${block.name}\n\n${block.content}`)
+    .join('\n\n');
 
   return { blocks, text };
 }

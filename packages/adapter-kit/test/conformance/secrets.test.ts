@@ -95,7 +95,12 @@ describe('checkC13NoSecretLeak — every AdapterEvent variant is inspected', () 
           sessionId: 's1',
           events: (async function* () {
             await Promise.resolve();
-            yield { type: 'tool.result' as const, id: 'call-1', ok: true, summary: `leaked: ${SECRET}` };
+            yield {
+              type: 'tool.result' as const,
+              id: 'call-1',
+              ok: true,
+              summary: `leaked: ${SECRET}`,
+            };
           })(),
           stop: () => Promise.resolve(),
           result: () => Promise.resolve(emptyResult({ finalText: 'no secret here' })),
@@ -159,14 +164,21 @@ describe('checkC13NoSecretLeak — every AdapterEvent variant is inspected', () 
               token: 'FORGE_CONFLICT' as const,
               payload: { reason: 'benign' },
             };
-            yield { type: 'retry' as const, attempt: 1, maxRetries: 3, reason: 'benign', delayMs: 10 };
+            yield {
+              type: 'retry' as const,
+              attempt: 1,
+              maxRetries: 3,
+              reason: 'benign',
+              delayMs: 10,
+            };
             yield { type: 'error' as const, code: 'E', message: 'benign', retryable: false };
             yield { type: 'file.changed' as const, path: 'x', change: 'created' as const };
             yield { type: 'usage' as const, inputTokens: 1, outputTokens: 1 };
             yield { type: 'session.ended' as const, reason: 'complete' as const };
           })(),
           stop: () => Promise.resolve(),
-          result: () => Promise.resolve(emptyResult({ finalText: 'benign', structured: { note: 'benign' } })),
+          result: () =>
+            Promise.resolve(emptyResult({ finalText: 'benign', structured: { note: 'benign' } })),
         }),
       resumeSession: () => Promise.reject(new Error('not implemented for this test')),
     };
@@ -208,16 +220,18 @@ describe('checkC13NoSecretLeak — the real filesystem is inspected too', () => 
       preflight: () => Promise.resolve({ ok: true, issues: [] }),
       listModels: () => Promise.resolve([]),
       startSession: (request) =>
-        writeFile(path.join(request.cwd, 'debug-log.txt'), `env dump: ${SECRET}`, 'utf8').then(() => ({
-          sessionId: 's1',
-          events: {
-            [Symbol.asyncIterator]: () => ({
-              next: () => Promise.resolve({ done: true as const, value: undefined }),
-            }),
-          },
-          stop: () => Promise.resolve(),
-          result: () => Promise.resolve(emptyResult({ finalText: 'nothing to see here' })),
-        })),
+        writeFile(path.join(request.cwd, 'debug-log.txt'), `env dump: ${SECRET}`, 'utf8').then(
+          () => ({
+            sessionId: 's1',
+            events: {
+              [Symbol.asyncIterator]: () => ({
+                next: () => Promise.resolve({ done: true as const, value: undefined }),
+              }),
+            },
+            stop: () => Promise.resolve(),
+            result: () => Promise.resolve(emptyResult({ finalText: 'nothing to see here' })),
+          }),
+        ),
       resumeSession: () => Promise.reject(new Error('not implemented for this test')),
     };
     const context = await buildContext(adapter);
@@ -236,7 +250,9 @@ describe('checkC13NoSecretLeak — the real filesystem is inspected too', () => 
       listModels: () => Promise.resolve([]),
       startSession: (request) =>
         mkdir(path.join(request.cwd, 'logs'))
-          .then(() => writeFile(path.join(request.cwd, 'logs', 'debug.txt'), `env dump: ${SECRET}`, 'utf8'))
+          .then(() =>
+            writeFile(path.join(request.cwd, 'logs', 'debug.txt'), `env dump: ${SECRET}`, 'utf8'),
+          )
           .then(() => ({
             sessionId: 's1',
             events: {
@@ -262,7 +278,9 @@ describe('checkC13NoSecretLeak — the real filesystem is inspected too', () => 
       listModels: () => Promise.resolve([]),
       startSession: (request) =>
         mkdir(path.join(request.cwd, 'untracked-dir'))
-          .then(() => writeFile(path.join(request.cwd, 'untracked-dir', 'inner.txt'), 'benign', 'utf8'))
+          .then(() =>
+            writeFile(path.join(request.cwd, 'untracked-dir', 'inner.txt'), 'benign', 'utf8'),
+          )
           .then(() => ({
             sessionId: 's1',
             events: {

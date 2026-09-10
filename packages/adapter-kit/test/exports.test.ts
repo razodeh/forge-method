@@ -23,7 +23,9 @@ describe('package.json exports', () => {
 
     expect(Object.keys(manifest.exports).length).toBeGreaterThan(0);
     for (const [subpath, target] of Object.entries(manifest.exports)) {
-      expect(existsSync(new URL(target, `file://${packageDir}`)), `${subpath} -> ${target}`).toBe(true);
+      expect(existsSync(new URL(target, `file://${packageDir}`)), `${subpath} -> ${target}`).toBe(
+        true,
+      );
     }
   });
 });

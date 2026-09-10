@@ -83,10 +83,7 @@ Confirmed directly against the real system.
 }
 
 /** A real, schema-valid diagram sidecar (`diagramSchema`, parsed as plain YAML, not front matter). */
-export async function writeDiagramFixture(
-  project: TestProject,
-  id = 'DIAG-001',
-): Promise<string> {
+export async function writeDiagramFixture(project: TestProject, id = 'DIAG-001'): Promise<string> {
   const relPath = `${KB_ROOT}/architecture/views/fixture.mmd.yaml`;
   await mkdir(path.dirname(path.join(project.dir, relPath)), { recursive: true });
   const content = `id: ${id}

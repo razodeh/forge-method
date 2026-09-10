@@ -50,7 +50,9 @@ export async function kbList(ctx: KbCommandContext): Promise<readonly KbEntrySum
 
 export async function kbShow(ctx: KbCommandContext, id: string): Promise<KbEntrySummary> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  const found = tree.entries.map((entry) => summarize(entry, ctx.kbRoot)).find((entry) => entry.id === id);
+  const found = tree.entries
+    .map((entry) => summarize(entry, ctx.kbRoot))
+    .find((entry) => entry.id === id);
   if (found === undefined) {
     throw new ForgeError('KB-015', { id });
   }
@@ -60,7 +62,10 @@ export async function kbShow(ctx: KbCommandContext, id: string): Promise<KbEntry
 /** `open <id>`: resolves and prints the real file path — no TUI/`$EDITOR` launch this milestone
  * (`22`'s own "Do not build" line), so "open" means "tell you exactly where it is," the honest
  * non-interactive equivalent. */
-export async function kbOpen(ctx: KbCommandContext, id: string): Promise<{ readonly path: string }> {
+export async function kbOpen(
+  ctx: KbCommandContext,
+  id: string,
+): Promise<{ readonly path: string }> {
   const entry = await kbShow(ctx, id);
   return { path: entry.path };
 }
@@ -78,9 +83,14 @@ export interface KbSearchHit {
  * changed since) returns whatever the last real sync produced, not a silently-stale-but-hidden
  * result; `kb sync`'s own job is keeping it current.
  */
-export async function kbSearch(ctx: KbCommandContext, query: string): Promise<readonly KbSearchHit[]> {
+export async function kbSearch(
+  ctx: KbCommandContext,
+  query: string,
+): Promise<readonly KbSearchHit[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  const summaries = new Map(tree.entries.map((entry) => summarize(entry, ctx.kbRoot)).map((entry) => [entry.id, entry]));
+  const summaries = new Map(
+    tree.entries.map((entry) => summarize(entry, ctx.kbRoot)).map((entry) => [entry.id, entry]),
+  );
   const backend = openKbIndex(ctx.paths);
   try {
     return backend
@@ -133,7 +143,8 @@ export async function kbGraph(
   hops = 1,
 ): Promise<readonly KbGraphEdge[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  const startIds = id !== undefined ? [id] : tree.entries.map((entry) => summarize(entry, ctx.kbRoot).id);
+  const startIds =
+    id !== undefined ? [id] : tree.entries.map((entry) => summarize(entry, ctx.kbRoot).id);
   const backend = openKbIndex(ctx.paths);
   try {
     const edges: KbGraphEdge[] = [];

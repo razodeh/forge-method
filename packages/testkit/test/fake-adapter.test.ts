@@ -56,7 +56,12 @@ function buildAdapter(): FakePlatformAdapter {
 
   adapter.script((r) => r.prompt === HELLO_PROMPT, { text: ['Hello!'] });
   adapter.script((r) => r.prompt === WRITE_FILE_PROMPT, {
-    writeFiles: [{ relativePath: CONFORMANCE_WRITE_FILE_RELATIVE_PATH, content: CONFORMANCE_WRITE_FILE_CONTENT }],
+    writeFiles: [
+      {
+        relativePath: CONFORMANCE_WRITE_FILE_RELATIVE_PATH,
+        content: CONFORMANCE_WRITE_FILE_CONTENT,
+      },
+    ],
   });
   adapter.script((r) => r.prompt === MANY_TURNS_PROMPT, {
     text: ['turn one', 'turn two', 'turn three', 'turn four', 'turn five'],
@@ -67,13 +72,21 @@ function buildAdapter(): FakePlatformAdapter {
   adapter.script((r) => r.prompt === CONTROL_TOKEN_PROMPT, {
     text: ['FORGE_ASK: which database? | Postgres, SQLite'],
   });
-  adapter.script((r) => r.prompt === STRUCTURED_PROMPT, { text: ['done'], structured: { ok: true } });
+  adapter.script((r) => r.prompt === STRUCTURED_PROMPT, {
+    text: ['done'],
+    structured: { ok: true },
+  });
   adapter.script((r) => r.prompt === RESUME_INITIAL_PROMPT, {
     text: [`remembering: ${RESUME_REMEMBERED_FRAGMENT}`],
   });
   adapter.script((r) => r.prompt === RESUME_PROBE_PROMPT, { text: ['probing'] });
-  adapter.script((r) => r.prompt === MCP_PROMPT, { mcpToolAttempts: [MCP_ALLOWED_TOOL, MCP_DENIED_TOOL] });
-  adapter.script((r) => r.prompt === SKILL_PROMPT, { skillVisibleText: SKILL_FRAGMENT, text: ['using skill'] });
+  adapter.script((r) => r.prompt === MCP_PROMPT, {
+    mcpToolAttempts: [MCP_ALLOWED_TOOL, MCP_DENIED_TOOL],
+  });
+  adapter.script((r) => r.prompt === SKILL_PROMPT, {
+    skillVisibleText: SKILL_FRAGMENT,
+    text: ['using skill'],
+  });
   adapter.script((r) => r.prompt === SECRET_PROBE_PROMPT, { text: ['nothing to report'] });
 
   return adapter;
@@ -94,13 +107,22 @@ function buildOptions(): ConformanceOptions {
     execPrompt: EXEC_PROMPT,
     secretProbe: { value: 'forge-testkit-secret-do-not-print-this', prompt: SECRET_PROBE_PROMPT },
     controlTokenPrompt: CONTROL_TOKEN_PROMPT,
-    structured: { schema: { type: 'object' }, prompt: STRUCTURED_PROMPT, isValid: isValidStructured },
+    structured: {
+      schema: { type: 'object' },
+      prompt: STRUCTURED_PROMPT,
+      isValid: isValidStructured,
+    },
     resume: {
       initialPrompt: RESUME_INITIAL_PROMPT,
       probePrompt: RESUME_PROBE_PROMPT,
       expectedFragment: RESUME_REMEMBERED_FRAGMENT,
     },
-    mcp: { server: MCP_SERVER, allowedToolName: MCP_ALLOWED_TOOL, deniedToolName: MCP_DENIED_TOOL, prompt: MCP_PROMPT },
+    mcp: {
+      server: MCP_SERVER,
+      allowedToolName: MCP_ALLOWED_TOOL,
+      deniedToolName: MCP_DENIED_TOOL,
+      prompt: MCP_PROMPT,
+    },
     skill: { skill: SKILL, prompt: SKILL_PROMPT, expectedFragment: SKILL_FRAGMENT },
   };
 }

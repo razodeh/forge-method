@@ -10,7 +10,13 @@
  */
 import { minimatch } from 'minimatch';
 
-import type { ClaimIntervalMap, ClaimOverlap, CompileIssue, CompileResult, StepNode } from './types.ts';
+import type {
+  ClaimIntervalMap,
+  ClaimOverlap,
+  CompileIssue,
+  CompileResult,
+  StepNode,
+} from './types.ts';
 
 /** `10` §10.1's own `inputs`/`outputs` reference mini-DSL (`artifact:TypeName(id-or-*)`, `kb:glob`,
  * `diff:lane`) is otherwise carried through every `@forge/engine/plan` type as an opaque string
@@ -117,8 +123,13 @@ function countOpenBrackets(value: string): number {
 
 export function globsOverlap(a: string, b: string): boolean {
   if (a === b) return true;
-  if (a.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK || b.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK) return false;
-  if (countOpenBrackets(a) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK || countOpenBrackets(b) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK) return false;
+  if (a.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK || b.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK)
+    return false;
+  if (
+    countOpenBrackets(a) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK ||
+    countOpenBrackets(b) > MAX_BRACKET_COUNT_FOR_OVERLAP_CHECK
+  )
+    return false;
   try {
     return minimatch(a, b) || minimatch(b, a);
   } catch (cause) {
@@ -166,7 +177,10 @@ export function buildClaimIntervalMap(nodes: readonly StepNode[]): ClaimInterval
  * "if both are exclusive" wording; a mix of one exclusive and one shared/unset side still serialises
  * (declaration order — whichever step appears first in `nodes` becomes the ancestor — deterministic and
  * independent of which order `buildClaimIntervalMap` happened to enumerate the pair in). */
-export function applyClaimOverlaps(nodes: readonly StepNode[], intervalMap: ClaimIntervalMap): CompileResult {
+export function applyClaimOverlaps(
+  nodes: readonly StepNode[],
+  intervalMap: ClaimIntervalMap,
+): CompileResult {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const declarationOrder = new Map(nodes.map((node, index) => [node.id, index]));
   const issues: CompileIssue[] = [];

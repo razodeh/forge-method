@@ -15,7 +15,10 @@ function finding(overrides: Partial<KbFinding> = {}): KbFinding {
 
 describe('sortFindings', () => {
   it('sorts primarily by ruleId', () => {
-    const sorted = sortFindings([finding({ ruleId: 'kb:staleness' }), finding({ ruleId: 'kb:orphan' })]);
+    const sorted = sortFindings([
+      finding({ ruleId: 'kb:staleness' }),
+      finding({ ruleId: 'kb:orphan' }),
+    ]);
     expect(sorted.map((f) => f.ruleId)).toEqual(['kb:orphan', 'kb:staleness']);
   });
 

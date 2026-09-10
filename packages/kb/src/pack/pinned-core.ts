@@ -43,14 +43,19 @@ function computeActiveConstraints(tree: KbTree): string {
   const lines = tree.entries
     .filter(
       (entry): entry is Extract<KbParsedEntry, { kind: 'kb-entry' }> =>
-        entry.kind === 'kb-entry' && entry.value.section === 'constraints' && entry.value.status === 'active',
+        entry.kind === 'kb-entry' &&
+        entry.value.section === 'constraints' &&
+        entry.value.status === 'active',
     )
     .map((entry) => `${entry.value.id}: ${entry.value.title}`)
     .sort((a, b) => (a < b ? -1 : 1));
   return lines.join('\n');
 }
 
-export function computePinnedCore(tree: KbTree, overrides: PackRequest['pinnedCoreOverrides']): PinnedCore {
+export function computePinnedCore(
+  tree: KbTree,
+  overrides: PackRequest['pinnedCoreOverrides'],
+): PinnedCore {
   const computed = {
     glossary: kbEntryBodyAt(tree, GLOSSARY_PATH),
     constraints: computeActiveConstraints(tree),

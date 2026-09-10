@@ -35,7 +35,7 @@ describe('computeCriticalPath', () => {
     expect(computeCriticalPath([node('a', [], 5)])).toEqual({ path: ['a'], estimatedCost: 5 });
   });
 
-  it('a straight chain sums every node\'s own cost along it', () => {
+  it("a straight chain sums every node's own cost along it", () => {
     const nodes = [node('a', [], 1), node('b', ['a'], 2), node('c', ['b'], 3)];
     expect(computeCriticalPath(nodes)).toEqual({ path: ['a', 'b', 'c'], estimatedCost: 6 });
   });
@@ -88,10 +88,7 @@ describe('computeCriticalPath', () => {
   });
 
   it('declaration order only breaks a cost tie among candidates already at the same topological depth', () => {
-    const nodes = [
-      node('first', [], 5),
-      node('second', [], 5),
-    ];
+    const nodes = [node('first', [], 5), node('second', [], 5)];
     const result = computeCriticalPath(nodes);
     expect(result.path).toEqual(['first']);
     expect(computeCriticalPath([...nodes].reverse()).path).toEqual(['second']);
@@ -145,8 +142,13 @@ describe('computeCriticalPath', () => {
     expect(result.path).toEqual(['isolated']);
   });
 
-  it('excludes a node depending on a cyclic node too, not just the cycle\'s own two members', () => {
-    const nodes = [node('a', ['b'], 1), node('b', ['a'], 1), node('c', ['a'], 5), node('isolated', [], 1)];
+  it("excludes a node depending on a cyclic node too, not just the cycle's own two members", () => {
+    const nodes = [
+      node('a', ['b'], 1),
+      node('b', ['a'], 1),
+      node('c', ['a'], 5),
+      node('isolated', [], 1),
+    ];
     const result = computeCriticalPath(nodes);
     expect(result.path).toEqual(['isolated']);
   });

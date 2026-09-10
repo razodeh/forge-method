@@ -42,7 +42,8 @@ const MAX_EVALUATION_DEPTH = 200;
 function resolvePath(segments: readonly string[], context: ExpressionContext): unknown {
   let current: unknown = context;
   for (const segment of segments) {
-    if (typeof current !== 'object' || current === null || !Object.hasOwn(current, segment)) return undefined;
+    if (typeof current !== 'object' || current === null || !Object.hasOwn(current, segment))
+      return undefined;
     current = (current as Record<string, unknown>)[segment];
   }
   return current;
@@ -118,7 +119,8 @@ function evaluateAtDepth(expr: Expr, context: ExpressionContext, depth: number):
       // it could actually change the outcome, so a right-hand `length(...)`/path with a side-effect-free
       // but potentially "unresolved" value never gets asked for when it wouldn't matter anyway.
       const left = Boolean(evaluateAtDepth(expr.left, context, nextDepth));
-      if (expr.operator === '&&') return left && Boolean(evaluateAtDepth(expr.right, context, nextDepth));
+      if (expr.operator === '&&')
+        return left && Boolean(evaluateAtDepth(expr.right, context, nextDepth));
       return left || Boolean(evaluateAtDepth(expr.right, context, nextDepth));
     }
 
@@ -139,7 +141,8 @@ function evaluateAtDepth(expr: Expr, context: ExpressionContext, depth: number):
       const value = evaluateAtDepth(expr.value, context, nextDepth);
       const collection = evaluateAtDepth(expr.collection, context, nextDepth);
       if (Array.isArray(collection)) return collection.includes(value);
-      if (typeof collection === 'string') return typeof value === 'string' && collection.includes(value);
+      if (typeof collection === 'string')
+        return typeof value === 'string' && collection.includes(value);
       return false;
     }
 

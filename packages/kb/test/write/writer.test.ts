@@ -182,7 +182,12 @@ describe('KbWriter.write', () => {
 
     const ids = entries.map((entry) => entry.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect([...ids].sort()).toEqual(['KB-ARCH-0001', 'KB-ARCH-0002', 'KB-ARCH-0003', 'KB-ARCH-0004']);
+    expect([...ids].sort()).toEqual([
+      'KB-ARCH-0001',
+      'KB-ARCH-0002',
+      'KB-ARCH-0003',
+      'KB-ARCH-0004',
+    ]);
 
     const log = readFileSync(paths.resolveState('kb-events.jsonl'), 'utf8').trim().split('\n');
     expect(log).toHaveLength(4);
@@ -192,7 +197,9 @@ describe('KbWriter.write', () => {
     const first = freshProject();
     const second = freshProject();
     const entryFirst = await new KbWriter({ paths: first, clock: fakeClock() }).write(validInput());
-    const entrySecond = await new KbWriter({ paths: second, clock: fakeClock() }).write(validInput());
+    const entrySecond = await new KbWriter({ paths: second, clock: fakeClock() }).write(
+      validInput(),
+    );
     expect(entrySecond).toEqual(entryFirst);
   });
 });
@@ -352,7 +359,10 @@ describe('KbWriter.propose', () => {
     const paths = freshProject();
     const writer = await writerWithOneEntry(paths, fakeClock());
     await writer.propose(proposal());
-    const written = readFileSync(paths.resolveWithin('docs/forge/kb/architecture/topic.md'), 'utf8');
+    const written = readFileSync(
+      paths.resolveWithin('docs/forge/kb/architecture/topic.md'),
+      'utf8',
+    );
     expect(written).toContain('Something else is true.\n\n## Rationale');
   });
 
@@ -368,9 +378,7 @@ describe('KbWriter.propose', () => {
       'utf8',
     );
 
-    await writer.propose(
-      proposal({ baseValue: 'Round one.', proposedValue: 'Round two.' }),
-    );
+    await writer.propose(proposal({ baseValue: 'Round one.', proposedValue: 'Round two.' }));
     const afterRoundTwo = readFileSync(
       paths.resolveWithin('docs/forge/kb/architecture/topic.md'),
       'utf8',
@@ -388,7 +396,10 @@ describe('KbWriter.propose', () => {
     // silently picked whichever of two same-id files matched first, with no signal of the ambiguity.
     const paths = freshProject();
     const writer = await writerWithOneEntry(paths, fakeClock());
-    const original = readFileSync(paths.resolveWithin('docs/forge/kb/architecture/topic.md'), 'utf8');
+    const original = readFileSync(
+      paths.resolveWithin('docs/forge/kb/architecture/topic.md'),
+      'utf8',
+    );
     // A path that sorts before "topic.md", reusing the same id — the exact shape a copy-paste leaves.
     const decoyPath = paths.resolveWithin('docs/forge/kb/architecture/aaa-decoy.md');
     writeFileSync(decoyPath, original);

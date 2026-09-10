@@ -74,10 +74,11 @@ describe('normalizeAdapterEvent — rejects a malformed raw object', () => {
     // violated. Exercised directly via a mock, the same shape `IdAllocator.allocate`'s own
     // provably-unreachable-but-type-necessary branch tests already use elsewhere in this codebase.
     type SafeParseResult = ReturnType<typeof adapterEventSchema.safeParse>;
-    const emptyIssuesFailure = { success: false, error: { issues: [] } } as unknown as SafeParseResult;
-    const spy = vi
-      .spyOn(adapterEventSchema, 'safeParse')
-      .mockReturnValueOnce(emptyIssuesFailure);
+    const emptyIssuesFailure = {
+      success: false,
+      error: { issues: [] },
+    } as unknown as SafeParseResult;
+    const spy = vi.spyOn(adapterEventSchema, 'safeParse').mockReturnValueOnce(emptyIssuesFailure);
 
     const result = normalizeAdapterEvent({ type: 'thinking', text: 'x' });
     expect(result).toEqual({
@@ -95,7 +96,12 @@ describe('normalizeAdapterEvent — required unknown-typed keys (input, payload)
   });
 
   it('accepts a tool.call whose input key is present with value undefined (the key existed)', () => {
-    const result = normalizeAdapterEvent({ type: 'tool.call', id: 't1', name: 'Edit', input: undefined });
+    const result = normalizeAdapterEvent({
+      type: 'tool.call',
+      id: 't1',
+      name: 'Edit',
+      input: undefined,
+    });
     expect(result.ok).toBe(true);
   });
 
@@ -176,7 +182,7 @@ describe('normalizeAdapterEvent — never throws, even for adversarial property 
     expect(result.ok).toBe(false);
   });
 
-  it('does not throw for a Proxy whose ownKeys trap throws (hit by .strict()\'s extra-key scan)', () => {
+  it("does not throw for a Proxy whose ownKeys trap throws (hit by .strict()'s extra-key scan)", () => {
     const proxy = new Proxy(
       { type: 'text', text: 'x', partial: false },
       {
@@ -199,10 +205,13 @@ describe('normalizeAdapterEvent — never throws, even for adversarial property 
       },
     });
     const result = normalizeAdapterEvent(evil);
-    expect(result).toEqual({ ok: false, issue: { path: '(root)', message: 'a plain string, not an Error' } });
+    expect(result).toEqual({
+      ok: false,
+      issue: { path: '(root)', message: 'a plain string, not an Error' },
+    });
   });
 
-  it('does not throw even when the thrown cause\'s own toString also throws', () => {
+  it("does not throw even when the thrown cause's own toString also throws", () => {
     // A verify pass found `describeThrown`'s own `String(cause)` fallback was unprotected: a thrown
     // value whose `toString`/`Symbol.toPrimitive` itself throws re-escaped past the outer catch.
     const evil: Record<string, unknown> = {};
@@ -241,10 +250,19 @@ describe('normalizeAdapterEvent — never throws, even for adversarial property 
 
 describe('normalizeAdapterEvent — numeric constraints reject Infinity, not just negatives/NaN', () => {
   it.each([
-    ['retry.delayMs', { type: 'retry' as const, attempt: 1, maxRetries: 3, reason: 'x', delayMs: Infinity }],
+    [
+      'retry.delayMs',
+      { type: 'retry' as const, attempt: 1, maxRetries: 3, reason: 'x', delayMs: Infinity },
+    ],
     ['usage.inputTokens', { type: 'usage' as const, inputTokens: Infinity, outputTokens: 1 }],
-    ['usage.costUsd', { type: 'usage' as const, inputTokens: 1, outputTokens: 1, costUsd: Infinity }],
-    ['tool.result.bytes', { type: 'tool.result' as const, id: 't1', ok: true, summary: 'x', bytes: Infinity }],
+    [
+      'usage.costUsd',
+      { type: 'usage' as const, inputTokens: 1, outputTokens: 1, costUsd: Infinity },
+    ],
+    [
+      'tool.result.bytes',
+      { type: 'tool.result' as const, id: 't1', ok: true, summary: 'x', bytes: Infinity },
+    ],
   ])('rejects Infinity for %s', (_label, event) => {
     const result = normalizeAdapterEvent(event);
     expect(result.ok).toBe(false);

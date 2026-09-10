@@ -40,7 +40,12 @@ function isNonBlank(value: string): boolean {
  * (below), which re-checks this shape half plus one more thing (see its own doc comment for why expiry
  * itself is checked differently there). */
 function isWellFormedWaiver(waiver: Waiver): boolean {
-  return isNonBlank(waiver.reason) && isNonBlank(waiver.owner) && isNonBlank(waiver.expiresAt) && !Number.isNaN(Date.parse(waiver.expiresAt));
+  return (
+    isNonBlank(waiver.reason) &&
+    isNonBlank(waiver.owner) &&
+    isNonBlank(waiver.expiresAt) &&
+    !Number.isNaN(Date.parse(waiver.expiresAt))
+  );
 }
 
 /** Refuses (throws a specific `ForgeError`, never a silent no-op) a waiver missing a `reason`/`owner`, one
@@ -64,7 +69,11 @@ function isWellFormedWaiver(waiver: Waiver): boolean {
  * waiver is wrong to record just because it turned out not to be needed, and keeping this function's own
  * behaviour uniform (never branching on `passed` itself) is simpler than a caller having to know not to
  * call it in that case. */
-export function applyWaiver(result: GateEvaluationResult, waiver: Waiver, now: number): GateEvaluationResult {
+export function applyWaiver(
+  result: GateEvaluationResult,
+  waiver: Waiver,
+  now: number,
+): GateEvaluationResult {
   if (!isWellFormedWaiver(waiver)) {
     throw new ForgeError('GATE-504', { gateId: result.gateId });
   }
@@ -106,5 +115,8 @@ export function applyWaiver(result: GateEvaluationResult, waiver: Waiver, now: n
 export function isApproved(result: GateEvaluationResult): boolean {
   if (result.passed) return true;
   if (result.waiver === undefined || result.waiverAppliedAt === undefined) return false;
-  return isWellFormedWaiver(result.waiver) && Date.parse(result.waiver.expiresAt) > result.waiverAppliedAt;
+  return (
+    isWellFormedWaiver(result.waiver) &&
+    Date.parse(result.waiver.expiresAt) > result.waiverAppliedAt
+  );
 }

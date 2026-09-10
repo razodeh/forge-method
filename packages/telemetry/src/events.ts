@@ -130,7 +130,13 @@ export interface AppendEventOptions {
  * both (mistakenly) pass `''` silently share one file and interleave their sequence numbers, rather than
  * failing loudly. */
 function assertSafeRunId(runId: string): void {
-  if (runId === '' || runId.includes('/') || runId.includes('\\') || runId === '.' || runId === '..') {
+  if (
+    runId === '' ||
+    runId.includes('/') ||
+    runId.includes('\\') ||
+    runId === '.' ||
+    runId === '..'
+  ) {
     throw new TelemetryError({
       code: 'TELEMETRY-INVALID-RUN-ID',
       message: `runId "${runId}" is not a valid single path segment — it must not be empty, must not contain "/" or "\\", and must not be "." or "..".`,
@@ -149,7 +155,9 @@ function eventLogPath(projectRoot: string, runId: string): string {
  * that branch otherwise unreachable through this module's own real behaviour, the same situation
  * `@forge/vcs`'s own identically-shaped helper was in. */
 export function errorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String(error.code)
+    : undefined;
 }
 
 /** Same reasoning and the same reused-not-duplicated shape as `errorCode` above: every real
@@ -280,7 +288,8 @@ async function truncateTornTrailingWrite(filePath: string, content: string): Pro
       {
         code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
         message: `Failed to recover a torn trailing write for the event log at "${filePath}": ${errorMessage(cause)}`,
-        remedy: 'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
+        remedy:
+          'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
       },
       { cause },
     );
@@ -290,7 +299,11 @@ async function truncateTornTrailingWrite(filePath: string, content: string): Pro
 /** Reuses `parseEventLine` rather than duplicating its shape-check — the same "is this a well-formed
  * event" question `readEvents` already asks of every line, asked here of just the last one, so the two
  * can't drift apart into checking slightly different things. */
-async function determineLastSeq(projectRoot: string, runId: string, cacheKey: string): Promise<number> {
+async function determineLastSeq(
+  projectRoot: string,
+  runId: string,
+  cacheKey: string,
+): Promise<number> {
   const cached = lastSeqCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -304,7 +317,8 @@ async function determineLastSeq(projectRoot: string, runId: string, cacheKey: st
       {
         code: 'TELEMETRY-EVENT-LOG-READ-FAILED',
         message: `Failed to read the event log for run "${runId}" while determining its last sequence number: ${errorMessage(error)}`,
-        remedy: 'Verify the project root is correct and this process has permission to read .forge/state/.',
+        remedy:
+          'Verify the project root is correct and this process has permission to read .forge/state/.',
       },
       { cause: error },
     );
@@ -353,7 +367,8 @@ async function appendLineWithFsync(filePath: string, line: string): Promise<void
       {
         code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
         message: `Failed to append to the event log at "${filePath}": ${errorMessage(cause)}`,
-        remedy: 'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
+        remedy:
+          'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
       },
       { cause },
     );
@@ -379,7 +394,11 @@ export async function appendEvent(
   return enqueueForRun(cacheKey, async () => {
     const lastSeq = await determineLastSeq(projectRoot, runId, cacheKey);
     const seq = lastSeq + 1;
-    const redactedPayload = redactPayload(event.payload, options.redactPatterns ?? [], options.knownSecrets ?? []);
+    const redactedPayload = redactPayload(
+      event.payload,
+      options.redactPatterns ?? [],
+      options.knownSecrets ?? [],
+    );
     const fullEvent: ForgeEvent = { ...event, v: 1, seq, payload: redactedPayload };
     try {
       await appendLineWithFsync(eventLogPath(projectRoot, runId), `${JSON.stringify(fullEvent)}\n`);
@@ -423,7 +442,8 @@ export async function* readEvents(projectRoot: string, runId: string): AsyncGene
       {
         code: 'TELEMETRY-EVENT-LOG-READ-FAILED',
         message: `Failed to read the event log for run "${runId}": ${errorMessage(error)}`,
-        remedy: 'Verify the project root is correct and this process has permission to read .forge/state/.',
+        remedy:
+          'Verify the project root is correct and this process has permission to read .forge/state/.',
       },
       { cause: error },
     );

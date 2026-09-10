@@ -23,10 +23,7 @@ import type { ParseIssue, ParseResult } from './types.ts';
  * nothing a plain structural check on the one field this function actually reads doesn't already give. */
 function hasRange(value: unknown): value is { readonly range: readonly [number, number, number] } {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'range' in value &&
-    Array.isArray(value.range)
+    typeof value === 'object' && value !== null && 'range' in value && Array.isArray(value.range)
   );
 }
 
@@ -61,10 +58,16 @@ function resolvePosition(
  * `errorMessage` helpers are in. */
 export function yamlErrorToParseIssue(error: YAMLError): ParseIssue {
   const pos = error.linePos?.[0];
-  return pos === undefined ? { message: error.message } : { message: error.message, line: pos.line, column: pos.col };
+  return pos === undefined
+    ? { message: error.message }
+    : { message: error.message, line: pos.line, column: pos.col };
 }
 
-function zodIssueToParseIssue(doc: Document, lineCounter: LineCounter, issue: ZodIssue): ParseIssue {
+function zodIssueToParseIssue(
+  doc: Document,
+  lineCounter: LineCounter,
+  issue: ZodIssue,
+): ParseIssue {
   const position = resolvePosition(doc, lineCounter, issue.path);
   const message = `${issue.path.join('.') || '(root)'}: ${issue.message}`;
   return position === undefined ? { message } : { message, ...position };
@@ -84,7 +87,11 @@ function zodIssueToParseIssue(doc: Document, lineCounter: LineCounter, issue: Zo
  * this branch unreachable through this module's real behaviour, the same situation `yamlErrorToParseIssue`
  * above is in. Handling it here regardless closes the gap unconditionally rather than resting on that
  * empirical margin holding forever, upholding `parseWorkflow`'s own "never throws" contract either way. */
-export function parseValueAgainstSchema(doc: Document, lineCounter: LineCounter, value: unknown): ParseResult {
+export function parseValueAgainstSchema(
+  doc: Document,
+  lineCounter: LineCounter,
+  value: unknown,
+): ParseResult {
   let result: ReturnType<typeof workflowSchema.safeParse>;
   try {
     result = workflowSchema.safeParse(value);

@@ -81,7 +81,9 @@ export interface MergeConflictDescription {
  * the in-progress rebase before letting the throw propagate, since — unlike a merge commit left sitting
  * on integration for a caller to inspect — a rebase left mid-progress blocks every further git operation
  * on that lane worktree, with no comparable inspection value to leaving it in place. */
-export type MergeConflictResolver = (conflict: MergeConflictDescription) => Promise<'resolved' | 'unresolved'>;
+export type MergeConflictResolver = (
+  conflict: MergeConflictDescription,
+) => Promise<'resolved' | 'unresolved'>;
 
 export interface CheckResult {
   readonly passed: boolean;
@@ -121,9 +123,16 @@ export interface ProcessMergeCandidateOptions {
 export type MergeOutcome =
   | { readonly kind: 'clean'; readonly mergeCommitSha: string }
   | { readonly kind: 'conflict-resolved'; readonly mergeCommitSha: string }
-  | { readonly kind: 'conflict-unresolved'; readonly reason: 'abort-policy' | 'resolver-unresolved' }
+  | {
+      readonly kind: 'conflict-unresolved';
+      readonly reason: 'abort-policy' | 'resolver-unresolved';
+    }
   | { readonly kind: 'pre-check-failed'; readonly checkResult: CheckResult }
-  | { readonly kind: 'post-check-failed-reverted'; readonly checkResult: CheckResult; readonly revertCommitSha: string };
+  | {
+      readonly kind: 'post-check-failed-reverted';
+      readonly checkResult: CheckResult;
+      readonly revertCommitSha: string;
+    };
 
 async function runChecksUntilFailure(
   checks: readonly ((path: string) => Promise<CheckResult>)[],
@@ -142,7 +151,9 @@ async function runChecksUntilFailure(
 async function conflictedFilePaths(laneWorktreePath: string): Promise<readonly string[]> {
   const { stdout } = await wrapGitFailure(
     () =>
-      execa('git', ['diff', '--no-renames', '-z', '--name-only', '--diff-filter=U'], { cwd: laneWorktreePath }),
+      execa('git', ['diff', '--no-renames', '-z', '--name-only', '--diff-filter=U'], {
+        cwd: laneWorktreePath,
+      }),
     `listing conflicted files in the lane worktree at "${laneWorktreePath}"`,
   );
   return stdout.split('\0').filter((entry) => entry !== '');
@@ -305,7 +316,9 @@ export async function revertMerge(
   candidate: MergeCandidate,
 ): Promise<string> {
   try {
-    await execa('git', ['revert', '-m', '1', '--no-commit', mergeCommitSha], { cwd: integrationPath });
+    await execa('git', ['revert', '-m', '1', '--no-commit', mergeCommitSha], {
+      cwd: integrationPath,
+    });
     await execa('git', ['commit', '-m', formatRevertCommitMessage(candidate, mergeCommitSha)], {
       cwd: integrationPath,
     });
@@ -327,7 +340,7 @@ export async function revertMerge(
           `reverting the merge commit "${mergeCommitSha}" in the integration worktree at ` +
           `"${integrationPath}" failed: ${errorMessage(cause)}${cleanupNote}`,
         remedy:
-          'This can happen if integration moved again while this candidate\'s own post-merge checks ' +
+          "This can happen if integration moved again while this candidate's own post-merge checks " +
           'were still running (the "one merge at a time" contract this piece trusts its caller to hold) ' +
           '— inspect the integration worktree directly. See the underlying cause for the exact git error.',
       },
@@ -461,7 +474,7 @@ export async function processMergeCandidate(
           `merging lane branch "${candidate.handle.branch}" into the integration worktree at ` +
           `"${options.integrationPath}" failed: ${errorMessage(cause)}${cleanupNote}`,
         remedy:
-          'This should not happen for a lane already successfully rebased onto integration\'s current ' +
+          "This should not happen for a lane already successfully rebased onto integration's current " +
           'head, unless integration moved again after that rebase (the "one merge at a time" contract ' +
           'this piece trusts its caller to hold) — inspect the integration worktree directly. See the ' +
           'underlying cause for the exact git error.',
@@ -481,5 +494,7 @@ export async function processMergeCandidate(
     return { kind: 'post-check-failed-reverted', checkResult: postCheckFailure, revertCommitSha };
   }
 
-  return wasConflictResolved ? { kind: 'conflict-resolved', mergeCommitSha } : { kind: 'clean', mergeCommitSha };
+  return wasConflictResolved
+    ? { kind: 'conflict-resolved', mergeCommitSha }
+    : { kind: 'clean', mergeCommitSha };
 }

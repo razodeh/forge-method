@@ -62,7 +62,9 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
     const events = await drainAbortingAfter(
       handle.events,
       (event) => event.type === 'text' && event.text === 'one',
@@ -71,7 +73,9 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const result = await handle.result();
 
     expect(events.some((event) => event.type === 'text' && event.text === 'two')).toBe(false);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
     expect(result.finalText).toBe('one');
   });
 
@@ -81,11 +85,19 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
-    const events = await drainAbortingAfter(handle.events, (event) => event.type === 'text', controller);
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
+    const events = await drainAbortingAfter(
+      handle.events,
+      (event) => event.type === 'text',
+      controller,
+    );
 
     expect(events.some((event) => event.type === 'thinking')).toBe(false);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 
   it('the thinking phase runs normally, with no abort, and emits a thinking event per entry', async () => {
@@ -97,7 +109,9 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const events = [];
     for await (const event of handle.events) events.push(event);
 
-    expect(events.some((event) => event.type === 'thinking' && event.text === 'pondering')).toBe(true);
+    expect(events.some((event) => event.type === 'thinking' && event.text === 'pondering')).toBe(
+      true,
+    );
   });
 
   it('an abort issued right after the first thinking entry stops the remaining thinking entries from running', async () => {
@@ -106,59 +120,101 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
     const events = await drainAbortingAfter(
       handle.events,
       (event) => event.type === 'thinking' && event.text === 'first thought',
       controller,
     );
 
-    expect(events.some((event) => event.type === 'thinking' && event.text === 'second thought')).toBe(false);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'thinking' && event.text === 'second thought'),
+    ).toBe(false);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 
   it('an abort issued right after thinking ends stops the untrustedContent phase from running', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script((r) => r.prompt === 'go', { thinking: ['thought'], untrustedContent: 'should not appear' });
+    adapter.script((r) => r.prompt === 'go', {
+      thinking: ['thought'],
+      untrustedContent: 'should not appear',
+    });
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
-    const events = await drainAbortingAfter(handle.events, (event) => event.type === 'thinking', controller);
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
+    const events = await drainAbortingAfter(
+      handle.events,
+      (event) => event.type === 'thinking',
+      controller,
+    );
 
     expect(events.some((event) => event.type === 'text')).toBe(false);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 
   it('an abort issued right after untrustedContent stops the skillVisibleText phase from running', async () => {
     const adapter = new FakePlatformAdapter();
     const cwd = await createScratchDir();
-    adapter.script((r) => r.prompt === 'go', { untrustedContent: 'harmless', skillVisibleText: 'SKILL TEXT' });
-    await adapter.provisionSkills([{ id: 's1', summary: 's', body: 'b', appliesTo: [] }], { runId: 'r', stepId: 's', cwd });
+    adapter.script((r) => r.prompt === 'go', {
+      untrustedContent: 'harmless',
+      skillVisibleText: 'SKILL TEXT',
+    });
+    await adapter.provisionSkills([{ id: 's1', summary: 's', body: 'b', appliesTo: [] }], {
+      runId: 'r',
+      stepId: 's',
+      cwd,
+    });
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
     const events = await drainAbortingAfter(
       handle.events,
       (event) => event.type === 'text' && event.text === 'harmless',
       controller,
     );
 
-    expect(events.some((event) => event.type === 'text' && event.text.includes('SKILL TEXT'))).toBe(false);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(events.some((event) => event.type === 'text' && event.text.includes('SKILL TEXT'))).toBe(
+      false,
+    );
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 
   it('an abort issued right after the only (last) scripted write is still detected, not silently completed', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script((r) => r.prompt === 'one-write', { writeFiles: [{ relativePath: 'a.txt', content: 'a' }] });
+    adapter.script((r) => r.prompt === 'one-write', {
+      writeFiles: [{ relativePath: 'a.txt', content: 'a' }],
+    });
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'one-write', abortSignal: controller.signal }));
-    const events = await drainAbortingAfter(handle.events, (event) => event.type === 'file.changed', controller);
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'one-write', abortSignal: controller.signal }),
+    );
+    const events = await drainAbortingAfter(
+      handle.events,
+      (event) => event.type === 'file.changed',
+      controller,
+    );
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'complete')).toBe(false);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'complete'),
+    ).toBe(false);
   });
 
   it('an abort issued right after the only (last) exec attempt is still detected, not silently completed', async () => {
@@ -175,10 +231,18 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
         abortSignal: controller.signal,
       }),
     );
-    const events = await drainAbortingAfter(handle.events, (event) => event.type === 'tool.result', controller);
+    const events = await drainAbortingAfter(
+      handle.events,
+      (event) => event.type === 'tool.result',
+      controller,
+    );
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'complete')).toBe(false);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'complete'),
+    ).toBe(false);
   });
 
   it('an abort issued right after the only (last) MCP tool attempt is still detected, not silently completed', async () => {
@@ -187,29 +251,49 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'one-mcp', abortSignal: controller.signal }));
-    const events = await drainAbortingAfter(handle.events, (event) => event.type === 'tool.result', controller);
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'one-mcp', abortSignal: controller.signal }),
+    );
+    const events = await drainAbortingAfter(
+      handle.events,
+      (event) => event.type === 'tool.result',
+      controller,
+    );
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'complete')).toBe(false);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'complete'),
+    ).toBe(false);
   });
 
   it('an abort issued right after skillVisibleText, the last populated phase, is still detected, not silently completed', async () => {
     const adapter = new FakePlatformAdapter();
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { skillVisibleText: 'SKILL TEXT' });
-    await adapter.provisionSkills([{ id: 's1', summary: 's', body: 'b', appliesTo: [] }], { runId: 'r', stepId: 's', cwd });
+    await adapter.provisionSkills([{ id: 's1', summary: 's', body: 'b', appliesTo: [] }], {
+      runId: 'r',
+      stepId: 's',
+      cwd,
+    });
     const controller = new AbortController();
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', abortSignal: controller.signal }),
+    );
     const events = await drainAbortingAfter(
       handle.events,
       (event) => event.type === 'text' && event.text === 'SKILL TEXT',
       controller,
     );
 
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'complete')).toBe(false);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'complete'),
+    ).toBe(false);
   });
 
   it('an abort issued right after the first exec attempt stops the remaining attempts from running', async () => {
@@ -235,7 +319,9 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     const result = await handle.result();
 
     expect(events.filter((event) => event.type === 'tool.call')).toHaveLength(1);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
     expect(result.ok).toBe(false);
   });
 
@@ -265,12 +351,16 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     expect(existsSync(path.join(cwd, 'b.txt'))).toBe(false);
     expect(existsSync(path.join(cwd, 'c.txt'))).toBe(false);
     expect(result.changedFiles).toEqual(['a.txt']);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 
   it('an abort issued right after the first MCP tool attempt stops the remaining attempts from running', async () => {
     const adapter = new FakePlatformAdapter();
-    adapter.script((r) => r.prompt === 'many-mcp', { mcpToolAttempts: ['tool-a', 'tool-b', 'tool-c'] });
+    adapter.script((r) => r.prompt === 'many-mcp', {
+      mcpToolAttempts: ['tool-a', 'tool-b', 'tool-c'],
+    });
     const cwd = await createScratchDir();
     const controller = new AbortController();
 
@@ -285,6 +375,8 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
     await handle.result();
 
     expect(events.filter((event) => event.type === 'tool.call')).toHaveLength(1);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'aborted')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'session.ended' && event.reason === 'aborted'),
+    ).toBe(true);
   });
 });

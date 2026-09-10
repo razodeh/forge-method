@@ -31,7 +31,10 @@ function freshProject(): ProjectPaths {
  * latter. */
 function mockNodeModuleRequire(blockedSpecifiers: readonly string[]): void {
   vi.doMock('node:module', async (importOriginal) => {
-    const actual = (await importOriginal<typeof NodeModule>()) as unknown as Record<string, unknown>;
+    const actual = (await importOriginal<typeof NodeModule>()) as unknown as Record<
+      string,
+      unknown
+    >;
     const realCreateRequire = actual['createRequire'] as (url: string | URL) => NodeJS.Require;
     return {
       ...actual,
@@ -170,9 +173,11 @@ describe('openKbIndex — a genuine filesystem obstruction, not a missing module
     } catch (error) {
       thrown = error;
     }
-    expect(isForgeError(thrown) && thrown.code === 'KB-012' && thrown.message.includes('a non-Error failure')).toBe(
-      true,
-    );
+    expect(
+      isForgeError(thrown) &&
+        thrown.code === 'KB-012' &&
+        thrown.message.includes('a non-Error failure'),
+    ).toBe(true);
     vi.doUnmock('node:fs');
     vi.resetModules();
   });

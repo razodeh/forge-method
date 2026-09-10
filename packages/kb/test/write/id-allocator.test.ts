@@ -98,7 +98,11 @@ describe('KbIdAllocator.scan', () => {
   it('skips a file with no front matter at all, rather than failing the whole scan', async () => {
     const paths = freshProject();
     const root = paths.resolveWithin('.');
-    write(root, 'docs/forge/kb/architecture/not-front-matter.md', 'just prose, no --- delimiters\n');
+    write(
+      root,
+      'docs/forge/kb/architecture/not-front-matter.md',
+      'just prose, no --- delimiters\n',
+    );
     write(root, 'docs/forge/kb/architecture/real.md', kbEntry('KB-ARCH-0002'));
     const allocator = new KbIdAllocator({ paths, clock: fakeClock() });
     expect((await allocator.scan()).counters).toEqual({ architecture: 2 });

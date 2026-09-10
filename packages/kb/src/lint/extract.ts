@@ -12,7 +12,9 @@ import type { KbParsedEntry, KbTree } from '../schema/tree.ts';
 
 export function kbEntriesOf(tree: KbTree): readonly KbEntry[] {
   return tree.entries
-    .filter((entry): entry is Extract<KbParsedEntry, { kind: 'kb-entry' }> => entry.kind === 'kb-entry')
+    .filter(
+      (entry): entry is Extract<KbParsedEntry, { kind: 'kb-entry' }> => entry.kind === 'kb-entry',
+    )
     .map((entry) => entry.value);
 }
 
@@ -24,13 +26,17 @@ export function adrsOf(tree: KbTree): readonly ADR[] {
 
 export function diagramsOf(tree: KbTree): readonly Diagram[] {
   return tree.entries
-    .filter((entry): entry is Extract<KbParsedEntry, { kind: 'diagram' }> => entry.kind === 'diagram')
+    .filter(
+      (entry): entry is Extract<KbParsedEntry, { kind: 'diagram' }> => entry.kind === 'diagram',
+    )
     .map((entry) => entry.value);
 }
 
 export function runbooksOf(tree: KbTree): readonly Runbook[] {
   return tree.entries
-    .filter((entry): entry is Extract<KbParsedEntry, { kind: 'runbook' }> => entry.kind === 'runbook')
+    .filter(
+      (entry): entry is Extract<KbParsedEntry, { kind: 'runbook' }> => entry.kind === 'runbook',
+    )
     .map((entry) => entry.value);
 }
 

@@ -54,7 +54,9 @@ export class SqliteBackend extends BaseSqliteBackend {
   protected upsertTerms(row: EntryRow): void {
     this.db.prepare('DELETE FROM terms WHERE id = ?').run(row.id);
     this.db
-      .prepare('INSERT INTO terms (id, title, statement, rationale) VALUES (@id, @title, @statement, @rationale)')
+      .prepare(
+        'INSERT INTO terms (id, title, statement, rationale) VALUES (@id, @title, @statement, @rationale)',
+      )
       .run({ id: row.id, title: row.title, statement: row.statement, rationale: row.rationale });
   }
 
@@ -69,7 +71,9 @@ export class SqliteBackend extends BaseSqliteBackend {
     if (ftsQuery === undefined) return [];
 
     const rows = this.db
-      .prepare('SELECT id, bm25(terms) AS raw_score FROM terms WHERE terms MATCH ? ORDER BY raw_score')
+      .prepare(
+        'SELECT id, bm25(terms) AS raw_score FROM terms WHERE terms MATCH ? ORDER BY raw_score',
+      )
       .all(ftsQuery) as readonly { readonly id: string; readonly raw_score: number }[];
     return rows.map((row): TermsHit => ({ id: row.id, score: -row.raw_score }));
   }

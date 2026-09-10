@@ -13,7 +13,9 @@ import type { Expr } from '../../src/expr/types.ts';
 function parseOk(source: string): Expr {
   const result = parseExpression(source);
   if (!result.success) {
-    throw new Error(`expected "${source}" to parse, got: ${result.error.message} at ${String(result.error.position)}`);
+    throw new Error(
+      `expected "${source}" to parse, got: ${result.error.message} at ${String(result.error.position)}`,
+    );
   }
   return result.expr;
 }
@@ -92,7 +94,10 @@ describe('parseExpression — dotted paths', () => {
   });
 
   it('parses 10 §10.3\'s own "failures.test-failure" worked example, hyphen included', () => {
-    expect(parseOk('failures.test-failure')).toEqual({ kind: 'path', segments: ['failures', 'test-failure'] });
+    expect(parseOk('failures.test-failure')).toEqual({
+      kind: 'path',
+      segments: ['failures', 'test-failure'],
+    });
   });
 
   it('parses a multi-segment path', () => {
@@ -136,7 +141,7 @@ describe('parseExpression — comparisons', () => {
     });
   });
 
-  it('parses 10 §10.3\'s own two real consumer expressions', () => {
+  it("parses 10 §10.3's own two real consumer expressions", () => {
     expect(parseOk('errors > 0')).toEqual({
       kind: 'comparison',
       operator: '>',
@@ -375,7 +380,19 @@ describe('parseExpression — errors', () => {
   });
 
   it('never throws for any malformed input — always returns a ParseExpressionResult', () => {
-    const adversarial = ['(((', ')))', '!!!!', '&&&&', '"', "'", '..', 'a.b.', '0.0.0', 'length()', '()'];
+    const adversarial = [
+      '(((',
+      ')))',
+      '!!!!',
+      '&&&&',
+      '"',
+      "'",
+      '..',
+      'a.b.',
+      '0.0.0',
+      'length()',
+      '()',
+    ];
     for (const source of adversarial) {
       expect(() => parseExpression(source)).not.toThrow();
     }

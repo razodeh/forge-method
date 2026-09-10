@@ -31,7 +31,11 @@ export async function initGitRepo(cwd: string): Promise<void> {
  * general porcelain-format parser: each line is a two-character status code, a space, then the path
  * (or, for a rename, `old -> new`), per `git status --porcelain`'s own documented format. */
 export async function gitStatusPaths(cwd: string): Promise<readonly string[]> {
-  const { stdout } = await execFileAsync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd });
+  const { stdout } = await execFileAsync(
+    'git',
+    ['status', '--porcelain', '--untracked-files=all'],
+    { cwd },
+  );
   return stdout
     .split('\n')
     .map((line) => line.trimEnd())

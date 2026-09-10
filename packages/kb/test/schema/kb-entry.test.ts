@@ -149,7 +149,11 @@ describe('kbEntrySchema — confidence: verified requires a real Verification se
 
   it('does not require Verification content for a lower confidence level', () => {
     const result = kbEntrySchema.safeParse(
-      workedExample({ confidence: 'high', verified: undefined, body: '## Statement\nSomething.\n' }),
+      workedExample({
+        confidence: 'high',
+        verified: undefined,
+        body: '## Statement\nSomething.\n',
+      }),
     );
     expect(result.success).toBe(true);
   });

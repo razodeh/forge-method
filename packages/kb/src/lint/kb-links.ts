@@ -23,7 +23,9 @@ export function adrScope(adrId: string, kbEntries: readonly KbEntry[]): Readonly
   const scope = new Set<string>();
   for (const entry of kbEntries) {
     if (entry.status !== 'active') continue;
-    const citesAdr = entry.sources.some((source) => source.kind === 'decision' && source.ref === adrId);
+    const citesAdr = entry.sources.some(
+      (source) => source.kind === 'decision' && source.ref === adrId,
+    );
     if (!citesAdr) continue;
     for (const tag of entry.applies_to) scope.add(tag);
   }

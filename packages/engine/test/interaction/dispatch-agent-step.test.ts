@@ -53,12 +53,17 @@ function testAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 }
 
 describe('dispatchAgentStep', () => {
-  it("solo delegates straight to runAgentStep unchanged -- one real session, no participants", async () => {
+  it('solo delegates straight to runAgentStep unchanged -- one real session, no participants', async () => {
     const projectRoot = await createTempRepo('solo');
     const adapter = new FakePlatformAdapter();
     adapter.script(() => true, { text: ['implemented it'] });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer'), brief: 'implement' });
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'implement',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'solo');
 
@@ -73,7 +78,12 @@ describe('dispatchAgentStep', () => {
       const adapter = new FakePlatformAdapter();
       adapter.script(() => true, { text: ['done'] });
       const ctx = createTestContext({ projectRoot, adapter });
-      const stepNode = node({ id: 'wf:step', kind: 'agent', agent: toAgentId('engineer'), brief: 'do work' });
+      const stepNode = node({
+        id: 'wf:step',
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: 'do work',
+      });
 
       const result = await dispatchAgentStep(stepNode, testAgent(), ctx, mode);
       expect(result.outcome.status).toBe('succeeded');
@@ -84,16 +94,19 @@ describe('dispatchAgentStep', () => {
   it('pair drives a real author session AND a real reviewer session for one logical step', async () => {
     const projectRoot = await createTempRepo('pair');
     const adapter = new FakePlatformAdapter();
-    adapter.script(
-      (request) => request.stepId === 'wf:implement',
-      { text: ['author wrote the code'] },
-    );
-    adapter.script(
-      (request) => request.stepId === 'wf:implement:reviewer',
-      { text: ['reviewer: looks good'] },
-    );
+    adapter.script((request) => request.stepId === 'wf:implement', {
+      text: ['author wrote the code'],
+    });
+    adapter.script((request) => request.stepId === 'wf:implement:reviewer', {
+      text: ['reviewer: looks good'],
+    });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer'), brief: 'implement' });
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'implement',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'pair');
 
@@ -109,11 +122,22 @@ describe('dispatchAgentStep', () => {
   it('panel drives one independent session per perspective, then a real synthesis session reconciling them -- more than one real session for one logical step', async () => {
     const projectRoot = await createTempRepo('panel');
     const adapter = new FakePlatformAdapter();
-    adapter.script((request) => request.stepId === 'wf:decide:panel:cost', { text: ['cost says: cheap option A'] });
-    adapter.script((request) => request.stepId === 'wf:decide:panel:risk', { text: ['risk says: option A is risky'] });
-    adapter.script((request) => request.stepId === 'wf:decide', { text: ['synthesized: go with option B instead'] });
+    adapter.script((request) => request.stepId === 'wf:decide:panel:cost', {
+      text: ['cost says: cheap option A'],
+    });
+    adapter.script((request) => request.stepId === 'wf:decide:panel:risk', {
+      text: ['risk says: option A is risky'],
+    });
+    adapter.script((request) => request.stepId === 'wf:decide', {
+      text: ['synthesized: go with option B instead'],
+    });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:decide', kind: 'agent', agent: toAgentId('architect'), brief: 'pick a stack' });
+    const stepNode = node({
+      id: 'wf:decide',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'pick a stack',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'panel', {
       perspectives: ['cost', 'risk'],
@@ -129,19 +153,37 @@ describe('dispatchAgentStep', () => {
   it('panel throws RUN-046 when no perspectives are given', async () => {
     const projectRoot = await createTempRepo('panel-no-perspectives');
     const ctx = createTestContext({ projectRoot, adapter: new FakePlatformAdapter() });
-    const stepNode = node({ id: 'wf:decide', kind: 'agent', agent: toAgentId('architect'), brief: 'pick a stack' });
+    const stepNode = node({
+      id: 'wf:decide',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'pick a stack',
+    });
 
-    await expect(dispatchAgentStep(stepNode, testAgent(), ctx, 'panel')).rejects.toThrow(ForgeError);
+    await expect(dispatchAgentStep(stepNode, testAgent(), ctx, 'panel')).rejects.toThrow(
+      ForgeError,
+    );
   });
 
   it('debate is a bounded loop that terminates at exactly 3 rounds when neither side concedes', async () => {
     const projectRoot = await createTempRepo('debate-no-concede');
     const adapter = new FakePlatformAdapter();
-    adapter.script((request) => request.stepId.includes(':debate:proposer:'), { text: ['I propose X'] });
-    adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['I disagree, still'] });
-    adapter.script((request) => request.stepId === 'wf:debate', { text: ['ruling: X, with caveats'] });
+    adapter.script((request) => request.stepId.includes(':debate:proposer:'), {
+      text: ['I propose X'],
+    });
+    adapter.script((request) => request.stepId.includes(':debate:critic:'), {
+      text: ['I disagree, still'],
+    });
+    adapter.script((request) => request.stepId === 'wf:debate', {
+      text: ['ruling: X, with caveats'],
+    });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:debate', kind: 'agent', agent: toAgentId('architect'), brief: 'settle it' });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate');
 
@@ -155,11 +197,18 @@ describe('dispatchAgentStep', () => {
   it('debate ends early, before the round cap, when the critic concedes', async () => {
     const projectRoot = await createTempRepo('debate-concede');
     const adapter = new FakePlatformAdapter();
-    adapter.script((request) => request.stepId.includes(':debate:proposer:'), { text: ['I propose X'] });
+    adapter.script((request) => request.stepId.includes(':debate:proposer:'), {
+      text: ['I propose X'],
+    });
     adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['CONCEDE'] });
     adapter.script((request) => request.stepId === 'wf:debate', { text: ['ruling: X'] });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:debate', kind: 'agent', agent: toAgentId('architect'), brief: 'settle it' });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate');
 
@@ -170,13 +219,22 @@ describe('dispatchAgentStep', () => {
   it('debate clamps a caller-supplied maxDebateRounds above 3 down to 3', async () => {
     const projectRoot = await createTempRepo('debate-clamp');
     const adapter = new FakePlatformAdapter();
-    adapter.script((request) => request.stepId.includes(':debate:proposer:'), { text: ['I propose X'] });
+    adapter.script((request) => request.stepId.includes(':debate:proposer:'), {
+      text: ['I propose X'],
+    });
     adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['still no'] });
     adapter.script((request) => request.stepId === 'wf:debate', { text: ['ruling'] });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:debate', kind: 'agent', agent: toAgentId('architect'), brief: 'settle it' });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+    });
 
-    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate', { maxDebateRounds: 10 });
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate', {
+      maxDebateRounds: 10,
+    });
 
     expect(result.participants).toHaveLength(6);
   });
@@ -201,27 +259,46 @@ describe('dispatchAgentStep', () => {
       structured: [],
     });
     const ctx = createTestContext({ projectRoot, adapter });
-    const stepNode = node({ id: 'wf:review', kind: 'agent', agent: toAgentId('reviewer'), brief: 'review the diff' });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review the diff',
+    });
 
     const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review', {
       perspectives: ['design', 'security', 'testing', 'performance'],
     });
 
     expect(result.participants).toHaveLength(4);
-    expect(result.reviewReport?.perspectives).toEqual(['design', 'security', 'testing', 'performance']);
+    expect(result.reviewReport?.perspectives).toEqual([
+      'design',
+      'security',
+      'testing',
+      'performance',
+    ]);
     // 4 distinct summaries reported across perspectives, but "missing error boundary" was raised by
     // BOTH design and security -- the merged report has exactly 4 findings, not 5, and that one finding
     // carries both attributions: the real de-duplication the Checks text asks for.
     expect(result.reviewReport?.findings).toHaveLength(4);
-    const shared = result.reviewReport?.findings.find((f) => f.summary === 'missing error boundary');
+    const shared = result.reviewReport?.findings.find(
+      (f) => f.summary === 'missing error boundary',
+    );
     expect(shared?.perspectives).toEqual(['design', 'security']);
   });
 
   it('swarm-review throws RUN-046 when no perspectives are given', async () => {
     const projectRoot = await createTempRepo('swarm-no-perspectives');
     const ctx = createTestContext({ projectRoot, adapter: new FakePlatformAdapter() });
-    const stepNode = node({ id: 'wf:review', kind: 'agent', agent: toAgentId('reviewer'), brief: 'review' });
+    const stepNode = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'review',
+    });
 
-    await expect(dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review')).rejects.toThrow(ForgeError);
+    await expect(dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review')).rejects.toThrow(
+      ForgeError,
+    );
   });
 });

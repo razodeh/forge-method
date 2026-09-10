@@ -62,7 +62,10 @@ class ParserState {
   enterRecursion(): void {
     this.recursionDepth += 1;
     if (this.recursionDepth > MAX_EXPRESSION_DEPTH) {
-      throw new LexError(`Expression nests more than ${String(MAX_EXPRESSION_DEPTH)} levels deep.`, this.peek().position);
+      throw new LexError(
+        `Expression nests more than ${String(MAX_EXPRESSION_DEPTH)} levels deep.`,
+        this.peek().position,
+      );
     }
   }
 
@@ -102,7 +105,10 @@ function parsePrimary(state: ParserState): Expr {
 
   if (token.kind === 'number' || token.kind === 'string' || token.kind === 'boolean') {
     state.advance();
-    return { kind: 'literal', value: assertDefined(token.value, 'literal token missing its own value') };
+    return {
+      kind: 'literal',
+      value: assertDefined(token.value, 'literal token missing its own value'),
+    };
   }
 
   if (token.kind === 'length') {
@@ -241,7 +247,10 @@ export function parseExpression(source: string): ParseExpressionResult {
       const trailing = state.peek();
       return {
         success: false,
-        error: { message: `Unexpected trailing token "${trailing.text || trailing.kind}".`, position: trailing.position },
+        error: {
+          message: `Unexpected trailing token "${trailing.text || trailing.kind}".`,
+          position: trailing.position,
+        },
       };
     }
     return { success: true, expr };

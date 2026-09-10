@@ -9,7 +9,11 @@ import { VcsError } from '../src/errors.ts';
 
 describe('VcsError', () => {
   it('is a real Error carrying code, message and remedy', () => {
-    const error = new VcsError({ code: 'VCS-TEST', message: 'something went wrong', remedy: 'do the fix' });
+    const error = new VcsError({
+      code: 'VCS-TEST',
+      message: 'something went wrong',
+      remedy: 'do the fix',
+    });
 
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe('VcsError');
@@ -20,7 +24,10 @@ describe('VcsError', () => {
 
   it('preserves a supplied cause', () => {
     const cause = new Error('root cause');
-    const error = new VcsError({ code: 'VCS-TEST', message: 'wrapped', remedy: 'fix it' }, { cause });
+    const error = new VcsError(
+      { code: 'VCS-TEST', message: 'wrapped', remedy: 'fix it' },
+      { cause },
+    );
 
     expect(error.cause).toBe(cause);
   });

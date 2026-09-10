@@ -56,12 +56,16 @@ describe('withCapabilities({ sessionResume: false })', () => {
     const initial = await adapter.startSession(baseRequest({ cwd, prompt: 'hello' }));
     await initial.result();
     await expect(
-      adapter.resumeSession(initial.sessionId, { prompt: 'continue', limits: {}, abortSignal: new AbortController().signal }),
+      adapter.resumeSession(initial.sessionId, {
+        prompt: 'continue',
+        limits: {},
+        abortSignal: new AbortController().signal,
+      }),
     ).resolves.toBeDefined();
   });
 });
 
-describe("withCapabilities({ mcp: false, toolProxy: false })", () => {
+describe('withCapabilities({ mcp: false, toolProxy: false })', () => {
   it('provisionMcp is genuinely absent, not present-but-throwing', () => {
     const adapter = withCapabilities({ mcp: false, toolProxy: false });
     expect(adapter.provisionMcp).toBeUndefined();
@@ -113,7 +117,9 @@ describe('withCapabilities({ structuredOutput: false })', () => {
 describe('withCapabilities({ fileEditing: false })', () => {
   it('refuses a scripted write even when tools.write is granted', async () => {
     const adapter = withCapabilities({ fileEditing: false });
-    adapter.script((r) => r.prompt === 'write', { writeFiles: [{ relativePath: 'a.txt', content: 'x' }] });
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [{ relativePath: 'a.txt', content: 'x' }],
+    });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'write' }));
     const events = [];
@@ -131,7 +137,11 @@ describe('withCapabilities({ bash: false })', () => {
     adapter.script((r) => r.prompt === 'exec', { execAttempts: ['echo hi'] });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(
-      baseRequest({ cwd, prompt: 'exec', tools: { read: true, write: true, exec: ['echo*'], network: 'none' } }),
+      baseRequest({
+        cwd,
+        prompt: 'exec',
+        tools: { read: true, write: true, exec: ['echo*'], network: 'none' },
+      }),
     );
     const events = [];
     for await (const event of handle.events) events.push(event);

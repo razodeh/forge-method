@@ -106,10 +106,12 @@ function mergeReviewReport(
       findingsBySummary.set(summary, attributions);
     }
   }
-  const findings: ReviewFinding[] = [...findingsBySummary.entries()].map(([summary, attributions]) => ({
-    summary,
-    perspectives: attributions,
-  }));
+  const findings: ReviewFinding[] = [...findingsBySummary.entries()].map(
+    ([summary, attributions]) => ({
+      summary,
+      perspectives: attributions,
+    }),
+  );
   return { perspectives, findings };
 }
 

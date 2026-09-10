@@ -85,7 +85,10 @@ export interface GateDefinition {
  * level by an earlier piece (P10) — a real `CheckRunner` implementation is where that budget belongs
  * enforced, the same "this piece has no opinion on the real mechanism" stance the rest of this doc comment
  * already takes. */
-export type CheckRunner = (check: DeterministicCheck, cwd: string) => Promise<{ readonly stdout: string; readonly exitCode: number }>;
+export type CheckRunner = (
+  check: DeterministicCheck,
+  cwd: string,
+) => Promise<{ readonly stdout: string; readonly exitCode: number }>;
 
 /** One deterministic check's own outcome, always recorded — passing or failing — so `buildGateReport`'s
  * own audit trail (rule 4: "the exact command output") can show every check that ran, not only the ones

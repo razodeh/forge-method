@@ -24,7 +24,9 @@ const TOKEN_LINE_PATTERN = /^(FORGE_[A-Z0-9_]+):(.*)$/;
 /** A line "names" a token only by its own content — leading whitespace is ignored (so an indented
  * token line still counts), but the match is anchored at the line's own start, so a token name
  * appearing mid-sentence (e.g. "...so I'll FORGE_ASK: is this right?") never matches at all. */
-function matchTokenLine(line: string): { readonly name: string; readonly payload: string } | undefined {
+function matchTokenLine(
+  line: string,
+): { readonly name: string; readonly payload: string } | undefined {
   const match = TOKEN_LINE_PATTERN.exec(line.trimStart());
   // Both capture groups are mandatory in the pattern above (neither sits inside an optional
   // quantifier or alternation), so they are always populated together whenever `match` is non-null —
@@ -73,7 +75,12 @@ function parseTokenPayload(name: string, rawPayload: string): ParsedControlToken
       // The length check above guarantees exactly four elements — `noUncheckedIndexedAccess` cannot
       // derive that from a `.length` comparison, so this cast makes it visible to the type checker
       // instead of leaving four unreachable `?? ''` fallbacks in place.
-      const [textRaw, confidenceRaw, impactRaw, validateByRaw] = parts as [string, string, string, string];
+      const [textRaw, confidenceRaw, impactRaw, validateByRaw] = parts as [
+        string,
+        string,
+        string,
+        string,
+      ];
       const text = textRaw.trim();
       const confidence = confidenceRaw.trim().toLowerCase();
       const impact = impactRaw.trim();

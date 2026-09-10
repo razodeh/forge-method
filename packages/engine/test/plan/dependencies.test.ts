@@ -9,7 +9,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { applyClaimOverlaps, buildClaimIntervalMap, insertContractDependencies } from '../../src/plan/dependencies.ts';
+import {
+  applyClaimOverlaps,
+  buildClaimIntervalMap,
+  insertContractDependencies,
+} from '../../src/plan/dependencies.ts';
 import type { StepNode } from '../../src/plan/types.ts';
 
 function node(overrides: Partial<StepNode> & { readonly id: string }): StepNode {
@@ -30,22 +34,38 @@ function node(overrides: Partial<StepNode> & { readonly id: string }): StepNode 
 
 describe('insertContractDependencies', () => {
   it('makes an InterfaceContract producer an ancestor of every consumer, without an explicit dependsOn', () => {
-    const producer = node({ id: 'freeze', outputs: [{ type: 'InterfaceContract', cardinality: 'many' }] });
+    const producer = node({
+      id: 'freeze',
+      outputs: [{ type: 'InterfaceContract', cardinality: 'many' }],
+    });
     const consumer = node({ id: 'implement', inputs: ['artifact:InterfaceContract(*)'] });
-    const [result] = insertContractDependencies([producer, consumer]).filter((n) => n.id === 'implement');
+    const [result] = insertContractDependencies([producer, consumer]).filter(
+      (n) => n.id === 'implement',
+    );
     expect(result?.dependsOn).toEqual(['freeze']);
   });
 
   it('does not touch a node that does not consume any InterfaceContract', () => {
     const producer = node({ id: 'freeze', outputs: [{ type: 'InterfaceContract' }] });
     const unrelated = node({ id: 'other', inputs: ['kb:engineering/standards'] });
-    const [result] = insertContractDependencies([producer, unrelated]).filter((n) => n.id === 'other');
+    const [result] = insertContractDependencies([producer, unrelated]).filter(
+      (n) => n.id === 'other',
+    );
     expect(result?.dependsOn).toEqual([]);
   });
 
   it('does not duplicate an edge already present, and does not depend on itself', () => {
-    const producer = node({ id: 'freeze', outputs: [{ type: 'InterfaceContract' }], inputs: ['artifact:InterfaceContract(*)'], dependsOn: ['freeze'] });
-    const consumer = node({ id: 'implement', inputs: ['artifact:InterfaceContract(*)'], dependsOn: ['freeze'] });
+    const producer = node({
+      id: 'freeze',
+      outputs: [{ type: 'InterfaceContract' }],
+      inputs: ['artifact:InterfaceContract(*)'],
+      dependsOn: ['freeze'],
+    });
+    const consumer = node({
+      id: 'implement',
+      inputs: ['artifact:InterfaceContract(*)'],
+      dependsOn: ['freeze'],
+    });
     const result = insertContractDependencies([producer, consumer]);
     expect(result.find((n) => n.id === 'freeze')?.dependsOn).toEqual(['freeze']);
     expect(result.find((n) => n.id === 'implement')?.dependsOn).toEqual(['freeze']);
@@ -74,7 +94,12 @@ describe('buildClaimIntervalMap', () => {
     const a = node({ id: 'a', produces: ['src/foo.ts'] });
     const b = node({ id: 'b', produces: ['src/foo.ts'] });
     const map = buildClaimIntervalMap([a, b]);
-    expect(map.overlaps).toContainEqual({ stepIdA: 'a', stepIdB: 'b', globA: 'src/foo.ts', globB: 'src/foo.ts' });
+    expect(map.overlaps).toContainEqual({
+      stepIdA: 'a',
+      stepIdB: 'b',
+      globA: 'src/foo.ts',
+      globB: 'src/foo.ts',
+    });
   });
 
   it('finds an overlap between a literal path and a wildcard that covers it', () => {
@@ -159,7 +184,10 @@ describe('buildClaimIntervalMap', () => {
     expect(longButOrdinary.length).toBeGreaterThan(256);
     expect(longButOrdinary).not.toContain('[');
     const a = node({ id: 'a', produces: [longButOrdinary] });
-    const b = node({ id: 'b', produces: ['packages/design-system/src/components/generated/**/*.tsx'] });
+    const b = node({
+      id: 'b',
+      produces: ['packages/design-system/src/components/generated/**/*.tsx'],
+    });
     expect(buildClaimIntervalMap([a, b]).overlaps).toHaveLength(1);
   });
 
@@ -234,7 +262,9 @@ describe('applyClaimOverlaps', () => {
 
   it('silently ignores an overlap naming a step id that does not exist in the given nodes -- defensive, since ClaimIntervalMap is a public type a caller could hand-construct mismatched with its own node list', () => {
     const a = node({ id: 'a', produces: ['src/foo.ts'] });
-    const result = applyClaimOverlaps([a], { overlaps: [{ stepIdA: 'nonexistent', stepIdB: 'also-nonexistent', globA: 'x', globB: 'y' }] });
+    const result = applyClaimOverlaps([a], {
+      overlaps: [{ stepIdA: 'nonexistent', stepIdB: 'also-nonexistent', globA: 'x', globB: 'y' }],
+    });
     expect(result).toEqual({ success: true, nodes: [a] });
   });
 });

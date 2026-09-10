@@ -12,15 +12,23 @@ import { describe, expect, it } from 'vitest';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { CheckRunner, DeterministicCheck, GateDefinition } from '../../src/gates/types.ts';
 
-function check(overrides: Partial<DeterministicCheck> & { readonly id: string }): DeterministicCheck {
+function check(
+  overrides: Partial<DeterministicCheck> & { readonly id: string },
+): DeterministicCheck {
   return { run: `run ${overrides.id}`, failOn: 'errors > 0', ...overrides };
 }
 
 function gate(overrides: Partial<GateDefinition> & { readonly id: string }): GateDefinition {
-  return { checks: { deterministic: [], advisory: [] }, openQuestionsPolicy: 'block', ...overrides };
+  return {
+    checks: { deterministic: [], advisory: [] },
+    openQuestionsPolicy: 'block',
+    ...overrides,
+  };
 }
 
-function stubRunner(responses: Readonly<Record<string, { readonly stdout: string; readonly exitCode: number }>>): CheckRunner {
+function stubRunner(
+  responses: Readonly<Record<string, { readonly stdout: string; readonly exitCode: number }>>,
+): CheckRunner {
   return (c) => {
     const response = responses[c.id];
     if (response === undefined) throw new Error(`no stubbed response for check ${c.id}`);
@@ -55,7 +63,7 @@ describe('evaluateGate', () => {
     expect(failing?.exitCode).toBe(1);
   });
 
-  it('never lets an advisory check\'s own presence flip pass/fail -- proven with a gate whose only deterministic checks all pass and one advisory check is declared', async () => {
+  it("never lets an advisory check's own presence flip pass/fail -- proven with a gate whose only deterministic checks all pass and one advisory check is declared", async () => {
     // Advisory checks are agent-dispatched, not run/parsed the way deterministic checks are (`agent`/
     // `brief`, not `run`/`failOn`) -- evaluateGate must never even attempt to treat one as if it needed a
     // failOn evaluation.
@@ -69,25 +77,36 @@ describe('evaluateGate', () => {
     const runner = stubRunner({ a: { stdout: '{"errors":0}', exitCode: 0 } });
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.passed).toBe(true);
-    expect(result.advisory).toEqual([{ id: 'architect-review', agent: 'critic', brief: 'briefs/critique.md' }]);
+    expect(result.advisory).toEqual([
+      { id: 'architect-review', agent: 'critic', brief: 'briefs/critique.md' },
+    ]);
   });
 
   it('resolves a bare, unnested failOn identifier directly against the parsed output\'s own top-level fields -- the real spec shape ("errors > 0", "undefined_refs > 0"), not a path nested under one of ExpressionContext\'s own named helper slots', async () => {
     const g = gate({
       id: 'G-Design',
-      checks: { deterministic: [check({ id: 'interfaces:frozen', failOn: 'undefined_refs > 0' })], advisory: [] },
+      checks: {
+        deterministic: [check({ id: 'interfaces:frozen', failOn: 'undefined_refs > 0' })],
+        advisory: [],
+      },
     });
-    const runner = stubRunner({ 'interfaces:frozen': { stdout: '{"undefined_refs":2}', exitCode: 0 } });
+    const runner = stubRunner({
+      'interfaces:frozen': { stdout: '{"undefined_refs":2}', exitCode: 0 },
+    });
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.passed).toBe(false);
     expect(result.checks[0]?.passed).toBe(false);
   });
 
-  it('runs every deterministic check regardless of an earlier one failing, and correctly attributes each check\'s own stdout/exitCode rather than mixing them up under concurrent dispatch', async () => {
-    const checks = Array.from({ length: 6 }, (_, i) => check({ id: `c${String(i)}`, failOn: 'errors > 0' }));
+  it("runs every deterministic check regardless of an earlier one failing, and correctly attributes each check's own stdout/exitCode rather than mixing them up under concurrent dispatch", async () => {
+    const checks = Array.from({ length: 6 }, (_, i) =>
+      check({ id: `c${String(i)}`, failOn: 'errors > 0' }),
+    );
     const g = gate({ id: 'G-Test', checks: { deterministic: checks, advisory: [] } });
     const runner = stubRunner(
-      Object.fromEntries(checks.map((c, i) => [c.id, { stdout: `{"errors":${String(i)}}`, exitCode: i }])),
+      Object.fromEntries(
+        checks.map((c, i) => [c.id, { stdout: `{"errors":${String(i)}}`, exitCode: i }]),
+      ),
     );
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.checks).toHaveLength(6);
@@ -99,12 +118,14 @@ describe('evaluateGate', () => {
     }
   });
 
-  it('does not mix up any two checks\' own output even when they genuinely resolve out of declaration order -- a real async race, not just a same-tick Promise.resolve() that never actually interleaves', async () => {
+  it("does not mix up any two checks' own output even when they genuinely resolve out of declaration order -- a real async race, not just a same-tick Promise.resolve() that never actually interleaves", async () => {
     // A critic round found the previous concurrency test's stub resolved every response synchronously, so
     // it could not have caught a real crosstalk bug even if one existed. Each check's own runner call here
     // waits a genuinely different, REVERSED amount of real time (the check declared *last* resolves
     // *first*), so this exercises a real interleaving Promise.all must still keep straight.
-    const checks = Array.from({ length: 8 }, (_, i) => check({ id: `c${String(i)}`, failOn: 'errors > 0' }));
+    const checks = Array.from({ length: 8 }, (_, i) =>
+      check({ id: `c${String(i)}`, failOn: 'errors > 0' }),
+    );
     const g = gate({ id: 'G-Test', checks: { deterministic: checks, advisory: [] } });
     const runner: CheckRunner = (c) => {
       const index = Number(c.id.slice(1));
@@ -156,7 +177,10 @@ describe('evaluateGate', () => {
   });
 
   it('conservatively fails a check declaring an unsupported parser, rather than silently JSON-parsing it anyway', async () => {
-    const g = gate({ id: 'G-Test', checks: { deterministic: [check({ id: 'a', parser: 'xml' })], advisory: [] } });
+    const g = gate({
+      id: 'G-Test',
+      checks: { deterministic: [check({ id: 'a', parser: 'xml' })], advisory: [] },
+    });
     const runner = stubRunner({ a: { stdout: '<errors>0</errors>', exitCode: 0 } });
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.checks[0]?.passed).toBe(false);
@@ -186,7 +210,10 @@ describe('evaluateGate', () => {
   });
 
   it('conservatively fails a check whose failOn expression is syntactically invalid, rather than throwing out of evaluateGate', async () => {
-    const g = gate({ id: 'G-Test', checks: { deterministic: [check({ id: 'a', failOn: 'errors >' })], advisory: [] } });
+    const g = gate({
+      id: 'G-Test',
+      checks: { deterministic: [check({ id: 'a', failOn: 'errors >' })], advisory: [] },
+    });
     const runner = stubRunner({ a: { stdout: '{"errors":0}', exitCode: 0 } });
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.checks[0]?.passed).toBe(false);
@@ -210,12 +237,15 @@ describe('evaluateGate', () => {
     expect(result.checks[0]?.reason).toContain('ECONNREFUSED');
   });
 
-  it('conservatively fails a check whose failOn expression blows evaluate\'s own separate depth guard (CFG-016), rather than letting that ForgeError escape evaluateGate', async () => {
+  it("conservatively fails a check whose failOn expression blows evaluate's own separate depth guard (CFG-016), rather than letting that ForgeError escape evaluateGate", async () => {
     // The identical technique @forge/engine/plan's own compile.test.ts already uses: a flat, non-nested-
     // looking &&-chain of 200+ terms parses cleanly (parseAnd is iterative) but still builds a left-deep
     // Expr tree that blows evaluate's own recursive walk, at a depth parseExpression's own guard never sees.
     const deepFailOn = Array.from({ length: 250 }, () => 'a == a').join(' && ');
-    const g = gate({ id: 'G-Test', checks: { deterministic: [check({ id: 'a', failOn: deepFailOn })], advisory: [] } });
+    const g = gate({
+      id: 'G-Test',
+      checks: { deterministic: [check({ id: 'a', failOn: deepFailOn })], advisory: [] },
+    });
     const runner = stubRunner({ a: { stdout: '{}', exitCode: 0 } });
     const result = await evaluateGate(g, '/repo', runner);
     expect(result.checks[0]?.passed).toBe(false);
@@ -225,7 +255,10 @@ describe('evaluateGate', () => {
   it('is idempotent: re-evaluating the identical gate against a runner that always returns the same output produces a byte-identical result (rule 3)', async () => {
     const g = gate({
       id: 'G-Test',
-      checks: { deterministic: [check({ id: 'a' }), check({ id: 'b', failOn: 'errors > 5' })], advisory: [] },
+      checks: {
+        deterministic: [check({ id: 'a' }), check({ id: 'b', failOn: 'errors > 5' })],
+        advisory: [],
+      },
     });
     const runner = stubRunner({
       a: { stdout: '{"errors":0}', exitCode: 0 },
@@ -236,7 +269,7 @@ describe('evaluateGate', () => {
     expect(second).toEqual(first);
   });
 
-  it('passes vacuously (no deterministic checks to fail) when a gate declares none -- rejecting that shape at all is a different, already-built package\'s own job (GATE-502)', async () => {
+  it("passes vacuously (no deterministic checks to fail) when a gate declares none -- rejecting that shape at all is a different, already-built package's own job (GATE-502)", async () => {
     const g = gate({ id: 'G-Empty', checks: { deterministic: [], advisory: [] } });
     const result = await evaluateGate(g, '/repo', stubRunner({}));
     expect(result.passed).toBe(true);
@@ -244,7 +277,11 @@ describe('evaluateGate', () => {
   });
 
   it('carries openQuestionsPolicy straight through into the result, unmodified', async () => {
-    const g = gate({ id: 'G-Test', openQuestionsPolicy: 'warn', checks: { deterministic: [], advisory: [] } });
+    const g = gate({
+      id: 'G-Test',
+      openQuestionsPolicy: 'warn',
+      checks: { deterministic: [], advisory: [] },
+    });
     const result = await evaluateGate(g, '/repo', stubRunner({}));
     expect(result.openQuestionsPolicy).toBe('warn');
   });

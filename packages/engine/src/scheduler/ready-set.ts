@@ -28,7 +28,9 @@ export function computeReadySet(
     const dependenciesSucceeded = node.dependsOn.every((dep) => statuses.get(dep) === 'succeeded');
     if (!dependenciesSucceeded) return false;
 
-    const claimsConflict = node.produces.some((glob) => runningClaims.some((running) => globsOverlap(glob, running)));
+    const claimsConflict = node.produces.some((glob) =>
+      runningClaims.some((running) => globsOverlap(glob, running)),
+    );
     return !claimsConflict;
   });
 }

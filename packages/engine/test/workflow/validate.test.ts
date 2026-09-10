@@ -8,7 +8,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { ValidationIssue, Workflow, WorkflowExistenceOracle, WorkflowStep } from '../../src/workflow/types.ts';
+import type {
+  ValidationIssue,
+  Workflow,
+  WorkflowExistenceOracle,
+  WorkflowStep,
+} from '../../src/workflow/types.ts';
 import { validateStructure, validateWorkflow } from '../../src/workflow/validate.ts';
 
 function workflow(steps: readonly WorkflowStep[], overrides: Partial<Workflow> = {}): Workflow {
@@ -56,38 +61,61 @@ describe('validateStructure', () => {
         { id: 'b', kind: 'checkpoint' },
       ]);
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual([]);
+      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual(
+        [],
+      );
     });
 
     it('checks ids nested inside parallel/sequence groups too, since each child is individually addressable', () => {
       const wf = workflow([
-        { id: 'group', kind: 'parallel', steps: [{ id: 'a', kind: 'checkpoint' }, { id: 'a', kind: 'checkpoint' }] },
+        {
+          id: 'group',
+          kind: 'parallel',
+          steps: [
+            { id: 'a', kind: 'checkpoint' },
+            { id: 'a', kind: 'checkpoint' },
+          ],
+        },
       ]);
 
       const issues = validateStructure(wf);
 
-      expect(issues).toContainEqual(expect.objectContaining({ code: 'duplicate-step-id', stepId: 'a' }));
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'duplicate-step-id', stepId: 'a' }),
+      );
     });
 
-    it('does not require a fanout child\'s own id to be unique against (or even present among) sibling ids', () => {
+    it("does not require a fanout child's own id to be unique against (or even present among) sibling ids", () => {
       const wf = workflow([
-        { id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'command', run: 'echo hi' } },
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'command', run: 'echo hi' },
+        },
         { id: 'b', kind: 'checkpoint' },
       ]);
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual([]);
+      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual(
+        [],
+      );
     });
 
     it('does not require onComplete or an onFailure escalation\'s "do" step to have (or collide on) an id', () => {
       const wf = workflow([{ id: 'a', kind: 'checkpoint' }], {
         onComplete: [{ kind: 'command', run: 'echo done' }],
-        onFailure: { default: 'block', escalations: [{ when: 'true', do: { kind: 'command', run: 'echo escalate' } }] },
+        onFailure: {
+          default: 'block',
+          escalations: [{ when: 'true', do: { kind: 'command', run: 'echo escalate' } }],
+        },
       });
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual([]);
+      expect(validateStructure(wf).filter((issue) => issue.code === 'duplicate-step-id')).toEqual(
+        [],
+      );
     });
 
-    it('reports a duplicate id nested inside a parallel/sequence group that is itself onComplete\'s own top-level step', () => {
+    it("reports a duplicate id nested inside a parallel/sequence group that is itself onComplete's own top-level step", () => {
       // onComplete's own step still needs no id of its own (the test above), but if that step happens
       // to be a parallel/sequence group, its children are exactly as individually-addressable as any
       // other parallel/sequence children -- confirmed empirically that excluding onComplete's whole
@@ -104,7 +132,9 @@ describe('validateStructure', () => {
         ],
       });
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }),
+      );
     });
 
     it('reports a duplicate id nested inside a parallel/sequence group that is itself an onFailure escalation\'s own "do" step', () => {
@@ -126,7 +156,9 @@ describe('validateStructure', () => {
         },
       });
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }),
+      );
     });
 
     it('reports a duplicate id nested inside a parallel/sequence group that is itself nested inside a fanout child', () => {
@@ -147,7 +179,9 @@ describe('validateStructure', () => {
         },
       ]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'duplicate-step-id', stepId: 'dup' }),
+      );
     });
   });
 
@@ -155,13 +189,18 @@ describe('validateStructure', () => {
     it('reports a top-level step with no id -- otherwise structurally inert, nothing could ever dependsOn or name it', () => {
       const wf = workflow([{ kind: 'checkpoint' }]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'missing-step-id' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'missing-step-id' }),
+      );
     });
 
-    it('names the offending step\'s own kind in the message -- the one distinguishing detail an id-less step actually has', () => {
+    it("names the offending step's own kind in the message -- the one distinguishing detail an id-less step actually has", () => {
       // Confirmed empirically that without this, several simultaneously-offending steps produce
       // byte-for-byte identical issue objects, with no way to tell "N real problems" from a duplicate.
-      const wf = workflow([{ kind: 'checkpoint' }, { id: 'group', kind: 'parallel', steps: [{ kind: 'command', run: 'echo hi' }] }]);
+      const wf = workflow([
+        { kind: 'checkpoint' },
+        { id: 'group', kind: 'parallel', steps: [{ kind: 'command', run: 'echo hi' }] },
+      ]);
 
       const messages = validateStructure(wf)
         .filter((issue) => issue.code === 'missing-step-id')
@@ -175,11 +214,20 @@ describe('validateStructure', () => {
     it('reports a parallel/sequence child with no id', () => {
       const wf = workflow([{ id: 'group', kind: 'parallel', steps: [{ kind: 'checkpoint' }] }]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'missing-step-id' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'missing-step-id' }),
+      );
     });
 
-    it('does not report a fanout\'s own templated child for missing an id -- it is never supposed to have one', () => {
-      const wf = workflow([{ id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'command', run: 'echo hi' } }]);
+    it("does not report a fanout's own templated child for missing an id -- it is never supposed to have one", () => {
+      const wf = workflow([
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'command', run: 'echo hi' },
+        },
+      ]);
 
       expect(validateStructure(wf).filter((issue) => issue.code === 'missing-step-id')).toEqual([]);
     });
@@ -187,7 +235,10 @@ describe('validateStructure', () => {
     it('does not report onComplete or an onFailure escalation\'s "do" step for missing an id either', () => {
       const wf = workflow([{ id: 'a', kind: 'checkpoint' }], {
         onComplete: [{ kind: 'command', run: 'echo done' }],
-        onFailure: { default: 'block', escalations: [{ when: 'true', do: { kind: 'command', run: 'echo escalate' } }] },
+        onFailure: {
+          default: 'block',
+          escalations: [{ when: 'true', do: { kind: 'command', run: 'echo escalate' } }],
+        },
       });
 
       expect(validateStructure(wf).filter((issue) => issue.code === 'missing-step-id')).toEqual([]);
@@ -213,7 +264,9 @@ describe('validateStructure', () => {
         { id: 'c', kind: 'checkpoint', dependsOn: ['b'] },
       ]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'dependency-cycle' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'dependency-cycle' }),
+      );
     });
 
     it('does not report a cycle for a genuine, acyclic DAG, including a diamond shape', () => {
@@ -224,7 +277,9 @@ describe('validateStructure', () => {
         { id: 'd', kind: 'checkpoint', dependsOn: ['b', 'c'] },
       ]);
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'dependency-cycle')).toEqual([]);
+      expect(validateStructure(wf).filter((issue) => issue.code === 'dependency-cycle')).toEqual(
+        [],
+      );
     });
 
     it('does not treat a templated, per-item dependsOn reference (10 §10.1\'s own "generate-tests:{{item.id}}" shape) as part of the static graph', () => {
@@ -234,25 +289,34 @@ describe('validateStructure', () => {
       ]);
 
       // Must not throw, must not report a cycle -- the templated reference simply isn't a graph edge.
-      expect(validateStructure(wf).filter((issue) => issue.code === 'dependency-cycle')).toEqual([]);
+      expect(validateStructure(wf).filter((issue) => issue.code === 'dependency-cycle')).toEqual(
+        [],
+      );
     });
 
     it('does not crash or misfire on a self-loop', () => {
       const wf = workflow([{ id: 'a', kind: 'checkpoint', dependsOn: ['a'] }]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'dependency-cycle', stepId: 'a' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'dependency-cycle', stepId: 'a' }),
+      );
     });
 
     it('skips an id-less top-level step for both id-uniqueness and cycle detection, rather than crashing', () => {
       // id is optional at the type level (types.ts's own WorkflowStepBase doc comment) -- a caller
       // constructing a Workflow directly, not through parseWorkflow, can genuinely omit it even on a
       // top-level step. Neither check may assume every "addressable" step actually has one.
-      const wf = workflow([{ kind: 'checkpoint' }, { id: 'a', kind: 'checkpoint', dependsOn: ['a'] }]);
+      const wf = workflow([
+        { kind: 'checkpoint' },
+        { id: 'a', kind: 'checkpoint', dependsOn: ['a'] },
+      ]);
 
       const issues = validateStructure(wf);
 
       expect(issues.filter((issue) => issue.code === 'duplicate-step-id')).toEqual([]);
-      expect(issues).toContainEqual(expect.objectContaining({ code: 'dependency-cycle', stepId: 'a' }));
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'dependency-cycle', stepId: 'a' }),
+      );
     });
 
     it('reports a cycle entirely inside a parallel/sequence group nested inside a fanout child', () => {
@@ -271,7 +335,9 @@ describe('validateStructure', () => {
         },
       ]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'dependency-cycle' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'dependency-cycle' }),
+      );
     });
 
     it('reports an excessive-dependency-depth issue rather than crashing on an extremely long dependsOn chain', () => {
@@ -292,7 +358,9 @@ describe('validateStructure', () => {
       expect(() => {
         issues = validateStructure(wf);
       }).not.toThrow();
-      expect(issues).toContainEqual(expect.objectContaining({ code: 'excessive-dependency-depth' }));
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'excessive-dependency-depth' }),
+      );
     });
 
     it('reports only excessive-dependency-depth, never a fabricated non-closing dependency-cycle, when a long chain and a real cycle appear in the same graph', () => {
@@ -331,13 +399,19 @@ describe('validateStructure', () => {
 
       const issues = validateStructure(wf);
 
-      expect(issues).toContainEqual(expect.objectContaining({ code: 'malformed-produces-glob', stepId: 'a' }));
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'malformed-produces-glob', stepId: 'a' }),
+      );
     });
 
     it('reports an empty-string entry inside a produces array as malformed', () => {
-      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer', produces: ['src/**/*.ts', ''] }]);
+      const wf = workflow([
+        { id: 'a', kind: 'agent', agent: 'engineer', produces: ['src/**/*.ts', ''] },
+      ]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'malformed-produces-glob' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'malformed-produces-glob' }),
+      );
     });
 
     it('does not report a real, ordinary glob as malformed, bare string or array alike', () => {
@@ -346,21 +420,32 @@ describe('validateStructure', () => {
         { id: 'b', kind: 'agent', agent: 'engineer', produces: ['src/a.ts', 'src/b.ts'] },
       ]);
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob')).toEqual([]);
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob'),
+      ).toEqual([]);
     });
 
     it('checks produces globs nested inside a fanout child too', () => {
       const wf = workflow([
-        { id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'agent', agent: 'engineer', produces: '' } },
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'agent', agent: 'engineer', produces: '' },
+        },
       ]);
 
-      expect(validateStructure(wf)).toContainEqual(expect.objectContaining({ code: 'malformed-produces-glob' }));
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'malformed-produces-glob' }),
+      );
     });
 
     it('does not check produces on a step kind that has no such field', () => {
       const wf = workflow([{ id: 'a', kind: 'command', run: 'echo hi' }]);
 
-      expect(validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob')).toEqual([]);
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob'),
+      ).toEqual([]);
     });
   });
 
@@ -392,7 +477,9 @@ describe('validateWorkflow', () => {
   });
 
   it('reports an unknown brief', () => {
-    const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer', brief: 'briefs/does-not-exist.md' }]);
+    const wf = workflow([
+      { id: 'a', kind: 'agent', agent: 'engineer', brief: 'briefs/does-not-exist.md' },
+    ]);
 
     const issues = validateWorkflow(wf, allowAllOracle({ briefExists: () => false }));
 
@@ -400,14 +487,16 @@ describe('validateWorkflow', () => {
   });
 
   it('reports a gateEvidence entry naming a nonexistent gate', () => {
-    const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer', gateEvidence: ['G-DoesNotExist'] }]);
+    const wf = workflow([
+      { id: 'a', kind: 'agent', agent: 'engineer', gateEvidence: ['G-DoesNotExist'] },
+    ]);
 
     const issues = validateWorkflow(wf, allowAllOracle({ gateExists: () => false }));
 
     expect(issues).toContainEqual(expect.objectContaining({ code: 'unknown-gate', stepId: 'a' }));
   });
 
-  it('reports a gate step\'s own gate field naming a nonexistent gate, not just gateEvidence', () => {
+  it("reports a gate step's own gate field naming a nonexistent gate, not just gateEvidence", () => {
     const wf = workflow([{ id: 'a', kind: 'gate', gate: 'G-DoesNotExist' }]);
 
     const issues = validateWorkflow(wf, allowAllOracle({ gateExists: () => false }));
@@ -416,11 +505,15 @@ describe('validateWorkflow', () => {
   });
 
   it('reports an outputs[].type naming a nonexistent artifact type', () => {
-    const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer', outputs: [{ type: 'NotARealType' }] }]);
+    const wf = workflow([
+      { id: 'a', kind: 'agent', agent: 'engineer', outputs: [{ type: 'NotARealType' }] },
+    ]);
 
     const issues = validateWorkflow(wf, allowAllOracle({ artifactTypeExists: () => false }));
 
-    expect(issues).toContainEqual(expect.objectContaining({ code: 'unknown-artifact-type', stepId: 'a' }));
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'unknown-artifact-type', stepId: 'a' }),
+    );
   });
 
   it('reports a subworkflow step naming a nonexistent workflow', () => {
@@ -428,7 +521,9 @@ describe('validateWorkflow', () => {
 
     const issues = validateWorkflow(wf, allowAllOracle({ workflowExists: () => false }));
 
-    expect(issues).toContainEqual(expect.objectContaining({ code: 'unknown-workflow', stepId: 'a' }));
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'unknown-workflow', stepId: 'a' }),
+    );
   });
 
   it('reports nothing when everything referenced genuinely exists', () => {
@@ -478,7 +573,12 @@ describe('validateWorkflow', () => {
 
   it('checks referential integrity inside a fanout child too, not just top-level steps', () => {
     const wf = workflow([
-      { id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'agent', agent: 'nonexistent-role' } },
+      {
+        id: 'a',
+        kind: 'fanout',
+        over: 'stage.stories',
+        step: { kind: 'agent', agent: 'nonexistent-role' },
+      },
     ]);
 
     const issues = validateWorkflow(wf, allowAllOracle({ agentExists: () => false }));
@@ -503,7 +603,9 @@ describe('validateWorkflow', () => {
   it('does not check anything for a step kind with no referential fields, e.g. checkpoint', () => {
     const wf = workflow([{ id: 'a', kind: 'checkpoint' }]);
 
-    expect(validateWorkflow(wf, allowAllOracle({ agentExists: () => false, gateExists: () => false }))).toEqual([]);
+    expect(
+      validateWorkflow(wf, allowAllOracle({ agentExists: () => false, gateExists: () => false })),
+    ).toEqual([]);
   });
 
   describe('an unidentified step (no id, e.g. a fanout child)', () => {
@@ -525,33 +627,57 @@ describe('validateWorkflow', () => {
 
       const issues = validateWorkflow(
         wf,
-        allowAllOracle({ briefExists: () => false, gateExists: () => false, artifactTypeExists: () => false }),
+        allowAllOracle({
+          briefExists: () => false,
+          gateExists: () => false,
+          artifactTypeExists: () => false,
+        }),
       );
 
       expect(issues.find((issue) => issue.code === 'unknown-brief')).not.toHaveProperty('stepId');
-      expect(issues.find((issue) => issue.code === 'unknown-brief')?.message).toContain('"(unidentified)"');
-      expect(issues.find((issue) => issue.code === 'unknown-gate')?.message).toContain('"(unidentified)"');
-      expect(issues.find((issue) => issue.code === 'unknown-artifact-type')?.message).toContain('"(unidentified)"');
+      expect(issues.find((issue) => issue.code === 'unknown-brief')?.message).toContain(
+        '"(unidentified)"',
+      );
+      expect(issues.find((issue) => issue.code === 'unknown-gate')?.message).toContain(
+        '"(unidentified)"',
+      );
+      expect(issues.find((issue) => issue.code === 'unknown-artifact-type')?.message).toContain(
+        '"(unidentified)"',
+      );
     });
 
     it('labels an unknown-gate message "(unidentified)" for a nested gate step too, not just gateEvidence', () => {
       const wf = workflow([
-        { id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'gate', gate: 'G-DoesNotExist' } },
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'gate', gate: 'G-DoesNotExist' },
+        },
       ]);
 
       const issues = validateWorkflow(wf, allowAllOracle({ gateExists: () => false }));
 
-      expect(issues.find((issue) => issue.code === 'unknown-gate')?.message).toContain('"(unidentified)"');
+      expect(issues.find((issue) => issue.code === 'unknown-gate')?.message).toContain(
+        '"(unidentified)"',
+      );
     });
 
     it('labels an unknown-workflow message "(unidentified)" for a nested subworkflow step too', () => {
       const wf = workflow([
-        { id: 'a', kind: 'fanout', over: 'stage.stories', step: { kind: 'subworkflow', workflow: 'not-a-real-workflow' } },
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'subworkflow', workflow: 'not-a-real-workflow' },
+        },
       ]);
 
       const issues = validateWorkflow(wf, allowAllOracle({ workflowExists: () => false }));
 
-      expect(issues.find((issue) => issue.code === 'unknown-workflow')?.message).toContain('"(unidentified)"');
+      expect(issues.find((issue) => issue.code === 'unknown-workflow')?.message).toContain(
+        '"(unidentified)"',
+      );
     });
   });
 

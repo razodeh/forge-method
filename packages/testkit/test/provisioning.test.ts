@@ -50,7 +50,9 @@ describe('provisionSkills scoping', () => {
       cwd,
     });
 
-    const sameRun = await adapter.startSession(baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }));
+    const sameRun = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }),
+    );
     const sameRunResult = await sameRun.result();
     expect(sameRunResult.finalText).toContain('SKILL VISIBLE');
 
@@ -85,7 +87,9 @@ describe('provisionMcp scoping', () => {
       { runId: 'run-A', stepId: 'implement', cwd },
     );
 
-    const sameRun = await adapter.startSession(baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }));
+    const sameRun = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }),
+    );
     const sameRunEvents = [];
     for await (const event of sameRun.events) sameRunEvents.push(event);
     expect(sameRunEvents.some((event) => event.type === 'tool.result' && event.ok)).toBe(true);
@@ -95,7 +99,9 @@ describe('provisionMcp scoping', () => {
     );
     const differentRunEvents = [];
     for await (const event of differentRun.events) differentRunEvents.push(event);
-    expect(differentRunEvents.some((event) => event.type === 'tool.result' && !event.ok)).toBe(true);
+    expect(differentRunEvents.some((event) => event.type === 'tool.result' && !event.ok)).toBe(
+      true,
+    );
   });
 
   it("grantedTools: '*' grants every tool name, not none", async () => {
@@ -103,13 +109,18 @@ describe('provisionMcp scoping', () => {
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { mcpToolAttempts: ['any-tool-name-at-all'] });
 
-    await adapter.provisionMcp?.([{ id: 'server-1', transport: 'stdio', command: 'noop', grantedTools: '*' }], {
-      runId: 'run-A',
-      stepId: 'implement',
-      cwd,
-    });
+    await adapter.provisionMcp?.(
+      [{ id: 'server-1', transport: 'stdio', command: 'noop', grantedTools: '*' }],
+      {
+        runId: 'run-A',
+        stepId: 'implement',
+        cwd,
+      },
+    );
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }),
+    );
     const events = [];
     for await (const event of handle.events) events.push(event);
 
@@ -123,13 +134,20 @@ describe('provisionMcp scoping', () => {
 
     await adapter.provisionMcp?.(
       [
-        { id: 'server-explicit', transport: 'stdio', command: 'noop', grantedTools: ['listed-tool'] },
+        {
+          id: 'server-explicit',
+          transport: 'stdio',
+          command: 'noop',
+          grantedTools: ['listed-tool'],
+        },
         { id: 'server-wildcard', transport: 'stdio', command: 'noop', grantedTools: '*' },
       ],
       { runId: 'run-A', stepId: 'implement', cwd },
     );
 
-    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }));
+    const handle = await adapter.startSession(
+      baseRequest({ cwd, prompt: 'go', runId: 'run-A', stepId: 'implement' }),
+    );
     const events = [];
     for await (const event of handle.events) events.push(event);
 

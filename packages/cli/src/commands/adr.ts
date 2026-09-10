@@ -9,7 +9,12 @@ import type { ProjectPaths } from '@forge/core/fs';
 import { parseKbTree } from '@forge/kb/schema';
 import { renderArtifactPath } from '@forge/schemas/registry';
 
-import { getSharedIdAllocator, readArtifactTemplate, summarize, type KbEntrySummary } from './shared.ts';
+import {
+  getSharedIdAllocator,
+  readArtifactTemplate,
+  summarize,
+  type KbEntrySummary,
+} from './shared.ts';
 
 export interface AdrCommandContext {
   readonly paths: ProjectPaths;
@@ -19,7 +24,9 @@ export interface AdrCommandContext {
 
 async function findAdrPath(ctx: AdrCommandContext, id: string): Promise<string> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  const entry = tree.entries.find((candidate) => candidate.kind === 'adr' && candidate.value.id === id);
+  const entry = tree.entries.find(
+    (candidate) => candidate.kind === 'adr' && candidate.value.id === id,
+  );
   if (entry === undefined) {
     throw new ForgeError('KB-015', { id });
   }
@@ -31,7 +38,9 @@ async function findAdrPath(ctx: AdrCommandContext, id: string): Promise<string> 
 
 export async function adrList(ctx: AdrCommandContext): Promise<readonly KbEntrySummary[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
-  return tree.entries.filter((entry) => entry.kind === 'adr').map((entry) => summarize(entry, ctx.kbRoot));
+  return tree.entries
+    .filter((entry) => entry.kind === 'adr')
+    .map((entry) => summarize(entry, ctx.kbRoot));
 }
 
 export async function adrShow(ctx: AdrCommandContext, id: string): Promise<ArtifactDocument> {
@@ -96,12 +105,28 @@ async function transition(
 
 export async function adrAccept(ctx: AdrCommandContext, id: string): Promise<ArtifactDocument> {
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-  return transition(ctx, id, clock, (doc) => { doc.set(['status'], 'accepted'); }, 'Accepted.');
+  return transition(
+    ctx,
+    id,
+    clock,
+    (doc) => {
+      doc.set(['status'], 'accepted');
+    },
+    'Accepted.',
+  );
 }
 
 export async function adrReject(ctx: AdrCommandContext, id: string): Promise<ArtifactDocument> {
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-  return transition(ctx, id, clock, (doc) => { doc.set(['status'], 'rejected'); }, 'Rejected.');
+  return transition(
+    ctx,
+    id,
+    clock,
+    (doc) => {
+      doc.set(['status'], 'rejected');
+    },
+    'Rejected.',
+  );
 }
 
 /** `supersede <id>`: marks `id` as superseded by a newly-created ADR (`adrNew`'s own real id

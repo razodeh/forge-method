@@ -3,7 +3,12 @@
  *
  * @see specs/03 §3.2.2
  */
-import { ArtifactDocument, readArtifact, validateArtifact, writeArtifact } from '@forge/core/artifacts';
+import {
+  ArtifactDocument,
+  readArtifact,
+  validateArtifact,
+  writeArtifact,
+} from '@forge/core/artifacts';
 import { SpecGraph, type GraphNode, type GraphViolation, type Orphan } from '@forge/core/graph';
 import { SYSTEM_CLOCK, ForgeError, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
@@ -44,7 +49,11 @@ export interface SpecSummary {
 }
 
 function summarizeDoc(doc: ArtifactDocument): SpecSummary {
-  const frontMatter = doc.frontMatter as { readonly id: string; readonly type: string; readonly title: string };
+  const frontMatter = doc.frontMatter as {
+    readonly id: string;
+    readonly type: string;
+    readonly title: string;
+  };
   return { id: frontMatter.id, type: frontMatter.type, title: frontMatter.title, path: doc.path };
 }
 
@@ -70,9 +79,7 @@ export interface SpecValidationResult {
 
 /** `validate`: `18` §18.6's two-phase check (`validateArtifact`) against every real spec document,
  * plus `09` §9.4's own required-edge/cycle checks (`SpecGraph`) across the whole graph. */
-export async function specValidate(
-  ctx: SpecCommandContext,
-): Promise<{
+export async function specValidate(ctx: SpecCommandContext): Promise<{
   readonly documents: readonly SpecValidationResult[];
   readonly missingRequiredEdges: readonly GraphViolation[];
   readonly cycles: readonly { readonly path: readonly string[] }[];
@@ -132,14 +139,7 @@ export async function specOrphans(ctx: SpecCommandContext): Promise<readonly Orp
  * own `TemplateArtifactTypeId` (all 21: every registered type has a template, but not every type
  * lives under `specs/` — `ADR` lives under `kb/decisions/`, `Risk` under `kb/risks.md`, etc.). */
 export type SpecArtifactType =
-  | 'Vision'
-  | 'Capability'
-  | 'NFR'
-  | 'Epic'
-  | 'Story'
-  | 'Task'
-  | 'InterfaceContract'
-  | 'DataModel';
+  'Vision' | 'Capability' | 'NFR' | 'Epic' | 'Story' | 'Task' | 'InterfaceContract' | 'DataModel';
 
 const SPEC_ARTIFACT_TYPES: ReadonlySet<ArtifactTypeId> = new Set<SpecArtifactType>([
   'Vision',

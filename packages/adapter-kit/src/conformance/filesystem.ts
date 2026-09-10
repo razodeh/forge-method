@@ -27,7 +27,9 @@ import {
 import { gitStatusPaths, initGitRepo } from './git.ts';
 import { collectEvents, withTimeout } from './helpers.ts';
 
-function isToolResultEvent(event: AdapterEvent): event is Extract<AdapterEvent, { readonly type: 'tool.result' }> {
+function isToolResultEvent(
+  event: AdapterEvent,
+): event is Extract<AdapterEvent, { readonly type: 'tool.result' }> {
   return event.type === 'tool.result';
 }
 
@@ -94,7 +96,11 @@ export async function checkC3ToolRestriction(context: ConformanceContext): Promi
       tools: { read: true, write: false, exec: false, network: 'none' },
     }),
   );
-  const events = await withTimeout(collectEvents(handle), 30000, 'C3: session did not end within 30s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C3: session did not end within 30s',
+  );
   const result = await withTimeout(handle.result(), 5000, 'C3: result() did not settle within 5s');
 
   const written = await readMarkerFile(cwd);
@@ -121,7 +127,11 @@ export async function checkC4ExecAllowlist(context: ConformanceContext): Promise
       tools: { read: true, write: true, exec: ['echo *'], network: 'none' },
     }),
   );
-  const events = await withTimeout(collectEvents(handle), 30000, 'C4: session did not end within 30s');
+  const events = await withTimeout(
+    collectEvents(handle),
+    30000,
+    'C4: session did not end within 30s',
+  );
   await withTimeout(handle.result(), 5000, 'C4: result() did not settle within 5s');
 
   // "Blocks rm -rf": no field of the tool.call event names the command in a typed way
@@ -185,7 +195,9 @@ export async function checkC14DeterminismOfReporting(context: ConformanceContext
   await withTimeout(collectEvents(handle), 30000, 'C14: session did not end within 30s');
   const result = await withTimeout(handle.result(), 5000, 'C14: result() did not settle within 5s');
 
-  const reportedByAdapter = [...result.changedFiles].map((reported) => normalizeReportedPath(reported, cwd)).sort();
+  const reportedByAdapter = [...result.changedFiles]
+    .map((reported) => normalizeReportedPath(reported, cwd))
+    .sort();
   const reportedByGit = [...(await gitStatusPaths(cwd))].sort();
 
   expect(reportedByAdapter).toEqual(reportedByGit);

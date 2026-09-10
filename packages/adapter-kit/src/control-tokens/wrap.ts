@@ -38,7 +38,11 @@ const DEFANGED_CLOSE_MARKER = withZeroWidthSpaceInserted(CLOSE_MARKER);
  * holds for `source` too, not only `text` — a caller could plausibly pass a not-fully-trusted `source`
  * label (e.g. a fetched page's own self-reported title). */
 function defangMarkers(value: string): string {
-  return value.split(OPEN_MARKER).join(DEFANGED_OPEN_MARKER).split(CLOSE_MARKER).join(DEFANGED_CLOSE_MARKER);
+  return value
+    .split(OPEN_MARKER)
+    .join(DEFANGED_OPEN_MARKER)
+    .split(CLOSE_MARKER)
+    .join(DEFANGED_CLOSE_MARKER);
 }
 
 export interface WrapUntrustedContentResult {

@@ -11,7 +11,12 @@
 export { compilePlan, compileStepId, expandFanout } from './compile.ts';
 export { computeCriticalPath, safeCost } from './critical-path.ts';
 export { detectCycles, renderCycleAsMermaid } from './cycles.ts';
-export { applyClaimOverlaps, buildClaimIntervalMap, globsOverlap, insertContractDependencies } from './dependencies.ts';
+export {
+  applyClaimOverlaps,
+  buildClaimIntervalMap,
+  globsOverlap,
+  insertContractDependencies,
+} from './dependencies.ts';
 export { compileRunPlan } from './run-plan.ts';
 export {
   toAgentId,

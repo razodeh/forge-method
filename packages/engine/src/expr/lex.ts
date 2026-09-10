@@ -187,13 +187,15 @@ export function tokenize(source: string): readonly Token[] {
       continue;
     }
     if (char === '&') {
-      if (source[pos + 1] !== '&') throw new LexError('"&" is not a valid operator; did you mean "&&"?', start);
+      if (source[pos + 1] !== '&')
+        throw new LexError('"&" is not a valid operator; did you mean "&&"?', start);
       pos += 2;
       tokens.push({ kind: '&&', text: '&&', position: start });
       continue;
     }
     if (char === '|') {
-      if (source[pos + 1] !== '|') throw new LexError('"|" is not a valid operator; did you mean "||"?', start);
+      if (source[pos + 1] !== '|')
+        throw new LexError('"|" is not a valid operator; did you mean "||"?', start);
       pos += 2;
       tokens.push({ kind: '||', text: '||', position: start });
       continue;

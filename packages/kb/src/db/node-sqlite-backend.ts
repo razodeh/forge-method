@@ -44,7 +44,9 @@ export class NodeSqliteBackend extends BaseSqliteBackend {
   }
 
   search(query: string): readonly SearchHit[] {
-    const rows = this.db.prepare('SELECT id, title, statement, rationale FROM terms').all() as readonly TermsRow[];
+    const rows = this.db
+      .prepare('SELECT id, title, statement, rationale FROM terms')
+      .all() as readonly TermsRow[];
     const documents = rows.map((row) => ({
       id: row.id,
       text: `${row.title} ${row.statement} ${row.rationale}`,

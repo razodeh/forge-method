@@ -144,7 +144,11 @@ export function computeCriticalPath(nodes: readonly StepNode[]): CriticalPathRes
   if (bestId === undefined) return { path: [], estimatedCost: 0 };
 
   const path: string[] = [];
-  for (let current: string | undefined = bestId; current !== undefined; current = predecessor.get(current)) {
+  for (
+    let current: string | undefined = bestId;
+    current !== undefined;
+    current = predecessor.get(current)
+  ) {
     path.push(current);
   }
   path.reverse();

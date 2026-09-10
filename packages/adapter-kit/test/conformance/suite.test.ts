@@ -47,7 +47,10 @@ import {
 import { checkC16McpGrantFidelity } from '../../src/conformance/capabilities.ts';
 import { checkC5Abort } from '../../src/conformance/control-and-abort.ts';
 import { collectEvents } from '../../src/conformance/helpers.ts';
-import { runAdapterConformanceSuite, SAFETY_CRITICAL_CONFORMANCE_IDS } from '../../src/conformance/suite.ts';
+import {
+  runAdapterConformanceSuite,
+  SAFETY_CRITICAL_CONFORMANCE_IDS,
+} from '../../src/conformance/suite.ts';
 
 // --- fixture prompts: this is a fully scripted fake, so a short deterministic marker string is all a
 // prompt needs to be (no natural-language elicitation required, unlike a real platform). ---
@@ -87,7 +90,10 @@ async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-conformance-'));
 }
 
-function emptySessionResult(sessionId: string, overrides: Partial<SessionResult> = {}): SessionResult {
+function emptySessionResult(
+  sessionId: string,
+  overrides: Partial<SessionResult> = {},
+): SessionResult {
   return {
     sessionId,
     ok: true,
@@ -135,7 +141,7 @@ function makeHandle(
     if (pumpInFlight) {
       throw new Error(
         `stub adapter: session ${sessionId} — events and result() were drained concurrently; ` +
-          'fully drain one before starting the other (see makeHandle\'s own doc comment).',
+          "fully drain one before starting the other (see makeHandle's own doc comment).",
       );
     }
     pumpInFlight = true;
@@ -258,7 +264,10 @@ class StubAdapter implements PlatformAdapter {
     return Promise.resolve([{ id: 'conformance-model', displayName: 'Conformance Model' }]);
   }
 
-  provisionSkills(skills: readonly ResolvedSkill[], ctx: SessionContext): Promise<SkillProvisioning> {
+  provisionSkills(
+    skills: readonly ResolvedSkill[],
+    ctx: SessionContext,
+  ): Promise<SkillProvisioning> {
     const existing = this.provisioningByStepId.get(ctx.stepId);
     this.provisioningByStepId.set(ctx.stepId, {
       skillIds: skills.map((skill) => skill.id),
@@ -267,10 +276,16 @@ class StubAdapter implements PlatformAdapter {
     // Matches this stub's own declared capabilities().skills ('inline') per 15 §15.6's own mapping —
     // C15 now cross-checks provisioning.strategy against the declared capability (a gauntlet critic
     // found the original version never asserted this half of the row at all).
-    return Promise.resolve({ strategy: 'inline', provisionedSkillIds: skills.map((skill) => skill.id) });
+    return Promise.resolve({
+      strategy: 'inline',
+      provisionedSkillIds: skills.map((skill) => skill.id),
+    });
   }
 
-  provisionMcp(servers: readonly GrantedMcpServer[], ctx: SessionContext): Promise<McpProvisioning> {
+  provisionMcp(
+    servers: readonly GrantedMcpServer[],
+    ctx: SessionContext,
+  ): Promise<McpProvisioning> {
     const existing = this.provisioningByStepId.get(ctx.stepId);
     this.provisioningByStepId.set(ctx.stepId, {
       skillIds: existing?.skillIds ?? [],
@@ -295,7 +310,8 @@ class StubAdapter implements PlatformAdapter {
   }
 
   resumeSession(sessionId: string, request: ResumeRequest): Promise<SessionHandle> {
-    const remembered = this.sessionsById.get(sessionId)?.rememberedFragment ?? '(nothing remembered)';
+    const remembered =
+      this.sessionsById.get(sessionId)?.rememberedFragment ?? '(nothing remembered)';
     async function* wrapped(): AsyncGenerator<AdapterEvent, SessionResult> {
       await Promise.resolve();
       const text = request.prompt === RESUME_PROBE_PROMPT ? `I remember: ${remembered}` : 'resumed';
@@ -306,7 +322,10 @@ class StubAdapter implements PlatformAdapter {
     return Promise.resolve(makeHandle(sessionId, wrapped));
   }
 
-  private behaviorFor(request: SessionRequest, sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private behaviorFor(
+    request: SessionRequest,
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     // An invalid model fails the session regardless of what prompt was requested — checked before the
     // prompt dispatch below, not folded into its default case, so C11 is exercised no matter which
     // prompt fixture a caller happens to combine it with.
@@ -357,7 +376,11 @@ class StubAdapter implements PlatformAdapter {
       return emptySessionResult(sessionId, { finalText: 'I cannot write files in this session.' });
     }
     const targetDir = this.opts.writeBroken ? await createScratchDir() : request.cwd;
-    await writeFile(path.join(targetDir, CONFORMANCE_WRITE_FILE_RELATIVE_PATH), CONFORMANCE_WRITE_FILE_CONTENT, 'utf8');
+    await writeFile(
+      path.join(targetDir, CONFORMANCE_WRITE_FILE_RELATIVE_PATH),
+      CONFORMANCE_WRITE_FILE_CONTENT,
+      'utf8',
+    );
     yield { type: 'tool.call', id: 'call-1', name: 'write_file' };
     yield { type: 'tool.result', id: 'call-1', ok: true, summary: 'wrote file' };
     yield { type: 'session.ended', reason: 'complete' };
@@ -367,7 +390,10 @@ class StubAdapter implements PlatformAdapter {
       // the write itself) but misreports changedFiles as empty regardless — a realistic bug shape
       // (correct write, buggy bookkeeping) distinct from writeBroken's, and the one C14 itself exists to
       // catch: git status on cwd would show the real file, changedFiles would not.
-      changedFiles: this.opts.writeBroken || this.opts.changedFilesBroken ? [] : [CONFORMANCE_WRITE_FILE_RELATIVE_PATH],
+      changedFiles:
+        this.opts.writeBroken || this.opts.changedFilesBroken
+          ? []
+          : [CONFORMANCE_WRITE_FILE_RELATIVE_PATH],
     });
   }
 
@@ -396,7 +422,10 @@ class StubAdapter implements PlatformAdapter {
       }
       if (maxTurns !== undefined && turn > maxTurns) {
         yield { type: 'session.ended', reason: 'limit' };
-        return emptySessionResult(sessionId, { finalText: text, usage: { inputTokens: 10, outputTokens: 5, turns: turnsRun } });
+        return emptySessionResult(sessionId, {
+          finalText: text,
+          usage: { inputTokens: 10, outputTokens: 5, turns: turnsRun },
+        });
       }
       const chunk = `Turn ${String(turn)}. `;
       text += chunk;
@@ -404,10 +433,16 @@ class StubAdapter implements PlatformAdapter {
       turnsRun += 1;
     }
     yield { type: 'session.ended', reason: 'complete' };
-    return emptySessionResult(sessionId, { finalText: text, usage: { inputTokens: 10, outputTokens: 5, turns: turnsRun } });
+    return emptySessionResult(sessionId, {
+      finalText: text,
+      usage: { inputTokens: 10, outputTokens: 5, turns: turnsRun },
+    });
   }
 
-  private async *execBehavior(request: SessionRequest, sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *execBehavior(
+    request: SessionRequest,
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     // Both sides genuinely routed through the real isExecAllowed grant-checker, not hardcoded — a
     // gauntlet critic named the earlier hardcoded-echo-success version as a (low-materiality) way this
@@ -416,7 +451,9 @@ class StubAdapter implements PlatformAdapter {
     yield { type: 'tool.call', id: 'call-echo', name: 'exec' };
     yield { type: 'tool.result', id: 'call-echo', ok: echoAllowed, summary: 'echo hi' };
 
-    const rmAllowed = this.opts.execBroken === true || isExecAllowed(request.tools, 'rm -rf conformance-canary.txt');
+    const rmAllowed =
+      this.opts.execBroken === true ||
+      isExecAllowed(request.tools, 'rm -rf conformance-canary.txt');
     if (rmAllowed) {
       // The broken variant ignores the grant outright (isExecAllowed would correctly say no — 'rm
       // -rf...' never matches 'echo *' — this branch only reaches the real deletion when execBroken
@@ -425,21 +462,33 @@ class StubAdapter implements PlatformAdapter {
         // Already absent, or some other reason it can't be removed — nothing more for the stub to do.
       });
       yield { type: 'tool.call', id: 'call-rm', name: 'exec' };
-      yield { type: 'tool.result', id: 'call-rm', ok: true, summary: 'rm -rf conformance-canary.txt' };
+      yield {
+        type: 'tool.result',
+        id: 'call-rm',
+        ok: true,
+        summary: 'rm -rf conformance-canary.txt',
+      };
     }
     yield { type: 'session.ended', reason: 'complete' };
     return emptySessionResult(sessionId, { finalText: 'ran commands' });
   }
 
-  private async *controlTokenBehavior(sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *controlTokenBehavior(
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     const raw = 'FORGE_ASK: which database? | Postgres, SQLite';
     const parsed = parseControlTokens(raw);
     const askToken = parsed.tokens.find(
-      (token): token is Extract<ParsedControlToken, { readonly token: 'FORGE_ASK' }> => token.token === 'FORGE_ASK',
+      (token): token is Extract<ParsedControlToken, { readonly token: 'FORGE_ASK' }> =>
+        token.token === 'FORGE_ASK',
     );
     if (askToken !== undefined) {
-      yield { type: 'control', token: 'FORGE_ASK', payload: { question: askToken.question, options: askToken.options } };
+      yield {
+        type: 'control',
+        token: 'FORGE_ASK',
+        payload: { question: askToken.question, options: askToken.options },
+      };
     }
     yield { type: 'text', text: raw, partial: false };
     yield { type: 'session.ended', reason: 'complete' };
@@ -449,14 +498,18 @@ class StubAdapter implements PlatformAdapter {
     });
   }
 
-  private async *structuredBehavior(sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *structuredBehavior(
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     yield { type: 'text', text: 'done', partial: false };
     yield { type: 'session.ended', reason: 'complete' };
     return emptySessionResult(sessionId, { finalText: 'done', structured: { ok: true } });
   }
 
-  private async *resumeInitialBehavior(sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *resumeInitialBehavior(
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     this.sessionsById.set(sessionId, { rememberedFragment: RESUME_REMEMBERED_FRAGMENT });
     yield { type: 'text', text: 'remembering a fact', partial: false };
@@ -464,30 +517,55 @@ class StubAdapter implements PlatformAdapter {
     return emptySessionResult(sessionId, { finalText: 'remembering a fact' });
   }
 
-  private async *mcpBehavior(request: SessionRequest, sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *mcpBehavior(
+    request: SessionRequest,
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     const provisioning = this.provisioningByStepId.get(request.stepId);
-    const grantedIds = this.opts.mcpBroken ? [MCP_ALLOWED_TOOL, MCP_DENIED_TOOL] : (provisioning?.mcpServerIds.length ?? 0) > 0 ? [MCP_ALLOWED_TOOL] : [];
+    const grantedIds = this.opts.mcpBroken
+      ? [MCP_ALLOWED_TOOL, MCP_DENIED_TOOL]
+      : (provisioning?.mcpServerIds.length ?? 0) > 0
+        ? [MCP_ALLOWED_TOOL]
+        : [];
     yield { type: 'tool.call', id: 'call-allowed', name: MCP_ALLOWED_TOOL };
-    yield { type: 'tool.result', id: 'call-allowed', ok: grantedIds.includes(MCP_ALLOWED_TOOL), summary: 'allowed tool' };
+    yield {
+      type: 'tool.result',
+      id: 'call-allowed',
+      ok: grantedIds.includes(MCP_ALLOWED_TOOL),
+      summary: 'allowed tool',
+    };
     if (this.opts.mcpBroken) {
       yield { type: 'tool.call', id: 'call-denied', name: MCP_DENIED_TOOL };
-      yield { type: 'tool.result', id: 'call-denied', ok: true, summary: 'denied tool (should not succeed)' };
+      yield {
+        type: 'tool.result',
+        id: 'call-denied',
+        ok: true,
+        summary: 'denied tool (should not succeed)',
+      };
     }
     yield { type: 'session.ended', reason: 'complete' };
     return emptySessionResult(sessionId, { finalText: 'mcp done' });
   }
 
-  private async *skillBehavior(request: SessionRequest, sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *skillBehavior(
+    request: SessionRequest,
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     const provisioning = this.provisioningByStepId.get(request.stepId);
-    const text = provisioning !== undefined && provisioning.skillIds.length > 0 ? `Using skill: ${SKILL_FRAGMENT}` : 'no skill visible';
+    const text =
+      provisioning !== undefined && provisioning.skillIds.length > 0
+        ? `Using skill: ${SKILL_FRAGMENT}`
+        : 'no skill visible';
     yield { type: 'text', text, partial: false };
     yield { type: 'session.ended', reason: 'complete' };
     return emptySessionResult(sessionId, { finalText: text });
   }
 
-  private async *invalidModelBehavior(sessionId: string): AsyncGenerator<AdapterEvent, SessionResult> {
+  private async *invalidModelBehavior(
+    sessionId: string,
+  ): AsyncGenerator<AdapterEvent, SessionResult> {
     await Promise.resolve();
     yield { type: 'error', code: 'INVALID_MODEL', message: 'unknown model id', retryable: false };
     yield { type: 'session.ended', reason: 'error' };
@@ -517,15 +595,27 @@ function buildOptions(overrides: Partial<ConformanceOptions> = {}): ConformanceO
     writeFilePrompt: WRITE_FILE_PROMPT,
     manyTurnsPrompt: MANY_TURNS_PROMPT,
     execPrompt: EXEC_PROMPT,
-    secretProbe: { value: 'forge-conformance-secret-do-not-print-this', prompt: 'FIXTURE:SECRET_PROBE' },
+    secretProbe: {
+      value: 'forge-conformance-secret-do-not-print-this',
+      prompt: 'FIXTURE:SECRET_PROBE',
+    },
     controlTokenPrompt: CONTROL_TOKEN_PROMPT,
-    structured: { schema: STRUCTURED_SCHEMA, prompt: STRUCTURED_PROMPT, isValid: isValidStructured },
+    structured: {
+      schema: STRUCTURED_SCHEMA,
+      prompt: STRUCTURED_PROMPT,
+      isValid: isValidStructured,
+    },
     resume: {
       initialPrompt: RESUME_INITIAL_PROMPT,
       probePrompt: RESUME_PROBE_PROMPT,
       expectedFragment: RESUME_REMEMBERED_FRAGMENT,
     },
-    mcp: { server: MCP_SERVER, allowedToolName: MCP_ALLOWED_TOOL, deniedToolName: MCP_DENIED_TOOL, prompt: MCP_PROMPT },
+    mcp: {
+      server: MCP_SERVER,
+      allowedToolName: MCP_ALLOWED_TOOL,
+      deniedToolName: MCP_DENIED_TOOL,
+      prompt: MCP_PROMPT,
+    },
     skill: { skill: SKILL, prompt: SKILL_PROMPT, expectedFragment: SKILL_FRAGMENT },
     ...overrides,
   };
@@ -535,7 +625,7 @@ function buildOptions(overrides: Partial<ConformanceOptions> = {}): ConformanceO
 runAdapterConformanceSuite(() => new StubAdapter(), buildOptions());
 
 describe('runAdapterConformanceSuite meta', () => {
-  it('SAFETY_CRITICAL_CONFORMANCE_IDS matches 07 §7.6\'s own closing line exactly', () => {
+  it("SAFETY_CRITICAL_CONFORMANCE_IDS matches 07 §7.6's own closing line exactly", () => {
     expect(SAFETY_CRITICAL_CONFORMANCE_IDS).toEqual(['C2', 'C5', 'C13', 'C14', 'C16']);
   });
 
@@ -560,7 +650,10 @@ describe('runAdapterConformanceSuite meta', () => {
       env: {},
       abortSignal: new AbortController().signal,
     });
-    const [eventsOutcome, resultOutcome] = await Promise.allSettled([collectEvents(handle), handle.result()]);
+    const [eventsOutcome, resultOutcome] = await Promise.allSettled([
+      collectEvents(handle),
+      handle.result(),
+    ]);
     const outcomes = [eventsOutcome, resultOutcome];
     expect(outcomes.some((outcome) => outcome.status === 'rejected')).toBe(true);
     for (const outcome of outcomes) {

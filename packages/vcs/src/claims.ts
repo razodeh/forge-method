@@ -69,10 +69,16 @@ import type { LaneHandle } from './lanes.ts';
  * naturally stops appearing in this output on the next call — confirmed empirically — with no special
  * retry logic needed anywhere; a file that failed to revert (`VCS-CLAIM-REVERT-FAILED`) naturally keeps
  * appearing until it's actually fixed. */
-export async function diffLaneChanges(handle: LaneHandle, baseSha: string): Promise<readonly string[]> {
+export async function diffLaneChanges(
+  handle: LaneHandle,
+  baseSha: string,
+): Promise<readonly string[]> {
   const resolvedBase = await resolveRevision(handle.path, baseSha);
   const { stdout: diffOutput } = await wrapGitFailure(
-    () => execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase], { cwd: handle.path }),
+    () =>
+      execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase], {
+        cwd: handle.path,
+      }),
     `diffing the lane worktree at "${handle.path}" against "${baseSha}"`,
   );
   const { stdout: untrackedOutput } = await wrapGitFailure(
@@ -202,7 +208,9 @@ export type SharedPathStrategyOptions =
   | { readonly glob: string; readonly strategy: 'regenerate'; readonly command: string };
 
 function errorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined;
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String(error.code)
+    : undefined;
 }
 
 /** Idempotently ensures `.gitattributes` in the lane worktree has a `<glob> merge=union` line — git's
@@ -225,7 +233,8 @@ async function ensureUnionMergeAttribute(cwd: string, glob: string): Promise<voi
   // given attribute regardless, but a redundant near-duplicate append on every call is not truly
   // idempotent, which a gauntlet critic round flagged directly.
   if (existing.split(/\r?\n/).some((existingLine) => existingLine.trim() === line)) return;
-  const withTrailingNewline = existing === '' || existing.endsWith('\n') ? existing : `${existing}\n`;
+  const withTrailingNewline =
+    existing === '' || existing.endsWith('\n') ? existing : `${existing}\n`;
   await fsp.writeFile(attributesPath, `${withTrailingNewline}${line}\n`, 'utf8');
 }
 

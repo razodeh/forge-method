@@ -49,10 +49,7 @@ export async function uninstall(
   }
 
   const clock = options.clock ?? SYSTEM_CLOCK;
-  const relPaths = [
-    '.forge',
-    ...(options.removeDocs === true ? ['docs/forge'] : []),
-  ] as const;
+  const relPaths = ['.forge', ...(options.removeDocs === true ? ['docs/forge'] : [])] as const;
 
   const existing: string[] = [];
   for (const relPath of relPaths) {

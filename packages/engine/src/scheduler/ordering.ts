@@ -70,7 +70,11 @@ function seededHash(seed: string, id: string): number {
  * `0` only for values the caller genuinely considers interchangeable — two *different* step ids never are,
  * so leaving a same-hash pair to resolve however the sort algorithm's own tie-handling happens to land
  * would itself be a small, avoidable non-determinism, undermining the exact guarantee rule 4 exists for. */
-export function orderReadyNodes(ready: readonly StepNode[], nodes: readonly StepNode[], seed: string): readonly StepNode[] {
+export function orderReadyNodes(
+  ready: readonly StepNode[],
+  nodes: readonly StepNode[],
+  seed: string,
+): readonly StepNode[] {
   const unblocks = transitiveDescendantCounts(nodes);
   const onCriticalPath = new Set(computeCriticalPath(nodes).path);
 

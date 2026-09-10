@@ -48,10 +48,17 @@ describe('FakeSessionScript.endReason === "error", fresh session', () => {
     for await (const event of handle.events) events.push(event);
     const result = await handle.result();
 
-    expect(events.some((event) => event.type === 'error' && event.code === 'CUSTOM_FAILURE')).toBe(true);
-    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'error')).toBe(true);
+    expect(events.some((event) => event.type === 'error' && event.code === 'CUSTOM_FAILURE')).toBe(
+      true,
+    );
+    expect(events.some((event) => event.type === 'session.ended' && event.reason === 'error')).toBe(
+      true,
+    );
     expect(result.ok).toBe(false);
-    expect(result.error).toEqual({ code: 'CUSTOM_FAILURE', message: 'the script says this step fails' });
+    expect(result.error).toEqual({
+      code: 'CUSTOM_FAILURE',
+      message: 'the script says this step fails',
+    });
     // The text emitted before the scripted failure is still reported, not discarded.
     expect(result.finalText).toBe('partial progress');
   });
@@ -91,7 +98,9 @@ describe('FakeSessionScript.endReason === "error", resumed session', () => {
     for await (const event of resumed.events) events.push(event);
     const result = await resumed.result();
 
-    expect(events.some((event) => event.type === 'error' && event.code === 'RESUMED_FAILURE')).toBe(true);
+    expect(events.some((event) => event.type === 'error' && event.code === 'RESUMED_FAILURE')).toBe(
+      true,
+    );
     expect(result.ok).toBe(false);
     expect(result.error).toEqual({ code: 'RESUMED_FAILURE', message: 'fails on resume' });
     // Scaled by the 3 turns actually run, not the flat single-turn numbers a resumed error path once

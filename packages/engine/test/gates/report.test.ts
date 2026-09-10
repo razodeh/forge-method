@@ -9,17 +9,30 @@ import { describe, expect, it } from 'vitest';
 
 import { buildGateReport } from '../../src/gates/report.ts';
 import { applyWaiver } from '../../src/gates/waiver.ts';
-import type { DeterministicCheckResult, GateDefinition, GateEvaluationResult, Waiver } from '../../src/gates/types.ts';
+import type {
+  DeterministicCheckResult,
+  GateDefinition,
+  GateEvaluationResult,
+  Waiver,
+} from '../../src/gates/types.ts';
 
 function gate(overrides: Partial<GateDefinition> & { readonly id: string }): GateDefinition {
-  return { checks: { deterministic: [], advisory: [] }, openQuestionsPolicy: 'block', ...overrides };
+  return {
+    checks: { deterministic: [], advisory: [] },
+    openQuestionsPolicy: 'block',
+    ...overrides,
+  };
 }
 
-function checkResult(overrides: Partial<DeterministicCheckResult> & { readonly checkId: string }): DeterministicCheckResult {
+function checkResult(
+  overrides: Partial<DeterministicCheckResult> & { readonly checkId: string },
+): DeterministicCheckResult {
   return { run: `run ${overrides.checkId}`, passed: true, stdout: '{}', exitCode: 0, ...overrides };
 }
 
-function result(overrides: Partial<GateEvaluationResult> & { readonly passed: boolean }): GateEvaluationResult {
+function result(
+  overrides: Partial<GateEvaluationResult> & { readonly passed: boolean },
+): GateEvaluationResult {
   return {
     gateId: 'G-Test',
     checks: [],
@@ -32,9 +45,15 @@ function result(overrides: Partial<GateEvaluationResult> & { readonly passed: bo
 }
 
 describe('buildGateReport', () => {
-  it('carries the gate id, pass/fail, and every check\'s own real command output through into the report', () => {
-    const checks = [checkResult({ checkId: 'a', passed: true, stdout: '{"errors":0}' }), checkResult({ checkId: 'b', passed: false, stdout: '{"errors":3}', reason: 'errors > 0' })];
-    const report = buildGateReport(gate({ id: 'G-Design' }), result({ passed: false, gateId: 'G-Design', checks }));
+  it("carries the gate id, pass/fail, and every check's own real command output through into the report", () => {
+    const checks = [
+      checkResult({ checkId: 'a', passed: true, stdout: '{"errors":0}' }),
+      checkResult({ checkId: 'b', passed: false, stdout: '{"errors":3}', reason: 'errors > 0' }),
+    ];
+    const report = buildGateReport(
+      gate({ id: 'G-Design' }),
+      result({ passed: false, gateId: 'G-Design', checks }),
+    );
     expect(report.gateId).toBe('G-Design');
     expect(report.passed).toBe(false);
     expect(report.checks).toEqual(checks);
@@ -51,7 +70,11 @@ describe('buildGateReport', () => {
   });
 
   it('reports approved: true for a failing gate once a valid waiver has been applied, and carries the waiver itself and waiverAppliedAt through', () => {
-    const waiver: Waiver = { reason: 'known false positive', owner: 'alice', expiresAt: '2099-01-01T00:00:00.000Z' };
+    const waiver: Waiver = {
+      reason: 'known false positive',
+      owner: 'alice',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    };
     const appliedAt = Date.parse('2026-01-01T00:00:00.000Z');
     const waived = applyWaiver(result({ passed: false }), waiver, appliedAt);
     const report = buildGateReport(gate({ id: 'G-Test' }), waived);
@@ -73,11 +96,17 @@ describe('buildGateReport', () => {
     // rule that out.
     const first = buildGateReport(
       gate({ id: 'G-Test' }),
-      result({ passed: false, checks: [checkResult({ checkId: 'a', passed: false, reason: 'errors > 0' })] }),
+      result({
+        passed: false,
+        checks: [checkResult({ checkId: 'a', passed: false, reason: 'errors > 0' })],
+      }),
     );
     const second = buildGateReport(
       gate({ id: 'G-Test' }),
-      result({ passed: false, checks: [checkResult({ checkId: 'a', passed: false, reason: 'errors > 0' })] }),
+      result({
+        passed: false,
+        checks: [checkResult({ checkId: 'a', passed: false, reason: 'errors > 0' })],
+      }),
     );
     expect(first).toEqual(second);
   });
