@@ -7491,3 +7491,83 @@ comment's own literal `*/` example introduced), `prettier --check .`, `pnpm run 
 full monorepo test suite (6132 tests, 5 correctly skipped) all clean after every fix, aside from the
 identical pre-existing, unrelated `crash-resume.test.ts` worktree-concurrency flake already documented
 throughout this build, re-confirmed passing alone.
+
+## M8 P6 — `forge test coverage [--rule acceptance-criteria|ratchet]`: coverage collection, AC
+coverage, and the coverage ratchet, `G-Verify`-wired
+
+**Mandate:** `story:ac-coverage`/`test:coverage`/`coverage:ratchet` — the three coverage checks `13`
+§13.4 names for `G-Verify`. Default rule reads the target project's own already-written, istanbul-
+shaped `coverage-summary.json` for a flat, whole-project line-coverage floor (never runs coverage
+collection itself); `--rule acceptance-criteria` cross-references P3's `test-results.json` AC
+bindings against every `done` story's own AC ids (`09` §9.5's binding metric); `--rule ratchet` ports
+`scripts/lib/coverage-ratchet.mjs`'s own already-proven per-package tolerance design (`ratchet.ts`),
+auto-persisting the baseline on every invocation rather than gating writes behind a human-run
+`--update` step, since `G-Verify` runs unattended (`SPEC-QUESTIONS.md` Q127 has the fuller record).
+
+### Round 1 — fresh critic (given only the diff, F-TEST-5, the exact shipped `G-Verify.gate.yaml`,
+`scripts/lib/coverage-ratchet.mjs` and its own CLI wrapper for comparison, and every prior M8 piece's
+own GAUNTLET-LOG entry; told to adversarially fuzz the code and reproduce anything it flagged as
+BLOCKING/MAJOR against the real code before reporting it): two blocking, four major findings
+
+1. **[BLOCKING] A present-but-unusable baseline file was silently overwritten with this run's own
+   (possibly regressed) numbers, laundering a real regression on the very next invocation.**
+   Reproduced directly, as a real two-call sequence: run 1 establishes a real baseline at 90%; the
+   baseline file is then corrupted (a hand edit); run 2, with real coverage dropped to 40%, correctly
+   reported the regression *for that invocation* — but also persisted `next` (computed against
+   `readBaseline`'s own empty `{}` stand-in for the unusable file) back to disk, so run 3 read back a
+   perfectly valid, freshly-written 40% baseline and reported a clean pass. Falsified both the
+   original doc comment's own claim ("never silently reset to empty") and `SPEC-QUESTIONS.md` Q127's
+   single-call safety argument, which never considered a second call. **Fixed:** persistence is now
+   skipped entirely whenever `problems` is non-empty for any reason (an unusable baseline, incomplete
+   coverage data, an escaped file path, finding 3 below) — nothing is written back until a run is
+   known-good. New regression test reproducing the exact three-run sequence.
+2. **[BLOCKING] A `coverage-summary.json` that parses but names zero real per-file entries reported a
+   clean `regressions: 0`.** Confirmed directly against several real shapes (a `total`-only summary, a
+   `coverage.include` glob matching nothing): `achieved` came back `{}`, `evaluateRatchet` found
+   nothing to compare, and nothing was actually verified. The identical gap `run.ts`'s own default
+   rule already closes for "ran but matched zero tests" (P4). **Fixed:** an empty `counts` after
+   aggregation is now a real `problems` entry, forcing `regressions >= 1`. New regression test.
+3. **[MAJOR] The `realpath` fix for the project-root/coverage-summary symlink mismatch only guarded
+   one direction.** `fileCoverageCountsFrom` realpaths `projectRoot` but used the summary's own file
+   keys verbatim — when a collector never resolves symlinks itself and the project root is itself
+   reached through one (confirmed directly: `mkdtemp`'s own real temp directories are, on macOS),
+   `path.relative` returns a `../..`-prefixed path for *every* file, and `packageKeyFor` silently
+   collapsed all of them into one `".."`-keyed bucket, masking any real per-package regression
+   underneath it — the exact failure mode `scripts/check-coverage-ratchet.mjs`'s own doc comment
+   already named, now reproduced in the opposite direction. **Fixed:** any relative path that escapes
+   the project root (`..`-prefixed or still absolute) is excluded from aggregation and named in
+   `problems`, never silently merged into a nonsense bucket. New regression test.
+4. **[MAJOR] `testCoverage`'s own "never throws" doc comment was false in several reproducible
+   cases.** `JSON.parse` returning `null` or an array for `coverage-summary.json`/a per-file entry
+   threw straight through `summary['total']`/`Object.entries(summary)`/property access on `null`
+   rather than degrading to a `problems` entry; a malformed spec doc under `specsRoot` (unterminated
+   front matter) threw straight out of `listSpecArtifacts`, uncaught; a read-only `docs/forge/reports`
+   let `writeFileAtomic`'s own `RUN-034` propagate uncaught from the ratchet's persist step — a
+   failure mode auto-persisting itself introduced, since `--rule ratchet` is now the only coverage
+   rule that needs write access at all. **Fixed:** a shared `isPlainObject` guard at every JSON-parse
+   boundary, a null-tolerant `fileMetricFrom`, a try/catch around `loadDoneStories` and around
+   `writeBaseline`'s own call site — each converts to a real `problems` entry instead. New regression
+   tests for each (null summary, array summary, null file entry, malformed spec doc, unwritable
+   reports directory).
+
+Also fixed, minor (same round): `--rule` present but the very last token in argv (`forge test coverage
+--rule`, no value) collapsed to the identical `undefined` "no `--rule` given" silently ran the default
+rule instead of erroring — the same collapse `findRawTestRuleFlag`'s own doc comment already claimed
+to have closed, but only for the *misspelled* case, not the *missing-value* one; fixed in both
+`findRuleFlag` (shared with `spec validate`) and `findRawTestRuleFlag`, with a new real-subprocess
+regression test. `isRatchetBaseline` accepted a JSON array (silently read as an empty baseline) and
+placed no upper bound on a stored percentage; tightened to reject both, with a new regression test.
+Duplicate AC ids claimed by two different `done` stories (a case `SPEC-023` already flags elsewhere)
+now also deduplicated defensively in `runAcceptanceCriteriaCoverage` itself. `missingAcIds` is now
+also printed in `test coverage`'s own non-`--json` output, not only the JSON envelope.
+
+Two further critic findings were disclosed rather than fixed, both recorded in `SPEC-QUESTIONS.md`
+Q127: `story:ac-coverage` has no freshness/ordering guarantee against `test:run`'s own most recent
+write (`evaluateGate` runs every deterministic check concurrently, with no `needs:`-style mechanism —
+a real fix belongs to `@forge/engine/gates` itself, out of this piece's scope); and auto-persisting
+still cannot distinguish a genuinely complete coverage run from a partial one, bounded by this piece's
+own "never runs coverage collection itself" mandate rather than solved by it.
+
+`tsc --build`, `eslint .` (zero warnings), `prettier --check .`, `pnpm run boundaries`, and the full
+monorepo test suite (6164 tests, 5 correctly skipped) all clean after every fix, including the
+previously-flaky `crash-resume.test.ts` passing clean in this same full run.

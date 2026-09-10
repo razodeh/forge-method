@@ -9448,3 +9448,72 @@ what to do about the fifth, which is not syntactic at all.
 See `GAUNTLET-LOG.md`'s M8 P5 entry for the full critic round (two blocking, four major findings, all
 in the scanner's own body-extraction and per-call assertion-strength logic — distinct from the two
 design questions recorded here, which were settled before any critic saw the diff).
+
+## Q127 — M8 P6: the coverage ratchet auto-persists its baseline on every invocation (not gated
+behind a human-run "--update" step); package grouping is a real generalisation, not a verbatim port;
+`(done+)` collapses to exactly `status === 'done'`
+
+**Q (P6's own BUILD phase).** `packages/cli/src/commands/loop/test/ratchet.ts` ports
+`scripts/lib/coverage-ratchet.mjs`'s own already-proven design (FORGE's own repo tooling) for a
+*target* project's own coverage ratchet. Three real, disclosed deviations from a verbatim port:
+
+1. **Auto-persisting `next` on every real `forge test coverage --rule ratchet` invocation, not gated
+   behind a separate, human-run `--update` flag the way `scripts/check-coverage-ratchet.mjs` gates
+   it.** Traced directly: `evaluateRatchet`'s own tolerance check only ever *raises* a stored mark
+   (`now > mark`) or leaves it exactly where it was — a real regression (`now < mark - TOLERANCE`)
+   always falls through to `return mark` (the old, unchanged value), with or without persisting
+   `next` to disk. FORGE's own internal script gates writes behind `--update` for a *human* workflow
+   (a developer decides when to accept a new high-water mark); `G-Verify` runs unattended as part of
+   an autonomous agent loop with no second, human-run command in the loop at all, so gating in the
+   identical way would leave the ratchet permanently stale for every target project this ships to.
+   **Resolved:** auto-persist — but a fresh critic round found the *single-call* safety argument
+   above was not the whole story: a **two-call** sequence could still launder a real regression when
+   `readBaseline` degraded a present-but-unusable baseline file to `{}` and the code then persisted
+   `next` (computed against that empty stand-in) anyway, silently overwriting the real prior mark
+   with this run's own possibly-regressed numbers — reported as a real, correctly-failing check on
+   *this* invocation, but read back clean on the *next* one. **Fixed:** persistence is now skipped
+   entirely whenever `problems` is non-empty for any reason (an unusable baseline, incomplete
+   coverage data, a path that escaped the project root) — see `GAUNTLET-LOG.md`'s M8 P6 entry,
+   finding B1.
+2. **`packageTotals`'s own package/path-prefix grouping is a real generalisation
+   (`packages/<name>/...`/`apps/<name>/...` group by their own two-segment package; anything else
+   groups by its own top-level directory alone), not a verbatim copy of the original script's own
+   FORGE-specific grouping** (which special-cases only `scripts/` at depth 1 and otherwise assumes
+   every path is `packages/<name>/...`). A target project's own repository layout is not knowable in
+   advance the way FORGE's own is. **Resolved:** the two-container generalisation above; revisit if a
+   real target project's own layout needs a third recognised multi-package container directory.
+3. **F-TEST-5's "every AC of every `done` story" and `PLAN-M8.md` P6's own "`done`(+)" phrasing
+   collapse to exactly `status === 'done'`.** `story.ts`'s own status enum
+   (`draft`/`ready`/`in-progress`/`in-review`/`verified`/`done`/`blocked`) has nothing after `'done'`
+   except the lateral `'blocked'` state — there is no higher status the `(+)` could ever include.
+   **Resolved:** `isDoneStory` checks the literal value only. **Disclosed, not fixed:** at `G-Verify`
+   (P7) itself, the story actually under verification is typically still `verified` or earlier, not
+   yet `done` — so `story:ac-coverage` reports the vacuous `100` for exactly the story the gate run is
+   about, and only constrains *other, already-`done`* stories' own ACs. Spec-faithful (`09` §9.3's
+   own literal wording names `done`, not `verified`), but worth a human read against `specs/10`'s own
+   verification-phase intent before treating this check as doing real work at `G-Verify` specifically.
+4. **`story:ac-coverage` has no freshness check against `test:run`'s own most recent write, and no
+   declared ordering with it either.** `evaluateGate` (`@forge/engine/gates`) runs every deterministic
+   check concurrently (`Promise.all`), and `G-Verify.gate.yaml` has no `needs:`-style ordering
+   mechanism at all — so a first-ever gate run can race `test:run`'s own write to `docs/forge/reports/
+   test-results.json`, and every later run trusts whatever that file's most recent write happened to
+   be, stale or not. Fixing this needs either a real ordering mechanism in the gate schema or a
+   run-id/freshness stamp on the normalised report — both cross-cutting changes to `evaluateGate`
+   itself (M5 P14 territory), out of this piece's own scope. **Disclosed, not fixed** — recorded in
+   `coverage.ts`'s own doc comment on `runAcceptanceCriteriaCoverage`.
+
+Also disclosed: `PLAN-M8.md` P6's own Checks section illustrative example ("a baseline of 82% and an
+achieved 81.4% is within the 0.5pp tolerance") does not hold up against the real tolerance arithmetic
+(82 − 0.5 = 81.5, and 81.4 < 81.5 is a genuine regression, a 0.6pp drop against a 0.5pp tolerance) —
+the ported, verified-against-the-original tolerance check was trusted over the plan's own example
+number; `ratchet.test.ts` uses a genuinely-in-tolerance value (81.6%) instead.
+
+Also disclosed: auto-persisting on every invocation still cannot distinguish a genuinely complete
+coverage run from a partial one (a `testCommands` invocation that only exercised a subset of the
+project) — a partial run's own package can have its mark raised on real, but incomplete, data, with
+no way back down short of a hand edit to `docs/forge/reports/coverage-baseline.json`. This is bounded
+by, not solved by, this piece's own explicit "never runs coverage collection itself" mandate: whether
+a run is complete is a fact about the *target project's own* `testCommands` configuration, which this
+layer deliberately never inspects or second-guesses.
+
+See `GAUNTLET-LOG.md`'s M8 P6 entry for the full critic round.
