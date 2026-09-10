@@ -8062,17 +8062,59 @@ actually vulnerable. The bug was in the conformance harness's own test design, n
 30s) was genuinely too tight for a live round trip in this environment — bumped to 30s.
 
 Re-run after all four fixes: 38 of 43 tests passed (up from 34 of 43), C3/C4 now clean on both
-transports, C16 clean on sdk transport. Two failures remain, each disclosed rather than chased further
-with more live-session budget: C6 (both transports) now ends within the real 30s bound but reports
-`'complete'`/`'error'` instead of `'limit'` against a ten-tool-call fixture prompt under `maxTurns: 1` —
-plausibly a real model completing an unbounded tool-call chain within what Claude Code itself counts as
-one turn (prompt/capability drift since the fixture was written), not necessarily a `maxTurns`-enforcement
-bug, but not root-caused further here; C16 on cli transport only still shows the granted MCP tool never
-being attempted at all (not denied — never called), possibly live-run non-determinism, possibly a real
-cli-transport-specific gap, not distinguished without at least one more live re-run. `SPEC-QUESTIONS.md`
-Q132 has the full record, including exact repro output.
+transports, C16 clean on sdk transport. Two failures remained, initially disclosed rather than chased
+further with more live-session budget: C6 (both transports) and C16 (cli transport only).
 
-`pnpm typecheck`, `eslint .`, `prettier --check .` all clean on every fix. This checkpoint consumed
-roughly 70 real, live Claude Code sessions against this machine's own real subscription across two full
-conformance runs, the smoke test (twice), and several small targeted repros — a real, billed action, not
-a simulation.
+### Round 2 — "keep digging," on explicit direction
+
+**C16, cli transport — a real, 100%-reproducible bug, not non-determinism.** A retry of the isolated
+check (not the full suite) reproduced the identical failure twice, each in ~125-133ms — far too fast for
+a genuine live session, and the raw event stream showed no `session.started` at all, only an immediate
+`session.ended{reason:'error'}`. Bypassing this adapter's own NDJSON parsing and spawning the real CLI
+directly with its exact real argv exposed the real cause: `Error: Invalid MCP configuration:\nmcpServers:
+Invalid input`, exit code 1. `mapGrantedMcpServersToConfig`'s own bare `{serverId: config}` map — genuinely
+correct for the SDK transport's own `Options.mcpServers` field — is not what the real, installed CLI's own
+`--mcp-config` flag accepts; it wants that map wrapped one level deeper, under a top-level `mcpServers`
+key. **Every real CLI-transport session using an MCP grant was failing at spawn, 100% of the time, before
+this fix.** Fixed in `build-args.ts`, at this transport's own one real serialization point only —
+`mapGrantedMcpServersToConfig` itself is unchanged. Re-run twice (once isolated, once as part of a full
+43-test suite run): C16 now passes cleanly on cli transport both times, ~13s and ~9s respectively, genuine
+live sessions.
+
+**C6, sdk transport — a real bug, narrower than it first looked.** `run-query.ts`'s own `session.ended`
+reason derivation (`stopped ? 'aborted' : sawError ? 'error' : 'complete'`) had no path to `'limit'` at
+all, even though the SDK's own `Options.maxTurns` genuinely enforces the cutoff — a real, live-hit
+`maxTurns` boundary was always misreported as a generic `'error'`, indistinguishable from a genuine
+execution failure. The real, installed SDK's own `SDKResultError.subtype` union names a dedicated
+`'error_max_turns'` case for exactly this, confirmed against `sdk.d.ts` — already threaded into
+`AdapterEvent.error.code` unmodified by `map-message.ts`, just never read back. Fixed: a new
+`sawMaxTurnsLimit` flag gives `'limit'` priority when `code === 'error_max_turns'`; a new, deterministic
+unit test (an injected fake `Query`, no live call) proves it. Re-run confirmed the `reason` assertion now
+passes — which exposed a *second*, narrower, already-disclosed issue underneath it: `checkC6Limits`'s own
+`usage.turns <= 1` assertion now fails with `turns: 2`, because `session-result.ts`'s own `turns:
+toolCallCount + 1` was already documented as a client-side approximation of the real SDK turn boundary,
+not a literal read of it — a real SDK "turn" can contain more than one tool call. Not fixed here: doing so
+properly means threading the SDK/CLI's own real `num_turns` field through the shared `AdapterEvent.usage`
+shape for both transports, a larger, cross-transport design change beyond this specific finding's own
+scope.
+
+**C6, cli transport — confirmed not a bug at all.** `SPEC-QUESTIONS.md` Q114 already records this as a
+deliberate M7 P2 decision (`spawn.ts`'s own doc comment: "`limits.maxTurns` is deliberately never enforced
+here... a client-side approximation... was considered and rejected"); this conformance check was simply
+never confronted with a real live run before now. `C6` is not in `SAFETY_CRITICAL_CONFORMANCE_IDS`. The
+idiomatic fix (a real `AdapterCapabilities` field, mirroring how `structuredOutput`/`sessionResume`
+already gate other optional checks) touches a `07` §7.2-mirroring, cross-package shared interface with
+real construction sites in two other packages — judged a real, if modest, design extension beyond what
+this specific, non-safety-critical finding justified deciding unilaterally. Left as a disclosed,
+deliberately-deferred decision for the coordinator.
+
+**Final state after both rounds: 41 of 43 conformance tests passing** (up from 34 of 43 on the first-ever
+live run) — every safety-critical id (`C2, C5, C13, C14, C16`) now passes on both transports. The 2
+remaining failures are both pre-existing, already-disclosed, non-safety-critical limitations (a deliberate
+CLI-transport capability gap, and a documented turn-counting approximation), not new bugs and not silently
+dismissed. `SPEC-QUESTIONS.md` Q132 items 5-7 have the full record, including exact repro output.
+
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean after every fix across
+both rounds. This checkpoint consumed roughly 100+ real, live Claude Code sessions against this machine's
+own real subscription across three full conformance runs, the smoke test (twice), and roughly a dozen
+small, targeted repros — a real, billed action, not a simulation.

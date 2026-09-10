@@ -10174,38 +10174,88 @@ exercised), not read-and-guessed.
    filesystem.ts`) and `checkC16McpGrantFidelity` (`.../capabilities.ts`) now explicitly override
    `permissionMode: 'deny-unlisted'` in their own `buildRequest` calls, each with a doc comment recording
    this exact live-verified reasoning. Re-run confirmed: C3 and C4 now pass on both transports; C16 now
-   passes on the sdk transport (still open on cli — item 4 below).
+   passes on the sdk transport (a separate, real bug remained on cli — item 5 below).
 3. **[Confirmed, fixed] C6's own hard-coded 15s timeout was tighter than every sibling check's 30s, and**
    **too tight for a genuinely live round trip.** The first full live run's own C6 failure was a plain
    harness timeout (`"C6: session did not end within 15s"`), not a real assertion failure — every other
    C1-C16 check already budgets 30s for the identical real-latency reason; C6 alone had a narrower bound
    with no evidence it ever needed to be tighter. **Fixed:** bumped to 30s
    (`packages/adapter-kit/src/conformance/session-basics.ts`), matching every sibling check.
-4. **[Found, NOT fixed — disclosed, needs a decision before further live-budget spend] Two failures**
-   **remain after every fix above, each with a plausible but unconfirmed benign explanation, not yet**
-   **root-caused with further live verification:**
-   - **C6 (maxTurns), both transports, after the timeout fix:** the real session now ends well within
-     30s but reports `reason: 'complete'` (cli transport) or `reason: 'error'` (sdk transport) instead of
-     `'limit'`, against a `manyTurnsPrompt` fixture asking for five sequential create-then-read-back file
-     operations (ten real tool calls) under `limits: { maxTurns: 1 }`. One plausible, benign reading:
-     Claude Code's own real notion of a "turn" may allow an unbounded chain of tool calls within a single
-     assistant turn before yielding control back — a sufficiently capable real model completing this
-     whole ten-call sequence without ever needing a *second* turn would correctly report `'complete'`,
-     not a `maxTurns`-enforcement bug at all, just prompt/capability drift since this fixture was
-     originally written. The sdk transport's distinct `'error'` reason is unexplained — no detailed event
-     dump was captured for this specific run to diagnose further.
-   - **C16 (MCP grant fidelity), cli transport only, after the `deny-unlisted` fix:** `okByToolName.get(
-     fixture.allowedToolName)` is `undefined` — the granted MCP tool the agent was asked to call was
-     never attempted at all (not "called and denied"), while the identical check now passes cleanly on
-     sdk transport. Could be ordinary live-run non-determinism (the model took a different real path) or
-     a genuine cli-transport-specific gap in how `deny-unlisted` interacts with an MCP-provisioned tool —
-     not distinguished without at least one more live re-run, not spent here.
-   Both are real, disclosed open items — not re-runs of a flaky harness bug already fixed above, and not
-   silently absorbed as "probably fine."
+4. **[Superseded by items 5-6 below] The two failures left after items 1-3 were investigated further,**
+   **on explicit direction ("keep digging"), rather than left as disclosed-but-unexplored.** Both turned
+   out to be real, root-causable findings, not non-determinism — recorded fully in items 5-6.
 
-**Real cost note:** this checkpoint consumed roughly 70 real, live Claude Code sessions against this
-machine's own subscription (two full conformance suite runs at 32 sessions each, the live-smoke test
-twice, plus several small targeted repros) — a real, billed action, not a simulation, exactly as its own
-gating (`shouldRunLive`) and this file's own Q121 always said it would be.
+5. **[Confirmed, fixed — real bug] The real, installed CLI's own `--mcp-config` flag rejects**
+   **`mapGrantedMcpServersToConfig`'s own, otherwise-correct bare `{serverId: config}` map outright —**
+   **every real CLI-transport session using an MCP grant failed at spawn, 100% of the time, before this**
+   **fix.** Root-caused via a targeted, isolated live repro that bypassed this adapter's own NDJSON
+   parsing and spawned the real CLI directly, reading raw stderr: `Error: Invalid MCP configuration:\n
+   mcpServers: Invalid input`, exit code 1, the real session never even reaching `session.started`
+   (`session.ended{reason:'error'}` within ~125ms every time — reproduced twice, not a one-off). The bare
+   map shape is genuinely correct for the *SDK* transport's own `Options.mcpServers` field (confirmed
+   against `sdk.d.ts`, unchanged) — only the CLI transport's own `--mcp-config` JSON payload needs the
+   map wrapped one level deeper, under a top-level `mcpServers` key, confirmed by the identical direct
+   repro succeeding once wrapped. **Fixed:** `build-args.ts` now serializes `{ mcpServers: mcp.
+   serverConfig }` for `--mcp-config` specifically, at this transport's own one real serialization point
+   — `mapGrantedMcpServersToConfig` itself is unchanged, still correct for the SDK transport. One
+   pre-existing unit test (`build-args.test.ts`) asserted the old, buggy bare-map shape; updated to the
+   real, correct envelope. Re-run confirmed: C16 (MCP grant fidelity, safety-critical) now passes
+   cleanly on the cli transport, ~13s, a genuine live session — re-run a second time in the full suite to
+   confirm it wasn't a fluke; passed both times.
+6. **[Confirmed, fixed — real bug, narrower than first appeared] The SDK transport's own `session.ended`**
+   **reason derivation never produces `'limit'` at all, even though `Options.maxTurns` genuinely enforces**
+   **the cutoff — a real result was collapsed into a generic `'error'`, indistinguishable from a genuine**
+   **execution failure.** `run-query.ts`'s own three-way reason ternary (`stopped ? 'aborted' : sawError ?
+   'error' : 'complete'`) had no path to `'limit'` at all. The real, installed SDK's own `SDKResultError.
+   subtype` union (confirmed against `sdk.d.ts`) names `'error_max_turns'` as its own dedicated signal,
+   distinct from `'error_during_execution'`/the other genuine-failure subtypes — already threaded
+   unmodified into `AdapterEvent{type:'error', code: subtype, ...}` by `map-message.ts`'s own
+   `mapResultError`, but never read back by `run-query.ts`'s own reason logic. **Fixed:** a new
+   `sawMaxTurnsLimit` flag, set when a mapped event's own `code === 'error_max_turns'`, gives `'limit'`
+   priority over the generic `'error'` path — no change needed to `map-message.ts` or the shared
+   `AdapterEvent` shape at all, since `code` already carried the raw subtype string unmodified. A new,
+   deterministic unit test (`run-query.test.ts`, an injected fake `Query` yielding one
+   `error_max_turns`-shaped result message) proves this with no live call. Re-run confirmed: the `reason`
+   assertion now passes on the sdk transport — but a *second*, narrower, pre-existing, already-disclosed
+   issue was exposed once that assertion stopped masking it: `checkC6Limits`'s own second assertion
+   (`result.usage.turns <= 1`) now fails with `usage.turns: 2`. `session-result.ts`'s own
+   `accumulateSessionResult` already documents `turns: toolCallCount + 1` as a client-side
+   *approximation* ("Neither transport's own event mapping currently threads the SDK/CLI's own real
+   `num_turns` field through any `AdapterEvent` at all") — genuinely counting something different from
+   what the SDK's own real `maxTurns` boundary bounds (a real SDK "turn" can contain more than one tool
+   call before yielding). **Not fixed here:** doing so properly means threading the real `num_turns`
+   field through `AdapterEvent.usage` for both transports, a real, cross-transport change to shared,
+   already-established event surface — a larger design call than this specific finding's own scope,
+   recorded honestly as a known, pre-existing limitation surfaced (not newly introduced) by this live
+   run, not silently absorbed.
+7. **[Found, deliberately left unfixed, needs the coordinator's own call, not this session's] The CLI**
+   **transport's own C6 failure (`reason: 'complete'`, never `'limit'`) is not a bug at all — it is**
+   **`SPEC-QUESTIONS.md` Q114's own already-recorded, deliberate M7 P2 decision** ("`limits.maxTurns` is
+   deliberately never enforced here... a client-side approximation... was considered and rejected,"
+   `spawn.ts`'s own doc comment) **that this specific conformance check was simply never confronted with
+   in a real, live run before now.** `C6` is not in `SAFETY_CRITICAL_CONFORMANCE_IDS`. The idiomatic,
+   already-established fix would model this as a real `AdapterCapabilities` field (mirroring exactly how
+   `structuredOutput`/`sessionResume` already gate other optional checks) — `spawn.ts`'s own doc comment
+   already invokes `07` §7.3's "capabilities degrade, don't crash" precedent as the reasoning this
+   *should* eventually become a capability question. Not done in this pass: `AdapterCapabilities` is a
+   `07` §7.2-mirroring, cross-package shared interface (real construction sites in `packages/
+   adapter-claude-code/src/capabilities.ts` and `packages/testkit/src/fake-adapter.ts`, read at
+   `packages/engine/src/resume/strategy.ts`) — a real, if modest, design extension beyond what this
+   specific, non-safety-critical finding's own scope justified deciding unilaterally. Left as a real,
+   disclosed, deliberately-deferred decision for the coordinator, not silently patched over.
+
+**Real cost note:** this checkpoint consumed roughly 100+ real, live Claude Code sessions against this
+machine's own subscription across two rounds — three full conformance suite runs at 32 sessions each, the
+live-smoke test twice, plus roughly a dozen small, targeted repros (several of which, per this file's own
+established discipline, spawned the real CLI directly to read raw stderr rather than trusting the
+adapter's own already-suspect event mapping) — a real, billed action, not a simulation, exactly as its
+own gating (`shouldRunLive`) and this file's own Q121 always said it would be.
+
+**Final state after both rounds:** 41 of 43 conformance tests passing (up from the original, never-before-
+live-run-tested 34 of 43) — every safety-critical id (`C2, C5, C13, C14, C16`) now passes on both
+transports. The 2 remaining failures (both halves of C6) are a pre-existing, already-disclosed, non-
+safety-critical capability gap (cli transport, Q114) and a pre-existing, already-disclosed turn-counting
+approximation (sdk transport, item 6 above) — real, but neither a newly-introduced bug nor a safety
+concern, and neither silently dismissed.
 
 See `GAUNTLET-LOG.md`'s M7 live-run-checkpoint addendum for the full run log.
