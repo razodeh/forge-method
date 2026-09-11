@@ -15,3 +15,19 @@ export {
   type DiffLine,
   type DiffLineType,
 } from './diff-view.tsx';
+export { Modal, useIsBackgrounded, ModalStackContext, type ModalProps } from './modal.tsx';
+export {
+  QuestionForm,
+  TooManyQuestionsError,
+  type QuestionFormProps,
+  type Question,
+  type Answer,
+  type QuestionOption,
+  type SelectQuestion,
+  type MultiselectQuestion,
+  type TextQuestion,
+  type ConfirmQuestion,
+  type RankQuestion,
+} from './question-form.tsx';
+export { CommandPalette, type CommandPaletteProps, type Command } from './command-palette.tsx';
+export { HelpOverlay, type HelpOverlayProps, type HelpKeyBinding } from './help-overlay.tsx';
