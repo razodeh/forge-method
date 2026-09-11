@@ -13,3 +13,15 @@ export {
   type ActivityEntry,
   type CanonicalScreenState,
 } from './home.tsx';
+export {
+  RunBoard,
+  formatSchedulerLine,
+  type RunBoardScreenProps,
+  type LaneSummary,
+  type LaneBoardStatus,
+  type LaneDetail,
+  type LaneDetailTab,
+  type LaneFileEntry,
+  type LaneCheckEntry,
+  type SchedulerFooter,
+} from './run-board.tsx';

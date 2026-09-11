@@ -13,3 +13,4 @@ export {
   type StepReadStatus,
   type LaneReadStatus,
 } from './run-read-model.ts';
+export type { EngineCommand } from './engine-command.ts';
