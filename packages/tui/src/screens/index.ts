@@ -39,3 +39,10 @@ export {
   type GateCheck,
   type GateOpenQuestion,
 } from './gates.tsx';
+export {
+  SessionsScreen,
+  type SessionsScreenProps,
+  type SessionSummary,
+  type SessionTurn,
+  type SessionProgress,
+} from './sessions.tsx';

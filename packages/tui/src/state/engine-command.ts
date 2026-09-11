@@ -31,10 +31,14 @@
  * `gate.waive` command at all for an `alwaysHuman` gate — both refusals happen before this union is ever
  * touched, so there is no "approve/waive, but invalid" variant to represent here; every `gate.approve`/
  * `gate.waive` this union can express is, structurally, one the UI itself already judged permissible.
+ * `session.*` variants are `PLAN-M9.md` P12's own addition (S6 Sessions) — `[space]`/`c`/`s`/`Esc`
+ * (advance step/converge/save-to-KB/end) and a session's own free-text contribution flow all emit
+ * exactly one command each, never a direct write, matching the identical discipline `kb.search` (P10)
+ * already established for its own free-text flow.
  *
- * @see specs/04 §4.3 S2, S3, S4, S5
- * @see PLAN-M9.md P8, P9, P10, P11
- * @see SPEC-QUESTIONS.md Q140, Q141, Q142, Q143
+ * @see specs/04 §4.3 S2, S3, S4, S5, S6
+ * @see PLAN-M9.md P8, P9, P10, P11, P12
+ * @see SPEC-QUESTIONS.md Q140, Q141, Q142, Q143, Q144
  */
 export type EngineCommand =
   | { readonly type: 'lane.follow'; readonly laneId: string }
@@ -52,4 +56,10 @@ export type EngineCommand =
   | { readonly type: 'gate.approve'; readonly gateId: string }
   | { readonly type: 'gate.reject'; readonly gateId: string }
   | { readonly type: 'gate.waive'; readonly gateId: string; readonly reason: string }
-  | { readonly type: 'gate.rerunChecks'; readonly gateId: string };
+  | { readonly type: 'gate.rerunChecks'; readonly gateId: string }
+  | { readonly type: 'session.start' }
+  | { readonly type: 'session.contribute'; readonly sessionId: string; readonly message: string }
+  | { readonly type: 'session.advanceStep'; readonly sessionId: string }
+  | { readonly type: 'session.converge'; readonly sessionId: string }
+  | { readonly type: 'session.saveToKb'; readonly sessionId: string }
+  | { readonly type: 'session.end'; readonly sessionId: string };
