@@ -19,6 +19,7 @@ export { Modal, useIsBackgrounded, ModalStackContext, type ModalProps } from './
 export {
   QuestionForm,
   TooManyQuestionsError,
+  assertQuestionCount,
   type QuestionFormProps,
   type Question,
   type Answer,
@@ -31,3 +32,15 @@ export {
 } from './question-form.tsx';
 export { CommandPalette, type CommandPaletteProps, type Command } from './command-palette.tsx';
 export { HelpOverlay, type HelpOverlayProps, type HelpKeyBinding } from './help-overlay.tsx';
+export {
+  AppShell,
+  useAppModalStack,
+  AppModalStackContext,
+  type AppShellProps,
+  type ScreenId,
+  type ScreenProps,
+  type ScreenComponent,
+  type ScreenEntry,
+  type ModalEntry,
+  type ModalStackApi,
+} from './app-shell.tsx';
