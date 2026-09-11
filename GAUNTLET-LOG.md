@@ -8864,3 +8864,49 @@ lines across the full `packages/tui/src` scope, comfortably above the 85%/80% fl
 Q146 has the full record.
 
 This is the fourteenth of M9's 16 planned pieces.
+
+## M9 P15 — Degradation modes (`04` §4.7)
+
+**Mandate:** every screen and component in `@forge/tui` must degrade correctly across
+`RenderMode.ascii`/`color`/`linear` and narrow terminal widths, plus `04`'s own colour-blindness rule
+("never encode pass/fail by red/green alone"). Unlike every other piece this milestone, this one has no
+new screen or component of its own — it is a dedicated, cross-cutting audit-and-fix sweep over
+everything P2-P14 already shipped. The core new artifact is `test/ascii-matrix.test.tsx`, a single
+programmatic sweep over every real component/screen asserting each renders under `ascii: true` without
+throwing and its own ANSI-stripped frame is pure ASCII.
+
+The initial matrix run alone found 5 real, already-shipped ascii-compliance bugs (`CommandPalette`,
+`HelpOverlay`, `RunBoard`, `GatesScreen`, `CostScreen` — each missing a `mode` prop/param entirely). A
+follow-up proactive grep sweep found further, additional ungated glyphs the matrix's own minimal
+fixtures hadn't exercised, across `gates.tsx`/`customize.tsx`/`home.tsx`/`kb.tsx`/`sessions.tsx`/
+`specs.tsx`/`<AppShell>`'s own header line. A separate, direct audit of `04`'s colour-blindness rule
+found `<DiffView>`'s fold-collapse ellipsis (`⋯`) was also hardcoded, never gated at all. All fixed
+before dispatching the first critic round. Full record in `SPEC-QUESTIONS.md` Q147.
+
+### Round 1 — fresh critic, briefed to hunt beyond the matrix's own 22 covered entries: two further real
+gaps found
+
+**[Bug 1]** `<AppShell>`'s own notification banner hardcoded `⚠` unconditionally, unlike the header line
+right above it in the same file — the notification test and the ascii-mode test never intersected, so
+neither caught it. **Fixed:** `{liveMode.ascii ? '!' : '⚠'}`, with a new targeted test.
+
+**[Bug 2]** `<SpecsScreen>`'s own `MatrixView` (`m`) took no `mode` prop at all and hardcoded `✓`/`✗`; the
+traceability-path panel (`t`) hardcoded `→` as its join separator — the matrix's own `SpecsScreen` entry
+never presses either key. **Fixed:** `MatrixView` now takes `mode`, using `+`/`x`; the trace-path panel
+joins with `mode.ascii ? ' -> ' : ' → '`.
+
+### Round 2 — a second, fresh critic independently re-verifying both fixes and re-hunting from scratch:
+confirmed correct and complete, no new findings
+
+Independently re-read both changed files, re-ran typecheck/lint/the full suite, and did a second,
+independent glyph hunt across every remaining screen/component plus a second full pass of the
+colour-blindness rule. Nothing further found. **Recommendation: Go.**
+
+**Final state: 493 real tests** (up from 489). `pnpm typecheck`, `eslint packages/tui`, `prettier --check
+packages/tui`, `pnpm run boundaries` all clean. The full, cross-package repository suite was also run in
+full with coverage: 6784/6789 tests passing (5 intentionally skipped), no regression anywhere, and
+`packages/tui/src` produced zero coverage-threshold errors of its own — the handful of threshold
+failures in that run are pre-existing gaps in unrelated packages (`adapter-claude-code`, `agents`, `cli`,
+`scripts`), none touched by this piece. `SPEC-QUESTIONS.md` Q147 has the full record.
+
+This is the fifteenth of M9's 16 planned pieces.

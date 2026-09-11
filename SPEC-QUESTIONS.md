@@ -11713,3 +11713,90 @@ ask a human.
 `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.05% statements / 91.58%
 branches / 94.97% functions / 98.33% lines across the full `packages/tui/src` scope, comfortably above
 the 85%/80% floor.
+
+## Q147 — M9 P15: Degradation modes (`04` §4.7) — a cross-cutting audit-and-fix piece, two critic rounds,
+real ascii-compliance bugs found and fixed in both rounds, no escalation
+
+`PLAN-M9.md` P15's mandate is `04` §4.7: every screen and component in `@forge/tui` must degrade
+correctly across `RenderMode.ascii`, `RenderMode.color` (`NO_COLOR`/`FORCE_COLOR`/no-TTY), `RenderMode.
+linear`, and narrow terminal widths — plus `04`'s own colour-blindness rule, "never encode pass/fail by
+red/green alone." Unlike every other piece this milestone, this one has no single new screen or
+component of its own: it is a dedicated, cross-cutting sweep over everything P2-P14 already shipped,
+built new, programmatic test infrastructure specifically to find where that sweep's own mandate was
+violated, then fixed every real violation found.
+
+**The core new artifact:** `test/ascii-matrix.test.tsx`, a single programmatic sweep over every real
+component and screen (`ENTRIES`), asserting each renders under `ascii: true` without throwing and its
+own ANSI-stripped frame is pure ASCII — one strong, generic assertion (`/^[\x00-\x7F]*$/`) instead of
+enumerating every specific glyph by name, so it catches any *future* ungated glyph too, not just the
+ones known at the time it was written.
+
+**Real, genuine gaps found and fixed** (this milestone's now-familiar "hardcoded Unicode glyph never
+gated on `mode.ascii`" bug class, `<ListPane>`/`<Tree>`'s own established `onFocusChange`/
+`onFilterModeChange` additive-prop pattern reused nowhere here — this is a different bug class, not a
+new mechanism):
+
+1. **The initial `ascii-matrix.test.tsx` run itself found 5 real failures** in already-shipped
+   components/screens: `CommandPalette` (em dash separator), `HelpOverlay` (em dash separator + Unicode
+   `borderStyle="round"`), `RunBoard` (`formatSchedulerLine`'s own middle-dot separator, plus two other
+   `—` usages), `GatesScreen` (`—`/`▸`), `CostScreen` (`·`/`⚡`/`—`). Each of these five components/
+   functions gained a `mode: Pick<RenderMode, 'ascii'>` parameter/prop it previously lacked entirely.
+2. **A follow-up, broader proactive grep sweep** (`grep -rn "⬚\|⚭\|▸\|▾\|🔒\|⚡\|—\|·\|═\|┌\|└"` across
+   every screen/component) found the matrix's own minimal fixtures hadn't exercised every reachable code
+   path, missing real, additional ungated occurrences in `gates.tsx` (open-question `▸`), `customize.tsx`
+   (`🔒` lock glyph, `←`), `home.tsx` (breadcrumb/next-action `▸`, gate-status `—` fallback), `kb.tsx`
+   (write-history/`last verified`/`sources`/`used by` `—` fallbacks, `⬚` diagram glyph), `sessions.tsx`
+   (title/technique `·` separators), `specs.tsx` (`⚭`/`·` in `crossLinkSuffix`, `—` in the orphans view),
+   and `<AppShell>`'s own wide-mode header line (`▸`/`──`/`●`/`·`) — all fixed the same way, each function/
+   component gaining (or already having, and now correctly threading) a `mode` parameter.
+3. **`<DiffView>`'s own fold-collapse message hardcoded a Unicode ellipsis (`⋯`)**, found only while
+   directly auditing every remaining pass/fail-adjacent surface for `04`'s colour-blindness rule (neither
+   the matrix's own fixture, which never triggers folding, nor the grep sweep, whose glyph list didn't
+   include this character, caught it) — `<DiffView>` had never accepted an `ascii` field on its own `mode`
+   prop at all (`Pick<RenderMode, 'color'>` only). Fixed by widening to `Pick<RenderMode, 'ascii' |
+   'color'>` and gating the ellipsis.
+
+### Round 1 — fresh critic, briefed to actively hunt beyond the matrix's own 22 covered entries: found
+two further real, reproducible gaps the matrix itself still missed
+
+**[Bug 1]** `<AppShell>`'s own notification banner hardcoded `⚠ {message}` unconditionally — unlike the
+header line immediately above it in the same file, which the P15 work had already correctly ternaried on
+`liveMode.ascii`. `<AppShell>` isn't itself one of the matrix's `ENTRIES` (it needs a full engine-client
+harness to construct), and the existing notification test never set `ascii: true` while the existing
+ascii-mode test never triggered a notification — the two test surfaces never intersected. **Fixed:**
+`{liveMode.ascii ? '!' : '⚠'}`, with a new, targeted test added directly to `app-shell.test.tsx`'s own
+"degradation modes end to end" describe block.
+
+**[Bug 2]** `<SpecsScreen>`'s own `MatrixView` (the `m` traceability-matrix view) took no `mode` prop at
+all and hardcoded `✓`/`✗`; the separate traceability-path panel (`t`) hardcoded `→` as its own join
+separator. The matrix's `SpecsScreen` entry only ever exercises the default tree view — it never presses
+`m` or `t` — so neither code path was ever reached under `ascii: true`. **Fixed:** `MatrixView` now takes
+`mode: Pick<RenderMode, 'ascii'>` and uses `+`/`x`; the trace-path panel joins with `mode.ascii ? ' -> '
+: ' → '`. New tests added to `specs.test.tsx`'s own `'m (traceability matrix)'` and `'t (traceability
+path to root)'` describe blocks, each asserting both the ascii-mode output and the absence of the
+Unicode glyph.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes and independently re-hunting from
+scratch: both fixes confirmed real and correct, no new findings
+
+Independently re-read both changed files without relying on round 1's own description, confirmed
+`pnpm typecheck`/`eslint packages/tui` clean and the full `packages/tui` suite green, then did a second,
+independent glyph hunt across every remaining screen/component (toast, modal, progress-bar, sparkline,
+tree, key-value, stream-view, linear, cost, home, gates, run-board, customize, kb, sessions, pane,
+diff-view, command-palette, help-overlay, question-form, list-pane, status-glyph) plus a second full pass
+of `04`'s colour-blindness rule (confirming `StatusGlyph`'s per-state label text, `Toast`'s
+`[INFO]`/`[WARN]`/`[ERROR]` prefixes, `DiffView`'s `+`/`-`/` ` line prefixes, and `Pane`'s glyph-paired
+focus marker each carry meaning independent of color). No new ungated glyph or color-only encoding found
+anywhere. **Recommendation: Go.**
+
+**Final state: 493 real tests** (up from 489 before this piece's own fixture/`ascii-matrix.test.tsx`
+addition; the two round-1 fixes added 3 more — one in `app-shell.test.tsx`, two in `specs.test.tsx`).
+`pnpm typecheck`, `eslint packages/tui`, `prettier --check packages/tui`, `pnpm run boundaries` all
+clean. The full, cross-package repository suite (`packages/tui packages/telemetry packages/engine
+packages/vcs packages/cli/test/commands/run packages/kb packages/core packages/extensions` plus every
+other package) was also run in full with coverage: 6784/6789 tests passing (5 intentionally skipped), no
+regression anywhere, and `packages/tui/src` produced zero coverage-threshold errors of its own (the
+handful of coverage-threshold failures in that run are all pre-existing gaps in unrelated packages —
+`adapter-claude-code`, `agents`, `cli`, `scripts` — none touched by this piece).
+
+This is the fifteenth of M9's 16 planned pieces.
