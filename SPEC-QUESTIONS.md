@@ -10761,3 +10761,96 @@ luck. No new findings.
 `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.91% statements /
 91.5% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
 floor.
+
+## Q136 — M9 P4: content viewers (`<StreamView>`, `<DiffView>`) — three critic rounds on one component,
+one real bug found and fixed twice-over (the second round's own fix introducing a real regression), plus
+two disclosed, deliberately-not-fixed limitations
+
+`PLAN-M9.md` P4's mandate was the two "show me a body of real content" primitives S2/S3/S4 need: a
+bounded ring-buffer log/transcript view with follow-mode, and a unified-diff renderer with hunk folding.
+Design decisions not previously written up:
+
+1. `<DiffView>` stays a stateless, pure function of `patch` (plus an optional caller-controlled
+   `expandedHunks` set) rather than owning its own fold/expand keyboard state — the literal
+   `<DiffView patch>` surface `PLAN-M9.md` names takes no other required prop, and `expandedHunks`
+   mirrors the same "additional, optional, caller-supplied" pattern `<Pane>`'s own `scroll` indicator
+   already established in P2.
+2. `parseUnifiedDiff` ignores `diff --git`/`index`/`---`/`+++` file-header lines entirely — this
+   component renders hunk content, not a file-path banner; a caller that wants the file path renders it
+   itself, outside `<DiffView>`.
+3. The diff fixture (`test/fixtures/sample.diff`) is a real `git diff --no-index` output captured
+   against two genuine versions of a file in this repo, deliberately constructed with three hunks of
+   different real shapes (a 1-line change, an 11-line pure-addition hunk, and a 43-line hunk exceeding
+   the default 20-line fold threshold) rather than a single trivial hunk — `PLAN-M9.md` P4's own Checks
+   call for exactly this ("captured from an actual `git diff` in this repo, fixture-frozen").
+4. `<StreamView>`'s `height` is an explicit prop, following the identical precedent `<ListPane>` (P3)
+   and `<Pane>` (P2) already established: Ink has no element-measurement API, so the owning screen
+   supplies the visible row count rather than this component guessing at it.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: one real
+BLOCKING finding
+
+**[BLOCKING] `<StreamView>` never reset its `lines` buffer when `source` changed identity.** `lines` was
+seeded only by a `useState` lazy initializer, which runs exactly once on mount. Reproduced directly, two
+ways: a static-array source swap (switching to a different lane's finished transcript) left the *previous*
+lane's content frozen on screen forever; an async-iterable source swap silently concatenated the new
+source's lines *after* the stale old ones, rather than replacing them. `04` §4.3 S2 has the transcript
+pane follow whichever lane is currently selected — a mounted `<StreamView>` instance whose `source`
+changes underneath it as the user switches lanes is the ordinary path this mandate describes, not an
+edge case. **Fixed (round 1):** a `useEffect` keyed on `[source, maxLines]`, gated by an
+`isFirstRender` ref (to avoid redundantly re-computing what the lazy initializer already got right on
+mount), reset `lines` to the fresh source's own content.
+
+Also confirmed clean by round 1, no fix needed: `parseUnifiedDiff`'s handling of no-trailing-newline
+final lines, `\ No newline at end of file` markers, malformed/body-less hunk headers, multi-hunk
+boundaries; `<DiffView>`'s `foldThreshold`/`expandedHunks` edge values; `<StreamView>`'s exact-`maxLines`
+boundary (no over-trim), `height` exceeding available lines (no negative slice), zero-lines key presses,
+focus gating, unmount-mid-consume cancellation.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: one real regression it introduced
+
+**[BLOCKING, a regression introduced by round 1's own fix] `maxLines` changing alone (the same `source`**
+**still live) also reset the buffer and restarted consumption of a live async source.** Round 1's fix put
+`maxLines` in the same `[source, maxLines]` dependency array as the reset effect *and* the pre-existing
+async-consumption effect. Reproduced directly: adjusting only `maxLines` on an in-flight async source
+(the ordinary "a live settings panel changes the buffer size while a lane's tail is running" case) reset
+`lines` to empty **and** tore down and restarted the consumption effect against the *same*
+already-partially-consumed `AsyncIterable` — a real async generator's own `Symbol.asyncIterator()`
+returns `this`, not a fresh iterator, so "restarting" it does not actually replay anything: every line
+already streamed was lost, permanently, with no way to recover it. Not a cosmetic reset; a genuine data
+loss on an ordinary, non-adversarial interaction. **Fixed (round 2):** `maxLines` is read through a
+`maxLinesRef` the consumption loop's own closure reads, never a dependency of that effect; both the reset
+effect and the consumption effect are now keyed on `[source]` alone; a new, small, independent effect
+keyed on `[maxLines]` alone re-trims the existing buffer in place (`current.length > maxLines ?
+current.slice(...) : current`) without touching `source` or the consumption loop at all.
+
+### Round 3 — a third critic round, specifically told not to assume the round-2 fix was safe merely
+because it passed existing tests, given two real bugs in a row on the same component: nothing new found
+
+Deliberately constructed and verified: `source` and `maxLines` changing in the same render, for both
+static and async sources (correct final state either way, since effect declaration order makes the ref
+update happen before the reset effect reads it, deterministically, not by luck); `maxLines` shrinking
+while an async source is paused mid-stream, then resumed (correct in-place trim, then correct continued
+append); `height` changing alone (no interaction with any of the three restructured effects, confirmed
+by reading the dependency arrays directly). Concluded the apparent "effects sharing a `[maxLines]`
+dependency array" is not a hidden coupling: the ref-sync effect and the trim effect never read each
+other's output, each closing over what it needs directly.
+
+**Disclosed, not fixed (confirmed identical across all three rounds, not introduced by any fix under**
+**review):**
+1. `<StreamView>`'s `following`/`manualScrollOffset` state is untouched by a `source` change. A user who
+   manually scrolled on lane A (suspending follow) and then switches to lane B keeps follow suspended,
+   with the scroll offset silently clamped to lane B's own bounds — no crash, no stale content, but not
+   "return to following the bottom" either. `04` doesn't specify either behaviour for a lane switch;
+   judged a real, if minor, UX question for a later piece (whichever screen actually wires
+   `<StreamView>` up) to decide, not this primitive's own call to make unilaterally.
+2. `parseUnifiedDiff` silently drops a truly bare blank context line (a raw empty line with no leading
+   space at all) in a unified diff. Real `git diff` — `<DiffView>`'s own sole documented source per its
+   spec citation — always emits a single leading space for a blank context line, so this path is not
+   reachable through FORGE's own actual usage; recorded as a known interop limitation for a hypothetical
+   third-party diff tool emitting the bare-empty-line variant, not a gating defect.
+
+**Final state: 169 real tests** (up from 163 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.9% statements /
+92.3% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
+floor.

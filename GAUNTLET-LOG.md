@@ -8376,3 +8376,54 @@ starts empty then populated" without getting stuck.
 floor. `SPEC-QUESTIONS.md` Q135 has the full record.
 
 This is the third of M9's 16 planned pieces.
+
+## M9 P4 — Content viewers: `<StreamView>`, `<DiffView>` (`04` §4.1, §4.3 S2, §4.5)
+
+**Mandate:** the two "show me a body of real content" primitives S2/S3/S4 need — a bounded ring-buffer
+log/transcript view with follow-mode, and a unified-diff renderer with syntax-agnostic colouring and
+hunk folding. Four real design decisions, including a deliberately multi-shaped, `git diff --no-index`-
+captured fixture, are recorded in `SPEC-QUESTIONS.md` Q136.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: one real
+BLOCKING finding
+
+**[BLOCKING] `<StreamView>` never reset its `lines` buffer when `source` changed identity** (seeded only
+once, via a `useState` lazy initializer). Reproduced on the ordinary "user switches lanes" path `04`
+§4.3 S2 itself describes: a static-array source swap left the previous lane's content frozen forever; an
+async-iterable source swap silently concatenated the new source's lines after the stale old ones.
+**Fixed:** a `useEffect` keyed on `[source, maxLines]`, gated by an `isFirstRender` ref, reset the buffer
+on a genuine source change.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: one real regression it introduced
+
+**[BLOCKING regression] `maxLines` changing alone (same `source` still live) also reset the buffer and**
+**restarted consumption of the live async source** — since round 1's fix put `maxLines` in the same
+dependency array as both the reset and the consumption effects. Reproduced directly: adjusting only
+`maxLines` on an in-flight async source permanently lost every line already streamed (a real async
+generator's own iterator is itself — "restarting" it replays nothing). **Fixed:** `maxLines` is read
+through a ref the consumption loop's closure reads (never a dependency of that effect); reset and
+consumption are now keyed on `[source]` alone; a new, independent `[maxLines]`-only effect re-trims the
+existing buffer in place without touching `source` or the consumption loop.
+
+### Round 3 — a third critic round, explicitly told not to assume round 2's fix was safe merely because
+it passed existing tests, given two real bugs in a row on the same component: nothing new found
+
+Deliberately constructed and verified: `source`+`maxLines` changing in the same render (both source
+shapes); `maxLines` shrinking mid-stream then the source resuming; `height` changing alone. Confirmed
+the three effects' apparent shared `[maxLines]` dependency is not a hidden coupling — each closes over
+what it needs directly, with effect declaration order making the interaction deterministic, not
+accidental.
+
+**Disclosed, not fixed** (confirmed identical across all three rounds, not introduced by any fix under
+review): `following`/`manualScrollOffset` state isn't reset on a `source` change (a real, minor, `04`-
+silent UX question left to whichever screen actually wires `<StreamView>` up); `parseUnifiedDiff` drops
+a truly bare blank context line with no leading space (unreachable through FORGE's own real `git diff`
+source, which always emits a leading space for blank context lines — a disclosed interop limitation for
+a hypothetical third-party diff tool, not FORGE's own usage).
+
+**Final state: 169 real tests** (up from 163 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.9% statements /
+92.3% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
+floor. `SPEC-QUESTIONS.md` Q136 has the full record.
+
+This is the fourth of M9's 16 planned pieces.
