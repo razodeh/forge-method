@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./env": "./src/env.ts",
     "./state": "./src/state/index.ts",
-    "./components": "./src/components/index.ts"
+    "./components": "./src/components/index.ts",
+    "./screens": "./src/screens/index.ts"
   },
   "engines": {
     "node": ">=20.10"

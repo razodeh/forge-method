@@ -1,0 +1,415 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "blocked" canonical state 1`] = `
+"┌─────────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                    ││  Next actions                             │
+│acme-billing Level L3                        ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                       ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA                 ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                          ││ Run: forge decide data-store              │
+│Run ⊘ blocked blocked, waiting on human input││                                           │
+└─────────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "complete" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✓ pass complete         ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "empty" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ↷ skipped no active run ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "failed" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✗ fail failed           ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "loading" canonical state 1`] = `
+"┌───────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                  ││  Next actions                             │
+│acme-billing Level L3                      ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                     ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA               ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                        ││ Run: forge decide data-store              │
+│Run ◐ waiting plan created, not yet started││                                           │
+└───────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 80x24 for the "running" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ● running running       ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "blocked" canonical state 1`] = `
+"┌─────────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                    ││  Next actions                             │
+│acme-billing Level L3                        ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                       ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA                 ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                          ││ Run: forge decide data-store              │
+│Run ⊘ blocked blocked, waiting on human input││                                           │
+└─────────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "complete" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✓ pass complete         ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "empty" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ↷ skipped no active run ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "failed" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✗ fail failed           ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "loading" canonical state 1`] = `
+"┌───────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                  ││  Next actions                             │
+│acme-billing Level L3                      ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                     ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA               ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                        ││ Run: forge decide data-store              │
+│Run ◐ waiting plan created, not yet started││                                           │
+└───────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 100x30 for the "running" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ● running running       ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "blocked" canonical state 1`] = `
+"┌─────────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                    ││  Next actions                             │
+│acme-billing Level L3                        ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                       ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA                 ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                          ││ Run: forge decide data-store              │
+│Run ⊘ blocked blocked, waiting on human input││                                           │
+└─────────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "complete" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✓ pass complete         ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "empty" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ↷ skipped no active run ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "failed" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ✗ fail failed           ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "loading" canonical state 1`] = `
+"┌───────────────────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                                  ││  Next actions                             │
+│acme-billing Level L3                      ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x                     ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA               ││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided                        ││ Run: forge decide data-store              │
+│Run ◐ waiting plan created, not yet started││                                           │
+└───────────────────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;
+
+exports[`HomeScreen > renders a distinct snapshot at 120x40 for the "running" canonical state 1`] = `
+"┌────────────────────────────┐┌───────────────────────────────────────────┐
+│▸ Project                   ││  Next actions                             │
+│acme-billing Level L3       ││▸ Approve gate G-Design (2 open questions) │
+│Platform     adapter-x      ││ Run: forge gate approve G-Design          │
+│Stages       [MVP] ▸ M2 ▸ GA││▸ 3 stories blocked on ADR-014 (data store)│
+│Autonomy     guided         ││ Run: forge decide data-store              │
+│Run ● running running       ││                                           │
+└────────────────────────────┘└───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Health                                                                                          │
+│KB ✓ pass 84 entries                                                                              │
+│Specs ✓ pass 6 epics 31 stories, traceability 94%                                                 │
+│Build ✓ pass (3m ago) Tests 412/412 Coverage 81%                                                  │
+│Gates G-Product ✓ pass  G-Design ◐ waiting  G-Ready ⊘ blocked  G-Verify —  G-Deliver —            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Recent activity                                                                                 │
+│12:41 architect ADR-014 drafted: primary datastore                                                │
+│12:38 sdet test plan for EPIC-003 generated                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
+`;

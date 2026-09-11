@@ -1,0 +1,15 @@
+export {
+  HomeScreen,
+  rankNextActions,
+  canonicalStateFor,
+  type HomeScreenProps,
+  type ProjectInfo,
+  type HealthSummary,
+  type HealthKbRow,
+  type HealthSpecsRow,
+  type HealthBuildRow,
+  type HealthGateRow,
+  type NextActionCandidate,
+  type ActivityEntry,
+  type CanonicalScreenState,
+} from './home.tsx';
