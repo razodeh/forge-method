@@ -8261,3 +8261,63 @@ times with no flakiness observed. `SPEC-QUESTIONS.md` Q133 has the full record, 
 presented in `BLOCKED-P1.md` and the coordinator's "go with B" decision.
 
 This is the first of M9's 16 planned pieces (`@forge/tui`, `specs/22`'s TUI milestone).
+
+## M9 P2 — Presentational primitives: `<StatusGlyph>`, `<Pane>`, `<KeyValue>`, `<ProgressBar>`,
+`<Sparkline>`, `<Toast>` (`04` §4.2, §4.5, §4.7)
+
+**Mandate:** the small, stateless, `RenderMode`-aware building blocks `04` §4.5's own component
+inventory names first — every later screen composes these directly. The first real Ink/React code in
+`@forge/tui`, proving the `ink-testing-library` snapshot-testing harness works at all before anything
+more complex depends on it. Six real design decisions this piece had to make are recorded in
+`SPEC-QUESTIONS.md` Q134.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component with real
+inputs rather than reading and speculating: three real findings, all reproduced directly, all fixed
+
+1. **[MAJOR] `<Pane>` never accepted a `color` slice of `RenderMode` — its own focus-ring border/title**
+   **colour was hardcoded to cyan whenever `focused` was true, regardless of `NO_COLOR`.** Every sibling
+   P2 component threads the relevant `RenderMode` slice through; `Pane`'s own `mode` prop silently
+   omitted the one slice its own colouring logic needed. **Fixed:** `PaneProps.mode` widened to
+   `Pick<RenderMode, 'ascii' | 'color'>`; `borderColor` now correctly gated on `focused && mode.color`.
+   The regression test calls `Pane(...)` as a plain function and inspects the returned React element
+   tree directly, bypassing `ink-testing-library`'s fake terminal entirely — independently confirmed
+   that fake terminal never emits real ANSI codes in this test environment at all (even with
+   `FORCE_COLOR` forced), so no frame-comparison test could have proven this fix either way.
+2. **[MAJOR] `<Toast>` rendered only `message.text` — `kind` (info/warn/error) affected nothing but its**
+   **own colour, so two differently-kinded toasts sharing the same text were byte-identical once colour**
+   **was stripped, violating `04` §4.7's "colour is never *only* meaning-bearing" rule.** This
+   component's own test suite had unknowingly already proven the bug: its last case asserted
+   `stripAnsi(colored) === stripAnsi(plain)`, i.e. asserted away the only channel that carried `kind` at
+   all. **Fixed:** a new `KIND_LABEL` table prefixes every entry with a real, ASCII-safe text marker
+   (`[INFO]`/`[WARN]`/`[ERROR]`), unconditionally. A new test proves three same-text, different-kind
+   entries render as three distinct lines under `color: false`, and that "queued past 3, drops the
+   oldest" still holds against a rotating-kind queue.
+3. **[MINOR] `<KeyValue>` aligned columns by `String.prototype.length` (UTF-16 code units), not real**
+   **terminal display width, visibly misaligning the value column for a full-width/CJK key.** Reproduced
+   directly with a `日本語`/`id` pair. **Fixed:** padding now computed via `string-width` — already a
+   real, transitive dependency of `ink`'s own layout engine, promoted here to a direct, correctly
+   declared `dependency` since it now backs production code, not a devDependency.
+
+Also confirmed clean by the critic round, no fix needed: `<StatusGlyph>`'s 8-state text-only
+disambiguation, in both ascii and unicode mode; `<ProgressBar>`'s clamping (negative value, value
+exceeding max, `max === 0`); `<Sparkline>`'s single-element and flat-series handling; `<Toast>`'s exact
+3/4-entry boundary behaviour; `<Pane>`'s focus-marker text-only disambiguation independent of the colour
+bug above.
+
+### Round 2 — a second, fresh critic verifying round 1's own three fixes, specifically hunting for a fix
+that only appears correct because of the same fake-terminal limitation finding 1 already named: nothing
+new found
+
+Verified `<Pane>`'s colour gating across every `{focused, ascii, color}` combination via the same
+direct-function-call technique, confirming it is sound rather than accidentally reading a stale/mocked
+prop. Verified `<Toast>`'s labels stay distinct under a real 10-entry rotating-kind queue against the
+"drop oldest" invariant. Verified `string-width`'s own column math directly against CJK, Hangul, and an
+emoji ZWJ family sequence, confirming correct alignment and no ASCII regression. No new findings; all
+three fixes independently confirmed correct and complete.
+
+**Final state: 111 real tests** (up from 108 before either critic round). `pnpm typecheck`, `eslint .`,
+`prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.58% statements / 90.95%
+branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80% floor.
+`SPEC-QUESTIONS.md` Q134 has the full record.
+
+This is the second of M9's 16 planned pieces.

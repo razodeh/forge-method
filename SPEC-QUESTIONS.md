@@ -10565,3 +10565,95 @@ Final state after this fifth round's own fixes: 106 real tests, `pnpm typecheck`
 --check .`/`pnpm run boundaries` all clean, coverage comfortably above the 85%/80% floor on every file
 in the diff, the full test suite re-run three consecutive times with no flakiness observed. See
 `GAUNTLET-LOG.md`'s M9 P1 entry for the full five-round critic record.
+
+## Q134 — M9 P2: presentational primitives (`<StatusGlyph>`, `<Pane>`, `<KeyValue>`, `<ProgressBar>`,
+`<Sparkline>`, `<Toast>`) — two critic rounds, three real corrections against `04` §4.7's own
+accessibility contract
+
+`PLAN-M9.md` P2's mandate was the small, stateless, `RenderMode`-aware building blocks `04` §4.5's own
+component inventory names first, and the first real Ink/React code in the package. Six real design
+decisions, not previously written up, are recorded here.
+
+1. `<StatusGlyph>`'s ASCII fallback set is a fresh, single-character-per-state table (`+`/`x`/`o`/`.`/
+   `=`/`!`/`#`/`-`), not literally named anywhere in `04` — the spec only mandates the 8 canonical
+   Unicode glyphs; the ASCII set had to be invented, with the one hard constraint that all 8 remain
+   pairwise distinct (verified by a dedicated test).
+2. `<Pane>`'s border style choice: `cli-boxes`' own `'single'`/`'classic'` names, not a hand-rolled
+   character set — `classic` is genuinely pure ASCII (`+`/`-`/`|`), already shipped as a transitive
+   dependency of `ink` itself, so nothing here reinvents a border-drawing convention.
+3. `<Pane>`'s scroll indicator is opt-in via an explicit `{ moreAbove, moreBelow }` prop, not something
+   `<Pane>` infers from its own children — it has no way to measure whether `children` overflows the
+   box it's given, so a caller that owns real scroll position (a later `<ListPane>`/`<StreamView>`)
+   passes the flags down explicitly instead.
+4. `<Toast>` is deliberately a pure function of `queue`: expiry (removing an entry after its display
+   duration) needs a real timer, which is stateful, contradicting P2's own "small, stateless" mandate —
+   deferred to whichever later, state-owning piece re-renders `<AppShell>` with a shorter queue.
+5. `<ListPane>`/`<Tree>` (both hand-rolled per P3's own text) are the reason `<Pane>` does not itself
+   own virtualisation or list semantics — P2's own components are presentational-only, one layer below
+   where P3's real "browse a collection" logic lives.
+6. `vitest.config.ts` needed no explicit JSX/esbuild configuration at all for this package's first
+   `.tsx` files: Vite 8's `oxc` transform (which superseded `esbuild` as vitest's default transform in
+   this dependency's installed version) already reads the nearest `tsconfig.json`'s own `"jsx":
+   "react-jsx"` setting automatically. An explicit `esbuild: { jsx: 'automatic', ... }` block was tried
+   first and silently ignored (`oxc` options take precedence when both are set, per its own startup
+   warning) — removed once confirmed dead, rather than left in as misleading, inert configuration.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: three real
+findings, all reproduced directly, all fixed
+
+1. **[MAJOR] `<Pane>` never accepted a `color` slice of `RenderMode` at all — its focus ring's own**
+   **border/title colour was hardcoded to cyan whenever `focused` was true, regardless of `NO_COLOR`.**
+   Every sibling P2 component threads the relevant `RenderMode` slice through (`StatusGlyph`/`Toast`
+   take `color`; `ProgressBar`/`Sparkline`/`Pane` itself already took `ascii`) — `Pane`'s own `mode` prop
+   silently omitted `color`, the one slice its own border-colouring logic actually needed. Confirmed by
+   reading the type signature (no `color` field existed to gate on) before ever writing a repro.
+   **Fixed:** `PaneProps.mode` widened to `Pick<RenderMode, 'ascii' | 'color'>`; `borderColor` now
+   `focused && mode.color ? 'cyan' : undefined`. The regression test calls `Pane(...)` as a plain
+   function (bypassing `ink-testing-library`'s fake terminal entirely) and inspects the returned React
+   element tree's own `borderColor`/`color` props directly — necessary because that fake terminal never
+   emits real ANSI codes in this test environment at all (confirmed independently: even with
+   `FORCE_COLOR=3` forced and `color: true`, its own rendered frame carries zero escape codes, so a
+   byte-comparison of two rendered frames could not have proven this fix either way).
+2. **[MAJOR] `<Toast>` rendered only `message.text` — `kind` (info/warn/error) affected nothing but its**
+   **own `KIND_COLOR` colour, so two toasts of different kind sharing the same text were byte-identical**
+   **once colour was stripped, violating `04` §4.7's "colour is never *only* meaning-bearing" rule the**
+   **same way `<StatusGlyph>` already satisfies it for its own 8 states.** This component's own test
+   suite had already, unknowingly, proven the bug: its last case asserted `stripAnsi(colored) ===
+   stripAnsi(plain)`, i.e. it asserted away the only channel that carried `kind` at all. Reproduced
+   directly: three toasts, identical text, three different kinds, `color: false` — three byte-identical
+   rendered lines. **Fixed:** a new `KIND_LABEL` table prefixes every entry with a real, ASCII-safe text
+   marker (`[INFO]`/`[WARN]`/`[ERROR]`), unconditionally, not gated on `color`. A new test proves three
+   same-text, different-kind entries now render as three distinct lines under `color: false`, and that
+   the "queued past 3, drops the oldest" behaviour still holds against a rotating-kind queue.
+3. **[MINOR] `<KeyValue>` aligned columns by `String.prototype.length` (UTF-16 code units), not real**
+   **terminal display width — a full-width/CJK key (`日本語`, 3 code units, 6 terminal columns) was**
+   **padded as if it were the same width as a 3-column ASCII key sitting next to it, visibly**
+   **misaligning the value column.** Reproduced directly with `rows=[{key:'日本語',...},{key:'id',...}]`.
+   Given the mandate is explicitly "aligned two-column metadata display" and project/field names in a
+   real host project are plausibly non-ASCII, judged a real (if narrow) functional gap, not a stylistic
+   nitpick. **Fixed:** padding now computed via `string-width` (already a real, transitive dependency of
+   `ink`'s own layout engine — promoted here to a direct, correctly-declared `dependency`, not a
+   devDependency, since it's used by production code) rather than `.length`. A new test proves correct
+   alignment for the same CJK case.
+
+**Disclosed, not fixed:** `<Toast>` performs no duplicate-`id` guard on its own `queue` — two entries
+sharing an `id` produce React's own "duplicate key" warning. Judged a caller bug (constructing a queue
+with duplicate IDs), not a spec violation reachable from ordinary use, and not one of P2's own Checks.
+
+### Round 2 — a second, fresh critic verifying round 1's own three fixes, specifically hunting for a
+fix that only appears correct because of the same fake-terminal limitation finding 1 already named:
+nothing new found
+
+Verified `<Pane>`'s colour gating across every `{focused, ascii, color}` combination via the same
+direct-function-call technique (confirming it is sound, not accidentally reading a stale/mocked prop, by
+independently reproducing that `ink-testing-library`'s fake terminal genuinely cannot observe this
+regression even with `FORCE_COLOR` forced). Verified `<Toast>`'s labels stay distinct under a real
+10-entry rotating-kind queue against the "max 3, drop oldest" invariant. Verified `string-width`'s own
+column math directly against CJK, Hangul, and an emoji ZWJ family sequence (`👨‍👩‍👧‍👦`, `.length ===
+11` but display width 2), confirming `<KeyValue>` renders it correctly aligned, and that plain-ASCII
+alignment is unaffected. No new findings; all three fixes independently confirmed correct and complete.
+
+**Final state: 111 real tests** (up from the 108 that P2's initial build produced before either critic
+round). `pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped
+coverage on every file in the diff: 98.58% statements / 90.95% branches / 100% functions / 100% lines,
+comfortably above the 85%/80% floor, no file below it individually.
