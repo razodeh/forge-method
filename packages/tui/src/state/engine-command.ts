@@ -9,15 +9,18 @@
  * their own variants, the same "one evolving type" shape `@forge/adapter-kit`'s own `AdapterCapabilities`
  * already establishes for a comparable cross-cutting contract.
  *
- * Every variant is scoped to exactly what `PLAN-M9.md` P8 (S2 Run board) actually needs — `lane.*`
- * commands for the six lane keys with a real engine-side effect (`f`/`i`/`s`/`R`/`m`/`o`). `Enter`
- * (select/inspect) and `d` (jump to the Diff tab) are deliberately **not** commands: both are pure,
- * local view concerns with no real engine-side effect to name (`SPEC-QUESTIONS.md` Q140 has the full
- * reasoning) — matching `v`'s own already-established view-only tab-cycle, never in this union either.
+ * `lane.*` variants are scoped to exactly what `PLAN-M9.md` P8 (S2 Run board) actually needs — the six
+ * lane keys with a real engine-side effect (`f`/`i`/`s`/`R`/`m`/`o`). `Enter` (select/inspect) and `d`
+ * (jump to the Diff tab) are deliberately **not** commands: both are pure, local view concerns with no
+ * real engine-side effect to name (`SPEC-QUESTIONS.md` Q140 has the full reasoning) — matching `v`'s own
+ * already-established view-only tab-cycle, never in this union either. `spec.*` variants are `PLAN-M9.md`
+ * P9's own addition (S3 Specs/Spec graph), for its `n`/`e` keys — `t` (traceability path to root) and `x`
+ * (orphans-only filter) are, by the identical reasoning, pure local view concerns and never commands
+ * either (`SPEC-QUESTIONS.md` Q141).
  *
- * @see specs/04 §4.3 S2
- * @see PLAN-M9.md P8
- * @see SPEC-QUESTIONS.md Q140
+ * @see specs/04 §4.3 S2, S3
+ * @see PLAN-M9.md P8, P9
+ * @see SPEC-QUESTIONS.md Q140, Q141
  */
 export type EngineCommand =
   | { readonly type: 'lane.follow'; readonly laneId: string }
@@ -25,4 +28,7 @@ export type EngineCommand =
   | { readonly type: 'lane.stop'; readonly laneId: string }
   | { readonly type: 'lane.retryStep'; readonly laneId: string }
   | { readonly type: 'lane.requestMerge'; readonly laneId: string }
-  | { readonly type: 'lane.openWorktree'; readonly laneId: string };
+  | { readonly type: 'lane.openWorktree'; readonly laneId: string }
+  | { readonly type: 'spec.newArtifactFromTemplate'; readonly parentId: string }
+  | { readonly type: 'spec.edit'; readonly artifactId: string }
+  | { readonly type: 'spec.validate'; readonly artifactId: string };

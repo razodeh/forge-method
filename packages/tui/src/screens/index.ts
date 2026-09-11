@@ -13,6 +13,7 @@ export {
   type ActivityEntry,
   type CanonicalScreenState,
 } from './home.tsx';
+export { SpecsScreen, traceabilityPathToRoot, type SpecsScreenProps } from './specs.tsx';
 export {
   RunBoard,
   formatSchedulerLine,

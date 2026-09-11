@@ -38,7 +38,7 @@
  */
 import { Box, Text, useInput } from 'ink';
 import type { JSX } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { RenderMode } from '../env.ts';
 import { StatusGlyph } from './status-glyph.tsx';
@@ -55,6 +55,12 @@ export interface TreeProps {
   readonly nodes: readonly TreeNode[];
   readonly focused: boolean;
   readonly mode: Pick<RenderMode, 'ascii' | 'color'>;
+  /** Called with the currently-focused node whenever it changes (including once, on mount, for the
+   * initial default) -- `<Tree>`'s own `focusedId` is otherwise entirely internal and opaque to a
+   * caller. Added for `PLAN-M9.md` P9 (`<SpecsScreen>`), whose own `t`/`n`/`e` key actions all need to
+   * know which node a keystroke should act on; optional and additive, so every existing caller (P3's
+   * own tests) is unaffected. */
+  readonly onFocusChange?: (node: TreeNode) => void;
 }
 
 interface FlatRow {
@@ -85,7 +91,7 @@ function flatten(
   return rows;
 }
 
-export function Tree({ nodes, focused, mode }: TreeProps): JSX.Element {
+export function Tree({ nodes, focused, mode, onFocusChange }: TreeProps): JSX.Element {
   const [focusedId, setFocusedId] = useState<string | undefined>(nodes[0]?.id);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [loadedChildren, setLoadedChildren] = useState<ReadonlyMap<string, readonly TreeNode[]>>(
@@ -96,6 +102,14 @@ export function Tree({ nodes, focused, mode }: TreeProps): JSX.Element {
 
   const rows = flatten(nodes, expanded, loadedChildren, 0);
   const focusedRowIndex = rows.findIndex((row) => row.node.id === focusedId);
+  const focusedNode = rows[focusedRowIndex]?.node;
+
+  // Deliberately keyed on the focused node's own id alone, not `onFocusChange` -- it's an ordinary
+  // inline callback prop at most call sites, a fresh closure every render; including it would re-fire
+  // this effect on every render regardless of whether the focused node actually changed.
+  useEffect(() => {
+    if (focusedNode) onFocusChange?.(focusedNode);
+  }, [focusedNode?.id]);
 
   function withoutId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
     if (!set.has(id)) return set;

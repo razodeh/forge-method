@@ -270,4 +270,65 @@ describe('Tree', () => {
     expect(frame).toBe('▸ Project B');
     expect(frame).not.toContain('Old Task');
   });
+
+  describe('onFocusChange', () => {
+    it('is called once, with the default-focused (first) node, on mount', async () => {
+      const focused: TreeNode[] = [];
+      const nodes: TreeNode[] = [
+        { id: 'a', label: 'Story A' },
+        { id: 'b', label: 'Story B' },
+      ];
+      render(
+        <Tree
+          nodes={nodes}
+          focused
+          mode={{ ascii: false, color: true }}
+          onFocusChange={(node) => focused.push(node)}
+        />,
+      );
+      await flush();
+      expect(focused).toEqual([{ id: 'a', label: 'Story A' }]);
+    });
+
+    it('fires again, with the newly-focused node, on every up/down move -- and only then', async () => {
+      const focused: TreeNode[] = [];
+      const nodes: TreeNode[] = [
+        { id: 'a', label: 'Story A' },
+        { id: 'b', label: 'Story B' },
+        { id: 'c', label: 'Story C' },
+      ];
+      const { stdin } = render(
+        <Tree
+          nodes={nodes}
+          focused
+          mode={{ ascii: false, color: true }}
+          onFocusChange={(node) => focused.push(node)}
+        />,
+      );
+      await flush();
+      await press(stdin, DOWN);
+      await press(stdin, DOWN);
+      await press(stdin, UP);
+      expect(focused.map((n) => n.id)).toEqual(['a', 'b', 'c', 'b']);
+    });
+
+    it('never fires while collapsing/expanding a node the focus does not itself move off of', async () => {
+      const focused: TreeNode[] = [];
+      const nodes: TreeNode[] = [
+        { id: 'a', label: 'Story A', children: [{ id: 'a1', label: 'Task 1' }] },
+      ];
+      const { stdin } = render(
+        <Tree
+          nodes={nodes}
+          focused
+          mode={{ ascii: false, color: true }}
+          onFocusChange={(node) => focused.push(node)}
+        />,
+      );
+      await flush();
+      await press(stdin, RIGHT); // expand -- focus stays on "a"
+      await press(stdin, LEFT); // collapse -- focus stays on "a"
+      expect(focused.map((n) => n.id)).toEqual(['a']);
+    });
+  });
 });

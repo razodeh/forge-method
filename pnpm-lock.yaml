@@ -349,6 +349,9 @@ importers:
 
   packages/tui:
     dependencies:
+      '@forge/core':
+        specifier: workspace:*
+        version: link:../core
       '@forge/telemetry':
         specifier: workspace:*
         version: link:../telemetry
