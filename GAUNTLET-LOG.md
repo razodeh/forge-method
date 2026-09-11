@@ -8622,3 +8622,47 @@ threshold (each round's fix was independently re-verified correct before the nex
 scope, comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q140 has the full record.
 
 This is the eighth of M9's 16 planned pieces.
+
+## M9 P9 — `<SpecsScreen>`: S3 Specs / Spec graph (`04` §4.3 S3)
+
+**Mandate:** the spec-graph tree, traceability path-to-root, an orphans-only filter, and the
+traceability matrix view. `PLAN-M9.md`'s own P9 text posed an explicit open question — read
+`SpecGraph` through `EngineClient`'s read model, or load it directly — settled by confirming directly
+against `@forge/core/graph`'s own real construction path: `SpecGraph.build(docs)` is a synchronous,
+read-only, non-event-sourced fold, so this screen accepts an already-built `SpecGraph` as a
+caller-supplied prop. Real design decisions are recorded in `SPEC-QUESTIONS.md` Q141, including a real,
+additive extension to P3's already-shipped `<Tree>` (a new `onFocusChange` prop, needed since `<Tree>`
+had no way for a caller to learn which node is currently focused), and confirming `@forge/core/graph`'s
+own `buildGraphData` only constructs 5 of `09` §9.4's 11 edge kinds today — `implements`/`constrains`
+are a real, pre-existing, disclosed gap in that package, not something this screen's tests fake past.
+
+### The matrix-cursor saga — three critic rounds, each closing a real, progressively narrower gap
+
+**Round 1** found one real MAJOR bug: the matrix cursor's `col` was re-clamped on `leftArrow`/
+`rightArrow` but not on `upArrow`/`downArrow`, so moving from a longer row to a shorter one could strand
+the cursor on a cell index the new row didn't have — the highlight vanished and `Enter` silently no-op'd
+even on a genuinely actionable cell. **Fixed:** `upArrow`/`downArrow` now clamp `col` against the
+destination row's own cell count too. A second, minor finding (a stale traceability-path panel
+persisting across view switches) was fixed in the same round.
+
+**Round 2** (verifying round 1) confirmed both fixes correct, and found a further, lower-severity,
+genuinely different gap: the cursor could point out of bounds for a render or more if the `graph` prop
+itself shrank while sitting in matrix view with no intervening keypress (the clamp logic only ran in
+response to an arrow press). **Fixed:** a new `safeCursor`, re-derived every render from the current
+data — the same "never trust raw, possibly-stale state directly" pattern `<RunBoard>` (P8)'s own
+`activeLaneId` fix already established.
+
+**Round 3**, dispatched explicitly as a stop-and-check round given three consecutive rounds narrowing on
+the same area, independently re-derived `safeCursor`'s correctness from scratch and constructed two
+fresh adversarial scenarios neither prior round had named. Confirmed the area fully closed, safe to
+commit — the streak broke on round 3 without reaching `BUILD-PROMPT.md`'s own escalation threshold,
+since each round's fix was independently re-verified correct first and each finding was a genuinely
+distinct, progressively narrower root cause, not the same bug recurring unfixed.
+
+**Final state: 331 real tests** (up from 307 before this piece; `specs.test.tsx` alone has 21, plus 3
+new `tree.test.tsx` tests for the `onFocusChange` extension). `pnpm typecheck`, `eslint .`, `prettier
+--check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.13% statements / 90.74% branches /
+96.69% functions / 98.93% lines across the full `packages/tui/src` scope, comfortably above the
+85%/80% floor. `SPEC-QUESTIONS.md` Q141 has the full record.
+
+This is the ninth of M9's 16 planned pieces.

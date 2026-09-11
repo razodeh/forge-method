@@ -11250,3 +11250,92 @@ round began, the precondition that clause requires).
 `pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
 98.12% statements / 92.06% branches / 97.46% functions / 99.36% lines across the full `packages/tui/src`
 scope, comfortably above the 85%/80% floor.
+
+## Q141 — M9 P9: `<SpecsScreen>` (S3 Specs/Spec graph) — three critic rounds narrowing on one seam
+(the traceability matrix's cursor), settling `PLAN-M9.md`'s own open construction-path question, and a
+real, additive extension to an already-shipped P3 component
+
+`PLAN-M9.md` P9's mandate is `04` §4.3 S3: the spec-graph tree, traceability path-to-root, an
+orphans-only filter, and the traceability matrix view. `PLAN-M9.md`'s own P9 text posed an explicit open
+question this piece had to settle before design could start: whether `SpecGraph` (`@forge/core/graph`,
+M1/M2) should be read through `EngineClient`'s event-sourced read model, or loaded directly, read-only.
+
+Real design decisions, not previously written up:
+
+1. **`SpecGraph` is confirmed a direct, read-only, non-event-sourced load.** `SpecGraph.build(docs)` is
+   a synchronous fold over an already-loaded `ArtifactDocument[]` — there is nothing event-sourced to
+   read through `EngineClient` here at all. This screen accepts an already-built `SpecGraph` as a
+   caller-supplied prop, the same pattern `<HomeScreen>` (P7) and `<RunBoard>` (P8) already established.
+   `@forge/core` became a fresh dependency of `@forge/tui` for this piece — its own `pnpm install` needed
+   a second, explicit `pnpm install --filter @forge/tui` pass before the workspace symlink actually
+   materialised in `node_modules/@forge/core`, despite the lockfile already recording the dependency
+   correctly on the first pass; a real, if minor, tooling gotcha worth recording for the next piece that
+   adds a fresh cross-package dependency.
+2. **`<Tree>` (P3) gained a new, additive, optional `onFocusChange` prop.** Its own `focusedId` was
+   entirely internal, opaque state with no way for a caller to learn which node is currently focused —
+   this screen's own `t`/`n`/`e` keys all need exactly that fact. `onFocusChange` fires via a `useEffect`
+   keyed on the focused node's own id (never on the callback itself, which is an ordinary fresh closure
+   at most call sites) whenever it changes, including once on mount. Every existing `<Tree>` caller (P3's
+   own tests) is unaffected — confirmed by re-running P3's full suite unchanged after the extension.
+3. **Not every literal `04` §4.3 S3 key is a real `EngineCommand`.** `t` (traceability path to root) and
+   `x` (orphans-only) are pure, local view concerns with no engine-side effect to name — the identical
+   reasoning `<RunBoard>` (P8) already established for its own `Enter`/`d`. Only `n`
+   (`spec.newArtifactFromTemplate`) and `e` (`spec.edit` immediately followed by `spec.validate`, `04`'s
+   own literal "then auto-`forge spec validate`") emit real commands, both new variants added to the
+   shared `EngineCommand` union (`state/engine-command.ts`) P8 introduced, exactly as that union's own
+   doc comment already anticipated P9 would do.
+4. **The primary hierarchy is built from exactly the `realises`/`delivers`/`partOf`/`implements` edges
+   `09` §9.4's own table names** — computed directly from `graph.edges()`, deliberately narrower than
+   `SpecGraph.childrenOf()` (which mixes cross-link edges like `ADR constrains Story` into its results
+   without distinguishing them from genuine hierarchy children). Confirmed directly against
+   `@forge/core/graph/build.ts`'s own top doc comment: `buildGraphData` today only ever constructs
+   `realises`/`delivers`/`partOf`/`belongsTo`/`proves` edges — `implements` (Task) and `constrains` (ADR)
+   are a real, pre-existing, disclosed gap in that package itself ("deliberately deferred"), not
+   something this screen's own logic or tests should fake past. Tests/ADRs are rendered as computed
+   cross-link-count suffixes on the owning row (`· ⚭ N tests`/`· N ADR(s)`), not a separate interactive
+   view — a disclosed scope narrowing given this piece's already-large surface.
+5. **The traceability matrix is Capabilities × Stories**, not a literal three-axis Capabilities × Stories
+   × Tests grid (`09` §9.4's own matrix concept names no single flat cell shape for three independent
+   axes at once): rows are `CAP` nodes, columns are every `STORY` reachable from that capability via its
+   own Epics, a cell is `✓` when the Story has at least one Test proving one of its Acceptance Criteria,
+   `✗` otherwise. `Enter` on a `✗` cell emits `spec.newArtifactFromTemplate` for that Story — a reasonable
+   reading of `04`'s own "actionable" given no other action is named for this specific cell shape.
+
+### The matrix-cursor saga — three critic rounds, each closing a real, progressively narrower gap
+
+**Round 1** (fresh critic) found one real MAJOR bug: the matrix cursor's `col` was re-clamped against the
+current row's own cell count on `leftArrow`/`rightArrow`, but `upArrow`/`downArrow` left `col` completely
+untouched — moving from a longer row to a shorter one could strand the cursor on a cell index the new row
+didn't have, making the highlight vanish and `Enter` silently no-op even on a genuinely actionable
+(uncovered) cell. **Fixed:** `upArrow`/`downArrow` now compute the destination row's own cell count and
+clamp `col` against it, matching `leftArrow`/`rightArrow`'s own existing discipline. A second, minor
+finding (the "Traceability path to root" panel persisting stale across `x`/`m` view switches) was fixed
+in the same round: `setTracePath(undefined)` added to every view-changing key handler.
+
+**Round 2** (verifying round 1's fixes) confirmed both correct and complete, and found one further,
+lower-severity, genuinely different-root-cause gap: if the `graph` prop itself shrinks while the user is
+already sitting in matrix view with no intervening keypress, the cursor could point out of bounds for a
+render or more (the row/col clamp logic only ever runs *in response to* an arrow-key press). **Fixed:** a
+new `safeCursor`, re-derived every render from the current `caps`/`rows` (never trusting raw `matrixCursor`
+state directly for rendering or the `Enter` action) — explicitly the same "never trust raw, possibly-stale
+state directly" pattern `<RunBoard>` (P8)'s own `activeLaneId` fix already established for an analogous
+staleness gap.
+
+**Round 3**, dispatched explicitly as a stop-and-check round given three consecutive rounds narrowing on
+the same area, independently re-derived `safeCursor`'s correctness from scratch, traced every arrow/Enter
+handler by hand, and constructed two fresh adversarial scenarios neither prior round had named (zero
+capabilities while in matrix view; the graph shrinking then regrowing with no keypress in between).
+Confirmed the area **fully closed** — safe at every reachable index, no crash, no silent no-op on a real
+cell — with one purely cosmetic, non-blocking quirk newly disclosed (a possible cursor "snap" on
+regrowth-with-no-keypress, since `safeCursor` is derive-only and never writes its clamped value back into
+state) and one test-rigor gap in the round-2 regression test tightened (asserting the *specific*
+correctly-clamped cell, not merely "some" cell). Recommended safe to commit; the "three rounds, same
+narrow area" streak closed on round 3 without ever reaching `BUILD-PROMPT.md`'s own three-full-round
+escalation threshold, since each round's own fix was independently re-verified correct before the next
+round began (the precondition that clause requires) and each round's finding was a genuinely distinct,
+progressively narrower root cause, not the same bug recurring unfixed.
+
+**Final state: 331 real tests** (up from 307 before this piece; `specs.test.tsx` alone has 21, plus 3 new
+`tree.test.tsx` tests for the `onFocusChange` extension). `pnpm typecheck`, `eslint .`, `prettier --check
+.`, `pnpm run boundaries` all clean. Scoped coverage: 97.13% statements / 90.74% branches / 96.69%
+functions / 98.93% lines across the full `packages/tui/src` scope, comfortably above the 85%/80% floor.
