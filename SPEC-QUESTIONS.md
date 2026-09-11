@@ -10657,3 +10657,107 @@ alignment is unaffected. No new findings; all three fixes independently confirme
 round). `pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped
 coverage on every file in the diff: 98.58% statements / 90.95% branches / 100% functions / 100% lines,
 comfortably above the 85%/80% floor, no file below it individually.
+
+## Q135 — M9 P3: navigation primitives (`<ListPane>`, `<Tree>`) — two critic rounds, three real
+corrections, one resolved via the same caller-lifecycle precedent Q133's "go with B" already established
+
+`PLAN-M9.md` P3's mandate was the two "browse a collection" primitives every list/tree-shaped screen
+(S2-S6) needs: a virtualised list with selection/filter/keyboard nav, and a collapsible tree with lazy
+children. Both hand-rolled per the plan's own already-resolved "neither library's own real API
+accommodates virtualisation or lazy tree children" call. Real design decisions, not previously written
+up:
+
+1. `height` is an explicit `<ListPane>` prop, not measured from the terminal — Ink has no element-
+   measurement API, so the owning screen/`<Pane>` supplies it, mirroring `<Pane>`'s own caller-supplied
+   scroll indicator (P2).
+2. `<ListPane>`'s filter has an explicit `isEditingFilter` phase distinct from "a filter is applied":
+   `/` opens editing, `Enter` commits it (narrowing stays, but keystrokes stop being captured as filter
+   text), `Esc` cancels it back to the full list and the pre-filter selection — three states
+   (`unfiltered` / `editing` / `committed`), not two, since `04` §4.2's own text names both a live-narrow
+   behavior and a distinct commit gesture.
+3. **A real, non-obvious test-harness discovery, load-bearing for every keyboard-driven test in this
+   piece and likely every future one**: `useInput`'s own effect (which wires the fake stdin's `readable`
+   listener via `setRawMode(true)`) runs asynchronously after the initial commit, so `stdin.write(...)`
+   issued immediately after `render(...)` with no tick in between is silently dropped — nothing is
+   listening yet. Worse, since both components' `useInput` callbacks are fresh closures every render
+   (branching directly on state like `isEditingFilter`, not through a functional updater), a *later*
+   keystroke sent before React's own effect-dependency-driven resubscription completes is processed by
+   a *stale* closure that still sees the *previous* render's state — reproduced directly: sending `/`
+   then `item-1` back-to-back with no flush between them left `item-1` processed by the pre-`/` handler,
+   which still read `isEditingFilter` as `false` and silently dropped it as an unmapped browse key
+   instead of typing it into the filter. **Fixed** by a `press(stdin, data)` test helper that flushes
+   (`setImmediate`) after every single keystroke, used throughout both test files — not a workaround for
+   a test-only artifact, since the identical resubscription-timing gap exists in a real terminal too
+   (just usually faster than a human can type through it).
+4. `<Tree>` deliberately does not mirror `<ListPane>`'s `g`/`G`/`/`-filter: a tree's own visible row set
+   already reshapes on every expand/collapse, and neither key has an established meaning here yet —
+   documented as deferred rather than guessed at, matching this codebase's own standing discipline
+   against inventing behavior a spec doesn't actually ask for.
+5. `<Tree>`'s lazy-loader caching (`loadedChildren`) is real and per-node, verified round 2 also proves
+   collapse-then-re-expand-before-the-original-load-settles never triggers a second concurrent fetch —
+   the `loading` guard persists across a collapse, so the single in-flight promise is reused rather than
+   restarted, a deliberate (if slightly UX-visible) choice to avoid a duplicate-fetch race rather than
+   introduce one.
+6. `defaultListItemLabel` (P3's own realization of P2's "Depends on: `<StatusGlyph>` used inside default
+   `renderItem`" note) is exported standalone rather than wired as `<ListPane>`'s own default `renderItem`
+   value — `renderItem` is a required prop, not optional-with-a-fallback, since a generic `T` gives this
+   component no way to know a row has a `StatusState` at all; callers that want the common "label + one
+   of the 8 states" shape call the helper explicitly from their own `renderItem`.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: three real
+findings, all reproduced directly, all fixed
+
+1. **[BLOCKING] `<Tree>`'s lazy-loader call (`void loader().then(...)`) had no `.catch()` at all — a**
+   **rejected promise (any real fetch failure) left the node showing a `running` `<StatusGlyph>`**
+   **forever, an unhandled promise rejection, and no way to ever retry it.** Reproduced directly with a
+   controllable-reject promise. **Fixed:** a `.catch()` clears `loading`, adds the node to a new `failed`
+   state set, and un-expands the node (so it's not left expanded over nothing); a `fail` `<StatusGlyph>`
+   renders in the loading-glyph's own place. Pressing `→` again retries, since a failed attempt was never
+   cached in `loadedChildren`.
+2. **[MAJOR/BLOCKING] `<Tree>`'s `expanded`/`loadedChildren`/`loading` state is keyed only by `node.id`,**
+   **scoped to the component instance's whole lifetime, not to the specific `nodes` prop currently**
+   **passed in.** Reproduced directly: re-rendering the *same* `<Tree>` element with a genuinely different
+   `nodes` prop that reused an id (e.g. switching between two projects' spec graphs built by a generic id
+   scheme) showed the *previous* project's stale cached children under the new project's label, and never
+   called the new project's own loader at all — a real, silent wrong-data bug on a plausible, non-
+   adversarial prop update. This is the identical "does an existing instance detect a real underlying-
+   dataset swap, or is that a caller-lifecycle concern" question `EngineClient` already answered (item 12
+   in Q133 above) — resolved the same way, deliberately, rather than attempting a fourth heuristic:
+   **not fixed via internal state-reset logic.** Instead, documented prominently in `tree.tsx`'s own top
+   doc comment as a caller-lifecycle concern: a caller switching `<Tree>` to a genuinely different
+   dataset that might reuse ids must give the element a distinct React `key` prop, forcing a real
+   remount with fresh state — the ordinary, idiomatic React answer to "this collection's own identity
+   changed" (the same mechanism `key` already exists for on any list). Two new tests: one reproducing the
+   hazard directly (same `key`, reused id → stale data shown, new loader never called — documenting the
+   real hazard rather than hiding it), one proving the escape hatch (different `key` → clean remount, no
+   stale data, correct loader called).
+3. **[MAJOR] `<ListPane>` tracked the current selection as a raw numeric index — when `items` itself**
+   **changed shape (e.g. an earlier item removed from a live-updating list), the index stayed numerically**
+   **valid but silently pointed at the wrong *item*.** Reproduced directly: select index 1 (`Bob`) in
+   `[Alice, Bob, Carol]`; re-render with `[Bob, Carol]` (Alice removed) — the pane now shows `Carol`
+   selected, not `Bob`, with no signal anything jumped. A completely ordinary update, not an adversarial
+   one. **Fixed:** selection state changed from a numeric `selectedIndex` to `selectedId: string |
+   undefined`; the current index is re-resolved from `visibleItems.findIndex(item => getId(item) ===
+   selectedId)` on every render (falling back to index 0 if the selected item is genuinely gone, e.g.
+   filtered out or removed entirely — a sane, disclosed re-anchor, not a crash or a silently-lost
+   selection). Movement keys (`↑↓/jk/g/G`) now compute the target item from the resolved index and call
+   `setSelectedId(getId(target))`, never mutating a bare number directly. New tests prove both the
+   original reshuffle scenario and the item-removed-entirely fallback.
+
+### Round 2 — a second, fresh critic verifying round 1's own three fixes, specifically probing the `key`-
+remount design's own tradeoffs and hunting for a race in the new `.catch()`/`failed` logic: nothing new
+found
+
+Verified fix 1 and fix 2 behave exactly as their own doc comments claim, independently reproduced.
+Verified fix 3's fallback covers both "selected item removed" and "items starts empty then populated
+later" (the `useState` lazy-initializer's one-time-only concern doesn't actually matter, since the
+render-time `clampedIndex` fallback already covers the gap independent of when the initializer ran).
+Deliberately hunted for a stale-rejection race (expand → collapse → re-expand before the first load
+settles, and two `→` keypresses delivered within the same tick) — found none: the `loading` guard
+persists across a collapse, so only one loader call is ever in flight per node, by construction, not by
+luck. No new findings.
+
+**Final state: 142 real tests** (up from 133 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.91% statements /
+91.5% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
+floor.

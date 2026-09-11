@@ -8321,3 +8321,58 @@ branches / 100% functions / 100% lines on every file in the diff, comfortably ab
 `SPEC-QUESTIONS.md` Q134 has the full record.
 
 This is the second of M9's 16 planned pieces.
+
+## M9 P3 — Navigation primitives: `<ListPane>`, `<Tree>` (`04` §4.1, §4.2, §4.3, §4.5)
+
+**Mandate:** the two "browse a collection" primitives every list/tree-shaped screen (S2-S6) needs — a
+virtualised list with selection/filter/keyboard nav, and a collapsible tree with lazy children. Both
+hand-rolled, per `PLAN-M9.md`'s own already-resolved call that neither library's real API accommodates
+virtualisation or lazy tree children. Six real design decisions, including a load-bearing test-harness
+discovery (`useInput`'s effect-timing/stale-closure gap, requiring a per-keystroke flush helper used
+throughout both test files), are recorded in `SPEC-QUESTIONS.md` Q135.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: three real
+findings, all reproduced directly, all fixed
+
+1. **[BLOCKING] `<Tree>`'s lazy-loader call had no `.catch()` — a rejected promise left a node showing**
+   **`running` forever, an unhandled rejection, with no way to retry.** **Fixed:** a `.catch()` clears
+   `loading`, marks the node `failed`, and un-expands it; a `fail` `<StatusGlyph>` renders in place.
+   Pressing `→` again retries, since nothing was cached on failure.
+2. **[MAJOR/BLOCKING] `<Tree>`'s `expanded`/`loadedChildren`/`loading` state is keyed only by `node.id`,**
+   **scoped to the component instance's whole lifetime, not to the specific `nodes` prop passed in —**
+   **re-rendering the same element with a genuinely different `nodes` prop that reused an id showed the**
+   **previous dataset's stale cached children, and never called the new loader.** The identical "does an
+   existing instance detect a real underlying-dataset swap" question `EngineClient` already answered
+   (M9 P1) — resolved the same way: **not fixed via internal state-reset heuristics.** Documented as a
+   caller-lifecycle concern: a caller switching to a genuinely different dataset that might reuse ids
+   must give `<Tree>` a distinct React `key`, forcing a real remount — the ordinary React answer to a
+   collection's own identity changing. Two new tests prove both the hazard (same key → stale data) and
+   the escape hatch (different key → clean remount).
+3. **[MAJOR] `<ListPane>` tracked selection as a raw numeric index — when `items` changed shape (an**
+   **earlier item removed from a live list), the index stayed valid but silently pointed at the wrong**
+   **item.** Reproduced on a completely ordinary update, not an adversarial one. **Fixed:** selection
+   state changed from `selectedIndex` to `selectedId`, re-resolved against `visibleItems` via `getId` on
+   every render, falling back to index 0 only when the selected item is genuinely gone. Movement keys
+   compute the target item and call `setSelectedId`, never mutating a bare number.
+
+Also confirmed clean by the critic round, no fix needed: filter-vs-nav-key collision (typing `g`/`j`/`G`
+into the filter correctly inserts text, no collision, since `isEditingFilter` is checked first);
+`clampedIndex`/`scrollOffset` slice math never produces a negative or out-of-bounds index; `height`
+changing dynamically; `preFilterSelectedId` restore when the selection survives filtering.
+
+### Round 2 — a second, fresh critic verifying round 1's own three fixes, specifically probing the `key`-
+remount design's own tradeoffs and hunting for a race in the new `.catch()`/`failed` logic: nothing new
+found
+
+Verified all three fixes behave exactly as documented. Deliberately hunted for a stale-rejection race
+(expand → collapse → re-expand before the first load settles, and two `→` keypresses in the same tick) —
+found none: the `loading` guard persists across a collapse, so only one loader call is ever in flight per
+node, by construction. Verified the id-based selection's fallback covers both "item removed" and "items
+starts empty then populated" without getting stuck.
+
+**Final state: 142 real tests** (up from 133 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.91% statements /
+91.5% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
+floor. `SPEC-QUESTIONS.md` Q135 has the full record.
+
+This is the third of M9's 16 planned pieces.
