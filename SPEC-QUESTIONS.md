@@ -11563,3 +11563,73 @@ directly into the open contribution field) — not a live bug given the gating i
 `pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
 97.15% statements / 91.29% branches / 95.4% functions / 98.56% lines across the full `packages/tui/src`
 scope, comfortably above the 85%/80% floor.
+
+## Q145 — M9 P13: `<CostScreen>` (S7 Cost & telemetry) — two real `PLAN-M9.md`-prose-vs-real-code
+corrections settled before design, no BLOCKING/MAJOR critic findings, three real MINOR fixes/disclosures
+
+`PLAN-M9.md` P13's mandate is `04` §4.3 S7: spend/token/wall-clock breakdowns, cache-hit indicators,
+budget burn-down, the top-10-most-expensive-steps table, and cost-per-merged-story. This is a purely
+read-only, non-interactive screen — no `useInput` at all, matching the plan's own Surface text, which
+names no keys for S7.
+
+Real design decisions, not previously written up:
+
+1. **`attributedSpend(entries, stepId)` is genuinely step-scoped, confirmed directly against**
+   **`@forge/telemetry/ledger`'s own real signature and `LedgerEntry` shape (no `laneId` field at**
+   **all).** `PLAN-M9.md` P13's own text describes cost-per-merged-story as "total spend attributed to
+   a lane ÷ merged story count," reading as if `attributedSpend` itself computed a lane total — it
+   cannot, since a `LedgerEntry` carries no lane identity to filter by. `topExpensiveSteps` is the real,
+   direct reuse of `attributedSpend` this piece has (once per distinct `stepId`); `costPerMergedStory`
+   is a separate, trivial pure division over `RunReadModel.spentUsd` (already real) and a
+   caller-supplied merged-story count (`LaneReadStatus` has no `'merged'` value; `MergeCompleted` folds
+   into `reduceRun`'s own no-op catch-all group today).
+2. **No real `AdapterCapabilities` field reports "this adapter surfaces cache-hit data" — confirmed**
+   **directly against its full, real field list.** `PLAN-M9.md` P13's own text names a signal that does
+   not exist. The real, grounded signal used instead: `LedgerEntry.cacheReadTokens` (a real, per-entry
+   field) — a cache-hit indicator renders for a step if and only if that step's own ledger entries
+   report `cacheReadTokens > 0` anywhere, never fabricated for an adapter that reports nothing.
+3. The top-10 table's own tiebreak is deterministic and explicit (equal-cost steps ordered by `stepId`
+   ascending, never left to `Array.prototype.sort`'s own engine-dependent stability for equal keys),
+   matching every other real ranking function this milestone has already built (`rankNextActions`, P7).
+
+### Round 1 — fresh critic: no BLOCKING/MAJOR findings, three real MINOR issues
+
+**[MINOR] `topExpensiveSteps(entries, limit)`'s own public contract was weaker than it looked**:
+`ranked.slice(0, limit)` for a negative `limit` does not mean "take zero" — `Array.prototype.slice`'s
+own real semantics drop only the last `|limit|` elements and keep everything else, so
+`topExpensiveSteps(entries, -1)` on a 3-entry array returned 2 items, not 0. Currently unreachable (the
+one real call site always uses the default `10`), but a real gap in the exported function's own
+contract. **Fixed:** clamped via `Math.max(0, limit)` before slicing.
+
+**[MINOR] `costPerMergedStory`'s own `totalSpentUsd` check was narrower than the codebase's own**
+**established neighbouring convention.** `Number.isFinite` alone accepts negative values, which would
+render as a nonsensical `$-2.50`-shaped string — the identical "finite alone isn't enough, a real $
+amount also has no legitimate negative domain" reasoning `@forge/telemetry/ledger`'s own
+`isFiniteNonNegativeNumber` already documents for the same class of field. Currently unreachable
+(`readModel.spentUsd` is itself already built via that same convention and can never go negative), but
+the exported pure function's own contract didn't say so. **Fixed:** a local
+`isFiniteNonNegativeNumber` mirrors the established convention.
+
+**[MINOR, disclosed not fixed] `sumBy`'s own per-agent/per-model grouping trusts exact string equality**
+**on `agent`/`model`, with no case/whitespace canonicalisation anywhere in the real ingestion path** —
+confirmed directly against `@forge/telemetry/ledger`'s own `isUsageRecordedPayload` (validates
+non-blank, not canonical). Two entries differing only in case would silently split into two rows rather
+than summing into one. Left as a documented, disclosed assumption rather than fixed here: deciding the
+real canonical form for an agent/model identifier is a `@forge/adapter-kit`-level policy question this
+screen has no authority to invent unilaterally.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes: confirmed correct and complete, no
+new findings
+
+Hand-verified the limit clamp against `limit = 0`/a large `limit`/the untouched default call site;
+hand-verified the tightened `costPerMergedStory` check still accepts every legitimate input (including
+`-0`, traced to render as `"0.00"`, not a broken string) while correctly rejecting only genuinely
+invalid ones; independently traced `@forge/telemetry/ledger`'s own real ingestion path and confirmed
+`CostScreen` is never actually responsible for defending against a malformed `LedgerEntry` reaching it,
+since `isUsageRecordedPayload` already rejects one at the source — closing the "is this deeper defense
+even needed" question definitively rather than leaving it assumed.
+
+**Final state: 419 real tests** (up from 399 before this piece; `cost.test.tsx` alone has 20). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 96.99%
+statements / 91.37% branches / 95% functions / 98.34% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor.

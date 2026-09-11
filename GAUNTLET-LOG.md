@@ -8782,3 +8782,39 @@ an additional test before commit.
 scope, comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q144 has the full record.
 
 This is the twelfth of M9's 16 planned pieces.
+
+## M9 P13 — `<CostScreen>`: S7 Cost & telemetry (`04` §4.3 S7)
+
+**Mandate:** spend/token/wall-clock breakdowns, cache-hit indicators, budget burn-down, top-10 most
+expensive steps, and cost-per-merged-story — a purely read-only, non-interactive screen. Real design
+decisions are recorded in `SPEC-QUESTIONS.md` Q145, including two real corrections against
+`PLAN-M9.md`'s own literal prose (settled before design, not discovered mid-build): `attributedSpend`
+is genuinely step-scoped, not lane-scoped (`LedgerEntry` carries no lane identity at all), and no real
+`AdapterCapabilities` field reports cache-hit support — the real, grounded signal used instead is
+`LedgerEntry.cacheReadTokens` directly.
+
+### Round 1 — fresh critic: no BLOCKING/MAJOR findings, three real MINOR issues
+
+Two real, if currently-unreachable, contract gaps were fixed: `topExpensiveSteps`'s own `limit`
+parameter didn't guard against `Array.prototype.slice`'s own negative-index semantics (a negative limit
+returned MORE items, not zero); `costPerMergedStory`'s own `totalSpentUsd` check accepted negative
+values, which would render as a nonsensical `$-2.50`-shaped string, narrower than this codebase's own
+established `isFiniteNonNegativeNumber` convention for exactly this class of field. A third finding
+(`sumBy`'s per-agent/per-model grouping trusting exact string equality with no case canonicalisation)
+was deliberately disclosed rather than fixed — deciding the real canonical form for an identifier is a
+`@forge/adapter-kit`-level policy question this screen has no authority to invent unilaterally.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes: confirmed correct and complete, no
+new findings
+
+Hand-verified both fixes against their own edge cases and the untouched default call sites, and
+independently traced the real ingestion path to confirm this screen is never actually responsible for
+defending against a malformed `LedgerEntry` reaching it in the first place — closing that question
+definitively rather than leaving it assumed.
+
+**Final state: 419 real tests** (up from 399 before this piece; `cost.test.tsx` alone has 20). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 96.99%
+statements / 91.37% branches / 95% functions / 98.34% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q145 has the full record.
+
+This is the thirteenth of M9's 16 planned pieces.
