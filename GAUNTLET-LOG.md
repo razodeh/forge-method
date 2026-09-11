@@ -8427,3 +8427,55 @@ a hypothetical third-party diff tool, not FORGE's own usage).
 floor. `SPEC-QUESTIONS.md` Q136 has the full record.
 
 This is the fourth of M9's 16 planned pieces.
+
+## M9 P5 — Modal infrastructure: `<Modal>`, `<QuestionForm>`, `<CommandPalette>`, `<HelpOverlay>` (`04`
+§4.2, §4.4, §4.5)
+
+**Mandate:** the four components `04` §4.4's own six modal flows all render through — a focus-trapping
+overlay, the elicitation-question renderer, the `:` command palette, and contextual help. `Question`/
+`Answer`'s five-kind vocabulary (select/multiselect/text/confirm/rank) is this piece's own fresh
+invention — a dedicated research pass confirmed nothing else in this codebase encodes it. Real design
+decisions are recorded in `SPEC-QUESTIONS.md` Q137.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: five real
+findings, three fixed, two disclosed
+
+1. **[MAJOR] `<CommandPalette>`'s fuzzy-match scoring gave wrong/inverted rankings** (a single greedy
+   forward pass took the *first* occurrence of each query character, not the tightest span) — escalated
+   into a genuine three-round saga on one ~15-line function; see below.
+2. **[MAJOR] `<QuestionForm>`'s `TooManyQuestionsError` only reached a caller cleanly on the very first**
+   **render** — a later re-render into >3 questions was swallowed by Ink's own internal error boundary
+   into an uncatchable stack-trace dump. **Fixed:** a new, standalone `assertQuestionCount(questions)`
+   for real callers to call themselves before ever constructing/updating a `<QuestionForm>` element,
+   sharing the identical check the component's own in-render throw now calls directly.
+3. **[MAJOR] `recommended` was dead prop surface for 3 of 4 question kinds, and didn't even preselect**
+   **`select`'s own initial cursor** — only a label suffix, contradicting §4.4's own "recommended default
+   preselected" hard-MUST. **Fixed:** a new `initialStateFor(question)` helper seeds real starting
+   state from each question's own `recommended` field, for the first question and every later one.
+4. **[disclosed, not fixed] Two simultaneously-open `<Modal>`s both respond to a single `Esc`** —
+   `<Modal>` has no "topmost" concept; documented as `<AppShell>`'s (M9 P6) own real modal-stack
+   ownership, not something a single, stack-unaware instance can resolve correctly on its own.
+5. **[disclosed, not fixed] Empty-`options` select/multiselect/rank questions are an unanswerable**
+   **dead-end** beyond the still-functional `Ctrl+U` escape hatch — low severity.
+
+### The `fuzzyMatch` saga — three critic rounds on one function
+
+Round 1's naive single-pass scoring was replaced with a two-pass "forward-then-backward-tighten"
+approach. Round 2, verifying that fix, found it still wrong — a two-pass approach only tightens the span
+for the *first* end the forward pass completes at, never considering a later start elsewhere reaching a
+genuinely tighter completion (counterexample: `"ab"` vs `"axxxxxxxxxxbab"`, two-pass gives span 11, true
+minimum is 1). **Fixed:** try every candidate start position matching the query's first character,
+greedily match forward from each (provably minimal for a fixed start), keep the global minimum across
+all candidates. Round 3, explicitly warned this was the third round on the same function, wrote a
+throwaway property test comparing the shipped function against two independent reference
+implementations (a mirror backward-greedy algorithm, and brute-force enumeration) over 20,000 randomized
+cases plus 6 hand-picked edge cases — zero mismatches, closing the correctness question. A smaller,
+related finding (a multiselect question's `recommended` value naming no real option silently leaking
+into `onAnswer`) was found and fixed in round 2's own pass.
+
+**Final state: 213 real tests** (up from 202 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.51% statements /
+91.77% branches / 99.26% functions / 99.65% lines on every file in the diff, comfortably above the
+85%/80% floor. `SPEC-QUESTIONS.md` Q137 has the full record.
+
+This is the fifth of M9's 16 planned pieces.

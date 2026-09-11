@@ -10854,3 +10854,116 @@ other's output, each closing over what it needs directly.
 `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.9% statements /
 92.3% branches / 100% functions / 100% lines on every file in the diff, comfortably above the 85%/80%
 floor.
+
+## Q137 — M9 P5: modal infrastructure (`<Modal>`, `<QuestionForm>`, `<CommandPalette>`, `<HelpOverlay>`)
+— three critic rounds (two of them on one ~15-line function alone), five real findings, two deliberately
+disclosed rather than fixed
+
+`PLAN-M9.md` P5's mandate was the four components `04` §4.4's six modal flows all render through. Real
+design decisions, not previously written up:
+
+1. **No question-shape vocabulary (select/multiselect/text/confirm/rank) exists anywhere else in this**
+   **codebase for `<QuestionForm>` to conform to.** `PLAN-M9.md` P5's own text names these five forms as
+   coming from "`05`/`16`'s own elicitation mechanisms," but `@forge/adapter-kit`'s control-token
+   vocabulary's `FORGE_ASK` is a flat `{ question, options }` with no kind discriminant, `@forge/engine`'s
+   own `ElicitQuestion` is a flatter `{ name, prompt }`, and `ElicitationRequested`'s own event payload is
+   `unknown`, defined by no code anywhere (confirmed by a dedicated research pass before writing this
+   piece). The `Question`/`Answer` union this piece defines is fresh, not a conformance target.
+2. `<Modal>`'s own focus-trapping cannot be self-contained: Ink's `useInput` has no z-order concept, and
+   `<Modal>` and the screen behind it are ordinary React siblings, not parent/child, so `<Modal>` cannot
+   reach into a sibling's own `useInput` call to disable it. The trap is a real, shared contract instead
+   — `ModalStackContext`/`useIsBackgrounded()` are exported for background content to read; the
+   *orchestrating parent* (`<AppShell>`, M9 P6) is the real integrator that wraps background content in
+   the provider based on its own modal stack. This piece defines the mechanism and proves it end-to-end
+   against a cooperating test double, not against a real screen (which doesn't exist yet).
+3. `<CommandPalette>`'s `commands` vocabulary is injected, not hardcoded — a dedicated research pass
+   confirmed there is no single, centralised registry of `forge` subcommand names/descriptions anywhere
+   in this codebase today (`packages/cli/src/bin.ts`'s own doc comment explicitly disclaims being one).
+4. `onAnswer` fires once per question as it's answered, not once at the end with a batched array — a
+   caller can react to or persist partial progress through a still-in-progress form.
+
+### Round 1 — fresh critic, told to actually run the code and try to break each component: five real
+findings
+
+1. **[MAJOR] `<CommandPalette>`'s fuzzy-match scoring used a single greedy forward pass (first**
+   **occurrence of each query character), producing wrong/inverted rankings** — a tight, contiguous
+   match could rank behind a scattered one. Reproduced: for commands `run pause`/`run resume`/`gate
+   approve`/`gate reject`, typing `ap` ranked `run resume`/`run pause` (matched only via scattered
+   letters in "resume"/"pause") ahead of `gate approve` (where "ap" is a literal contiguous substring of
+   "approve"), directly contradicting the file's own "tighter cluster ranks first" doc comment. This
+   escalated into a genuine three-round saga on one ~15-line function — see the dedicated subsection
+   below.
+2. **[MAJOR] `<QuestionForm>`'s `TooManyQuestionsError` throw only reaches a caller cleanly on the very**
+   **first render.** Reproduced directly: mounting with ≤3 questions then re-rendering into >3 does not
+   raise a catchable exception — Ink's own internal error boundary (`componentDidCatch` -> `onExit`)
+   intercepts the render-phase throw and tears the tree down into a raw stack-trace dump on screen,
+   never a `try`/`catch`-able exception a caller's own code can see; confirmed independently that
+   `ink-testing-library`'s own `render()` wrapper doesn't even expose `waitUntilExit` to observe the
+   rejection Ink's real instance produces internally. **Fixed:** a new, standalone exported
+   `assertQuestionCount(questions)` throws the identical `TooManyQuestionsError` in ordinary,
+   caller-side control flow, documented as what a real caller must call itself before ever
+   constructing/updating a `<QuestionForm>` element — the identical "this is a caller-lifecycle
+   responsibility, not something one already-mounted instance can detect and recover from" resolution
+   this package has already reached twice before (`Tree`'s reused-id hazard, M9 P3; `EngineClient`'s
+   restart question, M9 P1, Q133's "go with B"). The component's own in-render throw now calls
+   `assertQuestionCount` directly (never duplicating the `MAX_QUESTIONS` check), so the two call sites
+   can never disagree.
+3. **[MAJOR] `recommended` was dead prop surface for 3 of 4 question kinds, and didn't even affect**
+   **`select`'s own initial cursor position — only a label suffix.** Reproduced: `multiselect`/
+   `text`/`confirm`'s own `recommended` fields were declared, accepted, and never read anywhere;
+   `select`'s own cursor always started at index 0 regardless of which option was recommended, requiring
+   an explicit keypress to even reach it — directly contradicting §4.4's hard-MUST "recommended default
+   preselected" text. **Fixed:** a new `initialStateFor(question)` helper seeds real starting
+   `cursor`/`selected`/`text` from each question's own `recommended` field, called both as the lazy
+   initializer for question 0 and again inside `advance()` for whichever question comes next (so a
+   multi-question form honours every question's own recommended default, not just the first).
+   `confirm`'s own `recommended` is rendered as an explicit "(recommended: y)"-style hint, since a
+   confirm question answers immediately on keypress with no cursor state to preselect.
+4. **[MINOR/MAJOR, a real design gap, disclosed not fixed] Two simultaneously-`open` `<Modal>` instances**
+   **both respond to a single `Esc` press.** Reproduced: mounting two `<Modal open>` siblings and
+   pressing `Esc` once calls both `onClose` callbacks — `<Modal>` has no "topmost" concept at all.
+   `PLAN-M9.md` P6's own text names a real "modal stack" whose own Check reads "`Esc` pops exactly one
+   level, never the whole stack" — deciding which modal is topmost, and routing `Esc` (and the focus
+   trap) to only that one, is that stack's own real ownership, not something a single, stack-unaware
+   `<Modal>` instance could resolve correctly without knowing about every other mounted instance.
+   Documented prominently in `modal.tsx`'s own top doc comment as a deliberately un-enforced invariant
+   attributed explicitly to P6's own stack.
+5. **[MINOR, disclosed not fixed] select/multiselect/rank questions with an empty `options` array are an**
+   **unanswerable dead-end** — `Enter` never fires since the indexed option is always `undefined`; only
+   `Ctrl+U` ("I don't know") escapes. Low severity since the escape hatch still works regardless of
+   `options.length` (the `Ctrl+U` branch is checked before any kind-specific branch).
+
+### The `fuzzyMatch` saga — three critic rounds on one ~15-line function
+
+**Round 1's fix** (a naive single-forward-pass score) was replaced with a two-pass "forward pass finds
+an end, backward pass tightens the start from that end" approach.
+
+**Round 2**, verifying round 1's fix, found it still wrong: a two-pass approach only tightens the span
+for the *one* end position the forward pass happens to complete at first, never considering that a
+*later* start elsewhere in the string might reach a genuinely tighter completion. Counterexample:
+query `"ab"` against `"axxxxxxxxxxbab"` — two-pass gives span 11 (locked onto the `a` at index 0 and the
+first `b` at index 11), when the true minimal span is 1 (the tight `"ab"` at indices 12-13). **Fixed:**
+try every index where `target` matches the query's first character as a candidate start, greedily match
+forward from each one (provably minimal for a fixed start — taking the earliest occurrence of each
+subsequent character can never do worse than any other valid completion from the same start), and keep
+the smallest span across every candidate — O(length²) per keystroke, justified given real `forge`
+subcommand list sizes are short, not an unbounded corpus.
+
+**Round 3**, verifying round 2's fix and explicitly warned this was the third round on the same
+function, wrote a throwaway property test comparing the shipped function against two independent
+references (a mirror backward-greedy algorithm, and pure brute-force subsequence enumeration for short
+queries) over 20,000 randomized cases plus 6 hand-picked edge cases (empty query, case-fold mismatches,
+query longer than target, repeated-character queries). Zero mismatches. This closes the correctness
+question: the "fixed-start greedy-forward is provably minimal" claim holds, and trying every start and
+taking the global minimum is therefore globally correct.
+
+A separate, smaller finding surfaced during round 2's own review and fixed in the same round: a
+`multiselect` question's `recommended` array is now filtered against the question's own real `options`
+before seeding initial `selected` state, so a caller typo (a `recommended` value naming no real option)
+no longer silently leaks into `onAnswer`'s own submitted `values` array as an answer no option ever
+actually offered.
+
+**Final state: 213 real tests** (up from 202 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.51% statements /
+91.77% branches / 99.26% functions / 99.65% lines on every file in the diff, comfortably above the
+85%/80% floor.
