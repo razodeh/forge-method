@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`StatusGlyph > renders a distinct ascii frame for state blocked 1`] = `"# blocked"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state fail 1`] = `"x fail"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state pass 1`] = `"+ pass"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state paused 1`] = `"= paused"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state running 1`] = `"o running"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state skipped 1`] = `"- skipped"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state waiting 1`] = `". waiting"`;
+
+exports[`StatusGlyph > renders a distinct ascii frame for state warn 1`] = `"! warn"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state blocked 1`] = `"⊘ blocked"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state fail 1`] = `"✗ fail"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state pass 1`] = `"✓ pass"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state paused 1`] = `"⏸ paused"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state running 1`] = `"● running"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state skipped 1`] = `"↷ skipped"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state waiting 1`] = `"◐ waiting"`;
+
+exports[`StatusGlyph > renders a distinct unicode frame for state warn 1`] = `"⚠ warn"`;

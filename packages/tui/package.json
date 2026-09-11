@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./env": "./src/env.ts",
-    "./state": "./src/state/index.ts"
+    "./state": "./src/state/index.ts",
+    "./components": "./src/components/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -15,6 +16,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@forge/telemetry": "workspace:*"
+    "@forge/telemetry": "workspace:*",
+    "ink": "5.2.1",
+    "react": "18.3.1",
+    "string-width": "7.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.31",
+    "ink-testing-library": "4.0.0",
+    "strip-ansi": "7.2.0"
   }
 }
