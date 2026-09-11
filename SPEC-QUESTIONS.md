@@ -11800,3 +11800,101 @@ handful of coverage-threshold failures in that run are all pre-existing gaps in 
 `adapter-claude-code`, `agents`, `cli`, `scripts` — none touched by this piece).
 
 This is the fifteenth of M9's 16 planned pieces.
+
+## Q148 — M9 P16: Fuzz harness and event-replay golden-file tests (`04` §4.8) — the final piece of M9,
+two critic rounds, both finding real gaps in the fuzz harness's own error-detection coverage, neither
+reaching escalation
+
+`PLAN-M9.md` P16's mandate is `04` §4.8's own two most distinctive, named test requirements: a real,
+seeded 10,000-iteration random resize + key fuzz test, and event-replay-to-golden-frame tests. This is
+the sixteenth and final piece of M9 — a cross-cutting test-infrastructure piece with no new screen or
+component of its own, like P15 before it.
+
+**Two new test surfaces:**
+
+1. `packages/tui/test/fuzz/resize-key-fuzz.test.tsx` — a `mulberry32`-seeded PRNG drives a real, fully-
+   composed `<AppShell>` (all 8 real screens: Home, RunBoard, Specs, Kb, Gates, Sessions, Cost,
+   Customize) through 10,000 randomised resize + key iterations, asserting zero thrown errors and zero
+   unhandled promise rejections. A `<FuzzErrorBoundary>` is placed as `<AppShell>`'s own immediate parent
+   to catch render-phase throws (`ink-testing-library`'s own `render()` already wraps everything in
+   Ink's own internal error boundary, so a bare `try`/`catch` around `render()` itself would never see a
+   thrown error). A mutation-tested negative control (a deliberately broken screen that throws under a
+   real, reachable narrow-terminal condition) proves this detection mechanism genuinely works.
+2. `packages/tui/test/replay/event-replay.test.tsx` — feeds 4 real, frozen NDJSON fixtures
+   (`test/fixtures/events/{happy-path,failure-retry,abort,gate-blocked}.ndjson`) through the *real*
+   production pipeline end to end: a real `createEngineClient` polling a real file on disk, feeding
+   `<AppShell>`'s own real, internal `createStore`/`reduceRun` reducer directly — never a test-only
+   stand-in store. The final rendered frame (`<AppShell>` composing the real `<HomeScreen>`) is asserted
+   byte-for-byte against frozen golden files in `test/fixtures/golden/*.golden.txt`, in both normal and
+   `--ascii` mode. A 5th fixture (`gap-mid-run.ndjson` — `happy-path.ndjson` with one line's own `seq`
+   removed) drives two more tests: a real seq-gap surfaces as a `'gap'` notification without crashing,
+   preserving whatever partial state was read before the gap; and a *fresh* `EngineClient` constructed
+   for the same run (the codebase's own already-documented real recovery path — `engine-client.ts`'s own
+   doc comment: a restart is a caller-lifecycle concern, handled by constructing a new client, never by
+   one instance self-healing an already-broken log) reaches the correct, complete golden frame.
+3. **A related naming fix, not a new mechanism**: several existing P15-era `describe` blocks (in
+   `test/ascii-matrix.test.tsx`, `test/components/app-shell.test.tsx`, `test/env.test.ts`,
+   `test/linear.test.tsx`) were prefixed with `'tui degradation: '` so `specs/22`'s own literal M9
+   exit-test command `--testNamePattern "tui degradation"` actually selects something — it selected zero
+   tests before this fix. The new fuzz describe block is named `'tui fuzz: resize + key (04 §4.8)'` so
+   `--testNamePattern "tui fuzz"` selects it too. All three of `specs/22`'s own literal M9 exit-test
+   commands (translated to this repo's real tooling per `PLAN-M9.md` P16's own note) now select and pass
+   a non-trivial number of tests, confirmed directly.
+
+### Round 1 — fresh critic: two real, verified gaps in the fuzz harness's own error-detection coverage
+
+**Finding 1**: `<FuzzErrorBoundary>` only catches render-phase throws. The critic directly probed Ink's
+own dispatch internals and confirmed `useInput` handlers — where all 8 real screens' actual interactive
+logic lives, not their render bodies — are invoked synchronously from a plain `EventEmitter.emit` chain
+starting at `stdin.write()`, entirely outside React's render/commit cycle. A throw from inside a
+`useInput` handler therefore propagates synchronously out of `stdin.write()` itself and is never seen by
+any React error boundary. The main loop's `stdin.write()` calls (70% of all 10,000 iterations) were
+unwrapped, so this dominant bug class — the one a random-keypress fuzzer is best positioned to find —
+would still fail the test (as a raw uncaught exception) but without the intended "iteration N, seed S,
+reproducible" diagnostic the file's own header comment promised.
+
+**Finding 2**: the fuzz test's fake `EngineClient` (`noopClient()`) never actually called a subscribed
+listener, so `<AppShell>`'s own real, debounced `store.dispatch` → `setTimeout(flush, REDRAW_WINDOW_MS)`
+redraw path — the one genuinely asynchronous code path in the whole fuzzed component tree — never fired
+once across all 10,000 iterations, leaving the `process.on('unhandledRejection', ...)` detection wired
+but with no real async work to ever exercise it against.
+
+**Fixed**: a new `dispatchOneAction()` helper wraps the real `stdin.write()`/`stdout.emit('resize')` call
+site in its own `try`/`catch`, converging on the identical `caughtErrors` array the boundary uses. A
+second, new negative-control test deliberately reintroduces a bug that throws from inside a real
+`useInput` handler (not a render body) and confirms this `try`/`catch` genuinely catches it. `noopClient`
+was replaced with `fuzzClient()`, which actually stores and calls its subscribed listeners; the main loop
+now calls `client.emit(...)` with a real, synthetic `ForgeEvent` every 7th iteration, interleaved with
+the random resize/key chaos — genuinely exercising the debounce-timer path, including real races against
+further dispatches and eventual unmount.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes: both confirmed real and correct, one
+further real (but currently latent) gap found
+
+Independently re-read the file, re-traced `fuzzClient().emit()` through to `store.dispatch` and the real
+`REDRAW_WINDOW_MS` timer, confirmed the new negative-control test genuinely throws from a `useInput`
+callback rather than a render body, and re-ran every required command (full `packages/tui` suite: 506/506
+passing; typecheck/lint/prettier/boundaries all clean; all three of `specs/22`'s own literal exit-test
+commands passing non-trivial counts).
+
+Found a **third, previously-unnoticed unwrapped synchronous-throw call site**: the main loop's own
+periodic `client.emit(...)` call itself. `createStore`'s own `dispatch()` (`store.ts`) deliberately
+re-throws an `AggregateError` if any of its own listeners throws (by its own documented design, for a
+real caller to handle), and `fuzzClient()`'s own `emit` had no per-listener isolation the way the real
+`EngineClient.notify()` provides — so a future throwing `reduceRun` branch for one of the fuzzed event
+types, or a throwing `<AppShell>`-internal store listener, would propagate straight out of that call,
+uncaught by either of round 1's own two detection paths. Confirmed currently latent, not live-failing:
+every one of the 8 fuzzed `FUZZ_EVENT_TYPES` maps to a safe, non-throwing `reduceRun` branch today. The
+critic's own recommendation was "Go, with a minor follow-up suggested (not blocking)" — triaged and fixed
+immediately anyway, in the same spirit as every prior piece's own critic-round discipline this milestone:
+the `client.emit(...)` call site is now wrapped in the identical `try`/`catch` pattern, and the header
+comment's own "the one real call site" claim was corrected to name all three.
+
+**Final state: 506 real tests** (up from 505 after P15's own close; the fuzz file's own 3rd negative-
+control test is the only net addition — the two golden-frame/gap-recovery test files from this piece's
+own first build already landed in that 505 count during in-progress verification). `pnpm typecheck`,
+`eslint packages/tui`, `prettier --check packages/tui`, `pnpm run boundaries` all clean. All three of
+`specs/22`'s own literal M9 exit-test commands pass: `node scripts/run-tests.mjs run packages/tui`
+(506/506), `--testNamePattern "tui fuzz"` (3/3), `--testNamePattern "tui degradation"` (52/52).
+
+This is the sixteenth and final piece of M9.
