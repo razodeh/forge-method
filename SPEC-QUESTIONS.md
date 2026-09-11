@@ -10967,3 +10967,114 @@ actually offered.
 `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.51% statements /
 91.77% branches / 99.26% functions / 99.65% lines on every file in the diff, comfortably above the
 85%/80% floor.
+
+## Q138 — M9 P6: `<AppShell>` — three critic rounds, all on the same real integration seam (the `q`
+quit binding's own interaction with the modal stack), plus two real, independently-found integration
+bugs elsewhere
+
+`PLAN-M9.md` P6's mandate was the piece that makes `@forge/tui` a real, running application for the
+first time: header/footer, screen router, modal stack, resize, redraw coalescing, and every global key
+binding not already owned by a leaf component. This is the biggest, most integration-heavy piece in the
+milestone so far — it composes five already-built pieces (`EngineClient`, `createStore`/`reduceRun`/
+`RunReadModel`, `<Modal>`/`ModalStackContext`/`useIsBackgrounded`, `RenderMode`, Ink's own `useStdout`/
+`useInput`), so its own bugs were more likely to be *integration* bugs (two correct pieces composed
+wrong) than bugs local to one function — confirmed by what actually surfaced.
+
+Real design decisions, not previously written up:
+
+1. `<AppShell>` owns the *only* real `TuiStore<RunReadModel, ForgeEvent>` this application has —
+   `EngineClient` (P1) only ever delivers raw `ForgeEvent`s, never a projected read model; `<AppShell>`
+   is the first piece to actually wire `client.subscribe` to `store.dispatch(event)` and derive a real
+   `RunReadModel` from it.
+2. The modal stack is a real `readonly ModalEntry[]`, but only ever ONE `<Modal>` is ever mounted at a
+   time, always showing the topmost entry's own content — this is what actually resolves the "two
+   simultaneously-open `<Modal>`s both respond to one `Esc`" hazard `<Modal>`'s own doc comment (M9 P5)
+   disclosed rather than fixed: `<AppShell>` is the real stack-owner P5 deferred to.
+3. `mode` is the *initial* `RenderMode`; `columns`/`lines` are re-derived live on Ink's own `resize`
+   event via `useStdout().stdout` (a real `EventEmitter` in both the real terminal and
+   `ink-testing-library`'s own fake one, confirmed directly — the fake `Stdout.columns` getter is
+   hardcoded to 100 with no `rows` property at all, so tests exercise resize via `Object.defineProperty`
+   plus a direct `rows` assignment, then `stdout.emit('resize')`).
+4. `p`/`r`/`a`/`x` are real key bindings `<AppShell>` owns, but their actual effect is injected via
+   optional callback props — wiring them to a real engine command is out of this piece's own scope (no
+   command-dispatch mechanism exists yet anywhere in this codebase).
+5. `⚙ N`/`⚠ escalations: N` header badges (`04` §4.2) are not implemented — confirmed no upstream
+   `RunReadModel` field carries customization-overlay or escalation counts yet, a reasonable scope
+   deferral, not an oversight, matching the same disclosed-scope pattern as `p`/`r`/`a`/`x`.
+
+### A bug caught by this piece's own test-writing, before any critic round
+
+While writing the modal-stack tests, a genuine bug surfaced directly: `<Modal>`'s own rendered content
+was nested *outside* `AppModalStackContext.Provider` in an early draft, meaning any modal's own content
+calling `useAppModalStack()` silently read the context's no-op default (`push`/`pop` that do nothing) and
+could never actually stack a second modal at all — the exact scenario `<Modal>`'s own P5 doc comment
+names as the reason a real stack-owner would eventually be needed. Fixed before ever submitting the
+diff for critic review, by moving `<Modal>` inside the provider.
+
+### Round 1 — fresh critic, told this piece is more likely to have integration bugs than local ones: two
+real findings
+
+1. **[BLOCKING] The quit prompt never stacked on top of a screen's own modal — `q` was silently**
+   **swallowed instead.** `<AppShell>`'s own `useInput` (owning `q`, among every other global key) was
+   gated by `isActive: !anyModalOpen`, true for *any* stack entry, not just the quit prompt itself. The
+   moment a screen pushed its own modal via `useAppModalStack().push(...)`, the only place that knows
+   how to push the quit-prompt entry went completely inert — pressing `q` did nothing at all, not merely
+   "queued behind" the screen's modal. This directly failed this piece's own Check ("does the quit
+   prompt correctly stack ON TOP" of an already-open modal). **Fixed (round 1):** `q` split into its own,
+   separately-gated `useInput`, active whenever the topmost stack entry isn't itself the quit prompt
+   (avoiding a redundant double-push), regardless of what else is open.
+2. **[MAJOR] `EngineClient.onNotification` — the real, honest signal for a genuine telemetry read gap**
+   **or a throwing store listener (P1's own "instead of a silently-stale read model" framing) — was**
+   **never wired at all.** Only `client.subscribe` (events) was. A real read-log corruption produced zero
+   visible signal to the user; the read model could silently go stale with nothing on screen to say so.
+   **Fixed (round 1):** `client.onNotification` wired alongside `client.subscribe` in the same effect;
+   the latest notification renders as a one-line `⚠ <message>` banner under the header — a minimal, real
+   signal, not the fuller `<Toast>` queue (P2) a later screen-integration piece may still choose to route
+   it through instead.
+
+Also confirmed clean by round 1, no fix needed: `client` prop identity changes correctly tear down the
+old subscription before wiring the new one; resize never touches `focusedPaneIndex`/`activeScreen`; the
+50-event redraw-coalescing burst produces exactly one re-render.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes: one real regression the `q` fix
+introduced
+
+**[MAJOR, a regression introduced by round 1's own fix] Typing the literal letter "q" into a real**
+**free-text elicitation field (`<QuestionForm>`'s own `text` question kind, P5) was silently yanked out**
+**of the field and into a quit prompt instead.** Round 1's fix made `q` unconditionally active regardless
+of what other modal was open. Ink's `useInput` has no "only the topmost consumer sees this key" routing
+— every active hook receives the same keystroke, regardless of visual stacking — so `<QuestionForm>`'s
+own handler correctly appended `"q"` to its text buffer *and* `<AppShell>`'s `q`-handler independently
+saw the same keystroke and pushed the quit prompt on top, discarding the user's in-progress answer with
+no indication anything happened. Reproduced directly: mount a screen that pushes a real `<QuestionForm>`
+text-question modal, start a run, type `"quick fix"` — the frame shows "Quit anyway?" instead of the
+typed text. **Fixed (round 2):** a new, optional `ModalEntry.capturesTextInput` boolean; a caller pushing
+a modal whose own content includes free-text entry sets it, suppressing the `q` binding while that entry
+is topmost. `Esc` still closes/pops the modal normally, after which `q` is reachable again the ordinary
+way — matching this codebase's own established "a caller declares the real fact only it can know"
+pattern (the same shape as `useIsBackgrounded()`'s own contract).
+
+### Round 3 — a third critic round, explicitly told three rounds finding a new bug in the same q-binding
+area is exactly the escalation pattern to watch for: nothing new found
+
+Deliberately constructed and verified: `capturesTextInput` correctly stops suppressing `q` the instant a
+text-capturing modal is popped (no stale leak); a nested modal scenario (an outer modal with
+`capturesTextInput` and a different, topmost inner one without it, and the reverse) — confirmed the
+*topmost* entry's own flag is always the one that controls `q`, correctly, since `<Modal>` only ever
+mounts the topmost entry's own content in the first place (the backgrounded outer one is literally
+unmounted, so it has no live field a keystroke could reach regardless). Re-confirmed none of the other
+global keys (digits, `Tab`/`Shift+Tab`, `p`/`r`/`a`/`x`, `Ctrl+L`) share this class of bug — all remain
+correctly gated by `!anyModalOpen`, unaffected by this round's changes. Re-verified every previously-
+passing scenario (plain modal stacking, quit-prompt-on-top-of-own-modal, cancel pops exactly one level,
+resize, the coalescing burst, `onNotification` wiring) still holds.
+
+Round 3 also noted, as an observation rather than a finding against that round, that the quit-confirmation
+condition (`runStatus === 'started' || 'resumed'`) didn't treat `'paused'` as an active run requiring
+confirmation, even though a paused run is still real and active, not yet finished. **Fixed proactively**
+(not critic-mandated, a self-directed judgment call given the observation): `'paused'` added to the same
+condition, with a new regression test.
+
+**Final state: 235 real tests** (up from 233 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.47% statements /
+91.68% branches / 98.2% functions / 99.7% lines on every file in the diff, comfortably above the 85%/80%
+floor.

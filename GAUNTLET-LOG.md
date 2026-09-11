@@ -8479,3 +8479,52 @@ into `onAnswer`) was found and fixed in round 2's own pass.
 85%/80% floor. `SPEC-QUESTIONS.md` Q137 has the full record.
 
 This is the fifth of M9's 16 planned pieces.
+
+## M9 P6 — `<AppShell>`: header, footer, screen router, modal stack, resize, global keys (`04` §4.1,
+§4.2, §4.3)
+
+**Mandate:** the piece that makes `@forge/tui` a real, running application for the first time — the
+biggest, most integration-heavy piece in the milestone so far, composing five already-built pieces
+(`EngineClient`, the store/reducer, `<Modal>`'s focus-trap contract, `RenderMode`, Ink's own resize/
+input hooks). Real design decisions are recorded in `SPEC-QUESTIONS.md` Q138.
+
+A genuine bug — `<Modal>`'s own content nested outside `AppModalStackContext.Provider`, silently
+breaking any modal's own ability to stack a second modal on top of itself — was caught by this piece's
+own test-writing and fixed before ever leaving this machine for critic review.
+
+### Round 1 — fresh critic, told this piece is more likely to have integration bugs than local ones: two
+real findings
+
+1. **[BLOCKING] The quit prompt never stacked on top of a screen's own modal — `q` was silently**
+   **swallowed instead**, since `<AppShell>`'s own global `useInput` gated `q` identically to every other
+   key (`!anyModalOpen`). **Fixed:** `q` split into its own, separately-gated `useInput`, active whenever
+   the topmost stack entry isn't itself the quit prompt.
+2. **[MAJOR] `EngineClient.onNotification` — the real signal for a genuine telemetry read gap — was**
+   **never wired**, so a real read-log corruption produced zero visible signal. **Fixed:** wired alongside
+   `client.subscribe`; the latest notification renders as a one-line `⚠ <message>` banner.
+
+### Round 2 — a second, fresh critic verifying round 1's own fixes: one real regression the `q` fix
+introduced
+
+**[MAJOR regression] Typing the literal letter "q" into a real free-text `<QuestionForm>` field was**
+**silently yanked into a quit prompt instead** — Ink's `useInput` has no "only the topmost consumer sees
+this key" routing, so making `q` unconditionally active meant it fired alongside the text field's own
+handler for the same keystroke. **Fixed:** a new `ModalEntry.capturesTextInput` flag a caller sets when
+its own pushed modal includes free-text entry, suppressing `q` while that entry is topmost.
+
+### Round 3 — a third critic round, explicitly warned that three rounds finding a new bug in the same
+q-binding area is exactly the escalation pattern to watch for: nothing new found
+
+Deliberately constructed and verified: no stale suppression after a text-capturing modal pops; a nested-
+modal scenario confirmed the *topmost* entry's own flag (never a backgrounded one's) is always what
+controls `q`, correctly, since only the topmost entry is ever actually mounted; every other global key
+remains correctly gated by `!anyModalOpen`, unaffected. Re-confirmed every previously-passing scenario
+still holds. The round's own observation that `'paused'` runs weren't treated as requiring quit
+confirmation was fixed proactively, not critic-mandated, alongside a new test.
+
+**Final state: 235 real tests** (up from 233 before this piece's own critic rounds). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.47% statements /
+91.68% branches / 98.2% functions / 99.7% lines on every file in the diff, comfortably above the 85%/80%
+floor. `SPEC-QUESTIONS.md` Q138 has the full record.
+
+This is the sixth of M9's 16 planned pieces.
