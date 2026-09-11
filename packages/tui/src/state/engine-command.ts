@@ -16,11 +16,17 @@
  * already-established view-only tab-cycle, never in this union either. `spec.*` variants are `PLAN-M9.md`
  * P9's own addition (S3 Specs/Spec graph), for its `n`/`e` keys — `t` (traceability path to root) and `x`
  * (orphans-only filter) are, by the identical reasoning, pure local view concerns and never commands
- * either (`SPEC-QUESTIONS.md` Q141).
+ * either (`SPEC-QUESTIONS.md` Q141). `kb.*` variants are `PLAN-M9.md` P10's own addition (S4 Knowledge
+ * Body browser), for its `/`/`v`/`a` keys — `c` (contradictions filter) and `s` (stale filter) are, by
+ * the identical reasoning, pure local view concerns, never commands (`SPEC-QUESTIONS.md` Q142). `o`
+ * (open diagrams in browser) is deliberately **not** a command either, but for a different reason: `04`
+ * §4.3 S4's own text calls this a real, disclosed side effect (shelling out to open a URL), the one
+ * deliberate exception to "the TUI never causes side effects itself" — routed through an injected
+ * callback prop, not through this command union, since it has no real engine-side action to name at all.
  *
- * @see specs/04 §4.3 S2, S3
- * @see PLAN-M9.md P8, P9
- * @see SPEC-QUESTIONS.md Q140, Q141
+ * @see specs/04 §4.3 S2, S3, S4
+ * @see PLAN-M9.md P8, P9, P10
+ * @see SPEC-QUESTIONS.md Q140, Q141, Q142
  */
 export type EngineCommand =
   | { readonly type: 'lane.follow'; readonly laneId: string }
@@ -31,4 +37,7 @@ export type EngineCommand =
   | { readonly type: 'lane.openWorktree'; readonly laneId: string }
   | { readonly type: 'spec.newArtifactFromTemplate'; readonly parentId: string }
   | { readonly type: 'spec.edit'; readonly artifactId: string }
-  | { readonly type: 'spec.validate'; readonly artifactId: string };
+  | { readonly type: 'spec.validate'; readonly artifactId: string }
+  | { readonly type: 'kb.search'; readonly query: string }
+  | { readonly type: 'kb.markVerified'; readonly entryId: string }
+  | { readonly type: 'kb.newAdr'; readonly contextEntryId: string };

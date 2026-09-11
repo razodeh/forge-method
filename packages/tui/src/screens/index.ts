@@ -15,6 +15,12 @@ export {
 } from './home.tsx';
 export { SpecsScreen, traceabilityPathToRoot, type SpecsScreenProps } from './specs.tsx';
 export {
+  KbScreen,
+  type KbScreenProps,
+  type KbDiagramSummary,
+  type KbWriteHistoryEntry,
+} from './kb.tsx';
+export {
   RunBoard,
   formatSchedulerLine,
   type RunBoardScreenProps,
