@@ -8746,3 +8746,39 @@ statements / 90.9% branches / 95.54% functions / 98.59% lines across the full `p
 comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q143 has the full record.
 
 This is the eleventh of M9's 16 planned pieces.
+
+## M9 P12 — `<SessionsScreen>`: S6 Sessions (`04` §4.3 S6)
+
+**Mandate:** the facilitated-discussion list plus a live-session transcript/technique-step-indicator/
+input view. `@forge/sessions` (M10) is a real, disclosed forward dependency (confirmed not to exist yet)
+— the technique indicator renders against a plain, independently-defined `SessionProgress` shape, never
+blocked on M10. Real design decisions are recorded in `SPEC-QUESTIONS.md` Q144, including the free-text
+contribution flow re-using `<QuestionForm>`-in-`<Modal>` (matching `<RunBoard>`/`<KbScreen>`/
+`<GatesScreen>`'s own established pattern) with both the pinned-target and re-verify-at-submit
+disciplines copied from those pieces' own already-fixed forms, confirmed directly by a critic rather
+than assumed.
+
+### Round 1 — fresh critic: one real MAJOR finding
+
+**[MAJOR] `<StreamView>` (the transcript renderer)'s own `focused` prop was hardcoded `false`,**
+**unconditionally** — every other consumer in this file correctly derived it from `focusedPane`/
+`contributeOpen`, but this one didn't, so `<StreamView>`'s own scroll-follow `useInput` never activated
+at all: a real transcript longer than the visible window had its earlier turns permanently
+unreachable, for the life of the component. Not a disclosed scope cut — an oversight, since this screen
+owns no `f` key of its own that would have justified disabling it. **Fixed:** `focused` now derives the
+same way every other consumer here does.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct and complete
+
+Enumerated every key both `<StreamView>` and this screen's own handler bind and confirmed zero overlap;
+confirmed the contribution modal correctly forces scrolling off while open (closing the exact class of
+hazard `<RunBoard>` (P8) once found for an analogous situation); confirmed the new regression tests
+genuinely prove scroll movement, not merely "didn't crash." One coverage gap was flagged and closed with
+an additional test before commit.
+
+**Final state: 399 real tests** (up from 377 before this piece; `sessions.test.tsx` alone has 22).
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
+97.15% statements / 91.29% branches / 95.4% functions / 98.56% lines across the full `packages/tui/src`
+scope, comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q144 has the full record.
+
+This is the twelfth of M9's 16 planned pieces.

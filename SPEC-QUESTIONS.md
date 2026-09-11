@@ -11502,3 +11502,64 @@ place, both gate-matched.
 typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.09%
 statements / 90.9% branches / 95.54% functions / 98.59% lines across the full `packages/tui/src` scope,
 comfortably above the 85%/80% floor.
+
+## Q144 — M9 P12: `<SessionsScreen>` (S6 Sessions) — one real MAJOR finding (a permanently
+unscrollable transcript), closed and independently re-verified
+
+`PLAN-M9.md` P12's mandate is `04` §4.3 S6: the facilitated-discussion list plus a live-session
+transcript/technique-step-indicator/input view. `@forge/sessions` (M10) is a real, disclosed forward
+dependency named in the plan's own text — confirmed directly (no such package exists under `packages/`
+yet) — so the technique indicator renders against a plain, typed `SessionProgress { technique, step,
+total }` shape this piece defines independently, never blocked on M10.
+
+Real design decisions, not previously written up:
+
+1. No `RunReadModel` field carries session state — the caller-supplied-fact pattern every prior
+   S-screen this milestone already established.
+2. **The list's own "start new" row is a real, synthetic sentinel entry** — selecting it emits
+   `session.start` instead of navigating into it as a live session; `<ListPane>`'s own id-keyed
+   internal selection state (not index-keyed) keeps this correctly independent of whichever real
+   session is currently selected, confirmed directly.
+3. **The free-text contribution box re-uses `<QuestionForm>` inside a `<Modal>`**, exactly like
+   `<RunBoard>` (P8)'s own interject flow, `<KbScreen>` (P10)'s own search, and `<GatesScreen>` (P11)'s
+   own waive-reason flow — not a bespoke always-capturing raw input line, which would collide with
+   every one of `[space]`/`c`/`s`/`Esc`'s own single-key bindings the instant the user typed any of
+   those literal characters into a real contribution (this milestone's own repeatedly-rediscovered
+   Ink `useInput` no-exclusive-routing hazard). The contribution target is pinned at the moment `Enter`
+   opens the modal and re-verified against the live `sessions` prop at submit time — both patterns
+   copied from their own already-fixed forms in `<RunBoard>` (P8, round 3) and `<GatesScreen>` (P11,
+   round 1), not their earlier, buggier drafts, confirmed directly by a critic.
+4. `[space]`/`c`/`s`/`Esc` (advance step/converge/save-to-KB/end) are real, unconfirmed,
+   single-keystroke commands, each active only against a live session (one with a real `progress`).
+
+### Round 1 — fresh critic: one real MAJOR finding
+
+**[MAJOR] `<StreamView>` (the transcript renderer)'s own `focused` prop was hardcoded `false`,**
+**unconditionally** — unlike every other consumer in this file, which correctly derived it from
+`focusedPane`/`contributeOpen`. Since `<StreamView>` (P4)'s own `f`/`j`/`k`/arrow scroll-follow
+`useInput` is gated on `focused`, that hook never activated at all: `following` started (and stayed)
+`true` forever, so a real, longer transcript's own earlier turns were permanently unreachable — no way
+to ever scroll up, for the life of the component. Not a disclosed scope cut (unlike `<RunBoard>` (P8)'s
+own deliberate `f` double-binding, a real, different situation): this screen owns no `f` key of its own
+to collide with, so there was no reason for this — an oversight, not an intentional narrower design.
+**Fixed:** `focused` now derives the same way every other consumer here does —
+`focusedPane === DETAIL_PANE_INDEX && !contributeOpen`.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct and complete, no
+new findings
+
+Enumerated every key both `<StreamView>` and this screen's own `useInput` hook bind and confirmed zero
+overlap (`f`/`j`/`k`/arrows vs. `[space]`/`c`/`s`/Enter/Esc), so enabling `<StreamView>`'s own bindings
+introduced no new collision. Confirmed the contribution modal correctly forces `focused` to `false`
+(via the same `&& !contributeOpen` term) while open, closing the exact class of "modal open, composed
+child still reads keystrokes underneath it" hazard `<RunBoard>` (P8) once found and fixed for its own
+analogous situation — structurally, not just by inspection of one test. Noted the round's own two new
+regression tests genuinely prove movement (a 12-line transcript's window shifting by exactly one line
+after `k`), not merely "didn't crash." Flagged one coverage gap (no test yet covered typing `j`/`k`/`f`
+directly into the open contribution field) — not a live bug given the gating is unconditional on
+`contributeOpen`, but closed anyway with one further test before commit.
+
+**Final state: 399 real tests** (up from 377 before this piece; `sessions.test.tsx` alone has 22).
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
+97.15% statements / 91.29% branches / 95.4% functions / 98.56% lines across the full `packages/tui/src`
+scope, comfortably above the 85%/80% floor.
