@@ -39,7 +39,7 @@
  */
 import { Box, Text, useInput } from 'ink';
 import type { JSX, ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RenderMode } from '../env.ts';
 import { type StatusState, StatusGlyph } from './status-glyph.tsx';
@@ -57,6 +57,17 @@ export interface ListPaneProps<T> {
   readonly onSelect?: (item: T) => void;
   readonly focused: boolean;
   readonly height: number;
+  /** Called with whether this list is currently capturing raw `/`-filter text, whenever that changes
+   * (including once, on mount, for the initial `false`) -- `isEditingFilter` is otherwise entirely
+   * internal, opaque state. Added for `PLAN-M9.md` P14 (`<CustomizeScreen>`), whose own action keys
+   * (`e`/`r`/`d`/`t`/`E`) are gated to the *same* pane this list occupies (unlike `<RunBoard>`'s (P8)
+   * own action keys, gated to a *different*, non-`<ListPane>` detail pane) -- Ink's `useInput` has no
+   * "only the topmost/focused consumer sees this key" routing, so without this signal, typing any of
+   * those letters while filtering would also fire the parent's own action handler. Optional and
+   * additive, so every existing caller is unaffected — the identical shape `<Tree>` (P3)'s own
+   * `onFocusChange` extension (P9) already established for an analogous "expose internal state a new
+   * caller genuinely needs" situation. */
+  readonly onFilterModeChange?: (isEditingFilter: boolean) => void;
 }
 
 export function defaultListItemLabel(
@@ -80,6 +91,7 @@ export function ListPane<T>({
   onSelect,
   focused,
   height,
+  onFilterModeChange,
 }: ListPaneProps<T>): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | undefined>(() => {
     const first = items[0];
@@ -89,6 +101,33 @@ export function ListPane<T>({
   const [isEditingFilter, setIsEditingFilter] = useState(false);
   const [pendingG, setPendingG] = useState(false);
   const [preFilterSelectedId, setPreFilterSelectedId] = useState<string | undefined>(undefined);
+
+  // `onFilterModeChange` is read through a ref, not a direct closure, in both effects below -- kept
+  // current every render without ever appearing in either effect's own dependency array.
+  const onFilterModeChangeRef = useRef(onFilterModeChange);
+  useEffect(() => {
+    onFilterModeChangeRef.current = onFilterModeChange;
+  });
+
+  // Deliberately keyed on `isEditingFilter` alone -- the ref indirection above means this still fires
+  // exactly on real `isEditingFilter` transitions (plus once on mount), never spuriously on every
+  // render just because an inline callback prop is a fresh closure each time.
+  useEffect(() => {
+    onFilterModeChangeRef.current?.(isEditingFilter);
+  }, [isEditingFilter]);
+
+  // A real, round-2-critic-found gap the effect above cannot close on its own: a *caller* that
+  // conditionally unmounts this component while it happens to be mid-filter (e.g. `<CustomizeScreen>`,
+  // P14, swapping this component out for a plain `<Text>` the instant its own `items` prop becomes
+  // empty) never gets a final `false` -- `useEffect`'s own dependency-change cleanup only runs again
+  // when `isEditingFilter` itself changes, never on unmount for a *different* reason entirely. This
+  // empty-deps effect's own cleanup is the one place guaranteed to run exactly once, on unmount,
+  // regardless of why -- closing the "stale `true` left behind forever" gap structurally.
+  useEffect(() => {
+    return () => {
+      onFilterModeChangeRef.current?.(false);
+    };
+  }, []);
 
   const visibleItems = useMemo(() => {
     if (filterQuery === undefined) return items;

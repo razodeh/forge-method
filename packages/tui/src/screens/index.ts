@@ -53,3 +53,11 @@ export {
   type CostScreenProps,
   type StepCostEntry,
 } from './cost.tsx';
+export {
+  CustomizeScreen,
+  CUSTOMIZATION_SURFACES,
+  type CustomizeScreenProps,
+  type CustomizationSurface,
+  type ResolvedFieldRow,
+  type SurfaceTestStatus,
+} from './customize.tsx';

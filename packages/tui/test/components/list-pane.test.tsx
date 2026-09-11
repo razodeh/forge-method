@@ -295,6 +295,111 @@ describe('ListPane', () => {
   });
 });
 
+describe('onFilterModeChange', () => {
+  it('is called once, with false, on mount', async () => {
+    const changes: boolean[] = [];
+    render(
+      <ListPane
+        items={items(3)}
+        getId={(item) => item.id}
+        getFilterText={(item) => item.label}
+        renderItem={(item) => <Text>{item.label}</Text>}
+        focused
+        height={5}
+        onFilterModeChange={(v) => changes.push(v)}
+      />,
+    );
+    await flush();
+    expect(changes).toEqual([false]);
+  });
+
+  it('fires true when "/" starts filter-editing, and false again once Enter confirms it', async () => {
+    const changes: boolean[] = [];
+    const { stdin } = render(
+      <ListPane
+        items={items(3)}
+        getId={(item) => item.id}
+        getFilterText={(item) => item.label}
+        renderItem={(item) => <Text>{item.label}</Text>}
+        focused
+        height={5}
+        onFilterModeChange={(v) => changes.push(v)}
+      />,
+    );
+    await flush();
+    await press(stdin, '/');
+    await press(stdin, ENTER);
+    expect(changes).toEqual([false, true, false]);
+  });
+
+  it('fires false again when Esc cancels filter-editing', async () => {
+    const changes: boolean[] = [];
+    const { stdin } = render(
+      <ListPane
+        items={items(3)}
+        getId={(item) => item.id}
+        getFilterText={(item) => item.label}
+        renderItem={(item) => <Text>{item.label}</Text>}
+        focused
+        height={5}
+        onFilterModeChange={(v) => changes.push(v)}
+      />,
+    );
+    await flush();
+    await press(stdin, '/');
+    await press(stdin, ESC);
+    expect(changes).toEqual([false, true, false]);
+  });
+
+  it('fires a final false on unmount while still mid-filter -- a round-2 critic reproduced directly that a caller conditionally unmounting this component (e.g. its own items prop going empty) mid-filter left the last reported value stuck true forever otherwise', async () => {
+    const changes: boolean[] = [];
+    const { stdin, unmount } = render(
+      <ListPane
+        items={items(3)}
+        getId={(item) => item.id}
+        getFilterText={(item) => item.label}
+        renderItem={(item) => <Text>{item.label}</Text>}
+        focused
+        height={5}
+        onFilterModeChange={(v) => changes.push(v)}
+      />,
+    );
+    await flush();
+    await press(stdin, '/'); // start filtering, never confirmed or cancelled
+    expect(changes).toEqual([false, true]);
+
+    unmount();
+    await flush();
+    expect(changes).toEqual([false, true, false]);
+  });
+
+  it('unmounting while never in filter-editing mode fires a redundant but harmless final false, not a crash', async () => {
+    const changes: boolean[] = [];
+    const { unmount } = render(
+      <ListPane
+        items={items(3)}
+        getId={(item) => item.id}
+        getFilterText={(item) => item.label}
+        renderItem={(item) => <Text>{item.label}</Text>}
+        focused
+        height={5}
+        onFilterModeChange={(v) => changes.push(v)}
+      />,
+    );
+    await flush();
+    unmount();
+    await flush();
+    expect(changes).toEqual([false, false]);
+  });
+
+  it('is entirely optional -- omitting it changes nothing about ordinary filter behavior', async () => {
+    const { lastFrame, stdin } = await renderList({ data: items(3), height: 5 });
+    await press(stdin, '/');
+    await press(stdin, 'item-1');
+    expect(stripAnsi(lastFrame() ?? '')).toContain('/item-1');
+  });
+});
+
 describe('defaultListItemLabel', () => {
   it('renders a label with a StatusGlyph when a state is given', () => {
     const { lastFrame } = render(

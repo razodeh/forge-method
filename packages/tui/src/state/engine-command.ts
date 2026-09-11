@@ -34,11 +34,18 @@
  * `session.*` variants are `PLAN-M9.md` P12's own addition (S6 Sessions) — `[space]`/`c`/`s`/`Esc`
  * (advance step/converge/save-to-KB/end) and a session's own free-text contribution flow all emit
  * exactly one command each, never a direct write, matching the identical discipline `kb.search` (P10)
- * already established for its own free-text flow.
+ * already established for its own free-text flow. `customize.*` variants are `PLAN-M9.md` P14's own
+ * addition (S8 Customize) — `e`/`r`/`E`/`t` (edit overlay/reset field/eject preset/test) each emit
+ * exactly one command; `d` (diff-vs-base) is, by the identical reasoning `<RunBoard>` (P8)'s own `d`
+ * already established, a pure local view concern, never a command. `customize.editOverlay`/
+ * `customize.resetField` both carry the identical *UI-layer refusal* discipline `<GatesScreen>` (P11)'s
+ * own `gate.approve`/`gate.waive` established: `<CustomizeScreen>` itself never constructs either
+ * command at all for a field the read model reports locked by a real invariant id — the refusal happens
+ * before this union is ever touched (`SPEC-QUESTIONS.md` Q146).
  *
- * @see specs/04 §4.3 S2, S3, S4, S5, S6
- * @see PLAN-M9.md P8, P9, P10, P11, P12
- * @see SPEC-QUESTIONS.md Q140, Q141, Q142, Q143, Q144
+ * @see specs/04 §4.3 S2, S3, S4, S5, S6, S8
+ * @see PLAN-M9.md P8, P9, P10, P11, P12, P14
+ * @see SPEC-QUESTIONS.md Q140, Q141, Q142, Q143, Q144, Q146
  */
 export type EngineCommand =
   | { readonly type: 'lane.follow'; readonly laneId: string }
@@ -62,4 +69,16 @@ export type EngineCommand =
   | { readonly type: 'session.advanceStep'; readonly sessionId: string }
   | { readonly type: 'session.converge'; readonly sessionId: string }
   | { readonly type: 'session.saveToKb'; readonly sessionId: string }
-  | { readonly type: 'session.end'; readonly sessionId: string };
+  | { readonly type: 'session.end'; readonly sessionId: string }
+  | {
+      readonly type: 'customize.editOverlay';
+      readonly surfaceId: string;
+      readonly fieldPath: string;
+    }
+  | {
+      readonly type: 'customize.resetField';
+      readonly surfaceId: string;
+      readonly fieldPath: string;
+    }
+  | { readonly type: 'customize.ejectPreset'; readonly surfaceId: string }
+  | { readonly type: 'customize.testSurface'; readonly surfaceId: string };
