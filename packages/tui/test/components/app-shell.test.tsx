@@ -585,7 +585,7 @@ describe('AppShell', () => {
     expect(stripAnsi(lastFrame() ?? '')).toContain('modal');
   });
 
-  describe("degradation modes end to end (04 §4.7) -- a real, rendered-frame-level proof for each, not just detectRenderMode's own unit tests from P1", () => {
+  describe("tui degradation: modes end to end (04 §4.7) -- a real, rendered-frame-level proof for each, not just detectRenderMode's own unit tests from P1", () => {
     it('color:true and color:false render the identical notification text -- color is presentation only, never a second source of truth for what is shown', async () => {
       // `ink-testing-library` renders with Ink's own `debug: true` mode (confirmed directly against its
       // real source), which never emits raw ANSI colour escapes into `lastFrame()` regardless of any
@@ -673,7 +673,7 @@ describe('AppShell', () => {
     });
   });
 
-  describe('--linear mode (04 §4.7)', () => {
+  describe('tui degradation: --linear mode (04 §4.7)', () => {
     const LINEAR_MODE: RenderMode = { ...MODE, linear: true };
 
     it("renders <LinearView>'s own sequential output, never the panelled screen layout", async () => {

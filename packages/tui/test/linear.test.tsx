@@ -86,7 +86,7 @@ describe('describeEvent', () => {
   });
 });
 
-describe('<LinearView>', () => {
+describe('tui degradation: <LinearView>', () => {
   it('renders an initial line naming the product and stage', () => {
     const client = createFakeClient();
     const { lastFrame } = render(

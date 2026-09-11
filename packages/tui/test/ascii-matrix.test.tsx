@@ -271,7 +271,7 @@ const ENTRIES: readonly Entry[] = [
   },
 ];
 
-describe('--ascii matrix (04 §4.7)', () => {
+describe('tui degradation: --ascii matrix (04 §4.7)', () => {
   for (const entry of ENTRIES) {
     it(`${entry.name} renders under ascii:true without throwing, and its frame is pure ASCII`, () => {
       const { lastFrame } = render(entry.render());

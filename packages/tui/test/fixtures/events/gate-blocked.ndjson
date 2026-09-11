@@ -1,0 +1,10 @@
+{"type":"RunPlanned","runId":"run-gate-blocked","ts":"2026-01-01T00:00:01.000Z","payload":{},"v":1,"seq":1}
+{"type":"RunStarted","runId":"run-gate-blocked","ts":"2026-01-01T00:00:02.000Z","payload":{},"v":1,"seq":2}
+{"type":"LaneCreated","runId":"run-gate-blocked","ts":"2026-01-01T00:00:03.000Z","payload":{},"laneId":"lane-1","v":1,"seq":3}
+{"type":"StepScheduled","runId":"run-gate-blocked","ts":"2026-01-01T00:00:04.000Z","payload":{},"stepId":"step-1","v":1,"seq":4}
+{"type":"StepStarted","runId":"run-gate-blocked","ts":"2026-01-01T00:00:05.000Z","payload":{},"stepId":"step-1","v":1,"seq":5}
+{"type":"StepSucceeded","runId":"run-gate-blocked","ts":"2026-01-01T00:00:06.000Z","payload":{},"stepId":"step-1","v":1,"seq":6}
+{"type":"LaneCommitted","runId":"run-gate-blocked","ts":"2026-01-01T00:00:07.000Z","payload":{},"laneId":"lane-1","v":1,"seq":7}
+{"type":"GateEvaluated","runId":"run-gate-blocked","ts":"2026-01-01T00:00:08.000Z","payload":{"gateId":"gate-1"},"v":1,"seq":8}
+{"type":"StepScheduled","runId":"run-gate-blocked","ts":"2026-01-01T00:00:09.000Z","payload":{},"stepId":"step-2","v":1,"seq":9}
+{"type":"UsageRecorded","runId":"run-gate-blocked","ts":"2026-01-01T00:00:10.000Z","payload":{"costUsd":0.9},"stepId":"step-1","v":1,"seq":10}

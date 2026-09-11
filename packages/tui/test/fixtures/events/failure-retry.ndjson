@@ -1,0 +1,13 @@
+{"type":"RunPlanned","runId":"run-retry","ts":"2026-01-01T00:00:01.000Z","payload":{},"v":1,"seq":1}
+{"type":"RunStarted","runId":"run-retry","ts":"2026-01-01T00:00:02.000Z","payload":{},"v":1,"seq":2}
+{"type":"LaneCreated","runId":"run-retry","ts":"2026-01-01T00:00:03.000Z","payload":{},"laneId":"lane-1","v":1,"seq":3}
+{"type":"StepScheduled","runId":"run-retry","ts":"2026-01-01T00:00:04.000Z","payload":{},"stepId":"step-1","v":1,"seq":4}
+{"type":"StepStarted","runId":"run-retry","ts":"2026-01-01T00:00:05.000Z","payload":{},"stepId":"step-1","v":1,"seq":5}
+{"type":"StepFailed","runId":"run-retry","ts":"2026-01-01T00:00:06.000Z","payload":{},"stepId":"step-1","v":1,"seq":6}
+{"type":"StepRetried","runId":"run-retry","ts":"2026-01-01T00:00:07.000Z","payload":{},"stepId":"step-1","v":1,"seq":7}
+{"type":"StepStarted","runId":"run-retry","ts":"2026-01-01T00:00:08.000Z","payload":{},"stepId":"step-1","v":1,"seq":8}
+{"type":"StepSucceeded","runId":"run-retry","ts":"2026-01-01T00:00:09.000Z","payload":{},"stepId":"step-1","v":1,"seq":9}
+{"type":"LaneCommitted","runId":"run-retry","ts":"2026-01-01T00:00:10.000Z","payload":{},"laneId":"lane-1","v":1,"seq":10}
+{"type":"LaneReady","runId":"run-retry","ts":"2026-01-01T00:00:11.000Z","payload":{},"laneId":"lane-1","v":1,"seq":11}
+{"type":"UsageRecorded","runId":"run-retry","ts":"2026-01-01T00:00:12.000Z","payload":{"costUsd":2.5},"stepId":"step-1","v":1,"seq":12}
+{"type":"RunCompleted","runId":"run-retry","ts":"2026-01-01T00:00:13.000Z","payload":{},"v":1,"seq":13}

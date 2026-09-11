@@ -12,7 +12,7 @@ function env(overrides: Readonly<Record<string, string | undefined>> = {}) {
   return overrides;
 }
 
-describe('detectRenderMode', () => {
+describe('tui degradation: detectRenderMode', () => {
   it('colour defaults to whatever isTty says, ascii/linear default off, and the size floor is 80x24, when no env var or flag is set', () => {
     expect(detectRenderMode(env(), [], true)).toEqual({
       color: true,
