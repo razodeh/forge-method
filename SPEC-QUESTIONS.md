@@ -10305,3 +10305,227 @@ passed entirely except for the two already-documented, pre-existing SIGKILL/work
 touched by any change in this checkpoint).
 
 See `GAUNTLET-LOG.md`'s M7 live-run-checkpoint addendum for the full run log.
+
+## Q133 — M9 P1: `@forge/tui` package scaffold, render-mode detection, event-sourced store — two critic rounds, four real corrections against `PLAN-M9.md`'s own literal text
+
+**Q (P1's own BUILD phase, corrected across two critic rounds — recorded together, matching the
+established Q127-Q132 pattern).** `PLAN-M9.md` P1's own Surface text named a 2-parameter
+`detectRenderMode(env, argv)` and no `tsup.config.ts` per-package convention; both diverged once this
+piece was actually built against the real, already-established sibling-package conventions and the real
+`supports-color`/`chalk` colour-detection precedent this codebase's own tooling already follows.
+
+1. **`detectRenderMode` takes a third, real parameter: `isTty: boolean`.** The plan's own 2-parameter
+   signature has no way to express "colour defaults on for a real interactive terminal, off for a piped/
+   non-interactive one" — the real, standard convention `NO_COLOR`/`FORCE_COLOR` are themselves defined
+   against (`FORCE_COLOR`'s own real purpose is overriding a *non-TTY* auto-detected "off," not merely
+   restating a default that was already "on"). A first draft defaulted `color` to `true` unconditionally,
+   which a fresh critic round's own repro showed makes `FORCE_COLOR` structurally unable to ever change
+   anything — corrected by adding `isTty` and defining `color` as `NO_COLOR` (forces off, always wins) →
+   `TERM=dumb` (forces off) → `FORCE_COLOR` (forces on, overriding a false `isTty`) → `isTty` (the real
+   default). The real CLI entry point (a later, out-of-scope-for-P1 piece) supplies `process.stdout.isTTY`
+   here; this piece's own tests supply it explicitly, matching the function's own already-established
+   "never read ambiently" discipline for `env`/`argv`.
+2. **No `tsup.config.ts` per package** — confirmed directly against every real sibling package (e.g.
+   `@forge/telemetry`) before writing one: none exists anywhere in this monorepo. Packages are consumed
+   directly via their own `package.json` `exports` mapping straight to `./src/*.ts`; bundling (`02` §2.1's
+   own "tsup (esbuild) per package" tech-stack line) is real but not yet wired as a per-package build step
+   this milestone's own P1 needs to reproduce — `packages/tui/package.json` matches the real, already-
+   established `type/exports/engines/scripts` shape every sibling package actually has today, nothing more.
+3. **[BLOCKING, round 1] A subscriber's own thrown exception was caught by the same `try`/`catch` as the**
+   **real telemetry read failure, silently relabeling a real application bug as a benign `'gap'`**
+   **(staleness) notification.** Reproduced directly: a throwing event listener produced a fabricated
+   `'gap'` notification carrying that listener's own error message, and — separately — stopped every
+   listener registered after it from receiving that event at all. **Fixed:** the read and the
+   per-listener dispatch are now two structurally separate phases (dispatch happens *inside* the same
+   `for await` loop as the read, for the real "one event before a later gap still gets dispatched, a
+   partial recovery, not silence" contract — not collected and dispatched only after the whole read
+   succeeds), and each event listener's own call is individually wrapped in its own `try`/`catch`,
+   reported through a new, distinct `'listener-error'` notification, never `'gap'`.
+4. **[MAJOR, round 1] A real `TelemetryError`'s own three distinctly-remedied codes were collapsed into**
+   **one bare message string.** Fixed in round 1 (`code` threaded through) — **but round 2's own fresh
+   critic reproduced that the fix was still half-done: `remedy` itself, the one field `QUALITY-BAR.md`
+   §1.1 names as the real standard ("a stable machine code *and* a human remedy... the hint field carries
+   the next action"), was still discarded.** `EngineClientNotification`'s own `'gap'` variant now carries
+   both `code?` and `remedy?`, populated only for a real `TelemetryError` (never fabricated for a plain
+   `Error`/non-Error throw).
+5. **[MAJOR, round 1] `stop()` only ever cleared the interval timer — a read already in flight at the**
+   **moment of a logical shutdown still delivered its own events afterward.** Reproduced directly: an
+   injected, deliberately slow `readEvents` still dispatched to listeners after `stop()` had already run.
+   **Fixed:** a real `stopped` flag, checked again the instant the in-flight read resolves (both on the
+   success path and inside the per-event loop itself, so a stop mid-read-in-progress is caught at the
+   next event boundary too, not only after the whole read finishes).
+6. **[MAJOR, round 1 → still-real gap found by round 2] Every poll re-read and re-parsed the entire event**
+   **log from scratch, forever — an unbounded, ever-growing per-tick cost over a run's own lifetime.**
+   Round 1 fixed this for the healthy/idle case via an `fs.stat`-based short-circuit keyed on the file's
+   own `mtimeMs`. **Round 2's own fresh critic reproduced two real, separate problems with that first
+   fix**: (a) the short-circuit's own "last known" value was only ever recorded on the *success* path,
+   so a persistently broken (corrupted/permission-denied) log — the exact case the companion
+   notification-dedup fix (item 7 below) was built to handle gracefully — never benefited from the
+   short-circuit at all, still re-reading the whole file on every single tick forever; (b) `mtimeMs`
+   itself is not a reliable "did this file change" signal on filesystems with coarse mtime resolution
+   (HFS+'s own historical 1s granularity, some network-mount/container filesystems) — two real, distinct
+   `appendEvent` calls landing inside the same resolution window produce an identical `mtimeMs`,
+   silently deferring the second write's own delivery until some later, coincidental write finally ticks
+   the timestamp forward. **Fixed, both at once:** switched from `mtimeMs` to the file's own real byte
+   **size** — `@forge/telemetry`'s own event log is strictly append-only (confirmed directly against its
+   own header doc comment), so its real size can only ever grow between two genuinely different states,
+   an exact, environment-independent signal with no resolution-quantisation risk at all — and the
+   last-known size is now recorded in *both* the success and the failure path, so a broken-but-unchanging
+   log is also read at most once more after its own first notification, not forever.
+7. **[MINOR, round 1] A persistently broken log re-fired an identical `'gap'` notification on every**
+   **single poll cycle forever.** Fixed: de-duplicated against the last-notified message, cleared again
+   once a read genuinely succeeds.
+8. **[MINOR, round 1] `parsePositiveInt` (env.ts) accepted partially-numeric garbage (`"1e10"` → `1`,**
+   **`"80px"` → `80`) via a naive `Number.parseInt` call that stops at the first non-digit rather than**
+   **rejecting the rest.** Fixed with a `/^[0-9]+$/` whole-string check before parsing; **round 2 found
+   one more, real gap in the same function** — no upper bound at all, so a genuinely enormous, purely-
+   digit string (`"99999999999999999999"`) still passed through to an absurd, precision-losing value
+   rather than the documented 80×24 floor. Fixed with a 100,000-unit sanity cap (no real terminal is
+   remotely this large).
+9. **[BLOCKING, round 2] `onNotification` listeners were themselves completely unguarded — the identical**
+   **class of bug item 3 fixed for event listeners, recurring one layer deeper.** A fresh, second critic
+   round reproduced directly: a throwing notification listener's own exception propagated out through the
+   inner `catch` (the one item 3 added) into the *outer* `catch`, itself getting mislabeled as a
+   fabricated `'gap'` — and, separately, a throwing notification listener with no surrounding `gap`/
+   `listener-error` context at all became a genuine **unhandled promise rejection**, since nothing else
+   was positioned to catch it. **Fixed:** every notification, of every kind, now flows through one single
+   `notify()` helper that isolates each notification listener in its own `try`/`catch`, silently dropping
+   (never re-notifying, which would recurse the moment *every* notification listener happened to be
+   broken) one that itself throws — the one place in this whole file a real error is deliberately allowed
+   to go unreported, and only because there is no further, safe channel left to escalate it to.
+10. **[MAJOR, round 2] `createStore.dispatch()` (`store.ts`) had no per-listener isolation at all —**
+    **the identical class of bug items 3/9 fixed for `EngineClient`, never applied to the more**
+    **foundational, more widely-reused `createStore` primitive every later P2-P15 piece subscribes**
+    **through.** A fresh, second critic round reproduced directly: one throwing subscriber stopped every
+    subscriber registered after it (in iteration order) from ever seeing that dispatch's own new state,
+    and the exception propagated synchronously out of `dispatch()` itself to whatever engine code called
+    it. **Fixed:** every listener is now called inside its own `try`/`catch`; the *first* real error
+    (if any) is re-thrown only after every listener has run — so a caller of `dispatch()` still learns
+    something broke (never silently swallowed, unlike `EngineClient`'s own notification-listener case
+    above, which genuinely has no better option) without that failure costing any other subscriber its
+    own update.
+11. **[MAJOR, round 2, closing a real, disclosed gap against `PLAN-M9.md`'s own P1 mandate] "Gap detection**
+    **and re-subscribe-on-restart" — `PLAN-M9.md:73-74`'s own literal Surface text — was never actually**
+    **implemented; the client held no mechanism at all to detect a genuinely restarted/truncated log for**
+    **the same `runId`, and its own top doc comment's claim that it "re-reads from seq: 1 regardless" was**
+    **not true** (`lastSeq` persists across polls and never resets on its own). **Fixed as a real
+    consequence of item 6's own size-based rewrite:** an append-only log can only ever grow: a real byte
+    size *smaller* than the one last observed is therefore a genuine, unambiguous restart/truncation
+    signal on its own. `lastSeq` resets to `0` and a new `EngineClientNotification{type:'restart'}` is
+    emitted so a caller's own reducer can discard whatever it had already folded in, before the read
+    below replays the new log from its own real beginning.
+
+**Real cost note (round 2, the same discipline `SPEC-QUESTIONS.md` Q132 already established for M7's own
+live-run checkpoint):** this piece's own two critic rounds and their fixes were verified entirely against
+real, temp-directory event logs and real `readEvents`/`appendEvent` calls (no live, billed Claude Code
+session was needed for this piece — P1 has no real agent-dispatch surface of its own yet) — every finding
+above was reproduced directly (a throwing listener, a hand-corrupted seq-gapped log, a same-byte-length
+recovery write that the critic's own repro found defeats a naive `mtimeMs` check, a real slow-`readEvents`
+race against `stop()`) before being called fixed, matching this whole build's own "run the code, don't
+just read it" discipline for every gauntlet round.
+
+Full findings recorded across two rounds; final state — 100 real tests across `env.test.ts`,
+`store.test.ts`, `run-read-model.test.ts`, `engine-client.test.ts`, plus 2 new tests added to
+`@forge/telemetry`'s own `events.test.ts` for the newly-exported `eventLogPath` — all passing, `pnpm
+typecheck`/`eslint .`/`prettier --check .`/`pnpm run boundaries` clean, coverage comfortably above the
+85%/80% floor on every file in the diff. See `GAUNTLET-LOG.md`'s M9 P1 entry for the full two-round
+critic record.
+
+### Rounds 3-4: restart/truncation detection escalated, then resolved by removing the mechanism
+
+Round 2's item 11 fix (a real byte-size-decrease signal for restart detection) itself failed two more
+consecutive critic rounds, each closing one real reproduction and the next round finding a different,
+real way past it — the same end-state (a restarted run's own events silently and permanently dropped,
+zero notification) reached by three different routes across three rounds:
+
+12. **[BLOCKING, round 3] A point-sampled byte-size comparison misses a real restart if the file**
+    **shrinks and then regrows past its old size within a single poll interval.** A fresh, third critic
+    round reproduced directly: write a large "run 1" log, poll once, then — inside one poll window —
+    truncate to a small "run 2" log and immediately append enough catch-up content to exceed the
+    original size before the next poll fires. The shrink is never observed; `lastSeq` is never reset;
+    every event of the new run (which restarts at `seq: 1`) is filtered out by the stale, too-high
+    `lastSeq` forever. **Fixed:** switched from comparing byte size to comparing the log's own real
+    **first event content** (a JSON fingerprint), checked as part of the very read whose content it
+    describes — reasoned, at the time, to be unmissable between polls the way a separate, earlier size
+    snapshot can be.
+13. **[BLOCKING x2, round 4] The round-3 fingerprint fix itself had two further real coincidence**
+    **windows, both reproduced directly against a real filesystem, both landing back at the identical**
+    **silent-permanent-drop end-state:** (a) the byte-size short-circuit still ran *before* the
+    fingerprint check — a genuine restart whose new total byte length happened to exactly equal the
+    previously-recorded size at the literal instant of a poll tick short-circuited past the read
+    (and therefore the fingerprint check) entirely; (b) the fingerprint compared only the *first*
+    event's own JSON — two genuinely different runs sharing a byte-identical first event (plausible with
+    a fixed/replayed clock, and this exact codebase's own tests hardcode identical timestamps throughout)
+    never triggers a mismatch even though a real, successful read did happen.
+
+Per `BUILD-PROMPT.md`'s own escalation clause ("if a piece fails three full rounds, stop looping...
+write `BLOCKED-<piece>.md`... ask me"), this specific mechanism — not the rest of P1, which passed all
+four rounds clean — was escalated rather than patched a fourth time. `BLOCKED-P1.md` (now removed,
+superseded by this entry once resolved) presented two options: (A) accept the residual, narrow
+coincidence risk as a disclosed trade-off, or (B) remove the in-place-detection mechanism entirely and
+redefine "restart" as a caller-lifecycle concern — a real engine restart is handled by whichever caller
+constructs a **new** `EngineClient` for the new session (starting `lastSeq: 0` correctly, by
+construction), not by an existing instance trying to infer in-place file replacement from any cheap
+signal. **The coordinator chose Option B.** The `'restart'` notification type, the byte-size-decrease
+check, and the first-event-fingerprint check are all removed; the byte-size short-circuit itself is
+kept (it is still a real, valid, unrelated optimisation for skipping a genuinely unchanged file — every
+one of its own four rounds of scrutiny found nothing wrong with *that* half of the mechanism, only with
+using size as a restart signal). This is a real, disclosed scope narrowing against `04` §4.6's own
+literal "engine restart (re-subscribe + snapshot)" text, resolved by interpretation (re-subscribe means
+a fresh client instance, not an existing one detecting replacement) rather than by building the
+requirement and accepting known gaps in it — recorded here, not silently narrowed.
+
+Final state after all four rounds: 100 real tests (down from 102 — the two restart-specific tests
+removed along with the mechanism they tested), `pnpm typecheck`/`eslint .`/`prettier --check .`/`pnpm
+run boundaries` all clean, coverage comfortably above the 85%/80% floor. See `GAUNTLET-LOG.md`'s M9 P1
+entry for the full four-round critic record and the final resolution.
+
+### Round 5: verifying the Option B removal, and two new, real bugs found elsewhere in the piece
+
+A fifth critic round, scoped explicitly to (a) confirming the Option B removal above was complete and
+correct, and (b) a fresh read of everything else in P1 the first four rounds had spent less attention
+on (having focused heavily on `EngineClient`'s own restart logic) — confirmed the removal itself
+genuinely clean (no dangling `'restart'` references, no stale doc comments, rounds 1-2's fixes all still
+intact, the size short-circuit still correct standing alone), but found two new, real bugs unrelated to
+the closed restart-detection question:
+
+14. **[BLOCKING] Polling started eagerly at `EngineClient` construction, racing construction against**
+    **subscription rather than against subscription itself, despite this file's own doc comment's**
+    **literal claim otherwise ("a caller should not have to wait a full interval for the first frame...**
+    **by the time it subscribes").** Reproduced directly: `const client = createEngineClient(...);
+    await anyRealAsyncGap(); client.subscribe(fn);` silently and permanently drops every event already
+    in the log at construction time — the first, eager poll already advanced `lastSeq` past them with
+    zero listeners registered, and there is no persisted "unseen event" buffer to replay from. This is
+    an entirely ordinary, non-hostile shape (subscribing from inside a `useEffect`, the literal pattern
+    every later P7+ Ink screen will use) landing on the identical "silently and permanently dropped, zero
+    notification" failure the whole restart saga was escalated over — except unconditional, with no
+    coincidence required at all. **Fixed:** polling now starts lazily, on the *first* real
+    `subscribe()`/`onNotification()` call (`ensurePollingStarted()`), never at construction — by
+    construction, the very call that starts polling has already registered its own listener first, so
+    nothing already-in-the-log can ever be consumed with zero listeners present. A new test proves an
+    event present at construction time is still delivered after a real 50ms async gap before the first
+    `subscribe()` call.
+15. **[MAJOR] `createStore.dispatch()` had no guard against re-entrant calls — a listener that itself**
+    **calls `dispatch()` again (an ordinary "react to a state change" pattern, not adversarial) silently**
+    **corrupts delivery to every listener still pending in the outer dispatch's own loop**, because the
+    per-listener loop reads the shared closure variable `state` at call time rather than a value
+    captured once per dispatch. Reproduced directly: with listeners `[B, C]`, `B` re-dispatching from
+    inside its own callback made `C` (registered after `B`) observe the *inner* dispatch's own final
+    value instead of the outer one's — silently wrong delivery, not a crash, the kind of bug that
+    manifests as skipped renders or stale UI with no error to point at. **Fixed:** a real `isDispatching`
+    flag, checked at the very top of `dispatch()`, throws a plain, typed `Error` before any listener
+    runs at all if called re-entrantly — the identical, well-established hazard real Redux itself
+    refuses for the same reason ("Reducers may not dispatch actions"), mirrored here without pulling in
+    the library, matching this file's own explicit "hand-rolled... do not pull in Redux" mandate. Reset
+    in a `finally` block so a caller catching the resulting `AggregateError` (a real, ordinary listener
+    failure, unrelated to re-entrancy) and dispatching again immediately afterward is never itself
+    mistaken for a re-entrant call. Two new tests prove both directions: the re-entrant call is refused
+    and later listeners see the outer dispatch's own correct, undisturbed value; and a genuine,
+    sequential dispatch immediately after catching a previous `AggregateError` succeeds normally.
+
+Both fixes are scoped narrowly to these two, orthogonal issues — the restart-detection resolution
+(items 11-13 above) was not reopened, per the coordinator's own explicit direction that decision stands.
+
+Final state after five rounds: 104 real tests, `pnpm typecheck`/`eslint .`/`prettier --check .`/`pnpm
+run boundaries` all clean, coverage comfortably above the 85%/80% floor on every file in the diff. See
+`GAUNTLET-LOG.md`'s M9 P1 entry for the full five-round critic record.

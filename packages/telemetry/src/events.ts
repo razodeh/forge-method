@@ -145,7 +145,12 @@ function assertSafeRunId(runId: string): void {
   }
 }
 
-function eventLogPath(projectRoot: string, runId: string): string {
+/** Exported (beyond this module's own internal use in `appendEvent`/`readEvents`) so a caller that
+ * needs to cheaply check whether a run's own event log has changed at all — `@forge/tui`'s own
+ * `EngineClient` polling loop, `PLAN-M9.md` P1 — can `fs.stat` it directly rather than duplicating
+ * this exact path convention (`.forge/state/runs/<runId>/events.ndjson`) a second time outside this
+ * package. */
+export function eventLogPath(projectRoot: string, runId: string): string {
   assertSafeRunId(runId);
   return path.join(projectRoot, '.forge', 'state', 'runs', runId, 'events.ndjson');
 }

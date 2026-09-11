@@ -19,6 +19,7 @@ import {
   appendEvent,
   errorCode,
   errorMessage,
+  eventLogPath,
   readEvents,
   type ForgeEvent,
   type NewForgeEvent,
@@ -881,4 +882,16 @@ describe('torn trailing write recovery', () => {
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
     },
   );
+});
+
+describe('eventLogPath', () => {
+  it('returns the real, documented .forge/state/runs/<runId>/events.ndjson path', () => {
+    expect(eventLogPath('/a/project', 'run-1')).toBe(
+      path.join('/a/project', '.forge', 'state', 'runs', 'run-1', 'events.ndjson'),
+    );
+  });
+
+  it('rejects an unsafe runId the identical way appendEvent/readEvents already do', () => {
+    expect(() => eventLogPath('/a/project', '../escape')).toThrow(TelemetryError);
+  });
 });
