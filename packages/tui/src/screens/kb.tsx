@@ -175,10 +175,15 @@ function EntryDetail({
 }): JSX.Element {
   if (!entry) return <Text dimColor>No entry selected.</Text>;
 
+  const dash = mode.ascii ? '-' : '—';
+  const diagramGlyph = mode.ascii ? '[#]' : '⬚';
+
   if (showWriteHistory) {
     return (
       <Box flexDirection="column">
-        <Text bold>{entry.id} — write history</Text>
+        <Text bold>
+          {entry.id} {dash} write history
+        </Text>
         {writeHistory.length === 0 ? (
           <Text dimColor>No write history.</Text>
         ) : (
@@ -199,7 +204,7 @@ function EntryDetail({
     { key: 'owner', value: entry.owner },
     { key: 'updated', value: entry.updated },
     { key: 'review by', value: entry.review_by },
-    { key: 'last verified', value: entry.verified ?? '—' },
+    { key: 'last verified', value: entry.verified ?? dash },
   ];
   const backlinks = usedBy(entries, entry.id);
 
@@ -208,10 +213,12 @@ function EntryDetail({
       <Text bold>{entry.title}</Text>
       <KeyValue rows={rows} />
       <Text>
-        sources: {entry.sources.map((source) => `${source.kind}:${source.ref}`).join(', ') || '—'}
+        sources: {entry.sources.map((source) => `${source.kind}:${source.ref}`).join(', ') || dash}
       </Text>
-      <Text>used by: {backlinks.length > 0 ? backlinks.map((e) => e.id).join(', ') : '—'}</Text>
-      <Text>{diagrams.length > 0 ? `⬚ ${String(diagrams.length)} diagrams` : '⬚ 0 diagrams'}</Text>
+      <Text>used by: {backlinks.length > 0 ? backlinks.map((e) => e.id).join(', ') : dash}</Text>
+      <Text>
+        {diagramGlyph} {String(diagrams.length)} diagrams
+      </Text>
       {diagrams.map((diagram) => (
         <Box flexDirection="column" key={diagram.id}>
           <Text dimColor>

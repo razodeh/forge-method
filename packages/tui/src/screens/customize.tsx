@@ -104,6 +104,7 @@ import type { ScreenProps } from '../components/app-shell.tsx';
 import { DiffView } from '../components/diff-view.tsx';
 import { defaultListItemLabel, ListPane } from '../components/list-pane.tsx';
 import { Pane } from '../components/pane.tsx';
+import type { RenderMode } from '../env.ts';
 import type { EngineCommand } from '../state/engine-command.ts';
 
 /** Mirrors `@forge/extensions/resolve`'s own real `Layer` values (`L0` built-in through `L4` personal)
@@ -176,9 +177,12 @@ function surfaceLabel(surface: CustomizationSurface, modifiedCount: number): str
   return `${surface.id} ${surface.name}${badge}`;
 }
 
-function fieldLabel(field: ResolvedFieldRow): string {
-  const lock = field.lockedInvariantId ? ` 🔒 ${field.lockedInvariantId}` : '';
-  return `${field.path} = ${field.displayValue} ← ${LAYER_LABEL[field.layer]}${lock}`;
+function fieldLabel(field: ResolvedFieldRow, mode: Pick<RenderMode, 'ascii'>): string {
+  const lock = field.lockedInvariantId
+    ? ` ${mode.ascii ? '[locked]' : '🔒'} ${field.lockedInvariantId}`
+    : '';
+  const arrow = mode.ascii ? '<-' : '←';
+  return `${field.path} = ${field.displayValue} ${arrow} ${LAYER_LABEL[field.layer]}${lock}`;
 }
 
 export function CustomizeScreen({
@@ -293,7 +297,7 @@ export function CustomizeScreen({
               items={activeFields}
               getId={(field) => field.path}
               getFilterText={(field) => field.path}
-              renderItem={(field) => <Text>{fieldLabel(field)}</Text>}
+              renderItem={(field) => <Text>{fieldLabel(field, mode)}</Text>}
               onSelect={(field) => {
                 setSelectedFieldPath(field.path);
               }}

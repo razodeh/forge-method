@@ -58,6 +58,7 @@ import { Modal } from '../components/modal.tsx';
 import { Pane } from '../components/pane.tsx';
 import { type Answer, QuestionForm } from '../components/question-form.tsx';
 import { StreamView } from '../components/stream-view.tsx';
+import type { RenderMode } from '../env.ts';
 import type { EngineCommand } from '../state/engine-command.ts';
 
 export interface SessionProgress {
@@ -109,20 +110,24 @@ function turnLine(turn: SessionTurn): string {
 function SessionDetail({
   session,
   focused,
+  mode,
 }: {
   readonly session: SessionSummary | undefined;
   readonly focused: boolean;
+  readonly mode: Pick<RenderMode, 'ascii'>;
 }): JSX.Element {
   if (!session) return <Text dimColor>No session selected.</Text>;
 
   const lines = session.transcript.map(turnLine);
+  const sep = mode.ascii ? ' | ' : ' · ';
 
   return (
     <Box flexDirection="column">
       <Text bold>
-        {session.title} · &quot;{session.topic}&quot;
+        {session.title}
+        {sep}&quot;{session.topic}&quot;
         {session.progress
-          ? ` · technique: ${session.progress.technique} (${String(session.progress.step)}/${String(session.progress.total)})`
+          ? `${sep}technique: ${session.progress.technique} (${String(session.progress.step)}/${String(session.progress.total)})`
           : ''}
       </Text>
       <StreamView source={lines} height={TRANSCRIPT_HEIGHT} focused={focused} />
@@ -225,6 +230,7 @@ export function SessionsScreen({
           <SessionDetail
             session={activeSession}
             focused={focusedPane === DETAIL_PANE_INDEX && !contributeOpen}
+            mode={mode}
           />
         </Pane>
       </Box>

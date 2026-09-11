@@ -287,6 +287,19 @@ describe('<SpecsScreen>', () => {
       expect(stripAnsi(lastFrame() ?? '')).toContain('CAP-001 → VIS-001');
     });
 
+    it('ascii mode joins the path with "->" instead of the Unicode "→"', async () => {
+      const { lastFrame, stdin } = render(
+        <SpecsScreen {...baseProps({ mode: { ...MODE, ascii: true } })} />,
+      );
+      await flush();
+      await press(stdin, RIGHT); // expand VIS -- focus stays on VIS-001
+      await press(stdin, DOWN); // focus moves to CAP-001
+      await press(stdin, 't');
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('CAP-001 -> VIS-001');
+      expect(frame).not.toContain('→');
+    });
+
     it('never emits a command -- a pure local view concern', async () => {
       const commands: EngineCommand[] = [];
       const { stdin } = render(
@@ -367,6 +380,20 @@ describe('<SpecsScreen>', () => {
       expect(frame).toContain('CAP-001:');
       expect(frame).toContain('✓');
       expect(frame).toContain('✗');
+    });
+
+    it('ascii mode uses +/x instead of the Unicode ✓/✗ marks -- a round-1 P15 critic found MatrixView never accepted a mode prop at all', async () => {
+      const { lastFrame, stdin } = render(
+        <SpecsScreen {...baseProps({ mode: { ...MODE, ascii: true } })} />,
+      );
+      await flush();
+      await press(stdin, 'm');
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('CAP-001:');
+      expect(frame).toContain('+');
+      expect(frame).toContain('x');
+      expect(frame).not.toContain('✓');
+      expect(frame).not.toContain('✗');
     });
 
     it('pressing m again returns to the tree view', async () => {

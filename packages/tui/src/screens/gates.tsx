@@ -117,7 +117,8 @@ function CheckRow({
 }): JSX.Element {
   return (
     <Text>
-      <StatusGlyph state={check.status} mode={mode} /> {check.id} — {check.detail}
+      <StatusGlyph state={check.status} mode={mode} /> {check.id} {mode.ascii ? '-' : '—'}{' '}
+      {check.detail}
     </Text>
   );
 }
@@ -155,7 +156,7 @@ function GateDetail({
       ))}
       {openQuestion ? (
         <Text dimColor>
-          ▸ {openQuestion.id}: {openQuestion.text}
+          {mode.ascii ? '>' : '▸'} {openQuestion.id}: {openQuestion.text}
         </Text>
       ) : undefined}
       {blockedReason ? (

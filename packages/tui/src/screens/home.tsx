@@ -241,7 +241,7 @@ export function HomeScreen({
                   .map((stage, index) =>
                     index === project.currentStageIndex ? `[${stage}]` : stage,
                   )
-                  .join(' ▸ '),
+                  .join(mode.ascii ? ' > ' : ' ▸ '),
               },
               { key: 'Autonomy', value: project.autonomy },
             ]}
@@ -255,7 +255,9 @@ export function HomeScreen({
           <Box flexDirection="column">
             {rankedActions.map((action) => (
               <Box key={action.id} flexDirection="column">
-                <Text>▸ {action.description}</Text>
+                <Text>
+                  {mode.ascii ? '>' : '▸'} {action.description}
+                </Text>
                 <Text dimColor> Run: {action.command}</Text>
               </Box>
             ))}
@@ -290,7 +292,15 @@ export function HomeScreen({
               <Text key={gate.gateId}>
                 {index > 0 ? '  ' : ''}
                 {gate.gateId}{' '}
-                {gate.status === undefined ? '—' : <StatusGlyph state={gate.status} mode={mode} />}
+                {gate.status === undefined ? (
+                  mode.ascii ? (
+                    '-'
+                  ) : (
+                    '—'
+                  )
+                ) : (
+                  <StatusGlyph state={gate.status} mode={mode} />
+                )}
               </Text>
             ))}
           </Text>

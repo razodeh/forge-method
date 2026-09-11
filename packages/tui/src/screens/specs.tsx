@@ -79,6 +79,7 @@ import { useState } from 'react';
 import type { ScreenProps } from '../components/app-shell.tsx';
 import { Pane } from '../components/pane.tsx';
 import { Tree, type TreeNode } from '../components/tree.tsx';
+import type { RenderMode } from '../env.ts';
 import type { EngineCommand } from '../state/engine-command.ts';
 
 export interface SpecsScreenProps extends ScreenProps {
@@ -142,20 +143,27 @@ function adrCountFor(graph: SpecGraph, nodeId: string): number {
   return graph.edges().filter((edge) => edge.edge === 'constrains' && edge.to === nodeId).length;
 }
 
-function crossLinkSuffix(graph: SpecGraph, node: GraphNode): string {
+function crossLinkSuffix(
+  graph: SpecGraph,
+  node: GraphNode,
+  mode: Pick<RenderMode, 'ascii'>,
+): string {
   const parts: string[] = [];
   if (node.kind === 'STORY') {
     const tests = testCountForStory(graph, node.id);
-    if (tests > 0) parts.push(`⚭ ${String(tests)} test${tests === 1 ? '' : 's'}`);
+    if (tests > 0) {
+      parts.push(`${mode.ascii ? '[test]' : '⚭'} ${String(tests)} test${tests === 1 ? '' : 's'}`);
+    }
   }
   if (node.kind === 'EPIC' || node.kind === 'STORY') {
     const adrs = adrCountFor(graph, node.id);
     if (adrs > 0) parts.push(`${String(adrs)} ADR${adrs === 1 ? '' : 's'}`);
   }
-  return parts.length > 0 ? ` · ${parts.join(' · ')}` : '';
+  const sep = mode.ascii ? ' | ' : ' · ';
+  return parts.length > 0 ? `${sep}${parts.join(sep)}` : '';
 }
 
-function buildTree(graph: SpecGraph): readonly TreeNode[] {
+function buildTree(graph: SpecGraph, mode: Pick<RenderMode, 'ascii'>): readonly TreeNode[] {
   const capsOf = primaryChildIndex(graph, HIERARCHY_EDGES.CAP);
   const epicsOf = primaryChildIndex(graph, HIERARCHY_EDGES.EPIC);
   const storiesOf = primaryChildIndex(graph, HIERARCHY_EDGES.STORY);
@@ -168,7 +176,7 @@ function buildTree(graph: SpecGraph): readonly TreeNode[] {
     const tasks = tasksOf.get(story.id) ?? [];
     return {
       id: story.id,
-      label: `${story.kind} ${story.id}${crossLinkSuffix(graph, story)}`,
+      label: `${story.kind} ${story.id}${crossLinkSuffix(graph, story, mode)}`,
       ...(tasks.length > 0 ? { children: tasks.map(taskNode) } : {}),
     };
   }
@@ -176,7 +184,7 @@ function buildTree(graph: SpecGraph): readonly TreeNode[] {
     const stories = storiesOf.get(epic.id) ?? [];
     return {
       id: epic.id,
-      label: `${epic.kind} ${epic.id}${crossLinkSuffix(graph, epic)}`,
+      label: `${epic.kind} ${epic.id}${crossLinkSuffix(graph, epic, mode)}`,
       ...(stories.length > 0 ? { children: stories.map(storyNode) } : {}),
     };
   }
@@ -253,14 +261,20 @@ function buildMatrix(graph: SpecGraph): {
   return { caps, rows };
 }
 
-function OrphansView({ graph }: { readonly graph: SpecGraph }): JSX.Element {
+function OrphansView({
+  graph,
+  mode,
+}: {
+  readonly graph: SpecGraph;
+  readonly mode: Pick<RenderMode, 'ascii'>;
+}): JSX.Element {
   const orphans = graph.orphans();
   if (orphans.length === 0) return <Text dimColor>No orphans.</Text>;
   return (
     <Box flexDirection="column">
       {orphans.map((orphan) => (
         <Text key={`${orphan.kind}:${orphan.id}`}>
-          {orphan.kind} {orphan.id} — {orphan.reason}
+          {orphan.kind} {orphan.id} {mode.ascii ? '-' : '—'} {orphan.reason}
         </Text>
       ))}
     </Box>
@@ -270,12 +284,16 @@ function OrphansView({ graph }: { readonly graph: SpecGraph }): JSX.Element {
 function MatrixView({
   graph,
   cursor,
+  mode,
 }: {
   readonly graph: SpecGraph;
   readonly cursor: { readonly row: number; readonly col: number };
+  readonly mode: Pick<RenderMode, 'ascii'>;
 }): JSX.Element {
   const { caps, rows } = buildMatrix(graph);
   if (caps.length === 0) return <Text dimColor>No capabilities.</Text>;
+  const covered = mode.ascii ? '+' : '✓';
+  const uncovered = mode.ascii ? 'x' : '✗';
   return (
     <Box flexDirection="column">
       {caps.map((cap, rowIndex) => {
@@ -287,7 +305,7 @@ function MatrixView({
               ? '(no stories)'
               : cells
                   .map((cell, colIndex) => {
-                    const mark = cell.covered ? '✓' : '✗';
+                    const mark = cell.covered ? covered : uncovered;
                     const isCursor = rowIndex === cursor.row && colIndex === cursor.col;
                     return isCursor ? `[${mark}]` : ` ${mark} `;
                   })
@@ -317,7 +335,7 @@ export function SpecsScreen({
   const [tracePath, setTracePath] = useState<readonly string[] | undefined>(undefined);
   const [matrixCursor, setMatrixCursor] = useState({ row: 0, col: 0 });
 
-  const treeNodes = buildTree(graph);
+  const treeNodes = buildTree(graph, mode);
   const { caps, rows } = buildMatrix(graph);
 
   // Re-derived every render, never trusted directly from `matrixCursor` state -- a round-2 critic
@@ -439,12 +457,14 @@ export function SpecsScreen({
             }}
           />
         ) : undefined}
-        {view === 'orphans' ? <OrphansView graph={graph} /> : undefined}
-        {view === 'matrix' ? <MatrixView graph={graph} cursor={safeCursor} /> : undefined}
+        {view === 'orphans' ? <OrphansView graph={graph} mode={mode} /> : undefined}
+        {view === 'matrix' ? (
+          <MatrixView graph={graph} cursor={safeCursor} mode={mode} />
+        ) : undefined}
       </Pane>
       {tracePath ? (
         <Pane title="Traceability path to root" focused={false} mode={mode}>
-          <Text>{tracePath.join(' → ')}</Text>
+          <Text>{tracePath.join(mode.ascii ? ' -> ' : ' → ')}</Text>
         </Pane>
       ) : undefined}
     </Box>

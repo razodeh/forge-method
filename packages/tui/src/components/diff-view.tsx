@@ -87,7 +87,7 @@ const LINE_PREFIX: Readonly<Record<DiffLineType, string>> = {
 
 export interface DiffViewProps {
   readonly patch: string;
-  readonly mode: Pick<RenderMode, 'color'>;
+  readonly mode: Pick<RenderMode, 'ascii' | 'color'>;
   readonly foldThreshold?: number;
   readonly expandedHunks?: ReadonlySet<number>;
 }
@@ -112,8 +112,13 @@ export function DiffView({
             </Text>
             {isFolded ? (
               <Text dimColor>
-                ⋯ {String(hunk.lines.length)} lines folded (+{String(hunk.addCount)} -
-                {String(hunk.removeCount)}) ⋯
+                {/* `04` §4.7's own degradation-mode pass (`PLAN-M9.md` P15) found this fold message
+                    unconditionally used a real Unicode ellipsis (`⋯`) -- a real, genuine gap missed by
+                    both the ascii matrix (whose own fixture never triggers folding) and the earlier grep
+                    sweep (whose glyph list didn't include this character), caught only while directly
+                    auditing every remaining pass/fail-adjacent surface for `04`'s colour-blindness rule. */}
+                {mode.ascii ? '...' : '⋯'} {String(hunk.lines.length)} lines folded (+
+                {String(hunk.addCount)} -{String(hunk.removeCount)}) {mode.ascii ? '...' : '⋯'}
               </Text>
             ) : (
               hunk.lines.map((line, lineIndex) => {

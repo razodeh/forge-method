@@ -11,6 +11,7 @@
  */
 import { Text, useInput } from 'ink';
 import { render } from 'ink-testing-library';
+import type { JSX } from 'react';
 import stripAnsi from 'strip-ansi';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +24,7 @@ import {
 } from '../../src/components/app-shell.tsx';
 import { useIsBackgrounded } from '../../src/components/modal.tsx';
 import { QuestionForm } from '../../src/components/question-form.tsx';
+import { StatusGlyph } from '../../src/components/status-glyph.tsx';
 import type { RenderMode } from '../../src/env.ts';
 import type { EngineClient, EngineClientNotification } from '../../src/state/engine-client.ts';
 import type { ForgeEvent } from '@forge/telemetry/events';
@@ -581,5 +583,135 @@ describe('AppShell', () => {
     await press(stdin, UP);
     await press(stdin, DOWN);
     expect(stripAnsi(lastFrame() ?? '')).toContain('modal');
+  });
+
+  describe("degradation modes end to end (04 §4.7) -- a real, rendered-frame-level proof for each, not just detectRenderMode's own unit tests from P1", () => {
+    it('color:true and color:false render the identical notification text -- color is presentation only, never a second source of truth for what is shown', async () => {
+      // `ink-testing-library` renders with Ink's own `debug: true` mode (confirmed directly against its
+      // real source), which never emits raw ANSI colour escapes into `lastFrame()` regardless of any
+      // `color` prop -- the same reason every other test in this entire package asserts through
+      // `stripAnsi`, never against a raw escape sequence. `color`'s own real effect (`app-shell.tsx`'s
+      // `{...(liveMode.color ? { color: 'yellow' } : {})}` spread on the notification banner) is a
+      // single, narrow, already-disclosed conditional prop application -- proving `liveMode.color`
+      // genuinely reaches it, and that toggling it never changes the rendered *text*, is the real,
+      // meaningful end-to-end claim this harness can actually support.
+      const client = createFakeClient();
+      const { lastFrame: colorFrame } = await renderShell({
+        mode: { ...MODE, color: true },
+        client,
+      });
+      client.emitNotification({ type: 'gap', message: 'log read failed' });
+      await flush();
+
+      const plainClient = createFakeClient();
+      const { lastFrame: plainFrame } = await renderShell({
+        mode: { ...MODE, color: false },
+        client: plainClient,
+      });
+      plainClient.emitNotification({ type: 'gap', message: 'log read failed' });
+      await flush();
+
+      expect(stripAnsi(colorFrame() ?? '')).toContain('⚠ log read failed');
+      expect(stripAnsi(colorFrame() ?? '')).toBe(stripAnsi(plainFrame() ?? ''));
+    });
+
+    it('a narrow terminal (< 100 columns) renders the compact digit-only header, never the full "FORGE ▸ product" header', async () => {
+      const { lastFrame } = await renderShell({ mode: { ...MODE, columns: 80 } });
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('[1*]');
+      expect(frame).not.toContain('FORGE ▸ acme-billing');
+    });
+
+    it('a wide terminal (>= 100 columns) renders the full header, never the compact digit-only one', async () => {
+      const { lastFrame } = await renderShell({ mode: { ...MODE, columns: 120 } });
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('FORGE ▸ acme-billing');
+      expect(frame).not.toContain('[1*]');
+    });
+
+    it('a short terminal (< 24 lines) renders the "? help" footer, never the full key-legend footer', async () => {
+      const { lastFrame } = await renderShell({ mode: { ...MODE, lines: 20 } });
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('? help');
+      expect(frame).not.toContain('?help :cmd  q quit');
+    });
+
+    it('a tall terminal (>= 24 lines) renders the full key-legend footer, never the bare "? help"', async () => {
+      const { lastFrame } = await renderShell({ mode: { ...MODE, lines: 40 } });
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('?help :cmd  q quit');
+    });
+
+    it('--ascii mode reaches a real composed screen and changes its own rendered glyphs, end to end through AppShell', async () => {
+      function ScreenWithGlyph({ mode }: { readonly mode: RenderMode }): JSX.Element {
+        return <StatusGlyph state="pass" mode={mode} />;
+      }
+      const screens = new Map<ScreenId, ScreenEntry>([
+        [1, { label: 'Home', component: ScreenWithGlyph }],
+      ]);
+      const { lastFrame: unicodeFrame } = await renderShell({
+        screens,
+        mode: { ...MODE, ascii: false },
+      });
+      const { lastFrame: asciiFrame } = await renderShell({
+        screens,
+        mode: { ...MODE, ascii: true },
+      });
+      expect(stripAnsi(unicodeFrame() ?? '')).toContain('✓');
+      expect(stripAnsi(asciiFrame() ?? '')).toContain('+');
+      expect(stripAnsi(asciiFrame() ?? '')).not.toContain('✓');
+    });
+
+    it("--ascii mode also degrades the notification banner's own glyph, not just a composed screen's -- a round-1 P15 critic found this ⚠ was still hardcoded, unlike the header decorations right above it", async () => {
+      const client = createFakeClient();
+      const { lastFrame } = await renderShell({ client, mode: { ...MODE, ascii: true } });
+      client.emitNotification({ type: 'gap', message: 'telemetry log unreadable' });
+      await flush();
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('! telemetry log unreadable');
+      expect(frame).not.toContain('⚠');
+    });
+  });
+
+  describe('--linear mode (04 §4.7)', () => {
+    const LINEAR_MODE: RenderMode = { ...MODE, linear: true };
+
+    it("renders <LinearView>'s own sequential output, never the panelled screen layout", async () => {
+      const { lastFrame } = await renderShell({ mode: LINEAR_MODE });
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).toContain('FORGE acme-billing -- stage MVP (2/7 epics) -- linear mode');
+      expect(frame).not.toContain('Home (pane 0)');
+      expect(frame).not.toContain('?help :cmd  q quit'); // the panelled footer
+    });
+
+    it('announces a real event dispatched through the client as a new line', async () => {
+      const client = createFakeClient();
+      const { lastFrame } = await renderShell({ mode: LINEAR_MODE, client });
+      client.emit(makeEvent('RunStarted'));
+      await flush();
+      expect(stripAnsi(lastFrame() ?? '')).toContain('RunStarted');
+    });
+
+    it("is genuinely non-interactive -- every one of AppShell's own global keys (screen-switch digits, Tab, p/r/a/x, q, Ctrl+L) is inert", async () => {
+      const onQuit = vi.fn();
+      const onPause = vi.fn();
+      const client = createFakeClient();
+      client.emit(makeEvent('RunStarted'));
+      const { lastFrame, stdin } = await renderShell({
+        mode: LINEAR_MODE,
+        client,
+        onQuit,
+        onPause,
+      });
+      await flush();
+      await press(stdin, '2'); // would switch screens in panelled mode
+      await press(stdin, TAB);
+      await press(stdin, 'p');
+      await press(stdin, 'q');
+      const frame = stripAnsi(lastFrame() ?? '');
+      expect(frame).not.toContain('Run (pane'); // no screen ever rendered at all in linear mode
+      expect(onQuit).not.toHaveBeenCalled();
+      expect(onPause).not.toHaveBeenCalled();
+    });
   });
 });

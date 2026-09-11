@@ -97,8 +97,14 @@ function baseProps(overrides: Partial<RunBoardScreenProps> = {}): RunBoardScreen
 
 describe('formatSchedulerLine', () => {
   it('renders every aggregate count, and the blocked reason in parens', () => {
-    expect(formatSchedulerLine(scheduler())).toBe(
+    expect(formatSchedulerLine(scheduler(), { ascii: false })).toBe(
       'ready 4 · running 3/4 · blocked 2 (ADR-014) · merge queue 1 · budget $4.21/$25.00',
+    );
+  });
+
+  it('ascii mode uses a plain pipe separator, never a middle dot', () => {
+    expect(formatSchedulerLine(scheduler(), { ascii: true })).toBe(
+      'ready 4 | running 3/4 | blocked 2 (ADR-014) | merge queue 1 | budget $4.21/$25.00',
     );
   });
 
@@ -112,7 +118,7 @@ describe('formatSchedulerLine', () => {
       spentUsd: 4.21,
       budgetCapUsd: 25,
     };
-    expect(formatSchedulerLine(noReason)).toBe(
+    expect(formatSchedulerLine(noReason, { ascii: false })).toBe(
       'ready 4 · running 3/4 · blocked 0 · merge queue 1 · budget $4.21/$25.00',
     );
   });

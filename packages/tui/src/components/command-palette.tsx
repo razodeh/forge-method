@@ -34,6 +34,8 @@ import { Box, Text, useInput } from 'ink';
 import type { JSX } from 'react';
 import { useMemo, useState } from 'react';
 
+import type { RenderMode } from '../env.ts';
+
 export interface Command {
   readonly name: string;
   readonly description: string;
@@ -80,6 +82,11 @@ export interface CommandPaletteProps {
   readonly commands: readonly Command[];
   readonly onSubmit: (commandName: string) => void;
   readonly onCancel: () => void;
+  /** `04` §4.7's own degradation-mode pass (`PLAN-M9.md` P15) found this component never accepted a
+   * `mode` prop at all, unconditionally rendering a real Unicode em dash (`—`) between a command's own
+   * name and description regardless of `RenderMode.ascii` -- a real, genuine gap, not a disclosed scope
+   * cut. Added to close it; every other component in this package already threads `RenderMode` through. */
+  readonly mode: Pick<RenderMode, 'ascii'>;
 }
 
 export function CommandPalette({
@@ -87,6 +94,7 @@ export function CommandPalette({
   commands,
   onSubmit,
   onCancel,
+  mode,
 }: CommandPaletteProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
@@ -137,13 +145,15 @@ export function CommandPalette({
 
   if (!open) return <></>;
 
+  const separator = mode.ascii ? '-' : '—';
+
   return (
     <Box flexDirection="column">
       <Text>:{query}</Text>
       {matches.map((command, index) => (
         <Text key={command.name}>
           {index === clampedCursor ? '> ' : '  '}
-          {command.name} — {command.description}
+          {command.name} {separator} {command.description}
         </Text>
       ))}
     </Box>

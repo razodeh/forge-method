@@ -65,7 +65,9 @@ describe('parseUnifiedDiff', () => {
 
 describe('DiffView', () => {
   it('renders every hunk header and its own real add/remove line count is reflected in the rendered content', () => {
-    const { lastFrame } = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false }} />);
+    const { lastFrame } = render(
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} />,
+    );
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('@@ -1,5 +1,5 @@');
     expect(frame).toContain('@@ -28,6 +28,11 @@');
@@ -76,14 +78,18 @@ describe('DiffView', () => {
     // Short fragments only: the fake terminal (100 columns) word-wraps this fixture's own long
     // doc-comment lines mid-string, so a long expected literal would never match regardless of
     // correctness -- these are the short lines the fixture was built to also cover for exactly this.
-    const { lastFrame } = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false }} />);
+    const { lastFrame } = render(
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} />,
+    );
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('+// fixture-added line 1');
     expect(frame).toContain('+// fixture-added line 5');
   });
 
   it('a hunk beyond the folding threshold renders collapsed with an expand affordance, not its own full content', () => {
-    const { lastFrame } = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false }} />);
+    const { lastFrame } = render(
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} />,
+    );
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).not.toContain('fixture-replacement line 1');
     expect(frame).toContain('43 lines folded (+25 -12)');
@@ -91,14 +97,16 @@ describe('DiffView', () => {
 
   it('a caller-supplied foldThreshold changes which hunks fold', () => {
     // At the default threshold (20), the 11-line hunk renders in full -- below the bound.
-    const atDefault = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false }} />);
+    const atDefault = render(
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} />,
+    );
     expect(stripAnsi(atDefault.lastFrame() ?? '')).toContain('+// fixture-added line 1');
 
     // A threshold of 3 forces that same, otherwise-unfolded 11-line hunk to fold too, proving the
     // prop is actually read on every hunk, not merely applied to whichever one happens to exceed the
     // hard-coded default.
     const withLowThreshold = render(
-      <DiffView patch={SAMPLE_DIFF} mode={{ color: false }} foldThreshold={3} />,
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} foldThreshold={3} />,
     );
     const frame = stripAnsi(withLowThreshold.lastFrame() ?? '');
     expect(frame).not.toContain('fixture-added line 1');
@@ -107,7 +115,11 @@ describe('DiffView', () => {
 
   it('expandedHunks forces a specific folded hunk open, by index', () => {
     const { lastFrame } = render(
-      <DiffView patch={SAMPLE_DIFF} mode={{ color: false }} expandedHunks={new Set([2])} />,
+      <DiffView
+        patch={SAMPLE_DIFF}
+        mode={{ color: false, ascii: false }}
+        expandedHunks={new Set([2])}
+      />,
     );
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('fixture-replacement line 1');
@@ -115,13 +127,22 @@ describe('DiffView', () => {
   });
 
   it('an empty patch renders nothing', () => {
-    const { lastFrame } = render(<DiffView patch="" mode={{ color: false }} />);
+    const { lastFrame } = render(<DiffView patch="" mode={{ color: false, ascii: false }} />);
     expect(lastFrame()).toBe('');
   });
 
+  it('ascii mode renders the fold message with a plain "..." ellipsis, never the Unicode "⋯"', () => {
+    const { lastFrame } = render(
+      <DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: true }} />,
+    );
+    const frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).toContain('... 43 lines folded (+25 -12) ...');
+    expect(frame).not.toContain('⋯');
+  });
+
   it('color: true and color: false render identical text once ANSI codes are stripped', () => {
-    const colored = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: true }} />);
-    const plain = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false }} />);
+    const colored = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: true, ascii: false }} />);
+    const plain = render(<DiffView patch={SAMPLE_DIFF} mode={{ color: false, ascii: false }} />);
     expect(stripAnsi(colored.lastFrame() ?? '')).toBe(stripAnsi(plain.lastFrame() ?? ''));
   });
 });

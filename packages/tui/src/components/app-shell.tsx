@@ -70,6 +70,7 @@ import type { JSX, ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RenderMode } from '../env.ts';
+import { LinearView } from '../linear.tsx';
 import type { EngineClient, EngineClientNotification } from '../state/engine-client.ts';
 import { INITIAL_RUN_READ_MODEL, reduceRun, type RunReadModel } from '../state/run-read-model.ts';
 import { createStore } from '../state/store.ts';
@@ -267,7 +268,7 @@ export function AppShell({
         setReadModel(store.getState());
       }
     },
-    { isActive: !anyModalOpen },
+    { isActive: !anyModalOpen && !liveMode.linear },
   );
 
   const topModal = modalStack[modalStack.length - 1];
@@ -302,19 +303,38 @@ export function AppShell({
         onQuit();
       }
     },
-    { isActive: true },
+    { isActive: !liveMode.linear },
   );
+
+  // `--linear` (`04` §4.7) is a genuinely different render path, not a reflow of the panelled layout
+  // below -- branched here, at the very end, after every one of this component's own hooks has already
+  // run unconditionally above (React's own rule: hooks must never be called conditionally, only the
+  // final returned JSX may branch). `<LinearView>` (P15) owns its own independent event subscription;
+  // this component's own `store`/`client.subscribe` wiring above still runs regardless of `liveMode
+  // .linear` (an accepted, harmless redundancy in linear mode, not a bug -- refactoring it away would
+  // mean the panelled path's own subscription setup became conditional on a value only known after
+  // hooks must already have run).
+  if (liveMode.linear) {
+    return <LinearView client={client} productName={productName} stageLabel={stageLabel} />;
+  }
 
   const activeEntry = screens.get(activeScreen);
   const ActiveScreenComponent = activeEntry?.component;
 
+  // `04` §4.7's own degradation-mode pass (`PLAN-M9.md` P15) found this header unconditionally used
+  // four distinct Unicode decorations (`▸`/`──`/`●`/`·`) regardless of `RenderMode.ascii` -- a real,
+  // genuine gap in the one line every real screen shares, not a disclosed scope cut.
+  const arrow = liveMode.ascii ? '>' : '▸';
+  const rule = liveMode.ascii ? '--' : '──';
+  const dot = liveMode.ascii ? '*' : '●';
+  const sep = liveMode.ascii ? ' | ' : ' · ';
   const header = isNarrow
     ? ALL_SCREEN_IDS.map((id) =>
         id === activeScreen ? `[${String(id)}*]` : `[${String(id)}]`,
       ).join('')
-    : `FORGE ▸ ${productName} ▸ Stage: ${stageLabel} ── ● ${String(
+    : `FORGE ${arrow} ${productName} ${arrow} Stage: ${stageLabel} ${rule} ${dot} ${String(
         [...readModel.laneStatuses.values()].filter((status) => status !== 'removed').length,
-      )} lanes · $${readModel.spentUsd.toFixed(2)}/$${budgetCapUsd.toFixed(2)} · ${String(
+      )} lanes${sep}$${readModel.spentUsd.toFixed(2)}/$${budgetCapUsd.toFixed(2)}${sep}${String(
         Math.round(elapsedMs / 60_000),
       )}m`;
 
@@ -328,7 +348,9 @@ export function AppShell({
     <Box flexDirection="column">
       <Text>{header}</Text>
       {notification ? (
-        <Text {...(liveMode.color ? { color: 'yellow' } : {})}>⚠ {notification.message}</Text>
+        <Text {...(liveMode.color ? { color: 'yellow' } : {})}>
+          {liveMode.ascii ? '!' : '⚠'} {notification.message}
+        </Text>
       ) : undefined}
       <AppModalStackContext.Provider value={modalStackApi}>
         <FocusTrapContext.Provider value={{ isBackgrounded: anyModalOpen }}>

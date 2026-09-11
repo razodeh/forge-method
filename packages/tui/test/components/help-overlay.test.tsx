@@ -13,7 +13,12 @@ import { HelpOverlay } from '../../src/components/help-overlay.tsx';
 describe('HelpOverlay', () => {
   it('renders nothing when closed', () => {
     const { lastFrame } = render(
-      <HelpOverlay open={false} context="Home" keys={[{ key: 'q', action: 'Quit' }]} />,
+      <HelpOverlay
+        open={false}
+        context="Home"
+        keys={[{ key: 'q', action: 'Quit' }]}
+        mode={{ ascii: false }}
+      />,
     );
     expect(lastFrame()).toBe('');
   });
@@ -27,6 +32,7 @@ describe('HelpOverlay', () => {
           { key: 'p', action: 'Pause run' },
           { key: 'r', action: 'Resume run' },
         ]}
+        mode={{ ascii: false }}
       />,
     );
     const frame = stripAnsi(lastFrame() ?? '');
@@ -36,7 +42,14 @@ describe('HelpOverlay', () => {
   });
 
   it('two different context/keys inputs produce two genuinely different snapshots -- context-sensitive, not a static overlay', () => {
-    const home = render(<HelpOverlay open context="Home" keys={[{ key: 'q', action: 'Quit' }]} />);
+    const home = render(
+      <HelpOverlay
+        open
+        context="Home"
+        keys={[{ key: 'q', action: 'Quit' }]}
+        mode={{ ascii: false }}
+      />,
+    );
     const run = render(
       <HelpOverlay
         open
@@ -45,15 +58,32 @@ describe('HelpOverlay', () => {
           { key: 'p', action: 'Pause run' },
           { key: 'a', action: 'Approve gate' },
         ]}
+        mode={{ ascii: false }}
       />,
     );
     expect(home.lastFrame()).not.toBe(run.lastFrame());
   });
 
   it('an empty keys array renders just the context, without crashing', () => {
-    const { lastFrame } = render(<HelpOverlay open context="Empty screen" keys={[]} />);
+    const { lastFrame } = render(
+      <HelpOverlay open context="Empty screen" keys={[]} mode={{ ascii: false }} />,
+    );
     const frame = stripAnsi(lastFrame() ?? '');
     expect(frame).toContain('Empty screen');
     expect(frame.split('\n')).toHaveLength(3); // top border, the one content line, bottom border
+  });
+
+  it('ascii mode uses a plain hyphen separator and a classic border, never Unicode', () => {
+    const { lastFrame } = render(
+      <HelpOverlay
+        open
+        context="Run screen"
+        keys={[{ key: 'p', action: 'Pause run' }]}
+        mode={{ ascii: true }}
+      />,
+    );
+    const frame = stripAnsi(lastFrame() ?? '');
+    expect(frame).toContain('p - Pause run');
+    expect(frame).not.toContain('—');
   });
 });

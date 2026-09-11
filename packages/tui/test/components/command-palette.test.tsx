@@ -48,6 +48,7 @@ async function renderPalette(props: {
       commands={COMMANDS}
       onSubmit={props.onSubmit ?? (() => undefined)}
       onCancel={props.onCancel ?? (() => undefined)}
+      mode={{ ascii: false }}
     />,
   );
   await flush();
@@ -109,7 +110,13 @@ describe('CommandPalette', () => {
     ];
     const onSubmit = vi.fn();
     const { stdin } = render(
-      <CommandPalette open commands={commands} onSubmit={onSubmit} onCancel={() => undefined} />,
+      <CommandPalette
+        open
+        commands={commands}
+        onSubmit={onSubmit}
+        onCancel={() => undefined}
+        mode={{ ascii: false }}
+      />,
     );
     await flush();
     await press(stdin, 'ab');

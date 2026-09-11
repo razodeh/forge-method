@@ -100,6 +100,7 @@ import { Pane } from '../components/pane.tsx';
 import { type Answer, QuestionForm } from '../components/question-form.tsx';
 import { StatusGlyph, type StatusState } from '../components/status-glyph.tsx';
 import { StreamView } from '../components/stream-view.tsx';
+import type { RenderMode } from '../env.ts';
 import type { EngineCommand } from '../state/engine-command.ts';
 
 export type LaneBoardStatus = 'running' | 'waiting' | 'merged' | 'failed' | 'blocked' | 'idle';
@@ -179,13 +180,20 @@ function nextTab(current: LaneDetailTab): LaneDetailTab {
   return TAB_ORDER[(index + 1) % TAB_ORDER.length] ?? 'transcript';
 }
 
-export function formatSchedulerLine(scheduler: SchedulerFooter): string {
+export function formatSchedulerLine(
+  scheduler: SchedulerFooter,
+  mode: Pick<RenderMode, 'ascii'>,
+): string {
   const blockedSuffix = scheduler.blockedReason ? ` (${scheduler.blockedReason})` : '';
+  // `04` §4.7's own degradation-mode pass (`PLAN-M9.md` P15) found this function unconditionally used
+  // a real Unicode middle dot (`·`) as its own field separator, regardless of `RenderMode.ascii` -- a
+  // real, genuine gap this function's own exported, directly-tested status should have caught earlier.
+  const sep = mode.ascii ? ' | ' : ' · ';
   return (
-    `ready ${String(scheduler.ready)} · ` +
-    `running ${String(scheduler.running)}/${String(scheduler.runningCap)} · ` +
-    `blocked ${String(scheduler.blocked)}${blockedSuffix} · ` +
-    `merge queue ${String(scheduler.mergeQueue)} · ` +
+    `ready ${String(scheduler.ready)}${sep}` +
+    `running ${String(scheduler.running)}/${String(scheduler.runningCap)}${sep}` +
+    `blocked ${String(scheduler.blocked)}${blockedSuffix}${sep}` +
+    `merge queue ${String(scheduler.mergeQueue)}${sep}` +
     `budget $${scheduler.spentUsd.toFixed(2)}/$${scheduler.budgetCapUsd.toFixed(2)}`
   );
 }
@@ -226,7 +234,7 @@ function LaneDetailBody({
         {detail.checks.map((check) => (
           <Text key={check.name}>
             <StatusGlyph state={check.status} mode={mode} /> {check.name}
-            {check.detail ? ` — ${check.detail}` : ''}
+            {check.detail ? ` ${mode.ascii ? '-' : '—'} ${check.detail}` : ''}
           </Text>
         ))}
       </Box>
@@ -343,7 +351,7 @@ export function RunBoard({
           />
         </Pane>
         <Pane
-          title={`Lane: ${detail?.headline ?? '—'} — ${TAB_LABEL[activeTab]}`}
+          title={`Lane: ${detail?.headline ?? (mode.ascii ? '-' : '—')} ${mode.ascii ? '-' : '—'} ${TAB_LABEL[activeTab]}`}
           focused={focusedPane === DETAIL_PANE_INDEX}
           mode={mode}
         >
@@ -356,7 +364,7 @@ export function RunBoard({
         </Pane>
       </Box>
       <Pane title="Scheduler" focused={false} mode={mode}>
-        <Text>{formatSchedulerLine(scheduler)}</Text>
+        <Text>{formatSchedulerLine(scheduler, mode)}</Text>
       </Pane>
       <Modal
         open={interjectOpen}
@@ -371,8 +379,8 @@ export function RunBoard({
         />
         {interjectSupported ? undefined : (
           <Text dimColor>
-            This adapter cannot deliver a live interject — your message will be queued as an
-            addendum for the next step.
+            This adapter cannot deliver a live interject {mode.ascii ? '-' : '—'} your message will
+            be queued as an addendum for the next step.
           </Text>
         )}
       </Modal>

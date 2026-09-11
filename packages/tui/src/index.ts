@@ -6,4 +6,5 @@
  * @see PLAN-M9.md
  */
 export { detectRenderMode, type RenderMode } from './env.ts';
+export { LinearView, describeEvent, type LinearViewProps } from './linear.tsx';
 export * from './state/index.ts';

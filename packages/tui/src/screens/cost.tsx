@@ -149,13 +149,19 @@ export function CostScreen({
   const perModel = sumBy(entries, 'model');
   const perStory = costPerMergedStory(readModel.spentUsd, mergedStoryCount);
 
+  const sep = mode.ascii ? '-' : '—';
+
   return (
     <Box flexDirection="column">
-      <Pane title={`Cost & telemetry · ${runLabel}`} focused={false} mode={mode}>
+      <Pane
+        title={`Cost & telemetry ${mode.ascii ? '|' : '·'} ${runLabel}`}
+        focused={false}
+        mode={mode}
+      >
         <Text>Total spend: ${readModel.spentUsd.toFixed(2)}</Text>
         <Text>
           Cost per merged story:{' '}
-          {perStory === undefined ? '— (no merged stories yet)' : `$${perStory.toFixed(2)}`}
+          {perStory === undefined ? `${sep} (no merged stories yet)` : `$${perStory.toFixed(2)}`}
         </Text>
       </Pane>
       <Box>
@@ -184,8 +190,8 @@ export function CostScreen({
           getFilterText={(step) => step.stepId}
           renderItem={(step) => (
             <Text>
-              {step.stepId} — ${step.costUsd.toFixed(2)}
-              {step.hasCacheHits ? ' ⚡ cache hits' : ''}
+              {step.stepId} {sep} ${step.costUsd.toFixed(2)}
+              {step.hasCacheHits ? ` ${mode.ascii ? '*' : '⚡'} cache hits` : ''}
             </Text>
           )}
           focused={false}
