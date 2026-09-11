@@ -11078,3 +11078,80 @@ condition, with a new regression test.
 `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.47% statements /
 91.68% branches / 98.2% functions / 99.7% lines on every file in the diff, comfortably above the 85%/80%
 floor.
+
+## Q139 — M9 P7: `<HomeScreen>` (S1 Home/Dashboard) — one critic round finding a real comparator-
+correctness bug, one self-caught rendering gap fixed before critic review
+
+`PLAN-M9.md` P7's mandate is `04` §4.3 S1: the Project/Next-actions/Health/Recent-activity four-pane
+dashboard. Unlike the mostly self-contained pieces before it, S1 is the first screen that composes
+already-built presentational primitives (`<Pane>`, `<KeyValue>`, `<StatusGlyph>`, `<ListPane>`) around
+data no existing type in this codebase actually carries.
+
+Real design decisions, not previously written up:
+
+1. **No `RunReadModel` field carries Project/Health/NextActions facts** — `RunReadModel` (M9 P1) only
+   ever projects `ForgeEvent`s already defined elsewhere in this codebase, and none of those events
+   carry a product's level/platform/stage list, KB/specs/build health rollups, or ranked next-action
+   candidates. Rather than inventing new `EventType` payload schemas this package doesn't own, `project`/
+   `health`/`nextActionCandidates`/`recentActivity` are accepted as explicit, required props extending
+   `ScreenProps` — the same caller-supplied-fact pattern used by `<Pane>`'s `mode` (P2) and `<AppShell>`'s
+   `productName`/etc. (P6). A later, not-yet-built integration piece is expected to supply the real data
+   via a small adapter closure over the engine's actual state.
+2. **`rankNextActions` is fresh logic, not a reuse of existing code.** A research pass before writing it
+   confirmed `helpRecommendNext` (elsewhere in this codebase) is the wrong shape entirely (it recommends
+   a single next CLI subcommand for a human at a prompt, not a ranked list of blocking/gate-readiness/
+   cost-weighted action candidates for a dashboard); `orderReadyNodes` (the KB/specs dependency-ready-
+   node orderer) is the closest structural precedent — a multi-key stable sort — but not directly
+   reusable since its keys are domain-specific to dependency graphs, not this screen's own blocking/
+   gate-ready/cost/goal-match fields. The final ranking key order (from `PLAN-M9.md`'s own §4.3 S1 text):
+   blocking first, then gate-ready, then cheapest unblock cost, then declared-goal match, then a final
+   id-ordinal tiebreak for full determinism given equal-ranked candidates.
+3. **The 8-value `RunStatus` union collapses to 6 canonical screen states** (`empty`/`loading`/`running`/
+   `blocked`/`failed`/`complete`) via `canonicalStateFor`, matching `04` §4.3's own state vocabulary for
+   this screen rather than exposing all 8 raw `RunStatus` values directly in the UI (`started`/`resumed`
+   both read as `running`; `failed`/`aborted` both read as `failed`).
+
+### A gap caught by this piece's own test-writing, before any critic round
+
+While writing the 18-snapshot canonical-state × terminal-size matrix (6 states × 3 widths), the state
+mapping `canonicalStateFor` computed was never actually rendered anywhere on screen — it existed only as
+a pure function nothing called. Left uncaught, all 18 snapshots would have collapsed to near-identical
+content across every one of the 6 states, legally satisfying the letter of "one snapshot per state" while
+producing a test matrix that verified nothing. **Fixed proactively**, before ever submitting the diff for
+critic review: a real "Run: `<status>`" `<Text>`/`<StatusGlyph>` line was added to the Project pane, with
+`RUN_STATE_GLYPH`/`RUN_STATE_LABEL` lookup tables keyed by the 6 canonical states.
+
+### Round 1 — fresh critic: one real finding
+
+**[MAJOR] `rankNextActions`'s comparator was order-dependent whenever `unblockCost` was non-finite** —
+`a.unblockCost - b.unblockCost` evaluates to `NaN` when either operand is `NaN` (or when both are
+infinite with opposing signs), and `Array.prototype.sort`'s V8 implementation silently treats a `NaN`
+comparator result as "no swap," breaking `Array.prototype.sort`'s own documented stability/determinism
+contract. The critic's own repro: 20 candidates alternating `NaN` and index-valued costs, sorted in
+forward order and in fully-reversed order — both inputs came back unchanged from their own starting
+order, proving the sort had silently fallen back to input order rather than actually ranking by cost,
+directly contradicting this screen's own "deterministic, order-independent ranking" requirement. **Fixed
+(round 1):** a new `safeUnblockCost(cost)` helper (returns `Number.POSITIVE_INFINITY` for any
+non-`Number.isFinite` value, mirroring `run-read-model.ts`'s pre-existing `extractCostUsd`/
+`isFiniteNonNegativeNumber` convention of treating a malformed numeric fact as "worst case" rather than
+letting `NaN` corrupt downstream logic) called on both operands before subtracting in the comparator. Two
+regression tests added (`NaN`-vs-finite compared forward and reversed; two-`NaN` candidates correctly
+falling through to the next ranking key rather than being treated as equal-and-stable by accident).
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct, one minor
+documentation suggestion taken
+
+Ran all 120 permutations of a 5-candidate set mixing `NaN`, `+Infinity`, and `-Infinity` costs alongside
+two finite ones — exactly 1 distinct ranking result across all 120 permutations, confirming genuine
+order-independence. Separately confirmed `-Infinity` is *also* correctly clamped to worst-possible cost
+by `Number.isFinite`, and judged this correct behavior rather than a bug: a legitimate `unblockCost` can
+never legitimately be negative-infinite — only a caller-side formula bug (an unguarded subtraction of
+infinities) could ever produce one, so treating it identically to `NaN`/`+Infinity` ("worst possible,"
+not "infinitely cheap") is the only defensible interpretation. Suggested, as a non-blocking minor, adding
+an explicit `-Infinity` regression test for documentation value — **added**, asserting `-Infinity` sorts
+identically to `NaN`/`+Infinity` in both forward and reversed input order.
+
+**Final state: 274 real tests** (up from 235 before this piece's own critic round). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.19% statements /
+91.2% branches / 97.79% functions / 99.44% lines across the full `packages/tui/src` scope, comfortably
+above the 85%/80% floor.

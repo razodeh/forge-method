@@ -8528,3 +8528,46 @@ confirmation was fixed proactively, not critic-mandated, alongside a new test.
 floor. `SPEC-QUESTIONS.md` Q138 has the full record.
 
 This is the sixth of M9's 16 planned pieces.
+
+## M9 P7 — `<HomeScreen>`: S1 Home/Dashboard (`04` §4.3 S1)
+
+**Mandate:** the first screen built on top of P1-P6's primitives and `<AppShell>` — a four-pane
+dashboard (Project, Next actions, Health, Recent activity). Real design decisions are recorded in
+`SPEC-QUESTIONS.md` Q139: no `RunReadModel` field carries Project/Health/NextActions facts, so `project`/
+`health`/`nextActionCandidates`/`recentActivity` are accepted as explicit caller-supplied props (the same
+pattern as P2's `Pane.mode` and P6's `productName`/etc.); `rankNextActions` is fresh logic (a research
+pass confirmed `helpRecommendNext` is the wrong shape and `orderReadyNodes` isn't directly reusable); the
+8-value `RunStatus` union collapses to 6 canonical screen states via `canonicalStateFor`.
+
+A gap — `canonicalStateFor`'s own mapping was computed but never actually rendered anywhere, which would
+have made the 18-snapshot canonical-state × terminal-size matrix legally satisfy "one snapshot per state"
+while producing near-identical, meaningless output across all 6 states — was caught by this piece's own
+test-writing and fixed (a real "Run: `<status>`" line added to the Project pane) before ever leaving this
+machine for critic review.
+
+### Round 1 — fresh critic: one real finding
+
+**[MAJOR] `rankNextActions`'s comparator was order-dependent whenever `unblockCost` was non-finite** —
+`a.unblockCost - b.unblockCost` returns `NaN` when either operand is `NaN`, and `Array.prototype.sort`
+silently treats a `NaN` comparator result as "no swap," breaking the screen's own deterministic-ranking
+requirement. The critic's own repro (20 candidates alternating `NaN`/index costs, sorted forward and
+fully reversed) proved the sort fell back to input order in both directions. **Fixed:** a new
+`safeUnblockCost(cost)` helper (returns `Number.POSITIVE_INFINITY` for any non-finite value, mirroring
+`run-read-model.ts`'s pre-existing `extractCostUsd` convention) called on both operands before
+subtracting. Two regression tests added.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct, one minor suggestion
+taken
+
+Ran all 120 permutations of a 5-candidate set mixing `NaN`/`+Infinity`/`-Infinity` costs — exactly 1
+distinct ranking result across all 120, confirming genuine order-independence. Confirmed `-Infinity` is
+also correctly clamped to worst-possible cost, judged correct (a legitimate cost can never legitimately
+be negative-infinite). Suggested adding an explicit `-Infinity` regression test for documentation value —
+**added**.
+
+**Final state: 274 real tests** (up from 235 before this piece's own critic round). `pnpm typecheck`,
+`eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.19% statements /
+91.2% branches / 97.79% functions / 99.44% lines across the full `packages/tui/src` scope, comfortably
+above the 85%/80% floor. `SPEC-QUESTIONS.md` Q139 has the full record.
+
+This is the seventh of M9's 16 planned pieces.
