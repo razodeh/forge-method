@@ -10526,6 +10526,42 @@ the closed restart-detection question:
 Both fixes are scoped narrowly to these two, orthogonal issues — the restart-detection resolution
 (items 11-13 above) was not reopened, per the coordinator's own explicit direction that decision stands.
 
+Both fixes are scoped narrowly to these two, orthogonal issues — the restart-detection resolution
+(items 11-13 above) was not reopened, per the coordinator's own explicit direction that decision stands.
+
 Final state after five rounds: 104 real tests, `pnpm typecheck`/`eslint .`/`prettier --check .`/`pnpm
-run boundaries` all clean, coverage comfortably above the 85%/80% floor on every file in the diff. See
+run boundaries` all clean, coverage comfortably above the 85%/80% floor on every file in the diff.
+
+### A fifth, tightly-scoped critic round verifying items 14-15's own fixes found one real sibling gap
+
+16. **[MAJOR] Fix 14 (lazy polling start) closed only the construction-to-first-subscribe window — a**
+    **fresh critic round reproduced its own real sibling: unsubscribing the *last* remaining listener**
+    **(an entirely ordinary screen-unmount shape) never paused polling, so any event appended during**
+    **that real "nobody is listening right now" window was silently, permanently lost the moment a**
+    **caller resubscribed later (a tab switch, a remount) and found it already gone** — the identical
+    failure fix 14 targeted, reached a second way. Not yet reachable from any shipped call site (this
+    milestone has no real `EngineClient` caller yet), which is why the critic scored it Major rather than
+    Blocking, but squarely in the same "lazy-polling lifecycle" territory fix 14 was supposed to close.
+    **Fixed:** a `pauseIfNoListenersLeft()` helper, called from both `unsubscribe` closures, clears the
+    interval and resets `timer` to `undefined` the moment the listener count reaches zero — restoring the
+    real invariant `timer !== undefined` ⟺ "polling is currently running" (see finding 17 below for the
+    other half of that same invariant being violated) — so a later resubscribe's own identical
+    `ensurePollingStarted()` call correctly starts a genuinely fresh poll rather than wrongly no-op'ing
+    against a stale "still running" flag while nothing was actually being read. `ensurePollingStarted`
+    itself also now refuses to start at all once `stopped` is `true` — `stop()` means permanently done,
+    not merely paused, so a subscribe-after-stop must never resurrect a real interval that would fire
+    forever doing nothing (`poll()` itself already no-ops once `stopped`), a real, if easy-to-miss, leaked
+    timer otherwise. Two new tests prove both directions: unsubscribe-then-resubscribe genuinely resumes
+    and delivers what was appended in between; subscribe-after-`stop()` never delivers anything at all.
+17. **[MINOR] The same critic round also found `stop()` cleared the interval without ever resetting**
+    **`timer` back to `undefined`** — harmless on its own at the time (nothing else depended on the
+    distinction yet), but exactly the kind of state-conflation this file has already been bitten by more
+    than once (mtime vs size, byte-size vs first-event-content). **Fixed as a direct consequence of
+    finding 16's own fix**, restoring the one real invariant `timer !== undefined` ⟺ "polling is
+    currently running" everywhere it is set or cleared, not merely patched at the one call site a critic
+    happened to name.
+
+Final state after this fifth round's own fixes: 106 real tests, `pnpm typecheck`/`eslint .`/`prettier
+--check .`/`pnpm run boundaries` all clean, coverage comfortably above the 85%/80% floor on every file
+in the diff, the full test suite re-run three consecutive times with no flakiness observed. See
 `GAUNTLET-LOG.md`'s M9 P1 entry for the full five-round critic record.

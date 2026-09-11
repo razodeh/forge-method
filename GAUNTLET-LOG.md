@@ -8152,3 +8152,112 @@ capability-gated where a real, disclosed transport asymmetry exists. The live sm
 concurrency flakes (`resume.test.ts`, `crash-resume.test.ts`), each independently re-confirmed passing in
 isolation, neither touched by any change in this checkpoint. `SPEC-QUESTIONS.md` Q132 items 8-9 have the
 full record.
+
+## M9 P1 — `@forge/tui` package scaffold, render-mode detection, event-sourced store (`04` §4.1/§4.6,
+`specs/22`)
+
+**Mandate:** stand up the new `@forge/tui` package per `PLAN-M9.md` P1 — `detectRenderMode` (`04` §4.1's
+color/ascii/linear-mode/terminal-size detection), `createStore` (`04` §4.6's own hand-rolled, ~80 LOC
+reducer container — "do not pull in Redux"), a `reduceRun` projection folding `ForgeEvent`s into a
+`RunReadModel`, and `createEngineClient` — a polling adapter bridging `@forge/telemetry`'s one-shot
+`readEvents` reader onto the store's live `dispatch()`, since nothing in `@forge/telemetry` itself tails a
+growing log. `eventLogPath` was promoted from private to exported in `@forge/telemetry/events` so
+`EngineClient` could `fs.stat` it directly rather than duplicating the path convention. Six real design
+decisions and every finding below are recorded in `SPEC-QUESTIONS.md` Q133.
+
+### Rounds 1-2 — fresh critic each round, told to actually run the code against real fixtures, not just
+read it: ten real findings across both rounds, all fixed cleanly
+
+Round 1 found: `detectRenderMode`'s missing `isTty` parameter meant `color` could never actually be
+`false` on a real TTY regardless of `FORCE_COLOR`/`NO_COLOR` (fixed by adding the real third parameter and
+deriving `color` via the genuine `NO_COLOR` > dumb-term > `FORCE_COLOR` > `isTty` precedence);
+`EngineClientNotification`'s listener-error case was mislabeled identically to a genuine log-read gap,
+indistinguishable to a caller (fixed by splitting into `'gap' | 'listener-error'` variants);
+`TelemetryError`'s own `code`/`remedy` were dropped on the floor building the gap notification (fixed by
+threading both through, `exactOptionalPropertyTypes`-safe via a conditional object literal rather than a
+spread); `stop()` never actually cancelled an in-flight read, so a notification could still fire after a
+caller believed itself fully unsubscribed (fixed by checking a `stopped` flag inside the read loop
+itself, not just at poll-start); the original poll used `fs`'s `mtime`/unconditional full re-read on every
+tick regardless of whether the file had grown, an unbounded, real cost on a long-lived run (fixed by a
+byte-`size`-based short-circuit via `fs.stat`); repeated, identical gap notifications fired on every tick
+of an unrecovered failure (fixed by de-duping against `lastNotifiedMessage`); `parsePositiveInt` accepted
+non-digit-prefixed garbage like `"80px"` as `80` (fixed by requiring the whole string match
+`/^[0-9]+$/`).
+
+Round 2 found: `onNotification`'s own returned unsubscribe function was never wired to remove the listener
+at all (fixed, and a new test calls the returned function and asserts it stops delivery); `store.dispatch`
+let one throwing listener silently stop delivery to every listener registered after it in iteration order
+(fixed by isolating each listener in its own `try`/`catch`, first re-throwing only the first error — later
+revised in round 5 below); and `PLAN-M9.md`'s own literal text expected `EngineClient` to detect and
+re-subscribe across a real engine *restart* (a fresh process replacing the log file in place, not merely
+appending to it) — the original design had no mechanism for this at all. This last finding is what
+escalated into rounds 3-4.
+
+### Rounds 3-4 — restart-detection escalated after four consecutive rounds narrowing, not closing, the
+same coincidence-based false-negative; resolved by the coordinator's explicit "go with B" decision
+
+A byte-size-decrease heuristic (round 2's first attempt at restart detection) was falsified by round 3's
+own critic: a point-sample `fs.stat` taken *after* the short-circuit's own size comparison could race a
+genuine restart's own truncate-then-regrow-past-the-old-size sequence, silently missing it. The
+narrower fix (fingerprinting the first event's own content, not just the file's size) was itself
+falsified by round 4's own critic, twice: once because the short-circuit path ran *before* the
+fingerprint check ever got a chance to run, and once because two genuinely different runs can share an
+identical first event's own serialized content, a real, if rare, collision the fingerprint approach could
+never actually rule out. Four full critic rounds, each closing one real, reproduced coincidence and each
+followed by a critic reproducing a narrower one underneath it — exactly the "fails three full rounds"
+scenario `BUILD-PROMPT.md`'s own escalation clause anticipates. Escalated via `BLOCKED-P1.md`, presenting
+two options: (A) accept the residual, disclosed risk of the fingerprint heuristic; (B) remove the
+restart-detection mechanism entirely, redefining "engine restart" as a caller-lifecycle concern — a fresh
+`EngineClient` instance is what handles a real restart, not an existing instance detecting in-place file
+replacement underneath it.
+
+**The coordinator chose Option B.** Implemented by removing the `'restart'` notification variant, the
+size-decrease heuristic, and the first-event-content fingerprint entirely; the underlying byte-size
+short-circuit itself (an unrelated, still-valid "skip the full re-read when nothing was appended"
+optimization) was kept, along with its own round-2/3 fix recording `lastKnownSize` on both the success and
+failure paths. `PLAN-M9.md`'s own restart expectation is now understood, and documented in both the code's
+own doc comments and `SPEC-QUESTIONS.md` Q133, as a caller-lifecycle responsibility rather than something
+one `EngineClient` instance can or should detect about itself.
+
+### Round 5 — verifying the Option B removal, and two new, real bugs found elsewhere in the same file
+
+1. **[MAJOR] `EngineClient` began polling eagerly at construction, before any real caller had ever**
+   **called `subscribe()`/`onNotification()`** — a real construction-vs-subscription race: any event
+   appended in the window between construction and the first real subscribe was silently missed, with
+   nothing to indicate it. **Fixed:** polling now starts lazily, only from a new `ensurePollingStarted()`
+   called from both `subscribe`/`onNotification`.
+2. **[MAJOR] `store.dispatch` had no guard against being called re-entrantly — from inside a listener**
+   **still being notified by an outer, in-progress `dispatch()` of the same store.** Reproduced directly:
+   the per-listener loop reads the shared `state` closure variable at call time, not a value captured once
+   per dispatch, so a listener that itself calls `dispatch()` again mutates that same variable out from
+   under the outer loop — every listener registered after the re-entrant one silently sees the *inner*
+   dispatch's own final state instead of the outer one's. The identical hazard real Redux itself refuses
+   ("Reducers may not dispatch actions"), mirrored here without pulling in the library. **Fixed:** an
+   `isDispatching` flag throws a plain, typed `Error` before any listener runs if `dispatch()` is called
+   re-entrantly, reset in a `finally` so an ordinary, sequential dispatch immediately after catching a
+   previous one is never mistaken for re-entrant. This also surfaced round 2's own "re-throw only the
+   first error" design as a second, independent regression — a second, later listener's own real bug was
+   silently discarded forever with no channel to ever learn it existed — revised to collect every thrown
+   error and re-throw them all together, once, as a single `AggregateError`.
+
+### Round 6 — a tightly-scoped critic round verifying rounds 5's own fixes found one real sibling gap
+
+1. **[MAJOR] Fix 5.1 (lazy polling start) closed only the construction-to-first-subscribe window — this**
+   **round reproduced its own real sibling: unsubscribing the *last* remaining listener (an ordinary**
+   **screen-unmount shape) never paused polling**, so any event appended during that "nobody is listening
+   right now" window was silently, permanently lost the moment a caller resubscribed later and found it
+   already gone — the identical failure fix 5.1 targeted, reached a second way. **Fixed:** a
+   `pauseIfNoListenersLeft()` helper, called from both `unsubscribe` closures, clears the interval and
+   resets `timer` to `undefined` once the listener count reaches zero, restoring the real invariant `timer
+   !== undefined` ⟺ "polling is currently running." `ensurePollingStarted()` also now refuses to start at
+   all once `stopped` is true, so a subscribe-after-`stop()` call can never resurrect a real interval.
+2. **[MINOR]** `stop()` cleared the interval without ever resetting `timer` back to `undefined` — closed
+   as a direct consequence of restoring the same invariant above.
+
+**Final state after six rounds: 106 real tests.** `pnpm typecheck`, `eslint .`, `prettier --check .`,
+`pnpm run boundaries` all clean. Scoped coverage 98.81% statements / 92.23% branches / 100% functions /
+100% lines on the diff — comfortably above the 85%/80% floor. The full test suite re-run three consecutive
+times with no flakiness observed. `SPEC-QUESTIONS.md` Q133 has the full record, including the two options
+presented in `BLOCKED-P1.md` and the coordinator's "go with B" decision.
+
+This is the first of M9's 16 planned pieces (`@forge/tui`, `specs/22`'s TUI milestone).
