@@ -23,10 +23,18 @@
  * §4.3 S4's own text calls this a real, disclosed side effect (shelling out to open a URL), the one
  * deliberate exception to "the TUI never causes side effects itself" — routed through an injected
  * callback prop, not through this command union, since it has no real engine-side action to name at all.
+ * `gate.*` variants are `PLAN-M9.md` P11's own addition (S5 Gates), for its `a`/`x`/`w`/`c` keys —
+ * `Enter` (open question) is, by the identical reasoning, a pure local view concern and never a command
+ * (`SPEC-QUESTIONS.md` Q143). `gate.approve` and `gate.waive` both carry `04` §4.3 S5's own hard MUSTs
+ * as *UI-layer* refusals, not engine-trusting requests: `<GatesScreen>` itself never constructs a
+ * `gate.approve` command at all when any deterministic check is failing, and never constructs a
+ * `gate.waive` command at all for an `alwaysHuman` gate — both refusals happen before this union is ever
+ * touched, so there is no "approve/waive, but invalid" variant to represent here; every `gate.approve`/
+ * `gate.waive` this union can express is, structurally, one the UI itself already judged permissible.
  *
- * @see specs/04 §4.3 S2, S3, S4
- * @see PLAN-M9.md P8, P9, P10
- * @see SPEC-QUESTIONS.md Q140, Q141, Q142
+ * @see specs/04 §4.3 S2, S3, S4, S5
+ * @see PLAN-M9.md P8, P9, P10, P11
+ * @see SPEC-QUESTIONS.md Q140, Q141, Q142, Q143
  */
 export type EngineCommand =
   | { readonly type: 'lane.follow'; readonly laneId: string }
@@ -40,4 +48,8 @@ export type EngineCommand =
   | { readonly type: 'spec.validate'; readonly artifactId: string }
   | { readonly type: 'kb.search'; readonly query: string }
   | { readonly type: 'kb.markVerified'; readonly entryId: string }
-  | { readonly type: 'kb.newAdr'; readonly contextEntryId: string };
+  | { readonly type: 'kb.newAdr'; readonly contextEntryId: string }
+  | { readonly type: 'gate.approve'; readonly gateId: string }
+  | { readonly type: 'gate.reject'; readonly gateId: string }
+  | { readonly type: 'gate.waive'; readonly gateId: string; readonly reason: string }
+  | { readonly type: 'gate.rerunChecks'; readonly gateId: string };

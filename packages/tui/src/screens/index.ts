@@ -32,3 +32,10 @@ export {
   type LaneCheckEntry,
   type SchedulerFooter,
 } from './run-board.tsx';
+export {
+  GatesScreen,
+  type GatesScreenProps,
+  type GateInfo,
+  type GateCheck,
+  type GateOpenQuestion,
+} from './gates.tsx';
