@@ -8571,3 +8571,54 @@ be negative-infinite). Suggested adding an explicit `-Infinity` regression test 
 above the 85%/80% floor. `SPEC-QUESTIONS.md` Q139 has the full record.
 
 This is the seventh of M9's 16 planned pieces.
+
+## M9 P8 — `<RunBoard>`: S2 Run board (`04` §4.3 S2)
+
+**Mandate:** `04` §4.3's own explicit "the core screen" — two-pane lane list/detail, five detail
+sub-tabs, the interject flow, and the scheduler footer. Real design decisions are recorded in
+`SPEC-QUESTIONS.md` Q140: `EngineCommand` (a fresh, shared union) did not exist anywhere in this
+codebase before this piece; no `RunReadModel` field carries any of the per-lane/scheduler/capability
+facts this screen needs, so all of it is caller-supplied props; not every literal "Lane key" in `04`'s
+own mockup corresponds to a real command (`Enter`/`d` are pure view concerns, matching `v`'s existing
+role); lane-action keys are active only while the detail pane is focused, to avoid `<ListPane>`'s own
+`/`-filter-editing mode colliding with this screen's own key letters.
+
+### The interject-flow saga — four critic rounds, three real findings, the fourth confirming closure
+
+**Round 1** (fresh critic, told this screen was more likely to have integration bugs than local ones)
+found four real issues: the interject `<Modal>`'s local `useState` wasn't registered with any real modal
+stack, so a future `Tab` keypress could reactivate `<ListPane>`'s own `useInput` alongside the still-open
+`<QuestionForm>`'s (a real double-fire); `selectedLaneId` was never validated against the live `lanes`
+prop, so a pruned lane's id could still be a command's target; a screen first rendered with `lanes: []`
+permanently stranded `selectedLaneId` at `undefined` even once lanes later populated; and a generic-
+parameter command-emission helper was a latent type-safety footgun. **Fixed:** `<ListPane>`'s `focused`
+prop gated `&& !interjectOpen`; a new `activeLaneId`, re-derived every render with a `lanes[0]?.id`
+fallback, closing both staleness gaps at once; the generic helper removed in favor of literal call sites.
+
+**Round 2** (verifying round 1) confirmed three of the four fixes correct, but found the `<ListPane>`-only
+fix for the modal/focus issue incomplete: `<StreamView>` (P4), reached via `<LaneDetailBody>`'s own
+`focused` prop, has its own independent `f`/`j`/`k`/arrow `useInput` that wasn't gated the same way —
+typing an ordinary "f", "j", or "k" into an interject message silently corrupted the Transcript
+viewport's scroll-follow state underneath the still-open modal. **Fixed:** `<LaneDetailBody>`'s `focused`
+prop gated `&& !interjectOpen` too.
+
+**Round 3** (dispatched specifically to check for a fourth variant of the same "ungated descendant"
+class) exhaustively enumerated every `useInput` reachable from this screen's render tree and confirmed
+that class fully closed — but found a genuinely different bug: `handleInterjectAnswer` read the live
+`activeLaneId` at submit time rather than the lane the modal was opened for, so a live `lanes` update
+pruning the originally-selected lane while the modal stayed open could silently retarget an already-typed
+message at a different lane. **Fixed:** a separate `interjectLaneId`, pinned once when `i` opens the
+modal, never re-derived; the submit no-ops entirely if that pinned lane has since vanished.
+
+**Round 4**, dispatched explicitly as a stop-and-check round given three consecutive rounds finding a new
+bug in the same general area, independently re-verified round 3's fix end-to-end and ran one more fresh
+pass. Found nothing new, explicitly recommending the piece done — the "three rounds, same area" streak
+broke on round 4, closing the saga without reaching `BUILD-PROMPT.md`'s own three-full-round escalation
+threshold (each round's fix was independently re-verified correct before the next round began).
+
+**Final state: 307 real tests** (up from 274 before this piece; `run-board.test.tsx` alone has 33).
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
+98.12% statements / 92.06% branches / 97.46% functions / 99.36% lines across the full `packages/tui/src`
+scope, comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q140 has the full record.
+
+This is the eighth of M9's 16 planned pieces.

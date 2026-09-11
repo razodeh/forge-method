@@ -11155,3 +11155,98 @@ identically to `NaN`/`+Infinity` in both forward and reversed input order.
 `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 98.19% statements /
 91.2% branches / 97.79% functions / 99.44% lines across the full `packages/tui/src` scope, comfortably
 above the 85%/80% floor.
+
+## Q140 — M9 P8: `<RunBoard>` (S2 Run board) — four critic rounds, three real findings in the interject
+flow before a fourth round confirmed the area genuinely closed
+
+`PLAN-M9.md` P8's mandate is `04` §4.3 S2, "the core screen": a two-pane lane list/detail view, five
+detail sub-tabs, the interject flow, and the scheduler footer. This is the first screen to need a real
+modal (P5's `<Modal>`/`<QuestionForm>`) and the first to emit real, typed commands rather than only
+rendering read-only state — both new compositional surfaces this milestone hadn't exercised together
+before, which is what the round-1/2/3 saga below turned out to actually be about.
+
+Real design decisions, not previously written up:
+
+1. **`EngineCommand`** (`packages/tui/src/state/engine-command.ts`) did not exist anywhere in this
+   codebase before this piece (confirmed via a direct grep across `packages/engine`, `packages/cli`,
+   `packages/tui`, `packages/telemetry`) — a fresh, shared union this piece introduces, deliberately
+   *not* inlined into `run-board.tsx`, since P9/P10's own plan text ("emits a command, never writes
+   itself") describes the identical discipline for their own future variants; this union is where those
+   belong too, the same "one evolving type" shape `@forge/adapter-kit`'s own `AdapterCapabilities`
+   already establishes for a comparable cross-cutting contract.
+2. **No `RunReadModel` field carries per-lane label/status/transcript/diff/files/checks/prompt, the
+   scheduler footer's own aggregate counts, or whether the underlying adapter supports live interject
+   delivery** — confirmed directly: `run-read-model.ts` only ever tracks `runStatus`/`stepStatuses`/
+   `laneStatuses`/`spentUsd`, and `ForgeEvent.payload` is typed `unknown` with no dedicated `SessionEvent`/
+   `StepProgress` payload interface anywhere carrying any of this. All of it is accepted as explicit,
+   caller-supplied props extending `ScreenProps` (`lanes`, `laneDetails`, `scheduler`,
+   `interjectSupported`) — the same caller-supplied-fact pattern `<HomeScreen>` (P7) already established.
+   `interjectSupported` in particular mirrors `AdapterCapabilities.interject` (`@forge/adapter-kit`, M4,
+   confirmed real and currently `false` for every real adapter) rather than threading it through the read
+   model, since no such field exists there to thread it through.
+3. **Not every literal "Lane key" in `04`'s own mockup text corresponds to a real `EngineCommand`.**
+   `Enter` (select/inspect) and `d` (jump straight to the Diff tab) are deliberately *not* commands —
+   both are pure, local view concerns with no real engine-side effect to name, the identical role `v`
+   (cycling sub-tabs) already, uncontroversially, plays. Only the six lane keys with a genuine
+   engine-side effect (`f`/`i`/`s`/`R`/`m`/`o`) emit exactly one `EngineCommand` each.
+4. **Lane action keys and the tab-navigation keys are active only while the detail pane (not the list
+   pane) is focused** — a deliberate choice to avoid `<ListPane>`'s own `/`-filter-editing mode (which
+   captures arbitrary free text, including every one of this screen's own lane-key letters) colliding
+   with this screen's own handler via Ink's well-established no-exclusive-routing hazard, the same class
+   `<AppShell>`'s own `q`-binding saga (P6) already surfaced once.
+5. **The interject flow re-uses `<QuestionForm>`** (P5) rather than a bespoke text-entry widget: `i`
+   opens a single-question `text` modal; submitting emits `lane.interject`; `Esc` closes without
+   emitting. `interjectSupported: false` renders an explicit "queued as an addendum" caveat inside the
+   modal, matching `04` §4.3's own literal "the TUI says so explicitly."
+
+### The interject-flow saga — four critic rounds, three real findings, the fourth confirming closure
+
+**Round 1** (fresh critic, told this screen was more likely to have integration bugs than local ones)
+found four real issues: (a) the interject `<Modal>` was local `useState`, never registered with any real
+modal stack, so a future `Tab` keypress (owned by a not-yet-built `<AppShell>` integration) could move
+`focusedPaneIndex` while the modal stayed open, reactivating `<ListPane>`'s own `useInput` alongside the
+still-open `<QuestionForm>`'s — a real double-fire (`Enter`/`j`/`k`/`/` reaching both). **Fixed:**
+`<ListPane>`'s own `focused` prop gated `&& !interjectOpen` directly, so it goes inert the instant the
+modal opens regardless of `focusedPaneIndex`. (b) `selectedLaneId` was never validated against the live
+`lanes` prop, so a pruned lane's id could still be the target of a lane-action command. (c) a screen
+first rendered before any lanes existed (`lanes: []`) permanently stranded `selectedLaneId` at
+`undefined` even once `lanes` later populated, since a `useState` lazy initializer runs once, at mount.
+**Fixed (b+c) together:** a new `activeLaneId`, re-derived every render as `selectedLaneId` if it still
+names a real lane, else falling back to `lanes[0]?.id`. (d) `emitLaneCommand`'s generic-parameter helper
+was a latent type-safety footgun (a future variant with extra required fields wouldn't get a clean
+compile error at its own call site) — **fixed** by removing the helper, writing all 6 commands out
+literally at each call site.
+
+**Round 2** (verifying round 1's fixes) confirmed (b)/(c)/(d) correct and complete, but found the
+`<ListPane>`-only fix for (a) was incomplete: `<LaneDetailBody>`'s own `focused` prop (feeding
+`<StreamView>`'s, P4, own independent `f`/`j`/`k`/arrow `useInput`) was never gated the same way — so
+simply typing an "f", "j", or "k" into an ordinary interject message (no `Tab` required at all) silently
+toggled `<StreamView>`'s own scroll-follow state underneath the still-open modal, visibly corrupting the
+Transcript viewport while the user typed. **Fixed:** `<LaneDetailBody>`'s `focused` prop gated
+`&& !interjectOpen` too.
+
+**Round 3** (dispatched specifically to check for a fourth variant of the same "ungated descendant"
+class) exhaustively enumerated all five real `useInput` calls reachable from this screen's render tree
+and confirmed that class fully closed — but found a genuinely different bug: `handleInterjectAnswer` read
+the live, every-render-re-derived `activeLaneId` at *submit* time rather than the lane the modal was
+actually opened for. Since interject defers a user's own action (typing a message) across an arbitrary
+number of renders before submission, a live `lanes` update pruning the originally-selected lane *while
+the modal stayed open* could silently retarget an already-typed message at a different lane, with no UI
+indication the target had changed — a real correctness/safety issue for a live-run TUI, not cosmetic.
+**Fixed:** a separate `interjectLaneId` state, pinned once at the moment `i` opens the modal, never
+re-derived; `handleInterjectAnswer` reads that pinned id and no-ops the submit entirely (matching every
+other lane-action key's own `undefined`-lane guard) if that specific lane has since vanished.
+
+**Round 4**, dispatched explicitly as a stop-and-check round given three consecutive rounds finding a new
+bug in roughly the same area, independently re-verified round 3's fix end-to-end (pin timing, re-pin on
+reopen, the no-op guard's correctness, no interference with the six ordinary lane-action keys still
+reading live `activeLaneId`) and ran one more fresh pass hunting for a fourth bug. Found nothing new,
+explicitly recommending the piece as done rather than escalating — the "three rounds, same area" streak
+broke on round 4, closing the saga without ever reaching `BUILD-PROMPT.md`'s own three-full-round
+escalation threshold (each round's own fix was independently re-verified as correct before the next
+round began, the precondition that clause requires).
+
+**Final state: 307 real tests** (up from 274 before this piece; `run-board.test.tsx` alone has 33).
+`pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage:
+98.12% statements / 92.06% branches / 97.46% functions / 99.36% lines across the full `packages/tui/src`
+scope, comfortably above the 85%/80% floor.
