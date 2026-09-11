@@ -11422,3 +11422,83 @@ confirmed no stale window, since `activeEntry` is a plain derived value re-evalu
 typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.26%
 statements / 90.73% branches / 96.29% functions / 98.8% lines across the full `packages/tui/src` scope,
 comfortably above the 85%/80% floor.
+
+## Q143 — M9 P11: `<GatesScreen>` (S5 Gates) — safety-critical piece, one real BLOCKING finding closed
+and independently re-verified before commit
+
+`PLAN-M9.md` P11's mandate is `04` §4.3 S5: gate status/checks/evidence/open-questions, and the
+approve/reject/waive/re-run-checks flow — the first piece this milestone implementing a real,
+spec-mandated hard safety invariant rather than an ordinary UX concern: `04`'s own literal text says
+"approving a gate with failing deterministic checks MUST be impossible," and `specs/13` says "waivers of
+`alwaysHuman` gates are not permitted at any autonomy level." Given the safety-critical stakes, both
+critic rounds this piece went through were explicitly briefed to be adversarial about these two hard
+MUSTs specifically, not just general correctness.
+
+Real design decisions, not previously written up:
+
+1. No `RunReadModel` field carries per-gate status/checks/evidence/open-questions — confirmed directly:
+   the exhaustive `EventType` switch folds `GateEvaluated`/`GateApproved`/`GateRejected`/`GateWaived`
+   into its own no-op catch-all group, with no dedicated projection at all. `gates` is accepted as an
+   explicit, caller-supplied prop, the pattern every prior S-screen this milestone already established.
+2. **The approve hard MUST is enforced structurally, not by convention**: `a` never constructs a
+   `gate.approve` `EngineCommand` at all when any deterministic check on the focused gate has
+   `status !== 'pass'` (not merely `=== 'fail'` — every one of `StatusState`'s seven non-`pass` values
+   correctly blocks approval, confirmed directly against the real union). The refusal is a real, typed
+   reason rendered in the UI, not a command sent and rejected by whatever engine-side enforcement also
+   exists — a UI-layer guarantee layered on top of real engine-side enforcement, never a substitute for
+   it.
+3. **The waive hard MUST**: waiving an `alwaysHuman` gate is refused outright — no path to waive at
+   all, not even with a typed reason. `w` on such a gate opens no modal, emits nothing.
+4. Waive re-uses `<QuestionForm>` (P5)'s own single `text` question shape for the typed reason — `04`
+   §4.1's own "type \"abort\" to confirm" pattern, generalised to an actual waiver reason, matching this
+   milestone's own established typed-confirmation precedent rather than inventing a bespoke widget.
+5. `Enter` (open question) is a pure, local view concern, cycling through the focused gate's own open
+   questions — never a command. `c` (re-run checks) and `x` (reject) are real, unconfirmed,
+   single-keystroke commands — `04`'s own mockup lists all four gate keys at the same level with no
+   confirmation step named for any but `w`.
+
+### Round 1 — fresh critic, briefed specifically to be adversarial about both hard MUSTs: one real
+BLOCKING finding, one real MINOR (non-command) finding
+
+**[BLOCKING] The waive submit handler's own re-check only verified the pinned gate still *existed* in**
+**`gates` by id — never that its `alwaysHuman` flag was still `false`.** `w` correctly blocked opening
+the modal for a gate already `alwaysHuman: true` at keypress time, but once the modal was open,
+`waiveOpen`/`waiveGateId` (local state) were untouched by any live `gates` prop update — so a real,
+ordinary scenario (the engine now reports this same gate requires mandatory human sign-off, arriving as
+a prop update while the user was still typing a reason) could flip that gate's own `alwaysHuman` to
+`true` without closing the modal, and a typed reason submitted afterward still constructed a real
+`gate.waive` command — a direct, reachable violation of this screen's own documented guarantee and
+`specs/13`'s own text. **Fixed:** the submit handler now re-derives the pinned gate from the *live*
+`gates` prop and re-checks `!pinnedGate.alwaysHuman` immediately before ever constructing the command —
+the only re-check that actually matters is the one at the instant a command would be built, not the one
+at the instant the modal opened.
+
+**[MINOR, no command involved]** The open-question panel used a bare `questionId: string | undefined`
+looked up against whichever gate happened to be active — ambiguous the moment two different gates reuse
+the same question id (`Q1`/`Q2` are an obvious, plausible convention across gates), so the automatic
+stale-selection fallback (switching to a different gate after a live `gates` update removes the
+previously-selected one) could silently display a *different* gate's own question text under an id that
+only ever meant something on the gate the user actually selected it from. **Fixed:** open-question
+selection is now tracked as `{ gateId, questionId }` together, only ever displayed when `gateId` still
+matches the current `activeGateId` — the identical "pin the full context, not just an id that could
+collide" discipline the waive fix applies too.
+
+### Round 2 — a second, fresh critic, explicitly asked for a go/no-go recommendation given the
+safety-critical stakes: both fixes confirmed correct and complete, no new findings, "Go"
+
+Confirmed via direct grep that `handleWaiveAnswer` is the *only* place in the file that ever constructs
+a `gate.waive` object (no second, forgotten construction site). Traced the full waive lifecycle by
+hand: `activeGate` (gating the `w` keypress itself) is re-derived from live props every render, not a
+stale closure; a *second* live update flipping `alwaysHuman` back to `false` before submit correctly
+un-blocks the waive (the check is always against true current state, not a sticky latch — verified this
+is the intended, correct behavior, not a bug); rapid double-`w` or Esc-then-`w` always re-pins
+`waiveGateId` fresh, no stale id can leak from a cancelled attempt; the `a` (approve) path is genuinely
+atomic (check and command construction in one keypress handler against one live value), with no
+modal-mediated staleness window analogous to waive's own for round 1 to have found in the first place.
+Confirmed Fix 2 similarly complete: `openQuestion` is set in exactly one place and read in exactly one
+place, both gate-matched.
+
+**Final state: 377 real tests** (up from 357 before this piece; `gates.test.tsx` alone has 20). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.09%
+statements / 90.9% branches / 95.54% functions / 98.59% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor.

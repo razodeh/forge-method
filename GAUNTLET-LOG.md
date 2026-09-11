@@ -8707,3 +8707,42 @@ statements / 90.73% branches / 96.29% functions / 98.8% lines across the full `p
 comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q142 has the full record.
 
 This is the tenth of M9's 16 planned pieces.
+
+## M9 P11 — `<GatesScreen>`: S5 Gates (`04` §4.3 S5) — safety-critical piece
+
+**Mandate:** gate status/checks/evidence/open-questions, and the approve/reject/waive flow implementing
+two real, spec-mandated hard MUSTs — `04`'s own "approving a gate with failing deterministic checks
+MUST be impossible," and `specs/13`'s "waivers of `alwaysHuman` gates are not permitted at any autonomy
+level." Both critic rounds were explicitly briefed to be adversarial about these two invariants
+specifically, not just general correctness. Real design decisions are recorded in `SPEC-QUESTIONS.md`
+Q143.
+
+### Round 1 — briefed to attack both hard MUSTs: one real BLOCKING finding, one real MINOR finding
+
+**[BLOCKING] The waive submit handler's own re-check only verified the pinned gate still existed by**
+**id — never that its `alwaysHuman` flag was still `false`.** A live prop update flipping that same
+gate's own `alwaysHuman` to `true` while the waive modal stayed open (local modal state, untouched by a
+props change) could still let a typed reason submitted afterward construct a real `gate.waive` command
+— a direct, reachable violation of this screen's own documented guarantee. **Fixed:** the submit handler
+re-derives the pinned gate from the live `gates` prop and re-checks `alwaysHuman` immediately before
+ever constructing the command, the only re-check that actually matters being the one at the instant a
+command would be built. A second, MINOR finding (a bare open-question id colliding across two gates
+that happen to reuse the same id, after an automatic stale-selection fallback) was fixed the same round:
+open-question selection now pins `{ gateId, questionId }` together.
+
+### Round 2 — a second, fresh critic, explicitly asked for a go/no-go recommendation given the
+safety-critical stakes: "Go"
+
+Confirmed via direct grep that the waive command is constructed in exactly one place in the file (no
+second, forgotten construction site to have bypassed the fix). Traced the full waive lifecycle by hand
+and confirmed the fix's own two-part check is complete, correctly un-blocks again if `alwaysHuman` flips
+back to `false` before submit, and that rapid double-`w`/Esc-then-`w` always re-pins fresh. Confirmed
+the approve path has no analogous staleness window at all (a single atomic keypress, not a two-step
+modal flow like waive), and confirmed the open-question fix is similarly complete. No new findings.
+
+**Final state: 377 real tests** (up from 357 before this piece; `gates.test.tsx` alone has 20). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.09%
+statements / 90.9% branches / 95.54% functions / 98.59% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q143 has the full record.
+
+This is the eleventh of M9's 16 planned pieces.
