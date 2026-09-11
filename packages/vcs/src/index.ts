@@ -32,11 +32,16 @@ export {
   type RepoSnapshot,
 } from './git.ts';
 export {
+  clearStaleRepoLocks,
   createLaneWorktree,
   laneBranchName,
+  listOrphanedLaneBranches,
+  listOrphanedWorktreeDirectories,
   listOrphanedWorktrees,
   parseWorktreeBlocks,
   removeLaneWorktree,
+  removeOrphanedLaneBranch,
+  removeOrphanedWorktreeDirectory,
   resetLaneWorktree,
   slugifyStepId,
   type LaneHandle,

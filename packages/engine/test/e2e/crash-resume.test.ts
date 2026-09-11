@@ -52,20 +52,44 @@ const SEED = 'e3-seed';
  * `killAfterEventCount` events, and resolves once the OS confirms the process is genuinely gone —
  * `PLAN-M5.md`'s own Checks text: "verified by asserting the child's own PID stops existing, not by
  * trusting a promise resolved." Rejects if the child exits on its own before ever reaching that many
- * events (a caller bug: `killAfterEventCount` must be chosen below the fixture's own real total). */
+ * events (a caller bug: `killAfterEventCount` must be chosen below the fixture's own real total).
+ *
+ * `detached: true` makes the fixture child the leader of its own, brand-new process group (its pgid
+ * equal to its own pid) — every further descendant it spawns (concretely: the real `git` subprocess
+ * `@forge/vcs`'s own `createLaneWorktree` shells out to via `execa`, e.g. `git worktree add -b ...`)
+ * inherits that same group, not this test's own. Killing the *group* (`process.kill(-pid, 'SIGKILL')`,
+ * the POSIX convention for "target every process in this group," not just `pid` itself) is what a real
+ * crash this test's own doc comment claims to simulate ("a real child process, genuinely `SIGKILL`'d —
+ * never simulated") actually does: an OOM-killed cgroup, a killed session, or a lost host takes every
+ * descendant down together. A gauntlet critic round's own repro (four SIGKILL points landing squarely
+ * inside `git worktree add`'s own short execution window, reproduced reliably only under real CPU
+ * contention, isolated single-process runs almost never hit the narrow timing) found that killing only
+ * `child.pid` left that one real `git` subprocess to keep running, orphaned, and finish creating the
+ * lane's branch *after* the "crash" -- with no `LaneCreated` event ever durably recorded for it, since
+ * the killed parent never lived to emit one. Resume then correctly saw no lane origin at all for that
+ * step (the log has no trace of it, `resumeOneStep`'s own documented fallback) and rescheduled it fresh
+ * -- straight into git's own "a branch named '...' already exists" refusal, since the deterministic
+ * branch name (`laneBranchName`, keyed only by `runId`/`stepId`, not a per-attempt nonce) collided with
+ * the orphan's now-real branch. Group-killing closes the race at its actual source, rather than teaching
+ * `createLaneWorktree`/`resumeRun` to trust ambient git state the log itself never corroborated -- exactly
+ * the "never trust git state the log hasn't corroborated" discipline this same module's own
+ * `reclaimOrphanedWorktrees`/`repopulateLaneRegistry` already establish for the analogous cases they do
+ * need to handle (a lane the log *did* durably record before the crash, `resumeRun`'s own doc comment) --
+ * this case is different: the crash landed *before* anything durable was ever recorded, so the only
+ * correct fix is to make sure nothing real survives the crash to contradict that absence.
+ *
+ * `SPEC-QUESTIONS.md` Q149 has the full record. */
 async function spawnAndKillAfter(
   projectRoot: string,
   runId: string,
   killAfterEventCount: number,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn('node', [
-      '--experimental-strip-types',
-      FIXTURE_CHILD_PATH,
-      projectRoot,
-      runId,
-      SEED,
-    ]);
+    const child = spawn(
+      'node',
+      ['--experimental-strip-types', FIXTURE_CHILD_PATH, projectRoot, runId, SEED],
+      { detached: true },
+    );
     const pid = child.pid;
     if (pid === undefined) {
       reject(new Error('child process failed to spawn (no pid)'));
@@ -85,7 +109,10 @@ async function spawnAndKillAfter(
         seenEvents += 1;
         if (seenEvents >= killAfterEventCount && !killed) {
           killed = true;
-          child.kill('SIGKILL');
+          // Negative pid: POSIX's own "signal every process in this group," not just `pid` itself --
+          // see this function's own doc comment for why the group, not the one process, is the real
+          // crash boundary this test needs to simulate.
+          process.kill(-pid, 'SIGKILL');
         }
       }
     });

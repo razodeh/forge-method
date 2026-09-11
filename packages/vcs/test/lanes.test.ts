@@ -8,22 +8,25 @@
  * @see PLAN-M5.md P2
  */
 import { existsSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 
-import { readFile, writeFile } from 'node:fs/promises';
-
 import { VcsError } from '../src/errors.ts';
 import {
+  clearStaleRepoLocks,
   createLaneWorktree,
   laneBranchName,
+  listOrphanedLaneBranches,
+  listOrphanedWorktreeDirectories,
   listOrphanedWorktrees,
   parseWorktreeBlocks,
   removeLaneWorktree,
+  removeOrphanedLaneBranch,
+  removeOrphanedWorktreeDirectory,
   resetLaneWorktree,
   slugifyStepId,
 } from '../src/lanes.ts';
@@ -35,6 +38,10 @@ async function createTempRepo(): Promise<string> {
   await execa('git', ['init', '--quiet'], { cwd: dir });
   await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
   return dir;
+}
+
+async function mkdirRecursive(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
 }
 
 async function branchExistsInRepo(cwd: string, branch: string): Promise<boolean> {
@@ -423,12 +430,32 @@ describe('listOrphanedWorktrees', () => {
     expect(await listOrphanedWorktrees(cwd)).toEqual([]);
   });
 
-  it('excludes a detached-HEAD worktree — no branch line in porcelain output at all, so never forge-managed', async () => {
+  it("excludes a detached-HEAD worktree outside .forge/state/worktrees/ — a human's own, not forge-managed", async () => {
     const cwd = await createTempRepo();
     const target = path.join(cwd, 'detached-worktree');
     await execa('git', ['worktree', 'add', '--detach', target, 'HEAD'], { cwd });
 
     expect(await listOrphanedWorktrees(cwd)).toEqual([]);
+  });
+
+  it('finds a detached, branchless worktree inside .forge/state/worktrees/ — the shape a real crash mid `git worktree add -b` leaves before the branch or checkout ever complete', async () => {
+    // A gauntlet critic round's own E3 crash-resume repro found `git worktree add -b <branch> <path>
+    // <base>` registers the worktree itself, in a real, observed `locked initializing`, detached,
+    // branchless placeholder state, before it ever creates the branch or finishes checkout — a real
+    // crash landing in that early window leaves exactly this behind, with no `branch refs/heads/...`
+    // line in porcelain output at all for `parseLaneWorktrees` to key a `laneId` off of the old,
+    // branch-derived way. Deterministically reproduced here via a plain `--detach` worktree at the
+    // exact path `createLaneWorktree` would have used (not a real SIGKILL race, which the E3 test
+    // itself already covers under real timing — this isolates the parsing fix on its own): laneId must
+    // now come from the path, since a detached worktree has no branch line to derive one from at all.
+    const cwd = await createTempRepo();
+    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    await execa('git', ['worktree', 'add', '--detach', target, 'HEAD'], { cwd });
+
+    const orphans = await listOrphanedWorktrees(cwd);
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0]?.laneId).toBe('run-1-a-00000000');
+    expect(orphans[0]?.branch).toBe('');
   });
 
   it('excludes the main worktree itself, even when a human has checked out a forge/-namespaced branch directly in it', async () => {
@@ -451,5 +478,187 @@ describe('listOrphanedWorktrees', () => {
 
     expect(await listOrphanedWorktrees(cwd, new Set([handle.laneId]))).toEqual([]);
     expect(await listOrphanedWorktrees(cwd)).toHaveLength(1);
+  });
+});
+
+describe('removeLaneWorktree recovers from a worktree git itself refuses to plain-remove', () => {
+  it('removes a "missing but locked" worktree — a real leftover shape "git worktree remove -f -f" itself refuses even under double-force', async () => {
+    // A gauntlet critic round's own E3 crash-resume repro found `-f -f` still refuses outright
+    // ("validation failed, cannot remove working tree: '.../.git' is not a .git file") once a
+    // worktree's own directory is gone (or, as constructed here, its `.git` pointer file is gone)
+    // but git's own administrative record for it is still `locked` — the exact combination `git
+    // worktree prune` alone also cannot clear (`prune` deliberately skips locked entries). This
+    // reproduces that combination directly: a real worktree, locked, then its own `.git` pointer file
+    // removed by hand (standing in for a crash mid-checkout, before that pointer file was ever
+    // written) — cheaper and more precise than racing a real SIGKILL for the same effect.
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await execa('git', ['worktree', 'lock', handle.path], { cwd });
+    await rm(path.join(handle.path, '.git'), { force: true });
+
+    await removeLaneWorktree(cwd, handle, { retain: false });
+
+    expect(await listOrphanedWorktrees(cwd)).toEqual([]);
+    expect(await branchExistsInRepo(cwd, handle.branch)).toBe(false);
+  });
+
+  it('is a harmless no-op retrying the fallback path against an already-clean repository', async () => {
+    // The fallback's own `git worktree unlock` deliberately swallows "fatal: '...' is not locked" — a
+    // worktree that was never locked at all is just as real a case as a locked one (an even
+    // earlier-stage crash). Confirmed directly: the identical broken-worktree scenario above, but
+    // never locked in the first place.
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await rm(path.join(handle.path, '.git'), { force: true });
+
+    await removeLaneWorktree(cwd, handle, { retain: false });
+
+    expect(await listOrphanedWorktrees(cwd)).toEqual([]);
+  });
+});
+
+describe('clearStaleRepoLocks', () => {
+  it("removes a stale HEAD.lock left behind in a lane worktree's own private git-dir", async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const { stdout: gitDir } = await execa('git', ['rev-parse', '--absolute-git-dir'], {
+      cwd: handle.path,
+    });
+    const headLockPath = path.join(gitDir.trim(), 'HEAD.lock');
+    await writeFile(headLockPath, '');
+    expect(existsSync(headLockPath)).toBe(true);
+
+    await clearStaleRepoLocks(cwd);
+
+    expect(existsSync(headLockPath)).toBe(false);
+    // The lane worktree itself is completely unaffected -- only the stale lock file is gone.
+    await execa('git', ['reset', '--hard', 'HEAD'], { cwd: handle.path });
+  });
+
+  it("removes a stale ref lock in the main repository's own refs/heads/", async () => {
+    const cwd = await createTempRepo();
+    const { stdout: gitDir } = await execa('git', ['rev-parse', '--absolute-git-dir'], { cwd });
+    const refLockDir = path.join(gitDir.trim(), 'refs', 'heads');
+    const refLockPath = path.join(refLockDir, 'main.lock');
+    await writeFile(refLockPath, '');
+    expect(existsSync(refLockPath)).toBe(true);
+
+    await clearStaleRepoLocks(cwd);
+
+    expect(existsSync(refLockPath)).toBe(false);
+  });
+
+  it('is a no-op when nothing is locked', async () => {
+    const cwd = await createTempRepo();
+    await expect(clearStaleRepoLocks(cwd)).resolves.toBeUndefined();
+  });
+});
+
+describe('listOrphanedLaneBranches / removeOrphanedLaneBranch', () => {
+  it("finds a real branch in the run's own forge/<runId>/ namespace with no corresponding worktree", async () => {
+    const cwd = await createTempRepo();
+    await execa('git', ['branch', 'forge/run-1/a-00000000'], { cwd });
+
+    const orphans = await listOrphanedLaneBranches(cwd, 'run-1');
+
+    expect(orphans).toEqual(['forge/run-1/a-00000000']);
+  });
+
+  it('correctly reports a branch checked out in another worktree (git\'s own "+ " marker), not a mangled name', async () => {
+    // A first version of this function stripped only git branch --list's own "*" marker, leaving a
+    // literal, unstrippped leading "+ " on any branch checked out in a worktree of its own (the
+    // ordinary, common case for a real lane branch) -- every later deletion attempt against the
+    // mangled name then failed with "branch ... not found". Reproduced directly: a real lane whose own
+    // branch really is checked out in its own worktree, confirming the returned name is exactly the
+    // bare branch, ready to hand straight to `git branch -D`.
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+
+    // Not itself orphaned (it has a real worktree) -- listed here only to confirm it is correctly
+    // EXCLUDED despite git's own "+ " marker on it, not to test inclusion.
+    expect(await listOrphanedLaneBranches(cwd, 'run-1')).toEqual([]);
+    expect(await branchExistsInRepo(cwd, handle.branch)).toBe(true);
+  });
+
+  it('excludes a branch belonging to a different run', async () => {
+    const cwd = await createTempRepo();
+    await execa('git', ['branch', 'forge/run-2/a-00000000'], { cwd });
+
+    expect(await listOrphanedLaneBranches(cwd, 'run-1')).toEqual([]);
+  });
+
+  it('excludes a branch with a real, registered worktree of its own', async () => {
+    const cwd = await createTempRepo();
+    await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+
+    expect(await listOrphanedLaneBranches(cwd, 'run-1')).toEqual([]);
+  });
+
+  it('removeOrphanedLaneBranch deletes the named branch', async () => {
+    const cwd = await createTempRepo();
+    await execa('git', ['branch', 'forge/run-1/a-00000000'], { cwd });
+
+    await removeOrphanedLaneBranch(cwd, 'forge/run-1/a-00000000');
+
+    expect(await branchExistsInRepo(cwd, 'forge/run-1/a-00000000')).toBe(false);
+  });
+});
+
+describe('listOrphanedWorktreeDirectories / removeOrphanedWorktreeDirectory', () => {
+  it('finds a plain directory under .forge/state/worktrees/ with no git registration at all', async () => {
+    // The one leftover shape neither listOrphanedWorktrees nor listOrphanedLaneBranches can see: a
+    // real crash landing before git ever registers the worktree at all (mkdir alone, no admin entry
+    // yet) -- constructed here directly, since a real `git worktree add` always registers something,
+    // however incomplete, by the time it can be interrupted.
+    const cwd = await createTempRepo();
+    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    await mkdirRecursive(target);
+    await writeFile(path.join(target, 'leftover.txt'), 'partial checkout content\n');
+
+    const orphans = await listOrphanedWorktreeDirectories(cwd, 'run-1');
+
+    expect(orphans).toHaveLength(1);
+    expect(path.basename(orphans[0] ?? '')).toBe('run-1-a-00000000');
+  });
+
+  it('excludes a directory that IS a real, currently-registered worktree', async () => {
+    const cwd = await createTempRepo();
+    await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+
+    expect(await listOrphanedWorktreeDirectories(cwd, 'run-1')).toEqual([]);
+  });
+
+  it('excludes a directory belonging to a different run', async () => {
+    const cwd = await createTempRepo();
+    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-2-a-00000000');
+    await mkdirRecursive(target);
+
+    expect(await listOrphanedWorktreeDirectories(cwd, 'run-1')).toEqual([]);
+  });
+
+  it('removeOrphanedWorktreeDirectory deletes the directory via a plain filesystem removal', async () => {
+    const cwd = await createTempRepo();
+    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    await mkdirRecursive(target);
+
+    await removeOrphanedWorktreeDirectory(target);
+
+    expect(existsSync(target)).toBe(false);
   });
 });

@@ -22,9 +22,14 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  clearStaleRepoLocks,
   laneBranchName,
+  listOrphanedLaneBranches,
+  listOrphanedWorktreeDirectories,
   listOrphanedWorktrees,
   removeLaneWorktree,
+  removeOrphanedLaneBranch,
+  removeOrphanedWorktreeDirectory,
   resolveRevision,
   slugifyStepId,
   type LaneHandle,
@@ -100,6 +105,36 @@ async function reclaimOrphanedWorktrees(
     await removeLaneWorktree(ctx.projectRoot, handle, { retain: false });
   }
   return ownedOrphans.map((handle) => handle.laneId);
+}
+
+/** The sibling of `reclaimOrphanedWorktrees` above, for the leftover `listOrphanedWorktrees` cannot see
+ * at all: a real branch a crash left behind mid `git worktree add -b <branch> ...` (git's own internal
+ * branch-creation step completing before the worktree-registration/checkout step that follows it, which
+ * a real `SIGKILL` can land between) — no worktree was ever fully registered for it, so it has no
+ * `LaneHandle`/`laneId` of its own for `reclaimOrphanedWorktrees`'s own namespace check to key off.
+ * `listOrphanedLaneBranches` already scopes to this run's own `forge/<runId>/` namespace and already
+ * excludes any branch with a real, registered worktree — nothing here needs a *second* "is this really
+ * this run's own, and really orphaned" check on top of that. */
+async function reclaimOrphanedLaneBranches(ctx: ResumeContext, runId: string): Promise<void> {
+  const orphanedBranches = await listOrphanedLaneBranches(ctx.projectRoot, runId);
+  for (const branch of orphanedBranches) {
+    await removeOrphanedLaneBranch(ctx.projectRoot, branch);
+  }
+}
+
+/** A third sibling of `reclaimOrphanedWorktrees`/`reclaimOrphanedLaneBranches`, for the one shape of
+ * leftover neither of those two can see: the lane worktree's own target *directory*, created (at least
+ * partially) before git's own registration step ever completed, so it has neither a `LaneHandle` git
+ * itself recognises nor a branch ref of its own necessarily either. `listOrphanedWorktreeDirectories`'s
+ * own doc comment (`@forge/vcs`) has the full reasoning and its own cross-check against real git state. */
+async function reclaimOrphanedWorktreeDirectories(
+  ctx: ResumeContext,
+  runId: string,
+): Promise<void> {
+  const orphanedDirectories = await listOrphanedWorktreeDirectories(ctx.projectRoot, runId);
+  for (const dirPath of orphanedDirectories) {
+    await removeOrphanedWorktreeDirectory(dirPath);
+  }
 }
 
 /** `@forge/vcs`'s own `createLaneWorktree`/`removeLaneWorktree`/`listOrphanedWorktrees` all resolve
@@ -310,8 +345,23 @@ async function repopulateLaneRegistry(
 }
 
 export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunState> {
+  // Swept once, first, before anything else in this function (or anything it calls) ever touches git
+  // state for this run again: a real crash (`06` §6.10, this milestone's own E3 crash-resume test) can
+  // land a real `git` subprocess mid-write and abandon its own lock file forever, since `git` itself
+  // never gets to run its own cleanup — and a gauntlet critic round found this surfaces in more than
+  // one shape (a worktree's own `HEAD.lock`/`index.lock`, `git branch -D`'s own `refs/heads/<branch>.
+  // lock` in the *main* repo, discovered one at a time by two different real call sites below before a
+  // single, comprehensive sweep replaced chasing each newly-discovered shape individually). Safe
+  // specifically here: `resumeRun` only ever runs once the crashed process's own PID has already been
+  // confirmed gone (this whole function's own reason for existing), and this project's own
+  // single-writer-per-run design means nothing else is legitimately touching this exact repository
+  // concurrently with a resume — `clearStaleRepoLocks`'s own doc comment has the fuller reasoning.
+  await clearStaleRepoLocks(ctx.projectRoot);
+
   const runState = await reconstructRunState(readEvents(ctx.projectRoot, runId));
   await reclaimOrphanedWorktrees(ctx, runId, runState);
+  await reclaimOrphanedLaneBranches(ctx, runId);
+  await reclaimOrphanedWorktreeDirectories(ctx, runId);
   const staleReadyLaneIds = await repopulateLaneRegistry(ctx, runId, runState);
 
   const stepStatuses = new Map<string, StepReconstructedStatus>(runState.stepStatuses);

@@ -10,6 +10,11 @@
  * it, ordinarily `RunState.laneOrigins`' own recorded lane HEAD if the lane ever committed real work, or
  * the lane's own recorded `baseSha` if it never did — "last FORGE commit (or lane base)" read literally.
  *
+ * A stale git lock left behind by the crashed process this resume is recovering from (`06` §6.10) could
+ * otherwise make this very call's own `git reset --hard` fail outright — `resumeRun`'s own doc comment
+ * has the fuller reasoning for why that is swept once, up front, for the whole resume, rather than
+ * chased at each individual call site (this one included) that happens to touch git state afterward.
+ *
  * @see specs/06 §6.10
  * @see PLAN-M5.md P19
  */
