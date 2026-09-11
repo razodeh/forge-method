@@ -6,3 +6,12 @@ export { Sparkline, type SparklineProps } from './sparkline.tsx';
 export { Toast, type ToastProps, type ToastMessage, type ToastKind } from './toast.tsx';
 export { ListPane, defaultListItemLabel, type ListPaneProps } from './list-pane.tsx';
 export { Tree, type TreeProps, type TreeNode, type TreeChildren } from './tree.tsx';
+export { StreamView, type StreamViewProps, type StreamSource } from './stream-view.tsx';
+export {
+  DiffView,
+  parseUnifiedDiff,
+  type DiffViewProps,
+  type DiffHunk,
+  type DiffLine,
+  type DiffLineType,
+} from './diff-view.tsx';

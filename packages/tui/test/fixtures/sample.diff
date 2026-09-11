@@ -1,0 +1,67 @@
+diff --git a/original.ts b/modified.ts
+index 7c62a4b..1a8b0de 100644
+--- a/original.ts
++++ b/modified.ts
+@@ -1,5 +1,5 @@
+ /**
+- * `<Tree>` — `04` §4.5's own collapsible tree with lazy children (`04` §4.3's own "S3 lazy children"
++ * `<Tree>` — `04` §4.5's own COLLAPSIBLE tree with lazy children (`04` §4.3's own "S3 lazy children"
+  * need, e.g. a Story's own Tasks not fetched until expanded).
+  *
+  * A node's own `children` may be a plain, already-known array, or a `() => Promise<readonly
+@@ -28,6 +28,11 @@
+  * existing instance detect a real underlying-dataset swap" question `EngineClient` (`state/
+  * engine-client.ts`) already answered as a caller-lifecycle concern, not something safe to guess at
+  * with a heuristic (`SPEC-QUESTIONS.md` Q133's own "go with B" resolution) -- resolved the same way
++// fixture-added line 1
++// fixture-added line 2
++// fixture-added line 3
++// fixture-added line 4
++// fixture-added line 5
+  * here: **a caller switching `<Tree>` to a genuinely different dataset that might reuse ids must give
+  * it a distinct `key` prop**, so React remounts a fresh instance with fresh state, exactly the ordinary
+  * "list item identity" contract `key` already exists for. Reusing a `nodes` identity for the *same*
+@@ -48,18 +53,31 @@ export type TreeChildren = readonly TreeNode[] | (() => Promise<readonly TreeNod
+ export interface TreeNode {
+   readonly id: string;
+   readonly label: string;
+-  readonly children?: TreeChildren;
+-}
+-
+-export interface TreeProps {
+-  readonly nodes: readonly TreeNode[];
+-  readonly focused: boolean;
+-  readonly mode: Pick<RenderMode, 'ascii' | 'color'>;
+-}
+-
+-interface FlatRow {
+-  readonly node: TreeNode;
+-  readonly depth: number;
++// fixture-replacement line 1
++// fixture-replacement line 2
++// fixture-replacement line 3
++// fixture-replacement line 4
++// fixture-replacement line 5
++// fixture-replacement line 6
++// fixture-replacement line 7
++// fixture-replacement line 8
++// fixture-replacement line 9
++// fixture-replacement line 10
++// fixture-replacement line 11
++// fixture-replacement line 12
++// fixture-replacement line 13
++// fixture-replacement line 14
++// fixture-replacement line 15
++// fixture-replacement line 16
++// fixture-replacement line 17
++// fixture-replacement line 18
++// fixture-replacement line 19
++// fixture-replacement line 20
++// fixture-replacement line 21
++// fixture-replacement line 22
++// fixture-replacement line 23
++// fixture-replacement line 24
++// fixture-replacement line 25
+ }
+ 
+ function isLazy(children: TreeChildren): children is () => Promise<readonly TreeNode[]> {
