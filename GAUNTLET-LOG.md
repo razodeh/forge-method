@@ -8818,3 +8818,49 @@ statements / 91.37% branches / 95% functions / 98.34% lines across the full `pac
 comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q145 has the full record.
 
 This is the thirteenth of M9's 16 planned pieces.
+
+## M9 P14 — `<CustomizeScreen>`: S8 Customize (`04` §4.3 S8)
+
+**Mandate:** the customization surfaces (`15` §15.1) with per-field layer-provenance colouring and live
+validation — the piece with the most `PLAN-M9.md`-prose-vs-reality corrections of any single piece this
+milestone. Real design decisions are recorded in `SPEC-QUESTIONS.md` Q146, including: the real surface
+table has sixteen rows (C1-C16), not the plan's own "fifteen"; `@forge/tui` may not depend on
+`@forge/extensions` at all per the real, already-established dependency graph (discovered mid-build when
+an initial draft's import passed typecheck but failed `pnpm run boundaries` outright — fixed by defining
+local, mirrored `Layer`/`InvariantId` types instead of importing the real ones); and no per-field
+"locked by invariant X" data structure exists anywhere in `@forge/extensions` today.
+
+### The filter/focus-collision saga — four critic rounds, three resolving one evolving mechanism, one
+finding a genuinely distinct bug, none reaching escalation
+
+**Round 1: [BLOCKING]** this screen's own fields pane IS itself a `<ListPane>` with its own `/`-filter
+mode sharing the same pane focus as the screen's own action keys — unlike `<RunBoard>` (P8), whose
+action keys are gated to a separate, non-`<ListPane>` pane. Typing a filter string containing action-key
+letters fired real commands as a side effect of typing. **Fixed:** `<ListPane>` (P3) gained a new,
+additive `onFilterModeChange` prop, matching `<Tree>` (P3)'s own `onFocusChange` extension (P9).
+
+**Round 2** found the new mechanism had no unmount cleanup — a live prop update conditionally swapping
+`<ListPane>` out mid-filter left a consumer's own gate stuck `true` forever. **Fixed** with an
+unmount-only cleanup effect in `<ListPane>` itself.
+
+**Round 3**, dispatched to confirm `onFilterModeChange` was fully closed, confirmed it was — but while
+constructing fresh scenarios, found a genuinely different real bug: the fields `<ListPane>` was never
+keyed on the selected surface, so a filter query typed for one surface silently kept applying to a
+different surface's own fields after switching, hiding real fields behind a stale query. **Fixed** with
+`key={selectedSurfaceId}`, matching `<Tree>` (P3)'s own established "a genuinely different dataset needs
+a distinct key" discipline.
+
+**Round 4**, dispatched given four consecutive rounds on one piece, independently re-traced the `key`
+fix's interaction with the earlier mechanism from scratch and ran the full repository test suite (not
+just this piece's own) — 6739/6744 passing, no regression anywhere. No new finding; recommended closed.
+Never an unresolved bug recurring after its own fix — the precondition `BUILD-PROMPT.md`'s own
+three-round escalation clause requires before stopping to ask a human — so this piece closes without
+escalating.
+
+**Final state: 448 real tests** (up from 419 before this piece; `customize.test.tsx` alone has 23,
+`list-pane.test.tsx` gained 6 new tests). `pnpm typecheck`, `eslint .`, `prettier --check .`, `pnpm run
+boundaries` all clean. Scoped coverage: 97.05% statements / 91.58% branches / 94.97% functions / 98.33%
+lines across the full `packages/tui/src` scope, comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md`
+Q146 has the full record.
+
+This is the fourteenth of M9's 16 planned pieces.

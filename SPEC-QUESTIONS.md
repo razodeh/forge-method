@@ -11633,3 +11633,83 @@ even needed" question definitively rather than leaving it assumed.
 typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 96.99%
 statements / 91.37% branches / 95% functions / 98.34% lines across the full `packages/tui/src` scope,
 comfortably above the 85%/80% floor.
+
+## Q146 — M9 P14: `<CustomizeScreen>` (S8 Customize) — three `PLAN-M9.md`-prose-vs-real-code/architecture
+corrections settled before design, four critic rounds on a real cross-component filter/focus mechanism,
+none reaching escalation
+
+`PLAN-M9.md` P14's mandate is `04` §4.3 S8: the customization surfaces (`15` §15.1) with per-field
+layer-provenance colouring and live validation. This piece surfaced the most `PLAN-M9.md`-prose-vs-
+reality corrections of any single piece this milestone, plus the deepest critic saga (four rounds, on a
+real, genuinely evolving bug class) — recorded here in full.
+
+Real design decisions and corrections, not previously written up:
+
+1. **`PLAN-M9.md` P14's own "the fifteen customization surfaces" is wrong against `15` §15.1's own real**
+   **table, which has sixteen rows (C1–C16), not fifteen.** Confirmed directly by reading the table.
+   `CUSTOMIZATION_SURFACES` transcribes all sixteen, verbatim — the third recurrence in this milestone of
+   "trust the already-real spec table over the plan's own prose" (after P1's Q133, P10's Q142).
+2. **`@forge/tui` may not import `@forge/extensions` at all — confirmed directly against the real,**
+   **already-established dependency graph** (`tools/eslint-plugin-forge-boundaries/src/graph.mjs`'s own
+   `PACKAGE_GRAPH`, enforcing `specs/02` §2.2): `tui`'s real allowed edge list is `['engine', 'core',
+   'kb', 'telemetry', 'schemas']` — `extensions` is not in it. This was discovered the hard way, mid-
+   build: the screen was first written importing `Layer`/`InvariantId` directly from `@forge/extensions`,
+   which passed typecheck but failed `pnpm run boundaries` outright. **Fixed** by removing the dependency
+   entirely and defining local, plain string-literal unions (`Layer`/`InvariantId`) that mirror the real
+   values without importing them — a caller on the *other* side of this boundary is responsible for the
+   conversion before data ever reaches this screen's own props. `PLAN-M9.md` P14's own "`@forge/extensions`,
+   consumed read-only here, never re-implemented" is therefore also imprecise: this screen cannot consume
+   it directly at all.
+3. **No per-field "this field is locked by invariant X" data structure exists anywhere in**
+   **`@forge/extensions` today — confirmed directly against its real, exported `invariants` types**
+   (`runInvariants` operates on a whole `ResolvedSet`, returning a batch `InvariantViolation[]`, not a
+   live per-field lookup). `PLAN-M9.md` P14's own "`15`'s own already-real locked-field data, surfaced,
+   not invented" overstates what exists — this screen accepts already-flattened `ResolvedFieldRow[]` as
+   an explicit, caller-supplied fact instead.
+
+### The filter/focus-collision saga — four critic rounds on `<ListPane>`'s new `onFilterModeChange`
+mechanism and one further, genuinely distinct bug it surfaced
+
+**Round 1** (fresh critic): **[BLOCKING]** this screen's own action-key `useInput` was gated only on
+`focusedPane === FIELD_PANE_INDEX` — but unlike `<RunBoard>` (P8), whose own action keys are gated to a
+*different*, non-`<ListPane>` detail pane, this screen's fields pane IS itself a `<ListPane>` with its
+own `/`-filter-editing mode sharing the same pane focus. Typing a filter string like `"eject the test
+config"` while browsing fields fired real `ejectPreset`/`testSurface` commands as a side effect of
+typing. **Fixed:** `<ListPane>` (P3) gained a new, additive `onFilterModeChange` prop (the identical
+shape `<Tree>` (P3)'s own `onFocusChange` extension, P9, already established), and this screen's action
+keys are now also gated `!fieldsFiltering`.
+
+**Round 2** (verifying round 1): confirmed that fix, but found the new mechanism had no unmount cleanup
+— a live prop update that emptied the selected surface's own fields (conditionally swapping `<ListPane>`
+for a plain `<Text>`) while genuinely mid-filter left `fieldsFiltering` stuck `true` forever, silently
+blocking `t`/`d`/`E`. **Fixed in `<ListPane>` itself:** a second, empty-deps effect's own cleanup — the
+one place guaranteed to run exactly once, on unmount, regardless of cause — now fires a final `false`
+unconditionally.
+
+**Round 3**, dispatched specifically to check whether `onFilterModeChange` was now fully closed,
+confirmed it was (exhaustive hand-tracing of every mount→filter→confirm/cancel→unmount sequence, plus
+its own adversarial test construction, found nothing further in that exact mechanism) — but while
+constructing fresh scenarios, found a genuinely *different* real bug: the fields `<ListPane>` was never
+keyed on `selectedSurfaceId`, so switching surfaces changed its own `items` prop in place rather than
+remounting it, and a filter query typed for one surface silently kept applying to a different, unrelated
+surface's own fields after switching — hiding real fields behind a stale query the user never typed for
+that surface. **Fixed:** the fields `<ListPane>` is now keyed on `selectedSurfaceId`, the identical "a
+caller switching to a genuinely different dataset needs a distinct `key`" discipline `<Tree>` (P3)
+already established.
+
+**Round 4**, dispatched given four consecutive rounds on one piece, independently re-traced the `key`
+fix's own interaction with rounds 1-2's `onFilterModeChange` mechanism from scratch (confirming React's
+own unmount-before-mount effect-ordering guarantee leaves `fieldsFiltering` correctly `false` after
+every surface switch, even mid-filter) and ran the actual full repository test suite rather than only
+this piece's own — 6739/6744 tests passing, no regression anywhere. No new finding. **Recommended
+closed** rather than a fifth round: three of the four rounds resolved the *same* evolving mechanism
+(rounds 1, 2, and 4 were verification/closure of one saga), and round 3's own distinct finding was
+itself independently verified fixed by round 4 — never an unresolved bug recurring after its own fix,
+the precondition `BUILD-PROMPT.md`'s own three-full-round escalation clause requires before stopping to
+ask a human.
+
+**Final state: 448 real tests** (up from 419 before this piece; `customize.test.tsx` alone has 23,
+`list-pane.test.tsx` gained 6 new `onFilterModeChange`-specific tests). `pnpm typecheck`, `eslint .`,
+`prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.05% statements / 91.58%
+branches / 94.97% functions / 98.33% lines across the full `packages/tui/src` scope, comfortably above
+the 85%/80% floor.
