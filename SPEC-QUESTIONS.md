@@ -11339,3 +11339,86 @@ progressively narrower root cause, not the same bug recurring unfixed.
 `tree.test.tsx` tests for the `onFocusChange` extension). `pnpm typecheck`, `eslint .`, `prettier --check
 .`, `pnpm run boundaries` all clean. Scoped coverage: 97.13% statements / 90.74% branches / 96.69%
 functions / 98.93% lines across the full `packages/tui/src` scope, comfortably above the 85%/80% floor.
+
+## Q142 — M9 P10: `<KbScreen>` (S4 Knowledge Body browser) — two critic rounds, one real MAJOR
+tree/detail-pane desync closed, plus a real `PLAN-M9.md` prose-vs-code correction
+
+`PLAN-M9.md` P10's mandate is `04` §4.3 S4: the KB section tree, entry viewer, contradictions/stale
+filters, and diagram affordances. `@forge/kb` (M3) became a fresh dependency of `@forge/tui` for this
+piece.
+
+Real design decisions, not previously written up:
+
+1. **`PLAN-M9.md` P10's own literal section list is wrong against the real, already-committed
+   `@forge/kb` section set.** Its Surface text names `product/architecture/data/delivery/ops/domain/
+   decisions/constraints/glossary` — but `@forge/kb/schema`'s real `KB_SECTIONS` is `product/
+   constraints/architecture/domain/data/delivery/ops/engineering/glossary` (`engineering`, not
+   `decisions` — there is no `decisions` KB section anywhere in this codebase; ADRs are their own
+   document kind, not a KB section). This screen renders the real, imported `KB_SECTIONS` array
+   directly, never a hand-transcribed literal list — the identical "trust the already-built code over
+   the plan's own prose" correction `PLAN-M9.md` P1 (`SPEC-QUESTIONS.md` Q133) already established, now
+   recurring a second time in this same milestone.
+2. **No `RunReadModel` field, and no `@forge/kb` API, carries a ready-made "used by" back-reference
+   list, a write-history log, or a diagram's own caption/alt-text/before-after-diff** — all
+   caller-supplied facts, the pattern `<HomeScreen>` (P7), `<RunBoard>` (P8), and `<SpecsScreen>` (P9)
+   already established. "Used by" is computed locally from the full `entries` list's own `related`/
+   `applies_to`/`supersedes` arrays (`kbEntrySchema`'s own real fields), never invented.
+3. **`c`/`s` filter the section tree in place** — hiding non-matching entries and annotating each
+   section's own row with a real, computed `(N)` count — rather than replacing the tree with a flat list
+   the way `<SpecsScreen>` (P9)'s own `x` (orphans) does, matching this piece's own Check text
+   ("correctly counted in the section tree's own badge") literally.
+4. **Unlike `<RunBoard>` (P8), this screen's own key-handling `useInput` needed no pane-gating at all**
+   — confirmed directly by reading `<Tree>`'s own `useInput`, which only ever consumes arrows/`j`/`k`/
+   `h`/`l` and has no free-text-capture mode analogous to `<ListPane>`'s own `/`-filter-editing state (the
+   real reason P8's lane-action keys had to be pane-gated). Gated only by `!searchOpen`, applying the
+   lesson P8's own 3-round critic saga paid for from the outset rather than discovering it round-by-round
+   again: every `useInput`/`focused` prop this file owns or passes to a composed child is gated on the
+   search modal's own open state from the very first draft.
+5. **`w`/`D` (write-history/diagram-diff toggles) require a focused entry, unlike `c`/`s`** — there is
+   nothing to toggle a view *of* without one. `showWriteHistory`/`showDiagramDiff` are screen-level, not
+   reset per-entry: toggling `w` on and then navigating to a different entry keeps the write-history view
+   showing, now for the new entry — the identical "sticky viewer mode" precedent `<RunBoard>` (P8)'s own
+   `activeTab` already established for lane switches, not a bug.
+6. **`o` (open diagrams) is routed through an injected `onOpenDiagram` callback, never the `EngineCommand`
+   union** — `04` §4.3 S4's own explicitly named exception to "the TUI never causes side effects itself";
+   there is no real engine-side action to name for "open a URL in a local browser," only a real, local
+   side effect to delegate.
+
+### Round 1 — fresh critic: one real MAJOR finding, two doc/disclosure gaps
+
+**[MAJOR] Toggling a filter that excludes the currently-focused entry left the detail pane silently**
+**showing stale front matter for an entry no longer visible or highlighted anywhere in the tree.**
+Root cause: `<Tree>` (P3)'s own `onFocusChange` effect only fires `if (focusedNode)` — the moment the
+active filter (`c`/`s`) removes the focused row from `<Tree>`'s own flattened `rows` entirely, there is
+no `focusedNode` to report, so the effect never fires and never tells `<KbScreen>` its previously-focused
+entry is gone. `KbScreen`'s own `focusedEntryId` state (still naming a real, still-`entries`-present
+entry) was trusted directly, so `activeEntry` kept resolving successfully even though nothing in the
+tree was actually highlighted — `v`/`a`/`o` could silently act on an entry invisible to the user.
+**Fixed:** `activeEntry`'s own derivation now re-checks `entryMatchesView(entry, view, findings)` in
+addition to matching `focusedEntryId` against `entries`, so it agrees with what `<Tree>` visually shows
+the instant a filter would exclude the focused entry — confirmed a true no-op for `view === 'all'`
+(`entryMatchesView` short-circuits `true` before ever touching `findings`), so the unfiltered case is
+unaffected.
+
+Two further findings were doc-only, not code bugs: the top comment's original point 4 claimed `w`
+behaved identically to `c`/`s`'s unconditional reachability, when the actual code (correctly) gates `w`/
+`D` behind having a focused entry — corrected to state the real, intentional distinction. The
+`showWriteHistory`/`showDiagramDiff` "stickiness" across entry navigation was real but undisclosed —
+now explicitly documented as the same intentional pattern `<RunBoard>` (P8)'s own `activeTab` already
+established, not a residual defect.
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct, complete, no
+regression
+
+Independently re-traced `entryMatchesView`'s own `view === 'all'` short-circuit directly from the code
+(not assumed), confirmed `activeDiagrams`/`activeWriteHistory` collapse to `[]` on the same render
+`activeEntry` goes `undefined` regardless of which of the two root causes (entry removed vs. filtered
+out) triggered it, walked the regression test's own navigation sequence against `<Tree>`'s real flatten/
+focus logic and confirmed it a faithful repro, and constructed one further scenario (a live `findings`
+prop update while a filter is active) neither round 1 nor the fix's own reasoning had explicitly named —
+confirmed no stale window, since `activeEntry` is a plain derived value re-evaluated fresh every render.
+
+**Final state: 357 real tests** (up from 331 before this piece; `kb.test.tsx` alone has 26). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.26%
+statements / 90.73% branches / 96.29% functions / 98.8% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor.

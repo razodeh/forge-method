@@ -8666,3 +8666,44 @@ new `tree.test.tsx` tests for the `onFocusChange` extension). `pnpm typecheck`, 
 85%/80% floor. `SPEC-QUESTIONS.md` Q141 has the full record.
 
 This is the ninth of M9's 16 planned pieces.
+
+## M9 P10 — `<KbScreen>`: S4 Knowledge Body browser (`04` §4.3 S4)
+
+**Mandate:** the KB section tree, entry viewer, contradictions/stale filters, and diagram affordances.
+`@forge/kb` (M3) became a fresh dependency of `@forge/tui`. Real design decisions are recorded in
+`SPEC-QUESTIONS.md` Q142, including a second recurrence of the "`PLAN-M9.md`'s own literal prose is
+wrong against the real, already-committed code" correction P1 first established: the plan's own section
+list names a `decisions` section that doesn't exist anywhere in this codebase (the real
+`@forge/kb/schema` `KB_SECTIONS` has `engineering` instead) — this screen renders the real, imported
+array directly, never a hand-transcribed literal list.
+
+### Round 1 — fresh critic: one real MAJOR finding, two doc/disclosure gaps
+
+**[MAJOR] Toggling a filter that excludes the currently-focused entry left the detail pane silently**
+**showing stale front matter for an entry no longer visible anywhere in the tree.** Root cause: `<Tree>`
+(P3)'s own `onFocusChange` effect only fires when there's a real focused row to report — the moment a
+filter removes the focused row from `<Tree>`'s own flattened list entirely, the effect never fires and
+never tells the screen its previously-focused entry is gone, so `v`/`a`/`o` could silently act on an
+entry invisible to the user. **Fixed:** `activeEntry`'s own derivation now re-checks the active filter,
+not just whether the entry still exists in `entries`, agreeing with what `<Tree>` visually shows the
+instant a filter would exclude it — confirmed a true no-op for the unfiltered view. Two further findings
+were doc-only, not code bugs: a doc-comment claim that `w` behaved like `c`/`s`'s unconditional
+reachability (corrected — `w`/`D` genuinely need a focused entry, unlike the filters) and an undisclosed
+"sticky" view-toggle state across entry navigation (now documented as the same intentional pattern
+`<RunBoard>` (P8)'s own `activeTab` already established).
+
+### Round 2 — a second, fresh critic verifying round 1's own fix: confirmed correct, complete, no
+regression
+
+Independently re-traced the unfiltered-view short-circuit directly from the code, confirmed derived
+diagram/write-history data collapses correctly on the same render regardless of which root cause
+triggered it, walked the regression test's own navigation sequence against `<Tree>`'s real focus logic,
+and constructed one further scenario (a live `findings` prop update while a filter is active) neither
+round 1 nor the fix's own reasoning had named — confirmed no stale window.
+
+**Final state: 357 real tests** (up from 331 before this piece; `kb.test.tsx` alone has 26). `pnpm
+typecheck`, `eslint .`, `prettier --check .`, `pnpm run boundaries` all clean. Scoped coverage: 97.26%
+statements / 90.73% branches / 96.29% functions / 98.8% lines across the full `packages/tui/src` scope,
+comfortably above the 85%/80% floor. `SPEC-QUESTIONS.md` Q142 has the full record.
+
+This is the tenth of M9's 16 planned pieces.
