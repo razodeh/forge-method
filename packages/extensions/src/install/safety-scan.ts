@@ -54,7 +54,7 @@
  * @see specs/15 §15.10 (I9)
  * @see specs/20 §20.6
  * @see PLAN-M11.md P4
- * @see SPEC-QUESTIONS.md Q175
+ * @see SPEC-QUESTIONS.md Q176
  */
 import {
   ForgeError,
