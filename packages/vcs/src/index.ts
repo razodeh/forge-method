@@ -18,7 +18,15 @@ export {
   formatCommitMessage,
   type CommitMessageOptions,
 } from './commit.ts';
+export { SYSTEM_CLOCK, type VcsClock } from './clock.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';
+export {
+  analyzeGitProfile,
+  type ChurnHotspot,
+  type CoChangePair,
+  type GitProfile,
+  type GitProfileOptions,
+} from './git-profile.ts';
 export {
   assertCleanWorkingTree,
   assertGitAvailable,

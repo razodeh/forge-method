@@ -9,7 +9,8 @@
     "./write": "./src/write/index.ts",
     "./index": "./src/db/index.ts",
     "./pack": "./src/pack/index.ts",
-    "./lint": "./src/lint/index.ts"
+    "./lint": "./src/lint/index.ts",
+    "./adopt": "./src/adopt/index.ts"
   },
   "engines": {
     "node": ">=20.10"

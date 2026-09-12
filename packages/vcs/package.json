@@ -7,8 +7,10 @@
     ".": "./src/index.ts",
     "./claims": "./src/claims.ts",
     "./commit": "./src/commit.ts",
+    "./clock": "./src/clock.ts",
     "./errors": "./src/errors.ts",
     "./git": "./src/git.ts",
+    "./git-profile": "./src/git-profile.ts",
     "./lanes": "./src/lanes.ts",
     "./merge-queue": "./src/merge-queue.ts"
   },

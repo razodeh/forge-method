@@ -10,3 +10,4 @@ export * from './write/index.ts';
 export * from './db/index.ts';
 export * from './pack/index.ts';
 export * from './lint/index.ts';
+export * from './adopt/index.ts';
