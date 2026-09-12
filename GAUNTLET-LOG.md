@@ -10247,3 +10247,169 @@ functions that shipped alongside it) is the identical pattern repeating a third 
 established discipline (schema-validate everything untrusted before use, `parseSessionRecordText`'s own
 doc comment) existed one function away from the one place (`loadSessionState`) that needed it and didn't
 have it yet.
+
+## M10 P6 — `fm-mobile` module (`19` §19.1)
+
+**Mandate:** `19` §19.1's own `fm-mobile` row — `mobile` agent, store-release workflow (with a gate for
+app-store review readiness), device-matrix test strategy, offline-first pattern templates.
+
+Built: `modules/fm-mobile/module.yaml` (`requires: [fm-core]`), `agents/mobile.agent.yaml` (the real,
+authoritative copy resolving the `mobile` agent-id collision with `fm-core`, the same mechanism Q157/
+Q160/Q162 already resolve for their own collisions), `workflows/store-release.workflow.yaml` (a real,
+7-node, compilable workflow reusing the existing `G-Deliver` gate rather than inventing a new one, plus
+`G-Verify`), `checks/device-matrix.check.yaml` (a dependency-free inline script check), and
+`templates/offline-first-pattern.md.hbs` (reusing the existing, already-registered `ADR` type).
+
+### Round 1 — fresh critic: one major finding, one minor finding, two mistake classes confirmed clean
+
+Dispatched a fresh, context-free critic specifically instructed to check the three established mistake
+classes from Q157/Q160/Q162 (agent-id collision handling, shell injection, module-local dead-code
+duplication) plus general spec conformance and hostile-input robustness.
+
+**[Major]** `checks/device-matrix.check.yaml`'s own platform-detection used a plain
+`String.prototype.includes("ios"/"android")` substring test against both the device-name and OS fields —
+no word boundary at all. The critic ran the script directly against hand-built fixtures and reproduced two
+real false positives: a device named `"Verifone Kiosk Terminal"` (`"kiosk"` contains `"ios"`) and an OS
+field `"fooios"` both wrongly set `hasIos = true`, letting a release with zero real iOS coverage pass
+`store-readiness-gate` anyway. None of the shipped test suite's 9 original cases used an adversarial
+substring-collision string — every fixture used clean device/OS names. The identical mechanically-
+detectable false-positive class `checks/a11y.check.yaml`'s own `\balt\b`-vs-`data-alt` fix and `checks/
+data-quality.check.yaml`'s own `startsWith`-prefix fix already document.
+
+**[Minor]** The agent's own new `ADR` output used a single fixed literal path
+(`docs/forge/kb/architecture/mobile/offline-first-patterns.md`) with no `{seq}`/`{slug}` placeholder,
+unlike every other real ADR-producing agent in this repository (`architect`/`data-architect` both use
+`docs/forge/kb/decisions/ADR-{seq}-{slug}.md`) — combined with `cardinality: many`, a second offline-first
+decision would silently overwrite the first one on disk. Currently inert (no code path anywhere
+substitutes `{seq}`/`{slug}` into an agent's own `outputs[].path` field yet, confirmed by grep), but a real
+deviation from the established convention that a later piece wiring up real path resolution would hit
+immediately.
+
+**Confirmed clean, not merely asserted:** the critic independently verified (not trusting this piece's own
+doc comments) that `loadAgentRegistry`'s alphabetical-scan resolution and `resolveInstalledModules`'s
+install-order resolution really do disagree the way documented, that `device-matrix.check.yaml`'s `run:`
+field never touches `child_process`/a shell/`process.env` (genuinely nothing injectable), that
+`store-release.workflow.yaml`'s `{{buildTarget}}` template substitution is live (traced through
+`compile.ts`'s `toResourceClaims`/`safeResolveTemplate`), and that the `ADR` template's six rendered `##`
+headings exactly match `REQUIRED_SECTIONS.ADR` and validate against the real, production `adrSchema` —
+including a genuine negative case (a full ISO-8601 instant in `artifact.created` is really rejected, not a
+test that quietly avoids the failing shape).
+
+**Fixed:** the major finding at the root cause — platform detection now requires a real, whole-word device
+name (`/\b(iphone|ipad|ipod)\b/i`) or an OS field genuinely starting with the platform name
+(`/^ios\b/i`/`/^android\b/i`), verified against the critic's own two repro fixtures before and after the
+fix; both are now permanent regression tests. The minor finding fixed by adopting the established
+`{seq}-{slug}` path shape, with a doc comment naming the still-inert wiring gap explicitly rather than
+silently matching the convention with no explanation. 35 tests total (up from 33), all green.
+
+### Mandatory full-workspace verification — four failures found, all confirmed pre-existing/unrelated
+
+Whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all ran clean throughout (this piece's own `.hbs` template needed a
+new `.prettierignore` entry — the identical, already-documented "YAML front matter plus Handlebars"
+corruption class `packages/templates/templates/adr-*.md.hbs`/`modules/fm-web`'s/`fm-service`'s/`fm-data`'s
+own entries already record; an unguarded `prettier --write` on the first draft reproduced the exact
+corruption before the ignore rule was added). A root-level `@forge/core` devDependency was added so
+`test/fm-mobile-templates.test.ts` could use the real, production `validateArtifact` rather than
+hand-rolling a heading scanner, the identical reason `@forge/schemas` was already a root devDependency for
+`test/fm-service-templates.test.ts`.
+
+A full, unscoped `node scripts/run-tests.mjs run` (run under unusually heavy concurrent load — multiple
+other M10 pieces' own full-workspace runs were active in this same working directory at the same time)
+showed four failures, none touching this piece's own files (confirmed via `git status --short` before this
+piece touched anything): `test/workflows.test.ts`'s `build-stage` byte-for-byte comparison (real, in-flight
+uncommitted work from concurrent M10 P14's own workflow-step session placements — `packages/templates/
+templates/workflows/build-stage.workflow.yaml` is modified but uncommitted, not staged or touched by this
+piece), `packages/cli/test/commands/upgrade/run-upgrade.test.ts`'s idempotency test (an `ENOTEMPTY`
+directory-race failure, re-run in isolation immediately after where it passed cleanly in 27s — ordinary
+load-sensitive contention from the concurrent full-workspace runs, not a fifth accepted-flake file this
+piece introduces, and not a file this piece touches), and the two already-accepted load-sensitive flakes
+(`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test and `packages/engine/test/e2e/
+crash-resume.test.ts`, both re-run in isolation and confirmed clean and fast). `SPEC-QUESTIONS.md` Q166 has
+the full record.
+
+**What the critic caught that the builder missed:** the builder's own test suite for `device-matrix.check.
+yaml` proved the check's happy path, its vacuous-pass path, its missing-section path, and its
+case-insensitivity — but every single fixture string was clean, real-looking device/OS text, never an
+adversarial string chosen specifically to defeat the detection logic's own actual implementation (a plain
+substring test). This is the identical blind spot `checks/a11y.check.yaml`'s and `checks/
+data-quality.check.yaml`'s own header comments already document for themselves: writing tests from the
+check's *intended* behavior rather than from its *literal* implementation misses exactly the failure mode
+a hostile-input-focused critic exists to find.
+
+## M10 P14 — Workflow-step session placements (`16` §16.6's own built-in placement table)
+
+**Mandate:** wire `16` §16.6's own seven built-in session placements (Discovery, Product Definition,
+Solution Shaping, Planning, Implementation, Stabilization, Operate & Learn) into the real lifecycle
+workflows as real `kind: 'session', sessionType: ...` steps, plus the mandatory (never-optional) Operate
+& Learn retro and real, evaluable trigger conditions for `standup`/`premortem`/`war-room`.
+
+Confirmed directly, before writing anything, that `PLAN-M10.md`'s own text ("`@forge/methods`'s own
+already-real ten lifecycle workflows") is imprecise: `packages/methods/src` holds `dod`/`level`/`schema`/
+`score`/`expr` logic only, zero workflow YAML. The real, editable content is
+`packages/templates/templates/workflows/*.workflow.yaml` — the same conclusion M10 P1's own `module.yaml`
+doc comment already reached for `fm-core`. Edited seven real, shipped files directly: `discover`,
+`define-product`, `shape-solution`, `plan-stage` (singular — not the plural `plan-stages` meta-workflow),
+`build-stage`, `harden`, `operate`.
+
+Built: two new `SessionStep` fields (`question`, the literal one-sentence framed question `runSessionStep`'s
+own FRAME phase reads — `SessionStep` had none at all, so a workflow-authored session step with no
+question would compile cleanly and then fail at runtime with `RUN-061`; and `when`, a real trigger
+expression carried through compilation onto a new `StepNode.when`, uninterpreted — no per-step
+conditional-inclusion/dispatch mechanism exists anywhere in `@forge/engine` today, confirmed directly
+against `compile.ts`/`scheduler/*.ts`, and building one is a genuine, separate, cross-cutting scheduler
+feature outside this piece's own scope). A new `@forge/methods/session-triggers.ts` module
+(`SESSION_TRIGGERS`/`evaluateSessionTrigger`) provides the real, evaluable expressions for `standup`
+(elapsed time/blocked-lane count), `premortem` (L3+), and `war-room` (Sev1), reusing the framework-rule
+engine's own `evaluateCondition`. `@forge/extensions/workflows`'s own `checkWorkflowStepRemoval` (`15`
+§15.7's existing gate/red/review step-protection guardrail) is extended with a fourth protected shape — a
+`kind: 'session', sessionType: 'retro'` step — an explicit, documented extension of that rule's own
+principle, not a reading of already-existing text, given its own `mandatory-retro-step-removed` code.
+`five-whys` (named in `16` §16.6's own placement table but not one of `16` §16.2's own ten closed session
+types) is realized as a second `war-room` session with the technique folded into its own question text —
+the identical, already-established "folded into the framed question, no forced technique-selection
+mechanism" stance `forge session`'s own `--technique` flag already takes (`SPEC-QUESTIONS.md` Q164 item
+3). Every triggered/optional placement (`standup`, `premortem`, `war-room`, `five-whys-rca`) is positioned
+as a dependency-terminal step — nothing else depends on it — so an always-compiled-but-not-yet-gated
+`session` step can never deadlock or wrongly block a gate at a level/condition where it should not apply;
+only `design-review`, which `16` §16.6's own text explicitly says sits "before G-Design," actually gates
+`design-gate`. Full reasoning in `SPEC-QUESTIONS.md` Q165.
+
+### Round 1 — fresh critic: no blocking or major findings
+
+A fresh, context-free critic independently re-read `specs/16` §16.6 and `PLAN-M10.md` P14, diffed every
+touched file, and ran the real typechecks/tests itself rather than trusting this piece's own claims.
+Verified: all seven placements land at the correct file and dependency position matching the placement
+table's own text; the mandatory-retro refusal is real and tested end-to-end against the actual shipped
+`operate.workflow.yaml` (not only a synthetic fixture); the `when` trigger expressions are real, parse,
+are non-tautological, and are honestly documented as not yet wired to any runtime scheduler decision
+(independently confirmed against `compile.ts`/`scheduler/*.ts`); the `five-whys` resolution is coherent
+with the existing `--technique` precedent; no session step is missing a `question` (so none would hit
+`RUN-061`); no dependency wiring risks a deadlock. No findings raised beyond two disclosed, by-design
+notes (the permanently dependency-terminal triggered steps, and `story-refinement` reused as a step id
+across two different workflow files — harmless, since ids are workflow-scoped, and correct per the
+placement table itself). Nothing to fix.
+
+### Mandatory full-workspace verification — one real, this-piece-caused failure found and fixed
+
+Whole-workspace `pnpm typecheck` (20/20 packages) and `node scripts/check-boundaries.mjs` both clean
+throughout (this piece added zero new cross-package import edges). A full, unscoped
+`node scripts/run-tests.mjs run` found one real defect this piece's own scoped tests never exercised:
+`test/workflows.test.ts`'s own pre-existing "`build-stage` matches `10` §10.1's own literal worked example
+byte-for-byte" invariant (a structural-equality check written for an earlier milestone, before `16` §16.6
+existed) broke the moment this piece's own real `standup` step was added to `build-stage.workflow.yaml` —
+a genuine, deliberate tension between an earlier-milestone invariant and this milestone's own real,
+spec-mandated content, not a bug in either. Fixed by updating that test's own `worked` fixture to include
+the same real `standup` addition at its documented dependency position, keeping the test's real value (a
+structural fidelity check against everything *else* the worked example specifies) while no longer treating
+`10` §10.1's own minimal worked example as a ceiling `16` §16.6's own later, real content may never exceed.
+A second full run showed only this piece's own fix passing plus the two already-accepted load-sensitive
+flakes (`crash-resume.test.ts`; `run-upgrade.test.ts`'s idempotency test, confirmed clean and fast, 10/10,
+in isolation — an `ENOTEMPTY` directory-race from concurrent heavy load, not a file this piece touches at
+all).
+
+**What the critic caught that the builder missed:** nothing — this is the rare clean pass. The one real
+gap the builder itself caught (the `build-stage` byte-for-byte invariant) surfaced only from the mandatory
+full-workspace run, not from the critic round or this piece's own scoped tests, the identical lesson
+`M10`'s own checkpoint entry already draws: a piece's own scoped verification cannot see a cross-cutting
+invariant another, earlier piece owns.
