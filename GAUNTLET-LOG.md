@@ -10164,3 +10164,86 @@ remedy-verb check against `M10 P13`'s own uncommitted `forge session resume` cha
 `packages/tui/test/components/question-form.test.tsx`, unrelated to any file this piece touches —
 confirmed via `git status --short`. `crash-resume.test.ts` passed cleanly both times. `SPEC-QUESTIONS.md`
 Q163 has the full record.
+
+## M10 P13 — `forge session` CLI (`16` §16.6, `03` §3.2.6)
+
+**Mandate:** replace `packages/cli/src/commands/loop/session.ts`'s own `USR-003` refusal stub with the
+real thing: `forge session <type> --question "…" […]` for all ten real `16` §16.2 session types, the
+type-specific flag shapes (`--target`/`--scope`/`--stage`/`--defect`/`--options`), `list`/`show`/
+`resume`/`export` against real, persisted session records, and fixing the CLI's own pre-existing
+`SessionType` union bug (missing `discovery-interview`/`story-refinement`).
+
+Built: real dispatch to `@forge/engine/interaction`'s own `runSessionStep` (P10/P11/P12) via a hand-built
+`kind: 'session'` `StepNode` plus `buildRunEngineContext`, the identical pattern `forge panel`/`forge
+review` already establish. `SessionType` is now `SessionRecord['sessionType']` itself, and `SESSION_TYPES`
+(newly exported from `@forge/schemas`) is the one real runtime source of truth for validating a
+caller-supplied type string. Two new `runSessionStep` parameters (`participantRoles`, `resumeFrom`),
+additive and backward-compatible with the one other real caller (`execute.ts`'s `case 'session':`). A new
+`docs/forge/sessions/.state/{id}.json` sidecar (`persistSessionRecord`, `loadSessionState`) carries the
+real internal `SessionState` a resume needs, since the canonical `.md` record's own summarised body does
+not preserve enough structure to reconstruct it. Five new error codes (`RUN-070` through `RUN-074`).
+
+### Round 1 — fresh critic: three blocking findings, four major findings
+
+**[Blocking 1]** `--roles` had no guard against naming the facilitator's own role or `'human'` — the
+former would have DIVERGE/CONVERGE dispatch a real agent turn to the facilitator's own synthetic identity
+and record it as a real, attributed idea, directly violating `16` §16.3's "the facilitator does not
+contribute content" invariant this same file's own DECIDE owner-resolution already guards elsewhere; the
+latter would append a second, duplicate `{role: 'human'}` participant. **[Blocking 2]** `loadSessionState`
+trusted the parsed sidecar JSON outright via a bare `as SessionState` cast, with zero runtime validation —
+a hand-edited or bit-rotted sidecar would crash `runSessionStep` mid-flight with a raw `TypeError`, not a
+real `ForgeError`. **[Blocking 3]** `resumeFrom` was only correct for the two hand-built fixture shapes
+the first draft tested: a truncated state whose own DECIDE phase had already genuinely run (a real
+decision and write-back already exist) was resumed indistinguishably from an ordinary CONVERGE
+truncation, running DECIDE a second time and appending a second, divergent decision on top of the first;
+and DIVERGE resume always re-dispatched the *entire* original roster regardless of who had already
+contributed, producing real duplicate ideas from the identical role. **[Major 4]** `findSessionFile`'s
+exact-vs-prefix match order was sort-order-dependent, not deterministic: once a session had been
+exported, the export copy's own filename (`SESSION-{id}-{slug}.md`) sorted before the live working file
+(`SESSION-{id}.md`) under plain code-unit order (`-` 0x2D < `.` 0x2E), so every subsequent `show`/
+`resume`/`export` silently served the (potentially stale) export snapshot instead of the live file.
+**[Major 5]** `RUN-070` was reused across three semantically different failure modes (no file at all; a
+real file with corrupted front matter; a real, valid record with no resumable sidecar) with one remedy
+actively wrong for two of the three. **[Major 6]** the new `.state/` sidecar is written unconditionally
+for every session, never cleaned up, and sits inside the tracked `docs/forge/sessions/` tree with no
+`.gitignore` entry. **[Major 7]** `sessionResume` has no exclusivity/traceability — the same truncated id
+can be resumed more than once, each producing an independent forked continuation with no link back.
+
+**Fixed:** Blocking 1-3 and Major 4-5 fixed at the root cause (see `SPEC-QUESTIONS.md` Q164 for the full
+mechanism of each fix — a facilitator/human filter in `buildParticipants`, a new
+`isPlausibleSessionState` structural check, a new `RUN-072` already-decided guard plus per-role DIVERGE
+dedup on resume, a deterministic exact-match-first `findSessionFile`, and three new, distinct error codes
+`RUN-072`/`RUN-073`/`RUN-074` replacing the overloaded `RUN-070` for those three cases). Major 6-7 are
+real, disclosed limitations left open (both recorded in `SPEC-QUESTIONS.md` Q164 and in this piece's own
+doc comments) — genuine scope decisions given the milestone's own boundaries, not oversights.
+
+Nine new regression tests added across both files pinning every one of the seven findings above,
+including a real `RUN-072` reproduction, two `loadSessionState` corruption tests, and a dedicated
+facilitator/human-filter test. 76 tests total (28 CLI, 48 engine), all green.
+
+### Mandatory full-workspace verification — one real, this-piece-caused failure found and fixed
+
+A whole-workspace `pnpm typecheck` (20/20), `eslint --max-warnings 0`, `prettier --check`, and `node
+scripts/check-boundaries.mjs` all ran clean throughout. A full, unscoped `node scripts/run-tests.mjs run`
+found one real defect this piece's own scoped tests never exercised: `packages/core/test/errors.test.ts`'s
+"every remedy opens with an imperative verb" check failed against `RUN-071`'s own remedy text ("Only
+resume a session whose…") — a real gap in this piece's own new error codes' compliance with an
+already-established, whole-codebase convention neither `session.test.ts` nor `codes.ts`'s own file
+structure surfaces on its own. Inspection found three more of this piece's own new remedies
+(`RUN-072`/`RUN-073`/`RUN-074`) had the identical defect before they could independently fail the same
+check. All four rewritten to open with an approved imperative verb (`Check`/`Address`/`Check`/`Create`).
+A second full run showed only the two already-accepted load-sensitive flakes (`crash-resume.test.ts`,
+`kb/adopt/survey.test.ts`'s oversized-fixture test) plus one further, unrelated flake
+(`packages/tui/test/screens/kb.test.tsx`'s write-history-toggle test, confirmed clean in isolation, in a
+file this piece never touches — the same TUI-flake class M10 P18's own log entry independently reports
+for a different TUI file under the same heavy parallel load).
+
+**What the critic caught that the builder missed:** every blocking/major finding traces back to the same
+root gap — the first draft tested `--roles`/`resumeFrom` only against the hand-picked shapes it
+constructed itself, never against the shapes this same file's own bound-truncation logic (already shipped
+by P12) or a hostile/malformed input would actually produce. `sessionRecordQueues`'s own precedent in this
+exact file (a race found once for session-record ids, then found again, unfixed, for the two write-back
+functions that shipped alongside it) is the identical pattern repeating a third time here: a real,
+established discipline (schema-validate everything untrusted before use, `parseSessionRecordText`'s own
+doc comment) existed one function away from the one place (`loadSessionState`) that needed it and didn't
+have it yet.

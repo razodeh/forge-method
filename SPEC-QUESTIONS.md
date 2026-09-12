@@ -13335,3 +13335,131 @@ question-form.test.tsx` failure unrelated to any file this piece touches — con
 --short` to touch neither `packages/kb/src/adopt/reconstruction.ts` nor
 `packages/kb/test/adopt/reconstruction.test.ts`. `crash-resume.test.ts` passed cleanly on both full
 runs. `GAUNTLET-LOG.md`'s own `M10 P18` entry has the full round-by-round record.
+
+## Q164 — M10 P13: `forge session` CLI — the `SessionType` union fix, `resumeFrom`'s real re-entry
+rule, and four disclosed engineering decisions a fresh critic round drove
+
+**Context:** `PLAN-M10.md` P13 asked for the real `forge session <type>`/`list`/`show`/`resume`/`export`
+surface against `16` §16.6, replacing `packages/cli/src/commands/loop/session.ts`'s own `USR-003`
+refusal stub, fixing its own pre-existing `SessionType` union bug (missing `discovery-interview`/
+`story-refinement`) along the way. This entry records the real design decisions, not given verbatim by
+`16` or `PLAN-M10.md`.
+
+**1. `SessionType` is now `SessionRecord['sessionType']` itself, never a second hand-copied union.**
+The prior eight-member union (missing two of the ten real `16` §16.2 types) is exactly the class of bug
+a derived type cannot regress the same way again. `SESSION_TYPES` (the closed ten-value runtime array,
+previously a local, unexported const in `packages/schemas/src/artifacts/session-record.ts`) is now
+exported from `@forge/schemas` — the one real runtime source of truth `isSessionType` validates a
+caller-supplied string against, rather than re-deriving it from `z.enum`'s own internal `._def` shape
+(`sessionRecordSchema` is a `ZodEffects` after its own `.superRefine()`, which has no `.shape` accessor
+at all).
+
+**2. `runSessionStep`'s own real, standalone entry point is a hand-built, ad-hoc `kind: 'session'`
+`StepNode` plus `buildRunEngineContext`** — the identical pattern `forge panel`/`forge review` already
+establish (`ad-hoc-step.ts`), not a new one invented here. `bin.ts`'s own doc comment already names
+`session` among the commands that exist as real, tested functions with no argv dispatcher wiring yet
+(`03` §3.2's own C9 scope boundary, unchanged by this piece) — this piece's Surface is the CLI *function*
+layer (`SessionCommandDeps`/`StartSessionOptions`), not a new argv parser.
+
+**3. `--technique` is accepted but has no real DIVERGE-technique-selection wiring anywhere in
+`runSessionStep`** (`SessionPhaseMachine.diverge`'s own `techniqueId` input is never populated by that
+function for any caller — only `converge`'s steel-man-debate path ever sets one). Rather than silently
+dropping the flag, the requested technique id(s) are folded into the framed question's own text via a
+new `appendParenthetical` helper (strips the question's own trailing terminator first, so the combined
+string never fails `isStatableInOneSentence`'s real one-sentence check) — a disclosed, honest
+degradation: a real dispatched participant at least sees the request, but nothing forces the facilitator
+to actually run that specific technique's own method. A later piece's real fix, not this one's.
+
+**4. `--roles` is real and wired all the way through** a new `runSessionStep(node, ctx, humanInput?,
+participantRoles?, resumeFrom?)` parameter (`participantRoles`), overriding `SESSION_TYPE_DEFAULTS`' own
+per-type roster in `buildParticipants`. **A fresh critic round found an earlier draft let a caller name
+the facilitator's own role or `'human'` in `--roles`** — the former would have DIVERGE/CONVERGE dispatch
+a real agent turn to the facilitator's own synthetic identity and record it as a real, attributed idea
+(`ideaFrom`'s own `proposedBy`), directly violating `16` §16.3's "the facilitator does not contribute
+content" invariant everywhere else in this same file already guards; the latter would append a second,
+duplicate `{role: 'human'}` participant entry. Fixed by filtering both out of any override before use,
+falling back to the type's own real defaults when nothing real remains after filtering.
+
+**5. `resumeFrom` — `16` §16.6's own "resume" verb, read against `runSessionStep`'s real shape.** Every
+real invocation of `runSessionStep` already runs synchronously to `RECORD` — there is no "paused
+mid-run" state this engine ever leaves lying around across two separate process invocations — so
+"resume" cannot mean "continue an in-flight call." It means: start a new call that does not discard a
+prior, truncated session's own real accumulated work and does not re-ask its already-framed question a
+second time. Implemented via a new `docs/forge/sessions/.state/{id}.json` sidecar (`persistSessionRecord`
+now writes both the canonical `.md` record and this raw `SessionState` JSON snapshot unconditionally),
+read back by a new `loadSessionState` export. `resumeFrom` re-enters at `DIVERGE` when the prior state
+has no real clusters yet, or at `CONVERGE` otherwise — `framing`/`technique`/`participants` all carry
+over verbatim.
+
+**A fresh critic round found three further, real gaps in the first `resumeFrom` draft, all fixed:**
+- **A truncated state whose own DECIDE phase had already genuinely run** (`16` §16.8's own "a real cost
+  overrun caused only by the DECIDE-phase dispatch itself" truncation shape — a real decision and a real
+  KB/ADR/Risk write-back already exist) was indistinguishable from an ordinary CONVERGE truncation and
+  would resume straight into CONVERGE, then run DECIDE a *second* time, appending a second, divergent
+  decision and a second write-back on top of the first. Fixed by a new `RUN-072` guard: `runSessionStep`
+  refuses outright (no partial/best-effort merge — this module has no real rule for reconciling two
+  decisions) whenever `resumeFrom.decisions.length > 0`.
+- **DIVERGE resume always re-dispatched the entire original roster**, regardless of who had already
+  contributed a real idea before the original truncation, producing real, duplicate/near-duplicate ideas
+  from the identical role. Fixed: a role already present in `resumeFrom.ideas` is excluded from the
+  resumed DIVERGE dispatch, the identical "retry only who still needs to contribute" discipline this
+  same function's own ordinary round-retry loop already applies within a single run.
+- **`loadSessionState` trusted the parsed JSON outright via a bare `as SessionState` cast** — no schema
+  exists for `SessionState` anywhere in `@forge/sessions` (a pure, in-memory shape never otherwise
+  persisted before this piece), so a hand-edited or bit-rotted sidecar would crash `runSessionStep`
+  mid-flight with a raw `TypeError` instead of a real, actionable `ForgeError`. Fixed by a new
+  `isPlausibleSessionState` structural check (real phase string, every array field actually an array,
+  `truncated` actually a boolean) — a real, disclosed limitation, not a full schema: it checks shape
+  only, never entry-level content, and a corrupted-but-shape-plausible sidecar would still surface a more
+  specific failure later.
+
+**6. `RUN-070` was originally reused across three semantically different failure modes** (no file for
+`id` at all; a real file with corrupted/unparseable front matter; a real, valid record with no resumable
+sidecar) **with one remedy that was actively wrong for two of the three** — "run `forge session list`"
+tells a caller nothing useful for a corrupted record (`sessionList` itself silently skips any file that
+fails to parse, so following that remedy hides the corruption rather than surfacing it) or a missing
+sidecar. Split into `RUN-070` (no file at all), `RUN-073` (a real file, not a real, valid `SessionRecord`),
+and `RUN-074` (a real, valid `truncated` record with no real resumable state) — each with its own,
+accurate remedy.
+
+**7. `findSessionFile`'s exact-vs-prefix match order was undocumented and sort-order-dependent.** A
+session that has been exported (`sessionExport` deliberately leaves both the working `{id}.md` and the
+canonical `{id}-{slug}.md` on disk) has two real files for the same id; `listDirSorted`'s own plain
+code-unit sort orders `-` (0x2D) before `.` (0x2E), so the export copy always sorted first and
+`Array.prototype.find` silently served it over the live working file for every subsequent `show`/
+`resume`/`export` call — a real, undocumented, sort-order-accidental precedence, not a deliberate
+choice. Fixed: the exact `${id}.md` match is now checked first, deterministically, regardless of
+directory listing order.
+
+**8. Two real, disclosed limitations left open, not fixed by this piece:** (a) the `.state/` sidecar is
+written unconditionally for *every* session (not only a truncated one), is never cleaned up, sits inside
+`docs/forge/sessions/` with no `.gitignore` entry this piece adds, and duplicates content the canonical
+`.md` record already carries in summarised form — a later piece's real retention/GC job; (b)
+`sessionResume` never marks the original truncated record as superseded or links it to the new record it
+produces, so the identical `id` can be resumed more than once (even concurrently, since each call
+allocates its own new session id), each producing an independent forked continuation with no trace back
+— `16` names neither a `resumedFrom`-shaped field nor a single-resume rule, and adding one is a real
+`SessionRecord` schema change outside this piece's own Surface.
+
+**Verification:** 28 tests in `packages/cli/test/commands/loop/session.test.ts` (every one of the ten
+real session types invoked end to end, `USR-002`/`RUN-068`/`RUN-070`/`RUN-071`/`RUN-072`/`RUN-073`/
+`RUN-074`, `--roles`/`--options`/`--question`-precedence, `list`/`show`/`resume`/`export` against real,
+persisted records) plus 15 new tests in `packages/engine/test/interaction/session.test.ts` (the
+`participantRoles`/facilitator-filter fix, the `resumeFrom` DIVERGE/CONVERGE re-entry rule, the
+duplicate-idea dedup fix, the `RUN-072` already-decided guard, and `loadSessionState`'s structural
+validation against both a malformed-shape and a genuinely-invalid-JSON sidecar) — 76 tests total, all
+green. A first critic round found three blocking and four major findings (items 4-8 above); all fixed
+and re-verified with a full re-run rather than a second critic round, since every finding was concrete,
+independently reproducible, and directly fixed at its own root cause. Whole-workspace `pnpm typecheck`
+(20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs`
+all clean. A full, unscoped `node scripts/run-tests.mjs run` (run twice, once mid-fix and once after)
+found one real, this-piece-caused failure the first time — `RUN-071`'s own remedy text failed
+`packages/core/test/errors.test.ts`'s "remedy opens with an imperative verb" check (three more of this
+piece's own new remedies, `RUN-072`/`RUN-073`/`RUN-074`, had the identical defect, caught by inspection
+before it could fail the same way) — fixed, and the second full run showed only the three already-
+accepted load-sensitive flakes (`crash-resume.test.ts`, `kb/adopt/survey.test.ts`'s oversized-fixture
+test) plus one *new*, this-piece-unrelated flake (`packages/tui/test/screens/kb.test.tsx`'s
+write-history-toggle test, confirmed clean and fast in isolation, in a file this piece never touches) —
+the identical TUI-test flake *class* `M10 P18`'s own SPEC-QUESTIONS entry independently reports for a
+different TUI file (`question-form.test.tsx`) under the same heavy parallel load, not one this entry
+claims to fully explain.
