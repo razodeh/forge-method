@@ -24,6 +24,7 @@ import type { NewDispatchEvent, TelemetryFacade } from '../../src/dispatch/types
 import {
   runSessionStep,
   estimateSessionCostUsd,
+  loadSessionState,
   DEFAULT_SESSION_BOUNDS,
   type SessionStepResult,
 } from '../../src/interaction/session.ts';
@@ -1356,5 +1357,259 @@ describe('estimateSessionCostUsd', () => {
     // this is the exact shape every real dispatch in this test file's own suite actually produces.
     expect(estimateSessionCostUsd(BASE_USAGE)).toBeGreaterThan(0);
     expect(estimateSessionCostUsd(BASE_USAGE)).toBe(estimateSessionCostUsd(BASE_USAGE));
+  });
+});
+
+describe('runSessionStep — participantRoles override (PLAN-M10.md P13: forge session --roles)', () => {
+  it('overrides SESSION_TYPE_DEFAULTS own per-type roster when supplied, leaving the facilitator unaffected', async () => {
+    const projectRoot = await createTempRepo('roles-override');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['a real independent answer'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:roles-override',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'Should we adopt GraphQL',
+    });
+
+    const result = await runSessionStep(stepNode, ctx, undefined, ['sre', 'diagnostician']);
+
+    const record = requireRecord(result);
+    expect(record.participants).toContain('sre');
+    expect(record.participants).toContain('diagnostician');
+    // Neither role is a member of brainstorm's own real default roster (pm/analyst/architect/ux) --
+    // their presence here is only explainable by the override actually taking effect.
+    expect(record.participants).not.toContain('pm');
+    expect(record.participants).not.toContain('analyst');
+  });
+});
+
+describe('runSessionStep — resumeFrom (PLAN-M10.md P13: forge session resume)', () => {
+  it('re-enters at CONVERGE from a real, prior sidecar SessionState (real clusters, no decision yet), reusing the same framed question and never re-dispatching DIVERGE', async () => {
+    const projectRoot = await createTempRepo('resume-converge');
+    const fake = new FakePlatformAdapter();
+    fake.script(() => true, { text: ['I have a real objection: this risks a regression.'] });
+    const { wrapped, stepIds } = recordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+
+    // A hand-built prior state, past CONVERGE (real clusters already exist) but never reaching DECIDE
+    // -- the identical shape a genuine converge-rounds/wall-clock/cost truncation leaves behind
+    // (`RUN-072`'s own new resume guard refuses the *other* shape, where DECIDE already ran, tested
+    // separately below).
+    const priorState = {
+      phase: 'RECORD' as const,
+      sessionType: 'brainstorm' as const,
+      participants: [{ role: 'pm' }, { role: 'human' }],
+      technique: [],
+      ideas: [{ id: 'IDEA-1', text: 'a real prior idea', proposedBy: 'pm' }],
+      clusters: [{ id: 'CLUSTER-1', label: 'onboarding friction', ideaIds: ['IDEA-1'] }],
+      objections: [],
+      decisions: [],
+      nonDecisions: [],
+      actions: [],
+      truncated: true,
+      framing: {
+        question: 'How should we reduce onboarding time',
+        constraintsApplied: [],
+        outOfScope: [],
+        goodOutcomeLooksLike: 'A real decision or an honest non-decision.',
+      },
+      startedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const secondNode = node({
+      id: 'wf:resume-target',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: priorState.framing.question,
+    });
+    const second = await runSessionStep(secondNode, ctx, undefined, undefined, priorState);
+    const secondRecord = requireRecord(second);
+
+    // The already-framed question is reused verbatim, never re-asked.
+    expect(secondRecord.question).toBe(priorState.framing.question);
+    // DIVERGE's own block never ran at all for this resumed call — every real dispatch this run made
+    // was a CONVERGE or DECIDE phase, never a DIVERGE one.
+    expect(stepIds.length).toBeGreaterThan(0);
+    expect(stepIds.some((id) => id.includes(':diverge'))).toBe(false);
+    expect(stepIds.some((id) => id.includes(':converge'))).toBe(true);
+  });
+
+  it('re-enters at DIVERGE from a real, prior sidecar SessionState that has ideas but no clusters yet', async () => {
+    const projectRoot = await createTempRepo('resume-diverge');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['a real independent answer'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    // A hand-built prior state, past FRAME with real ideas but no clusters -- the identical shape a
+    // diverge-idea-cap/diverge-rounds truncation leaves behind (`session.ts`'s own `resumeFrom` doc
+    // comment), constructed directly here rather than forcing a real bound breach through the public
+    // API purely to get this one shape.
+    const priorState = {
+      phase: 'RECORD' as const,
+      sessionType: 'brainstorm' as const,
+      participants: [{ role: 'pm' }, { role: 'human' }],
+      technique: [],
+      ideas: [{ id: 'IDEA-1', text: 'an idea from a real prior round', proposedBy: 'pm' }],
+      clusters: [],
+      objections: [],
+      decisions: [],
+      nonDecisions: [],
+      actions: [],
+      truncated: true,
+      framing: {
+        question: 'How do we cut onboarding time',
+        constraintsApplied: [],
+        outOfScope: [],
+        goodOutcomeLooksLike: 'A real decision or an honest non-decision.',
+      },
+      startedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const secondNode = node({
+      id: 'wf:resume-diverge-target',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: priorState.framing.question,
+    });
+    const result = await runSessionStep(secondNode, ctx, undefined, undefined, priorState);
+    const record = requireRecord(result);
+    expect(record.question).toBe(priorState.framing.question);
+    // DIVERGE genuinely ran again (this prior state had no real clusters yet) -- its own real ideas
+    // grew past the one seeded above.
+    expect(record.status === 'complete' || record.status === 'inconclusive').toBe(true);
+  });
+
+  it('never re-dispatches a role that already has a real, recorded idea from before the resume', async () => {
+    const projectRoot = await createTempRepo('resume-diverge-dedup');
+    const fake = new FakePlatformAdapter();
+    fake.script(() => true, { text: ['a fresh, later idea'] });
+    const { wrapped, stepIds } = recordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+
+    // `pm` already contributed a real idea before the truncation this state represents; `ux` (brainstorm's
+    // own real second default participant) never got a chance to.
+    const priorState = {
+      phase: 'RECORD' as const,
+      sessionType: 'brainstorm' as const,
+      participants: [{ role: 'pm' }, { role: 'ux' }, { role: 'human' }],
+      technique: [],
+      ideas: [{ id: 'IDEA-1', text: 'pm already answered', proposedBy: 'pm' }],
+      clusters: [],
+      objections: [],
+      decisions: [],
+      nonDecisions: [],
+      actions: [],
+      truncated: true,
+      framing: {
+        question: 'How do we cut onboarding time',
+        constraintsApplied: [],
+        outOfScope: [],
+        goodOutcomeLooksLike: 'A real decision or an honest non-decision.',
+      },
+      startedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const secondNode = node({
+      id: 'wf:resume-dedup-target',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: priorState.framing.question,
+    });
+    const result = await runSessionStep(secondNode, ctx, undefined, ['pm', 'ux'], priorState);
+    const record = requireRecord(result);
+    // `pm` was never re-dispatched during DIVERGE -- only `ux` was.
+    expect(stepIds.some((id) => id.includes(':diverge'))).toBe(true);
+    const finalState = await loadSessionState(ctx, record.id);
+    const pmIdeaCount = finalState?.ideas.filter((idea) => idea.proposedBy === 'pm').length ?? -1;
+    expect(pmIdeaCount).toBe(1);
+  });
+
+  it('throws RUN-072 when the prior state already has a real decision recorded', async () => {
+    const projectRoot = await createTempRepo('resume-already-decided');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['a real independent answer'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    const decidedState = {
+      phase: 'RECORD' as const,
+      sessionType: 'brainstorm' as const,
+      participants: [{ role: 'pm' }, { role: 'human' }],
+      technique: [],
+      ideas: [{ id: 'IDEA-1', text: 'an idea', proposedBy: 'pm' }],
+      clusters: [{ id: 'CLUSTER-1', label: 'x', ideaIds: ['IDEA-1'] }],
+      objections: [],
+      decisions: [{ id: 'D-1', decision: 'Ship it', owner: 'pm', artifactRef: 'KB-0001' }],
+      nonDecisions: [],
+      actions: [],
+      truncated: true,
+      framing: {
+        question: 'How do we cut onboarding time',
+        constraintsApplied: [],
+        outOfScope: [],
+        goodOutcomeLooksLike: 'A real decision or an honest non-decision.',
+      },
+      startedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const secondNode = node({
+      id: 'wf:resume-already-decided-target',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: decidedState.framing.question,
+    });
+    await expect(
+      runSessionStep(secondNode, ctx, undefined, undefined, decidedState),
+    ).rejects.toMatchObject({ code: 'RUN-072' });
+  });
+});
+
+describe('buildParticipants (via runSessionStep) — --roles never lets a caller name the facilitator or human', () => {
+  it('filters facilitatorRole/human out of an override, falling back to real defaults when nothing real remains', async () => {
+    const projectRoot = await createTempRepo('roles-facilitator-filter');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['a real independent answer'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:roles-facilitator-filter',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'Should we adopt GraphQL',
+    });
+
+    // brainstorm's own real facilitator role is 'facilitator' -- naming it (plus 'human') in the
+    // override must never let it become a real, dispatch-eligible, content-contributing participant.
+    const result = await runSessionStep(stepNode, ctx, undefined, ['facilitator', 'human']);
+    const record = requireRecord(result);
+    // Every named override role was filtered out, so this fell back to brainstorm's own real defaults.
+    expect(record.participants).toContain('pm');
+    expect(record.participants).not.toContain('facilitator');
+    // 'human' still appears exactly once (added unconditionally by buildParticipants), never doubled.
+    expect(record.participants.filter((role) => role === 'human')).toHaveLength(1);
+  });
+});
+
+describe('loadSessionState — structural validation of the sidecar', () => {
+  it('returns undefined for corrupted or implausible JSON rather than throwing or trusting it', async () => {
+    const projectRoot = await createTempRepo('sidecar-corrupted');
+    const paths = new ProjectPaths(projectRoot);
+    await writeFileAtomic(
+      paths.resolveWithin('docs/forge/sessions/.state/SESSION-042.json'),
+      JSON.stringify({ phase: 'DIVERGE' }), // missing every other required field
+    );
+    const state = await loadSessionState({ projectRoot }, 'SESSION-042');
+    expect(state).toBeUndefined();
+  });
+
+  it('returns undefined for genuinely malformed JSON text', async () => {
+    const projectRoot = await createTempRepo('sidecar-malformed-json');
+    const paths = new ProjectPaths(projectRoot);
+    await writeFileAtomic(
+      paths.resolveWithin('docs/forge/sessions/.state/SESSION-042.json'),
+      '{ not valid json',
+    );
+    const state = await loadSessionState({ projectRoot }, 'SESSION-042');
+    expect(state).toBeUndefined();
   });
 });

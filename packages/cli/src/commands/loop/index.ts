@@ -13,10 +13,19 @@ export { panelQuestion, type PanelDeps, type PanelOptions } from './panel.ts';
 export { refactorTarget, type RefactorOptions } from './refactor.ts';
 export { reviewChange, type ReviewDeps, type ReviewOptions } from './review.ts';
 export {
+  isSessionType,
+  sessionExport,
   sessionList,
   sessionResume,
   sessionShow,
   startSession,
+  SESSIONS_ROOT,
+  type ExportSessionResult,
+  type ResumeSessionOptions,
+  type SessionCommandDeps,
+  type SessionDocument,
+  type SessionSummary,
   type SessionType,
+  type StartSessionOptions,
 } from './session.ts';
 export { test, type TestSubcommand } from './test.ts';

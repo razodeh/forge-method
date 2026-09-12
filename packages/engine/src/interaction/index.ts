@@ -14,4 +14,10 @@ export type {
   ReviewReport,
   ReviewSeverity,
 } from './types.ts';
-export { runSessionStep, type HumanSessionInput, type SessionStepResult } from './session.ts';
+export {
+  runSessionStep,
+  loadSessionState,
+  SESSIONS_DIR,
+  type HumanSessionInput,
+  type SessionStepResult,
+} from './session.ts';

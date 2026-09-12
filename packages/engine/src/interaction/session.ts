@@ -41,6 +41,7 @@ import {
   readTextFile,
   writeFileAtomic,
   ProjectPaths,
+  type AbsolutePath,
 } from '@forge/core/fs';
 import { IdAllocator } from '@forge/core/ids';
 import type { Clock } from '@forge/core';
@@ -232,17 +233,39 @@ const SESSION_TYPE_DEFAULTS: Readonly<Record<SessionType, SessionTypeDefaults>> 
  * `SPEC-QUESTIONS.md`. Excluding the facilitator also means it never counts against `16` §16.8's own
  * "5 agents + human" cap.
  */
-function buildParticipants(sessionType: SessionType): {
+function buildParticipants(
+  sessionType: SessionType,
+  // `16` §16.6's own `--roles pm,architect,ux` -- a real, caller-supplied narrowing/replacement of
+  // `SESSION_TYPE_DEFAULTS`' own disclosed per-type roster (`PLAN-M10.md` P13, the interactive `forge
+  // session` CLI). `undefined`/`[]` keeps this file's own pre-P13 defaults exactly as they were --
+  // every workflow-step caller (no `sessionStepSchema` field carries a roles list at all, per this
+  // file's own top-of-file doc comment) is unaffected by this parameter's mere existence.
+  roleOverride?: readonly string[],
+): {
   readonly facilitatorRole: string;
   readonly agentRoles: readonly string[];
   readonly participants: readonly SessionParticipant[];
 } {
   const defaults = SESSION_TYPE_DEFAULTS[sessionType];
+  // A fresh critic round found an earlier draft let a caller-supplied `roleOverride` name the
+  // facilitator's own role (`defaults.facilitator`) or `HUMAN_ROLE` outright: the former would have
+  // DIVERGE/CONVERGE dispatch a real agent turn to the facilitator's own synthetic identity and record
+  // it as a real, attributed idea/cluster (`ideaFrom`'s own `proposedBy`) -- the exact "facilitator
+  // contributes content" violation this file's own top-of-file doc comment and `resolveDecisionOwner`'s
+  // own facilitator exclusion both already guard against everywhere else; the latter would append a
+  // second, duplicate `{role: HUMAN_ROLE}` entry alongside the one this function already always adds.
+  // Both are filtered out here, silently narrowing to whatever real, distinct roles remain -- a
+  // caller-error case (`16` §16.6's own `--roles` flag naming the facilitator or the human) is not
+  // reachable through this codebase's own real CLI validation surface today, so refusing outright has
+  // no real caller to refuse yet; filtering is the honest, minimal fix for the structural invariant.
+  const requested =
+    roleOverride?.filter((role) => role !== defaults.facilitator && role !== HUMAN_ROLE) ?? [];
+  const agentRoles = requested.length > 0 ? [...new Set(requested)] : defaults.participants;
   const participants: SessionParticipant[] = [
-    ...defaults.participants.map((role) => ({ role })),
+    ...agentRoles.map((role) => ({ role })),
     { role: HUMAN_ROLE },
   ];
-  return { facilitatorRole: defaults.facilitator, agentRoles: defaults.participants, participants };
+  return { facilitatorRole: defaults.facilitator, agentRoles, participants };
 }
 
 /** A synthetic, non-content-contributing `AgentDefinition` for the facilitator's own voice --
@@ -300,7 +323,7 @@ function numericSessionId(seed: string): string {
 /** The canonical `docs/forge/sessions/` directory `16` §16.5 names -- kept as a real, checked
  * directory (not a fixed guess) so `allocateSessionId`'s own existence probe and
  * `persistSessionRecord`'s own write agree on exactly the same path every time. */
-const SESSIONS_DIR = 'docs/forge/sessions';
+export const SESSIONS_DIR = 'docs/forge/sessions';
 
 /**
  * One FIFO queue per project root, matching `@forge/kb/write`'s own `KbWriter` doc comment exactly
@@ -466,14 +489,114 @@ function renderSessionBody(state: SessionState): string {
  * here, as a real side effect independent of what `runSessionStep`'s own return value gets used for,
  * closes that the same way `writeDecisionBack`'s own KB write already is one.
  */
+/** `docs/forge/sessions/.state/` — a real, additive-only sidecar directory, never part of `16` §16.5's
+ * own canonical `SESSION-{id}-{slug}.md` artifact shape, holding one raw `SessionState` JSON snapshot
+ * per session id. Exists solely so `runSessionStep`'s own `resumeFrom` parameter (see that function's
+ * own doc comment) has a real prior `SessionState` to read back -- the persisted `SessionRecord` alone
+ * (front matter plus a rendered, already-summarised Markdown body) does not carry enough structure to
+ * reconstruct `state.ideas`/`state.clusters` with their own real ids intact, only their rendered text.
+ * A disclosed, internal mechanism (the identical "not one of `16`'s own artifact types, an engine-
+ * internal bookkeeping file" shape `.forge/state/` already is for run bookkeeping generally), not a
+ * second canonical artifact.
+ *
+ * Three real, disclosed limitations a fresh critic round named, none fixed here: (1) written
+ * unconditionally for *every* session (not only a truncated one that might later be resumed), so an
+ * ordinary `complete` session also leaves one behind, unbounded in count and never cleaned up -- a
+ * later piece's real retention/GC job, not this one's; (2) it sits inside `docs/forge/sessions/`, this
+ * project's own real, tracked `docs/` tree, with no `.gitignore` entry this piece adds anywhere, so an
+ * ordinary `git add docs/` commits it by default; (3) it duplicates content the canonical `.md` record
+ * already carries in summarised form, and the two are not guaranteed to stay in sync if either is ever
+ * hand-edited independently. None of these three affect correctness of a real `resumeFrom` call
+ * (`loadSessionState`'s own structural validation guards against a corrupted read), only disk hygiene
+ * and repository cleanliness. See `SPEC-QUESTIONS.md`. */
+const SESSION_STATE_DIR = `${SESSIONS_DIR}/.state`;
+
+function sessionStatePath(paths: ProjectPaths, id: string): AbsolutePath {
+  return paths.resolveWithin(`${SESSION_STATE_DIR}/${id}.json`);
+}
+
 async function persistSessionRecord(
   ctx: ExecuteStepContext,
   record: SessionRecord,
   state: SessionState,
 ): Promise<void> {
-  const target = new ProjectPaths(ctx.projectRoot).resolveWithin(`${SESSIONS_DIR}/${record.id}.md`);
+  const paths = new ProjectPaths(ctx.projectRoot);
+  const target = paths.resolveWithin(`${SESSIONS_DIR}/${record.id}.md`);
   const text = `---\n${YAML.stringify(record)}---\n\n${renderSessionBody(state)}`;
   await writeFileAtomic(target, text);
+  await writeFileAtomic(sessionStatePath(paths, record.id), JSON.stringify(state));
+}
+
+/** Reads back the real, previously-persisted `SessionState` sidecar for `id` -- `runSessionStep`'s own
+ * `resumeFrom` parameter's real source, and `forge session resume`'s (`PLAN-M10.md` P13) one real way
+ * to continue a session without re-asking `16` §16.3 step 1's own already-framed question. `undefined`
+ * when no sidecar exists for `id` (a session record predating this piece, or a hand-authored fixture)
+ * -- a real, honest absence, not a programmer error, matching `loadProjectAgentRegistry`'s own doc
+ * comment reasoning for an absent `modules/` directory. */
+const SESSION_PHASES: ReadonlySet<string> = new Set([
+  'FRAME',
+  'DIVERGE',
+  'CONVERGE',
+  'DECIDE',
+  'RECORD',
+]);
+
+/** A minimal, mechanical structural check over `candidate` -- not a full `zod` schema (`@forge/sessions`
+ * has no schema of its own for `SessionState`, a pure in-memory shape never otherwise persisted or
+ * validated anywhere in this codebase before this piece), but enough to catch a hand-edited or
+ * bit-rotted sidecar before it reaches `runSessionStep`'s own real dispatch logic as a raw, uncaught
+ * `TypeError` (e.g. `resumeFrom.clusters.length` on a missing/renamed field). A fresh critic round
+ * found an earlier draft trusted the parsed JSON outright via a bare `as SessionState` cast -- the
+ * identical "never a bare cast, a hand-edited or corrupted file must be caught here" discipline this
+ * file's own `parseSessionRecordText` counterpart (`@forge/cli/commands/loop/session.ts`) already
+ * applies to the real, canonical `.md` record, missing here for its own internal sidecar. Real,
+ * disclosed limitation: checks shape only (array-ness, a real phase string), never the *content* of
+ * `SessionParticipant`/`SessionIdea`/etc. entries -- a session record precisely damaged in a way that
+ * keeps every array real but corrupts one entry's own fields would still pass this check and surface a
+ * more specific failure later. See `SPEC-QUESTIONS.md`. */
+function isPlausibleSessionState(candidate: unknown): candidate is SessionState {
+  if (typeof candidate !== 'object' || candidate === null) return false;
+  const state = candidate as Record<string, unknown>;
+  return (
+    typeof state['phase'] === 'string' &&
+    SESSION_PHASES.has(state['phase']) &&
+    typeof state['sessionType'] === 'string' &&
+    Array.isArray(state['participants']) &&
+    Array.isArray(state['technique']) &&
+    Array.isArray(state['ideas']) &&
+    Array.isArray(state['clusters']) &&
+    Array.isArray(state['objections']) &&
+    Array.isArray(state['decisions']) &&
+    Array.isArray(state['nonDecisions']) &&
+    Array.isArray(state['actions']) &&
+    typeof state['truncated'] === 'boolean'
+  );
+}
+
+/** Reads back the real, previously-persisted `SessionState` sidecar for `id` -- `runSessionStep`'s own
+ * `resumeFrom` parameter's real source, and `forge session resume`'s (`PLAN-M10.md` P13) one real way
+ * to continue a session without re-asking `16` §16.3 step 1's own already-framed question. `undefined`
+ * both when no sidecar exists for `id` (a session record predating this piece, or a hand-authored
+ * fixture) and when one exists but fails `isPlausibleSessionState`'s own structural check (malformed
+ * JSON, or JSON that parses but is not a real, shape-plausible `SessionState`) -- both are the identical
+ * real, honest "no real, usable prior state to resume from" case from this function's own caller's
+ * point of view, matching `loadProjectAgentRegistry`'s own doc comment reasoning for an absent
+ * `modules/` directory: a caller-facing distinction between "absent" and "corrupted" belongs to
+ * `forge session resume`'s own error reporting (`RUN-074`, `@forge/cli/commands/loop/session.ts`), not
+ * to this function's own return type. */
+export async function loadSessionState(
+  ctx: Pick<ExecuteStepContext, 'projectRoot'>,
+  id: string,
+): Promise<SessionState | undefined> {
+  const target = sessionStatePath(new ProjectPaths(ctx.projectRoot), id);
+  if (!(await pathExists(target))) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readTextFile(target));
+  } catch {
+    return undefined;
+  }
+  return isPlausibleSessionState(parsed) ? parsed : undefined;
 }
 
 function toClock(ctx: ExecuteStepContext): Clock {
@@ -1112,10 +1235,32 @@ export interface HumanSessionInput {
   readonly owner?: string;
 }
 
+/**
+ * `resumeFrom` — `PLAN-M10.md` P13's own `forge session resume <id>` real entry point: an already
+ * real, previously-persisted `SessionState` (`loadSessionState` below, read back from this module's
+ * own sidecar JSON snapshot) rather than a fresh `machine.start()`/`machine.frame()` call. `16` §16.6's
+ * own "resume" verb, read literally against this module's own real shape: every real invocation of
+ * this function already runs synchronously to `RECORD` (there is no "paused mid-run" state this engine
+ * ever leaves lying around across two separate process invocations) -- so "resume" cannot mean
+ * "continue an in-flight call," it means "start a new call that does not discard a prior, truncated
+ * session's own real accumulated work and does not re-ask its already-framed question a second time."
+ *
+ * Re-enters at `DIVERGE` when the prior session has real clusters yet (`clusters.length === 0`) --
+ * `16` §16.8's own diverge-idea-cap/diverge-rounds truncation reasons both leave a session with real
+ * ideas but no real CONVERGE clustering ever attempted -- or at `CONVERGE` otherwise (the prior session
+ * already clustered at least once before a converge-rounds/wall-clock/cost bound cut it short, so
+ * DIVERGE's own real work is reused rather than re-run). `framing`/`technique`/`participants` all carry
+ * over verbatim -- `16` §16.3 step 1's own one-sentence question is asked once, not on every resume.
+ * `truncated`/`inconclusiveReason` are cleared: this new run gets a real, honest chance at a genuine
+ * `complete` outcome rather than starting pre-labelled as the failure it is resuming from. See
+ * `SPEC-QUESTIONS.md`.
+ */
 export async function runSessionStep(
   node: StepNode,
   ctx: ExecuteStepContext,
   humanInput?: HumanSessionInput,
+  participantRoles?: readonly string[],
+  resumeFrom?: SessionState,
 ): Promise<SessionStepResult> {
   const startedAt = ctx.now();
   if (node.sessionType === undefined) {
@@ -1148,7 +1293,10 @@ export async function runSessionStep(
     maxAgentParticipants: bounds.maxAgentParticipants,
     divergeIdeaCap: bounds.divergeIdeaCap,
   });
-  const { facilitatorRole, agentRoles, participants } = buildParticipants(sessionType);
+  const { facilitatorRole, agentRoles, participants } = buildParticipants(
+    sessionType,
+    participantRoles,
+  );
   const facilitator = facilitatorAgent(facilitatorRole, node);
 
   // `16` §16.8's own run-wide cost bound -- accumulated from every real dispatch this run makes
@@ -1176,40 +1324,88 @@ export async function runSessionStep(
     return undefined;
   }
 
-  let state = machine.start({ sessionType, participants });
+  // `resumeFrom`'s own doc comment above has the fuller reasoning -- entering directly at `DIVERGE`
+  // or `CONVERGE` skips a fresh `machine.start()`/`machine.frame()` call entirely, reusing the prior
+  // session's own real `framing`/`technique`/`participants` instead of asking `16` §16.3 step 1's own
+  // one-sentence question a second time.
+  // A fresh critic round found an earlier draft resumed any truncated state indiscriminately,
+  // including one whose own DECIDE phase had already genuinely run (`16` §16.8's own "a real cost
+  // overrun caused only by the DECIDE-phase dispatch itself" case -- a real decision, and a real
+  // KB/ADR/Risk write-back, already exist for it) -- resuming that state re-entered CONVERGE (its own
+  // `clusters.length > 0`) and ran DECIDE a *second* time, appending a second, divergent decision and a
+  // second write-back on top of the first rather than continuing anything. `resumeFrom.decisions.length
+  // > 0` is the one real, structural signal that DECIDE already ran for real: refused outright, with no
+  // partial/best-effort attempt to reconcile two decisions this module has no real merge rule for.
+  if (resumeFrom !== undefined && resumeFrom.decisions.length > 0) {
+    throw new ForgeError('RUN-072', { stepId: node.id });
+  }
+
+  const resuming = resumeFrom !== undefined;
+  const resumeEntryPhase: 'DIVERGE' | 'CONVERGE' =
+    resumeFrom !== undefined && resumeFrom.clusters.length > 0 ? 'CONVERGE' : 'DIVERGE';
+  let state: SessionState =
+    resumeFrom !== undefined
+      ? { ...resumeFrom, phase: resumeEntryPhase, truncated: false, inconclusiveReason: undefined }
+      : machine.start({ sessionType, participants });
 
   // FRAME -- no dispatch. `node.brief` is the one-sentence question `16` §16.3 step 1 asks for;
   // absent, an empty question is refused by `frame()` itself (`RUN-061`), the honest outcome for a
-  // session step authored with no real question at all.
-  const framed = machine.frame(state, {
-    question: node.brief ?? '',
-    goodOutcomeLooksLike: `A ${sessionType} session reaches real decisions or an honest non-decision.`,
-  });
-  state = framed.state;
-  if (framed.directive.kind === 'refused') {
-    return domainRefusalOutcome(node.id, startedAt, ctx.now(), framed.directive.error);
-  }
-  // `frame()`'s own implementation only ever returns `'refused'` (handled above) or
-  // `'dispatch-diverge'` -- `PhaseResult.directive`'s own type is the full nine-variant
-  // `PhaseDirective` union regardless of which method produced it, so this check is a real, typed
-  // narrowing step for the compiler, not a reachable runtime branch.
-  if (framed.directive.kind !== 'dispatch-diverge') {
-    throw new ForgeError('RUN-063', {
-      expected: 'dispatch-diverge',
-      actual: framed.directive.kind,
+  // session step authored with no real question at all. Skipped entirely on a resume (see this
+  // function's own `resumeFrom` doc comment above).
+  //
+  // On resume, a role that already has a real, recorded idea (`resumeFrom.ideas`, from the prior run's
+  // own DIVERGE) is not re-dispatched -- a fresh critic round found an earlier draft always dispatched
+  // the *entire* `agentRoles` roster on resume, regardless of who had already contributed, so every
+  // role that answered before the original truncation got asked again and its new answer was appended
+  // alongside the old one in `state.ideas`, producing real, duplicate/near-duplicate ideas from the
+  // identical role. Only genuinely un-contributed roles are asked again -- the identical "retry only
+  // who still needs to contribute" discipline this same function's own ordinary (non-resumed)
+  // round-retry loop below already applies within a single run, extended here across the resume
+  // boundary.
+  const alreadyContributed = new Set(
+    resumeFrom !== undefined ? resumeFrom.ideas.map((idea) => idea.proposedBy) : [],
+  );
+  let divergePerspectives: readonly string[] = agentRoles.filter(
+    (role) => role !== CRITIC_ROLE && !alreadyContributed.has(role),
+  );
+  if (!resuming) {
+    const framed = machine.frame(state, {
+      question: node.brief ?? '',
+      goodOutcomeLooksLike: `A ${sessionType} session reaches real decisions or an honest non-decision.`,
     });
+    state = framed.state;
+    if (framed.directive.kind === 'refused') {
+      return domainRefusalOutcome(node.id, startedAt, ctx.now(), framed.directive.error);
+    }
+    // `frame()`'s own implementation only ever returns `'refused'` (handled above) or
+    // `'dispatch-diverge'` -- `PhaseResult.directive`'s own type is the full nine-variant
+    // `PhaseDirective` union regardless of which method produced it, so this check is a real, typed
+    // narrowing step for the compiler, not a reachable runtime branch.
+    if (framed.directive.kind !== 'dispatch-diverge') {
+      throw new ForgeError('RUN-063', {
+        expected: 'dispatch-diverge',
+        actual: framed.directive.kind,
+      });
+    }
+    // DIVERGE -- `critic` is genuinely absent from this dispatch's own `perspectives`, not
+    // dispatched-then-ignored (`frame()`'s own directive already filtered it out). `human` is filtered
+    // here, by this module, not by `frame()` itself: the machine's own directive only ever promises to
+    // exclude `critic` (`16` §16.3 step 2), and dispatching a real agent session "as" the human would be
+    // exactly the groupthink-inducing mistake `16` §16.7 point 5 exists to prevent (the human's own
+    // position is never dispatched at all -- it enters, if anywhere, only via `ctx`'s own real
+    // elicitation channel, never through `dispatchAgentStep`).
+    divergePerspectives = framed.directive.participants.filter((role) => role !== HUMAN_ROLE);
   }
 
-  // DIVERGE -- `critic` is genuinely absent from this dispatch's own `perspectives`, not
-  // dispatched-then-ignored (`frame()`'s own directive already filtered it out). `human` is filtered
-  // here, by this module, not by `frame()` itself: the machine's own directive only ever promises to
-  // exclude `critic` (`16` §16.3 step 2), and dispatching a real agent session "as" the human would be
-  // exactly the groupthink-inducing mistake `16` §16.7 point 5 exists to prevent (the human's own
-  // position is never dispatched at all -- it enters, if anywhere, only via `ctx`'s own real
-  // elicitation channel, never through `dispatchAgentStep`).
-  const divergePerspectives = framed.directive.participants.filter((role) => role !== HUMAN_ROLE);
   let endDiverge: { readonly state: SessionState; readonly directive: PhaseDirective };
-  {
+  if (resuming && resumeEntryPhase === 'CONVERGE') {
+    // Resuming straight into CONVERGE (the prior session already has real clusters) -- DIVERGE's own
+    // block below never runs at all, matching this function's own top-of-file `resumeFrom` doc comment
+    // ("DIVERGE's own real work is reused rather than re-run"). `dispatch-converge`'s own participants
+    // are every real agent role, identical to `endDiverge()`'s own real directive shape on an ordinary,
+    // non-resumed run that reaches CONVERGE normally.
+    endDiverge = { state, directive: { kind: 'dispatch-converge', participants: agentRoles } };
+  } else {
     // `16` §16.8's own "Max rounds per phase: DIVERGE 3" bound, made real: rather than always
     // re-dispatching every perspective `maxDivergeRounds` times regardless of outcome (which would
     // make every session — including every one this package's own test suite already exercises —

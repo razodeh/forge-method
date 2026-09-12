@@ -38,6 +38,7 @@ export { riskSchema, type Risk } from './risk.ts';
 export { runbookSchema, type Runbook } from './runbook.ts';
 export {
   sessionRecordSchema,
+  SESSION_TYPES,
   type SessionRecord,
   type SessionTruncationBound,
 } from './session-record.ts';

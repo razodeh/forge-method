@@ -852,6 +852,74 @@ export const ERROR_CODES = {
       'Free an id by archiving or renumbering existing docs/forge/sessions/ records, or wait for a ' +
       'later FORGE release with a real, non-hash-based session-id allocator.',
   },
+  // `@forge/cli/commands/loop/session.ts`'s own `sessionShow`/`sessionResume`/`sessionExport`
+  // (`PLAN-M10.md` P13): both real, ordinary-input failure modes reading back a session record this
+  // milestone's own `runSessionStep` already wrote under `docs/forge/sessions/`.
+  'RUN-070': {
+    // No real `SESSION-<id>*.md` file under `docs/forge/sessions/` -- a typo'd id, or one from a
+    // different project root than the one `--project`/`cwd` currently points at.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `No session record found for ${show(d.id)} under docs/forge/sessions/.`,
+    remedy: 'Run `forge session list` to see the real, currently persisted session ids.',
+  },
+  'RUN-071': {
+    // `forge session resume <id>` against a record whose own `status` is not `truncated` -- `16`
+    // §16.6's own "resume" verb has no real meaning for a session that already reached a genuine
+    // `complete`/`inconclusive` end; `runSessionStep`'s own `resumeFrom` parameter exists specifically
+    // to continue a *truncated* session's own real, unfinished work (see that function's own doc
+    // comment, `@forge/engine/interaction/session.ts`), not to re-open a session that already finished.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string; status: string }) =>
+      `Session ${show(d.id)} has status ${show(d.status)}, not \`truncated\` -- only a truncated session can be resumed.`,
+    remedy: "Check `forge session show`'s status field -- only a truncated session can be resumed.",
+  },
+  'RUN-072': {
+    // `runSessionStep`'s own `resumeFrom` guard (`@forge/engine/interaction/session.ts`): a fresh
+    // critic round found a truncated record whose own DECIDE phase had already genuinely run (a real
+    // decision, and a real KB/ADR/Risk write-back, already exist) could still be resumed -- re-entering
+    // CONVERGE and running DECIDE a second time, appending a second, divergent decision and a second
+    // write-back on top of the first rather than continuing anything real.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string }) =>
+      `Session ${show(d.stepId)} already has a real decision recorded -- nothing left to resume.`,
+    remedy:
+      'Address this as its own real, final outcome via `forge session show` rather than resuming it ' +
+      '-- start a fresh session for any follow-up work instead.',
+  },
+  'RUN-073': {
+    // `@forge/cli/commands/loop/session.ts`'s own `parseSessionRecordText`: a real file exists for
+    // `id`, but its own front matter is missing, unparseable YAML, or fails `sessionRecordSchema` --
+    // data corruption or a hand-edit, distinct in kind from `RUN-070`'s own "no file at all" meaning. A
+    // fresh critic round found this case had been folded into `RUN-070` outright, whose own remedy
+    // ("run `forge session list`") is actively unhelpful here: `sessionList` silently skips any file
+    // that fails to parse, so following that remedy hides the corruption rather than surfacing it.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `The session record for ${show(d.id)} exists but is not a real, valid SessionRecord.`,
+    remedy:
+      'Check the file directly under docs/forge/sessions/ -- its front matter is missing, ' +
+      'unparseable, or no longer matches the real SessionRecord schema (`forge session list` will ' +
+      'not surface it either, since it skips any file that fails to parse).',
+  },
+  'RUN-074': {
+    // `forge session resume <id>` against a real, truncated record with no real `.state/{id}.json`
+    // sidecar (`loadSessionState`, `@forge/engine/interaction/session.ts`) -- a session record
+    // predating this piece's own sidecar mechanism, or one whose sidecar was manually removed/
+    // corrupted. Distinct from `RUN-070`/`RUN-073`: the record itself is real and valid, only the
+    // separate internal state this command needs to actually resume from is missing.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `No real, usable prior state survives for session ${show(d.id)} -- it cannot be resumed.`,
+    remedy:
+      'Create a fresh session for any follow-up work instead -- this record has no resumable ' +
+      'state (it may predate the resume feature, or its internal state file was removed).',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

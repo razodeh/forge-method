@@ -38,8 +38,13 @@ const SESSION_TRUNCATION_BOUNDS = [
   'cost',
 ] as const;
 
-// The closed, ten-row table at 16 §16.2.
-const SESSION_TYPES = [
+// The closed, ten-row table at 16 §16.2. Exported (not merely a local const) so a real runtime
+// consumer of the closed vocabulary itself -- `PLAN-M10.md` P13's own `forge session` CLI, validating
+// a caller-supplied `<type>` argument against the real ten values without hand-copying the list a
+// second time -- has one real source of truth to read, rather than re-deriving it from `z.enum`'s own
+// internal `._def` shape (`sessionRecordSchema` is a `ZodEffects` after its own `.superRefine()`, which
+// does not expose a `.shape` accessor at all).
+export const SESSION_TYPES = [
   'brainstorm',
   'design-review',
   'tradeoff',
