@@ -34,4 +34,20 @@ export interface DoctorReport {
    * warnings is still `ok: true`). */
   readonly ok: boolean;
   readonly checks: readonly DoctorCheck[];
+  /** Present only when `DoctorOptions.fix` was `true` — one real, honest outcome per check that
+   * failed on the pass immediately *before* the fix attempt ran (`PLAN-M11.md` P14). `checks` above
+   * always reflects the *post*-fix state (checks are re-run after fixes are applied), so a caller
+   * comparing `fixes` against `checks` can see exactly what changed and what did not. */
+  readonly fixes?: readonly DoctorFixResult[];
+}
+
+/** One real, honest outcome of `--fix` attempting to remediate a single failed check —
+ * `PLAN-M11.md` P14's own "a check with no safe automatic fix continues to only report, honestly,
+ * rather than fabricating a false 'fixed' claim" mandate. Every originally-failing check gets exactly
+ * one of these, whether or not a safe automatic fix existed for it — `applied: false` here is a real,
+ * honest outcome, not an omission. */
+export interface DoctorFixResult {
+  readonly id: string;
+  readonly applied: boolean;
+  readonly message: string;
 }

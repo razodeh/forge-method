@@ -9,6 +9,7 @@ import type { ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import type { ForgeConfig } from '@forge/schemas/config';
 
+import { kbSync } from '../kb.ts';
 import {
   checkDiskSpace,
   checkGitIdentity,
@@ -25,7 +26,8 @@ import {
 import { checkConfigValidity, checkKbLint, checkManifest, checkSpecGraph } from './project.ts';
 import { checkDiagrams } from './diagrams.ts';
 import { checkSecretReferences } from './secrets.ts';
-import type { DoctorCheck, DoctorReport } from './types.ts';
+import { applyDoctorFix } from './fix.ts';
+import type { DoctorCheck, DoctorFixResult, DoctorReport } from './types.ts';
 
 export interface DoctorOptions {
   readonly paths: ProjectPaths;
@@ -40,6 +42,23 @@ export interface DoctorOptions {
   /** `process.version`, injected — a real host fact R10 forbids reading ambiently inside business
    * logic; the one real caller allowed to read it is the CLI entry point itself. */
   readonly processVersion: string;
+  /** `--rebuild-index` — invokes `@forge/kb`'s own real, already-built `rebuildIndex(tree, backend)`
+   * (via `../kb.ts`'s own `kbSync`, the exact wrapper `forge kb sync` already uses) once, before any
+   * check runs, so a check that happens to read the freshly-rebuilt index sees current data. A
+   * genuinely corrupted on-disk *index file* needs no special detection here at all: `@forge/kb`'s own
+   * `openKbIndex` already degrades a corrupt or unreadable backend to a fresh, empty one rather than
+   * throwing (`packages/kb/src/db/open.ts`/`json-backend.ts`). A broken *storage location*
+   * (`.forge/state` occupied by a plain file, or unwritable) is a real, different failure `openKbIndex`
+   * does still throw for (`KB-012`) — degraded, here, into its own single failed `rebuild-index`
+   * `DoctorCheck` rather than rejecting the whole `runDoctor` call, matching `runChecks`'s own
+   * "never throws" contract for every other real check. */
+  readonly rebuildIndex?: boolean;
+  /** `--fix` — after checks run, apply `./fix.ts`'s own real, safe, automatic remediation to every
+   * check that failed, then re-run every check so `checks`/`ok` above reflect the real, current
+   * post-fix state. `fixes` on the returned `DoctorReport` records what was attempted for each
+   * originally-failing check, including an honest `applied: false` for the (majority of) checks with
+   * no safe automatic fix. */
+  readonly fix?: boolean;
 }
 
 /** One real check's own id, paired with its promise — needed so a check that throws instead of
@@ -51,7 +70,7 @@ interface NamedCheck {
   readonly promise: Promise<DoctorCheck>;
 }
 
-export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
+async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
   const { paths, projectRoot, config, adapter, env, processVersion } = options;
   const kbRoot = config.paths.kb;
   const specsRoot = config.paths.specs;
@@ -78,7 +97,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
     { id: 'secret-references', promise: checkSecretReferences(paths, env) },
   ];
 
-  const checks: DoctorCheck[] = await Promise.all(
+  return Promise.all(
     named.map(async ({ id, promise }): Promise<DoctorCheck> => {
       try {
         return await promise;
@@ -94,7 +113,64 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
       }
     }),
   );
+}
 
-  const ok = checks.every((c) => c.ok || c.severity !== 'hard');
-  return { v: 1, ok, checks };
+export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
+  const { paths, projectRoot, config, fix, rebuildIndex } = options;
+
+  // Never allowed to throw out of `runDoctor` — every one of `runChecks`'s own checks already
+  // degrades a genuine crash into its own single failed `DoctorCheck` rather than aborting the whole
+  // report (see `runChecks`'s own per-check try/catch above); a fresh gauntlet critic round found this
+  // call was the one real exception, an unguarded `await kbSync(...)` that let a real, documented
+  // `openKbIndex` failure (`KB-012`: `.forge/state` blocked by a stray file, or unwritable) reject the
+  // whole `runDoctor` call outright. Degraded here into the identical shape every other crashing check
+  // already produces, so a caller sees one honest failed check instead of an uncaught rejection.
+  let rebuildIndexFailure: DoctorCheck | undefined;
+  if (rebuildIndex) {
+    try {
+      await kbSync({
+        paths,
+        kbRoot: config.paths.kb,
+        specsRoot: config.paths.specs,
+        level: config.project.level,
+      });
+    } catch (cause: unknown) {
+      rebuildIndexFailure = {
+        id: 'rebuild-index',
+        ok: false,
+        severity: 'hard',
+        message: `Rebuilding the KB index crashed instead of completing: ${String(renderCause(cause))}.`,
+      };
+    }
+  }
+
+  const withRebuildIndexResult = async (): Promise<DoctorCheck[]> => [
+    ...(rebuildIndexFailure === undefined ? [] : [rebuildIndexFailure]),
+    ...(await runChecks(options)),
+  ];
+
+  const checks = await withRebuildIndexResult();
+
+  if (!fix) {
+    const ok = checks.every((c) => c.ok || c.severity !== 'hard');
+    return { v: 1, ok, checks };
+  }
+
+  // Sequential, deliberately not `Promise.all`: some real fixes (`git worktree remove`) mutate the
+  // same real repository, and running them concurrently risks racing against each other at the git
+  // level for no real benefit (a fix pass is not a hot path). Computed once, from the pre-fix `checks`
+  // above — each individual fix function re-derives its own current on-disk state before acting
+  // (`fixStaleLock`/`fixOrphanedWorktrees` both re-read, never trust this list's own snapshot), so a
+  // fix already applied by an earlier iteration in this same loop cannot be attempted twice from a
+  // stale entry here.
+  const fixes: DoctorFixResult[] = [];
+  for (const failedCheck of checks.filter((c) => !c.ok)) {
+    fixes.push(await applyDoctorFix(failedCheck, paths, projectRoot));
+  }
+  // `rebuild-index` is never re-attempted here (`--fix` has no safe automatic remedy for a rebuild
+  // that itself crashed — the `applyDoctorFix` default case already reports that honestly above), but
+  // it still belongs in the final, post-fix report if it never got any better.
+  const fixedChecks = await withRebuildIndexResult();
+  const ok = fixedChecks.every((c) => c.ok || c.severity !== 'hard');
+  return { v: 1, ok, checks: fixedChecks, fixes };
 }
