@@ -112,3 +112,58 @@ export {
   toSchemaIntrospectToErInput,
   writeReconstruction,
 } from './reconstruction.ts';
+
+export {
+  OPEN_QUESTIONS_RELATIVE_PATH,
+  RISKS_RELATIVE_PATH,
+  appendOpenQuestionEntry,
+  appendRiskEntry,
+} from './artifacts.ts';
+
+export type {
+  GapAnalysisInput,
+  GapAnalysisResult,
+  GapClass,
+  GapFinding,
+  GapSeverity,
+  WriteGapArtifactsResult,
+} from './gap-analysis.ts';
+export {
+  GAP_REPORT_RELATIVE_PATH,
+  analyzeGaps,
+  renderGapsReport,
+  writeGapArtifacts,
+} from './gap-analysis.ts';
+
+export type {
+  AskConfirmation,
+  ClaimImpact,
+  ConfirmableClaim,
+  ConfirmationAnswer,
+  ConfirmationBatch,
+  ConfirmationFlowResult,
+  ConfirmationOutcome,
+  RankedClaim,
+} from './confirmation.ts';
+export {
+  CONFIRMATION_QUESTION_CAP,
+  applyConfirmationAnswer,
+  buildConfirmationBatch,
+  rankClaims,
+  runConfirmationFlow,
+} from './confirmation.ts';
+
+export type {
+  BaselineDiff,
+  BaselineSnapshot,
+  GAdoptGateInput,
+  GAdoptGateResult,
+  MeasuredFacts,
+} from './baseline.ts';
+export {
+  BASELINE_REPORT_RELATIVE_PATH,
+  BASELINE_TAG_NAME,
+  computeMeasuredFacts,
+  diffBaselines,
+  evaluateGAdoptGate,
+} from './baseline.ts';

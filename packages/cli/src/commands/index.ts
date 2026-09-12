@@ -5,7 +5,19 @@
  * @see specs/03 §3.2.1
  * @see specs/03 §3.2.2
  */
-export { adopt } from './adopt.ts';
+export {
+  adopt,
+  adoptIncremental,
+  adoptReport,
+  baselineDiff,
+  baselineShow,
+  type AdoptContext,
+  type AdoptDepth,
+  type AdoptOptions,
+  type AdoptReportResult,
+  type AdoptRunResult,
+  type IncrementalReport,
+} from './adopt.ts';
 export {
   adrAccept,
   adrList,

@@ -39,6 +39,7 @@ export {
   wrapGitFailure,
   type RepoSnapshot,
 } from './git.ts';
+export { createAnnotatedTag, resolveTagCommit, tagExists } from './tag.ts';
 export {
   clearStaleRepoLocks,
   createLaneWorktree,

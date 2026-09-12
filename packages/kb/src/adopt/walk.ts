@@ -24,16 +24,25 @@ export interface WalkedFile {
 
 /**
  * Directory names never descended into. Each owns a real, distinct reason: `.git` is VCS-internal
- * state, not source; `node_modules`/`vendor`/`.venv`/`venv`/`target` (Cargo's build dir, distinct
+ * state, not source; `.forge` is FORGE's own state directory (`.forge/state/`'s id-allocator cache,
+ * event log, …) — real, but exactly as un-adoptable as `.git`, and a real, load-bearing bug this
+ * piece's own end-to-end pipeline test found: adopting a project *from inside its own FORGE working
+ * directory* (`PLAN-M10.md` P19's own real CLI, `forge adopt` run a second time after a first run has
+ * already populated `.forge/state/`) walked straight into it and hit `ProjectPaths.resolveWithin`'s
+ * own `CFG-004` deny-list rejection, since nothing here excluded it before this fix;
+ * `node_modules`/`vendor`/`.venv`/`venv`/`target` (Cargo's build dir, distinct
  * from a source dir also plausibly named `target`) are dependency or build output, not written by
  * this repository's own contributors; `dist`/`build`/`out`/`.next`/`.turbo`/coverage/cache dirs are
  * generated. Walking any of these would make every size/health signal measure the target's tooling
  * instead of its code — the opposite of `17` §17.2's own "facts only" mandate. Kept as an exported
  * `Set` (not inlined) so a caller can extend it for a target-repo-specific convention SURVEY has no
  * way to know about in advance (`--depth quick` in `17` §17.6, for instance, may want a narrower set).
+ *
+ * @see PLAN-M10.md P19
  */
 export const DEFAULT_IGNORED_DIR_NAMES: ReadonlySet<string> = new Set([
   '.git',
+  '.forge',
   'node_modules',
   'vendor',
   '.venv',
