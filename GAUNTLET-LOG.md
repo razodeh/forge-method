@@ -9981,3 +9981,102 @@ surfacing: `sessionRecordQueues` existed in this exact file specifically because
 the identical race for session-record ids, and the two new functions this piece added right next to it
 were not built against that same, already-established discipline. `SPEC-QUESTIONS.md` Q161 has the full
 record.
+
+## M10 P5 — `fm-data` module: `data-engineer`, F-DATA-8, lineage/quality checks, warehouse-modelling
+templates, pipeline diagrams (`19` §19.1, `12` §12)
+
+**Mandate:** the fifth and last of the five shipped-module pieces (`19` §19.1's own `fm-data` row):
+`data-engineer`, F-DATA-8 (the `analytical-pipeline-design` framework) "made real, matching `12` §12's
+own already-written criteria/rubric text exactly," `lineage:coverage`/`data-quality:tests` checks,
+warehouse-modelling templates, and pipeline diagrams reusing `packages/diagrams`'s own existing
+generators.
+
+Built: `modules/fm-data/module.yaml` (`requires: [fm-core]`); the real, authoritative
+`agents/data-engineer.agent.yaml` (resolving the identical `S(fm-data)` agent-id collision with
+`fm-core` `M10 P3`/`P4` already resolved for `frontend`/`domain-modeler`/`integration-architect`, this
+time extended with `DataModel`/`Diagram` outputs, `G-Design` added to `produces_evidence_for`, and
+`kb_propose` naming the new warehouse/views namespaces since `data-architect` holds
+`docs/forge/kb/data/**` exclusively); `checks/lineage.check.yaml` and `checks/data-quality.check.yaml`
+(two real, dependency-free `*.check.yaml` files); `templates/warehouse-model.md.hbs` (reusing the
+already-registered `DataModel` type) and `templates/pipeline-diagram.md.hbs` (reusing the already-
+registered `Diagram` type around a real `@forge/diagrams` `pipelineToFlow` run).
+
+### Round 1 — fresh critic: one blocking finding, two major, one minor, plus a coverage-gap note
+
+**[Blocking]** F-DATA-8's real content already lived in `@forge/templates`' own `FRAMEWORK_INDEX`
+(`packages/templates/templates/frameworks/analytical-pipeline-design.framework.yaml`, `fm-core/
+module.yaml`'s own header comment already excluded exactly this id from its own `provides.frameworks`
+in anticipation of this piece), but this piece's first draft shipped a SECOND, module-local copy under
+`modules/fm-data/frameworks/` with the corrected `owner_agent`. No `loadFrameworkRegistry`-shaped module
+scanner exists anywhere in this codebase for frameworks (unlike agents), so `FRAMEWORK_INDEX` is the
+ONLY mechanism a real `forge init`/`agentValidateAll` run ever reads a framework through — the module-
+local copy was dead code, and the real, live-loaded core copy still had the stale
+`owner_agent: data-architect`. F-DATA-8 was "real" only inside this piece's own isolated tests, exactly
+contradicting its own Surface's "made real" language. **[Major 1]** `checks/lineage.check.yaml`'s
+`Source:`/`Target:` regexes ran against the whole pipeline doc, not the `## Lineage` section's own
+content — an empty Lineage section followed by an unrelated section naming `Source:`/`Target:` passed
+with zero violations. **[Major 2]** `checks/data-quality.check.yaml` matched a pipeline's own test file
+via a naive `name.startsWith(base)`, so pipeline `orders` was wrongly satisfied by an unrelated
+`orders-archive.dq.test.ts`. **[Minor]** `templates/pipeline-diagram.md.hbs`'s Mermaid fence was
+hard-coded to three backticks around a caller-controlled `rawSource`; `sanitizeMermaidLabel`
+(`packages/diagrams/src/generate/sanitize.ts`) only ever escapes `"`, never a backtick, so a hostile
+stage name could break the fence. The critic also noted the coverage gap this all implied: the
+framework's own tests proved the file was well-formed, never that the shipped system actually used it.
+
+**Fixed:** the module-local framework copy and its paired, also-dead `modules/fm-data/templates/
+adr-analytical-pipeline-design.md.hbs` deleted outright; `owner_agent: data-architect` ->
+`owner_agent: data-engineer` corrected directly on the one real `@forge/templates` file instead — the
+identical "one real source of truth, fixed in place" discipline `fm-core/module.yaml`'s own header
+comment already establishes for its other 42 frameworks. `test/fm-data-framework.test.ts` rewritten to
+load via `FRAMEWORK_INDEX['analytical-pipeline-design']` (matching `test/frameworks.test.ts`'s own
+convention) with a dedicated assertion pinning the resolved path. `lineageSection()` added to bound the
+lineage check's own regex to the heading's real content. `data-quality.check.yaml`'s match anchored to
+`^<base>\.` (basename regex-escaped). `pipeline-diagram.md.hbs` changed to a caller-computed `fence`
+field (one backtick longer than the longest run in the source) on both fence lines, with a real
+four-backtick hostile-stage-name regression test. A full re-run of `test/frameworks.test.ts` (220),
+`packages/agents/test/content/a2-roster.test.ts` (21), `packages/cli/test/bin.test.ts`, and
+`packages/cli/test/commands/agent.test.ts` confirmed the edit to shared core infrastructure broke
+nothing else.
+
+### Round 2 — a second, fresh critic verifying round 1's fixes: all five confirmed genuinely fixed
+(empirically re-run, not merely re-read), plus one new minor finding
+
+Verified the dead-copy fix by direct filesystem inspection (`modules/fm-data/` has no `frameworks/` dir
+and no orphaned ADR template) and by re-running `test/fm-data-framework.test.ts`,
+`test/frameworks.test.ts` (220), `packages/agents/test/content/a2-roster.test.ts` (21),
+`packages/cli/test/bin.test.ts`, and `packages/cli/test/commands/agent.test.ts` directly — 269 tests,
+all green. Verified the lineage/data-quality regex fixes by tracing the adversarial cases by hand
+against the actual embedded scripts, then confirming the real test suite. Verified the fence fix by
+confirming `{{{fence}}}` is used consistently with no remaining hard-coded backtick literal anywhere in
+the template. **[New minor]** `checks/data-quality.check.yaml`'s own fixed match still accepted a
+DIRECTORY whose name happened to match the stem pattern — `fs.readdirSync(testsDir)` (no
+`withFileTypes`) plus a bare `fs.statSync(...).size > 0` check does not distinguish a file from a
+directory, so a directory entry could satisfy a pipeline's own test-coverage requirement.
+
+**Fixed:** `testFiles` now comes from `fs.readdirSync(testsDir, {withFileTypes: true})` filtered to
+`.isFile()` before the stem pattern is ever tested. A new regression fixture (a directory named
+`orders.dq.test.ts/` containing a real file, with no actual `orders.*` file present) confirms this now
+correctly reports a violation. `packages/engine/test/gates/fm-data-checks.test.ts` (13 tests total,
+green). No further findings.
+
+**Mandatory full-workspace verification pass:** whole-workspace `pnpm typecheck` (20/20 packages),
+`eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean. A
+full, unscoped `node scripts/run-tests.mjs run` shows 5 failures, none touching `modules/fm-data/` or
+any file this piece added: the two already-accepted load-sensitive flakes this build's own standing
+instructions name (`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test,
+`packages/cli/test/commands/run/resume.test.ts`), plus three failures traced directly to concurrent,
+uncommitted in-flight work by other M10 pieces building in this same working directory
+(`packages/core/test/errors.test.ts`'s `RUN-071` remedy-verb check and `packages/engine/test/
+interaction/session.test.ts`'s `resumeFrom` test, both against `M10 P13`'s own uncommitted `forge
+session resume` changes; `packages/tui/test/screens/kb.test.tsx`'s diagram-diff test, against
+uncommitted changes under `packages/kb/src/adopt/`) — confirmed by `git status` showing those exact
+files modified and untracked, none of them touched by this piece. `crash-resume.test.ts` passed on this
+run (65s, under load).
+
+**What the critic caught that the builder missed:** the same root pattern `M10 P4`'s own checkpoint
+entry already named for `api-versioning` — a module reserved from `fm-core`'s own `provides` in
+anticipation of a later piece is not automatically "wired up" once that piece exists; the actual load
+mechanism has to be checked directly for every new module-owned artifact type, not just agents (which
+already have a real, tested "later module wins" resolution). Frameworks had no such mechanism at all,
+which made the builder's first-draft assumption (mirror the agent pattern) actively wrong rather than
+merely incomplete. `SPEC-QUESTIONS.md` Q162 has the full record.

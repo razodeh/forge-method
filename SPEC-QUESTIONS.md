@@ -13098,3 +13098,114 @@ session.test.ts` has the full regression suite (40 tests total for this file aft
 27); `packages/sessions/test/phase-machine/machine.test.ts` covers `forceToDecide` and the two new
 configurable-bound constructor options directly; `packages/schemas/test/artifacts/session-record.test.ts`
 and `packages/sessions/test/record/assemble.test.ts` cover the new `truncated_bound` field end to end.
+
+## Q162 — M10 P5: `fm-data` module — the `data-engineer` agent-id collision with `fm-core`, and a real
+first-draft mistake this piece's own critic rounds caught: F-DATA-8 "made real" only in a dead,
+never-loaded module-local copy
+
+`PLAN-M10.md` P5's own Surface asked for `modules/fm-data/`: `data-engineer`, F-DATA-8 (the
+`analytical-pipeline-design` framework) "made real, matching `12` §12's own already-written
+criteria/rubric text exactly," `lineage:coverage`/`data-quality:tests` checks, warehouse-modelling
+templates, and pipeline diagrams reusing `packages/diagrams`'s own existing generators.
+
+**1. `data-engineer` is a real, pre-existing collision, resolved the identical way `M10 P3`/`P4`
+already resolved `frontend`/`domain-modeler`/`integration-architect`.** `05` §5.2 marks `data-engineer`
+as `S(fm-data)`; `modules/fm-core/agents/data-engineer.agent.yaml` already existed on disk (P1),
+physically under `fm-core`, and was also named unconditionally in `fm-core`'s own `provides.agents` —
+that file's own doc comment ("S(fm-data): installed with the fm-data module") already anticipated the
+mismatch. This piece ships the real, authoritative `data-engineer` under
+`modules/fm-data/agents/data-engineer.agent.yaml` (extended with `DataModel`/`Diagram` outputs for
+warehouse modelling and pipeline diagrams, `G-Design` added to `produces_evidence_for` alongside
+`G-Verify`, and `kb_propose` naming `data/warehouse/**`/`data/views/**` — `kb_write` stays empty, since
+`data-architect`'s own `parallel_safety.file_ownership: ['docs/forge/kb/data/**']` is exclusive, the
+identical "propose into an exclusive namespace" reasoning `fm-service`'s own `domain-modeler` already
+documents for `architect`'s `architecture/**`) and re-declares it in `provides.agents`. The same two
+independent, disagreeing mechanisms `fm-web`/`fm-service`'s own `module.yaml`s already document apply
+unchanged: `loadAgentRegistry`'s real, filesystem-alphabetical scan resolves `data-engineer` to this
+module's own copy (confirmed by `packages/agents/test/content/fm-data-roster.test.ts`); `resolveInstalledModules`'s
+own `installOrder`-based "winner" is a separate, currently-uncalled mechanism, tested both ways in
+`packages/extensions/test/module/fm-data.test.ts`. The residual gap this piece does not fix — `fm-core`'s
+own stray `provides.agents`/`ceilings` entry — is `fm-core`'s own already-committed file, out of Surface.
+
+**2. F-DATA-8's real content already existed as a `@forge/templates` core framework
+(`packages/templates/templates/frameworks/analytical-pipeline-design.framework.yaml`, one of the 43
+`FRAMEWORK_INDEX` entries), NOT a fresh file this piece needed to invent — `fm-core/module.yaml`'s own
+header comment already disclosed this, excluding exactly this one id from its own `provides.frameworks`
+in anticipation of this piece. A first draft of this piece nonetheless shipped a SECOND, module-local
+copy at `modules/fm-data/frameworks/analytical-pipeline-design.framework.yaml` with the corrected
+`owner_agent: data-engineer` (`19` §19.1's real ownership; the pre-existing core copy still said the
+stale `data-architect`) — a genuinely real, blocking mistake a fresh critic round caught: no
+`loadFrameworkRegistry`-shaped module scanner exists anywhere in this codebase for frameworks the way
+`@forge/agents`' own `loadAgentRegistry` exists for agents, so `FRAMEWORK_INDEX` is the ONLY mechanism a
+real `forge init`/`agentValidateAll` run ever reads a framework through. The module-local copy was
+therefore dead code: F-DATA-8 was "real" only inside this piece's own isolated tests, never in an
+actual `forge init`. **Fixed by deleting the module-local copy (and its paired, also-dead
+`modules/fm-data/templates/adr-analytical-pipeline-design.md.hbs`) and correcting
+`owner_agent: data-architect` -> `owner_agent: data-engineer` directly on the one real, live-loaded
+`@forge/templates` file instead** — the identical "one real source of truth, fixed in place, never
+forked" discipline `fm-core/module.yaml`'s own header comment already establishes for its other 42
+frameworks, applied here to the one framework `fm-data`, not `fm-core`, actually owns.
+`test/fm-data-framework.test.ts` now loads and proves this same real, corrected file via
+`FRAMEWORK_INDEX['analytical-pipeline-design']` (matching `test/frameworks.test.ts`'s own established
+convention), not a module-local path, and a dedicated assertion pins the resolved path directly. A full
+re-run of `test/frameworks.test.ts` (220 tests), `packages/agents/test/content/a2-roster.test.ts` (21),
+`packages/cli/test/bin.test.ts`, and `packages/cli/test/commands/agent.test.ts` confirmed this edit to
+shared core infrastructure broke nothing else. `data-engineer.agent.yaml`'s own `frameworks:` list
+DOES include `analytical-pipeline-design` directly — deliberately safe, unlike `PLAN-M10.md` P4's own
+real `agentValidateAll` bug (`api-versioning` was never in `FRAMEWORK_INDEX` at all): this id already
+is, and remains, a member of that same core index regardless of which module ships it, confirmed
+directly (not merely by analogy) via a real `forge agent validate --all` run.
+
+**3. Two more real bugs a first and second critic round found in the two new deterministic checks,
+neither a shell-injection risk (both checks were confirmed clean of that specific class — no
+`process.env`, no `child_process`, fixed literal directories only, unlike `M10 P4`'s own real
+`api-breaking-change.check.yaml` shell-injection defect).** `checks/lineage.check.yaml`'s first draft
+ran its `Source:`/`Target:` regexes against the WHOLE pipeline doc's text, not the `## Lineage`
+section's own content — a doc with an empty Lineage section plus an unrelated later section (e.g. a
+changelog) naming `Source:`/`Target:` passed with zero violations. Fixed with a `lineageSection()`
+helper bounding the extraction to the heading's own content, up to the next `##` heading or EOF.
+`checks/data-quality.check.yaml`'s first draft matched a pipeline's own test file via
+`name.startsWith(base)`, so pipeline `orders` was wrongly satisfied by an unrelated
+`orders-archive.dq.test.ts`; fixed with an anchored, regex-escaped `^<base>\.` pattern. A SECOND critic
+round then found this same fix still accepted a DIRECTORY whose name matched the pattern
+(`fs.readdirSync(testsDir)` with no `withFileTypes`, `fs.statSync(...).size > 0` alone does not
+distinguish a file from a directory) — fixed by filtering to `.isFile()` before the pattern is ever
+tested. All three fixes have real regression fixtures in
+`packages/engine/test/gates/fm-data-checks.test.ts` (13 tests total).
+
+**4. `templates/pipeline-diagram.md.hbs`'s own Mermaid fence was hard-coded to three backticks around
+a caller-controlled `rawSource` (`@forge/diagrams`' own real `pipelineToFlow` generator's output) — a
+critic round found `sanitizeMermaidLabel` (`packages/diagrams/src/generate/sanitize.ts`) only ever
+escapes `"`, never a backtick, so a pipeline stage name containing three or more literal backticks
+would prematurely close the fence and leak arbitrary Markdown into the rendered document body. Fixed
+with a caller-computed `fence` context field (one backtick longer than the longest backtick run in the
+source, the standard CommonMark escaping rule, minimum three) used on both the open and close fence
+lines — `test/fm-data-templates.test.ts` pins this with a real four-backtick hostile stage name fixture
+fed through the real generator.
+
+**5. Warehouse-modelling templates and pipeline diagrams reuse existing, already-registered
+infrastructure rather than inventing new artifact types or a new diagram generator.**
+`templates/warehouse-model.md.hbs` renders the already-registered `DataModel` type (no invented fields,
+`SPEC-QUESTIONS.md` Q20 — dimensional-model structure lives in the body, the identical choice
+`fm-service`'s own OpenAPI/proto templates already make for `InterfaceContract`).
+`templates/pipeline-diagram.md.hbs` renders the already-registered `Diagram` type around a real
+`pipelineToFlow` run (confirmed directly against `packages/diagrams/src/generate/generators.ts` before
+assuming a new generator was needed — a data pipeline's own stage-to-stage flow is no different in
+shape from the CI-stage list `pipelineToFlow`'s own doc comment already names as its source of truth).
+
+**Verification:** 74 real tests across `packages/extensions/test/module/fm-data.test.ts` (8),
+`packages/agents/test/content/fm-data-roster.test.ts` (8), `packages/engine/test/gates/
+fm-data-checks.test.ts` (13, including three real regression fixtures for the critic-found check bugs),
+`test/fm-data-framework.test.ts` (8, including the "genuinely the live-loaded file" assertion), and
+`test/fm-data-templates.test.ts` (5, including the hostile-backtick fence regression). Whole-workspace
+`pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean. A full, unscoped `node scripts/run-tests.mjs run` shows
+5 failures, none in `modules/fm-data/` or its own test files: the two already-accepted load-sensitive
+flakes (`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test,
+`packages/cli/test/commands/run/resume.test.ts`) plus three failures traced directly to concurrent,
+uncommitted in-flight work this piece does not touch (`packages/core/test/errors.test.ts`'s `RUN-071`
+remedy-verb check and `packages/engine/test/interaction/session.test.ts`'s `resumeFrom` test, both
+against `M10 P13`'s own uncommitted `forge session resume` changes to `packages/core/src/errors/
+codes.ts`/`packages/engine/src/interaction/session.ts`; `packages/tui/test/screens/kb.test.tsx`'s
+diagram-diff test, against uncommitted changes under `packages/kb/src/adopt/`). `GAUNTLET-LOG.md`'s own
+`M10 P5` entry has the full round-by-round record.
