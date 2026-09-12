@@ -9076,3 +9076,82 @@ agent's own real `tools:` block matching its ceiling) rather than a schema-shape
 excluding the concurrently in-flight, unrelated `@forge/sessions` package under active construction by a
 different task in the same working tree), `eslint`, `prettier --check`, `pnpm run boundaries` all clean.
 `SPEC-QUESTIONS.md` Q150 has the full record.
+
+## M10 P9 — `@forge/sessions`: package scaffold, technique library, five-phase state machine (`16` §16.2-16.5)
+
+**Mandate:** `16` §16.3's own FRAME → DIVERGE → CONVERGE → DECIDE → RECORD anatomy and §16.4's own
+technique library, as **pure logic only** — this plan's own recorded Surface deviation (the identical
+layering `Q104` already established for `@forge/agents`): no agent dispatch, no adapter calls, no edge to
+`@forge/engine`. New package `@forge/sessions`, depending only on `@forge/core` and `@forge/schemas` —
+well inside the unmodified `sessions: ['core','kb','agents','schemas']` graph row (confirmed directly
+against `tools/eslint-plugin-forge-boundaries/src/graph.mjs` before writing any code).
+
+Built: 25 real `modules/fm-core/techniques/*.technique.yaml` files (all 12 divergent + 8 convergent ids
+`16` §16.4's own two tables name, plus the 5 retro-only ids its own six-name retro prose row adds beyond
+`five-whys`, which is real, shared content across both the divergent table and the retro row rather than
+a duplicated id — `phases` is an array field for exactly this reason, a deliberate, documented departure
+from the plan's own singular-`phase` wording); `techniqueSchema` + `loadTechnique`/`listTechniques`,
+mirroring `@forge/agents`' own `loadAgentRegistry` convention exactly (a malformed shipped file throws a
+plain `Error` — an authoring bug in this repo's own content; an unknown id is `ForgeError` `RUN-065`); a
+pure `SessionPhaseMachine` (FRAME's refusal rule as `RUN-061`; DIVERGE's 30-idea cap forcing an early,
+lossless transition to CONVERGE, `RUN-063` for any phase driven out of order; CONVERGE's `advanceToDecide`
+requiring a real critic-sourced objection when a critic participant is present, `RUN-062`; `16` §16.8's
+"5 agents + human" bound enforced at `start()`, `RUN-067`); `canComplete` (the mandatory write-back gate,
+`16` §16.5) and `assembleSessionRecord`, writing to the already-real, unmodified `sessionRecordSchema`
+(`@forge/schemas`) rather than a second one. `modules/fm-core/module.yaml`'s own `provides.techniques`
+(left deliberately empty by P1, landed concurrently in the same working tree, with its own doc comment
+naming this piece as the one that populates it for real) now names all 25 files; `test/fm-core-module.test.ts`
+updated to check each one against disk.
+
+### Round 1 — fresh critic: three real major findings, three real minor findings
+
+**[Finding 1, major]** `assembleSessionRecord` threw a bare `throw new Error(...)` for a state that had
+never been through FRAME — the identical "phase driven out of order" failure `SessionPhaseMachine`'s own
+`assertPhase` already reports as a typed `ForgeError` (`RUN-063`), just reached from a different call
+site. **[Finding 2, major]** `assembleSessionRecord`'s own final `sessionRecordSchema.parse(candidate)`
+let a raw, unwrapped `ZodError` escape for any malformed caller-supplied `meta` (a bad id, an
+out-of-format date, a non-positive revision) — no code, no remedy, a bare stack trace in production.
+**[Finding 3, major]** `16` §16.8's own "Max participants: 5 agents + human" bound was never enforced
+anywhere, and — unlike every other §16.8 bound in this piece, each explicitly called out as caller-owned
+or externally-owned in its own doc comment — its omission here was undisclosed. **[Finding 4, minor]**
+`isStatableInOneSentence` false-positives on any embedded `.`/`?`/`!` that isn't a real sentence break
+(e.g. "vs."), a self-disclosed limitation with no test pinning it. **[Finding 5, minor]** every critic-role
+comparison used exact string equality (`role === CRITIC_ROLE`), so a participant recorded as `"Critic"`
+(any casing/whitespace variant) silently bypassed both the DIVERGE mute and the CONVERGE
+critic-objection gate — a real, structural bypass of both `16` §16.7 anti-groupthink measures for the cost
+of a typo. **[Finding 6, minor]** `resolveStatus` had undocumented precedence when a session is both
+`truncated` and has zero decisions/actions at once (previously reported `inconclusive`, silently dropping
+that the DIVERGE cap had forced the outcome).
+
+**Fixed:** finding 1 now reuses `RUN-063`; finding 2 wraps the final `.safeParse` in a new `RUN-066`,
+mirroring `CFG-008`'s own established "schema-valid or reject, with a named code" pattern
+(`packages/core/src/artifacts/validate.ts`); finding 3 gets a new `RUN-067`, enforced in
+`SessionPhaseMachine.start()`; finding 4 got a real test pinning the documented limitation rather than a
+behaviour change (the heuristic is accepted, not silently broken); finding 5 is fixed by a new
+case/whitespace-insensitive `isCriticRole`/`isHumanRole` pair used at every comparison site; finding 6
+now makes `truncated` take precedence explicitly, with a doc comment recording this as a decision the spec
+itself is silent on.
+
+### Round 2 — a second, fresh critic verifying all six fixes: confirmed real and correct, one further
+minor finding fixed immediately
+
+Verified each fix by re-reading the actual code and re-deriving the invariant (e.g. traced that
+`assemble.ts`'s `RUN-063` call site can only ever observe `state.phase === 'FRAME'`, so the rendered
+message reads sensibly; grepped for any remaining `=== CRITIC_ROLE`/`!== CRITIC_ROLE` comparison and found
+none) rather than trusting that a comment claiming a fix landed. All six confirmed genuine, not cosmetic.
+One new, minor finding: the new `MAX_AGENT_PARTICIPANTS` constant (`RUN-067`'s own bound) was missing from
+`phase-machine/index.ts`'s own barrel export list, even though its sibling `DIVERGE_IDEA_CAP` was exported
+right next to it — unreachable to any real consumer outside this package without hardcoding the number
+`RUN-067`'s own remedy also names. Fixed immediately: added to the barrel, with a new test asserting both
+bounds are reachable through the package's own root barrel, not only by reaching past it.
+
+**Final state: 96 real tests** across `packages/sessions/test/` (technique loading against both the real,
+shipped `modules/fm-core/techniques/` and fresh fixture trees; every `SessionPhaseMachine` transition,
+including every refusal/gate/cap path; `canComplete`; `assembleSessionRecord` against the real
+`sessionRecordSchema`) plus 192 in `test/fm-core-module.test.ts` (unchanged from P1 except the new
+technique-provides checks) and the whole-registry `packages/core/test/errors.test.ts` (295, covering the
+five new `RUN-06x` codes). 100% statement/branch/function/line coverage on `packages/sessions/src`.
+`pnpm typecheck` (whole workspace), `eslint`, `prettier --check`, `pnpm run boundaries` all clean —
+boundaries confirmed by direct inspection that `packages/sessions/src` imports only `@forge/core` and
+`@forge/schemas`, nothing wider than the graph's own row permits. `SPEC-QUESTIONS.md` Q151 has the full
+record, including the `five-whys`/`phases`-array deviation from the plan's own singular-`phase` wording.

@@ -12045,3 +12045,47 @@ one of the 29 `ceilings` entries transcribed directly from its own agent's real 
 the twenty-nine. `pnpm typecheck` (whole workspace excluding the concurrently in-flight, unrelated
 `@forge/sessions` package), `eslint`, `prettier --check`, `pnpm run boundaries` all clean;
 `node scripts/run-tests.mjs run test/fm-core-module.test.ts` 166/166 passing.
+
+## Q151 — M10 P9: the technique library's `phases` field is an array, not the plan's own singular
+`phase` wording, because `five-whys` is real content shared across two of `16` §16.4's own tables
+
+`PLAN-M10.md` P9's own Surface text describes each technique document as carrying "a facilitator prompt
+template" alongside "`id`, `name`, `bestFor`, `phase: diverge|converge|retro`" — a singular field, one
+value per technique.
+
+`16` §16.4 itself does not actually support a one-technique-one-phase model. Its own Divergent
+techniques table lists `five-whys` with "Best for: Retros and RCA," and its own retro-techniques prose
+row separately names `what-went-well-badly-next, start-stop-continue, timeline-review, five-whys,
+sailboat, data-driven` — the identical id, `five-whys`, cited as real content in both places. A singular
+`phase` field forces a choice with no good answer: pick `diverge` and the retro prose row's own explicit
+citation of this exact id becomes a real, uncheckable gap (`listTechniques('retro')` would never surface
+a technique the spec's own text says belongs there); pick `retro` and the divergent table's own row
+becomes the same kind of gap in the other direction; duplicate the id under two files and `loadTechnique`
+loses its "one real answer per id" contract (which file wins?), the same hazard `@forge/kb`'s own `KB-011`
+exists to catch for KB entries.
+
+**Decided:** `techniqueSchema`'s `phase` field is `phases: TechniquePhase[]` (min length 1), and
+`five-whys.technique.yaml` is the one technique in the shipped set with `phases: [diverge, retro]` —
+real, cited content in both tables, represented once. Every other technique keeps a one-element array,
+so this costs nothing for the 24 techniques that don't need it, and `listTechniques(phase)` filters by
+"is `phase` in this technique's own `phases`" rather than an exact match, so `five-whys` genuinely
+appears in both `listTechniques('diverge')` and `listTechniques('retro')`. This also settles the total
+file count: `16` §16.4's "12 divergent + 8 convergent" plus its own six-name retro row is not 26 files —
+it's 25, since `five-whys` is one of the 12 divergent ids counted once, not created a second time for the
+retro row.
+
+**Verification:** `packages/sessions/test/technique/load.test.ts` asserts all 25 real ids load from the
+real, shipped `modules/fm-core/techniques/` directory; `listTechniques('diverge')` returns exactly 12
+(five-whys included), `listTechniques('converge')` exactly 8, `listTechniques('retro')` exactly 6
+(five-whys included) — not 12+8+6=26 files, 25 real files with one shared across two lists.
+`packages/sessions/test/technique/schema.test.ts` separately asserts the schema accepts a
+multi-element `phases` array. `test/fm-core-module.test.ts`'s own `provides.techniques` check
+cross-references the same 25 ids against `modules/fm-core/module.yaml`. Two critic rounds on the whole
+piece (`GAUNTLET-LOG.md`'s own `M10 P9` entry has the full record) reviewed this design directly and
+raised no objection to it; the six real findings both rounds did raise were unrelated (a bare `Error`
+instead of a typed `ForgeError` for a phase-order violation now reusing `RUN-063`; an unwrapped `ZodError`
+escaping `assembleSessionRecord` now wrapped as `RUN-066`; `16` §16.8's own "5 agents + human" bound
+never enforced, now `RUN-067`; a documented one-sentence-heuristic limitation now pinned by a real test;
+case-sensitive critic-role matching that silently bypassed both `16` §16.7 anti-groupthink gates, now
+fixed with a case/whitespace-insensitive `isCriticRole`/`isHumanRole` pair; and undocumented
+`truncated`/`inconclusive` status precedence, now `truncated`-first with a recorded rationale).
