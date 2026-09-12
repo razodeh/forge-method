@@ -363,7 +363,7 @@ export const ERROR_CODES = {
     message: (d: { entryId: string; confidence: string; ceiling: string }) =>
       `${show(d.entryId)} has confidence ${show(d.confidence)}, which exceeds this write path's own ceiling of ${show(d.ceiling)}.`,
     remedy:
-      "Lower the entry's confidence to the allowed ceiling, or use a write path with no ceiling if the higher value is genuinely earned.",
+      "Reduce the entry's confidence to the allowed ceiling, or use a write path with no ceiling if the higher value is genuinely earned.",
   },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {

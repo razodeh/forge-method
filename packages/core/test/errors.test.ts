@@ -114,6 +114,8 @@ const SAMPLE_DETAILS = {
   moduleId: 'fm-service',
   requires: 'fm-core',
   forgeVersion: '1.4.0',
+  confidence: 'high',
+  ceiling: 'medium',
 } satisfies Record<string, unknown> as never;
 
 /**

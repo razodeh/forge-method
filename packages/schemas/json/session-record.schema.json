@@ -60,6 +60,9 @@
       "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
       "type": "string"
     },
+    "no_disagreement_observed": {
+      "type": "boolean"
+    },
     "participants": {
       "items": {
         "minLength": 1,

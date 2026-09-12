@@ -149,6 +149,14 @@ const IGNORED_PATHS = new Set([
   // shape `packages/methods/test/fixtures/repo-strategy.ts` above already establishes, for the same
   // reason unrecognised by `TEST_FILE`'s naming heuristic.
   'packages/methods/test/fixtures/dod-profiles.ts',
+  // `packages/kb/test/adopt/fixtures.ts`, `packages/engine/test/adopt/fixtures.ts` (`PLAN-M10.md`
+  // P15/P16): shared, importable SURVEY/INVENTORY/CARTOGRAPHY/INFERENCE fixture repositories and
+  // scripted-adapter builders, imported across several `test/adopt/*.test.ts` files each — the
+  // identical "shared, importable module, not a runnable suite" shape `packages/kb/test/lint/
+  // factories.ts` above already establishes, for the same reason unrecognised by `TEST_FILE`'s
+  // naming heuristic.
+  'packages/kb/test/adopt/fixtures.ts',
+  'packages/engine/test/adopt/fixtures.ts',
 ]);
 
 /**
