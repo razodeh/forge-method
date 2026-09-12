@@ -11818,7 +11818,7 @@ minor, all fixed). Outcome: WON.** Committed `af427ad` (feat).
 
 ---
 
-## P5 — Module/overlay lifecycle CLI (`19` §19.5, `03` §3.2.8)
+## M11 P5 — Module/overlay lifecycle CLI (`19` §19.5, `03` §3.2.8)
 
 **Mandate:** replace `moduleAdd`/`moduleRemove`/`moduleUpdate`'s three literal `never`-returning
 `USR-003` stubs with a real installation pipeline, plus a new `overlayAdd` for `forge overlay add`,
