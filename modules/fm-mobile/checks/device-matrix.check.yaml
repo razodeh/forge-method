@@ -1,0 +1,66 @@
+# checks/device-matrix.check.yaml -- 19 §19.1's own "device-matrix test strategy" row, in
+# `@forge/engine/gates`'s own real `DeterministicCheck` shape (`id`/`run`/`parser`/`failOn`,
+# packages/engine/src/gates/types.ts), plus the `remedy` string 19 §19.6's own documentation-obligation
+# rule requires for every check.
+#
+# `run` is the same "dependency-free inline script" choice `modules/fm-web/checks/a11y.check.yaml` and
+# `modules/fm-data/checks/lineage.check.yaml` document, and for the identical reason it deliberately
+# interpolates NO caller-supplied or environment-sourced value into the command it runs -- there is
+# nothing here for a hostile input to inject through; the script only ever reads a single, fixed,
+# project-relative file (`docs/forge/kb/mobile/device-matrix.md`) via `node:fs`, never `child_process`/
+# a shell at all (confirmed directly, not merely by omission, per the same "hostile user" angle
+# `modules/fm-service/checks/api-breaking-change.check.yaml`'s own doc comment names as the real
+# shell-injection defect a critic round found in PLAN-M10.md P4's own first draft, and per this
+# module's own critic round which specifically checked for that exact class of defect here too).
+#
+# 19 §19.1's own "device-matrix test strategy" concern, made mechanically checkable: this project's own
+# `docs/forge/kb/mobile/device-matrix.md` must carry a real "## Coverage" section listing, one bullet
+# per row, the exact form `- Device: <name> | OS: <version> | Result: pass|fail`. A violation is: any
+# listed row whose own Result is not "pass"; the whole matrix having no row naming an iOS device/OS;
+# the whole matrix having no row naming an Android device/OS. Prints
+# `{"violations": N, "devicesScanned": M}` -- see test/fm-mobile-checks.test.ts for the real pass/fail
+# fixture runs (a real, temporary directory tree, not a stub).
+#
+# A project with no `docs/forge/kb/mobile/device-matrix.md` file at all passes vacuously
+# (`{"violations": 0, "devicesScanned": 0}`) -- the identical "nothing to check yet" convention
+# `checks/a11y.check.yaml`/`checks/lineage.check.yaml` already establish for their own fixed target. A
+# project that HAS created the file but never added a real "## Coverage" section counts as one real
+# violation (`devicesScanned: 0`) -- the identical "created the file but never filled it in is a real
+# defect, not a fresh, honest 'nothing yet' state" distinction `checks/lineage.check.yaml`'s own doc
+# comment already draws for a missing "## Lineage" section on an existing file.
+#
+# A bullet line that does not match the exact `Device: ... | OS: ... | Result: pass|fail` shape is
+# silently ignored rather than counted as a violation -- the smallest real, mechanically-detectable
+# proxy this check can build without a full markdown-table parser; a project whose own matrix entries
+# are malformed in a way this regex cannot recognise gets neither credit nor blame for them, the
+# identical "smallest real, working default" tradeoff `checks/a11y.check.yaml`'s own doc comment
+# already discloses for its own two mechanically-detectable defects.
+#
+# Platform detection is anchored, NOT a bare substring test -- a critic round found the first draft's
+# own `device.includes("ios")`/`os.includes("ios")` (plain `String.prototype.includes`) let an
+# unrelated device/OS string that merely CONTAINS "ios"/"android" as a substring falsely satisfy the
+# platform requirement (e.g. a device named "Verifone Kiosk Terminal" -- "kiosk" contains "ios" -- or
+# an OS string "fooios" -- both wrongly set `hasIos = true` with the original code), the identical
+# class of mechanically-detectable false-positive `checks/a11y.check.yaml`'s own header comment already
+# discloses and fixes for its own `\balt\b`-vs-`data-alt` collision. Fixed: an iOS device is recognised
+# only by a real, whole-word device name (`iphone`/`ipad`/`ipod`, `\b`-bounded) or an OS field that
+# genuinely STARTS with "ios" as its own leading word (`/^ios\b/i`, so "iOS 17" matches but "fooios"
+# does not); an Android device is recognised only by a real, whole-word "android" naming either field
+# (`\bandroid\b` on the device name, or a leading "android" word on the OS field) -- see
+# test/fm-mobile-checks.test.ts's own regression fixtures for both the "kiosk" and the "fooios" cases.
+id: device-matrix:coverage
+name: Device matrix coverage
+description: >
+  Scans docs/forge/kb/mobile/device-matrix.md's own "## Coverage" section and fails if any listed
+  device row did not pass, or if no row covers an iOS device and no row covers an Android device.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const file=path.join("docs","forge","kb","mobile","device-matrix.md");let text;try{text=fs.readFileSync(file,"utf8");}catch(e){if(e.code==="ENOENT"){console.log(JSON.stringify({violations:0,devicesScanned:0}));process.exit(0);}throw e;}const m=/##[ \t]*coverage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text);if(!m){console.log(JSON.stringify({violations:1,devicesScanned:0}));process.exit(0);}const section=m[1];const lineRe=/^-\s*Device:\s*(.+?)\s*\|\s*OS:\s*(.+?)\s*\|\s*Result:\s*(pass|fail)\s*$/i;const iosDeviceRe=/\b(iphone|ipad|ipod)\b/i;const iosOsRe=/^ios\b/i;const androidDeviceRe=/\bandroid\b/i;const androidOsRe=/^android\b/i;let devicesScanned=0,violations=0,hasIos=false,hasAndroid=false;for(const line of section.split("\n")){const mm=lineRe.exec(line.trim());if(!mm)continue;devicesScanned++;const device=mm[1];const os=mm[2];const result=mm[3].toLowerCase();if(iosDeviceRe.test(device)||iosOsRe.test(os))hasIos=true;if(androidDeviceRe.test(device)||androidOsRe.test(os))hasAndroid=true;if(result!=="pass")violations++;}if(!hasIos)violations++;if(!hasAndroid)violations++;console.log(JSON.stringify({violations,devicesScanned}));'''
+parser: json
+failOn: 'violations > 0'
+remedy: >
+  Re-run the command above locally and read its printed counts, then open
+  docs/forge/kb/mobile/device-matrix.md: add or fix a "## Coverage" section listing one
+  "- Device: <name> | OS: <version> | Result: pass|fail" bullet per real device/OS combination this
+  release was actually tested against, ensure at least one row names an iOS device and at least one
+  names an Android device, and re-run any device whose own Result is not "pass" until it genuinely
+  passes. If a specific platform is a deliberate, reviewed exception for this release, record a waiver
+  rather than silencing this check.

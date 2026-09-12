@@ -1,0 +1,122 @@
+{{!--
+  Offline-first pattern decision ("19 §19.1's own "offline-first patterns" row) -- renders the
+  already-registered `ADR` type (@forge/schemas' own registry) rather than a new module-owned schema:
+  choosing a sync strategy/conflict-resolution/local-persistence approach for a mobile app is, honestly,
+  an architectural decision with real options and real consequences, the identical "reuse an existing
+  type, put structure in the body" choice modules/fm-service/module.yaml and
+  modules/fm-data/module.yaml already make for their own OpenAPI/proto contracts and warehouse model --
+  see agents/mobile.agent.yaml's own doc comment.
+
+  Unlike modules/fm-service's own adr-*.md.hbs (a FRAMEWORK's own output_template, rendered against a
+  scoring run's own execution data, per that file's own doc comment) this is a PLAIN module template --
+  no framework produces this decision -- so it renders against 19 §19.2's own real `TemplateContext`
+  shape (project/artifact/inputs/style/now/forge), matching modules/fm-web's/fm-data's own established
+  convention for a template that is not a framework's own output_template. `framework: none` below is a
+  real, honest literal (adrSchema's own `framework` field is `z.string().min(1)`, not optional) --
+  stating plainly that no framework produced this decision, not fabricating an owner that does not
+  exist.
+
+  `created`/`updated`/`date` render `{{{artifact.created}}}`, a bare date (adrSchema's own
+  `baseFrontMatterShape` types all three as `z.string().date()`), NOT the full ISO-8601 instant `now`
+  carries -- the identical "artifact.created, not now" choice modules/fm-service's own openapi-contract/
+  proto-contract templates already make, and the identical mistake (rendering `now` directly into a
+  bare-date field) Q157/Q160 already document a critic round catching in the opposite direction.
+
+  Only Handlebars built-in helpers are used (#each, #if) -- no custom helper is registered anywhere in
+  this repository yet. Every triple-stash {{{ }}} is deliberate: this is a Markdown/YAML render target,
+  not HTML, so a double-stash {{ }}'s default HTML-escaping would corrupt a YAML scalar containing an
+  apostrophe or ampersand. Every array field's own {{#each}} carries an {{else}} branch rendering a
+  literal "[]", the same reasoning adr-api-versioning.md.hbs's own doc comment already gives: an empty
+  {{#each}} with no {{else}} renders nothing at all, leaving the YAML key with no value (parses as null,
+  not []) -- adrSchema's own array fields reject null.
+
+  This file is listed in .prettierignore (the identical "YAML front matter plus Handlebars block
+  helpers" corruption class already documented there for packages/templates/templates/adr-*.md.hbs and
+  modules/fm-web's/fm-service's/fm-data's own *.md.hbs templates -- prettier's markdown formatter
+  reflows prose and merges distinct YAML keys onto one line, silently corrupting both the YAML and the
+  template's own control flow).
+--}}
+---
+id: {{{artifact.id}}}
+type: ADR
+schemaVersion: 1
+title: {{{inputs.title}}}
+status: {{{inputs.status}}}
+category: architecture
+deciders:
+{{#each inputs.deciders}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+date: {{{artifact.created}}}
+created: {{{artifact.created}}}
+updated: {{{artifact.created}}}
+revision: 1
+author: {{{artifact.author}}}
+reversibility: {{{inputs.reversibility}}}
+blast_radius:
+{{#each inputs.blastRadius}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+revisit_trigger: {{{inputs.revisitTrigger}}}
+supersedes:
+{{#each inputs.supersedes}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+superseded_by: null
+related:
+{{#each inputs.related}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+diagrams:
+{{#each inputs.diagrams}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+framework: none
+changelog:
+  - revision: 1
+    date: {{{artifact.created}}}
+    by: {{{artifact.author}}}
+    summary: {{{inputs.changelogSummary}}}
+---
+
+## Context
+
+{{{inputs.context}}}
+
+## Options considered
+
+{{#if inputs.optionsConsidered}}
+{{{inputs.optionsConsidered}}}
+{{else}}
+No competing options were recorded for this decision.
+{{/if}}
+
+## Decision
+
+We choose **{{{inputs.chosenPattern}}}**.
+
+## Diagram
+
+{{#if inputs.diagram}}
+{{{inputs.diagram}}}
+{{else}}
+No diagram was recorded for this decision.
+{{/if}}
+
+## Consequences
+
+{{{inputs.consequences}}}
+
+## Reversal plan
+
+{{{inputs.reversalPlan}}}

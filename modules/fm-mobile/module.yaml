@@ -1,0 +1,119 @@
+# module.yaml -- fm-mobile, "Mobile & cross-platform" (19 §19.1's own shipped-modules table):
+# `mobile` agent, store-release workflow, device-matrix test strategy, offline-first patterns.
+#
+# ---------------------------------------------------------------------------------------------------
+# The `mobile` agent id -- resolving a real collision with fm-core (PLAN-M10.md P1), the identical
+# class of issue Q157/Q160 already resolved for fm-web's own `frontend` and fm-service's own
+# `domain-modeler`/`integration-architect` ids (SPEC-QUESTIONS.md -- see this module's own entry for
+# the full record, and fm-web/module.yaml's/fm-service/module.yaml's own header comments for the two-
+# mechanism analysis reused here without restating it in full):
+#
+# `05` §5.2's own roster table marks `mobile` as `S(fm-mobile)` -- a specialised-tier role this
+# module, not fm-core, is supposed to add. `modules/fm-core/agents/mobile.agent.yaml` already exists
+# on disk today (P1), physically under fm-core (the one module-layout exception where agents load
+# straight from a module's own directory) and is *also* named, unconditionally, in fm-core's own
+# `provides.agents`, even though fm-core is "always installed" regardless of which specialised modules
+# a project picks. That file's own doc comment already anticipated this exact mismatch (`# S(fm-
+# mobile): installed with the fm-mobile module, per 05 §5.2's own Tier column`) -- anticipatory
+# scaffolding left in fm-core's own directory ahead of this module existing, the identical pattern
+# fm-web/fm-service/fm-data's own header comments already document for their own collisions.
+#
+# This module now ships the real, authoritative copy of `mobile` under its own directory
+# (`agents/mobile.agent.yaml`) and re-declares it in `provides.agents` below, with a real,
+# distinguishing enhancement over fm-core's older copy: it now produces evidence for `G-Deliver` in
+# addition to `G-Verify` (this module's own store-release workflow gives it a second real gate to
+# feed), and it now owns a second real output (an offline-first-pattern ADR) fm-core's older copy
+# never had a workflow or template to produce. The same two independent, disagreeing mechanisms
+# fm-web's/fm-service's own module.yaml already document apply here unchanged:
+#
+# - `@forge/agents`' own `loadAgentRegistry` (`packages/agents/src/registry/load-agent-registry.ts`) --
+#   the mechanism a real `forge` run actually uses -- walks `modulesDir`'s own subdirectories via
+#   `listDirEntriesSorted`, pure filesystem-alphabetical order, "a later entry with the same id...
+#   wins." "fm-core" sorts before "fm-mobile" alphabetically, so a project installing both gets this
+#   module's own real, specialised agent here today -- confirmed directly by
+#   `packages/agents/test/content/fm-mobile-roster.test.ts`'s own `loadAgentRegistry(modulesDir)` test.
+# - `PLAN-M10.md` P2's own `resolveInstalledModules`/`compareProvideConflicts`
+#   (`packages/extensions/src/module/resolve.ts`) is a SEPARATE mechanism whose own "winner" is
+#   whichever module is LAST in the caller-supplied `installOrder` array, unrelated to
+#   `loadAgentRegistry`'s own directory-scan order. `packages/extensions/test/module/fm-mobile.test.ts`
+#   tests both the agreeing order (`['fm-core', 'fm-mobile']`) and the disagreeing one
+#   (`['fm-mobile', 'fm-core']`), matching `fm-web.test.ts`'s/`fm-service.test.ts`'s own precedent.
+#
+# The residual gap this piece does not fix (fm-core's own stray `provides.agents` entry for `mobile`,
+# contradicting `05` §5.2's own tier column) is a defect in fm-core's already-committed file, a
+# different module's own file -- out of this piece's Surface. Recorded, not silently fixed here: see
+# SPEC-QUESTIONS.md.
+#
+# `catalog`/`gates`/`skills`/`techniques`/`frameworks`/`artifactTypes` are declared empty below: `19`
+# §19.1's own fm-mobile row names no catalog depth, gate, skill, technique, or framework of its own,
+# and the one new-content row it does name ("offline-first patterns") reuses the existing, already-
+# registered `ADR` type rather than a new schema -- see `agents/mobile.agent.yaml`'s own doc comment
+# for why. `store-release.workflow.yaml`'s own gate step reuses the existing `G-Deliver` gate rather
+# than inventing a new "app-store review readiness" gate id: `10` §10.3's own `G-Deliver` row already
+# names exactly this concern ("Deploy dry-run fails; rollback untested; secrets unresolved; smoke
+# tests fail in target env; deployment topology and pipeline diagrams missing or stale") generically
+# enough to cover an app-store submission as one more deployment target, the identical "reuse a real,
+# already-shipped gate rather than invent an unrequested new one" discipline
+# `modules/fm-service/workflows/contract-test-cycle.workflow.yaml` already establishes for
+# `G-Integration`/`G-Verify` -- building a new gate file here would be exactly the "no scaffolding for
+# its own sake" the build process forbids; PLAN-M10.md's own P6 Surface names no new gate file to
+# build. Recorded in SPEC-QUESTIONS.md.
+#
+# Two residual, disclosed-not-fixed gaps already confirmed pre-existing across every module shipped so
+# far in this repository (fm-core, fm-web, fm-service, fm-data), not a defect this piece newly
+# introduces: (1) neither this agent's own `prompt.system`/`prompt.briefs` paths nor this module's own
+# workflow's `brief:` paths resolve to a real file on disk; (2) no `README.md` or `tests/` directory
+# exists under this module's own directory. Fixing either gap here alone, while every sibling module
+# (including the always-installed fm-core) still lacks it, would be inconsistent scope creep relative
+# to established precedent, not a real fix; recorded in SPEC-QUESTIONS.md for whichever later piece
+# builds the real `forge agent/workflow validate`/`forge overlay validate` commands these two rules
+# actually belong to.
+# ---------------------------------------------------------------------------------------------------
+
+id: fm-mobile
+name: Mobile and cross-platform
+version: 1.0.0
+forgeVersion: '>=1.0 <2'
+requires: [fm-core]
+conflicts: []
+levels: [L1, L2, L3, L4]
+
+# Transcribed directly from `agents/mobile.agent.yaml`'s own already-declared `tools:` block, the same
+# "ceiling equals what the shipped agent already holds today" convention fm-core's/fm-web's/
+# fm-service's/fm-data's own module.yaml already establish. `network` is the real `ToolGrant` enum
+# (`none`/`allowlist`/`full`), not the boolean the agent's own unrelated base `tools:` schema uses for
+# the same concept.
+ceilings:
+  mobile:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+
+provides:
+  # The one real, authoritative `mobile` agent this module ships -- see the header comment above.
+  agents: [mobile]
+
+  # The one real, compilable workflow this module ships. See
+  # workflows/store-release.workflow.yaml.
+  workflows: [store-release]
+
+  frameworks: []
+
+  # No new gate file -- see the header comment above for why store-release.workflow.yaml's own gate
+  # step reuses the existing `G-Deliver` gate rather than a new "app-store review readiness" gate id.
+  gates: []
+
+  # The one real, standalone `*.check.yaml` file this module ships. See
+  # checks/device-matrix.check.yaml for the real command, parser, and failOn expression.
+  checks: ['device-matrix:coverage']
+
+  # No fm-mobile-specific skill exists yet (no device-matrix- or offline-first-specific procedural-
+  # knowledge packet is named anywhere in the spec pack) -- left empty rather than invented.
+  # `agents/mobile.agent.yaml` deliberately leaves its own `frameworks` field unset too, the same
+  # choice fm-web's own frontend agent already makes (`SPEC-QUESTIONS.md` Q98).
+  skills: []
+
+  # No new artifact type: templates/offline-first-pattern.md.hbs renders the existing, already-
+  # registered `ADR` type -- see agents/mobile.agent.yaml's own doc comment.
+  artifactTypes: []
+
+  catalog: []
+  techniques: []

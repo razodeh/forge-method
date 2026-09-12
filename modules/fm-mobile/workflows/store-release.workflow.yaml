@@ -1,0 +1,106 @@
+# workflows/store-release.workflow.yaml -- 19 §19.1's own "store-release workflow" row, in `10`'s own
+# real workflow DSL (packages/engine/src/workflow/schema.ts). Prepares a release build, runs the real
+# device-matrix test suite against it, gates on app-store review readiness before a submission record
+# is drafted, then verifies the submission itself -- the identical "agent step -> merge -> gate ->
+# agent step -> merge -> command -> gate" shape modules/fm-service/workflows/contract-test-cycle.
+# workflow.yaml already establishes for the identical class of "freeze work, verify it, gate, hand off"
+# release-cycle workflow, substituted here for a mobile store submission rather than an API contract.
+#
+# `requires.gates_passed: [G-Verify]` -- a release build is only ever prepared after the story-level
+# implementation this build packages has already passed its own G-Verify (10 §10.2's own P7
+# Verification phase), the same "later-phase workflow requires an earlier phase's own gate" convention
+# `10` §10.1's own worked examples already establish generically.
+#
+# `store-readiness-gate` reuses the existing, already-shipped `G-Deliver` gate rather than a new
+# "app-store review readiness" gate id -- see module.yaml's own header comment for the full reasoning
+# (10 §10.3's own G-Deliver row already names exactly this concern generically enough to cover an app
+# store as one more deployment target).
+#
+# Every `agent`/non-inline `command` step commits its own real work only to its OWN, isolated lane
+# worktree (`@forge/engine/dispatch`'s own `runLaneLifecycle`) -- only a real, explicit `merge` step
+# actually lands a lane's content at `integrationPath`, the same directory `run-device-matrix-tests`'s
+# own real command and `store-readiness-gate`'s own deterministic checks actually read from. This
+# workflow inserts a real, single-lane `merge` step after each agent step and before the gate/command
+# step that needs to see its result, the identical structural requirement
+# contract-test-cycle.workflow.yaml's own doc comment already proves is necessary (`runAgentStep`/
+# `runCommandStep` never merge a lane's own content into `integrationPath` themselves).
+# `run-device-matrix-tests` is `inline: true` (like contract-test-cycle's own `run-contract-tests`)
+# rather than yet another isolated lane: running the already-merged, already-committed device-matrix
+# test suite is exactly the "run directly against the current integration state" case `inline` exists
+# for, not new work needing its own lane and a third merge.
+#
+# `prepare-store-submission` is dispatched to fm-core's own `release` agent, not `mobile` -- a store
+# submission record is a release note ("owns release notes, versioning, change control, and rollout",
+# release.agent.yaml's own mandate), and `release`'s own `parallel_safety.file_ownership` already
+# exclusively claims `docs/forge/kb/delivery/release/**`, which this step's own `produces` path is
+# written directly under -- no new ownership claim invented here, the file lands exactly where
+# `release`'s own already-committed file already claims ownership.
+#
+# test/fm-mobile-workflow.test.ts proves this end to end: the fake adapter's own written files are only
+# actually visible on disk at `projectRoot` (== `integrationPath` here) after the real merge step runs,
+# not merely after the agent step reports success -- the identical proof
+# contract-test-cycle.workflow.yaml's own test already runs.
+id: store-release
+name: Mobile store release cycle
+version: 1.0.0
+description: >
+  Prepares a mobile release build, runs the device-matrix test suite against it, gates on app-store
+  review readiness (reusing G-Deliver), then drafts and verifies a real store submission record before
+  the release is allowed to proceed.
+levels: [L1, L2, L3, L4]
+requires:
+  gates_passed: [G-Verify]
+inputs:
+  - name: buildTarget
+    type: string
+    required: true
+
+steps:
+  - id: prepare-release-build
+    kind: agent
+    agent: mobile
+    brief: briefs/prepare-release-build.md
+    inputs: ['kb:engineering/standards.md']
+    outputs:
+      - type: Task
+        cardinality: one
+    gateEvidence: [G-Deliver]
+    limits: { maxTurns: 30, maxCostUsd: 4.0 }
+
+  - id: merge-release-build
+    kind: merge
+    over: prepare-release-build
+    dependsOn: [prepare-release-build]
+    policy: { conflict: abort }
+
+  - id: run-device-matrix-tests
+    kind: command
+    inline: true
+    dependsOn: [merge-release-build]
+    run: 'pnpm test -- test/device-matrix/{{buildTarget}}.test.ts'
+
+  - id: store-readiness-gate
+    kind: gate
+    gate: G-Deliver
+    dependsOn: [run-device-matrix-tests]
+
+  - id: prepare-store-submission
+    kind: agent
+    agent: release
+    dependsOn: [store-readiness-gate]
+    brief: briefs/prepare-store-submission.md
+    inputs: ['kb:delivery/**']
+    produces: 'docs/forge/kb/delivery/release/store-submission-{{buildTarget}}.md'
+    limits: { maxTurns: 20, maxCostUsd: 2.0 }
+    retry: { maxAttempts: 2, retryOn: [transient, validation] }
+
+  - id: merge-submission
+    kind: merge
+    over: prepare-store-submission
+    dependsOn: [prepare-store-submission]
+    policy: { conflict: abort }
+
+  - id: verify-gate
+    kind: gate
+    gate: G-Verify
+    dependsOn: [merge-submission]

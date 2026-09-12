@@ -20,6 +20,9 @@ importers:
       '@forge/adapter-kit':
         specifier: workspace:*
         version: link:packages/adapter-kit
+      '@forge/core':
+        specifier: workspace:*
+        version: link:packages/core
       '@forge/diagrams':
         specifier: workspace:*
         version: link:packages/diagrams

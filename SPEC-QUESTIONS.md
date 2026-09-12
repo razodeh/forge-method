@@ -13463,3 +13463,132 @@ write-history-toggle test, confirmed clean and fast in isolation, in a file this
 the identical TUI-test flake *class* `M10 P18`'s own SPEC-QUESTIONS entry independently reports for a
 different TUI file (`question-form.test.tsx`) under the same heavy parallel load, not one this entry
 claims to fully explain.
+
+## Q166 — M10 P6: `fm-mobile` module — the `mobile` agent-id collision with `fm-core`, the reused
+`G-Deliver` gate instead of an invented "app-store review readiness" gate, the `ADR`-reuse for
+offline-first patterns, and a real critic-found platform-detection false-positive in
+`device-matrix.check.yaml`
+
+`PLAN-M10.md` P6 asked this piece to ship `modules/fm-mobile/`'s own `mobile` agent, `store-release`
+workflow (with a gate for app-store review readiness), `device-matrix` check, and offline-first pattern
+templates. Several real decisions and one real, critic-found defect came out of doing that faithfully
+rather than guessing.
+
+**1. `mobile` is a real, pre-existing collision with `fm-core`, resolved the identical way Q157/Q160/
+Q162 already resolved `frontend`/`domain-modeler`+`integration-architect`/`data-engineer`.** `05` §5.2's
+own roster table marks `mobile` `S(fm-mobile)` — a specialised-tier role this module, not `fm-core`, is
+supposed to add. `modules/fm-core/agents/mobile.agent.yaml` already exists on disk (P1), unconditionally
+named in `fm-core`'s own `provides.agents` even though `fm-core` is "always installed" regardless of
+specialised-module choice; that file's own doc comment already anticipated this exact mismatch, the
+identical "anticipatory scaffolding" pattern `frontend.agent.yaml`/`domain-modeler.agent.yaml`/
+`data-engineer.agent.yaml` already document. This piece ships the real, authoritative copy under
+`modules/fm-mobile/agents/`, with a real, distinguishing enhancement over `fm-core`'s older copy (now
+produces evidence for `G-Deliver` in addition to `G-Verify`, and now owns a second real output — an
+offline-first-pattern ADR — `fm-core`'s older copy never had a workflow or template to produce).
+`@forge/agents`' own `loadAgentRegistry` resolves both to `fm-mobile`'s copy by the identical
+alphabetical-module-scan mechanism Q157 already verified empirically (`fm-core` sorts before
+`fm-mobile`) — `packages/agents/test/content/fm-mobile-roster.test.ts` confirms this directly, and
+`packages/extensions/test/module/fm-mobile.test.ts` pins the identical `resolveInstalledModules`
+install-order-dependent disagreement Q157/Q160/Q162 already pin for their own collisions. The residual
+gap this piece does not fix — `fm-core`'s own stray `provides.agents` entry for `mobile` — is `fm-core`'s
+own file, out of this piece's Surface, the same reasoning Q157/Q160/Q162 already give.
+
+**2. `store-release.workflow.yaml`'s own gate step reuses the existing, already-shipped `G-Deliver` gate
+rather than inventing a new "app-store review readiness" gate id.** `10` §10.3's own `G-Deliver` row
+("Deploy dry-run fails; rollback untested; secrets unresolved; smoke tests fail in target env;
+deployment topology and pipeline diagrams missing or stale") already names exactly this concern
+generically enough to cover an app-store submission as one more deployment target — the identical "reuse
+a real, already-shipped gate rather than invent an unrequested new one" discipline
+`modules/fm-service/workflows/contract-test-cycle.workflow.yaml` already establishes for `G-Integration`/
+`G-Verify`. `PLAN-M10.md`'s own P6 Surface names no new gate file to build, and building one unrequested
+would be exactly the "no scaffolding for its own sake" the build process forbids. The workflow's own
+`prepare-store-submission` step is dispatched to `fm-core`'s own `release` agent, not `mobile` — a store
+submission record is a real release note (`release.agent.yaml`'s own mandate: "owns release notes,
+versioning, change control, and rollout"), and the step's own `produces` path lands directly inside
+`release`'s own already-declared exclusive `parallel_safety.file_ownership` claim
+(`docs/forge/kb/delivery/release/**`) — no new ownership claim invented here.
+
+**3. `templates/offline-first-pattern.md.hbs` reuses the existing, already-registered `ADR` type rather
+than a new module-owned schema.** Choosing a sync strategy/conflict-resolution/local-persistence approach
+is, honestly, an architectural decision with real options and real consequences — the identical "reuse an
+existing type, put structure in the body" choice `modules/fm-service/module.yaml`'s own OpenAPI/proto
+contracts and `modules/fm-data/module.yaml`'s own warehouse model already make. Unlike a framework's own
+`output_template` (rendered against a scoring run's own execution data), this is a plain module template
+with no framework behind it, so it renders against `19` §19.2's own real `TemplateContext` shape and sets
+`framework: none` — a real, honest literal (`adrSchema`'s own `framework` field is `z.string().min(1)`,
+not optional), stating plainly that no framework produced this decision rather than fabricating an owner
+that does not exist. `created`/`updated`/`date` render `artifact.created` (a bare date), not `now` (a full
+ISO-8601 instant) — the identical "artifact.created, not now" choice `modules/fm-service`'s own
+`openapi-contract`/`proto-contract` templates already make, avoiding the exact mistake Q157/Q160 already
+document a critic round catching in the opposite direction. `test/fm-mobile-templates.test.ts` proves this
+directly against the real, production `adrSchema` and — going one step further than
+`test/fm-service-templates.test.ts` (whose own `InterfaceContract` type has no `requiredSections`) —
+against the real, production `validateArtifact`, confirming every one of `ADR`'s own six real
+`requiredSections` is genuinely present in the rendered body.
+
+**4. The agent's own new `ADR` output uses a `{seq}-{slug}` path placeholder, matching every other real
+ADR-producing agent, not a single fixed literal filename.** A first-round critic found the first draft's
+own `path: docs/forge/kb/architecture/mobile/offline-first-patterns.md` was a single fixed literal with no
+placeholder at all, which combined with `cardinality: many` meant a second offline-first decision would
+silently overwrite the first one on disk — the audit-trail-defeating opposite of what an ADR exists for.
+Fixed to `docs/forge/kb/architecture/mobile/ADR-{seq}-{slug}.md`, matching
+`modules/fm-core/agents/{architect,data-architect}.agent.yaml`'s own identical path shape exactly. No code
+path anywhere in this repository actually substitutes `{seq}`/`{slug}` into an agent's own `outputs[].
+path` field yet (confirmed: grepped `packages/` for it, zero hits) — the identical, already-disclosed
+"this predates real path-resolution wiring" gap this module's own header comment already names for
+`prompt.system`/`prompt.briefs`/`brief:` paths — but the shape itself should match the established
+convention regardless.
+
+**5. A real, critic-found platform-detection false-positive in `checks/device-matrix.check.yaml`, fixed
+before this piece's own commit.** The check's first draft recognised an iOS/Android device via a plain
+`String.prototype.includes("ios"/"android")` substring test against both the device-name and OS fields.
+A first-round critic found this let a device or OS string that merely *contains* "ios"/"android" as a
+substring — with no word boundary at all — falsely satisfy the platform requirement: a device literally
+named `"Verifone Kiosk Terminal"` (`"kiosk"` contains `"ios"`) or an OS field `"fooios"` both wrongly set
+`hasIos = true`, letting a release with zero real iOS coverage pass `store-readiness-gate` (`G-Deliver`)
+anyway — the identical mechanically-detectable false-positive class `checks/a11y.check.yaml`'s own header
+comment already discloses and fixes for its own `\balt\b`-vs-`data-alt` collision, and `checks/
+data-quality.check.yaml`'s own header comment already discloses and fixes for its own `startsWith`-prefix
+collision. Fixed: an iOS device is now recognised only by a real, whole-word device name (`iphone`/
+`ipad`/`ipod`, `\b`-bounded) or an OS field that genuinely starts with `"ios"` as its own leading word
+(`/^ios\b/i`, so `"iOS 17"` matches but `"fooios"` does not); Android is recognised only by a real,
+whole-word `"android"` naming either field. `packages/engine/test/gates/fm-mobile-checks.test.ts` pins
+both the `"Verifone Kiosk Terminal"` and the `"fooios"` regressions directly, reproducing the exact
+critic-found failure before the fix and confirming it is genuinely rejected after.
+
+**6. Two residual, disclosed-not-fixed gaps, confirmed pre-existing across every module already shipped
+in this repository (`fm-core`, `fm-web`, `fm-service`, `fm-data`), not unique to this piece.** (a) Neither
+the agent's own `prompt.system`/`prompt.briefs` paths nor the workflow's own `brief:` paths resolve to a
+real file on disk — confirmed identical on every sibling module's own agents/workflows. (b) No
+`README.md` or `tests/` directory exists under this module's own directory, though `19` §19.1's own
+module-layout diagram and §19.6 both name them — confirmed neither `fm-core` nor any specialised module
+shipped so far has either one either. Fixing either gap here alone would be inconsistent scope creep
+relative to established precedent; recorded here for whichever later piece builds the real `forge agent/
+workflow validate`/`forge overlay validate` commands these rules actually belong to.
+
+**Verification:** 35 real tests — `packages/extensions/test/module/fm-mobile.test.ts` (7),
+`packages/agents/test/content/fm-mobile-roster.test.ts` (8), `packages/engine/test/gates/
+fm-mobile-checks.test.ts` (11, including two real child-process executions of each fixture shape and the
+two critic-found platform-detection regressions), `test/fm-mobile-workflow.test.ts` (3, a real
+`parseWorkflow`/`compileRunPlan`/`runEngine` dry run against `FakePlatformAdapter` and a real temporary
+git repository, proving the workflow's own two explicit single-lane `merge` steps are structurally
+required), and `test/fm-mobile-templates.test.ts` (6, including the real `validateArtifact`
+required-sections proof). A root-level `@forge/core` devDependency was added (`package.json`/
+`pnpm-lock.yaml`) so `test/fm-mobile-templates.test.ts` could import the real, production
+`ArtifactDocument`/`validateArtifact` rather than hand-rolling a heading scanner — the identical reason
+`@forge/schemas` was already a root devDependency for `test/fm-service-templates.test.ts`.
+`modules/fm-mobile/templates/*.md.hbs` was added to `.prettierignore`, matching the identical, already-
+documented "YAML front matter plus Handlebars block helpers" corruption class already recorded there for
+`packages/templates/templates/adr-*.md.hbs` and `modules/fm-web`'s/`fm-service`'s/`fm-data`'s own
+`*.md.hbs` templates (confirmed directly: an unguarded `prettier --write` on the first draft did reflow
+and corrupt this file's own YAML/Handlebars structure exactly as those entries describe, before the
+ignore rule was added). Whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`,
+`prettier --check`, and `node scripts/check-boundaries.mjs` all clean on every file this piece touched. A
+full, unscoped `node scripts/run-tests.mjs run` showed four failures, none touching this piece's own
+files (confirmed via `git status --short` before this piece touched anything): `test/workflows.test.ts`'s
+`build-stage` byte-for-byte comparison and `packages/cli/test/commands/upgrade/run-upgrade.test.ts`'s
+idempotency test (both real, in-flight, uncommitted work from concurrent M10 pieces — P14's own workflow-
+step session placements and, respectively, ordinary load-sensitive contention, confirmed by re-running
+`run-upgrade.test.ts` in isolation where it passes cleanly and fast), plus the two already-accepted
+load-sensitive flakes (`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test and
+`packages/engine/test/e2e/crash-resume.test.ts`, both confirmed clean and fast in isolation).
