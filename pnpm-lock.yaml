@@ -120,7 +120,20 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
-  packages/adapter-generic: {}
+  packages/adapter-generic:
+    dependencies:
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:../adapter-kit
+      execa:
+        specifier: 9.6.1
+        version: 9.6.1
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
 
   packages/adapter-kit:
     dependencies:
@@ -263,6 +276,9 @@ importers:
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/extensions':
+        specifier: workspace:*
+        version: link:../extensions
       '@forge/kb':
         specifier: workspace:*
         version: link:../kb
