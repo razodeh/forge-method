@@ -43,13 +43,13 @@
  *
  * Both are still real, first-class `AuditCategory` values below (a future piece adding either producer
  * needs no change to this module to start being reported -- only a new case in `CATEGORY_EVENT_TYPES`)
- * -- they simply, honestly, always report zero entries today. See `SPEC-QUESTIONS.md` Q178.
+ * -- they simply, honestly, always report zero entries today. See `SPEC-QUESTIONS.md` Q181.
  *
  * @see specs/20 §20.9
  * @see specs/18 §18.4
  * @see PLAN-M11.md P11
  * @see PLAN-M11.md P13
- * @see SPEC-QUESTIONS.md Q178
+ * @see SPEC-QUESTIONS.md Q181
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
