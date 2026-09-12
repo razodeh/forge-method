@@ -12160,3 +12160,107 @@ secrets/config filename — was invisible to both the datastore-connection-strin
 surface env-var/secret-reference scan; fixed with a dedicated `isDotEnvFile` check (`.env` or a
 `.env.`-prefixed name) in both `survey.ts` and `inventory.ts`, each with a real test against a literal
 `.env` file, not only `app.env`.
+
+---
+
+## Q153 — M10 P2: L1 module compilation — `network: false` → `network: none` in `fm-core/module.yaml`,
+install-order winner is the *last*-installed contributor, and `forgeVersion`/module-id are caller-injected
+
+`PLAN-M10.md` P2 builds `moduleSchema`/`parseModule`/`resolveInstalledModules` (`packages/extensions/src/
+module/`) — the first real parser and enforcement mechanism for `19` §19.1's `module.yaml`, plus
+`requires`/`conflicts`/`forgeVersion`/ceiling checks. Three real decisions and one real, pre-existing
+fixture defect this piece was not asked to build but had to fix to satisfy its own Checks:
+
+**1. `fm-core/module.yaml`'s own `ceilings.<role>.network: false` does not parse against the real
+`ToolGrant` shape, and had to be corrected to `network: none`.** `19` §19.1's own `module.yaml` worked
+example writes `network: allowlist`/`network: none` — a three-value enum
+(`@forge/extensions/agents`'s own `ToolGrant.network: 'none' | 'allowlist' | 'full'`, `15` §15.3.2), not a
+boolean. `modules/fm-core/module.yaml` (`PLAN-M10.md` P1, already committed) transcribed all 29 ceiling
+entries' `network` field as a boolean directly off each agent's own base `tools:` block (which genuinely
+does use a boolean there — a *different*, unrelated schema `@forge/agents` owns for a base agent
+definition, not `ToolGrant`), so the file as committed could not parse against `moduleSchema` at all —
+`PLAN-M10.md` P2's own Checks text ("fm-core's own real `module.yaml` ... parses and resolves cleanly")
+is unsatisfiable without a fix. All 29 occurrences were uniformly `network: false` (confirmed by grep
+before editing — never `true`), so the meaning-preserving translation is unambiguous:
+`network: false` → `network: none`. Fixed directly in `modules/fm-core/module.yaml`, with a header comment
+recording why `network` there is not the same schema as the per-agent `tools:` block one directory up.
+
+**2. Two modules `provides`-ing the same id resolve to the *last*-installed contributor, not the first.**
+`19` §19.1's own prose ("conflicts... resolve by install order and are reported at compile") names the
+rule but not which end of `installOrder` wins. Decided: the module installed *later* wins — the same
+direction `@forge/extensions/resolve`'s own five-layer model already uses (`L0` → `L4`, "deepest wins,"
+i.e. the layer applied later overrides one applied earlier) and the same direction an ordinary package
+manager's own "last one wins" plugin-registration convention uses. `findProvideConflicts`
+(`packages/extensions/src/module/resolve.ts`) implements this and `resolve.test.ts` pins it directly
+(`"install order is what decides the winner, not alphabetical or declaration order"`), including a case
+where the later-installed id sorts alphabetically *earlier* than the first, to rule out an implementation
+that accidentally picks the alphabetically-last contributor instead of the temporally-last one.
+
+**3. `resolveInstalledModules`'s own signature is `(installOrder, modulesDir, options: { forgeVersion })`,
+not the plan's own bare `resolveInstalledModules(manifest)`.** The plan's own Surface bullet undersells
+what the function needs (the same "the plan's own bullet undersells the real signature" pattern `Q70`/
+`Q71`/`Q73` already recorded once each for a different function): checking a module's `forgeVersion` range
+needs the actual running FORGE version to check it against, and nothing in this repository has a real
+"current FORGE version" constant yet (every `package.json` in the workspace is still the `0.0.0`
+placeholder) — inventing one here would be a fact this piece has no authority to assert. `forgeVersion` is
+therefore caller-injected via `options`, the identical "never an uninjected fact, always threaded through
+explicitly" determinism reasoning `@forge/core`'s own `Clock` documents for "now," applied here to "which
+FORGE version is running" instead. `installOrder`/`modulesDir` are passed separately rather than as one
+`manifest` object for the same reason: `resolveInstalledModules` needs to resolve each id to a real
+`modules/<id>/module.yaml` path itself (`parseModule` takes only a path, not a directory), so a caller
+already has to supply both a filesystem root and an ordered list — bundling them into a single anonymous
+`manifest` shape would be an invented, undocumented object shape with no spec source.
+
+**Verification:** 61 real tests across `packages/extensions/test/module/` (schema shape and rejection
+cases against `19` §19.1's own `fm-service` worked example; `parseModule` against real fixture YAML,
+including malformed YAML, schema-invalid YAML, and a missing file; `resolveInstalledModules` against real
+fixture module trees for every one of `requires`/`conflicts`/`forgeVersion`/provide-conflict Checks
+`PLAN-M10.md` P2 names, plus `fm-core`'s own real, shipped `module.yaml` resolving cleanly with zero other
+modules installed). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint`, `prettier --check`,
+`node scripts/check-boundaries.mjs` all clean. Per-file coverage on every new `packages/extensions/src/
+module/*.ts` file meets that package's own ≥90% lines/statements/functions, ≥85% branches ratchet.
+`node scripts/run-tests.mjs run` (full workspace, no `--coverage`) is 7238/7241 passing outside this
+piece's own 61 (3 pre-existing failures confirmed unrelated and non-reproducing in isolation: a stray
+`packages/kb/test/adopt/fixtures.ts` file `test/workspace-floor.test.ts` flags, from the concurrently
+committed, unrelated `M10 P15` piece; and two timing-sensitive E2E tests, `packages/engine/test/e2e/
+crash-resume.test.ts` and `packages/cli/test/commands/run/resume.test.ts`, that both pass cleanly when run
+in isolation rather than under the full parallel suite's own resource pressure).
+
+A fresh critic round found two real blocking issues, both fixed: `moduleSchema`'s `ceilings.<role>` grant
+was built by reusing `@forge/extensions/agents`'s own `toolGrantSchema` — the right shape for an *overlay*
+document, since it lets `exec`/`allowlistHosts` be an overlay array-operator directive
+(`{ $append: [...] }`) as well as a bare array, which a module's own flat, non-overlay ceiling should never
+accept (`19` §19.1: "ceilings are declared by the module," never a merge target) — the shared schema
+silently accepted a `$append`-shaped ceiling and would have handed `@forge/extensions/agents`'s own
+`checkToolCeiling` a non-array `exec` it calls `.filter`/`.includes` on directly, a raw `TypeError`
+instead of a named schema error; fixed with a dedicated, non-overlay `moduleCeilingGrantSchema` local to
+`module/schema.ts`, with tests pinning the rejection. Separately, `resolveInstalledModules` built each
+module's manifest path as `modulesDir/<installOrder-entry>/module.yaml` with no check on the entry itself
+— a real path-traversal hole for an `installOrder` entry like `"../../etc"`, reproduced directly by the
+critic against a real file planted outside the fixture's `modulesDir`; fixed by validating every
+`installOrder` entry against the same lower-kebab-case pattern `moduleSchema` already uses for a real
+module id (`MODULE_ID_PATTERN`, exported from `module/schema.ts`) before it is ever joined into a path,
+throwing a new `CFG-025` for anything else. A third, minor finding (a test's own name claimed to prove
+parse failures are checked before requires/conflicts, but its single-module fixture could not actually
+distinguish that ordering from a naive per-module-as-you-go implementation) was fixed with a genuine
+two-module fixture.
+
+A second, fresh critic round verifying all three fixes confirmed the ceiling-schema and test-ordering
+fixes genuinely correct — including running its own adversarial `moduleSchema.safeParse` payloads live
+(nested `$remove`, an array containing an object, a bare string where `allowlistHosts` needs an array) and
+confirming every one rejected — but found the `CFG-025` fix only *partially* closed the containment gap:
+`MODULE_ID_PATTERN` is a string-shape check, and can never catch a `modulesDir/<id>` that is itself a
+**symlink** to somewhere else entirely — a legal-looking kebab-case id like `evil-module` can still point
+outside `modulesDir` on disk, which the critic reproduced directly (a real symlink, a real read through
+it, no error). Correctly identified this as the same class of hole `@forge/core/src/fs/paths.ts`'s own
+`ProjectPaths.resolveWithin` already exists to close for every other read/write boundary in this codebase
+(`specs/02` §2.5) — `resolveInstalledModules` built its manifest path with a raw `path.join(...) as
+AbsolutePath` instead of routing through it. Fixed: `resolveInstalledModules` now constructs a
+`ProjectPaths` rooted at `modulesDir` (lazily, only once `installOrder` is non-empty, so an empty
+installed-module set never requires `modulesDir` to exist) and resolves each manifest path via
+`resolveWithin`, which already performs the real, symlink-aware containment check `specs/02` §2.5
+establishes — reusing the established primitive rather than duplicating its
+`realpathOfDeepestExistingAncestor` logic locally. A symlink escape now throws the same `CFG-003` every
+other containment boundary in this codebase already throws, not a new code. A real symlink-escape test
+(planting a genuine symlink under a fixture `modulesDir` pointing outside it) was added to
+`resolve.test.ts` to pin this permanently.

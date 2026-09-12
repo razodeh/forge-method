@@ -9236,3 +9236,89 @@ and vcs's own ≥90/90/90/85 ratchet. `pnpm --filter @forge/kb typecheck`, `pnpm
 typecheck`, `eslint`, `prettier --check`, `node scripts/check-boundaries.mjs` all clean — boundaries
 confirmed both by the tool and by direct grep that no file under `packages/kb/src/adopt/` references
 `@forge/vcs` except in doc-comment prose. `SPEC-QUESTIONS.md` Q152 has the full record.
+
+## M10 P2 — L1 module compilation: `module.yaml` schema, parser, `requires`/`conflicts`/`ceilings`
+enforcement (`19` §19.1)
+
+**Mandate:** `19` §19.1's own module-compilation mechanism — a `moduleSchema`, `parseModule`,
+`resolveInstalledModules` with real `requires`/`conflicts`/`forgeVersion` checks, ceiling enforcement
+with expiring escalations, and install-order `provides`-conflict resolution reported at compile — the
+real, currently-nonexistent layer beneath `@forge/extensions`' already-shipped L2/L3 overlay compilation.
+
+Built `packages/extensions/src/module/` (`moduleSchema`/`parseModule`/`resolveInstalledModules`/
+`checkModuleCeilings`/`compareProvideConflicts`/a real, minimal `forgeVersion` range parser with no
+`semver` dependency, mirroring `packages/cli/src/commands/upgrade/version.ts`'s own established
+minimal-parse-and-compare precedent). Reused, rather than duplicated: `@forge/extensions/agents`'s own
+`checkToolCeiling`/`Escalation`/`ToolGrant` (`15` §15.3.2) for the actual grant-vs-ceiling diffing, adding
+only the one genuinely missing piece — expiry enforcement (`checkModuleCeilings` filters escalations to
+only those still active at a caller-injected `now`, the identical `now: number` shape
+`@forge/engine/gates`'s own `applyWaiver` already uses for the identical "is this expiry still in the
+future" check, before delegating to the existing, already-tested ceiling diff). Also found and fixed a
+real, pre-existing defect in `modules/fm-core/module.yaml` (P1, already committed): its ceilings'
+`network` field used a boolean (transcribed from each agent's own unrelated base `tools:` schema, which
+genuinely is boolean there) instead of the real `ToolGrant` enum (`none`/`allowlist`/`full`) this
+spec's own `module.yaml` worked example uses — the file could not parse at all against a correct
+`ToolGrant`-shaped ceiling schema without the fix, and P2's own Checks require it to parse cleanly.
+
+### Round 1 — fresh critic: two real blocking findings, one real minor finding
+
+**[Finding 1, blocking]** `moduleSchema`'s `ceilings.<role>` grant was built by reusing
+`@forge/extensions/agents`'s own `toolGrantSchema` — the right shape for an *overlay* document (its
+`exec`/`allowlistHosts` accept an overlay array-operator directive, `{ $append: [...] }`, as well as a
+bare array), wrong for a module's own flat, non-overlay declared ceiling (`19` §19.1: "ceilings are
+declared by the module," never a merge target). The shared schema silently accepted a `$append`-shaped
+ceiling, which would reach `checkToolCeiling`'s own `.filter`/`.includes` calls as a non-array and throw a
+raw, un-typed `TypeError` instead of a named schema error. **[Finding 2, blocking]**
+`resolveInstalledModules` built each module's manifest path as `modulesDir/<installOrder-entry>/
+module.yaml` with zero validation on the entry itself — a real path-traversal hole for an id like
+`"../../etc"`, reproduced directly by the critic against a real file planted outside the fixture's
+`modulesDir`. **[Finding 3, minor]** a test named to prove "parse failures are checked before requires/
+conflicts" used a single-module fixture that could not actually distinguish that ordering from a naive
+per-module-as-you-go implementation.
+
+**Fixed:** finding 1 with a dedicated, non-overlay `moduleCeilingGrantSchema` local to `module/schema.ts`
+(plain `z.array` for `exec`/`allowlistHosts`, no operator union), with two new tests pinning the
+rejection. Finding 2 with a new `MODULE_ID_PATTERN` check (lower-kebab-case, exported from
+`module/schema.ts`) run against every `installOrder` entry before it is ever joined into a path, throwing
+a new `CFG-025` for anything else. Finding 3 with a genuine two-module fixture (one schema-valid-but-
+requires-failing, one malformed) that actually distinguishes the claimed ordering.
+
+### Round 2 — a second, fresh critic verifying all three fixes: two confirmed genuinely fixed, the third
+only partially — a real symlink-escape gap `MODULE_ID_PATTERN` alone could never close
+
+Verified live, not by reading the code and trusting a comment: ran adversarial payloads
+(`exec: {$remove:[...], nested:{$append:[1]}}`, `exec: [{evil:true}]`, `allowlistHosts` as a bare string)
+directly through `moduleSchema.safeParse` and confirmed all rejected — finding 1's fix genuinely holds,
+with no leftover permissive path. The rewritten ordering test (finding 3) genuinely proves what it claims.
+Finding 2's fix closed the *string*-shaped traversal hole, but the critic went further than reviewing the
+diff: it planted a **real symlink** — `modulesDir/evil-module` (a legal kebab-case name) pointing at a
+real directory outside `modulesDir` — and confirmed `resolveInstalledModules(['evil-module'], ...)` read
+straight through it with no error. `MODULE_ID_PATTERN` is a string check; it can never see that the
+directory a legal id resolves to is itself a symlink elsewhere. Correctly identified this as the exact
+class of hole `@forge/core/src/fs/paths.ts`'s own `ProjectPaths.resolveWithin` already exists to close
+for every other read/write boundary in this codebase (`specs/02` §2.5's own containment mandate) — this
+piece's own manifest-path construction was the one place in the diff that used a raw `path.join(...) as
+AbsolutePath` cast instead of that established primitive.
+
+**Fixed:** `resolveInstalledModules` now constructs a `ProjectPaths` rooted at `modulesDir` (lazily, only
+once `installOrder` is confirmed non-empty, so a project with no modules resolved yet never requires
+`modulesDir` to exist just to return an empty result) and resolves every manifest path through
+`resolveWithin` — the same real, symlink-aware containment check (`realpathOfDeepestExistingAncestor`)
+every other boundary in this codebase already gets, reused rather than reimplemented locally. A symlink
+escape now throws the same `CFG-003` every other containment boundary already throws. A real test
+(a genuine symlink planted under a fixture `modulesDir`, pointing outside it) pins this permanently.
+
+**Final state: 61 real tests** in `packages/extensions/test/module/` covering every Check `PLAN-M10.md`
+P2 names (a fixture module requiring/conflicting with an absent/present module fails compile with a
+named error; a tool grant exceeding a declared ceiling fails, an unexpired escalation suppresses it, an
+expired one does not; two modules providing the same agent id resolve deterministically by install order
+with both contributors named; `fm-core`'s own real `module.yaml` parses and resolves cleanly with zero
+other modules installed) plus four real containment cases (string traversal, absolute path, embedded
+separator, and the real symlink escape). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint`,
+`prettier --check`, `node scripts/check-boundaries.mjs` all clean. Per-file coverage on every new
+`packages/extensions/src/module/*.ts` file meets `packages/extensions`' own ≥90% lines/statements/
+functions, ≥85% branches ratchet. Full workspace test run (`node scripts/run-tests.mjs run`, no
+`--coverage`) is otherwise green apart from three pre-existing failures confirmed unrelated and
+non-reproducing in isolation (a stray fixture file under the concurrently-committed, unrelated M10 P15
+piece that `test/workspace-floor.test.ts` flags, and two timing-sensitive E2E tests that pass cleanly on
+their own). `SPEC-QUESTIONS.md` Q153 has the full record.
