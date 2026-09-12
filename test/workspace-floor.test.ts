@@ -175,6 +175,12 @@ const IGNORED_PATHS = new Set([
   // `TEST_FILE`'s naming heuristic" shape `packages/cli/test/commands/helpers.ts` above already
   // establishes, for a fixture rather than a suite.
   'packages/extensions/test/install/npm-fixture-registry.ts',
+  // `packages/engine/test/e2e/crash-helpers.ts` (`PLAN-M11.md` P12): shared spawn/kill helpers
+  // extracted so the new S12 orphan-free-crash adversarial test and the pre-existing E3
+  // `crash-resume.test.ts` don't each hand-roll their own real child-process kill machinery -- the
+  // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
+  // heuristic" shape every other entry in this set already establishes.
+  'packages/engine/test/e2e/crash-helpers.ts',
 ]);
 
 /**
