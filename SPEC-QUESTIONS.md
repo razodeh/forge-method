@@ -14911,3 +14911,94 @@ including two full critic-driven rewrites of `fix.ts`. The final commit staged e
 name (no `git add -A`), via a pathspec-scoped `git commit <paths>` rather than a plain `git add` +
 `git commit`, after a concurrent commit from another agent reset this piece's own staged files mid-flight
 once already.
+
+## Q180 — M11 P5: module/overlay lifecycle CLI — `forge compile` is not actually invoked from `moduleAdd`/
+`moduleUpdate`/`overlayAdd`; a narrower, real resolved-set/grant diff is reported instead
+
+**Context:** `19` §19.5 step 6 reads "`forge compile` and report what changed in the resolved set, as a
+diff." `packages/cli/src/commands/compile.ts`'s own doc comment (pre-existing, read directly before
+writing anything for this piece) already records a real, disclosed gap: `forge compile`'s own
+`CompileSources` parameter has no concrete "gather this project's own real content off disk" resolver
+anywhere in this codebase — every existing caller of `compile()` passes an already-built `CompileSources`
+object itself (a test fixture, or `overlay.ts`'s own `overlayExplain` caller). Building that resolver is
+a real, separate piece of work (walking `.forge/agents/`, `.forge/overrides/`, every installed module's
+own content, across all six document kinds) far outside this piece's own ~400-line budget, and PLAN-M11
+does not name it as P5's own surface.
+
+**Decision:** `moduleAdd`/`moduleUpdate`/`overlayAdd` do not call `compile()` at all. What they report
+instead, as `InstallChangeReport`, is: (1) the real, module-layer resolved-set delta (`19` §19.1's own
+concept — which module/overlay ids are installed, before vs after this change) and (2) for `moduleUpdate`
+specifically, the real diff of newly-requested capability grants versus the previously-installed
+version's own `describeRequestedCapabilities` output. This is not a fabricated substitute: `PLAN-M11.md`
+P5's own Checks line names exactly this second thing explicitly ("updating a module that widens a
+ceiling shows exactly the new grants in the diff, not the whole resolved set") as the actual acceptance
+criterion, not a full document-level compile diff. Recorded here as a disclosed scope decision rather
+than a silent gap — a future piece building the real `CompileSources` gatherer can wire it into these
+three functions without changing their own public contract (`InstallChangeReport` gains fields, never
+loses one).
+
+**Gauntlet findings (all fixed, see `GAUNTLET-LOG.md`'s own P5 entry for the full three-round record):**
+round 1 found no locking around the manifest read-fetch-write sequence, `moduleRemove` not checking
+installed overlays' own dependents, `moduleAdd` not checking the overlay id namespace, and an overlay id
+with no path-safety validation. Round 2 found the install-tree copy itself was not atomic under a crash,
+`moduleUpdate` had no existence check on the currently-installed `module.yaml`, and no guard existed
+against a local source path overlapping its own install destination. Round 3 found the round-2 fix's own
+new staging-directory name used an uninjected `Date.now()` (`QUALITY-BAR.md` R10, `pnpm lint` failure)
+and never `fsync`'d the staged tree before publishing it (R12). All fixed and re-verified; see the log
+for exact commits and codes (`CFG-039`/`040`/`042`–`049`).
+
+A real, shared-working-directory hazard hit and corrected during this same docs commit: this piece's
+first append into `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` was silently lost when a concurrent piece (`P14`)
+rewrote both files from its own, older snapshot mid-flight — the identical unlocked-read-append-write
+race `withManifestLock` was built (in this same piece) to prevent for `manifest.yaml`, playing out for
+real on these two hand-appended log files themselves. Caught by grepping for this piece's own distinctive
+heading text immediately before committing, rather than trusting an earlier `Edit` call had stuck;
+re-appended and committed immediately after, with no further edit attempted in between.
+
+## Q181 — M11 P13: `forge audit` — two of `20` §20.9's eight audit categories have no real event
+producer anywhere in this codebase; treated as real, disclosed gaps rather than invented events
+
+**Context:** `PLAN-M11.md` P13 asks for `forge audit`, built as a pure aggregation/query layer over
+`@forge/telemetry`'s already-real `ForgeEvent` catalogue (`18` §18.4) — no new event-producing code for
+"most categories." `20` §20.9 names eight audit-relevant categories. Direct investigation (grepping
+every real `appendEvent`/`ctx.telemetry.emit` call site in `@forge/engine`/`@forge/cli` before writing
+anything, not assumed from the catalogue) confirmed six already have a real producer: gate decisions
+(`GateEvaluated`/`GateApproved`/`GateRejected`/`GateWaived`), tool-ceiling escalations
+(`EscalationActive` — not `StepEscalated`, a step-lifecycle status with no "approver and expiry" shape of
+its own), policy violations (`PolicyViolation`), blocked injections (`InjectionAttemptBlocked`), redacted
+secrets (`SecretRedacted`), and artifact writes (`ArtifactCreated`/`ArtifactUpdated`).
+
+**The remaining two genuinely have nothing to aggregate today:**
+
+1. **Destructive-operation confirmations.** `PLAN-M11.md` P11/S7's own `requireDestructiveConfirmation`
+   (`@forge/engine/security/destructive-confirmation.ts`) is confirmed a pure decision function with no
+   `appendEvent`/`ctx.telemetry.emit` call anywhere in its own module, and its one real call site
+   (`deployEnvironment`, `packages/cli/src/commands/loop/deploy.ts`) emits no event around the decision
+   either. `18` §18.4's catalogue has no dedicated event type for this either. This piece's own P13 text
+   anticipates exactly this ("if S7's own confirmation reuses an existing event type instead, this
+   dependency resolves to 'none new'") and this piece's own build instructions were explicit: do not
+   invent an event that doesn't exist.
+2. **MCP calls.** `18` §18.4's catalogue has no dedicated MCP-call event type at all, and no production
+   code anywhere in this workspace (`@forge/cli`'s own `mcp.ts`, `@forge/adapter-kit`) ever emits one. The
+   Adapter group's own `SessionEvent` is free-form enough (`payload: unknown`) that a future producer
+   *could* shape one as `{ server, tool, argumentDigest, outcome }`, but every real `SessionEvent` emitted
+   anywhere today (`@forge/engine/dispatch/steps.ts`) carries only `{ sessionId }` — a payload-shape
+   heuristic to guess which `SessionEvent`s are "really" MCP calls would misclassify real
+   session-id-registration events with no spec basis for the guess.
+
+**Decision:** both remain real, first-class `AuditCategory` values (`'destructive-confirmation'`,
+`'mcp-call'`) in `queryAuditEvents`'s own category catalogue and in every report `forge audit` produces —
+they simply, honestly, always report zero entries today, rather than being silently omitted from the
+schema or faked with an invented event shape. A future piece adding either producer needs no change to
+this module to start being reported — only a new entry in `CATEGORY_EVENT_TYPES`
+(`packages/telemetry/src/audit.ts`). Tests assert this explicitly: every real category, including these
+two, is a valid, queryable key, and both report genuinely zero entries against a fixture run that does
+populate the other six.
+
+**Gauntlet findings (all fixed, see `GAUNTLET-LOG.md`'s own M11 P13 entry for the full three-round
+record):** round 1 found one corrupted run aborted the whole aggregation, no versioned-schema test
+existed, `--since` accepted timezone-ambiguous input, and unbounded payload size in the human report.
+Round 2 found the new `--since` validation error and an escaping `TelemetryError` were both bare `Error`s
+rather than this codebase's own registered `ForgeError` (`USR-002` reused; a new `RUN-076` added), and a
+malformed event `ts` could silently defeat `--since` filtering via `NaN`. Round 3 found nothing new. All
+fixed and re-verified; see the log for exact fixes and test names.

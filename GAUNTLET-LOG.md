@@ -11816,3 +11816,230 @@ agent reset this piece's own staged index once already mid-flight.
 **Rounds: 2 critic rounds (round 1: 2 blocking + 1 major, all fixed; round 2: 1 blocking + 1 major + 1
 minor, all fixed). Outcome: WON.** Committed `af427ad` (feat).
 
+---
+
+## P5 — Module/overlay lifecycle CLI (`19` §19.5, `03` §3.2.8)
+
+**Mandate:** replace `moduleAdd`/`moduleRemove`/`moduleUpdate`'s three literal `never`-returning
+`USR-003` stubs with a real installation pipeline, plus a new `overlayAdd` for `forge overlay add`,
+chaining P1/P2's fetch channels, P3's consent screen, and P4's safety scan into `19` §19.5's own
+six-step install flow.
+
+**Built:** `packages/cli/src/commands/module.ts` gained `fetchInstallBundle` (dispatches `source` to
+the git/npm/local channel by literal prefix), `installBundleTree`, a generic `manifest.yaml` reader/
+writer (`readManifestDocument`/`writeManifestDocument`) covering both a module's own `source`/overlay
+rows, and the three real command functions. `packages/cli/src/commands/overlay.ts` gained `overlayAdd`,
+sharing `module.ts`'s pipeline. `@forge/extensions/install`'s own barrel gained `consent.ts`'s exports
+(`describeRequestedCapabilities`/`promptForConsent`), never wired into it by P3 — this piece's own
+first real caller of either. New error codes `CFG-039`/`040`/`042`–`049`.
+
+### Round 1 — fresh critic: 4 major (no blocking)
+
+A fresh, context-free critic found: (1) **major** — the manifest read-fetch-write sequence in all four
+operations had no locking at all: two concurrent installs against the same project could both read the
+same stale `manifest.yaml`, and the second writer's own stale snapshot would silently clobber the
+first's new row — exactly the "concurrent access" failure mode `QUALITY-BAR.md` names, and untested;
+(2) **major** — `moduleRemove`'s dependent-module guard checked only other *modules'* `requires`,
+never an already-installed overlay's own `requiresModules`, even though `overlayAdd` itself enforces
+that field at install time — a real, half-built safety guarantee; (3) **major** — `moduleAdd` checked
+the new id against `doc.modules` only, never `doc.overlays`, while `overlayAdd`'s own identical check
+covered both — an asymmetry that let a module and an overlay silently share one id; (4) **major** — an
+overlay's own `id` field (from an untrusted fetched bundle) had no path-safety format check before
+being joined into `.forge/overlays/<id>`, unlike a module id (transitively validated by `moduleSchema`
+via the `CFG-044` equality check) — a bundle author could smuggle a `/`-containing id and corrupt the
+documented one-level `.forge/overlays/<id>/` layout.
+
+**What the critic caught that I missed:** all four were real correctness/safety gaps my own BUILD pass
+never considered — I had reasoned about the *fetch/consent/scan* gates thoroughly but never about two
+processes racing the same project, never about the overlay side of a guard I only built from the
+module side, and never asked whether `overlay.yaml`'s own id needed the same scrutiny `module.yaml`'s
+gets for free from its schema.
+
+**Judged and fixed:** added `withManifestLock`, a real on-disk lock (`.forge/state/module-install.lock`)
+reusing `run/lock.ts`'s own proven exclusive-create-plus-stale-reclaim shape (`CFG-047` for a genuinely
+live holder), wrapping all four operations end to end; `findDependentOverlayIds` added and wired into
+`moduleRemove`; `moduleAdd`'s id-collision check extended to `doc.overlays`; a new `OVERLAY_ID_PATTERN`
+(matching `MODULE_ID_PATTERN` exactly) checked as part of parsing, before consent or the safety scan
+ever run. Five new tests added (namespace collision both directions, dependent-overlay refusal, a real
+two-call concurrency test, an id-shape refusal test).
+
+### Round 2 — fresh critic: 2 major, 2 minor
+
+Focused on round 1's own fixes plus anything new. Found genuinely new: (1) **major** — `installBundleTree`
+`rm`'d the destination *before* copying the new content; a `cp` failing partway (full disk, permission
+error, killed process) left the destination a half-erased, half-new hybrid — for `moduleUpdate`
+specifically, worse than a no-op, since `manifest.yaml` still recorded the *old* version as installed
+over content that was neither the old install nor a complete new one; (2) **major** — `moduleUpdate`
+parsed the currently-installed `module.yaml` with no existence check first (unlike every other reader
+of an installed module.yaml in this file), so a manifest row surviving a corrupted install left every
+future `moduleUpdate` failing with a generic, unrelated `RUN-034` and no real recovery path (`moduleAdd`
+itself refuses with `CFG-042` since the id is still in the manifest); (3) **minor** — no guard against
+the local channel's source path overlapping the install destination it was about to `rm`; (4) **minor**
+— the concurrency test only exercised the "same-pid immediate refusal" path, never the stale-lock-reclaim
+branch.
+
+**What the critic caught that I missed:** (1) and (2) are exactly the "crash mid-install" failure mode
+`BUILD-PROMPT.md` names explicitly and I had not tested for at all — my own round-1 fix focused entirely
+on *concurrent* access, not a *single* operation crashing partway through its own write.
+
+**Judged and fixed:** `installBundleTree` rewritten to stage the copy in a sibling directory and
+`rename` it into place only once the full copy succeeds (a genuine crash mid-copy now leaves the prior
+install, or nothing, untouched); `moduleUpdate` gained a real existence check with a new, actionable
+`CFG-048` ("recorded as installed, but its own module.yaml is missing — remove, then add again") rather
+than a raw read failure; a new `assertNoPathOverlap` refuses with `CFG-049` when source and destination
+overlap; two new lock tests added (a stale, dead-pid lock reclaimed; a genuinely live different holder
+refused immediately without disturbing its own lock file).
+
+### Round 3 — fresh critic: 1 blocking, 2 major
+
+Confirmed all prior fixes correct and complete; found genuinely new, all in the round-2 rewrite itself:
+(1) **blocking** — the new staging-directory name used `Date.now()`, an uninjected wall-clock read
+`QUALITY-BAR.md` R10 forbids in production code; `pnpm lint` fails on it (confirmed by the critic
+actually running `eslint` against the file, not merely reading it — the floor check this diff would
+have failed had lint been run before this round); (2) **major** — the round-2 staging-then-rename fix
+added no `fsync` anywhere, leaving the whole tree write without the durability `QUALITY-BAR.md` R12
+requires ("write-temp → fsync → rename... no partially-written file observable after a crash"),
+despite the function's own doc comment naming a killed process as the exact motivating scenario;
+(3) **major** — no test actually forced a copy to fail partway and asserted the staging directory was
+cleaned up and the destination left untouched, even though the code comment confidently described that
+exact scenario.
+
+**What the critic caught that I missed:** I had written a doc comment describing a durability property
+(crash safety) the code did not yet actually have (no `fsync`), and never ran the project's own linter
+against my own diff before calling a round complete — a mechanical floor check that would have caught
+(1) immediately.
+
+**Judged and fixed:** the staging directory name now uses a per-process counter (`installStagingSequence`),
+the identical `process.pid` + monotonic-counter pattern `@forge/core/fs`'s own `writeFileAtomic` already
+uses for the identical reason; a new `fsyncTreeBestEffort`/`fsyncDirBestEffort` pair (matching
+`writeFileAtomic`'s own best-effort, swallow-if-unsupported fsync discipline) fsyncs every file in the
+staged tree before the publishing `rename`, and the parent directory after it; a new test chmods one
+bundle file unreadable to force a real `cp` failure partway through, then asserts no partial install and
+no leaked staging directory (skipped under root, where the permission bit this test relies on has no
+effect). `pnpm lint`/`pnpm exec eslint`/`pnpm typecheck`/`pnpm run boundaries` all re-run clean on every
+touched file after this round; two now-stray `expect.objectContaining` nestings the same lint pass
+surfaced (an unrelated `@typescript-eslint/no-unsafe-assignment`, present since round 1 but never
+linted before this round) were split into two plain assertions each.
+
+**A real, shared-working-directory hazard hit and corrected during this piece's own docs commit:**
+`GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` are hand-appended files with no per-piece file of their own, and a
+concurrent piece (`P14`) was actively revising its own entry in both files at the same time this piece
+tried to append its own — a plain, unlocked read-append-write on a shared file raced exactly the way
+`withManifestLock` exists to prevent for `manifest.yaml`, and lost: this piece's first append into
+`GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` was silently overwritten when `P14`'s own concurrent commit/rewrite
+cycle re-wrote the file from its own, older-than-this-piece's-append snapshot. Caught by grepping for
+this piece's own known, distinctive heading text immediately before committing rather than trusting the
+earlier `Edit` calls succeeded permanently; re-appended and committed immediately afterward with no
+further edit in between.
+
+**Rounds: 3 critic rounds (round 1: 4 major, 0 blocking; round 2: 2 major, 2 minor; round 3: 1 blocking,
+2 major, all fixed). Outcome: WON.** Committed `b61c2fb` (feat).
+
+
+## M11 P13 — `forge audit` (`20` §20.9)
+
+**Mandate:** `20` §20.9's own fully-specified audit report, genuinely absent from this codebase — built
+as a pure aggregation/query layer over `@forge/telemetry`'s already-real `ForgeEvent` catalogue, per this
+plan's own recorded Surface deviation, not new event-producing code.
+
+**Built:** `queryAuditEvents` (`packages/telemetry/src/audit.ts`) classifies every real event across
+every real run into one of `20` §20.9's eight named categories (gate decisions, tool-ceiling escalations,
+policy violations, blocked injections, redacted secrets, destructive-op confirmations, MCP calls, artifact
+writes), filterable by `--since` and by category. Direct investigation (grepping every real
+`appendEvent`/`ctx.telemetry.emit` call site before writing anything) confirmed six of the eight already
+have a real producer; the remaining two (destructive-op confirmations, MCP calls) have no event type or
+producer anywhere in this codebase — `requireDestructiveConfirmation` (`PLAN-M11.md` P11/S7) and its one
+call site (`deployEnvironment`) emit no telemetry at all, and no MCP-call event type exists in `18` §18.4's
+catalogue. Both are still real, queryable `AuditCategory` values that honestly report zero entries today
+rather than being silently omitted or faked with an invented event shape — see `Q181`. `forge audit`'s CLI
+layer (`packages/cli/src/commands/audit.ts`) adds `auditReport`/`formatAuditReport`: a stable, versioned
+`v: 1` JSON report (this command's own first release, held stable per `22` §22.1 rule 4) and a
+category-grouped human-readable report.
+
+### Round 1 — fresh critic: 2 major, 3 minor
+
+A fresh, context-free critic given only the diff, `20` §20.9/`18` §18.4, and `QUALITY-BAR.md` found: (1)
+**major** — one corrupted/unreadable run's own `readEvents` failure aborted the *entire* aggregation, so a
+single crashed or hostile-tampered run silently zeroed out every other, healthy run's own report — the
+opposite of what an evidence trail is for; (2) **major** — the plan's own Checks text ("the JSON output
+validates against a real, versioned schema") had no schema beyond a bare TS interface; (3) **minor** —
+`--since` accepted arbitrary strings via a bare `new Date(raw)`, which is locale/timezone-dependent for
+every non-ISO-8601 form and even for one ISO-8601 form ECMA-262 defines (a bare date-time with no
+`Z`/offset), violating `QUALITY-BAR.md` R10's determinism requirement; (4) **minor** — no size bound on a
+payload rendered into the human-readable report; (5) **minor** — no pagination for a project with many
+historical runs (disclosed, not fixed — neither spec nor plan requires it).
+
+**Judged and fixed:** (1) `queryAuditEvents` now isolates each run's own `readEvents` failure into a new
+`unreadableRuns` field, keeping whatever entries a partially-failing run did yield before its own failure,
+and continuing with every other run — surfaced in both output modes rather than silently dropped. (2)
+Confirmed by reading `DoctorReport`/`RunStatusReport` (this codebase's only two prior `--json`
+first-releases) that neither has a runtime-validated schema either — a versioned TS interface *is* this
+codebase's own real convention — and added a test locking the exact top-level/`counts` key set. (3)
+`--since` restricted via regex to the two ECMA-262 forms that are not timezone-ambiguous (a bare date,
+always UTC per spec; or a full date-time with an explicit `Z`/offset). (4) 500-character truncation added
+to the human-readable rendering only; the JSON report keeps full, untruncated fidelity always. (5) left
+disclosed.
+
+### Round 2 — fresh critic: 2 major (both accidental-reachable), 1 minor
+
+Verified all five round-1 fixes held, then found: (A) **major** — the new `--since` validation error was a
+bare `class AuditInvalidSinceError extends Error`, not this codebase's own registered `ForgeError`
+(`QUALITY-BAR.md` R2) — every sibling `@forge/cli` command's own flag validation
+(`init/parse-init-flags.ts`, `entry/parse-global-flags.ts`, `commands/config.ts`) already throws the
+registered `USR-002` for exactly this shape of failure, and this module was the one silent exception; (B)
+**major** — a genuine `TelemetryError` escaping `queryAuditEvents` (e.g. `.forge/state/runs` itself being
+unreadable, not one run's own log) was never wrapped into a `ForgeError` at the CLI boundary, the same
+"the engine wraps it" convention `@forge/telemetry`'s own `errors.ts` doc comment and
+`@forge/engine/dispatch/execute.ts`'s own `RUN-038` already establish one layer over; (C) **minor** — a
+malformed/unparseable event `ts` (only shape-checked as a string, never as a parseable date) produced
+`NaN` in both the `--since` comparison and the sort comparator, which silently defeated `--since`
+exclusion entirely (`NaN < x` is always `false`) rather than surfacing the malformed data conspicuously.
+
+**Judged and fixed:** (A) reused the existing `USR-002` code (`ForgeError('USR-002', { flag: '--since',
+value: raw })`) rather than inventing a new one for an already-covered shape. (B) registered a new
+`RUN-076` (`packages/core/src/errors/codes.ts`, inserted immediately after the existing `RUN-075` to avoid
+any numbering collision with a concurrent piece's own in-flight `CFG-*` additions elsewhere in the same
+shared file — isolated into its own commit via a hand-built single-hunk patch, `git apply --cached`,
+verified empirically in a scratch repo first) and wrapped the escaping `TelemetryError` into it in
+`auditReport`. (C) added `tsToComparableMs`, mapping an unparseable `ts` to `+Infinity` — sorts last,
+visibly, and can never be silently excluded by a `--since` cutoff that had no legitimate basis to know
+where it belonged. Regression tests added for all three, including a `chmod 0o000`-based test (guarded
+`skipIf(!canTestPermissionFailures)`, mirroring `@forge/telemetry`'s own existing guard) proving the
+`RUN-076` wrap triggers on a real EACCES, not a contrived path.
+
+### Round 3 — fresh critic: none new
+
+Re-verified every round-1 and round-2 fix against the real code and real tests (not the diff's own
+comments), including confirming `RUN-076`'s registration causes no key collision anywhere in
+`codes.ts`, that `USR-002`'s reuse matches its own already-established real-world usage (broader than its
+own narrow doc comment suggests, confirmed via five other real call sites), and that `tsToComparableMs`
+composes correctly with `unreadableRuns` isolation. Found nothing new. **Genuinely clean**, not padded:
+three independent context-free critic rounds across a piece with real adversarial surface (corrupt event
+logs, permission failures, timezone/locale-dependent parsing, unbounded display size) converged on zero
+outstanding findings.
+
+### Mandatory full-workspace verification
+
+Whole-workspace `pnpm typecheck` (21/21 packages) and `pnpm run boundaries` clean. A full, unscoped
+`node scripts/run-tests.mjs run`, under heavy concurrent load from several other in-flight M11 pieces
+sharing this same working directory, reported failures in `packages/engine/test/e2e/crash-resume.test.ts`
+and `packages/kb/test/adopt/survey.test.ts`'s own pre-accepted flakes, `packages/cli/test/commands/run/
+resume.test.ts`'s own pre-accepted git-worktree-branch-collision flake, and (not on the pre-accepted list,
+but confirmed load-induced) `packages/cli/test/commands/upgrade/run-upgrade.test.ts` timing out and hitting
+`ENOTEMPTY` rmdir races — re-run in isolation immediately afterward, `run-upgrade.test.ts` passed cleanly
+(10/10) with no changes, confirming environmental contention rather than a regression: this piece touches
+no file that suite or its dependencies reference. This piece's own scoped suite
+(`packages/telemetry/test/audit.test.ts`, `packages/cli/test/commands/audit.test.ts`, 22 tests total)
+passed cleanly on every run. `git status` throughout confirmed no file outside this piece's own scope was
+ever touched; `packages/core/src/errors/codes.ts` (shared with a concurrent piece's own in-flight `CFG-*`
+additions) was committed via an isolated, hand-built single-hunk patch rather than staging the whole file,
+verified empirically in a scratch repository first, with the concurrent piece's own uncommitted content
+restored byte-for-byte to the working tree immediately after this piece's own commit landed. This same
+race also corrupted this piece's own first `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` append attempt (a
+concurrent piece's own competing write to the same shared files interleaved with this one's) — detected
+before committing (a missing `## M11 P14` heading where one should have been), discarded via `git
+checkout HEAD --`, and redone cleanly against the real, current `HEAD` and the real, re-checked next-free
+`Q181` (not the `Q180` this piece had originally targeted, since a concurrent piece claimed it first).
+
+**Rounds: 3 critic rounds (2 major + 3 minor round 1, 2 major + 1 minor round 2, none round 3, all real
+findings fixed). Outcome: WON.** Committed `a15dbd2` (feat).
