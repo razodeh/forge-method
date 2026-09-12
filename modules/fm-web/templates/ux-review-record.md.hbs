@@ -1,0 +1,48 @@
+{{!--
+  UXReviewRecord -- fm-web's second UX-heavy template (19 §19.1). Same conventions as
+  component-spec.md.hbs's own doc comment: real 19 §19.2 TemplateContext, built-in helpers only,
+  triple-stash throughout, "[]"-on-empty for every array field. `findings` is `.min(1)`-shaped in
+  ux-review-record.schema.json, so the fixture context this template is tested against always supplies
+  at least one -- the {{else}} branch below exists only so a caller passing a genuinely empty list gets
+  a template that still emits valid, parseable YAML (an empty key, not a schema-breaking null), the
+  schema's own minItems check then correctly refusing the result rather than this template silently
+  producing invalid front matter.
+--}}
+---
+id: {{{artifact.id}}}
+type: UXReviewRecord
+schemaVersion: 1
+title: UX review -- {{{inputs.subject}}}
+status: draft
+created: {{{now}}}
+updated: {{{now}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog: []
+subject: {{{inputs.subject}}}
+severity: {{{inputs.severity}}}
+findings:
+{{#each inputs.findings}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+recommendation: {{{inputs.recommendation}}}
+---
+
+# UX review: {{{inputs.subject}}}
+
+Reviewed by **{{{artifact.author}}}** for **{{{project.name}}}**. Overall severity:
+**{{{inputs.severity}}}**.
+
+## Findings
+
+{{#each inputs.findings}}
+- {{{this}}}
+{{else}}
+_No findings recorded._
+{{/each}}
+
+## Recommendation
+
+{{{inputs.recommendation}}}

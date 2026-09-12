@@ -1,0 +1,44 @@
+# checks/a11y.check.yaml -- 19 §19.1's own "a11y checks" row, in `@forge/engine/gates`'s own real
+# `DeterministicCheck` shape (`id`/`run`/`parser`/`failOn`, packages/engine/src/gates/types.ts), plus
+# the `remedy` string 19 §19.6's own documentation-obligation rule requires for every check ("a
+# failing check without a remedy is a dead end for the agent that hits it").
+#
+# `run` is deliberately a single, dependency-free `node -e '...'` script rather than a call to a
+# third-party accessibility tool (axe-core, pa11y, ...): those tools' own JSON output is an array of
+# per-page results, not the flat `{field: number}` object `failOn` evaluates against
+# (`@forge/engine/expr`'s own `resolvePath` reads a top-level field of the parsed JSON), and installing
+# one as a real dependency of a target project is a decision this module has no basis to make for it.
+# The inline script is real, not a stub: it walks every `.html` file under `dist/`, flags every `<img>`
+# missing an `alt` attribute and every `<html>` tag missing a `lang` attribute, and prints
+# `{"violations": N, "filesScanned": M}` -- exactly the shape `failOn` below reads. A project that wants
+# axe-core/pa11y/Lighthouse CI instead can replace `run` with a wrapper reducing that tool's own output
+# to the identical shape; this module ships the smallest real, working default rather than a check that
+# cannot run without a dependency this module cannot itself install. The script uses only double-quoted
+# JS string literals (no embedded single quotes) so it can be wrapped, unescaped, in the shell's own
+# single-quoted argument below -- see test/fm-web-checks.test.ts for the real pass/fail fixture runs
+# 19 §19.3's own Check-authoring "test" row asks for, including running this exact string via a real
+# child process, not a stub.
+#
+# Both attribute checks require a whitespace character immediately before the attribute name, not a
+# bare `\b` word boundary -- a critic round found `\balt\s*=` (a word-boundary regex) also matches
+# inside `data-alt="..."`/`some-alt="..."` (the hyphen is a non-word character, which `\b` treats
+# exactly like real whitespace), so an `<img>` decorated only with a `data-alt`-shaped attribute and no
+# real `alt` was silently treated as accessible. HTML attributes are always whitespace-separated from
+# whatever precedes them, so `\salt\s*=`/`\slang\s*=` is both correct and still simple; the
+# `data-alt="nope"` case is covered by a real regression fixture in
+# packages/engine/test/gates/fm-web-checks.test.ts.
+id: a11y:audit
+name: Accessibility audit
+description: >
+  Scans every built HTML page under dist/ for the two most common, mechanically-detectable
+  accessibility defects (an <img> with no alt text, an <html> tag with no lang attribute) and fails if
+  any are found.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".html"))files.push(p);}return files;}let violations=0,filesScanned=0;for(const f of walk(dir)){filesScanned++;const html=fs.readFileSync(f,"utf8");for(const img of html.match(/<img\b[^>]*>/gi)||[]){if(!/\salt\s*=/i.test(img))violations++;}if(/<html\b[^>]*>/i.test(html)&&!/<html\b[^>]*\slang\s*=/i.test(html))violations++;}console.log(JSON.stringify({violations,filesScanned}));'''
+parser: json
+failOn: 'violations > 0'
+remedy: >
+  Re-run the command above locally and read its printed counts, then open each built page under dist/
+  named by a violation: add a real, descriptive alt attribute to every <img> that conveys content
+  (alt="" only for genuinely decorative images), and add a lang attribute (e.g. lang="en") to every
+  page's <html> tag. If a specific violation is a deliberate, reviewed exception, record a waiver
+  rather than silencing this check.

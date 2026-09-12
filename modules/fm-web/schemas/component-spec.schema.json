@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/fm-web/component-spec.schema.json",
+  "title": "ComponentSpec",
+  "description": "modules/fm-web -- a UI component's own props/states/accessibility contract, produced by the frontend agent (19 §19.1's own 'UX-heavy templates' row). Front matter fields mirror @forge/schemas' own baseFrontMatterShape convention (packages/schemas/src/registry/front-matter.ts) field-for-field, EXCEPT created/updated: baseFrontMatterShape's own created/updated are a bare date because a workflow's own logic sets them, but this type's own template (templates/component-spec.md.hbs) renders them directly from 19 §19.2's own real TemplateContext.now, which @forge/core's own real Clock.now() (packages/core/src/clock.ts) documents as a full ISO-8601 instant, not a bare date -- a critic round rendered the template with a real instant value and confirmed a bare-date schema rejects it outright. created/updated are therefore date-time here, not date. This type is not registered in @forge/schemas' own registry -- see modules/fm-web/module.yaml's own header comment and SPEC-QUESTIONS.md Q157 for why a new, module-owned artifact type was the right call here rather than reusing an existing registry type.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "component_name",
+    "props",
+    "states",
+    "accessibility_notes"
+  ],
+  "properties": {
+    "id": { "type": "string", "pattern": "^CS-\\d{3,4}(-\\d+)?$" },
+    "type": { "const": "ComponentSpec" },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["draft", "review", "approved", "superseded"] },
+    "created": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "revision": { "type": "integer", "minimum": 1 },
+    "author": { "type": "string", "minLength": 1 },
+    "changelog": { "type": "array" },
+    "component_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the component's own real name, e.g. PriceTag"
+    },
+    "props": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "one entry per public prop the component accepts"
+    },
+    "states": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "the distinct visual/interaction states the component can be in"
+    },
+    "accessibility_notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "concrete a11y requirements this component must satisfy (aria roles, focus order, contrast, ...)"
+    }
+  }
+}

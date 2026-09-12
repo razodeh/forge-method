@@ -1,0 +1,79 @@
+{{!--
+  ComponentSpec -- one of fm-web's own two UX-heavy templates (19 §19.1's own "UX-heavy templates"
+  row). Renders against 19 §19.2's real TemplateContext shape (project/artifact/kb/spec/inputs/style/
+  now/forge), not a framework-specific execution-data object the way packages/templates' own 43
+  ADR-output .hbs templates do -- this template never calls kb.get/spec.get (nothing in a component
+  spec needs a KB citation or a spec cross-reference), so `context.kb`/`context.spec` are accepted but
+  genuinely unused, matching 19 §19.2 rule 2 ("templates are layout and prompting, never logic").
+
+  Only Handlebars built-in helpers are used (#each, #if) -- no custom helper (`{{id}}`, `{{slug}}`,
+  `{{required}}`, ...) is registered anywhere in this repository yet (test/output-templates.test.ts's
+  own comment, still true as of PLAN-M10.md P3), the same "built-ins only" convention every other real
+  .hbs template in this codebase already follows.
+
+  Every triple-stash {{{ }}} is deliberate: a double-stash {{ }} HTML-escapes its value by Handlebars'
+  own default, which would corrupt a YAML scalar containing an apostrophe or an ampersand -- this is a
+  Markdown/YAML render target, not HTML. Every array field's own {{#each}} carries an {{else}} branch
+  rendering a literal "[]", matching packages/templates' own adr-*.md.hbs convention: {{#each}} renders
+  nothing at all for an empty array, which would otherwise leave the YAML key with no value (parses as
+  null, not []) -- component-spec.schema.json's own array fields do not accept null.
+--}}
+---
+id: {{{artifact.id}}}
+type: ComponentSpec
+schemaVersion: 1
+title: {{{inputs.componentName}}} component spec
+status: draft
+created: {{{now}}}
+updated: {{{now}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog: []
+component_name: {{{inputs.componentName}}}
+props:
+{{#each inputs.props}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+states:
+{{#each inputs.states}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+accessibility_notes:
+{{#each inputs.accessibilityNotes}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+---
+
+# {{{inputs.componentName}}}
+
+Owned by **{{{artifact.author}}}** for **{{{project.name}}}**.
+
+## Props
+
+{{#each inputs.props}}
+- `{{{this}}}`
+{{else}}
+_No props declared._
+{{/each}}
+
+## States
+
+{{#each inputs.states}}
+- {{{this}}}
+{{else}}
+_No states declared._
+{{/each}}
+
+## Accessibility notes
+
+{{#each inputs.accessibilityNotes}}
+- {{{this}}}
+{{else}}
+_No accessibility notes recorded yet -- add at least one before this spec leaves draft._
+{{/each}}

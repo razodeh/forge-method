@@ -1,0 +1,24 @@
+# checks/bundle-size.check.yaml -- 19 §19.1's own "bundle-size checks" row, in `@forge/engine/gates`'s
+# own real `DeterministicCheck` shape (packages/engine/src/gates/types.ts), plus the `remedy` string
+# 19 §19.6 requires for every check.
+#
+# `run` is the same "dependency-free inline script" choice `checks/a11y.check.yaml` documents and for
+# the identical reason: it walks every `.js`/`.mjs`/`.css` file (excluding source maps) under `dist/`,
+# sums their real on-disk byte size, and prints `{"bytes": N, "budgetBytes": B}` -- the flat object
+# shape `failOn` needs. The 250000-byte (250KB) raw default budget is a placeholder any real project
+# should tune to its own target; nothing in the spec pack names a concrete number, so this follows the
+# same "state a reasonable default, do not leave the check unusable" choice `modules/fm-core`'s own
+# `test:coverage` check already makes with its own `coverage < 80` literal.
+id: bundle:size
+name: Bundle size budget
+description: >
+  Sums the byte size of every built JS/CSS file under dist/ (source maps excluded) and fails if the
+  total exceeds a fixed budget.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";const budgetBytes=250000;function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(/\.(js|mjs|css)$/i.test(e.name)&&!e.name.toLowerCase().endsWith(".map"))files.push(p);}return files;}let bytes=0;for(const f of walk(dir))bytes+=fs.statSync(f).size;console.log(JSON.stringify({bytes,budgetBytes}));'''
+parser: json
+failOn: 'bytes > budgetBytes'
+remedy: >
+  Re-run the command above locally to see the real total and the budget it was compared against, then
+  either reduce the shipped bundle (code-split a route, lazy-load a heavy dependency, drop an unused
+  library) or, if the larger size is a deliberate, reviewed tradeoff, record a waiver naming the new
+  budget rather than silencing this check.

@@ -1,0 +1,25 @@
+id: axe-core
+kind: testing
+name: axe-core
+category: accessibility-testing
+maturity: mature
+licence: MPL-2.0
+strengths:
+  - 'Industry-standard WCAG rule engine with a very low false-positive rate, usable as a CLI, a browser devtools panel, or a Playwright/Cypress plugin'
+  - 'Structured JSON output names the exact rule violated and the offending DOM node, giving an agent a concrete, actionable fix target rather than a vague score'
+weaknesses:
+  - 'Catches only mechanically-detectable violations (missing labels, contrast, ARIA misuse, ...) -- genuine usability problems (confusing flow, unclear copy) need a real UX review, not this tool'
+  - 'Its own JSON output is a per-page array of results, not a single pass/fail number -- a project wiring it into a deterministic check needs a small reducer step, the same reason checks/a11y.check.yaml ships its own minimal inline scanner rather than calling this tool directly'
+fits_when:
+  - 'the project already renders real HTML (server-rendered or built) that a CLI or browser-driven test can point at'
+  - 'the team wants a real, standard accessibility baseline enforced in CI, not only manual review'
+avoid_when:
+  - 'the UI is not yet rendered anywhere a tool can reach it (pure design mockups, no built pages yet)'
+pairs_with: [playwright, cypress]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: low
+agent_friendliness: high
+notes_for_agents:
+  - 'A "0 violations" result covers only what axe-core''s own ruleset can mechanically detect -- it is a floor, not proof the page is genuinely accessible. Do not treat a clean axe-core run as a substitute for a real UX review record (modules/fm-web/templates/ux-review-record.md.hbs) of a screen a human will actually use.'

@@ -1,0 +1,116 @@
+# module.yaml -- fm-web, "web applications" (19 §19.1's own shipped-modules table): `frontend` agent,
+# UX-heavy templates, a11y checks, browser e2e strategy, frontend catalog depth, bundle-size checks.
+#
+# ---------------------------------------------------------------------------------------------------
+# The `frontend` agent id -- resolving a real collision with fm-core (PLAN-M10.md P1), not inventing one:
+#
+# `05` §5.2's own roster table marks `frontend` as `S(fm-web)` -- a specialised-tier role this module,
+# not fm-core, is supposed to add. `modules/fm-core/agents/frontend.agent.yaml` already exists on disk
+# today (P1), physically under fm-core (the one module-layout exception where agents load straight from
+# a module's own directory rather than through `@forge/templates`'s indexes -- see fm-core/module.yaml's
+# own header comment) and is *also* named in fm-core's own `provides.agents`, unconditionally, even
+# though fm-core's own module.yaml declares itself "always installed" regardless of which specialised
+# modules a project picks. That file's own doc comment ("S(fm-web): installed with the fm-web module,
+# per 05 §5.2's own Tier column") shows P1 was aware of the mismatch, not that it was accidental --- it
+# reads as anticipatory scaffolding for this exact module, left in fm-core's own directory rather than
+# duplicated ahead of time.
+#
+# This module now ships the real, authoritative `frontend` agent under its own directory
+# (`agents/frontend.agent.yaml`) and re-declares it in `provides.agents` below -- a deliberate, tested
+# case of two modules both providing the same id, not a silent duplicate. Two DIFFERENT, DISAGREEING
+# real mechanisms are involved, and a critic round found the first draft of this comment stated their
+# outcome as a single settled fact when it is not:
+#
+# - `@forge/agents`' own `loadAgentRegistry` (`packages/agents/src/registry/load-agent-registry.ts`) --
+#   the mechanism a real `forge` run actually uses to build its roster -- walks `modulesDir`'s own
+#   subdirectories via `listDirEntriesSorted`, pure filesystem-alphabetical order, and its
+#   `AgentRegistry.add` lets "a later entry with the same id... win." "fm-core" sorts before "fm-web"
+#   alphabetically, so a project installing both gets fm-web's own real, specialised `frontend` agent
+#   here today -- confirmed directly, not merely reasoned about, by
+#   `packages/agents/test/content/fm-web-roster.test.ts`'s own `loadAgentRegistry(modulesDir)` test.
+# - `PLAN-M10.md` P2's own `resolveInstalledModules`/`compareProvideConflicts`
+#   (`packages/extensions/src/module/resolve.ts`) is a SEPARATE mechanism with no relationship to the
+#   one above: its own "winner" is whichever module is LAST in the caller-supplied `installOrder`
+#   array -- an arbitrary, caller-chosen list with no topological ordering against `requires` enforced
+#   anywhere, and (confirmed directly: `resolveInstalledModules` has zero callers anywhere in
+#   `packages/` outside its own tests today) no real command in this codebase consults its report yet.
+#   Passing `installOrder: ['fm-web', 'fm-core']` -- a legal input nothing rejects -- makes this
+#   function report `fm-core` as the winner, the OPPOSITE of what `loadAgentRegistry` actually hands
+#   out. `packages/extensions/test/module/fm-web.test.ts` tests both the agreeing order (`['fm-core',
+#   'fm-web']`) and this disagreeing one, so the discrepancy is pinned rather than hidden.
+#
+# In short: the real roster a `forge` run builds today already resolves to fm-web's own `frontend`
+# agent, by filesystem-alphabetical order, independent of any notion of "install order." The separate
+# `resolveInstalledModules` compile-time conflict *report* is real, tested, dead code with no consumer
+# yet, and its own "winner" is not currently a promise about which agent actually loads. Whichever
+# later piece wires that report into a real `forge compile --check` output should either feed it a
+# `requires`-respecting installOrder or reconcile its own notion of "winner" with `loadAgentRegistry`'s
+# -- neither of which is this piece's own Surface to fix.
+#
+# The other residual gap this piece does not fix: a project that installs fm-core *without* fm-web
+# still gets fm-core's own stray `frontend` agent, contradicting `05` §5.2's own tier column. That is a
+# defect in fm-core's already-committed `provides.agents`/`ceilings` list, a different module's own
+# file -- out of this piece's Surface ("do not touch any other PLAN-M10 piece"). Recorded, not silently
+# fixed here: see `SPEC-QUESTIONS.md` Q157.
+# ---------------------------------------------------------------------------------------------------
+#
+# `catalog` is declared empty below for the identical reason fm-core's own module.yaml already
+# documents: `packages/catalog/src`'s own registry is stack-and-module-agnostic selection input the
+# catalog engine loads on its own, never through a module's own `provides.catalog` list. The real
+# catalog content this module adds (`catalog/frontend/tailwind.entry.yaml`,
+# `catalog/testing/axe-core.entry.yaml`) still lives physically under this module's own directory, per
+# `19` §19.1's own module-layout diagram -- it is simply not re-listed in `provides` a second time.
+
+id: fm-web
+name: Web applications
+version: 1.0.0
+forgeVersion: '>=1.0 <2'
+requires: [fm-core]
+conflicts: []
+levels: [L1, L2, L3, L4]
+
+# Transcribed directly from agents/frontend.agent.yaml's own `tools:` block, the same "ceiling equals
+# what the shipped agent already holds today" convention fm-core's own module.yaml already establishes.
+# `network` is the real ToolGrant enum (`none`/`allowlist`/`full`), not the boolean the agent's own
+# unrelated base `tools:` schema uses for the same concept (`PLAN-M10.md` P2's own real-fixture fix).
+ceilings:
+  frontend:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+
+provides:
+  # The one real, authoritative `frontend` agent this module ships -- see the header comment above.
+  agents: [frontend]
+
+  # No new workflow, framework, or gate file exists under this module's own directory (19 §19.1's
+  # "browser e2e strategy" is prose describing what a frontend agent is expected to bring to the
+  # existing test-pyramid-shape/test-oracle-design frameworks fm-core already ships, not a new,
+  # separately-installable framework or workflow of its own) -- left empty rather than invented.
+  workflows: []
+  frameworks: []
+  gates: []
+
+  # The two real, standalone `*.check.yaml` files this module ships -- the first standalone check
+  # content anywhere in this repository (fm-core's own module.yaml notes that no such file existed
+  # before this piece: every deterministic check fm-core's own gates run was declared inline inside the
+  # owning gate). See checks/a11y.check.yaml and checks/bundle-size.check.yaml for the real command,
+  # parser, and failOn expression each one declares.
+  checks: [a11y:audit, bundle:size]
+
+  # No fm-web-specific skill exists yet (no accessibility- or bundle-size-specific procedural-knowledge
+  # packet is named anywhere in the spec pack) -- left empty rather than invented. `agents/
+  # frontend.agent.yaml` deliberately leaves its own `skills` field unset too, inheriting
+  # base-engineer's generic engineering skills via `extends`, the same choice fm-core's own frontend
+  # agent already makes (`SPEC-QUESTIONS.md` Q98).
+  skills: []
+
+  # Two new artifact types this module adds, per 19 §19.1's own module-layout diagram's `schemas/
+  # *.schema.json # new artifact types, if any` row -- real JSON Schema files under `schemas/`, real
+  # Handlebars templates under `templates/` that render front matter matching them. Not modelled as
+  # existing `@forge/schemas` registry types (InterfaceContract's own real path template is a `.yaml`
+  # contract file, not a UX-review write-up; SessionRecord's own schema requires `started`/`ended`/
+  # `cost_usd` fields a real, already-running collaboration session produces, which a hand-authored
+  # component/UX-review doc has no honest way to supply) -- see `SPEC-QUESTIONS.md` Q157.
+  artifactTypes: [ComponentSpec, UXReviewRecord]
+
+  catalog: []
+  techniques: []

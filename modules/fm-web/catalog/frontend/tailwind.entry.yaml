@@ -1,0 +1,27 @@
+id: tailwind
+kind: frontend
+name: Tailwind CSS
+category: css-framework
+maturity: mature
+licence: MIT
+strengths:
+  - 'Utility classes keep styling co-located with markup, eliminating a whole class of unused/dead CSS and naming-convention debates'
+  - 'A constrained design-token scale (spacing, color, type) makes agent-generated UI visually consistent without a separate design-system library'
+weaknesses:
+  - 'Markup gets visually noisy with long utility-class strings, especially on complex components'
+  - 'A hand-rolled, highly bespoke visual design still needs custom CSS or a plugin -- the utility set is deliberately generic'
+fits_when:
+  - 'the team wants fast, consistent styling without maintaining a separate CSS architecture or BEM-style naming convention'
+  - 'agent-generated frontend code needs a small, well-documented, LLM-legible vocabulary for styling decisions'
+avoid_when:
+  - 'the project already has a mature, bespoke design system or CSS-in-JS convention the team is not migrating off of'
+  - 'markup readability for non-frontend engineers matters more than styling velocity'
+pairs_with: [react, vue-nuxt, svelte-sveltekit, nextjs]
+alternatives: []
+operational_burden: low
+team_familiarity_weight: medium
+exit_cost: medium
+agent_friendliness: high
+notes_for_agents:
+  - "Prefer Tailwind's own scale tokens (spacing, color, font-size) over arbitrary bracket values (`w-[173px]`) -- arbitrary values are an escape hatch, not the default, and defeat the consistency this tool exists to provide."
+  - 'A component with a very long utility-class string is a signal to extract a reusable component or an `@apply`-based class, not to keep growing the string.'
