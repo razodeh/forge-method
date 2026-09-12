@@ -10503,3 +10503,69 @@ accepted for this build), confirmed clean and fast (17s) in isolation. `packages
 resume.test.ts` also flaked once mid-run under the same full-suite load (a real worktree-branch race, not
 this piece's own code) and was likewise confirmed clean in isolation, matching its own accepted-flake
 listing.
+
+## M10 P20 — Working-in-an-adopted-codebase adjustments (`17` §17.4) — the final piece of M10
+
+**Mandate:** `17` §17.4's six brownfield adjustments: conventions observed not imposed; blast-radius
+analysis before change; characterisation tests before refactoring; the strangler-fig default; narrower
+file claims (`strict` even at `guided` autonomy for an adopted project); drift detection from day one.
+
+Built: a new `project.adopted: boolean` config field (`packages/schemas/src/config/{schema,defaults,
+docs}.ts`) that `forge adopt`'s pipeline sets once a full run completes (`packages/cli/src/commands/
+adopt.ts`'s new `markProjectAdopted`, tolerant of a missing `.forge/config.yaml`); `resolveClaimPolicy`
+(`packages/kb/src/adopt/claim-policy.ts`), wired into `buildRunEngineContext`
+(`packages/cli/src/commands/run/context.ts`); `computeBlastRadius`/`expandTestScope`
+(`packages/kb/src/adopt/blast-radius.ts`), the real transitive reverse-dependency closure over P15's own
+`DependencyGraph`; `extractVerificationCommand` (`packages/kb/src/adopt/verify.ts`) plus a new, real
+`forge kb verify` command (`packages/cli/src/commands/kb.ts`); and three pure DoD-check predicates in
+`packages/methods/src/adopted-gates.ts` for `17` §17.4 points 1/3/4. Full reasoning, including the real
+`claimPolicy` bug this piece found and fixed (`buildRunEngineContext` had hard-coded `'strict'`
+unconditionally, silently wrong for `guided` per `06` §6.7), in `SPEC-QUESTIONS.md` Q168.
+
+### Round 1 — fresh critic: 1 blocking, 2 major, 3 minor
+
+A fresh, context-free critic found: (1) **blocking** — `kbVerify` executes an extracted command
+unsandboxed via `execa`, and that command's own text ultimately traces back to the target repository's
+own `package.json` scripts via RECONSTRUCTION, the identical class of command VERIFICATION's own
+onboarding-time equivalent deliberately sandboxes; (2) **major** — `computeBlastRadius`/`expandTestScope`
+have zero live callers anywhere in the codebase, and the first draft's own test literally labelled itself
+"the PLAN-M10 P20 exit check" despite only unit-testing the pure computation, not the plan's own literal
+"gets added to test scope automatically" claim; (3) **major** — the three `adopted-gates.ts` predicates
+are real but entirely unwired, the third instance this milestone of "a future piece" deferring real
+wiring; (4) **minor** — `resolveClaimPolicy`'s own `supervised -> strict` default (unstated by `06` §6.7)
+had no `SPEC-QUESTIONS.md` entry yet; (5) **minor** — the `claimPolicy` hardcode fix is a live behaviour
+change for every existing `guided`-autonomy run, worth an explicit call-out; (6) **minor** —
+`computeBlastRadius`'s recursive `visit()` has no depth bound and risks a stack overflow against a real,
+deep dependency chain.
+
+**What the critic caught that the builder missed:** the recursion depth bound (6) — the builder's own
+first-draft tests used only small, hand-built fixture graphs, never a chain deep enough to expose that a
+recursive traversal, not an iterative one, was silently relying on the test fixtures' own small size to
+stay safe. The test's own overclaiming (2) was also a real miss: the builder wrote an accurate function
+but an inaccurate test *name*, describing coverage the test did not actually provide.
+
+**Judged and resolved:** (1) judged not a new risk class after checking `@forge/engine/dispatch/
+shell.ts`'s own `runShellCommand`, which already runs every gate check's own `run:` field and
+`execution.testCommands` entry the identical, unsandboxed way — sandboxing is VERIFICATION's own
+onboarding-time-specific mitigation for a not-yet-adopted repository, not the norm for a project you
+already run `npm test` against directly yourself; disclosed explicitly in `kb.ts`'s own doc comment and
+`SPEC-QUESTIONS.md` Q168 rather than silently dismissed. (2) and (3) judged as real, disclosed,
+proportionate scope narrowing — no "component -> test file"/"live per-step fact" mechanism exists
+anywhere in this codebase to wire into, the identical shape Q159/Q167 already establish for CARTOGRAPHY/
+INFERENCE dispatch — but the test's own misleading name was fixed to describe exactly what is proven,
+and both files' own doc comments were strengthened with a direct `grep`-confirmed "zero callers" fact
+rather than a vaguer disclosure. (4) and (5) fixed via the `SPEC-QUESTIONS.md` Q168 entry above. (6)
+fixed at the root: `computeBlastRadius` rewritten as an explicit-queue BFS (no recursion), with a new
+50,000-module linear-chain regression test.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean throughout. `node scripts/emit-schemas.mjs` +
+`node scripts/assert-schema-drift.mjs` confirm the new `project.adopted` field's JSON Schema was
+regenerated and matches with no drift. A full, unscoped `node scripts/run-tests.mjs run` (447 test
+files) reported **7785 passing, 5 skipped, 0 failures** — including `packages/engine/test/e2e/
+crash-resume.test.ts` passing cleanly on this run (one of the four accepted load-sensitive flakes; none
+of the four fired this run).
+
+**M10 is complete.** All 20 planned pieces (P1-P20) are built, gauntlet-reviewed, and committed.

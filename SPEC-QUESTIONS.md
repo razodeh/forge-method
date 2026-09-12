@@ -13769,3 +13769,114 @@ Whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `p
 `node scripts/check-boundaries.mjs` all clean on every file this piece touched. A full, unscoped
 `node scripts/run-tests.mjs run` showed only the already-accepted `packages/engine/test/e2e/
 crash-resume.test.ts` flake (confirmed clean and fast in isolation), 7742/7748 tests passing overall.
+
+## Q168 — M10 P20: `17` §17.4's brownfield adjustments — the `project.adopted` marker's real home, the
+`claimPolicy` bug this piece found and fixed, the `supervised` autonomy default, and the blast-radius/
+`forge kb verify` scope narrowings
+
+**Context:** `PLAN-M10.md` P20 (the final M10 piece) asks for `17` §17.4's six adjustments FORGE makes
+once a codebase is adopted: conventions observed not imposed; blast-radius analysis before change;
+characterisation tests before refactoring; the strangler-fig default; narrower file claims (`strict`
+even at `guided` autonomy for an adopted project); and drift detection (`forge kb verify`/
+`diagram:drift`). The plan's own text asserted a project's own `adopted: true` marker already exists,
+set by P18 — checked directly before writing any code and found false: no prior piece anywhere writes
+such a marker (`grep -rn "adopted" packages/kb/src/adopt` returns only doc-comment prose).
+
+**1. The `adopted` marker's real home is `.forge/config.yaml`'s new `project.adopted: boolean` field**
+(`packages/schemas/src/config/schema.ts`/`defaults.ts`/`docs.ts`), not a new file under `reports/
+adoption/` — a project's own origin is a fact about the project, read by `buildRunEngineContext`
+(`packages/cli/src/commands/run/context.ts`) on every run, not something scoped to the adopt pipeline's
+own report directory. `forge adopt`'s own pipeline (`packages/cli/src/commands/adopt.ts`'s new
+`markProjectAdopted`) sets it to `true` once a full (non-`quick`, non-scoped-proposal) run completes,
+tolerantly: a target repository with no `.forge/config.yaml` yet (a real, disclosed case — this piece's
+own `adopt.test.ts` fixtures never create one, matching a real "adopt a bare repo before `forge init`"
+sequence) gets a warning in `AdoptRunResult.warnings`, never a throw over a file this function has no
+mandate to create from scratch.
+
+**2. `resolveClaimPolicy` (`packages/kb/src/adopt/claim-policy.ts`) found and fixed a real, pre-existing
+bug.** `06` §6.7 gives per-autonomy claim-policy defaults (`strict` for `autonomous`, `warn` for
+`guided`) that `packages/cli/src/commands/run/context.ts`'s own `buildRunEngineContext` never
+implemented at all — `claimPolicy: 'strict'` was a bare, unconditional literal, silently correct for
+`autonomous` (and, by this piece's own reading below, `supervised`) but wrong for `guided`, which `06`
+§6.7 defaults to `warn`. Confirmed directly (not assumed) by reading `context.ts` and its own test
+before writing anything. This piece is the first real implementation of that mapping; `context.ts` now
+calls it, and `packages/cli/test/commands/run/context.test.ts`'s own pre-existing assertion (`ctx.
+claimPolicy` toBe `'strict'`, against the fixture project's default `guided`/non-adopted config) was
+updated to the now-correct `'warn'`, with a new dedicated `claimPolicy` describe block covering all
+three autonomy levels crossed with `adopted: true/false`. A repo-wide `grep -rn "claimPolicy" packages`
+confirmed no other production or test file assumes the old hardcoded value: `packages/engine/test/**`'s
+own fixtures construct a `RunEngineContext` directly with their own literal `claimPolicy: 'strict'`
+default, never through `buildRunEngineContext`, so they are unaffected.
+
+**3. `supervised`'s own claim-policy default (`06` §6.7 leaves it unstated) is `strict`** — the same
+default `autonomous` gets, since a `supervised` run already has a human approving every step and a
+stricter out-of-claim default costs that workflow nothing it was not already going to review. Recorded
+here per a fresh critic round's own finding that this real judgment call had no `SPEC-QUESTIONS.md`
+entry yet (every other real M10 judgment call, Q152-Q167, got one at its own docs commit — this entry
+is that one, not a gap).
+
+**4. Blast-radius analysis (`packages/kb/src/adopt/blast-radius.ts`) is a real, tested, pure
+computation with zero live callers** — disclosed in the file's own doc comment, confirmed directly via
+`grep -rn "computeBlastRadius\|expandTestScope" packages` outside the module and its own tests
+(nothing). Wiring its `testScope` result into a live story's own compiled test scope needs a
+"component/module -> test file" association and a real per-story test-scope type that does not exist
+anywhere in `@forge/engine` yet (confirmed directly) — building one is a separate, cross-cutting
+scheduler feature outside a ~400-line piece's own budget, the identical "produces a structured fact for
+a later phase to consume, does not itself wire the consumer" shape Q159/Q167 already establish for
+CARTOGRAPHY/INFERENCE dispatch and the actionable-gap-to-artifact boundary. A fresh critic round
+correctly caught that the first version's own test file over-claimed this ("the PLAN-M10 P20 exit
+check") as if the literal plan text were fully satisfied by a unit test alone; the test's own name and
+the module's own doc comment were both corrected to describe exactly what is proven (the computation
+is real and correct) and exactly what remains unbuilt (the live wiring), rather than overclaiming.
+
+**5. `computeBlastRadius`'s original recursive `visit()` had no depth bound** — safe against the small
+fixture graphs its own first-draft tests used, but a real risk against a real monorepo's own deep import
+chain (`inventory.ts`'s own `DependencyGraph` output). A fresh critic round found this directly; fixed
+by rewriting the traversal as an explicit-queue BFS (no recursion at all), with a new test walking a
+50,000-module linear chain to prove it no longer depends on the call stack's own depth limit.
+
+**6. `forge kb verify` (`packages/cli/src/commands/kb.ts`) runs an extracted command unsandboxed, in
+the caller's own live working tree — considered directly, not overlooked, and left as-is rather than
+sandboxed.** A fresh critic round raised this as a potential blocking finding: the command text
+ultimately traces back, via RECONSTRUCTION, to the target repository's own `package.json` build/test
+scripts, and VERIFICATION's own onboarding-time equivalent (`packages/engine/src/adopt/verification.ts`)
+deliberately sandboxes the identical class of command. Judged not a new risk class after checking this
+codebase's own established precedent directly: `@forge/engine/dispatch/shell.ts`'s `runShellCommand`
+already runs every gate check's own `run:` field and every `execution.testCommands` entry the identical
+way (`execa(command, { cwd, shell: true })`, no sandbox, live project tree) — sandboxing exists
+specifically for VERIFICATION's own scan of a repository nobody has decided to adopt yet, not for a
+project you already run `npm test`/`npm run build` against directly yourself once it is your own. A
+hostile `package.json` script is a risk already present the moment a human runs `npm run build`
+themselves; `forge kb verify` does not create a materially new attack surface, only automates a check a
+human could already run by hand. Recorded here, with the reasoning also inlined in `kb.ts`'s own doc
+comment, as a real, considered, accepted design decision rather than a silently-dismissed finding.
+
+**7. `extractVerificationCommand` (`packages/kb/src/adopt/verify.ts`) recognises exactly one, narrow
+convention** — a line reading `` Command: `<cmd>` `` inside a KB entry's `## Verification` section, the
+exact text RECONSTRUCTION (`PLAN-M10.md` P18) already writes for every build/test check it records.
+`08` §8.3's own `## Verification` section is free-text prose with no structured command field
+(`SPEC-QUESTIONS.md` Q159 already found this while building P17); this piece does not attempt a general
+prose-to-command extractor (no such thing has a general solution) — a section with no such line is
+reported `skipped`, never `fail`, since a human-only verification step is not drift, it is simply not
+machine-checkable.
+
+**8. The three `@forge/methods/adopted-gates.ts` predicates (`stranglerFigCompliant`,
+`characterisationGatePasses`, `conventionChangeCompliant`) are real, pure, independently-tested
+implementations of `17` §17.4 points 1/3/4, with zero live callers today** — disclosed directly in the
+file's own doc comment, which also names the one real, already-shipped `resolveCheck` implementation in
+this codebase (`packages/cli/src/commands/spec/validate-rules.ts`'s `validateDefinitionOfReady`) and
+confirms, by reading it, that none of this piece's own three predicates are answerable from the data
+that function already has (a `Story` plus the KB tree) — each needs a real fact (legacy-area membership,
+characterisation-test existence, a detected convention change) that only `forge adopt`'s own GAP
+ANALYSIS/INVENTORY output or a real test-file-existence check could supply. A fresh critic round flagged
+this as scaffolding despite the disclosure; judged as real, spec-mandated business logic reusing an
+already-shipped, already-general mechanism (`@forge/methods/dod`'s `{ check: id }` resolution, built by
+an earlier M8 piece specifically to be extended this way) rather than a new mechanism invented for its
+own sake — but the live-wiring gap is real and left open, not silently narrowed away.
+
+**Verification:** `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean on every file this piece touched, whole-workspace. `node
+scripts/emit-schemas.mjs` + `node scripts/assert-schema-drift.mjs` confirm `config.schema.json` was
+regenerated and matches. A full, unscoped `node scripts/run-tests.mjs run` (447 files) showed 7785
+passing, 5 skipped, 0 failures — `crash-resume.test.ts` included, passing cleanly this run. `GAUNTLET-
+LOG.md`'s own `M10 P20` entry has the full round-by-round record; this is the final piece of M10.
