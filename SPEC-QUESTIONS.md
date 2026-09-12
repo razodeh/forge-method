@@ -11898,3 +11898,80 @@ own first build already landed in that 505 count during in-progress verification
 (506/506), `--testNamePattern "tui fuzz"` (3/3), `--testNamePattern "tui degradation"` (52/52).
 
 This is the sixteenth and final piece of M9.
+
+## Q149 — Post-M9 checkpoint: E3 crash-resume's own SIGKILL was never killing the process it spawned, and
+five real leftover-reconciliation gaps that hid behind it
+
+A full-repo verification pass after M9 closed surfaced a single failure — `packages/engine/test/e2e/
+crash-resume.test.ts` (M5 P20, `06` §6.10, `21` §21.3) timing out under a heavy concurrent test run.
+Investigated properly rather than dismissed as ordinary resource-contention flake, on explicit direction.
+
+**Real design decision 1 — the test's own SIGKILL was never faithful to a real crash.**
+`spawnAndKillAfter`'s own `child.kill('SIGKILL')` targeted only the immediate fixture-child process, not
+its process group. A real `git worktree add` subprocess that child spawned via `execa` could survive the
+"crash" entirely and keep running, orphaned — finishing the worktree's own branch creation *after*
+resume had already begun reconciling, with no `LaneCreated` event ever durably recorded for it (the
+killed parent never lived to emit one). Fixed: `spawn(..., { detached: true })` plus `process.kill(-pid,
+'SIGKILL')` — the POSIX group-kill convention — so every real descendant dies together, matching what an
+actual crash (OOM kill, host reboot) does to a process tree, and matching the test's own pre-existing
+doc-comment claim ("a real child process, genuinely SIGKILL'd — never simulated") for the first time.
+
+**Real design decision 2 — group-killing made the test *more* faithful, which surfaced five real,**
+**previously-masked leftover shapes a genuine crash mid `git worktree add` can produce**, each verified
+against a real, reproduced failure before being fixed (not fixed from reasoning alone):
+
+1. A stale `HEAD.lock`/`index.lock` (a lane worktree) or `refs/heads/<branch>.lock` (the main repo),
+   left by a `git` subprocess genuinely killed mid-write. **Fixed:** `clearStaleRepoLocks` (new
+   `@forge/vcs` export) sweeps every `*.lock` file under the repo's own git-dir once, at the very top of
+   `resumeRun` — safe only because resume, by construction, only ever runs once the crashed process is
+   confirmed dead (never safe as a general-purpose default; not applied inside `resetLaneWorktree`
+   itself, which has a second, non-crash-context caller in `@forge/cli`'s loop-debug retry path).
+2. `git worktree add -b <branch> <path> <base>` registers the worktree itself, in a real, observed
+   `locked initializing`, detached, *branchless* placeholder state, before it ever creates the branch or
+   finishes checkout (confirmed empirically, git 2.39.5). `parseLaneWorktrees` derived `laneId` from the
+   branch line, so this state was invisible to the existing orphan-worktree reclaim path. **Fixed:**
+   `laneId` is now derived from the worktree's own deterministic path (`worktreePath`'s own construction)
+   instead — which also subsumes the branch-namespace filter that approach used to need, since a path
+   outside `.forge/state/worktrees/` was never a real candidate either way.
+3. A real branch ref with no corresponding worktree, and a worktree *directory* with no git registration
+   at all — two further leftover shapes neither the worktree-reclaim nor the lock-sweep can see. **Fixed:**
+   two new siblings, `listOrphanedLaneBranches`/`removeOrphanedLaneBranch` and
+   `listOrphanedWorktreeDirectories`/`removeOrphanedWorktreeDirectory`, both scoped to the resuming run's
+   own namespace, both called from `resumeRun` alongside the existing worktree reclaim.
+4. Even `git worktree remove -f -f` itself still refuses — "validation failed... not a .git file" — once
+   a worktree's own `.git` pointer file is gone; and even after a raw `rm`, `git worktree prune` alone
+   leaves a *locked* placeholder's admin record behind (`prune` deliberately skips locked entries, by
+   git's own design — a real, empirically-confirmed constraint, not an oversight in this codebase).
+   **Fixed:** `removeLaneWorktree` falls back to `rm` + `git worktree unlock` (its own "not locked"
+   failure deliberately swallowed — that is exactly as real and expected a case as locked) + `git
+   worktree prune` (no `--force` flag exists on `prune` at all, confirmed empirically — an invented flag
+   from a first draft, caught and fixed before commit).
+5. An admin entry corrupted enough (`commondir` missing/empty) that `git worktree list --porcelain`
+   refuses to run *for the whole repository* — blocking every reclaim step before any of them can start.
+   **Fixed:** `listOrphanedWorktrees` retries once, after a new, deliberately un-scoped-by-run repair
+   sweep (`repairUnlistableWorktreeAdminEntries`) — a fully corrupted admin entry serves no legitimate
+   purpose for any run, crashed or not, so repairing it is safe regardless of which run created it.
+
+**Real design decision 3 — `vcs`'s own row in `specs/02` §2.2's dependency graph (`['schemas']`) stays**
+**untouched.** An initial attempt reused `@forge/core/fs`'s own `listDirSorted`/`listDirEntriesSorted`
+wrapper for R10-compliant sorted directory listing; `forge-boundaries/no-undeclared-package-import`
+correctly flagged the undeclared `vcs → core` graph edge this would have required. Reverted in favour of
+duplicating the small, already-proven "sort explicitly, one contained `eslint-disable` comment" pattern
+locally inside `lanes.ts` — the identical R10 guarantee, no new package dependency, no spec-graph change
+for what is a three-line, self-contained utility.
+
+**Verification:** each fix validated against a real, reproduced failure (real git commands run by hand to
+confirm every recovery recipe's own semantics before relying on them — including two of the author's own
+mistakes caught this way: the invented `git worktree prune --force` flag above, and `git branch --list`'s
+own `+ ` in-another-worktree marker silently corrupting a branch name a first version of
+`listOrphanedLaneBranches` parsed, replaced with `git for-each-ref`, built for exactly this kind of
+scripting). Final state confirmed against **268 repeated runs of the E3 test under heavy 6-8-way
+concurrent load** (the condition that reliably reproduces these races — a single isolated run rarely
+does) — zero failures on the final code, after failing at a high rate on every intermediate fix. The
+pre-existing 34-test `lanes.test.ts` suite (covering the old branch-derived `parseLaneWorktrees`
+behaviour) stayed 100% green through the rewrite to path-derived detection. 15 new focused unit tests
+added directly, each constructing the real leftover state (a real `git worktree lock` plus a by-hand-
+removed `.git` pointer file, not a mocked git) rather than relying on the slow, non-deterministic E3 test
+alone. `pnpm typecheck`, `eslint packages/vcs packages/engine`, `prettier --check packages/vcs
+packages/engine`, `pnpm run boundaries` all clean. Full cross-package gate: 1289/1289 passing.
+`GAUNTLET-LOG.md`'s own "Post-M9 checkpoint" entry has the same record in narrative form.
