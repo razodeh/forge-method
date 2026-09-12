@@ -10881,3 +10881,77 @@ unscoped `node scripts/run-tests.mjs run` reported **457 test files, 7920 passin
 failures** — including `packages/engine/test/e2e/crash-resume.test.ts` (one of the four accepted
 load-sensitive flakes) passing cleanly on this run, and none of the other three named flakes firing
 either.
+
+## M11 P10 — Security invariants S3, S5, S6: secret leakage, control-token stripping, taint
+enforcement (`20` §20.5, §20.10 S3/S5/S6)
+
+**Rounds:** 2 (round 1: build + fresh critic, three real major findings and three minor, all fixed;
+round 2: fresh critic verifying round 1's fixes against actual current file content, confirmed all
+resolved, zero new blocking/major issues).
+
+**Round 1 findings, all real:**
+1. (Major) `StepNode.taint` is never set by any real code path today — the new S6 gate-approval guard
+   is real and correctly wired into `runGateStep`, but an earlier doc-comment draft could be read as
+   claiming this is *enforced in production today*, when every real, compiled `StepNode` currently has
+   `taint: undefined` (`markExternalContent`, the taint-marking function, has zero production callers).
+   Fixed by rewriting `taint-guard.ts`'s and `StepNode.taint`'s own doc comments to state the
+   enforcement/signal split explicitly and unambiguously.
+2. (Major) A second, entirely taint-blind path to `GateApproved` exists (`forge gate approve <id>`,
+   `@forge/cli`'s `run/gate-commands.ts`) and was undisclosed by the new code. Judged a legitimately
+   separate human-override channel (the same class `gateWaive` already is) rather than a bypass to
+   close — disclosed explicitly in `taint-guard.ts` and the S6 test file's own doc comments.
+3. (Major) `evidence-sanitize.ts`'s per-leaf control-token stripping has a real, untested bypass: a
+   token preceded by ordinary prose on the same line (no newline separator) still evades detection,
+   since `stripControlTokens`'s own line-anchor is pre-existing, deliberate design (not a gap this
+   piece's own fix introduced or should redesign, since every other real caller shares the identical
+   anchor). Fixed by disclosing this explicitly in `evidence-sanitize.ts`'s doc comment and adding a
+   new, real, passing test proving the exact shape evades detection.
+4. (Minor) `evidence-sanitize.ts`'s recursive walk lacked the `isPlainObject`/circular-reference
+   defensive checks `@forge/telemetry/redact.ts` already has for the identical recursive-JSON-walk
+   problem. Fixed: mirrored both helpers directly.
+5. (Minor) No dedicated unit test file for `evidence-sanitize.ts` — only indirect integration coverage
+   via one hostile field in a real `runCartographyPhase` test, missing edge shapes (arrays of arrays,
+   null, numbers, deep nesting, non-plain objects, cycles). Fixed: new 8-test
+   `packages/engine/test/adopt/evidence-sanitize.test.ts`.
+6. (Minor) `SECRET_PATTERNS`'s value-matching is a bounded, disclosed detection oracle a moderately
+   capable adversary (a split/transformed/base64'd secret) trivially defeats. Judged adequate as
+   *disclosure*, not a bug requiring a code change — the existing doc comments already say this plainly.
+
+**What the critic caught that the build missed:** the overclaiming risk in doc-comment framing (finding
+1) and the second CLI approval path (finding 2) were both real gaps in the *investigation*, not the
+code — the build round correctly built the one real, wireable enforcement point (`runGateStep`) but
+did not go far enough in auditing every other real `GateApproved`-emitting call site, nor stress-test
+its own doc comments for a reading that overstates current coverage. The prose-prefix bypass (finding
+3) is the same class of "the fix closes gap X but not adjacent gap Y" the S2 denylist piece (`M11 P9`)
+already hit twice with real bypasses in round 1 of *that* piece.
+
+**Round 2:** a fresh critic, given only the six round-1 findings and the author's claimed fixes,
+independently re-read the actual current file content (not the round-1 description) for each of
+`taint-guard.ts`, `plan/types.ts`, `s6-taint-enforcement.test.ts`, `evidence-sanitize.ts`, and
+`evidence-sanitize.test.ts`, ran the new tests directly, and specifically checked the new `ancestors`
+cycle-tracking logic in `evidence-sanitize.ts` for correctness (confirmed: a fresh `Set` per recursive
+call correctly tracks the path-to-root, not a global visited set, so two sibling fields legitimately
+sharing one reference is not flagged as a cycle while a genuine self-reference still throws). Verdict:
+all three major and both testable minor findings genuinely, not cosmetically, resolved; no new
+blocking/major issue introduced by the fixes themselves. Ready to commit.
+
+### Mandatory full-workspace verification — clean, modulo two pre-accepted flakes and unrelated
+concurrent-work-in-progress failures
+
+Whole-workspace `pnpm typecheck` (21/21 packages) and `node scripts/check-boundaries.mjs` both clean.
+A full, unscoped `node scripts/run-tests.mjs run` reported **463 test files passed, 5 failed, 8036
+tests passed, 9 skipped**. Of the 5 failures: `packages/engine/test/e2e/crash-resume.test.ts` and
+`packages/kb/test/adopt/survey.test.ts`'s own oversized-fixture test are the two load-sensitive flakes
+this build's own instructions name as accepted — both confirmed clean and fast in isolation (17.3s and
+0.8s respectively). The remaining three (`test/workspace-floor.test.ts`'s stray-file check catching an
+uncommitted file from a concurrently-running, unrelated M11 piece; `packages/tui/test/linear.test.tsx`,
+untouched by any change in this session; `packages/extensions/test/install/fetch-npm.test.ts`, also
+uncommitted concurrent work) are none of this piece's own files and were confirmed, via `git status`
+before every commit, to lie entirely outside this piece's own touched surface.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`,
+`node scripts/check-boundaries.mjs` all clean on every file this piece touched, re-run after both
+rounds. See `SPEC-QUESTIONS.md` Q172 for the full record of the three real, previously-undiscovered
+enforcement gaps found and fixed (telemetry value-shape redaction; JSON-serialisation defeating
+control-token stripping; zero taint enforcement anywhere in the step-dispatch model) and the two
+structurally-impossible plan-stated file locations (S3, S5) relocated with disclosure.
