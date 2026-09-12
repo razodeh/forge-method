@@ -72,6 +72,7 @@ export function createTestContext(
     now,
     laneRegistry: overrides.laneRegistry ?? new Map<string, LaneHandle>(),
     gateRegistry,
+    ...(overrides.sessionBounds === undefined ? {} : { sessionBounds: overrides.sessionBounds }),
   };
 }
 

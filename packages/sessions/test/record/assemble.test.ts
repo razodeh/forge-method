@@ -195,4 +195,19 @@ describe('assembleSessionRecord', () => {
       expect(record.no_disagreement_observed).toBe(true);
     });
   });
+
+  // `16` §16.8's own breach behaviour, named -- `PLAN-M10.md` P12.
+  describe('truncatedBound (16 §16.8)', () => {
+    it('omits truncated_bound from the record when meta.truncatedBound is not given', () => {
+      const record = assembleSessionRecord(FRAMED, META);
+      expect(record.truncated_bound).toBeUndefined();
+    });
+
+    it("carries meta.truncatedBound through as the record's own truncated_bound field", () => {
+      const truncatedState: SessionState = { ...FRAMED, truncated: true };
+      const record = assembleSessionRecord(truncatedState, { ...META, truncatedBound: 'cost' });
+      expect(record.status).toBe('truncated');
+      expect(record.truncated_bound).toBe('cost');
+    });
+  });
 });

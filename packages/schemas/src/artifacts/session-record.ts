@@ -27,6 +27,17 @@ import { z } from 'zod';
 
 import { baseFrontMatterShape, checkIdMatchesRegisteredType } from '../registry/front-matter.ts';
 
+// `16` §16.8's own bound table, as a closed vocabulary -- `PLAN-M10.md` P12's own real, named
+// breach reasons: the two per-phase round caps, the idea cap DIVERGE forces early clustering on, and
+// the two run-wide resource ceilings (wall clock, cost).
+const SESSION_TRUNCATION_BOUNDS = [
+  'diverge-rounds',
+  'converge-rounds',
+  'diverge-idea-cap',
+  'wall-clock',
+  'cost',
+] as const;
+
 // The closed, ten-row table at 16 §16.2.
 const SESSION_TYPES = [
   'brainstorm',
@@ -54,8 +65,14 @@ export const sessionRecordSchema = baseFrontMatterShape
     cost_usd: z.number().nonnegative(),
     // `16` §16.7 point 4 — see this file's own top-of-file doc comment for why this is optional.
     no_disagreement_observed: z.boolean().optional(),
+    // `16` §16.8's own breach behaviour — `PLAN-M10.md` P12: "the record is marked truncated: true
+    // with the specific bound that triggered it." Optional for the identical additive-field reason
+    // `no_disagreement_observed` already is (see this file's own top-of-file doc comment) — set only
+    // when `status: 'truncated'`, absent for every other status.
+    truncated_bound: z.enum(SESSION_TRUNCATION_BOUNDS).optional(),
   })
   .strict()
   .superRefine(checkIdMatchesRegisteredType);
 
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;
+export type SessionTruncationBound = (typeof SESSION_TRUNCATION_BOUNDS)[number];

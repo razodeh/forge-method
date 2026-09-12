@@ -35,7 +35,14 @@
  * @see PLAN-M10.md P10
  */
 import { ForgeError } from '@forge/core/errors';
-import { pathExists, readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
+import {
+  listDirSorted,
+  pathExists,
+  readTextFile,
+  writeFileAtomic,
+  ProjectPaths,
+} from '@forge/core/fs';
+import { IdAllocator } from '@forge/core/ids';
 import type { Clock } from '@forge/core';
 import type { SessionResult } from '@forge/adapter-kit';
 import { loadAgentRegistry, type AgentDefinition } from '@forge/agents';
@@ -43,28 +50,87 @@ import { KbWriter, type KbEntryInput } from '@forge/kb/write';
 import { DEFAULT_KB_ROOT, type KbSection } from '@forge/kb/schema';
 import {
   CRITIC_ROLE,
+  DIVERGE_IDEA_CAP,
+  MAX_AGENT_PARTICIPANTS,
   SessionPhaseMachine,
   assembleSessionRecord,
   expressesDisagreement,
   isGenericNonObjection,
   loadTechnique,
-  type ConvergeInput,
   type DecideInput,
   type DivergeInput,
+  type PhaseDirective,
   type SessionState,
   type SessionParticipant,
   type SessionType,
   type Technique,
 } from '@forge/sessions';
-import type { SessionRecord } from '@forge/schemas';
+import {
+  adrSchema,
+  risksFileSchema,
+  type SessionRecord,
+  type SessionTruncationBound,
+} from '@forge/schemas';
+import { renderArtifactPath } from '@forge/schemas/registry';
 import * as YAML from 'yaml';
 
 import { dispatchAgentStep, runParticipantSession } from './dispatch-agent-step.ts';
 import type { InteractionParticipant } from './types.ts';
-import type { ExecuteStepContext, StepOutcome } from '../dispatch/types.ts';
+import type { ExecuteStepContext, SessionBounds, StepOutcome } from '../dispatch/types.ts';
 import { toAgentId, type StepNode } from '../plan/index.ts';
 
+export type { SessionBounds } from '../dispatch/types.ts';
+
 const HUMAN_ROLE = 'human';
+
+/** `16` §16.8's own literal bound table's real, literal default values -- the numbers every
+ * `SessionBounds` field falls back to when a caller (no real one exists yet in this milestone's own
+ * scope, per `ExecuteStepContext.sessionBounds`'s own doc comment) leaves it unset. Exported so a test
+ * can assert against these exact numbers directly, rather than re-transcribing the spec's own table a
+ * second time. */
+export const DEFAULT_SESSION_BOUNDS: Required<SessionBounds> = {
+  maxDivergeRounds: 3,
+  maxConvergeRounds: 2,
+  maxAgentParticipants: MAX_AGENT_PARTICIPANTS,
+  maxWallClockMs: 20 * 60 * 1000,
+  maxCostUsd: 3,
+  divergeIdeaCap: DIVERGE_IDEA_CAP,
+};
+
+function resolveSessionBounds(bounds: SessionBounds | undefined): Required<SessionBounds> {
+  return { ...DEFAULT_SESSION_BOUNDS, ...bounds };
+}
+
+/** `16` §16.8's own cost bound needs a real dollar figure per dispatch. `SessionResult.usage.costUsd`
+ * is a real, optional field (`@forge/adapter-kit`) some real adapters genuinely populate --
+ * `@forge/adapter-claude-code`'s own `session-result.ts`/`sdk/map-message.ts` read it straight from a
+ * real `total_cost_usd` the underlying CLI/SDK message reports -- but it is optional precisely because
+ * not every adapter, and not every one of a real adapter's own messages, reports one; `FakePlatformAdapter`
+ * -- the one adapter every test in this package runs against -- documents that it never does at all
+ * (`@forge/testkit`'s own top-of-file doc comment: "`SessionResult.usage.costUsd` is never populated
+ * despite `costReporting: 'per-turn'` being the default capability... add the mechanism when one does
+ * [need it]"). This piece is that consumer, for the case a real report is absent: a real per-token
+ * estimate, used strictly as a fallback -- `estimateSessionCostUsd` below checks `costUsd` first and
+ * returns it unmodified whenever it is present, so a real adapter's own real figure always wins outright
+ * over this estimate, never the other way around (a dedicated unit test, `session.test.ts`'s own
+ * "estimateSessionCostUsd" describe block, pins this precedence directly against a constructed
+ * `SessionResult` rather than relying on `FakePlatformAdapter` ever supplying one). The rate itself is a
+ * disclosed, order-of-magnitude approximation (roughly a blended input/output rate for a mid-tier coding
+ * model as of this piece's own authoring, not a per-model table), not a claimed-precise billing figure:
+ * `16` §16.8's own cost bound exists to keep a runaway conversation *bounded*, which a real, cheap,
+ * monotonic proxy over real token counts already achieves even when it is not billing-accurate for every
+ * real model -- the disclosed risk being that a genuinely pricier model's own real spend could exceed
+ * this estimate for the same token count on an adapter that itself never reports a real `costUsd`. See
+ * `SPEC-QUESTIONS.md`.
+ */
+const ESTIMATED_USD_PER_TOKEN = 0.00001;
+
+/** Exported for `session.test.ts`'s own direct, adapter-independent precedence test -- see this
+ * constant's own doc comment immediately above. */
+export function estimateSessionCostUsd(session: SessionResult): number {
+  if (session.usage.costUsd !== undefined) return session.usage.costUsd;
+  return (session.usage.inputTokens + session.usage.outputTokens) * ESTIMATED_USD_PER_TOKEN;
+}
 
 /** Every real, ten-row `16` §16.2 session type, read into a concrete `{facilitator, participants}`
  * pair -- see this file's own top-of-file doc comment for which rows are a verbatim table reading and
@@ -242,9 +308,13 @@ const SESSIONS_DIR = 'docs/forge/sessions';
  * critic round found `allocateSessionId`'s own existence probe had no lock at all, so two session
  * steps racing inside the same run (independent lanes, no `dependsOn` edge between them) whose
  * `numericSessionId` candidates coincide could both pass the same probe before either wrote, then
- * silently overwrite each other's real, completed session record. `allocateSessionAndPersist` below
- * is the one place both the probe and the write happen, serialised through this queue -- a real,
- * in-process mutex, not merely a comment asking callers to be careful.
+ * silently overwrite each other's real, completed session record. The id-allocation-and-write pattern
+ * this queue was first built for recurs twice more in this same file (`writeAdrBack`'s own real
+ * `IdAllocator.allocate('ADR')`, `writeRiskBack`'s own real `kb/risks.md` read-modify-write) -- both
+ * reuse this identical queue rather than each growing its own, since the failure mode (two concurrent
+ * session steps racing the same real, on-disk state for the same project) is the exact same shape every
+ * time, not three unrelated problems. Despite the name, this is this file's one general "serialise real
+ * writes against project-shared state" mutex, not a session-record-specific mechanism.
  */
 const sessionRecordQueues = new Map<string, Promise<unknown>>();
 
@@ -639,7 +709,7 @@ function extractKbEntryId(text: string): string | undefined {
  * already wrote. Checked and reused here instead, the same "same input, same real result, no crash"
  * property `06` §6.10's own resume model expects of every step this milestone drives.
  */
-async function writeDecisionBack(
+async function writeKbDecisionBack(
   ctx: ExecuteStepContext,
   section: KbSection,
   node: StepNode,
@@ -683,6 +753,280 @@ async function writeDecisionBack(
   };
   const entry = await writer.write(input);
   return entry.id;
+}
+
+/** `[a-z0-9]`, hyphen-joined, never empty -- the identical slug shape `forge adr new`'s own `slugify`
+ * (`@forge/cli/commands/adr.ts`) produces; re-derived here rather than imported (`@forge/engine` has
+ * no boundary-graph edge to `@forge/cli` at all -- `cli`'s own row is "everything," every other row's
+ * own arrow points the other way) rather than duplicating `adrNew`'s own thin command-layer logic. */
+function artifactSlug(seed: string): string {
+  return (
+    seed
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'session'
+  );
+}
+
+/** `related: [...]` provenance marker every ADR/Risk this module writes back carries, and the one
+ * thing `findExistingSessionArtifact` below greps for -- the identical "a decision made by session
+ * `node.id`" provenance `writeKbDecisionBack`'s own `sources: [{kind:'decision', ref: 'session:...'}]`
+ * already records for a KB entry, applied to the two artifact types that carry no such `sources` field
+ * of their own. */
+function sessionProvenance(nodeId: string): string {
+  return `session:${nodeId}`;
+}
+
+/**
+ * A best-effort idempotency check for the two artifact-creation paths below (`writeAdrBack`,
+ * `writeRiskBack`) that, unlike `writeKbDecisionBack`'s own deterministic-path check, allocate a real
+ * id via `IdAllocator` -- a path that is *not* deterministic in `node.id` alone, so a naive "does the
+ * target path already exist" check (the mechanism `writeKbDecisionBack` uses) cannot detect a prior
+ * write here at all. Scans every file already under `dir` for `sessionProvenance(nodeId)` in its own
+ * raw text (front matter or body, either counts) and returns the first match's own `id` field.
+ *
+ * A real, disclosed limitation, not a silent gap: a resumed/retried run of a session step whose own
+ * ADR/Risk write already landed is still expected to converge on it via this scan, but a project with
+ * a very large `kb/decisions/` (or a very large `kb/risks.md`) pays a real, linear read cost on every
+ * write-back call -- the same "a real, honest 0/disclosed-estimate over a fabricated precise one"
+ * trade-off this file already makes elsewhere (`estimateSessionCostUsd`'s own doc comment), preferred
+ * here over `writeKbDecisionBack`'s own O(1) deterministic-path check only because an allocated id's
+ * own path is not knowable in advance. See `SPEC-QUESTIONS.md`.
+ */
+async function findExistingSessionArtifact(
+  paths: ProjectPaths,
+  files: readonly string[],
+  nodeId: string,
+): Promise<string | undefined> {
+  const marker = sessionProvenance(nodeId);
+  for (const relativePath of files) {
+    const text = await readTextFile(paths.resolveWithin(relativePath)).catch(() => '');
+    if (!text.includes(marker)) continue;
+    const id = extractKbEntryId(text) ?? /^\s*-\s*id:\s*(\S+)/m.exec(text)?.[1];
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+/** Every `.md` file directly under `dir`, or `[]` if `dir` does not exist at all -- a brand-new
+ * project's own `kb/decisions/` before this module's first ever ADR write-back, the identical "a real,
+ * honest absence, not a programmer error" case `loadProjectAgentRegistry`'s own doc comment already
+ * treats a missing `modules/` directory as. */
+async function listMarkdownFiles(paths: ProjectPaths, dir: string): Promise<readonly string[]> {
+  const target = paths.resolveWithin(dir);
+  if (!(await pathExists(target))) return [];
+  const entries = await listDirSorted(target);
+  return entries.filter((entry) => entry.endsWith('.md')).map((entry) => `${dir}/${entry}`);
+}
+
+/**
+ * `16` §16.5's own worked example write-back ("Draft ADR for the quick-path data shape -- ADR-0019"):
+ * a real `kb/decisions/ADR-####-slug.md`, allocated through the identical `IdAllocator`
+ * (`@forge/core/ids`) and `renderArtifactPath` (`@forge/schemas/registry`) primitives `forge adr new`
+ * (`@forge/cli/commands/adr.ts`) composes -- `@forge/engine` has no boundary-graph edge to `@forge/cli`
+ * itself (this file's own `artifactSlug` doc comment), so this recomposes the same two primitives
+ * directly rather than reaching for cli's own thin wrapper, not a third, unrelated mechanism. Unlike
+ * `adrNew`, this cannot start from `@forge/templates`' own pre-fielded `ADR.md` template either --
+ * `@forge/engine` has no edge to `@forge/templates` (`tools/eslint-plugin-forge-boundaries/src/
+ * graph.mjs`) -- so every `adrSchema` field is synthesized directly and validated via `adrSchema.parse`
+ * before the file is ever written, the same "construct the full object, validate, then serialise"
+ * shape `persistSessionRecord` already uses for `SessionRecord` itself. See `SPEC-QUESTIONS.md`.
+ *
+ * The whole body runs inside `enqueueForProject` (the identical per-project FIFO queue
+ * `persistSessionRecord`'s own session-id allocation already uses, `sessionRecordQueues`'s own doc
+ * comment) -- a fresh critic round found an earlier draft constructed a brand-new `IdAllocator` per
+ * call with no queue at all, so two `design-review`/`tradeoff` session steps genuinely running
+ * concurrently in the same run (`run-engine.ts`'s own `Promise.all(admitted.map(...))`) could both scan
+ * the same "next free ADR id," both compute the identical candidate id, and both write a real,
+ * `adrSchema`-valid file at two different paths sharing one id -- a real, silent id collision, the
+ * exact defect class `sessionRecordQueues`'s own doc comment already names and fixes for session-record
+ * ids, left open here until this piece's own critic round found the identical gap in the two functions
+ * that ship alongside it.
+ */
+async function writeAdrBack(
+  ctx: ExecuteStepContext,
+  node: StepNode,
+  ownerRole: string,
+  decisionText: string,
+  clock: Clock,
+): Promise<string> {
+  return enqueueForProject(ctx.projectRoot, async () => {
+    const paths = new ProjectPaths(ctx.projectRoot);
+    const existingFiles = await listMarkdownFiles(paths, 'kb/decisions');
+    const existing = await findExistingSessionArtifact(paths, existingFiles, node.id);
+    if (existing !== undefined) return existing;
+
+    const allocator = new IdAllocator({ paths, clock });
+    const id = await allocator.allocate('ADR');
+    const pathResult = renderArtifactPath('ADR', { id, slug: artifactSlug(node.id) });
+    if (!pathResult.success) {
+      // `id`/`slug` are both always non-empty by construction above -- `ADR`'s own path template
+      // names no other variable, so this is not a reachable caller-input failure, the identical "this
+      // would be a bug in this class" shape `IdAllocator.allocate`'s own doc comment already uses a
+      // plain `RangeError` for.
+      throw new RangeError(
+        `renderArtifactPath('ADR', ...) failed: missing ${pathResult.missingVariable}`,
+      );
+    }
+    const today = clock.now().slice(0, 10);
+    const candidate = {
+      id,
+      type: 'ADR' as const,
+      schemaVersion: 1,
+      title: `Session decision -- ${node.id}`,
+      status: 'accepted' as const,
+      category: 'architecture' as const,
+      deciders: [ownerRole],
+      date: today,
+      reversibility: 'medium' as const,
+      blast_radius: [] as string[],
+      revisit_trigger: 'Revisit if new evidence contradicts this decision.',
+      supersedes: [] as string[],
+      superseded_by: null,
+      related: [sessionProvenance(node.id)],
+      diagrams: [] as string[],
+      framework: 'n/a',
+      created: today,
+      updated: today,
+      revision: 1,
+      author: ownerRole,
+      changelog: [
+        {
+          revision: 1,
+          date: today,
+          by: ownerRole,
+          summary: 'Recorded from a real collaboration session.',
+        },
+      ],
+    };
+    const parsed = adrSchema.safeParse(candidate);
+    if (!parsed.success) {
+      // Every field above is this function's own literal, statically-typed construction -- a schema
+      // mismatch here is a real defect in this function, not a caller-input failure `ForgeError`'s own
+      // remedy-oriented contract fits (the identical reasoning the branch above already gives).
+      throw new RangeError(
+        `adrSchema rejected a session write-back candidate: ${parsed.error.message}`,
+      );
+    }
+    const target = paths.resolveWithin(pathResult.path);
+    const body = `## Context\n\n${decisionText}\n`;
+    await writeFileAtomic(target, `---\n${YAML.stringify(parsed.data)}---\n\n${body}`);
+    return id;
+  });
+}
+
+/**
+ * `16` §16.5's own worked example write-back ("Add RISK: quick path bypasses tax validation --
+ * RISK-007"): a real entry appended to the real `kb/risks.md` register (`riskSchema`'s own `collection:
+ * true` path, `18` §18.7) -- read-modify-write against whatever the file already holds (or a freshly
+ * initialised, empty register when it does not exist yet), validated whole via `risksFileSchema`
+ * before ever being written, the identical validate-then-serialise discipline `writeAdrBack` above
+ * already uses.
+ *
+ * The whole body runs inside `enqueueForProject`, for a real reason far more pressing here than for
+ * `writeAdrBack`: this function's own read-modify-write of one shared file (`kb/risks.md`) has no
+ * per-target-path isolation the way two ADRs (each its own file) at least partially get -- a fresh
+ * critic round found an earlier, unqueued draft let two concurrent `premortem`/`war-room` session
+ * steps each read the identical pre-write `kb/risks.md`, each independently append their own real risk
+ * to that same snapshot's own `risks` array, and whichever `writeFileAtomic` call lands second silently
+ * overwrite the first session's entire risk entry -- a real, silent data-loss race with no error, no
+ * log, and (before this fix) no test able to catch it either.
+ */
+async function writeRiskBack(
+  ctx: ExecuteStepContext,
+  node: StepNode,
+  ownerRole: string,
+  decisionText: string,
+  clock: Clock,
+): Promise<string> {
+  return enqueueForProject(ctx.projectRoot, async () => {
+    const paths = new ProjectPaths(ctx.projectRoot);
+    const relativePath = 'kb/risks.md';
+    const existing = await findExistingSessionArtifact(paths, [relativePath], node.id);
+    if (existing !== undefined) return existing;
+
+    const target = paths.resolveWithin(relativePath);
+    const today = clock.now().slice(0, 10);
+    let existingFrontMatter: Record<string, unknown> | undefined;
+    if (await pathExists(target)) {
+      const text = await readTextFile(target);
+      const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+      if (match?.[1] !== undefined) {
+        const parsedYaml: unknown = YAML.parse(match[1]);
+        if (typeof parsedYaml === 'object' && parsedYaml !== null) {
+          existingFrontMatter = parsedYaml as Record<string, unknown>;
+        }
+      }
+    }
+    const allocator = new IdAllocator({ paths, clock });
+    const id = await allocator.allocate('Risk');
+    const priorRisksRaw = existingFrontMatter?.['risks'];
+    const priorRisks: readonly unknown[] = Array.isArray(priorRisksRaw) ? priorRisksRaw : [];
+    const priorChangelogRaw = existingFrontMatter?.['changelog'];
+    const priorChangelog: readonly unknown[] = Array.isArray(priorChangelogRaw)
+      ? priorChangelogRaw
+      : [];
+    const priorRevision =
+      typeof existingFrontMatter?.['revision'] === 'number' ? existingFrontMatter['revision'] : 0;
+    const candidate = {
+      type: 'Risk' as const,
+      schemaVersion: 1,
+      title: 'Risk register',
+      status: 'active',
+      created: (existingFrontMatter?.['created'] as string | undefined) ?? today,
+      updated: today,
+      revision: priorRevision + 1,
+      author: ownerRole,
+      changelog: priorChangelog,
+      risks: [
+        ...priorRisks,
+        {
+          id,
+          statement: `${decisionText} (${sessionProvenance(node.id)})`,
+          likelihood: 'unknown',
+          impact: 'unknown',
+          mitigation: 'To be assessed.',
+          owner: ownerRole,
+        },
+      ],
+    };
+    const parsed = risksFileSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw new RangeError(
+        `risksFileSchema rejected a session write-back candidate: ${parsed.error.message}`,
+      );
+    }
+    await writeFileAtomic(target, `---\n${YAML.stringify(parsed.data)}---\n`);
+    return id;
+  });
+}
+
+/**
+ * `16` §16.5's own mandatory write-back, dispatched to the real artifact-creation mechanism `16`
+ * §16.2's own session-type table implies each session type actually produces: `design-review`/
+ * `tradeoff` decisions are architectural rulings (`16` §16.5's own worked ADR reference), `premortem`/
+ * `war-room` decisions are risk-shaped (`16` §16.5's own worked "Add RISK:" action), every other
+ * session type keeps the plain KB-knowledge write-back `writeKbDecisionBack` already provides. Every
+ * path reuses the same real, already-established primitives (`KbWriter`, `IdAllocator`,
+ * `renderArtifactPath`) -- none of the three functions this dispatches to invents a fourth mechanism.
+ */
+async function writeSessionArtifactBack(
+  ctx: ExecuteStepContext,
+  sessionType: SessionType,
+  section: KbSection,
+  node: StepNode,
+  ownerRole: string,
+  decisionText: string,
+  clock: Clock,
+): Promise<string> {
+  if (sessionType === 'design-review' || sessionType === 'tradeoff') {
+    return writeAdrBack(ctx, node, ownerRole, decisionText, clock);
+  }
+  if (sessionType === 'premortem' || sessionType === 'war-room') {
+    return writeRiskBack(ctx, node, ownerRole, decisionText, clock);
+  }
+  return writeKbDecisionBack(ctx, section, node, ownerRole, decisionText, clock);
 }
 
 /** The honest "no real agent session ran" placeholder for the human-input fallback path -- `ok: true`
@@ -798,9 +1142,39 @@ export async function runSessionStep(
   const sessionType = node.sessionType as SessionType;
 
   const clock = toClock(ctx);
-  const machine = new SessionPhaseMachine({ clock });
+  const bounds = resolveSessionBounds(ctx.sessionBounds);
+  const machine = new SessionPhaseMachine({
+    clock,
+    maxAgentParticipants: bounds.maxAgentParticipants,
+    divergeIdeaCap: bounds.divergeIdeaCap,
+  });
   const { facilitatorRole, agentRoles, participants } = buildParticipants(sessionType);
   const facilitator = facilitatorAgent(facilitatorRole, node);
+
+  // `16` §16.8's own run-wide cost bound -- accumulated from every real dispatch this run makes
+  // (`estimateSessionCostUsd`'s own doc comment), across every phase, so `assembleSessionRecord`'s own
+  // `costUsd` field is finally a real, tracked figure rather than the disclosed, hardcoded `0` this
+  // file carried before this piece.
+  let costUsd = 0;
+  const trackCost = (session: SessionResult): void => {
+    costUsd += estimateSessionCostUsd(session);
+  };
+  /** `undefined` until a round-cap/cost/wall-clock bound genuinely fires; once set, DECIDE dispatches
+   * nothing further (this file's own `runSessionStep` doc comment addendum below has the fuller
+   * reasoning) and the record is assembled with `truncated_bound` naming it. Deliberately distinct
+   * from `ideaCapBound` below -- the idea cap forces early clustering, not an early end to the whole
+   * session, so it must never gate DECIDE's own real dispatch the way this variable does. */
+  let truncatedBound: SessionTruncationBound | undefined;
+  /** Set only when DIVERGE's own idea cap forced early clustering (`16` §16.8's own "Idea cap in
+   * DIVERGE: 30") -- a real-but-milder truncation than `truncatedBound` above, read back into the
+   * final record only as a fallback label when nothing more specific (a later round-cap/cost/wall-
+   * clock bound) also fired during the very same run. */
+  let ideaCapBound: SessionTruncationBound | undefined;
+  function checkTimeAndCost(): SessionTruncationBound | undefined {
+    if (costUsd >= bounds.maxCostUsd) return 'cost';
+    if (ctx.now() - startedAt >= bounds.maxWallClockMs) return 'wall-clock';
+    return undefined;
+  }
 
   let state = machine.start({ sessionType, participants });
 
@@ -834,32 +1208,83 @@ export async function runSessionStep(
   // position is never dispatched at all -- it enters, if anywhere, only via `ctx`'s own real
   // elicitation channel, never through `dispatchAgentStep`).
   const divergePerspectives = framed.directive.participants.filter((role) => role !== HUMAN_ROLE);
-  const divergeIdeas: DivergeInput['ideas'][number][] = [];
-  if (divergePerspectives.length > 0) {
-    const divergePhaseNode = phaseNode(node, 'diverge', facilitatorRole);
-    const divergeOutcome = await dispatchAgentStep(divergePhaseNode, facilitator, ctx, 'panel', {
-      perspectives: divergePerspectives,
-    });
-    for (const participant of divergeOutcome.participants ?? []) {
-      // A crashed/timed-out participant session (`SessionResult.ok === false`) contributes nothing
-      // real -- a fresh critic round found an earlier draft recorded its empty/garbage `finalText` as
-      // a genuine idea anyway, indistinguishable from a real, thoughtful contribution once merged.
-      if (!participant.session.ok) continue;
-      divergeIdeas.push(ideaFrom(participant));
-    }
-    // The reconciliation lane `divergeOutcome.outcome` left behind is never used (this module reads
-    // only `.participants`, per this file's own top-of-file doc comment) -- reclaimed immediately
-    // rather than leaked for the rest of the run (`cleanupPhaseLane`'s own doc comment).
-    await cleanupPhaseLane(ctx, divergePhaseNode.id);
-  }
-  const divergeResult = machine.diverge(state, { ideas: divergeIdeas });
-  state = divergeResult.state;
+  let endDiverge: { readonly state: SessionState; readonly directive: PhaseDirective };
+  {
+    // `16` §16.8's own "Max rounds per phase: DIVERGE 3" bound, made real: rather than always
+    // re-dispatching every perspective `maxDivergeRounds` times regardless of outcome (which would
+    // make every session — including every one this package's own test suite already exercises —
+    // dispatch 3x by default, a real behavioural change this piece has no mandate to make), each round
+    // after the first re-solicits *only* the perspectives whose immediately-preceding round genuinely
+    // failed (`SessionResult.ok === false`) -- an ordinary round where every dispatched perspective
+    // contributed something real converges after round 1, unchanged from this file's own prior
+    // behaviour. A perspective still failing when the round cap is reached is the real "non-converging"
+    // case `16` §16.8's own breach behaviour exists for.
+    let pending = divergePerspectives;
+    let divergeCappedDirective: PhaseDirective | undefined;
+    let boundHit: SessionTruncationBound | undefined;
+    for (let round = 1; pending.length > 0 && round <= bounds.maxDivergeRounds; round += 1) {
+      const suffix = round === 1 ? 'diverge' : `diverge-${String(round)}`;
+      const divergePhaseNode = phaseNode(node, suffix, facilitatorRole);
+      const divergeOutcome = await dispatchAgentStep(divergePhaseNode, facilitator, ctx, 'panel', {
+        perspectives: pending,
+      });
+      const roundIdeas: DivergeInput['ideas'][number][] = [];
+      const stillFailed: string[] = [];
+      for (const participant of divergeOutcome.participants ?? []) {
+        trackCost(participant.session);
+        // A crashed/timed-out participant session (`SessionResult.ok === false`) contributes nothing
+        // real -- a fresh critic round found an earlier draft recorded its empty/garbage `finalText`
+        // as a genuine idea anyway, indistinguishable from a real, thoughtful contribution once
+        // merged.
+        if (!participant.session.ok) {
+          stillFailed.push(roleFromParticipant(participant));
+          continue;
+        }
+        roundIdeas.push(ideaFrom(participant));
+      }
+      // The reconciliation lane `divergeOutcome.outcome` left behind is never used (this module reads
+      // only `.participants`, per this file's own top-of-file doc comment) -- reclaimed immediately
+      // rather than leaked for the rest of the run (`cleanupPhaseLane`'s own doc comment).
+      await cleanupPhaseLane(ctx, divergePhaseNode.id);
 
-  const endDiverge =
-    divergeResult.directive.kind === 'diverge-capped'
-      ? { state, directive: divergeResult.directive }
-      : machine.endDiverge(state);
-  state = endDiverge.state;
+      const divergeResult = machine.diverge(state, { ideas: roundIdeas });
+      state = divergeResult.state;
+      if (divergeResult.directive.kind === 'diverge-capped') {
+        divergeCappedDirective = divergeResult.directive;
+        break;
+      }
+      const breach = checkTimeAndCost();
+      if (breach !== undefined) {
+        boundHit = breach;
+        break;
+      }
+      pending = stillFailed;
+      if (pending.length > 0 && round >= bounds.maxDivergeRounds) {
+        boundHit = 'diverge-rounds';
+      }
+    }
+
+    if (divergeCappedDirective !== undefined) {
+      // `16` §16.8's own idea-cap bound, named -- unlike `boundHit` below, this does *not* force
+      // DECIDE to skip its own real dispatch (`ideaCapBound` is a record-label only, read back into
+      // the final `truncatedBound` meta field further down, never checked as a control-flow gate the
+      // way `truncatedBound` itself is): the idea cap forces early *clustering*, per `16` §16.3's own
+      // "DIVERGE ended... CONVERGE may begin," not an early end to the whole session -- CONVERGE and
+      // DECIDE still run their own real work afterward, exactly as this file's own behaviour was
+      // before this piece (`machine.diverge()` already sets `state.truncated = true` for this case on
+      // its own, independent of this variable).
+      ideaCapBound = 'diverge-idea-cap';
+      endDiverge = { state, directive: divergeCappedDirective };
+    } else if (boundHit !== undefined) {
+      truncatedBound = boundHit;
+      state = machine.forceToDecide(state);
+      endDiverge = { state, directive: { kind: 'dispatch-converge', participants: [] } };
+    } else {
+      const ended = machine.endDiverge(state);
+      state = ended.state;
+      endDiverge = { state, directive: ended.directive };
+    }
+  }
 
   // Hoisted ahead of CONVERGE (rather than declared immediately before DECIDE, as an earlier draft
   // did): the steel-man-debate CONVERGE path below (`16` §16.7 point 3) needs a real, registered
@@ -874,156 +1299,223 @@ export async function runSessionStep(
   // position outranking agent output when a human supplies one, not a fabricated agent session
   // impersonating them (the real precedence rule this module implements is in DECIDE-input handling
   // below -- `DecideInput.humanDecision`'s own doc comment, `@forge/sessions`).
-  const convergePerspectives = (
-    endDiverge.directive.kind === 'dispatch-converge'
-      ? endDiverge.directive.participants
-      : participants.map((p) => p.role)
-  ).filter((role) => role !== HUMAN_ROLE);
-  const objections: NonNullable<ConvergeInput['objections']>[number][] = [];
-  const clusters: NonNullable<ConvergeInput['clusters']>[number][] = [];
-  let convergeTechniqueId: string | undefined;
-  if (convergePerspectives.length > 0) {
-    const convergePhaseNode = phaseNode(node, 'converge', facilitatorRole);
+  //
+  // Skipped entirely when DIVERGE already forced this session's early end (`truncatedBound` already
+  // set): `16` §16.8's own "the facilitator forces convergence with what it has" applies at whichever
+  // phase the bound actually fired in -- forcing CONVERGE to run anyway would both spend further real
+  // cost/time past a bound that just fired to stop exactly that, and hand `machine.converge`/
+  // `advanceToDecide` a `state` already moved past `CONVERGE` by `machine.forceToDecide` above,
+  // which both assert the phase they expect and would throw `RUN-063` otherwise.
+  if (truncatedBound === undefined) {
+    const convergePerspectives = (
+      endDiverge.directive.kind === 'dispatch-converge'
+        ? endDiverge.directive.participants
+        : participants.map((p) => p.role)
+    ).filter((role) => role !== HUMAN_ROLE);
+    // Keyed by role, not pushed as a flat array: `16` §16.8's own "Max rounds per phase: CONVERGE 2"
+    // bound, made real the identical way DIVERGE's own round retry above is -- a role's own cluster
+    // content never actually depends on which round produced it (always `divergeIdeas` filtered by
+    // that same, fixed `proposedBy`), so keying by role is a real dedup, not merely a convenience;
+    // `objectionsByRole` keeps each role's *latest* round's own text, the identical "last round wins"
+    // treatment this file's own debate-mode handling already gives a multi-round contribution
+    // (`criticFinalText`'s own doc comment, below). A fresh critic round already found and fixed the
+    // identical duplicate-entry defect for debate rounds (`PLAN-M10.md` P11) -- keying by role here
+    // closes the same defect class for this piece's own new per-phase panel round retries too.
+    const clustersByRole = new Map<string, { readonly ideaIds: readonly string[] }>();
+    const objectionsByRole = new Map<string, string>();
+    let convergeTechniqueId: string | undefined;
+    const sessionHasCritic = participants.some((participant) => participant.role === CRITIC_ROLE);
 
-    // `16` §16.7 point 3 -- `tradeoff` sessions run CONVERGE as a real `debate`-mode dispatch, seeded
-    // with the real `steel-man-debate` technique's own prompt, instead of `panel` mode -- but only when
-    // this project actually has that technique installed and a real, non-critic role to dispatch as
-    // its proposer (`loadSteelManTechnique`'s own doc comment has the fallback reasoning for either
-    // condition failing).
-    const nonCriticRole = convergePerspectives.find((role) => role !== CRITIC_ROLE);
-    const steelManTechnique = STEEL_MAN_SESSION_TYPES.has(sessionType)
-      ? await loadSteelManTechnique(ctx)
-      : undefined;
-    // A fresh critic round found an earlier draft fell back to the neutral `facilitator` agent as the
-    // debate's own proposer whenever `nonCriticRole` had no real, registered `AgentDefinition`, then
-    // still labelled that facilitator-authored content as `nonCriticRole` in the record -- both a real
-    // violation of the facilitator's own "contributes no content of its own" invariant (this file's own
-    // top-of-file doc comment) and a mislabelled authorship. `useDebate` now requires a real, registered
-    // proposer agent outright; without one, CONVERGE degrades to ordinary `panel` mode instead, the
-    // identical "a real fallback, not a crash" choice `loadSteelManTechnique`'s own doc comment already
-    // makes for a missing technique.
-    const proposerAgent = nonCriticRole === undefined ? undefined : registry.get(nonCriticRole);
-    const useDebate = steelManTechnique !== undefined && proposerAgent !== undefined;
-    if (useDebate) convergeTechniqueId = steelManTechnique.id;
+    if (convergePerspectives.length > 0) {
+      for (let round = 1; round <= bounds.maxConvergeRounds; round += 1) {
+        const suffix = round === 1 ? 'converge' : `converge-${String(round)}`;
+        const convergePhaseNode = phaseNode(node, suffix, facilitatorRole);
 
-    const convergeOutcome =
-      useDebate && nonCriticRole !== undefined
-        ? await dispatchAgentStep(
-            convergePhaseNode,
-            proposerAgent,
-            ctx,
-            'debate',
-            // `16` §16.8's own "Max rounds per phase: ... CONVERGE 2" bound.
-            { maxDebateRounds: 2, steelManRequirement: steelManTechnique.prompt },
-          )
-        : await dispatchAgentStep(convergePhaseNode, facilitator, ctx, 'panel', {
-            perspectives: convergePerspectives,
-          });
+        // `16` §16.7 point 3 -- `tradeoff` sessions run CONVERGE's own first round as a real
+        // `debate`-mode dispatch, seeded with the real `steel-man-debate` technique's own prompt,
+        // instead of `panel` mode -- but only when this project actually has that technique installed
+        // and a real, non-critic role to dispatch as its proposer (`loadSteelManTechnique`'s own doc
+        // comment has the fallback reasoning for either condition failing). Only round 1: `debate`
+        // mode's own `maxDebateRounds: 2` already spends the full `16` §16.8 CONVERGE round budget
+        // inside that one dispatch call: a genuinely non-converging steel-man session (the debate's own
+        // two internal rounds both end in a generic non-objection) degrades to this loop's own ordinary
+        // per-round panel retries from round 2 onward, the same path every other session type uses.
+        const nonCriticRole = convergePerspectives.find((role) => role !== CRITIC_ROLE);
+        const steelManTechnique =
+          round === 1 && STEEL_MAN_SESSION_TYPES.has(sessionType)
+            ? await loadSteelManTechnique(ctx)
+            : undefined;
+        // A fresh critic round found an earlier draft fell back to the neutral `facilitator` agent as
+        // the debate's own proposer whenever `nonCriticRole` had no real, registered `AgentDefinition`,
+        // then still labelled that facilitator-authored content as `nonCriticRole` in the record --
+        // both a real violation of the facilitator's own "contributes no content of its own" invariant
+        // (this file's own top-of-file doc comment) and a mislabelled authorship. `useDebate` now
+        // requires a real, registered proposer agent outright; without one, CONVERGE degrades to
+        // ordinary `panel` mode instead, the identical "a real fallback, not a crash" choice
+        // `loadSteelManTechnique`'s own doc comment already makes for a missing technique.
+        const proposerAgent = nonCriticRole === undefined ? undefined : registry.get(nonCriticRole);
+        const useDebate = steelManTechnique !== undefined && proposerAgent !== undefined;
+        if (useDebate) convergeTechniqueId = steelManTechnique.id;
 
-    let criticFinalText: string | undefined;
-    // A fresh critic round found an earlier draft pushed one `clusters` entry *per debate round* for
-    // the identical `nonCriticRole` (a 2-round debate produced two duplicate cluster entries for one
-    // real perspective, breaking panel mode's own one-entry-per-perspective invariant) -- captured here
-    // instead, the identical "last round wins, pushed once after the loop" treatment `criticFinalText`
-    // already gets, and used only for the debate path (panel mode still pushes inline, one perspective,
-    // one session, no rounds to collapse).
-    let proposerFinalText: string | undefined;
-    for (const participant of convergeOutcome.participants ?? []) {
-      // Identical reasoning to DIVERGE's own filter above -- a failed `critic` session must never
-      // count as a real, structural objection (`16` §16.7 point 2's own gate, `advanceToDecide`
-      // below), and a failed non-critic session must never seed a cluster from empty/garbage text.
-      if (!participant.session.ok) continue;
-      const role =
-        useDebate && nonCriticRole !== undefined
-          ? roleFromDebateParticipant(participant.role, nonCriticRole)
-          : roleFromParticipant(participant);
-      if (role === CRITIC_ROLE) {
+        // Round 1 always dispatches every perspective (identical to this file's own behaviour before
+        // this piece's own round-retry loop, so no existing test's own round-1 stepId assertions
+        // change). Round 2+ re-solicits only the roles that have not yet produced a usable, recorded
+        // contribution -- `critic` until it has a real objection, any other role until it has a
+        // cluster entry -- the identical "retry only who still needs to contribute" design DIVERGE's
+        // own round-retry loop above already uses, rather than re-dispatching the full cohort (and
+        // spending the full cohort's own real cost) purely to give one already-satisfied role another,
+        // unneeded turn.
+        const roundPerspectives =
+          round === 1
+            ? convergePerspectives
+            : convergePerspectives.filter((role) =>
+                role === CRITIC_ROLE
+                  ? !objectionsByRole.has(CRITIC_ROLE)
+                  : !clustersByRole.has(role),
+              );
+
+        const convergeOutcome =
+          useDebate && nonCriticRole !== undefined
+            ? await dispatchAgentStep(
+                convergePhaseNode,
+                proposerAgent,
+                ctx,
+                'debate',
+                // `16` §16.8's own "Max rounds per phase: ... CONVERGE 2" bound.
+                { maxDebateRounds: 2, steelManRequirement: steelManTechnique.prompt },
+              )
+            : await dispatchAgentStep(convergePhaseNode, facilitator, ctx, 'panel', {
+                perspectives: roundPerspectives,
+              });
+
+        let criticFinalText: string | undefined;
         // The *last* round's own text when debate ran more than one round -- deferred to after this
-        // loop (rather than pushed to `objections` immediately) so the generic-non-objection re-prompt
-        // below can still act on it before it becomes this session's own real, recorded objection.
-        criticFinalText = participant.session.finalText;
-      } else if (useDebate) {
-        proposerFinalText = participant.session.finalText;
-      } else {
-        clusters.push({
-          label: role,
-          ideaIds: divergeIdeas
-            .map((idea, index) => ({ idea, index }))
-            .filter(({ idea }) => idea.proposedBy === role)
-            .map(({ index }) => `IDEA-${String(index + 1).padStart(3, '0')}`),
-        });
-        // `16` §16.7 point 4's own real, counted signal: a non-critic participant's own real
-        // disagreement counts too, not only critic's structural objection -- most real session types
-        // (`16` §16.2's own table) carry no `critic` participant at all (`expressesDisagreement`'s own
-        // doc comment has the fuller reasoning for why this matters).
-        if (expressesDisagreement(participant.session.finalText)) {
-          objections.push({ by: role, text: participant.session.finalText });
+        // loop (rather than recorded immediately) so the generic-non-objection re-prompt below can
+        // still act on it before it becomes this round's own real, recorded objection.
+        let proposerFinalText: string | undefined;
+        for (const participant of convergeOutcome.participants ?? []) {
+          trackCost(participant.session);
+          // Identical reasoning to DIVERGE's own filter above -- a failed `critic` session must never
+          // count as a real, structural objection (`16` §16.7 point 2's own gate, `advanceToDecide`
+          // below), and a failed non-critic session must never seed a cluster from empty/garbage text.
+          if (!participant.session.ok) continue;
+          const role =
+            useDebate && nonCriticRole !== undefined
+              ? roleFromDebateParticipant(participant.role, nonCriticRole)
+              : roleFromParticipant(participant);
+          if (role === CRITIC_ROLE) {
+            criticFinalText = participant.session.finalText;
+          } else if (useDebate) {
+            proposerFinalText = participant.session.finalText;
+          } else {
+            clustersByRole.set(role, {
+              // `state.ideas` (not a locally-reconstructed array) is the one authoritative source of
+              // real `IDEA-###` ids -- assigned by `machine.diverge()` itself, across however many real
+              // rounds this piece's own DIVERGE retry loop above actually ran.
+              ideaIds: state.ideas
+                .filter((idea) => idea.proposedBy === role)
+                .map((idea) => idea.id),
+            });
+            // `16` §16.7 point 4's own real, counted signal: a non-critic participant's own real
+            // disagreement counts too, not only critic's structural objection -- most real session
+            // types (`16` §16.2's own table) carry no `critic` participant at all
+            // (`expressesDisagreement`'s own doc comment has the fuller reasoning for why this
+            // matters).
+            if (expressesDisagreement(participant.session.finalText)) {
+              objectionsByRole.set(role, participant.session.finalText);
+            }
+          }
+        }
+        if (useDebate && nonCriticRole !== undefined && proposerFinalText !== undefined) {
+          clustersByRole.set(nonCriticRole, {
+            ideaIds: state.ideas
+              .filter((idea) => idea.proposedBy === nonCriticRole)
+              .map((idea) => idea.id),
+          });
+          if (expressesDisagreement(proposerFinalText)) {
+            objectionsByRole.set(nonCriticRole, proposerFinalText);
+          }
+        }
+
+        // `16` §16.7 point 2's own facilitator-enforced mandate: "'this seems fine' is not an
+        // acceptable contribution and is rejected by the facilitator" -- rejected and re-prompted
+        // exactly once per round before being accepted regardless of what the second attempt says
+        // (`isGenericNonObjection`'s own doc comment: this is a real, mechanical proxy, not a judge of
+        // whether the second attempt is any good). `isGenericNonObjection` also matches a bare debate
+        // "CONCEDE" (its own pattern list) -- a fresh critic round found an earlier draft recorded a
+        // debate concession verbatim as a real objection, the exact "theatre" measure 4 exists to
+        // catch, given `no_disagreement_observed` (`assembleSessionRecord`) reads `state.objections`
+        // directly.
+        if (criticFinalText !== undefined && isGenericNonObjection(criticFinalText)) {
+          const reprompt = await runParticipantSession(
+            convergePhaseNode,
+            ctx,
+            'critic-reprompt',
+            `You are acting as ${facilitator.name} (${facilitator.persona.voice}), framing this re-ask on ` +
+              `${CRITIC_ROLE}'s own behalf.\n\nThe prior CONVERGE contribution ("${criticFinalText}") is a ` +
+              'generic non-objection. 16 §16.7 point 2 does not accept a "this seems fine"-shaped response ' +
+              'as a real contribution. State one concrete, falsifiable objection to the proposal under ' +
+              'discussion -- or, if none genuinely exists, say precisely and specifically why not, rather ' +
+              'than a generic assurance.',
+          );
+          // A fresh critic round found an earlier draft left `criticFinalText` at its own original,
+          // already-rejected generic text when the re-prompt session itself failed (`ok: false`) --
+          // resurrecting a real failure into a fabricated, accepted contribution, the identical class
+          // of bug this file's own DIVERGE/CONVERGE participant loops already guard against for every
+          // other failed session. `undefined` here is the honest "critic contributed nothing usable"
+          // outcome for this round.
+          criticFinalText = reprompt.ok ? reprompt.finalText : undefined;
+        }
+        if (criticFinalText !== undefined) {
+          objectionsByRole.set(CRITIC_ROLE, criticFinalText);
+        }
+
+        // Identical reasoning to DIVERGE's own cleanup above.
+        await cleanupPhaseLane(ctx, convergePhaseNode.id);
+
+        const breach = checkTimeAndCost();
+        if (breach !== undefined) {
+          truncatedBound = breach;
+          break;
+        }
+        // `16` §16.7 point 2's own real, structural completion signal: CONVERGE is done exactly when
+        // either no `critic` participates at all, or `critic` has produced a real, recorded objection
+        // (`advanceToDecide`'s own identical gate, `@forge/sessions`) -- an ordinary session where
+        // `critic` objects (directly, or after one reprompt) by round 1 stops here, unchanged from this
+        // file's own behaviour before this piece. A `critic` that never produces one despite every
+        // round's own reprompt is the real "non-converging" case `16` §16.8's own round cap exists for.
+        if (!sessionHasCritic || objectionsByRole.has(CRITIC_ROLE)) break;
+        if (round >= bounds.maxConvergeRounds) {
+          truncatedBound = 'converge-rounds';
+          break;
         }
       }
     }
-    if (useDebate && nonCriticRole !== undefined && proposerFinalText !== undefined) {
-      clusters.push({
-        label: nonCriticRole,
-        ideaIds: divergeIdeas
-          .map((idea, index) => ({ idea, index }))
-          .filter(({ idea }) => idea.proposedBy === nonCriticRole)
-          .map(({ index }) => `IDEA-${String(index + 1).padStart(3, '0')}`),
-      });
-      if (expressesDisagreement(proposerFinalText)) {
-        objections.push({ by: nonCriticRole, text: proposerFinalText });
+
+    const convergeResult = machine.converge(state, {
+      clusters: [...clustersByRole.entries()].map(([label, cluster]) => ({ label, ...cluster })),
+      objections: [...objectionsByRole.entries()].map(([by, text]) => ({ by, text })),
+      ...(convergeTechniqueId === undefined ? {} : { techniqueId: convergeTechniqueId }),
+    });
+    state = convergeResult.state;
+
+    if (truncatedBound !== undefined) {
+      state = machine.forceToDecide(state);
+    } else {
+      const advance = machine.advanceToDecide(state);
+      state = advance.state;
+      if (advance.directive.kind === 'converge-refused') {
+        return domainRefusalOutcome(node.id, startedAt, ctx.now(), advance.directive.error);
       }
     }
-
-    // `16` §16.7 point 2's own facilitator-enforced mandate: "'this seems fine' is not an acceptable
-    // contribution and is rejected by the facilitator" -- rejected and re-prompted exactly once before
-    // being accepted regardless of what the second attempt says (`isGenericNonObjection`'s own doc
-    // comment: this is a real, mechanical proxy, not a judge of whether the second attempt is any
-    // good). `isGenericNonObjection` also matches a bare debate "CONCEDE" (its own pattern list) -- a
-    // fresh critic round found an earlier draft recorded a debate concession verbatim as a real
-    // objection, the exact "theatre" measure 4 exists to catch, given `no_disagreement_observed`
-    // (`assembleSessionRecord`) reads `state.objections` directly.
-    if (criticFinalText !== undefined && isGenericNonObjection(criticFinalText)) {
-      const reprompt = await runParticipantSession(
-        convergePhaseNode,
-        ctx,
-        'critic-reprompt',
-        `You are acting as ${facilitator.name} (${facilitator.persona.voice}), framing this re-ask on ` +
-          `${CRITIC_ROLE}'s own behalf.\n\nThe prior CONVERGE contribution ("${criticFinalText}") is a ` +
-          'generic non-objection. 16 §16.7 point 2 does not accept a "this seems fine"-shaped response ' +
-          'as a real contribution. State one concrete, falsifiable objection to the proposal under ' +
-          'discussion -- or, if none genuinely exists, say precisely and specifically why not, rather ' +
-          'than a generic assurance.',
-      );
-      // A fresh critic round found an earlier draft left `criticFinalText` at its own original,
-      // already-rejected generic text when the re-prompt session itself failed (`ok: false`) --
-      // resurrecting a real failure into a fabricated, accepted contribution, the identical class of
-      // bug this file's own DIVERGE/CONVERGE participant loops already guard against for every other
-      // failed session. `undefined` here is the honest "critic contributed nothing usable" outcome,
-      // matching `advanceToDecide`'s own real, structural refusal (`RUN-062`) for a `critic` participant
-      // that never produced a real objection.
-      criticFinalText = reprompt.ok ? reprompt.finalText : undefined;
-    }
-    if (criticFinalText !== undefined) {
-      objections.push({ by: CRITIC_ROLE, text: criticFinalText });
-    }
-
-    // Identical reasoning to DIVERGE's own cleanup above.
-    await cleanupPhaseLane(ctx, convergePhaseNode.id);
-  }
-  const convergeResult = machine.converge(state, {
-    clusters,
-    objections,
-    ...(convergeTechniqueId === undefined ? {} : { techniqueId: convergeTechniqueId }),
-  });
-  state = convergeResult.state;
-
-  const advance = machine.advanceToDecide(state);
-  state = advance.state;
-  if (advance.directive.kind === 'converge-refused') {
-    return domainRefusalOutcome(node.id, startedAt, ctx.now(), advance.directive.error);
   }
 
   // DECIDE -- solo dispatch to the resolved owner, or a real human-input request if none resolves.
+  // Skipped entirely once `truncatedBound` is set: `16` §16.8's own "forces convergence with what it
+  // has" -- spending a further real dispatch (and further real cost/time) after a hard bound has
+  // already fired would defeat the bound's own purpose. The session still reaches a real, honest
+  // record (`inconclusive` in substance, `truncated` in `status` -- `assemble.ts`'s own
+  // `resolveStatus` gives `truncated` precedence), never a fabricated decision.
   const owner = resolveDecisionOwner(agentRoles, facilitatorRole, registry);
   let decideSession: SessionResult = NO_AGENT_SESSION;
   let decideInput: DecideInput;
@@ -1031,7 +1523,13 @@ export async function runSessionStep(
   // session, or a lane/commit failure inside `runAgentStep`) -- distinct from the human-fallback path
   // above, which is not a failure at all, only an honest "nobody here owns this."
   let decideFailure: StepOutcome['failure'];
-  if (humanInput !== undefined) {
+  if (truncatedBound !== undefined) {
+    decideInput = {
+      inconclusiveReason:
+        `Session truncated: the '${truncatedBound}' bound (16 §16.8) was reached before DECIDE could ` +
+        'run; no decision was fabricated from a session the facilitator was forced to cut short.',
+    };
+  } else if (humanInput !== undefined) {
     // `16` §16.7 point 5's own "outranks" rule, made real: the human's own supplied position wins
     // outright, whether or not an agent owner would otherwise have resolved -- no agent DECIDE
     // dispatch runs at all (a real, honest saving against `16` §16.8's own cost/time bounds, not merely
@@ -1049,8 +1547,9 @@ export async function runSessionStep(
     // reaches this (`HumanSessionInput`'s own doc comment: no caller populates it yet), so this is
     // recorded here rather than reworked -- reworking `writeDecisionBack`'s own shared idempotency
     // contract would also change the already-tested agent-decision retry path. See `SPEC-QUESTIONS.md`.
-    const artifactRef = await writeDecisionBack(
+    const artifactRef = await writeSessionArtifactBack(
       ctx,
+      sessionType,
       SESSION_TYPE_DEFAULTS[sessionType].kbSection,
       node,
       humanInput.owner ?? HUMAN_ROLE,
@@ -1094,6 +1593,7 @@ export async function runSessionStep(
       decideOutcome.outcome.detail.kind === 'agent'
         ? decideOutcome.outcome.detail.session
         : decideSession;
+    trackCost(decideSession);
     // A fresh critic round found an earlier draft ignored `decideOutcome.outcome.status`/
     // `decideSession.ok` entirely, so a genuinely failed decide dispatch (a lane/commit failure, a
     // crashed adapter session) still wrote its own empty/garbage `finalText` to the KB as a real
@@ -1113,8 +1613,9 @@ export async function runSessionStep(
           'was made, and none was fabricated from the failed session output.',
       };
     } else {
-      const artifactRef = await writeDecisionBack(
+      const artifactRef = await writeSessionArtifactBack(
         ctx,
+        sessionType,
         SESSION_TYPE_DEFAULTS[sessionType].kbSection,
         node,
         owner.id,
@@ -1136,6 +1637,23 @@ export async function runSessionStep(
   }
   const decideResult = machine.decide(state, decideInput);
   state = decideResult.state;
+
+  // `16` §16.8's own cost/wall-clock bounds apply to the *whole* session, not only to DIVERGE/CONVERGE
+  // -- a fresh critic round found an earlier draft only ever checked `checkTimeAndCost()` inside those
+  // two phases' own round loops, so a real, expensive DECIDE-phase dispatch (`trackCost(decideSession)`
+  // above) could push the session's own real, tracked cost or wall clock past its configured bound
+  // with nothing in the final record ever reflecting it -- a real bound breach silently reported as an
+  // ordinary `complete` success. Checked once more here, after every real dispatch this run could ever
+  // make has already happened: too late to skip DECIDE's own dispatch (it already ran, and its real
+  // decision/write-back is not discarded merely because the very call that produced it also tipped the
+  // session over budget), but not too late to record the truth about it.
+  if (truncatedBound === undefined) {
+    const finalBreach = checkTimeAndCost();
+    if (finalBreach !== undefined) {
+      truncatedBound = finalBreach;
+      state = { ...state, truncated: true };
+    }
+  }
 
   // RECORD -- `assembleSessionRecord` (`@forge/sessions`), the real, schema-validated artifact, then a
   // real, persisted `docs/forge/sessions/SESSION-###.md` file (`persistSessionRecord`'s own doc
@@ -1163,14 +1681,18 @@ export async function runSessionStep(
           summary: 'Session recorded.',
         },
       ],
-      // No real per-session cost meter is reachable from here (`SessionResult.usage` carries token
-      // counts, never a dollar figure -- confirmed directly, `@forge/adapter-kit`'s own
-      // `SessionResult` type) -- a real, disclosed `0` rather than a fabricated estimate, left for a
-      // later piece with a real cost model (the identical `ExecuteStepContext`-wide gap
-      // `plan/types.ts`'s own `CriticalPathResult.estimatedCost` doc comment already names for the
-      // declared, not measured, case).
-      costUsd: 0,
+      // The real, tracked figure this run actually accumulated (`estimateSessionCostUsd`'s own doc
+      // comment) -- no longer the disclosed, hardcoded `0` this file carried before `PLAN-M10.md` P12.
+      costUsd,
       ended: endedIso,
+      // `truncatedBound` (a round-cap/cost/wall-clock breach) takes precedence when both fired during
+      // the same run -- it is always the more specific, more recent reason; `ideaCapBound` is only the
+      // fallback label for a session truncated solely by DIVERGE's own idea cap.
+      ...(truncatedBound === undefined
+        ? ideaCapBound === undefined
+          ? {}
+          : { truncatedBound: ideaCapBound }
+        : { truncatedBound }),
     });
     await persistSessionRecord(ctx, assembled, state);
     return assembled;

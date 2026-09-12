@@ -10,7 +10,11 @@
  * @see PLAN-M10.md P9
  */
 import { ForgeError } from '@forge/core';
-import { sessionRecordSchema, type SessionRecord } from '@forge/schemas';
+import {
+  sessionRecordSchema,
+  type SessionRecord,
+  type SessionTruncationBound,
+} from '@forge/schemas';
 
 import { canComplete } from '../phase-machine/can-complete.ts';
 import { isGenericNonObjection } from '../phase-machine/machine.ts';
@@ -41,6 +45,13 @@ export interface AssembleSessionRecordMeta {
   readonly costUsd: number;
   /** ISO-8601 datetime, per `sessionRecordSchema`'s own `z.string().datetime()`. */
   readonly ended: string;
+  /** `16` §16.8's own breach behaviour, named -- set by the caller (`@forge/engine`, the one side of
+   * the boundary that actually counts rounds/wall-clock/cost, per this file's own `SessionState`
+   * doc comment) exactly when its own bound enforcement forced this session's early end.
+   * `resolveStatus` below still independently decides `status: 'truncated'` from `state.truncated`
+   * alone -- this field only ever *names* the reason, never the fact itself, so the two can never
+   * disagree about whether a session was truncated, only (when it was) about why. */
+  readonly truncatedBound?: SessionTruncationBound | undefined;
 }
 
 /**
@@ -119,6 +130,7 @@ export function assembleSessionRecord(
     ended: meta.ended,
     cost_usd: meta.costUsd,
     no_disagreement_observed: !hadRealDisagreement(state),
+    ...(meta.truncatedBound === undefined ? {} : { truncated_bound: meta.truncatedBound }),
     schemaVersion: meta.schemaVersion,
     title: meta.title,
     status: resolveStatus(state),

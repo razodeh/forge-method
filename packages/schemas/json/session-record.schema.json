@@ -120,6 +120,16 @@
       "minLength": 1,
       "type": "string"
     },
+    "truncated_bound": {
+      "enum": [
+        "diverge-rounds",
+        "converge-rounds",
+        "diverge-idea-cap",
+        "wall-clock",
+        "cost"
+      ],
+      "type": "string"
+    },
     "type": {
       "const": "SessionRecord",
       "type": "string"

@@ -12,16 +12,21 @@ import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
-import { readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
+import { listDirSorted, readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
 import { FakePlatformAdapter } from '@forge/testkit';
-import type { PlatformAdapter, SessionRequest } from '@forge/adapter-kit';
+import type { PlatformAdapter, SessionRequest, SessionResult } from '@forge/adapter-kit';
 import type { SessionRecord } from '@forge/schemas';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { createTelemetryFacade } from '../../src/dispatch/facades.ts';
 import type { NewDispatchEvent, TelemetryFacade } from '../../src/dispatch/types.ts';
-import { runSessionStep, type SessionStepResult } from '../../src/interaction/session.ts';
+import {
+  runSessionStep,
+  estimateSessionCostUsd,
+  DEFAULT_SESSION_BOUNDS,
+  type SessionStepResult,
+} from '../../src/interaction/session.ts';
 import { createTestContext, createTestClock, node } from '../dispatch/helpers.ts';
 
 /** `SessionStepResult.record` is only absent for a domain refusal (FRAME/CONVERGE) this test file's
@@ -506,16 +511,24 @@ describe('runSessionStep — domain refusals are reported as data, never thrown'
     expect(result.record).toBeUndefined();
   });
 
-  it('a CONVERGE-phase critic dispatch that genuinely fails leaves the structural objection gate unsatisfied, producing a failed StepOutcome, not a thrown error', async () => {
+  it('a CONVERGE-phase critic dispatch that genuinely fails every round is cut off at the round cap and marked truncated, not thrown or fabricated into success', async () => {
     const projectRoot = await createTempRepo('converge-refused');
     const adapter = new FakePlatformAdapter();
     // tradeoff's own participants are [architect, critic] -- failing critic's own CONVERGE dispatch
-    // means no real objection is ever recorded for it.
-    // `wf:tradeoff-objection-flaky` deliberately avoids the substring "critic" in its own id --
-    // an earlier draft of this test used an id containing it, which made the matcher below also
-    // match the *reconciliation* session's own stepId (`<id>:converge`, no ":panel:" segment), a
-    // real, easy-to-hit false match this comment records so it is not reintroduced.
-    adapter.injectFailure((req) => req.stepId.includes(':converge:panel:critic'), 'error');
+    // every round means no real objection is ever recorded for it, forcing `PLAN-M10.md` P12's own
+    // real CONVERGE round cap (`bounds.maxConvergeRounds`, default 2) rather than the pre-P12 single-
+    // attempt refusal this test used to assert. `.script` (not `.injectFailure`, which is one-shot and
+    // would only fail this dispatch's very first round, letting round 2's default script succeed and
+    // silently "heal" the failure) persists the failure across every round's own re-dispatch.
+    // `wf:tradeoff-objection-flaky` deliberately avoids the substring "critic" in its own id -- an
+    // earlier draft of this test used an id containing it, which made the matcher below also match the
+    // *reconciliation* session's own stepId (`<id>:converge`, no ":panel:" segment), a real, easy-to-hit
+    // false match this comment records so it is not reintroduced.
+    adapter.script((req) => req.stepId.includes(':panel:critic'), {
+      text: [],
+      endReason: 'error',
+      errorInfo: { code: 'boom', message: 'critic dispatch always fails' },
+    });
     const ctx = createTestContext({ projectRoot, adapter });
     const stepNode = node({
       id: 'wf:tradeoff-objection-flaky',
@@ -526,9 +539,12 @@ describe('runSessionStep — domain refusals are reported as data, never thrown'
 
     const result = await runSessionStep(stepNode, ctx);
 
-    expect(result.outcome.status).toBe('failed');
-    expect(result.outcome.failure?.code).toBe('RUN-062');
-    expect(result.record).toBeUndefined();
+    // A bounded, honest truncation (`16` §16.8) -- never a thrown error, and never fabricated into an
+    // ordinary success with no trace of the real gate that was never satisfied.
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('converge-rounds');
   });
 });
 
@@ -875,14 +891,23 @@ describe('runSessionStep — anti-groupthink measures (16 §16.7)', () => {
     expect(architectClusterLines).toHaveLength(1);
   });
 
-  it('measure 2 (regression): a critic re-prompt that itself genuinely fails is not fabricated into an accepted objection -- the session honestly refuses CONVERGE (RUN-062)', async () => {
+  it('measure 2 (regression): a critic re-prompt that itself genuinely fails every round is not fabricated into an accepted objection -- the session is honestly cut off and marked truncated at the CONVERGE round cap', async () => {
     const projectRoot = await createTempRepo('anti-groupthink-critic-reprompt-fails');
     await withRealAgentRoster(projectRoot);
     const fake = new FakePlatformAdapter();
     fake.script((request) => request.stepId.endsWith(':panel:critic'), {
       text: ['This seems fine.'],
     });
-    fake.injectFailure((request) => request.stepId.endsWith(':critic-reprompt'), 'error');
+    // `.script` (persistent across every round), not the one-shot `.injectFailure`: a one-shot failure
+    // would only fail round 1's own re-prompt, leaving round 2's re-prompt to hit the adapter's default
+    // (unscripted) response -- real, non-generic text that would satisfy the critic gate and silently
+    // "heal" the very failure this test exists to keep honest, `PLAN-M10.md` P12's own real CONVERGE
+    // round cap (`bounds.maxConvergeRounds`, default 2) fires only when the failure persists.
+    fake.script((request) => request.stepId.endsWith(':critic-reprompt'), {
+      text: [],
+      endReason: 'error',
+      errorInfo: { code: 'boom', message: 'critic reprompt always fails' },
+    });
     const ctx = createTestContext({ projectRoot, adapter: fake });
     const stepNode = node({
       id: 'wf:design-review-reprompt-fails',
@@ -893,9 +918,10 @@ describe('runSessionStep — anti-groupthink measures (16 §16.7)', () => {
 
     const result = await runSessionStep(stepNode, ctx);
 
-    expect(result.outcome.status).toBe('failed');
-    expect(result.outcome.failure?.code).toBe('RUN-062');
-    expect(result.record).toBeUndefined();
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('converge-rounds');
   });
 
   it('measure 4: a scripted all-agreement panel (no critic present, no participant disagrees) flags no_disagreement_observed; one real disagreement clears it', async () => {
@@ -968,5 +994,367 @@ describe('runSessionStep — anti-groupthink measures (16 §16.7)', () => {
     );
     const text = await readTextFile(target);
     expect(text).toContain('Ship the manual path for now, revisit automation next quarter.');
+  });
+});
+
+describe('DEFAULT_SESSION_BOUNDS — 16 §16.8 own literal bound table', () => {
+  it('matches every one of 16 §16.8 own literal default values', () => {
+    expect(DEFAULT_SESSION_BOUNDS).toEqual({
+      maxDivergeRounds: 3,
+      maxConvergeRounds: 2,
+      maxAgentParticipants: 5,
+      maxWallClockMs: 20 * 60 * 1000,
+      maxCostUsd: 3,
+      divergeIdeaCap: 30,
+    });
+  });
+});
+
+describe('runSessionStep — PLAN-M10.md P12: bounds enforcement', () => {
+  it('a DIVERGE participant that never converges (fails every round) is cut off at the round cap and marked truncated with bound: diverge-rounds', async () => {
+    const projectRoot = await createTempRepo('diverge-rounds-cap');
+    const adapter = new FakePlatformAdapter();
+    // `ux` never contributes a real idea, in any round -- brainstorm's own DIVERGE dispatches
+    // [pm, analyst, architect, ux] (critic muted); persistent failure (`.script`, not the one-shot
+    // `.injectFailure`) means every one of `bounds.maxDivergeRounds` real retry rounds re-solicits
+    // `ux` specifically (this piece's own real "retry only the participants who failed" design) and
+    // gets the identical failure every time -- the real "non-converging" case `16` §16.8's own round
+    // cap exists for.
+    adapter.script((request) => request.stepId.includes(':panel:ux'), {
+      text: [],
+      endReason: 'error',
+      errorInfo: { code: 'boom', message: 'ux never contributes' },
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:brainstorm-diverge-never-converges',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    // A bounded, honest truncation, never a thrown error and never a fabricated ordinary success.
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('diverge-rounds');
+  });
+
+  it('a session exceeding the configured cost bound mid-CONVERGE is cut off and marked truncated with bound: cost', async () => {
+    const projectRoot = await createTempRepo('cost-cap-mid-converge');
+    const adapter = new FakePlatformAdapter();
+    // brainstorm's own default script gives every one of its 4 real DIVERGE/CONVERGE participants a
+    // single-turn response -- a real, deterministic, small token cost per dispatch
+    // (`estimateSessionCostUsd`'s own doc comment). `maxCostUsd: 0.001` sits strictly between DIVERGE's
+    // own real total cost (4 participants x 1 turn) and DIVERGE + CONVERGE's own combined total, so the
+    // bound fires for real, right after CONVERGE's own first real round of dispatches -- not before,
+    // and not merely because the bound is unrealistically small.
+    const ctx = createTestContext({ projectRoot, adapter, sessionBounds: { maxCostUsd: 0.001 } });
+    const stepNode = node({
+      id: 'wf:brainstorm-cost-cap',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('cost');
+    expect(record.cost_usd).toBeGreaterThanOrEqual(0.001);
+  });
+
+  it('a session exceeding the configured wall-clock bound is cut off and marked truncated with bound: wall-clock', async () => {
+    const projectRoot = await createTempRepo('wall-clock-cap');
+    const adapter = new FakePlatformAdapter();
+    // `maxWallClockMs: 0` -- any real elapsed time at all (this package's own `createTestClock`, used
+    // by `createTestContext` when no `now` override is given, ticks forward on every real call) already
+    // exceeds it, so the bound fires deterministically right after DIVERGE's own first real dispatch.
+    const ctx = createTestContext({ projectRoot, adapter, sessionBounds: { maxWallClockMs: 0 } });
+    const stepNode = node({
+      id: 'wf:brainstorm-wall-clock-cap',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('wall-clock');
+  });
+});
+
+describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type', () => {
+  it('a design-review decision writes back a real ADR (not a plain KB entry), verified by re-reading it from disk', async () => {
+    const projectRoot = await createTempRepo('adr-writeback');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:design-review-adr',
+      kind: 'session',
+      sessionType: 'design-review',
+      brief: 'Should we ship the new payments migration path',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(requireRecord(result).status).toBe('complete');
+
+    const paths = new ProjectPaths(projectRoot);
+    const files = await listDirSorted(paths.resolveWithin('kb/decisions'));
+    expect(files).toHaveLength(1);
+    const adrFile = files[0];
+    if (adrFile === undefined) throw new Error('expected exactly one ADR file');
+    const text = await readTextFile(paths.resolveWithin(`kb/decisions/${adrFile}`));
+    expect(text).toMatch(/^id:\s*ADR-\d{4}/m);
+    expect(text).toMatch(/^type:\s*ADR\s*$/m);
+    // The real provenance marker `writeAdrBack` records -- proof this ADR really was produced by this
+    // exact session step, not a coincidentally pre-existing one.
+    expect(text).toContain(`session:${stepNode.id}`);
+
+    // No plain KB-knowledge entry was written for this decision -- the ADR is the one real artifact.
+    const kbFile = paths.resolveWithin(
+      `docs/forge/kb/architecture/session-${stepNode.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`,
+    );
+    await expect(readTextFile(kbFile)).rejects.toThrow();
+  });
+
+  it('a premortem decision writes back a real Risk register entry in kb/risks.md, verified by re-reading it from disk', async () => {
+    const projectRoot = await createTempRepo('risk-writeback');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:premortem-risk',
+      kind: 'session',
+      sessionType: 'premortem',
+      brief: 'What could sink the payments migration launch',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(requireRecord(result).status).toBe('complete');
+
+    const paths = new ProjectPaths(projectRoot);
+    const text = await readTextFile(paths.resolveWithin('kb/risks.md'));
+    expect(text).toMatch(/^type:\s*Risk\s*$/m);
+    expect(text).toContain(`session:${stepNode.id}`);
+  });
+
+  it('a second session step writing back to an already-existing kb/risks.md appends rather than overwriting the prior entry', async () => {
+    const projectRoot = await createTempRepo('risk-writeback-append');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    const first = await runSessionStep(
+      node({
+        id: 'wf:premortem-risk-one',
+        kind: 'session',
+        sessionType: 'premortem',
+        brief: 'What could sink the payments migration launch',
+      }),
+      ctx,
+    );
+    const second = await runSessionStep(
+      node({
+        id: 'wf:premortem-risk-two',
+        kind: 'session',
+        sessionType: 'premortem',
+        brief: 'What could sink the invoicing rollout',
+      }),
+      ctx,
+    );
+
+    expect(first.outcome.status).toBe('succeeded');
+    expect(second.outcome.status).toBe('succeeded');
+
+    const text = await readTextFile(new ProjectPaths(projectRoot).resolveWithin('kb/risks.md'));
+    expect(text).toContain('session:wf:premortem-risk-one');
+    expect(text).toContain('session:wf:premortem-risk-two');
+  });
+
+  // A fresh critic round found that two `runSessionStep` calls racing concurrently against the same
+  // project (`ExecuteStepContext.projectRoot`) could each read the same pre-write `kb/risks.md`, each
+  // append their own real risk to that same snapshot, and whichever `writeFileAtomic` landed second
+  // silently discard the other's entry -- a real, silent data-loss race, since `writeRiskBack`
+  // originally built a fresh `IdAllocator` with no serialisation at all. Fixed by routing the whole
+  // read-modify-write through this file's own real, already-established per-project FIFO queue
+  // (`enqueueForProject`, shared with `persistSessionRecord`'s own session-id allocation). Driven via a
+  // real `Promise.all`, not two sequential `await`s, so this test actually exercises the race rather
+  // than merely re-proving the append test above under artificial serialization.
+  it('two premortem session steps writing to kb/risks.md concurrently (Promise.all, not sequential) both survive -- no lost update', async () => {
+    const projectRoot = await createTempRepo('risk-writeback-race');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    const [first, second] = await Promise.all([
+      runSessionStep(
+        node({
+          id: 'wf:premortem-risk-race-one',
+          kind: 'session',
+          sessionType: 'premortem',
+          brief: 'What could sink the payments migration launch',
+        }),
+        ctx,
+      ),
+      runSessionStep(
+        node({
+          id: 'wf:premortem-risk-race-two',
+          kind: 'session',
+          sessionType: 'premortem',
+          brief: 'What could sink the invoicing rollout',
+        }),
+        ctx,
+      ),
+    ]);
+
+    expect(first.outcome.status).toBe('succeeded');
+    expect(second.outcome.status).toBe('succeeded');
+
+    const text = await readTextFile(new ProjectPaths(projectRoot).resolveWithin('kb/risks.md'));
+    expect(text).toContain('session:wf:premortem-risk-race-one');
+    expect(text).toContain('session:wf:premortem-risk-race-two');
+  });
+
+  // A fresh critic round found the identical unserialised-`IdAllocator` defect for `writeAdrBack`
+  // (each call built its own, unqueued `IdAllocator`) -- two concurrent `design-review`/`tradeoff`
+  // session steps could both scan the same "next free ADR id" and both write a real, schema-valid ADR
+  // claiming the identical id. Fixed the same way, by the same shared queue.
+  it('two design-review session steps writing back ADRs concurrently (Promise.all) each get a distinct real id', async () => {
+    const projectRoot = await createTempRepo('adr-writeback-race');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    await Promise.all([
+      runSessionStep(
+        node({
+          id: 'wf:design-review-race-one',
+          kind: 'session',
+          sessionType: 'design-review',
+          brief: 'Should we ship the new payments migration path',
+        }),
+        ctx,
+      ),
+      runSessionStep(
+        node({
+          id: 'wf:design-review-race-two',
+          kind: 'session',
+          sessionType: 'design-review',
+          brief: 'Should we ship the new invoicing rollout',
+        }),
+        ctx,
+      ),
+    ]);
+
+    const paths = new ProjectPaths(projectRoot);
+    const files = await listDirSorted(paths.resolveWithin('kb/decisions'));
+    expect(files).toHaveLength(2);
+    const ids = await Promise.all(
+      files.map(async (file) => {
+        const text = await readTextFile(paths.resolveWithin(`kb/decisions/${file}`));
+        return /^id:\s*(\S+)/m.exec(text)?.[1];
+      }),
+    );
+    expect(new Set(ids).size).toBe(2);
+  });
+});
+
+describe('runSessionStep — PLAN-M10.md P12: bounds enforcement (round 2 fixes)', () => {
+  it('the DIVERGE idea cap forces early clustering and is itself named in truncated_bound: diverge-idea-cap', async () => {
+    const projectRoot = await createTempRepo('idea-cap-bound');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    // brainstorm's own DIVERGE dispatches [pm, analyst, architect, ux] -- 4 real ideas, comfortably
+    // over a configured cap of 2.
+    const ctx = createTestContext({ projectRoot, adapter, sessionBounds: { divergeIdeaCap: 2 } });
+    const stepNode = node({
+      id: 'wf:brainstorm-idea-cap',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('diverge-idea-cap');
+    // Unlike a round-cap/cost/wall-clock forced truncation, the idea cap does not skip DECIDE's own
+    // real dispatch -- a real decision, with a real artifact write-back, is still expected.
+    expect(record.status).not.toBe('inconclusive');
+  });
+
+  it('a real cost overrun caused only by the DECIDE-phase dispatch itself (DIVERGE+CONVERGE both stay under budget) is still marked truncated with bound: cost, even though the real decision it produced is not discarded', async () => {
+    const projectRoot = await createTempRepo('decide-phase-cost-overrun');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    // brainstorm has no `critic`, so CONVERGE's own round loop stops after round 1 regardless of cost
+    // (`sessionHasCritic` is false there) -- DIVERGE's own real total (4 participants x 1 turn) plus
+    // CONVERGE's own real total (the same 4 participants again) is 0.0012 by this file's own real,
+    // deterministic per-token estimate; `0.0013` sits strictly above that combined total but strictly
+    // below it plus one more real single-turn DECIDE-phase dispatch (~0.00015 more) -- the bound can
+    // only be crossed by DECIDE's own real dispatch, the one dispatch this file's own round loops never
+    // re-check `checkTimeAndCost()` against on their own.
+    const ctx = createTestContext({ projectRoot, adapter, sessionBounds: { maxCostUsd: 0.0013 } });
+    const stepNode = node({
+      id: 'wf:brainstorm-decide-cost-overrun',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const record = requireRecord(result);
+    expect(record.status).toBe('truncated');
+    expect(record.truncated_bound).toBe('cost');
+    // The real decision DECIDE's own dispatch produced is not discarded merely because that same
+    // dispatch also tipped the session over budget -- a real, verifiable KB write-back still landed.
+    const kbFile = new ProjectPaths(projectRoot).resolveWithin(
+      `docs/forge/kb/product/session-${stepNode.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`,
+    );
+    await expect(readTextFile(kbFile)).resolves.toContain('Session decision');
+  });
+});
+
+describe('estimateSessionCostUsd', () => {
+  const BASE_USAGE: SessionResult = {
+    sessionId: 'test',
+    ok: true,
+    finalText: 'x',
+    usage: { inputTokens: 100, outputTokens: 100, turns: 1 },
+    durationMs: 1,
+    changedFiles: [],
+    controlTokens: [],
+  };
+
+  it("returns the adapter's own real, reported costUsd unmodified when present -- never overridden by the token-based estimate", () => {
+    const withRealCost: SessionResult = {
+      ...BASE_USAGE,
+      usage: { ...BASE_USAGE.usage, costUsd: 1.23 },
+    };
+    expect(estimateSessionCostUsd(withRealCost)).toBe(1.23);
+  });
+
+  it('falls back to a real, deterministic per-token estimate when the adapter reports no costUsd at all', () => {
+    // `FakePlatformAdapter` (used by every other test in this file) never populates `usage.costUsd` --
+    // this is the exact shape every real dispatch in this test file's own suite actually produces.
+    expect(estimateSessionCostUsd(BASE_USAGE)).toBeGreaterThan(0);
+    expect(estimateSessionCostUsd(BASE_USAGE)).toBe(estimateSessionCostUsd(BASE_USAGE));
   });
 });

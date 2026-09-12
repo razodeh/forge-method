@@ -212,6 +212,41 @@ export interface ExecuteStepContext {
    * `executeStep` itself — `ctx.gates` already closes over it — kept here only so a caller building `ctx`
    * has one place to see everything a run needs. */
   readonly gateRegistry: ReadonlyMap<string, GateDefinition>;
+  /** `16` §16.8's own "all configurable" cost/time/round bounds for `kind: 'session'` steps
+   * (`@forge/engine/interaction/session.ts`'s own `runSessionStep`, `PLAN-M10.md` P12) — a run-wide
+   * knob, alongside `model`/`tools`/`retainLaneWorktrees` above, resolved from whatever configuration
+   * source constructs `ctx` (a project's `forge.config`, a CLI flag, ...; no such source populates this
+   * yet in this milestone's own scope — the identical "a real, wired extension point with no caller
+   * yet" shape `HumanSessionInput` already is, `@forge/engine/interaction/session.ts`'s own doc
+   * comment). `undefined` means every bound falls back to `16` §16.8's own literal defaults
+   * (`DEFAULT_SESSION_BOUNDS`), not that no bounds apply at all — every session step is bounded
+   * unconditionally, per the spec's own "on breach" rule, never opt-in. Declared here (not in
+   * `interaction/session.ts`, which imports it from here instead) so this file never needs an edge
+   * back into `interaction/` -- the same "sits with the context it configures" placement `model`/
+   * `tools`/`retainLaneWorktrees` already have. */
+  readonly sessionBounds?: SessionBounds | undefined;
+}
+
+/** `16` §16.8's own literal bound table, all optional and independently overridable — see
+ * `ExecuteStepContext.sessionBounds`'s own doc comment for how a caller supplies this. */
+export interface SessionBounds {
+  /** `16` §16.8: "Max rounds per phase: DIVERGE 3." */
+  readonly maxDivergeRounds?: number;
+  /** `16` §16.8: "Max rounds per phase: CONVERGE 2." */
+  readonly maxConvergeRounds?: number;
+  /** `16` §16.8: "Max participants: 5 agents + human" — threaded into `@forge/sessions`'s own
+   * `SessionPhaseMachine` (`MAX_AGENT_PARTICIPANTS` by default). */
+  readonly maxAgentParticipants?: number;
+  /** `16` §16.8: "Max wall clock: 20 min," in milliseconds. */
+  readonly maxWallClockMs?: number;
+  /** `16` §16.8: "Max cost: $3." */
+  readonly maxCostUsd?: number;
+  /** `16` §16.8: "Idea cap in DIVERGE: 30 before forced clustering" — threaded into `@forge/sessions`'s
+   * own `SessionPhaseMachine` (`DIVERGE_IDEA_CAP` by default); `PLAN-M10.md` P9 already built the
+   * enforcement itself (`SessionPhaseMachine.diverge`'s own cap check) — this only makes the cap value
+   * itself configurable, per `16` §16.8's own "all configurable" line, rather than duplicating the
+   * enforcement a second time here. */
+  readonly divergeIdeaCap?: number;
 }
 
 /** Every real handler's own failure reason, in one small, kind-independent vocabulary `06` §6.8's own

@@ -53,6 +53,27 @@ describe('sessionRecordSchema — valid', () => {
     if (result.success) expect(result.data.no_disagreement_observed).toBe(flag);
   });
 
+  // `16` §16.8's own breach behaviour, named (`PLAN-M10.md` P12) -- the identical additive-field
+  // treatment `no_disagreement_observed` above already gets.
+  it('accepts a record with truncated_bound omitted', () => {
+    const result = sessionRecordSchema.safeParse(validSessionRecord());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.truncated_bound).toBeUndefined();
+  });
+
+  it.each(['diverge-rounds', 'converge-rounds', 'diverge-idea-cap', 'wall-clock', 'cost'])(
+    'accepts a record with status: truncated and truncated_bound: %s',
+    (bound) => {
+      const result = sessionRecordSchema.safeParse({
+        ...validSessionRecord(),
+        status: 'truncated',
+        truncated_bound: bound,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.truncated_bound).toBe(bound);
+    },
+  );
+
   it.each([
     'brainstorm',
     'design-review',
@@ -103,6 +124,16 @@ describe('sessionRecordSchema — invalid, each asserting the error path', () =>
     });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['no_disagreement_observed']);
+  });
+
+  it('rejects a truncated_bound outside the real 16 §16.8 bound vocabulary', () => {
+    const result = sessionRecordSchema.safeParse({
+      ...validSessionRecord(),
+      status: 'truncated',
+      truncated_bound: 'made-up-bound',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['truncated_bound']);
   });
 
   it('rejects an id whose prefix does not match its type', () => {

@@ -36,7 +36,11 @@ export { openQuestionSchema, type OpenQuestion } from './open-question.ts';
 export { rcaSchema, type RCA } from './rca.ts';
 export { riskSchema, type Risk } from './risk.ts';
 export { runbookSchema, type Runbook } from './runbook.ts';
-export { sessionRecordSchema, type SessionRecord } from './session-record.ts';
+export {
+  sessionRecordSchema,
+  type SessionRecord,
+  type SessionTruncationBound,
+} from './session-record.ts';
 export { storySchema, type Story } from './story.ts';
 export { taskSchema, type Task } from './task.ts';
 export { visionSchema, type Vision } from './vision.ts';

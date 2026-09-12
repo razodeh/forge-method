@@ -470,3 +470,87 @@ describe('expressesDisagreement (16 §16.7 point 4)', () => {
     expect(expressesDisagreement(text)).toBe(false);
   });
 });
+
+describe('configurable bounds (16 §16.8: "all configurable") -- PLAN-M10.md P12', () => {
+  it('start() honours a caller-supplied maxAgentParticipants over the real MAX_AGENT_PARTICIPANTS default', () => {
+    const machine = new SessionPhaseMachine({ clock: fakeClock(), maxAgentParticipants: 1 });
+    // Two agent participants -- within the real, unconfigured MAX_AGENT_PARTICIPANTS default, but over
+    // this machine's own configured ceiling of 1.
+    expect(() =>
+      machine.start({ sessionType: 'brainstorm', participants: NO_CRITIC_PARTICIPANTS }),
+    ).toThrow();
+  });
+
+  it('start() still accepts the real MAX_AGENT_PARTICIPANTS default when no override is given', () => {
+    const machine = newMachine();
+    expect(() =>
+      machine.start({ sessionType: 'brainstorm', participants: NO_CRITIC_PARTICIPANTS }),
+    ).not.toThrow();
+  });
+
+  it('diverge() honours a caller-supplied divergeIdeaCap over the real DIVERGE_IDEA_CAP default', () => {
+    const machine = new SessionPhaseMachine({ clock: fakeClock(), divergeIdeaCap: 2 });
+    let state = machine.start({ sessionType: 'brainstorm', participants: NO_CRITIC_PARTICIPANTS });
+    state = machine.frame(state, {
+      question: 'How do we cut onboarding time',
+      goodOutcomeLooksLike: 'A real answer',
+    }).state;
+    const result = machine.diverge(state, {
+      ideas: [
+        { text: 'Idea one', proposedBy: 'pm' },
+        { text: 'Idea two', proposedBy: 'architect' },
+      ],
+    });
+    // Two ideas already reaches this machine's own configured cap of 2 -- `DIVERGE_IDEA_CAP` itself
+    // (30) would never have capped at only two real ideas.
+    expect(result.directive.kind).toBe('diverge-capped');
+    expect(result.state.truncated).toBe(true);
+  });
+});
+
+describe('forceToDecide (16 §16.8 breach behaviour) -- PLAN-M10.md P12', () => {
+  function framedState(machine: SessionPhaseMachine, participants: readonly SessionParticipant[]) {
+    let state = machine.start({ sessionType: 'brainstorm', participants });
+    state = machine.frame(state, {
+      question: 'How do we cut onboarding time',
+      goodOutcomeLooksLike: 'A real answer',
+    }).state;
+    return state;
+  }
+
+  it('forces DIVERGE straight to DECIDE, marking the state truncated', () => {
+    const machine = newMachine();
+    const state = framedState(machine, NO_CRITIC_PARTICIPANTS);
+    expect(state.phase).toBe('DIVERGE');
+
+    const forced = machine.forceToDecide(state);
+
+    expect(forced.phase).toBe('DECIDE');
+    expect(forced.truncated).toBe(true);
+  });
+
+  it('forces CONVERGE straight to DECIDE, bypassing the critic-objection gate a plain advanceToDecide would refuse on', () => {
+    const machine = newMachine();
+    let state = framedState(machine, PARTICIPANTS); // includes `critic`, with no objection recorded.
+    state = machine.diverge(state, { ideas: [{ text: 'Idea one', proposedBy: 'pm' }] }).state;
+    state = machine.endDiverge(state).state;
+    expect(state.phase).toBe('CONVERGE');
+    // The ordinary path refuses outright: critic is present, no objection was ever recorded.
+    expect(machine.advanceToDecide(state).directive.kind).toBe('converge-refused');
+
+    const forced = machine.forceToDecide(state);
+
+    expect(forced.phase).toBe('DECIDE');
+    expect(forced.truncated).toBe(true);
+  });
+
+  it('throws RUN-063 when called at FRAME, before either phase it can legitimately force from', () => {
+    const machine = newMachine();
+    const freshState = machine.start({
+      sessionType: 'brainstorm',
+      participants: NO_CRITIC_PARTICIPANTS,
+    });
+    expect(freshState.phase).toBe('FRAME');
+    expect(() => machine.forceToDecide(freshState)).toThrow();
+  });
+});

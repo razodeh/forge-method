@@ -175,6 +175,12 @@ export function expressesDisagreement(text: string): boolean {
 
 export interface SessionPhaseMachineDeps {
   readonly clock: Clock;
+  /** `16` §16.8's own "all configurable" line applied to `MAX_AGENT_PARTICIPANTS` -- defaults to that
+   * exact constant when omitted, so every caller that predates this option (every one before
+   * `PLAN-M10.md` P12) keeps its exact prior behaviour unchanged. See `SPEC-QUESTIONS.md`. */
+  readonly maxAgentParticipants?: number;
+  /** The identical "configurable, defaults to the real constant" treatment for `DIVERGE_IDEA_CAP`. */
+  readonly divergeIdeaCap?: number;
 }
 
 export interface StartInput {
@@ -235,22 +241,27 @@ export interface PhaseResult {
 
 export class SessionPhaseMachine {
   private readonly clock: Clock;
+  private readonly maxAgentParticipants: number;
+  private readonly divergeIdeaCap: number;
 
   constructor(deps: SessionPhaseMachineDeps) {
     this.clock = deps.clock;
+    this.maxAgentParticipants = deps.maxAgentParticipants ?? MAX_AGENT_PARTICIPANTS;
+    this.divergeIdeaCap = deps.divergeIdeaCap ?? DIVERGE_IDEA_CAP;
   }
 
   /**
    * The initial state, at `FRAME`, before any question has been accepted.
    *
-   * @throws {ForgeError} `RUN-067` if more than `MAX_AGENT_PARTICIPANTS` non-human participants are
-   * given -- `16` §16.8's own "Max participants: 5 agents + human" bound.
+   * @throws {ForgeError} `RUN-067` if more than this machine's own configured
+   * `maxAgentParticipants` (default `MAX_AGENT_PARTICIPANTS`) non-human participants are given --
+   * `16` §16.8's own "Max participants: 5 agents + human" bound.
    */
   start(input: StartInput): SessionState {
     const agentCount = input.participants.filter(
       (participant) => !isHumanRole(participant.role),
     ).length;
-    if (agentCount > MAX_AGENT_PARTICIPANTS) {
+    if (agentCount > this.maxAgentParticipants) {
       throw new ForgeError('RUN-067', { agentCount });
     }
 
@@ -327,7 +338,7 @@ export class SessionPhaseMachine {
     const ideas = [...state.ideas, ...newIdeas];
     const technique = addTechnique(state.technique, input.techniqueId);
 
-    if (ideas.length >= DIVERGE_IDEA_CAP) {
+    if (ideas.length >= this.divergeIdeaCap) {
       const capped: SessionState = {
         ...state,
         phase: 'CONVERGE',
@@ -411,6 +422,29 @@ export class SessionPhaseMachine {
     }
 
     return { state: withPhase(state, 'DECIDE'), directive: { kind: 'ready-to-decide' } };
+  }
+
+  /**
+   * `16` §16.8's own breach behaviour: forces DIVERGE or CONVERGE straight to DECIDE when a bound
+   * this pure machine has no knowledge of (max rounds, wall clock, cost -- every one of them
+   * "caller-counted," per this file's own `diverge()`/`converge()` doc comments, since `@forge/engine`
+   * is the one side of the boundary real enough to own a clock and a cost meter) has fired.
+   *
+   * Deliberately bypasses `advanceToDecide`'s own structural critic-objection gate: `16` §16.8's own
+   * literal "the facilitator forces convergence with what it has" instruction is written to override
+   * exactly that kind of in-session structure once a hard resource bound has fired -- a bounded,
+   * honest, `truncated` result outranks a theoretically-cleaner but unbounded conversation. Only ever
+   * called by a caller reacting to its own bound breach; an ordinary CONVERGE -> DECIDE transition
+   * must still go through `advanceToDecide`'s real gate, never this shortcut.
+   *
+   * @throws {ForgeError} `RUN-063` if `state` is in neither `DIVERGE` nor `CONVERGE` -- both phases
+   * this breach behaviour can legitimately fire from, per `16` §16.8's own round-cap table.
+   */
+  forceToDecide(state: SessionState): SessionState {
+    if (state.phase !== 'DIVERGE' && state.phase !== 'CONVERGE') {
+      throw new ForgeError('RUN-063', { expected: 'DIVERGE or CONVERGE', actual: state.phase });
+    }
+    return { ...withPhase(state, 'DECIDE'), truncated: true };
   }
 
   /**
