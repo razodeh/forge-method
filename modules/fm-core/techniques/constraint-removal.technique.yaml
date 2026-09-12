@@ -1,0 +1,9 @@
+id: constraint-removal
+name: Constraint removal
+bestFor: Stuck tradeoffs
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". List every hard constraint currently assumed to apply. Pick one at
+  a time, imagine it is genuinely absent, and generate the ideas that become possible only once it is
+  gone. Each idea must name the specific constraint it assumes away, so the group can judge later
+  whether removing it is actually realistic.

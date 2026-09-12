@@ -1,0 +1,9 @@
+id: cost-of-delay
+name: Cost of delay
+bestFor: Sequencing
+phases: [converge]
+prompt: >
+  For each surviving cluster, state concretely what waiting one stage costs (lost revenue, growing
+  risk, blocked downstream work, compounding technical debt) versus what waiting costs nothing.
+  Sequence clusters by cost of delay divided by duration (the highest cost-of-delay-per-unit-time
+  first), not by raw impact alone.

@@ -1,0 +1,9 @@
+id: what-went-well-badly-next
+name: What went well / badly / next
+bestFor: A straightforward retro on a completed stage or incident
+phases: [retro]
+prompt: >
+  Reviewing the stage or incident named by the framed question: "{{question}}". List what genuinely
+  went well (not politeness fillers), what genuinely went badly, and what to do differently next time
+  for each badly-went item. Every "next" item must be concrete enough to become a real action with an
+  owner, not a vague intention.

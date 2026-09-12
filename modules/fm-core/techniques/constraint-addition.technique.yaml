@@ -1,0 +1,9 @@
+id: constraint-addition
+name: Constraint addition
+bestFor: Forcing simplicity
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Add one brutal, artificial constraint (10x the current users,
+  one-tenth the current budget, no network access) and generate ideas that would still work under it.
+  Repeat with at least one more brutal constraint. The goal is simplicity the group would not have
+  found without the pressure, not literal compliance with the artificial constraint.

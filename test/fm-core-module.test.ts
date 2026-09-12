@@ -231,10 +231,28 @@ describe('every id fm-core/module.yaml provides resolves to something real on di
     expect([...mod.provides.artifactTypes].sort()).toEqual(Object.keys(TEMPLATE_INDEX).sort());
   });
 
-  it('provides.checks/catalog/techniques are deliberately empty -- no standalone check content, catalog-agnostic ownership, and techniques are a later piece (P9), not silently omitted keys', () => {
+  it('provides.checks/catalog are deliberately empty -- no standalone check content and catalog-agnostic ownership, not silently omitted keys', () => {
     expect(mod.provides.checks).toEqual([]);
     expect(mod.provides.catalog).toEqual([]);
-    expect(mod.provides.techniques).toEqual([]);
+  });
+
+  // `16` §16.4's own three tables (12 divergent + 8 convergent) plus its own retro prose row (6
+  // named techniques, one of which -- five-whys -- is shared with the divergent table): 25 real
+  // files. See `@forge/sessions`'s own `techniqueSchema` doc comment (`PLAN-M10.md` P9).
+  it.each(mod.provides.techniques)(
+    'technique %s resolves to a real modules/fm-core/techniques/<id>.technique.yaml file',
+    (id) => {
+      expect(existsSync(path.join(fmCoreRoot, 'techniques', `${id}.technique.yaml`))).toBe(true);
+    },
+  );
+
+  it('provides.techniques names exactly all 25 real technique files on disk under modules/fm-core/techniques/', () => {
+    const files = readdirSync(path.join(fmCoreRoot, 'techniques')).filter((name) =>
+      name.endsWith('.technique.yaml'),
+    );
+    const idsOnDisk = files.map((name) => name.slice(0, -'.technique.yaml'.length));
+    expect([...mod.provides.techniques].sort()).toEqual(idsOnDisk.sort());
+    expect(mod.provides.techniques).toHaveLength(25);
   });
 });
 

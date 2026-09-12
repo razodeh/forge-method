@@ -1,0 +1,9 @@
+id: jobs-to-be-done
+name: Jobs to be done
+bestFor: Product scope questions
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". State the real job the user is "hiring" this capability to do --
+  the outcome they want, independent of any particular feature. Generate ideas that serve that job
+  more directly, including ones that replace the assumed feature shape entirely, and flag any idea
+  that serves a different job than the one actually stated.

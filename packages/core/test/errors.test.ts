@@ -106,6 +106,11 @@ const SAMPLE_DETAILS = {
   runId: 'run-014-implement',
   installed: '1.2.0',
   requested: '1.0.0',
+  question: 'How do we ship faster?',
+  sessionType: 'brainstorm',
+  expected: 'CONVERGE',
+  techniqueId: 'scamper',
+  agentCount: 7,
 } satisfies Record<string, unknown> as never;
 
 /**

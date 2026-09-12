@@ -1,0 +1,9 @@
+id: dot-voting
+name: Dot voting
+bestFor: Large idea sets
+phases: [converge]
+prompt: >
+  Cluster the diverged ideas into named groups. Give every participant an equal, small budget of
+  votes (a fixed number, well under the cluster count) to place across the clusters, weighting
+  towards the ones they judge strongest. Rank clusters by votes received, and record the vote count
+  alongside each cluster so the ranking is auditable, not just asserted.

@@ -1,0 +1,9 @@
+id: user-journey-walk
+name: User journey walk
+bestFor: UX and capability gaps
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Walk one named persona through the flow step by step, from their
+  first real intent to the outcome they wanted. At each step, note the friction, the missing
+  information, or the dead end they would actually hit. Turn each noted friction point into one idea
+  that removes it.

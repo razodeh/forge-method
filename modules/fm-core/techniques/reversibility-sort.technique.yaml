@@ -1,0 +1,9 @@
+id: reversibility-sort
+name: Reversibility sort
+bestFor: Any decision batch
+phases: [converge]
+prompt: >
+  For each surviving cluster, classify it as a one-way door (expensive or impossible to reverse) or a
+  two-way door (cheap to reverse if wrong), stating what reversing it would actually cost. Decide
+  every two-way door quickly, with minimal debate; route one-way doors to a slower, more scrutinised
+  path (a `tradeoff` session, a weighted rubric) rather than deciding them at the same speed.

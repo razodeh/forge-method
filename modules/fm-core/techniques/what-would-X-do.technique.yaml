@@ -1,0 +1,10 @@
+id: what-would-X-do
+name: What would X do
+bestFor: Breaking a stalemate between styles
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Name a known engineering culture or stance relevant to this
+  stalemate (the boring-tech stance, the platform stance, the move-fast stance, a named real company's
+  known posture). Argue the idea that stance would actually produce, as concretely as that stance
+  would argue it. Repeat for at least one contrasting stance, so the group sees genuinely different
+  answers rather than one dressed up twice.

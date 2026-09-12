@@ -1,0 +1,9 @@
+id: scamper
+name: SCAMPER
+bestFor: Improving something that exists
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Walk the existing flow or feature through each SCAMPER lens in
+  turn -- Substitute, Combine, Adapt, Modify, Put to another use, Eliminate, Reverse -- and raise one
+  idea per lens that changes the current design under that lens. Do not evaluate or rank yet; every
+  idea is welcome, including ones that seem obviously wrong.

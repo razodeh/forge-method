@@ -1,0 +1,8 @@
+id: failure-storming
+name: Failure storming
+bestFor: Reliability design
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Enumerate every component or step involved, and for each one, name
+  a real way it can fail (timeout, partial write, bad input, dependency outage, human error). For
+  each failure named, propose one idea that prevents it, detects it fast, or bounds its blast radius.

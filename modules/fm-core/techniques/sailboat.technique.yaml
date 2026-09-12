@@ -1,0 +1,9 @@
+id: sailboat
+name: Sailboat
+bestFor: A retro that separates momentum from risk
+phases: [retro]
+prompt: >
+  Reviewing the stage named by the framed question: "{{question}}". Name the wind (what pushed
+  progress forward), the anchors (what dragged it back), the rocks ahead (risks visible now for the
+  next stage), and the destination (what success actually looks like for the next stage). Ground each
+  in a specific, real event, not a general impression.

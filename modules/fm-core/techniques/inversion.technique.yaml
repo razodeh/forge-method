@@ -1,0 +1,8 @@
+id: inversion
+name: Inversion
+bestFor: Finding hidden assumptions
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". First answer the inverted question: how would we deliberately make
+  this fail, or make it worse? Generate ideas for that inverted question without restraint. Then
+  invert each one back into a real idea for the original question, naming the assumption it exposes.

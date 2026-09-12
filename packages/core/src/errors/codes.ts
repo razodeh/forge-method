@@ -727,6 +727,87 @@ export const ERROR_CODES = {
       'Fix the underlying input/session response rather than retrying unchanged — this is a real, ' +
       'structural requirement of the RCA loop itself (specs/13 F-DEBUG-1).',
   },
+  // `@forge/sessions`'s own `SessionPhaseMachine` (`16` §16.3, `PLAN-M10.md` P9): a pure facilitation
+  // state machine with no adapter of its own to dispatch through, so a refusal it needs to surface is
+  // a `ForgeError` value embedded in a `PhaseDirective`, never a thrown exception -- the caller
+  // (`PLAN-M10.md` P10, later) decides whether that reaches a human or aborts the run.
+  'RUN-061': {
+    // `16` §16.3 step 1's own literal rule: "A session whose question cannot be stated in one
+    // sentence is refused; that is itself the finding."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { question: string }) =>
+      `FRAME refuses ${show(d.question)}: a session's question must be statable in one sentence.`,
+    remedy: 'Edit the question down to one sentence, then frame the session again.',
+  },
+  'RUN-062': {
+    // `16` §16.7 point 2: "critic participates in CONVERGE with a mandate to produce falsifiable
+    // objections... rejected by the facilitator" when absent. Distinct from `RUN-060`'s RCA-specific
+    // three-way gate -- this is CONVERGE's own single structural precondition for leaving the phase.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { sessionType: string }) =>
+      `A ${show(d.sessionType)} session cannot leave CONVERGE: a critic participant is present but recorded no objection.`,
+    remedy: 'Add at least one critic-sourced objection before advancing this session to DECIDE.',
+  },
+  'RUN-063': {
+    // A programmer-error guard, not a domain refusal (unlike RUN-061/RUN-062 above): the caller
+    // invoked a phase transition out of the fixed FRAME → DIVERGE → CONVERGE → DECIDE → RECORD order
+    // `16` §16.3 states as the one anatomy every session runs.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { expected: string; actual: string }) =>
+      `Expected the session to be at phase ${show(d.expected)}, but it is at ${show(d.actual)}.`,
+    remedy: 'Fix the caller to drive FRAME, DIVERGE, CONVERGE, DECIDE, RECORD strictly in order.',
+  },
+  'RUN-064': {
+    // `16` §16.5's own literal write-back rule: "will not mark a session complete until every
+    // decision has an artifact reference and every action has an owner... sessions with zero
+    // decisions and zero actions are recorded as inconclusive with a stated reason."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { sessionType: string }) =>
+      `A ${show(d.sessionType)} session cannot be recorded: it has a decision with no artifact reference or an action with no owner, and is not explicitly marked inconclusive with a reason.`,
+    remedy:
+      'Add the missing artifact reference or owner, or mark the session inconclusive with a ' +
+      'non-empty reason before assembling its record.',
+  },
+  'RUN-065': {
+    // `@forge/sessions`'s own technique loader (`16` §16.4, `PLAN-M10.md` P9): a caller asked for a
+    // technique id no `modules/*/techniques/*.technique.yaml` file declares -- a real, ordinary
+    // caller-input error, distinct from a shipped technique file itself failing to parse (an
+    // authoring bug in this repo's own content, thrown as a plain `Error` the same way
+    // `loadAgentRegistry` already does for the identical distinction).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { techniqueId: string }) =>
+      `No technique ${show(d.techniqueId)} is registered under any module's techniques/ directory.`,
+    remedy:
+      'Check the technique id against modules/*/techniques/*.technique.yaml, or add a new one.',
+  },
+  'RUN-066': {
+    // `@forge/sessions`'s own `assembleSessionRecord` (`16` §16.5, `PLAN-M10.md` P9): the assembled
+    // candidate failed the real, already-shipped `sessionRecordSchema` (`@forge/schemas`) -- a
+    // gauntlet critic round found the first version let a bare, unwrapped `ZodError` escape here
+    // instead, the same "schema-valid or reject, with a named code" pattern `CFG-008` already uses
+    // for `validateArtifact` (`packages/core/src/artifacts/validate.ts`), applied to this one
+    // caller-supplied assembly instead of a file read from disk.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { sessionType: string; issues: string }) =>
+      `The assembled ${show(d.sessionType)} session record fails its own schema: ${show(d.issues)}.`,
+    remedy: 'Fix the caller-supplied session metadata (id, dates, revision, ...) named above.',
+  },
+  'RUN-067': {
+    // `@forge/sessions`'s own `SessionPhaseMachine.start` (`16` §16.8's own literal bound: "Max
+    // participants: 5 agents + human").
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { agentCount: number }) =>
+      `A session cannot start with ${show(d.agentCount)} agent participants -- \`16\` §16.8's own bound is 5 agents plus the human.`,
+    remedy:
+      'Reduce the session to 5 or fewer agent participants (the human does not count against it).',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

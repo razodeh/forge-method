@@ -35,15 +35,20 @@
 # load-agent-registry.ts` today) already reads directly from this module's own directory, so the 29
 # files already there are exactly where they need to stay.
 #
-# `catalog` and `techniques` are declared empty, not omitted: `packages/catalog/catalog/` is real,
-# already-built content (language/framework/datastore entries), but it is stack-and-module-agnostic
-# selection input the catalog engine (`packages/catalog/src`) already loads on its own, never through
-# a module's own `provides.catalog` list -- attaching it to `fm-core` here would be a new, invented
-# ownership relationship this piece was not asked to build. Techniques (`16` §16.4's technique
-# library) are a separate module-layout contribution type `PLAN-M10.md` assigns to a later piece (P9),
-# not this one -- deliberately not enumerated here regardless of what does or doesn't exist under
-# `modules/fm-core/techniques/` at any given moment, so this piece never guesses at or races content
-# P9 alone owns and is still actively shaping; P9's own commit is what populates this list for real.
+# `catalog` is declared empty, not omitted: `packages/catalog/catalog/` is real, already-built
+# content (language/framework/datastore entries), but it is stack-and-module-agnostic selection input
+# the catalog engine (`packages/catalog/src`) already loads on its own, never through a module's own
+# `provides.catalog` list -- attaching it to `fm-core` here would be a new, invented ownership
+# relationship this piece was not asked to build.
+#
+# `techniques` names all 25 real `modules/fm-core/techniques/*.technique.yaml` files `PLAN-M10.md` P9
+# built (`16` §16.4's own three tables: 12 divergent + 8 convergent, plus 6 named retro techniques of
+# which one, `five-whys`, is shared with the divergent table rather than duplicated -- see
+# `@forge/sessions`'s own `techniqueSchema` doc comment and `SPEC-QUESTIONS.md` for the recorded
+# reasoning). Unlike workflows/gates/frameworks/skills/templates above, these files are real content
+# physically under this module's own directory, not a reference into `@forge/templates` -- `16` §16.4
+# names the technique library as new, first-party content with no existing home anywhere else in this
+# repo, so there is nothing else for `provides.techniques` to point at.
 # ---------------------------------------------------------------------------------------------------
 
 id: fm-core
@@ -329,4 +334,33 @@ provides:
   # See the header comment above: real, already-built content this module does not itself own or
   # populate. Left empty rather than invented.
   catalog: []
-  techniques: []
+
+  # `PLAN-M10.md` P9's own real, first-party content -- see the header comment above.
+  techniques:
+    [
+      scamper,
+      first-principles,
+      inversion,
+      analogy,
+      constraint-removal,
+      constraint-addition,
+      jobs-to-be-done,
+      user-journey-walk,
+      failure-storming,
+      what-would-X-do,
+      five-whys,
+      assumption-audit,
+      dot-voting,
+      impact-effort,
+      rice,
+      moscow,
+      weighted-rubric,
+      steel-man-debate,
+      reversibility-sort,
+      cost-of-delay,
+      what-went-well-badly-next,
+      start-stop-continue,
+      timeline-review,
+      sailboat,
+      data-driven,
+    ]

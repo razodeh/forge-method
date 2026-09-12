@@ -1,0 +1,9 @@
+id: assumption-audit
+name: Assumption audit
+bestFor: Pre-commitment de-risking
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". List every assumption this plan currently rests on. For each, rate
+  confidence (low/medium/high) and impact if wrong (low/medium/high), then propose the cheapest real
+  test that would falsify it before committing further. Prioritise low-confidence, high-impact
+  assumptions first.

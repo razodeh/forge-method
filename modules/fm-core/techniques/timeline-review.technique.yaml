@@ -1,0 +1,10 @@
+id: timeline-review
+name: Timeline review
+bestFor: Reconstructing what actually happened from the real event log
+phases: [retro]
+# `16` §16.6's own advantage over a human retro: "FORGE has the actual data."
+prompt: >
+  Reconstruct the real timeline for the stage or incident from the event log -- do not rely on
+  recollection where a real timestamped event exists. Walk the timeline in order, flagging every
+  point where the real sequence surprises a participant's own memory of it, and draw findings only
+  from what the log actually shows.

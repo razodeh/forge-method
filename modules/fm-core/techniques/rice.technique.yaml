@@ -1,0 +1,9 @@
+id: rice
+name: RICE scoring
+bestFor: Product backlog ordering
+phases: [converge]
+prompt: >
+  For each surviving cluster, estimate Reach (how many users/how often), Impact (magnitude per
+  instance), Confidence (how sure the first two estimates are), and Effort (person-time to deliver).
+  Compute score = Reach x Impact x Confidence / Effort, state each input number explicitly (not just
+  the final score), and rank clusters by the result.
