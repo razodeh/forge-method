@@ -10659,3 +10659,108 @@ confirmed passing cleanly and fast when re-run in isolation immediately afterwar
 throughout confirmed no file outside this piece's own scope (`packages/adapter-generic/`,
 `test/workspace-floor.test.ts`) was ever touched, despite concurrent M11 P1/P9 work proceeding in the
 same working directory.
+
+## M11 P1 — Overlay/module bundle fetch: local path and git channels, with integrity verification (`19` §19.5)
+
+**Mandate:** the real, previously-nonexistent fetch mechanism for two of `19` §19.5's three
+distribution channels (local path, git), plus a shared SHA-256 content checksum — closing the real
+local-path half of `PLAN-M10.md` P7's own original scope, per `PLAN-M11.md`'s own opening resolution.
+
+Confirmed directly before writing anything: zero hits for `fetch`/`npm:`/`git+`/`checksum`/`integrity`
+anywhere in `packages/extensions/src`, and `tools/eslint-plugin-forge-boundaries/src/graph.mjs`'s
+`extensions` row had no `vcs` entry — both exactly as `PLAN-M11.md`'s own pre-drafting research
+recorded. Built `packages/vcs/src/overlay-fetch.ts` (`parseGitOverlaySpec`, `fetchGitOverlay`,
+`computeContentChecksum` — a real, disposable, non-shallow clone against a caller-supplied `workDir`,
+never `os.tmpdir()`, per this plan's own recorded Surface deviation) and `packages/extensions/src/
+install/` (`findManifestKind`, `fetchLocalOverlay`, `fetchGitOverlayBundle`), plus a new, deliberate
+`extensions -> vcs` graph edge (`tools/eslint-plugin-forge-boundaries/src/graph.mjs` and its own test
+fixture), the same kind of disclosed graph deviation `Q104`/`PLAN-M10.md` P10/P16 already established.
+Full reasoning, including the checksum's own manifest-agnostic-and-shared-by-both-channels design and
+the local channel's "no integrity check against an expected value, but still computed" framing, in
+`SPEC-QUESTIONS.md` Q171.
+
+### Round 1 — fresh critic: 4 blocking, 2 major, 3 minor
+
+A fresh, context-free critic found: (1) **blocking** — `fetchGitOverlay` left a full, non-shallow
+clone behind permanently on any failure after `mkdtemp` (a bad ref, an unresolvable HEAD, a checksum
+failure) — no `try`/`finally` at all, the identical leak class `PLAN-M10.md` P17's own
+`createSandboxClone` gauntlet round already found and fixed one milestone earlier; (2) **blocking** —
+a real branch whose own name happens to be hex-shaped (e.g. `deadbeef`) was classified a pinned SHA
+before ever asking the remote, silently defeating `19` §19.5's own "floating refs warned about"
+guarantee for exactly that shape of real branch name; (3) **blocking** — `mkdir`/`mkdtemp`/
+`computeContentChecksum` in `fetchGitOverlay`, and `fetchLocalOverlay`'s own `computeContentChecksum`
+call, were never wrapped, so a permission error or a TOCTOU race leaked a raw `node:fs` exception past
+both functions' own documented "throws only `VcsError`/`ForgeError`" contracts; (4) **blocking** —
+`Dirent.isDirectory()` is `false` for a symlink, so the checksum walk fell through to the "regular
+file" branch and `readFile`'d straight through it, folding an arbitrary host file's bytes (for a
+symlink pointing outside the fetched/local content) into a checksum later written into
+`manifest.yaml` — an information-disclosure vector, and a break of the function's own determinism
+guarantee; (5) **major** — nothing restricted the git URL's own scheme before it reached
+`execa('git', ['clone', url, ...])`, leaving git's own `ext::`/`fd::` remote helper transports as an
+undisclosed residual risk; (6) **major** — `findManifestKind`'s blanket `catch {}` conflated a
+permission error on a real manifest file with "no manifest here at all," reporting the wrong diagnosis
+to the wrong problem; (7) **minor** — `isRemoteTag`'s `ls-remote` pattern argument is `fnmatch`-glob,
+not literal, so a ref containing `*`/`?`/`[` could match more than one real tag; (8) **minor** — the
+`VCS-008` wrap's `isErrorWithCode` duck-typed "has a string `.code`" rather than checking
+`instanceof VcsError`, so an unrelated raw fs error surfacing for some other reason would be reported
+as if its own `.code` were a legitimate `VcsError` code; (9) **minor** — `VcsError` messages
+interpolated a caller-supplied value directly rather than through `@forge/core`'s `show()` helper.
+
+**What the critic caught that the builder missed:** all four blocking findings — the builder's own
+scoped tests used only clean, cooperative fixtures (a real tag, a real SHA, `main`) and never
+constructed a hex-shaped branch name, never injected a checksum-phase failure, and never put a symlink
+anywhere in a fetched bundle, the identical "tests proved the intended behaviour, not the literal
+implementation against hostile input" blind spot this build's own `checks/a11y.check.yaml`/
+`device-matrix.check.yaml` precedents already document for themselves.
+
+**Judged and resolved:** (1)-(7) fixed at the root — `fetchGitOverlay` wrapped in `try`/`catch`
+removing `dest` on any failure; `classifyRef` now checks `git ls-remote` for a real tag then a real
+branch before ever falling back to the hex-shape heuristic, and a glob-metacharacter-containing ref is
+refused outright before reaching `ls-remote`; `computeContentChecksum` now wraps every failure via
+`wrapGitFailure` (so both call sites inherit the guarantee), with two new `ForgeError` codes (`VCS-008`
+git channel, `VCS-009` local channel) wrapping `@forge/vcs`'s own `VcsError` at each channel's one
+orchestration boundary, plus a new `CFG-028` for a manifest-file permission error distinct from
+`CFG-027`'s "no manifest here"; the checksum walk now refuses a symlink anywhere in the tree outright
+(`VCS-OVERLAY-SYMLINK-REJECTED`); the git URL's own scheme is now allowlisted
+(`http`/`https`/`ssh`/`git`/`file`, or a real scp-like remote), fail-closed by default. (8) fixed with
+a shared `vcsFailureDetails` helper checking `instanceof VcsError` first. (9) judged not a real
+defect: `show()` lives in `@forge/core`, a package `@forge/vcs` has no edge to, and every pre-existing
+`VcsError` message in this package (e.g. `tag.ts`'s `assertValidTagName`) already interpolates raw
+values the identical way — applying `show()`-style escaping to only this piece's own new messages
+would be a new, unprecedented inconsistency within `@forge/vcs` itself, not a fix. Full reasoning in
+`SPEC-QUESTIONS.md` Q171.
+
+Regression tests added for every fixed finding: a real branch literally named `deadbeef` classified
+`'branch'` with a warning; a symlink in a git-fetched checkout and in a plain local directory both
+refused with `VCS-OVERLAY-SYMLINK-REJECTED`/`VCS-009`, with `workDir` confirmed empty afterward; a
+disallowed URL scheme (`ext::`, `fd::`) and a glob-metacharacter ref both refused before ever spawning
+git; a permission error on a manifest file reported as `CFG-028`, not `CFG-027`; a POSIX-permission
+unreadable file wrapped as a real `VcsError`/`ForgeError`, never a raw exception (`it.skipIf` on
+Windows/root, matching `packages/vcs/test/git.test.ts`'s own established precedent for this exact
+class of test). 45 tests total across the three new/touched test files (up from the round-1 draft's
+25), all green.
+
+### Mandatory full-workspace verification — clean, three failures found, all confirmed pre-existing/unrelated
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean throughout. A full, unscoped
+`node scripts/run-tests.mjs run` reported **7911 passing, 5 skipped, 9 failures across 3 files** —
+none touching this piece's own files (confirmed via `git status --short` before this piece touched
+anything, and again immediately before this verification run): `packages/adapter-kit/test/grants/
+denylist.test.ts` (7 failures — real, in-flight uncommitted work from concurrent `M11 P9`; `packages/
+adapter-kit/src/grants/denylist.ts` is untracked, not staged or touched by this piece), and the two
+already-accepted load-sensitive flakes (`packages/engine/test/e2e/crash-resume.test.ts`, and
+`packages/tui/test/screens/specs.test.tsx` — explicitly named as an accepted "same class, same
+treatment" flake in this piece's own instructions), both confirmed clean and fast when re-run in
+isolation immediately afterward.
+
+**What the critic caught that the builder missed:** every one of the four blocking findings — the
+builder's own scoped test suite exercised only the happy path of each mechanism (a clean fixture repo,
+a well-formed spec, no adversarial ref/URL/symlink shape) and never once tested the literal failure
+modes `PLAN-M11.md` P1's own Checks section names as the hard part of this piece (deterministic
+checksums, a floating-ref warning, a refused invalid directory). The one real gap the critic did *not*
+find — a symlink literally named `.git` at the root silently skipped by the pre-existing `.git`-name
+exclusion rather than triggering the symlink rejection — was noticed during this same round but judged
+a genuinely low-value, out-of-scope edge case (the exclusion exists for hash-purity reasons already
+established by this piece's own precedent, not as a general symlink-safety mechanism for every future
+consumer of the fetched directory) rather than silently left unrecorded.

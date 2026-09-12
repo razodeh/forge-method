@@ -14028,3 +14028,95 @@ to handle every formatting variant.
 **Verification:** `pnpm typecheck` (21/21 packages, including the new `@forge/adapter-generic`),
 `eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean. See
 `GAUNTLET-LOG.md`'s own `M11 P8` entry for the three critic rounds and full-workspace test results.
+
+## Q171 — M11 P1: overlay/module bundle fetch (local + git channels) — the `extensions -> vcs` edge,
+the ref-classification order, the checksum's symlink stance, and the URL-scheme allowlist
+
+**Context:** `PLAN-M11.md` P1 asks for `19` §19.5's local-path and git channels, with a real SHA-256
+checksum shared by both, per the plan's own already-recorded Surface deviation putting the git fetch
+in `@forge/vcs` (not `@forge/extensions`) and this piece's own new `extensions -> vcs` graph edge.
+Confirmed directly, before writing anything: zero hits for `fetch`/`npm:`/`git+`/`checksum`/
+`integrity` anywhere in `packages/extensions/src`, and `tools/eslint-plugin-forge-boundaries/src/
+graph.mjs`'s `extensions` row had no `vcs` entry — both exactly as the plan's own research pass
+already recorded.
+
+**1. The `extensions -> vcs` edge is added exactly as the plan pre-committed to, with the boundaries
+test fixture updated the same way `Q104`/`PLAN-M10.md` P10/P16's own `engine -> sessions` precedent
+was recorded: `tools/eslint-plugin-forge-boundaries/test/boundaries.test.ts`'s `SPEC_TABLE` no longer
+asserts `extensions` against the literal spec text (moved to its own dedicated test, mirroring the
+file's existing `engine` carve-out), rather than `specs/02` §2.2's own table text being edited —
+specs stay normative, the deviation is disclosed here and in the graph/test comments instead.**
+
+**2. `computeContentChecksum` (`@forge/vcs`) is deliberately manifest-agnostic and shared by both
+channels**, per the plan's own literal "for both channels" Checksum bullet — even though the local
+channel's own bullet separately says "no integrity check needed" (true: nothing compares the local
+channel's checksum against an *expected* value, since the user already has direct filesystem access
+to what they are installing). The checksum is still computed and returned uniformly, so `19` §19.5
+step 5's later `manifest.yaml` record never needs a channel-conditional field.
+
+**3. A real, hostile-critic-caught correctness bug in ref classification, fixed at the root, not
+merely tested around:** the first draft treated any hex-shaped ref (`/^[0-9a-f]{7,40}$/i`) as a
+pinned SHA before ever asking the remote whether it was actually a *branch* — a real branch literally
+named `deadbeef` (an entirely plausible name in a hex-happy repo) would have been silently reported as
+pinned, defeating `19` §19.5's own "floating refs warned about" guarantee for exactly that shape.
+Fixed by checking `git ls-remote` for a real tag, then a real branch, and only falling back to the
+hex-shape heuristic once neither matched — a real, historical commit SHA is never itself advertised as
+a ref by `ls-remote`, so this ordering costs nothing for the legitimate case while closing the false
+negative. A second, related fix: `ls-remote`'s own pattern arguments are `fnmatch`-glob, not literal,
+so a ref containing `*`/`?`/`[` (e.g. `v*`) could match more than one real tag and be misclassified —
+refused outright before ever reaching `ls-remote`.
+
+**4. A real, hostile-critic-caught adversarial-input gap in the checksum walk, fixed at the root:**
+`Dirent.isDirectory()` is `false` for a symlink, so the original walk fell through to the "regular
+file" branch and `readFile`'d straight through it — a bundle (either channel; `fetchLocalOverlay`
+calls the identical function) containing a symlink pointing outside the fetched/local content would
+fold an arbitrary host file's bytes into a checksum later written into `manifest.yaml`, an
+information-disclosure vector, and would also break the function's own "two fetches of identical
+content checksum identically" guarantee across machines. Fixed by refusing outright
+(`VCS-OVERLAY-SYMLINK-REJECTED`) the moment a symlink is found anywhere in the tree, rather than
+attempting a containment-checked resolution disproportionate to this piece's own budget.
+
+**5. A real, hostile-critic-caught command/fd-injection surface in the git URL, fixed at the root:**
+nothing restricted the URL's own scheme before it reached `execa('git', ['clone', url, ...])` — git's
+own `ext::`/`fd::` remote helper transports run an arbitrary local command or inherit a file
+descriptor when a git build has them enabled. Fixed with an explicit allowlist
+(`http`/`https`/`ssh`/`git`/`file`, plus a real scp-like `user@host:path` remote with no scheme) —
+fail-closed by default: any URL matching neither shape is refused, not merely the two named unsafe
+schemes, since a real `19` §19.5 overlay/module entry is always one of the allowed shapes anyway.
+
+**6. Every failure path throws only a typed error, never a raw `node:fs`/`execa` exception** — a
+third real critic finding: the first draft left `mkdir`/`mkdtemp`/`computeContentChecksum` in
+`fetchGitOverlay` unwrapped, and `fetchLocalOverlay`'s own `computeContentChecksum` call unwrapped
+entirely, so a permission error or a rejected symlink would leak past both functions' own documented
+"throws only `VcsError`/`ForgeError`" contracts. Fixed: `computeContentChecksum` itself now wraps
+every failure via `wrapGitFailure` (so both call sites inherit the guarantee for free), and two new
+`ForgeError` codes (`VCS-008` for the git channel, `VCS-009` for the local channel) wrap
+`@forge/vcs`'s own `VcsError` at each channel's one orchestration boundary — `@forge/vcs` has no
+`core` edge and so cannot throw `ForgeError` itself. A fourth new code, `CFG-028`, gives
+`findManifestKind` a real, distinct error for "a candidate manifest file's own permission could not be
+checked," rather than conflating that with "no manifest here at all" (`CFG-027`) the way the first
+draft's blanket `catch {}` did.
+
+**7. A real, hostile-critic-caught leak, fixed at the root:** the first draft only cleaned up the
+disposable git checkout directory when `fetchGitOverlay` returned successfully with no manifest
+found; any failure *inside* `fetchGitOverlay` itself (a bad ref, an unresolvable HEAD, a checksum
+failure) left the full, non-shallow clone behind permanently — the identical leak class
+`PLAN-M10.md` P17's own `createSandboxClone` gauntlet round already found and fixed one milestone
+earlier for the adjacent "clone succeeded, the next step failed" shape. Fixed with a `try`/`catch`
+around the whole post-`mkdtemp` body in `fetchGitOverlay`, and a second one in
+`fetchGitOverlayBundle` (`@forge/extensions/install`) covering the case where `findManifestKind`
+itself throws (not only returns `undefined`) after a successful fetch.
+
+**Judged, not fixed:** the critic separately flagged `VcsError`'s own message strings (in
+`overlay-fetch.ts` and pre-existing throughout `@forge/vcs`, e.g. `tag.ts`'s own
+`assertValidTagName`) interpolating a caller-supplied value directly rather than through `@forge/
+core`'s `show()` helper. Judged not a real defect: `show()` is a `ForgeError`-message-builder helper
+that lives in `@forge/core`, a package `@forge/vcs` has no edge to and could not import even if this
+were otherwise worth fixing; every existing `VcsError` message in this package already interpolates
+raw values the identical way (`tag.ts`'s `` `"${name}" is not a valid git tag name.` ``), so applying
+`show()`-style escaping to only this piece's own new messages would be a new, unprecedented
+inconsistency within `@forge/vcs` itself, not a fix.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`,
+and `node scripts/check-boundaries.mjs` all clean. See `GAUNTLET-LOG.md`'s own `M11 P1` entry for the
+critic round and full-workspace test results.
