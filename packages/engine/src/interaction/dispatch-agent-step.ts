@@ -38,7 +38,15 @@ import type {
  * (never a lane path): these sessions read whatever the primary author's own lane already committed,
  * they do not get a worktree of their own.
  */
-async function runParticipantSession(
+/**
+ * Exported (unlike every other non-exported helper in this file) specifically so `session.ts`'s own
+ * `16` §16.7 point 2 CONVERGE re-prompt can dispatch one, targeted, non-committing re-ask of `critic`
+ * alone when its first CONVERGE turn is a generic non-objection -- reusing this exact function keeps
+ * that re-prompt identical in shape (read-only, `ctx.projectRoot` as `cwd`, the same telemetry
+ * envelope) to every other participant session this dispatch layer ever runs, rather than a second,
+ * subtly-different one-off implementation in `session.ts` itself.
+ */
+export async function runParticipantSession(
   node: StepNode,
   ctx: ExecuteStepContext,
   role: string,
@@ -282,12 +290,20 @@ async function dispatchDebate(
   const participants: InteractionParticipant[] = [];
   let priorCriticFeedback = '';
   let conceded = false;
+  // `16` §16.7 point 3's own literal requirement, embedded once, verbatim, for round 1 alone —
+  // `DispatchAgentStepOptions.steelManRequirement`'s own doc comment has the fuller reasoning for why
+  // this dispatch layer never invents this instruction text itself.
+  const steelManRequirement = options.steelManRequirement;
   for (let round = 1; round <= maxRounds && !conceded; round += 1) {
+    const steelManInstruction =
+      round === 1 && steelManRequirement !== undefined
+        ? `\n\nSteel-man requirement for this opening round (round 1 only): ${steelManRequirement}\n\nYour response must first state the opposing side's case, as convincingly as its own proponent would state it, before stating your own position. A response that states only your own position, without first steel-manning the opposing case, does not satisfy this round.`
+        : '';
     const proposerSession = await runParticipantSession(
       node,
       ctx,
       `debate:proposer:round-${String(round)}`,
-      `${roleFraming(agent)}\n\n${node.brief ?? ''}\n\nRound ${String(round)}. Prior critic feedback: ${priorCriticFeedback || '(none yet)'}`,
+      `${roleFraming(agent)}\n\n${node.brief ?? ''}\n\nRound ${String(round)}. Prior critic feedback: ${priorCriticFeedback || '(none yet)'}${steelManInstruction}`,
     );
     participants.push({ role: `proposer:round-${String(round)}`, session: proposerSession });
 
@@ -295,7 +311,7 @@ async function dispatchDebate(
       node,
       ctx,
       `debate:critic:round-${String(round)}`,
-      `Critique this proposal (round ${String(round)}): ${proposerSession.finalText}\n\nReply "CONCEDE" if you have no further objection.`,
+      `Critique this proposal (round ${String(round)}): ${proposerSession.finalText}\n\nReply "CONCEDE" if you have no further objection.${steelManInstruction}`,
     );
     participants.push({ role: `critic:round-${String(round)}`, session: criticSession });
     priorCriticFeedback = criticSession.finalText;

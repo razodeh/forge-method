@@ -45,17 +45,21 @@ import {
   CRITIC_ROLE,
   SessionPhaseMachine,
   assembleSessionRecord,
+  expressesDisagreement,
+  isGenericNonObjection,
+  loadTechnique,
   type ConvergeInput,
   type DecideInput,
   type DivergeInput,
   type SessionState,
   type SessionParticipant,
   type SessionType,
+  type Technique,
 } from '@forge/sessions';
 import type { SessionRecord } from '@forge/schemas';
 import * as YAML from 'yaml';
 
-import { dispatchAgentStep } from './dispatch-agent-step.ts';
+import { dispatchAgentStep, runParticipantSession } from './dispatch-agent-step.ts';
 import type { InteractionParticipant } from './types.ts';
 import type { ExecuteStepContext, StepOutcome } from '../dispatch/types.ts';
 import { toAgentId, type StepNode } from '../plan/index.ts';
@@ -561,6 +565,40 @@ async function loadProjectAgentRegistry(
   }
 }
 
+/** `16` §16.7 point 3's own `steel-man-debate` -- the one real `16` §16.2 session type whose own
+ * "contested decisions" nature matches `steel-man-debate.technique.yaml`'s own `bestFor: Contested
+ * decisions` field verbatim. A real, disclosed reading, not a spec quote (no other session type's own
+ * `SESSION_TYPE_DEFAULTS` row is a comparably direct match) -- see `SPEC-QUESTIONS.md`. */
+const STEEL_MAN_SESSION_TYPES: ReadonlySet<SessionType> = new Set<SessionType>(['tradeoff']);
+const STEEL_MAN_TECHNIQUE_ID = 'steel-man-debate';
+
+/** The real, on-disk `steel-man-debate` technique for this project, or `undefined` when this project
+ * has no module shipping it (`fm-core` not installed, or a bare test fixture with no `modules/`
+ * directory at all -- the identical shape `loadProjectAgentRegistry` immediately above already treats
+ * as a real, honest absence rather than a programmer error). CONVERGE degrades to ordinary `panel`
+ * mode when this comes back `undefined` -- a real fallback, not a crash, over an optional
+ * anti-groupthink enhancement this session step's own core anatomy does not depend on. */
+async function loadSteelManTechnique(ctx: ExecuteStepContext): Promise<Technique | undefined> {
+  try {
+    const modulesDir = new ProjectPaths(ctx.projectRoot).resolveWithin('modules');
+    return await loadTechnique(modulesDir, STEEL_MAN_TECHNIQUE_ID);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Recovers the real role a `debate`-mode CONVERGE participant's own fixed `proposer:round-N`/
+ * `critic:round-N` shape (`dispatchDebate`, `dispatch-agent-step.ts`) stands in for.
+ * `critic:round-N` is always `CRITIC_ROLE` itself -- `dispatchDebate`'s own built-in "critic" turn *is*
+ * this session's own `critic` participant when debate mode drives CONVERGE. `proposer:round-N` is
+ * whichever real, non-critic role this module actually resolved and dispatched as the debate's own
+ * `agent` parameter (`proposerRole`). */
+function roleFromDebateParticipant(role: string, proposerRole: string): string {
+  if (role.startsWith('critic:round-')) return CRITIC_ROLE;
+  if (role.startsWith('proposer:round-')) return proposerRole;
+  return role;
+}
+
 /** `05` §5.3's own `decisions_owned` field, read literally: the first of this session's own real,
  * non-critic, non-facilitator agent roles that both (a) resolves to a real, registered
  * `AgentDefinition` and (b) actually owns at least one decision -- `16` §16.3 step 4's own "the
@@ -713,9 +751,27 @@ function domainRefusalOutcome(
  * runtime check, documented, over provably unreachable through this module's own real callers" choice
  * `runAgentStep`/`runCommandStep` (`dispatch/steps.ts`) already make for their own missing-field guards.
  */
+/**
+ * `16` §16.7 point 5's own real precedence rule, threaded from the caller: when supplied, this is the
+ * human's own real, already-elicited position on the framed question, and DECIDE records it as *the*
+ * decision, in place of whatever agent-resolved owner would otherwise have run (`DecideInput.
+ * humanDecision`'s own doc comment, `@forge/sessions`, has the full override rule). Optional, and
+ * disclosed rather than silently absent: no real call site in this milestone's own scope populates it
+ * yet (`ExecuteStepContext` has no synchronous, interactive human-input channel at all -- this file's
+ * own top-of-file citation of that exact, already-recorded gap for `elicit`/`subworkflow` applies
+ * identically here), the same honest "a real, wired extension point with no caller yet" shape this
+ * file's own `ElicitationRequested` telemetry event already is. A later, interactive `forge session`
+ * CLI (`PLAN-M10.md` P13) is the real, intended caller.
+ */
+export interface HumanSessionInput {
+  readonly decision: string;
+  readonly owner?: string;
+}
+
 export async function runSessionStep(
   node: StepNode,
   ctx: ExecuteStepContext,
+  humanInput?: HumanSessionInput,
 ): Promise<SessionStepResult> {
   const startedAt = ctx.now();
   if (node.sessionType === undefined) {
@@ -805,11 +861,19 @@ export async function runSessionStep(
       : machine.endDiverge(state);
   state = endDiverge.state;
 
+  // Hoisted ahead of CONVERGE (rather than declared immediately before DECIDE, as an earlier draft
+  // did): the steel-man-debate CONVERGE path below (`16` §16.7 point 3) needs a real, registered
+  // `AgentDefinition` to dispatch as the debate's own proposer, the identical registry DECIDE's own
+  // owner-resolution reads -- one real, cheap, read-only load, reused by both phases rather than
+  // fetched twice.
+  const registry = await loadProjectAgentRegistry(ctx);
+
   // CONVERGE -- every agent participant, `critic` included this time (`16` §16.3 step 3's own "critic
   // is unmuted"). `human` is filtered here for the identical reason DIVERGE's own filter is -- see
   // that comment above; `16` §16.7 point 5's "enters at CONVERGE" describes the human's own real
   // position outranking agent output when a human supplies one, not a fabricated agent session
-  // impersonating them.
+  // impersonating them (the real precedence rule this module implements is in DECIDE-input handling
+  // below -- `DecideInput.humanDecision`'s own doc comment, `@forge/sessions`).
   const convergePerspectives = (
     endDiverge.directive.kind === 'dispatch-converge'
       ? endDiverge.directive.participants
@@ -817,19 +881,69 @@ export async function runSessionStep(
   ).filter((role) => role !== HUMAN_ROLE);
   const objections: NonNullable<ConvergeInput['objections']>[number][] = [];
   const clusters: NonNullable<ConvergeInput['clusters']>[number][] = [];
+  let convergeTechniqueId: string | undefined;
   if (convergePerspectives.length > 0) {
     const convergePhaseNode = phaseNode(node, 'converge', facilitatorRole);
-    const convergeOutcome = await dispatchAgentStep(convergePhaseNode, facilitator, ctx, 'panel', {
-      perspectives: convergePerspectives,
-    });
+
+    // `16` §16.7 point 3 -- `tradeoff` sessions run CONVERGE as a real `debate`-mode dispatch, seeded
+    // with the real `steel-man-debate` technique's own prompt, instead of `panel` mode -- but only when
+    // this project actually has that technique installed and a real, non-critic role to dispatch as
+    // its proposer (`loadSteelManTechnique`'s own doc comment has the fallback reasoning for either
+    // condition failing).
+    const nonCriticRole = convergePerspectives.find((role) => role !== CRITIC_ROLE);
+    const steelManTechnique = STEEL_MAN_SESSION_TYPES.has(sessionType)
+      ? await loadSteelManTechnique(ctx)
+      : undefined;
+    // A fresh critic round found an earlier draft fell back to the neutral `facilitator` agent as the
+    // debate's own proposer whenever `nonCriticRole` had no real, registered `AgentDefinition`, then
+    // still labelled that facilitator-authored content as `nonCriticRole` in the record -- both a real
+    // violation of the facilitator's own "contributes no content of its own" invariant (this file's own
+    // top-of-file doc comment) and a mislabelled authorship. `useDebate` now requires a real, registered
+    // proposer agent outright; without one, CONVERGE degrades to ordinary `panel` mode instead, the
+    // identical "a real fallback, not a crash" choice `loadSteelManTechnique`'s own doc comment already
+    // makes for a missing technique.
+    const proposerAgent = nonCriticRole === undefined ? undefined : registry.get(nonCriticRole);
+    const useDebate = steelManTechnique !== undefined && proposerAgent !== undefined;
+    if (useDebate) convergeTechniqueId = steelManTechnique.id;
+
+    const convergeOutcome =
+      useDebate && nonCriticRole !== undefined
+        ? await dispatchAgentStep(
+            convergePhaseNode,
+            proposerAgent,
+            ctx,
+            'debate',
+            // `16` §16.8's own "Max rounds per phase: ... CONVERGE 2" bound.
+            { maxDebateRounds: 2, steelManRequirement: steelManTechnique.prompt },
+          )
+        : await dispatchAgentStep(convergePhaseNode, facilitator, ctx, 'panel', {
+            perspectives: convergePerspectives,
+          });
+
+    let criticFinalText: string | undefined;
+    // A fresh critic round found an earlier draft pushed one `clusters` entry *per debate round* for
+    // the identical `nonCriticRole` (a 2-round debate produced two duplicate cluster entries for one
+    // real perspective, breaking panel mode's own one-entry-per-perspective invariant) -- captured here
+    // instead, the identical "last round wins, pushed once after the loop" treatment `criticFinalText`
+    // already gets, and used only for the debate path (panel mode still pushes inline, one perspective,
+    // one session, no rounds to collapse).
+    let proposerFinalText: string | undefined;
     for (const participant of convergeOutcome.participants ?? []) {
       // Identical reasoning to DIVERGE's own filter above -- a failed `critic` session must never
       // count as a real, structural objection (`16` §16.7 point 2's own gate, `advanceToDecide`
       // below), and a failed non-critic session must never seed a cluster from empty/garbage text.
       if (!participant.session.ok) continue;
-      const role = roleFromParticipant(participant);
+      const role =
+        useDebate && nonCriticRole !== undefined
+          ? roleFromDebateParticipant(participant.role, nonCriticRole)
+          : roleFromParticipant(participant);
       if (role === CRITIC_ROLE) {
-        objections.push({ by: role, text: participant.session.finalText });
+        // The *last* round's own text when debate ran more than one round -- deferred to after this
+        // loop (rather than pushed to `objections` immediately) so the generic-non-objection re-prompt
+        // below can still act on it before it becomes this session's own real, recorded objection.
+        criticFinalText = participant.session.finalText;
+      } else if (useDebate) {
+        proposerFinalText = participant.session.finalText;
       } else {
         clusters.push({
           label: role,
@@ -838,12 +952,69 @@ export async function runSessionStep(
             .filter(({ idea }) => idea.proposedBy === role)
             .map(({ index }) => `IDEA-${String(index + 1).padStart(3, '0')}`),
         });
+        // `16` §16.7 point 4's own real, counted signal: a non-critic participant's own real
+        // disagreement counts too, not only critic's structural objection -- most real session types
+        // (`16` §16.2's own table) carry no `critic` participant at all (`expressesDisagreement`'s own
+        // doc comment has the fuller reasoning for why this matters).
+        if (expressesDisagreement(participant.session.finalText)) {
+          objections.push({ by: role, text: participant.session.finalText });
+        }
       }
     }
+    if (useDebate && nonCriticRole !== undefined && proposerFinalText !== undefined) {
+      clusters.push({
+        label: nonCriticRole,
+        ideaIds: divergeIdeas
+          .map((idea, index) => ({ idea, index }))
+          .filter(({ idea }) => idea.proposedBy === nonCriticRole)
+          .map(({ index }) => `IDEA-${String(index + 1).padStart(3, '0')}`),
+      });
+      if (expressesDisagreement(proposerFinalText)) {
+        objections.push({ by: nonCriticRole, text: proposerFinalText });
+      }
+    }
+
+    // `16` §16.7 point 2's own facilitator-enforced mandate: "'this seems fine' is not an acceptable
+    // contribution and is rejected by the facilitator" -- rejected and re-prompted exactly once before
+    // being accepted regardless of what the second attempt says (`isGenericNonObjection`'s own doc
+    // comment: this is a real, mechanical proxy, not a judge of whether the second attempt is any
+    // good). `isGenericNonObjection` also matches a bare debate "CONCEDE" (its own pattern list) -- a
+    // fresh critic round found an earlier draft recorded a debate concession verbatim as a real
+    // objection, the exact "theatre" measure 4 exists to catch, given `no_disagreement_observed`
+    // (`assembleSessionRecord`) reads `state.objections` directly.
+    if (criticFinalText !== undefined && isGenericNonObjection(criticFinalText)) {
+      const reprompt = await runParticipantSession(
+        convergePhaseNode,
+        ctx,
+        'critic-reprompt',
+        `You are acting as ${facilitator.name} (${facilitator.persona.voice}), framing this re-ask on ` +
+          `${CRITIC_ROLE}'s own behalf.\n\nThe prior CONVERGE contribution ("${criticFinalText}") is a ` +
+          'generic non-objection. 16 §16.7 point 2 does not accept a "this seems fine"-shaped response ' +
+          'as a real contribution. State one concrete, falsifiable objection to the proposal under ' +
+          'discussion -- or, if none genuinely exists, say precisely and specifically why not, rather ' +
+          'than a generic assurance.',
+      );
+      // A fresh critic round found an earlier draft left `criticFinalText` at its own original,
+      // already-rejected generic text when the re-prompt session itself failed (`ok: false`) --
+      // resurrecting a real failure into a fabricated, accepted contribution, the identical class of
+      // bug this file's own DIVERGE/CONVERGE participant loops already guard against for every other
+      // failed session. `undefined` here is the honest "critic contributed nothing usable" outcome,
+      // matching `advanceToDecide`'s own real, structural refusal (`RUN-062`) for a `critic` participant
+      // that never produced a real objection.
+      criticFinalText = reprompt.ok ? reprompt.finalText : undefined;
+    }
+    if (criticFinalText !== undefined) {
+      objections.push({ by: CRITIC_ROLE, text: criticFinalText });
+    }
+
     // Identical reasoning to DIVERGE's own cleanup above.
     await cleanupPhaseLane(ctx, convergePhaseNode.id);
   }
-  const convergeResult = machine.converge(state, { clusters, objections });
+  const convergeResult = machine.converge(state, {
+    clusters,
+    objections,
+    ...(convergeTechniqueId === undefined ? {} : { techniqueId: convergeTechniqueId }),
+  });
   state = convergeResult.state;
 
   const advance = machine.advanceToDecide(state);
@@ -853,7 +1024,6 @@ export async function runSessionStep(
   }
 
   // DECIDE -- solo dispatch to the resolved owner, or a real human-input request if none resolves.
-  const registry = await loadProjectAgentRegistry(ctx);
   const owner = resolveDecisionOwner(agentRoles, facilitatorRole, registry);
   let decideSession: SessionResult = NO_AGENT_SESSION;
   let decideInput: DecideInput;
@@ -861,7 +1031,40 @@ export async function runSessionStep(
   // session, or a lane/commit failure inside `runAgentStep`) -- distinct from the human-fallback path
   // above, which is not a failure at all, only an honest "nobody here owns this."
   let decideFailure: StepOutcome['failure'];
-  if (owner === undefined) {
+  if (humanInput !== undefined) {
+    // `16` §16.7 point 5's own "outranks" rule, made real: the human's own supplied position wins
+    // outright, whether or not an agent owner would otherwise have resolved -- no agent DECIDE
+    // dispatch runs at all (a real, honest saving against `16` §16.8's own cost/time bounds, not merely
+    // a shortcut), and `machine.decide`'s own `humanDecision` override (`@forge/sessions`) is what
+    // actually enforces the "not equally authoritative" precedence, not this branch's own ordering
+    // alone.
+    //
+    // `writeDecisionBack`'s own idempotency (a KB entry already at this deterministic path is reused
+    // by id, not overwritten -- see its own doc comment) was designed against a retried/resumed run of
+    // the *same* decision text; it is not content-aware. A real, disclosed edge case this piece does
+    // not close: resuming a session step whose agent-authored decision was already written, then
+    // supplying a *different* `humanInput.decision` on that resume, reuses the stale KB entry's id
+    // rather than writing the human's own new text -- the persisted record's own decision text and its
+    // `artifactRef` target would then disagree. No real call site in this milestone's own scope
+    // reaches this (`HumanSessionInput`'s own doc comment: no caller populates it yet), so this is
+    // recorded here rather than reworked -- reworking `writeDecisionBack`'s own shared idempotency
+    // contract would also change the already-tested agent-decision retry path. See `SPEC-QUESTIONS.md`.
+    const artifactRef = await writeDecisionBack(
+      ctx,
+      SESSION_TYPE_DEFAULTS[sessionType].kbSection,
+      node,
+      humanInput.owner ?? HUMAN_ROLE,
+      humanInput.decision,
+      clock,
+    );
+    decideInput = {
+      humanDecision: {
+        decision: humanInput.decision,
+        owner: humanInput.owner ?? HUMAN_ROLE,
+        artifactRef,
+      },
+    };
+  } else if (owner === undefined) {
     await ctx.telemetry.emit({
       type: 'ElicitationRequested',
       stepId: node.id,

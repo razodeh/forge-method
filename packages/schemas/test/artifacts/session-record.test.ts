@@ -37,6 +37,22 @@ describe('sessionRecordSchema — valid', () => {
     expect(sessionRecordSchema.safeParse(validSessionRecord()).success).toBe(true);
   });
 
+  // `16` §16.7 point 4's own additive `no_disagreement_observed` flag (`PLAN-M10.md` P11).
+  it('accepts a record with no_disagreement_observed omitted (backward-compatible additive field)', () => {
+    const result = sessionRecordSchema.safeParse(validSessionRecord());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.no_disagreement_observed).toBeUndefined();
+  });
+
+  it.each([true, false])('accepts a record with no_disagreement_observed: %s', (flag) => {
+    const result = sessionRecordSchema.safeParse({
+      ...validSessionRecord(),
+      no_disagreement_observed: flag,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.no_disagreement_observed).toBe(flag);
+  });
+
   it.each([
     'brainstorm',
     'design-review',
@@ -78,6 +94,15 @@ describe('sessionRecordSchema — invalid, each asserting the error path', () =>
     const result = sessionRecordSchema.safeParse({ ...validSessionRecord(), cost_usd: -1 });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['cost_usd']);
+  });
+
+  it('rejects a non-boolean no_disagreement_observed', () => {
+    const result = sessionRecordSchema.safeParse({
+      ...validSessionRecord(),
+      no_disagreement_observed: 'yes',
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['no_disagreement_observed']);
   });
 
   it('rejects an id whose prefix does not match its type', () => {

@@ -91,6 +91,88 @@ export function isStatableInOneSentence(question: string): boolean {
   return !/[.?!]/.test(withoutOwnTerminator);
 }
 
+/**
+ * `16` §16.7 point 2's own named, unacceptable non-objection ("'this seems fine' is not an acceptable
+ * contribution"), as a mechanical, deterministic proxy -- the identical "a cheap mechanical proxy, not
+ * a judgement" shape `isStatableInOneSentence` above already uses. Matches an empty response and a
+ * small, closed set of the real generic-agreement shapes an agent's own CONVERGE turn plausibly
+ * produces ("this seems fine", "looks good", "no objections", "LGTM", "nothing to add") -- not a
+ * general sentiment classifier, and not claimed to be one: a real, specific objection that happens to
+ * also contain the word "fine" elsewhere in a longer sentence does not match any of these anchored
+ * patterns. The caller (`@forge/engine/interaction/session.ts`) uses this to decide whether `critic`'s
+ * own CONVERGE turn needs a single re-prompt before its text is accepted as a real objection.
+ *
+ * Also matches a bare `debate`-mode "CONCEDE" (`dispatchDebate`, `@forge/engine/interaction/dispatch-
+ * agent-step.ts`'s own literal concession token): a fresh critic round found an earlier caller-side
+ * draft treated a debate concession as a real, substantive objection outright (since "CONCEDE" alone
+ * matched none of this function's own patterns) -- a concession is definitionally the *absence* of a
+ * real objection, the identical case this function exists to catch, whichever dispatch shape (`panel`
+ * or `debate`) produced the text.
+ */
+export function isGenericNonObjection(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  const GENERIC_NON_OBJECTION_PATTERNS: readonly RegExp[] = [
+    /^this\s+(all\s+)?(seems|looks|sounds)\s+(fine|good|ok|okay|reasonable)\.?$/i,
+    /^(seems|looks|sounds)\s+(fine|good|ok|okay|reasonable)(\s+to\s+me)?\.?$/i,
+    /^no\s+(real\s+)?(objections?|concerns?|issues?)(\s+(here|from\s+me))?\.?$/i,
+    /^(lgtm|looks good to me)\.?$/i,
+    /^(i\s+)?(have\s+)?nothing\s+(to\s+add|further|else)\.?$/i,
+    /^(i\s+)?(agree|approve)\.?$/i,
+    /^concede[ds]?\.?$/i,
+  ];
+  return GENERIC_NON_OBJECTION_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+/**
+ * `16` §16.7 point 4's own real, counted signal: whether a participant's own CONVERGE-phase turn
+ * actually expressed disagreement with another participant's proposal, as a mechanical, deterministic
+ * proxy over its own text -- the same disclosed-heuristic shape `isGenericNonObjection` above already
+ * uses, applied to the opposite question. `critic`'s own structural CONVERGE objection already always
+ * counts (`advanceToDecide`'s own gate requires one whenever `critic` participates), but most session
+ * types (`16` §16.2's own table: `brainstorm`, `retro`, `war-room`, `estimation`, `standup`,
+ * `discovery-interview`, `story-refinement`) carry no `critic` participant at all -- without this,
+ * every one of those session types would always report "no disagreement observed" regardless of
+ * whether a real, substantive disagreement actually occurred between two non-critic participants, the
+ * exact false-flag `16` §16.7 point 4's own "so the user can see when a session was theatre" purpose
+ * would otherwise produce for the majority of real session types. The caller records a match as a real
+ * `SessionObjection` (attributed to the participant who said it), the same structural fact
+ * `no_disagreement_observed` is computed from (`assembleSessionRecord`) -- not a second, parallel
+ * signal, so the two can never disagree with each other about whether disagreement occurred.
+ *
+ * `NEGATED_AGREEMENT_PATTERNS` is checked first, and short-circuits to `false`: a fresh critic round
+ * found the marker list below has no negation awareness at all, so routine agreement phrasing that
+ * happens to *use* one of its own marker words ("no concerns", "low risk", "nothing against it") was
+ * misclassified as real disagreement -- exactly backwards for a signal whose whole purpose is
+ * distinguishing genuine disagreement from agreement. Still a mechanical proxy, not a full negation
+ * parser: it only catches the specific negated shapes a real CONVERGE turn plausibly uses.
+ */
+export function expressesDisagreement(text: string): boolean {
+  const NEGATED_AGREEMENT_PATTERNS: readonly RegExp[] = [
+    /\bno\s+(real\s+)?(concerns?|objections?|issues?)\b/i,
+    /\b(low|no|little|zero|minimal)\s+risks?\b/i,
+    /\bnothing\s+against\b/i,
+    /\bnot\s+against\b/i,
+  ];
+  if (NEGATED_AGREEMENT_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  const DISAGREEMENT_MARKERS: readonly RegExp[] = [
+    /\bdisagree/i,
+    /\bobjection\b/i,
+    /\bhowever\b/i,
+    /\binstead\b/i,
+    /\bshould not\b/i,
+    /\bshouldn't\b/i,
+    /\brisk(?:y|s)?\b/i,
+    /\bconcern(?:ed|s)?\b/i,
+    /\bagainst\b/i,
+    /\b(is|that's|that is)\s+wrong\b/i,
+    /\bi\s+don'?t\s+think\b/i,
+    /\bcounter[- ]?argument\b/i,
+    /\bpush\s?back\b/i,
+  ];
+  return DISAGREEMENT_MARKERS.some((pattern) => pattern.test(text));
+}
+
 export interface SessionPhaseMachineDeps {
   readonly clock: Clock;
 }
@@ -126,6 +208,24 @@ export interface DecideInput {
    * rule on. Ignored (never cleared) if real decisions or actions are also given -- see
    * `canComplete`'s own doc comment for which state this actually gates. */
   readonly inconclusiveReason?: string;
+  /** `16` §16.7 point 5's own "the human's position... enters at CONVERGE, where it outranks" --
+   * a real precedence rule, not merely a documented intention: when set, `decide()` records *only*
+   * this decision, discarding every agent-authored entry in `decisions` above from this same call
+   * outright, rather than merely placing the human's decision first alongside them. A caller with
+   * both a real agent-resolved decision and a real human position for the identical framed question
+   * must never end up with both recorded as if they were equally authoritative -- that is precisely
+   * the "converge on the human's stated position instead of outranking it" failure `16` §16.7 point 5
+   * exists to prevent, one level later (at the point a decision is actually made, not merely
+   * proposed). See `SPEC-QUESTIONS.md` for the disclosed timing deviation from the spec's own literal
+   * "enters at CONVERGE" wording -- this piece implements the precedence rule where a decision is
+   * actually recorded (DECIDE), since CONVERGE itself never resolves an authoritative decision. */
+  readonly humanDecision?:
+    | {
+        readonly decision: string;
+        readonly owner: string;
+        readonly artifactRef?: string | undefined;
+      }
+    | undefined;
 }
 
 export interface PhaseResult {
@@ -322,7 +422,12 @@ export class SessionPhaseMachine {
   decide(state: SessionState, input: DecideInput): PhaseResult {
     assertPhase(state, 'DECIDE');
 
-    const newDecisions = (input.decisions ?? []).map((decision, index) => ({
+    // `16` §16.7 point 5's own "outranks" rule, implemented as a full override -- see
+    // `DecideInput.humanDecision`'s own doc comment for why this is not mere prioritization.
+    const effectiveDecisions: readonly Omit<SessionDecision, 'id'>[] =
+      input.humanDecision === undefined ? (input.decisions ?? []) : [input.humanDecision];
+
+    const newDecisions = effectiveDecisions.map((decision, index) => ({
       ...decision,
       id: nextId('D', state.decisions.length + index),
     }));

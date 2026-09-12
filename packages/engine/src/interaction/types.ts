@@ -97,4 +97,12 @@ export interface DispatchAgentStepOptions {
    * way to know, and no check runs; a real, disclosed non-goal for a caller in that position
    * (`SPEC-QUESTIONS.md`), not a silent gap. */
   readonly authoringAgentIds?: readonly string[];
+  /** `debate` only — `16` §16.7 point 3's own `steel-man-debate` requirement ("each side to state the
+   * opposing case convincingly before its own"): when set, round 1's proposer AND critic prompts both
+   * embed this exact text and both require stating the opposing side's case first, as round 1's own
+   * required content. The caller supplies the real technique's own prompt text (`@forge/sessions`'s
+   * `loadTechnique(modulesDir, 'steel-man-debate')`) rather than this dispatch layer inventing generic
+   * instruction text of its own — real, technique-driven sequencing, not a hard-coded assumption about
+   * what "steel-man" means. Ignored on round 2 onward and ignored entirely for every other mode. */
+  readonly steelManRequirement?: string;
 }

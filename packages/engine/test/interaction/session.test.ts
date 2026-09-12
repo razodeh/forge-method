@@ -569,3 +569,404 @@ describe('runSessionStep — RUN-039 scoping', () => {
     }
   });
 });
+
+/** A real, on-disk `modules/fm-core/techniques/steel-man-debate.technique.yaml` -- byte-for-byte the
+ * same real, shipped content this repo's own `modules/fm-core/techniques/steel-man-debate.technique.
+ * yaml` carries, so this test exercises the identical real technique `loadSteelManTechnique`
+ * (`session.ts`) would load from a real project, not a synthetic stand-in with different content. */
+const STEEL_MAN_TECHNIQUE_YAML = `
+id: steel-man-debate
+name: Steel-man debate
+bestFor: Contested decisions
+phases: [converge]
+prompt: >
+  For each of the two (or more) contested options, first state the strongest possible case for every
+  *other* option -- as convincingly as that option's own proponent would state it -- before stating
+  the case for your own preferred option. A case for an option that has not first steel-manned every
+  alternative is not admissible input to CONVERGE.
+`;
+
+async function withSteelManTechnique(projectRoot: string): Promise<void> {
+  const target = new ProjectPaths(projectRoot).resolveWithin(
+    'modules/fm-core/techniques/steel-man-debate.technique.yaml',
+  );
+  await writeFileAtomic(target, STEEL_MAN_TECHNIQUE_YAML);
+}
+
+/** Wraps a real `FakePlatformAdapter`, recording every real `SessionRequest.prompt` this run actually
+ * sent, keyed by `stepId` -- the one real, inspectable signal proving *what content* a dispatch call
+ * actually carried (`16` §16.7 point 1's "independently" and point 3's "opposing case first" can only
+ * be checked against real prompt text, not merely against which stepIds ran). */
+function promptRecordingAdapter(adapter: FakePlatformAdapter): {
+  readonly wrapped: PlatformAdapter;
+  readonly prompts: Record<string, string>;
+} {
+  const prompts: Record<string, string> = {};
+  const wrapped: PlatformAdapter = {
+    id: adapter.id,
+    displayName: adapter.displayName,
+    capabilities: () => adapter.capabilities(),
+    preflight: () => adapter.preflight(),
+    listModels: () => adapter.listModels(),
+    startSession: (req: SessionRequest) => {
+      prompts[req.stepId] = req.prompt;
+      return adapter.startSession(req);
+    },
+    resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+  };
+  return { wrapped, prompts };
+}
+
+describe('runSessionStep — anti-groupthink measures (16 §16.7)', () => {
+  it("measure 1 (panel independence): DIVERGE dispatches each participant its own prompt, containing no other participant's own answer -- real independence, not merely instructed to stay quiet", async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-independence');
+    await withRealAgentRoster(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.endsWith(':panel:pm'), {
+      text: ['pm: simplify the signup form'],
+    });
+    fake.script((request) => request.stepId.endsWith(':panel:analyst'), {
+      text: ['analyst: cut the manual approval step'],
+    });
+    const { wrapped, prompts } = promptRecordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:brainstorm-independence',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    await runSessionStep(stepNode, ctx);
+
+    const pmPrompt = Object.entries(prompts).find(([id]) => id.endsWith(':panel:pm'))?.[1] ?? '';
+    const analystPrompt =
+      Object.entries(prompts).find(([id]) => id.endsWith(':panel:analyst'))?.[1] ?? '';
+    expect(pmPrompt).not.toBe('');
+    expect(analystPrompt).not.toBe('');
+    // Neither participant's own DIVERGE prompt contains the *other's* real answer -- each was
+    // genuinely dispatched before either answer existed, not sequenced or shown the other's output.
+    expect(pmPrompt).not.toContain('cut the manual approval step');
+    expect(analystPrompt).not.toContain('simplify the signup form');
+  });
+
+  it('measure 5a: DIVERGE never dispatches a session "as" the human -- no stepId for the human role is ever requested', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-no-human-diverge');
+    await withRealAgentRoster(projectRoot);
+    const { wrapped, stepIds } = recordingAdapter(new FakePlatformAdapter());
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:brainstorm-no-human-diverge',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    await runSessionStep(stepNode, ctx);
+
+    expect(stepIds.some((id) => id.includes('panel:human'))).toBe(false);
+    expect(stepIds.some((id) => id.endsWith(':human'))).toBe(false);
+  });
+
+  it('measure 2: a generic "this seems fine"-shaped critic CONVERGE turn is rejected and re-prompted once, and the re-prompted, real objection is what gets recorded', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-critic-reprompt');
+    await withRealAgentRoster(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.endsWith(':panel:critic'), {
+      text: ['This seems fine.'],
+    });
+    fake.script((request) => request.stepId.endsWith(':critic-reprompt'), {
+      text: ['The proposed rollout has no rollback plan for the payments migration -- real risk.'],
+    });
+    const { wrapped, stepIds } = recordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:design-review-reprompt',
+      kind: 'session',
+      sessionType: 'design-review',
+      brief: 'Should we ship the new payments migration path',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    // A real, targeted re-ask actually ran -- not merely implied.
+    expect(stepIds.some((id) => id.endsWith(':critic-reprompt'))).toBe(true);
+    const target = new ProjectPaths(projectRoot).resolveWithin(
+      `docs/forge/sessions/${requireRecord(result).id}.md`,
+    );
+    const text = await readTextFile(target);
+    // The generic non-objection never becomes this session's own recorded critic contribution.
+    expect(text).not.toContain('This seems fine.');
+    // The real, falsifiable objection from the re-prompt is what actually got recorded.
+    expect(text).toContain('no rollback plan for the payments migration');
+  });
+
+  it('measure 2 (accepted after one retry): a critic that is still generic on the second attempt is accepted anyway -- exactly one re-prompt, never a retry loop', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-critic-reprompt-still-generic');
+    await withRealAgentRoster(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.endsWith(':panel:critic'), {
+      text: ['LGTM'],
+    });
+    fake.script((request) => request.stepId.endsWith(':critic-reprompt'), {
+      text: ['No objections.'],
+    });
+    const { wrapped, stepIds } = recordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:design-review-reprompt-still-generic',
+      kind: 'session',
+      sessionType: 'design-review',
+      brief: 'Should we ship the new payments migration path',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    // Exactly one re-prompt was issued -- never a second one, even though the retry was itself generic.
+    const reprompts = stepIds.filter((id) => id.endsWith(':critic-reprompt'));
+    expect(reprompts).toHaveLength(1);
+  });
+
+  it('measure 3: a tradeoff session runs CONVERGE as a real debate dispatch seeded with the real steel-man-debate technique, requiring the opposing case first in round 1', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-steelman');
+    await withRealAgentRoster(projectRoot);
+    await withSteelManTechnique(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.includes(':converge:debate:proposer:round-1'), {
+      text: ['Steel-manning the alternative first, then my own case for option A.'],
+    });
+    fake.script((request) => request.stepId.includes(':converge:debate:critic:round-1'), {
+      text: ['CONCEDE'],
+    });
+    const { wrapped, prompts } = promptRecordingAdapter(fake);
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:tradeoff-steelman',
+      kind: 'session',
+      sessionType: 'tradeoff',
+      brief: 'Should we use a shared database or per-tenant databases',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const proposerPrompt =
+      Object.entries(prompts).find(([id]) =>
+        id.includes(':converge:debate:proposer:round-1'),
+      )?.[1] ?? '';
+    const criticPrompt =
+      Object.entries(prompts).find(([id]) => id.includes(':converge:debate:critic:round-1'))?.[1] ??
+      '';
+    expect(proposerPrompt).not.toBe('');
+    // The real technique's own prompt text was embedded, not a generic instruction invented here.
+    expect(proposerPrompt).toContain('first state the strongest possible case for every');
+    expect(proposerPrompt).toContain("opposing side's case");
+    expect(criticPrompt).toContain('first state the strongest possible case for every');
+  });
+
+  it('measure 3 (fallback): a tradeoff session with no steel-man-debate technique installed still completes, via ordinary panel-mode CONVERGE', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-steelman-fallback');
+    await withRealAgentRoster(projectRoot);
+    // Deliberately no `withSteelManTechnique` call -- no modules/fm-core/techniques/ at all.
+    const { wrapped, stepIds } = recordingAdapter(new FakePlatformAdapter());
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:tradeoff-no-technique',
+      kind: 'session',
+      sessionType: 'tradeoff',
+      brief: 'Should we use a shared database or per-tenant databases',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(stepIds.some((id) => id.includes(':debate:'))).toBe(false);
+    expect(stepIds.some((id) => id.includes(':panel:'))).toBe(true);
+  });
+
+  it('measure 3 (fallback, unregistered proposer): the technique is installed but the resolved proposer role has no real registered agent -- CONVERGE still degrades to panel mode, never a facilitator-authored debate mislabelled as the role', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-steelman-unregistered');
+    // Deliberately no `withRealAgentRoster` call -- `architect` is a bare role name, not a real,
+    // registered agent, even though the technique itself is installed.
+    await withSteelManTechnique(projectRoot);
+    const { wrapped, stepIds } = recordingAdapter(new FakePlatformAdapter());
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:tradeoff-unregistered-proposer',
+      kind: 'session',
+      sessionType: 'tradeoff',
+      brief: 'Should we use a shared database or per-tenant databases',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(stepIds.some((id) => id.includes(':debate:'))).toBe(false);
+    expect(stepIds.some((id) => id.includes(':panel:'))).toBe(true);
+  });
+
+  it('measure 3 (regression): a debate concession ("CONCEDE") is never recorded as real disagreement -- no_disagreement_observed stays true', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-steelman-concede-flag');
+    await withRealAgentRoster(projectRoot);
+    await withSteelManTechnique(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.includes(':converge:debate:proposer:round-1'), {
+      text: ['Steel-manning the alternative first, then my own case for option A.'],
+    });
+    fake.script((request) => request.stepId.includes(':converge:debate:critic:round-1'), {
+      text: ['CONCEDE'],
+    });
+    // A bare "CONCEDE" is itself a generic non-objection (`isGenericNonObjection`), so this triggers
+    // measure 2's own one-shot re-prompt -- scripted here to concede again, proving the *final*,
+    // still-generic text (not a stray default-adapter response) is what the flag is computed from.
+    fake.script((request) => request.stepId.endsWith(':critic-reprompt'), {
+      text: ['I have nothing further.'],
+    });
+    const ctx = createTestContext({ projectRoot, adapter: fake });
+    const stepNode = node({
+      id: 'wf:tradeoff-concede-flag',
+      kind: 'session',
+      sessionType: 'tradeoff',
+      brief: 'Should we use a shared database or per-tenant databases',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(requireRecord(result).no_disagreement_observed).toBe(true);
+  });
+
+  it("measure 3 (regression): a multi-round debate records the proposer's own final round only -- no duplicate cluster entries across rounds", async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-steelman-no-duplicate-clusters');
+    await withRealAgentRoster(projectRoot);
+    await withSteelManTechnique(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.includes(':converge:debate:proposer:round-1'), {
+      text: ['Round 1 proposal for the shared database.'],
+    });
+    fake.script((request) => request.stepId.includes(':converge:debate:critic:round-1'), {
+      text: ['Not convinced yet -- what about tenant isolation?'],
+    });
+    fake.script((request) => request.stepId.includes(':converge:debate:proposer:round-2'), {
+      text: ['Round 2 refined proposal for the shared database.'],
+    });
+    fake.script((request) => request.stepId.includes(':converge:debate:critic:round-2'), {
+      text: ['CONCEDE'],
+    });
+    const ctx = createTestContext({ projectRoot, adapter: fake });
+    const stepNode = node({
+      id: 'wf:tradeoff-no-duplicate-clusters',
+      kind: 'session',
+      sessionType: 'tradeoff',
+      brief: 'Should we use a shared database or per-tenant databases',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const target = new ProjectPaths(projectRoot).resolveWithin(
+      `docs/forge/sessions/${requireRecord(result).id}.md`,
+    );
+    const text = await readTextFile(target);
+    const architectClusterLines = text
+      .split('\n')
+      .filter((line) => line.startsWith('- architect:'));
+    expect(architectClusterLines).toHaveLength(1);
+  });
+
+  it('measure 2 (regression): a critic re-prompt that itself genuinely fails is not fabricated into an accepted objection -- the session honestly refuses CONVERGE (RUN-062)', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-critic-reprompt-fails');
+    await withRealAgentRoster(projectRoot);
+    const fake = new FakePlatformAdapter();
+    fake.script((request) => request.stepId.endsWith(':panel:critic'), {
+      text: ['This seems fine.'],
+    });
+    fake.injectFailure((request) => request.stepId.endsWith(':critic-reprompt'), 'error');
+    const ctx = createTestContext({ projectRoot, adapter: fake });
+    const stepNode = node({
+      id: 'wf:design-review-reprompt-fails',
+      kind: 'session',
+      sessionType: 'design-review',
+      brief: 'Should we ship the new payments migration path',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('failed');
+    expect(result.outcome.failure?.code).toBe('RUN-062');
+    expect(result.record).toBeUndefined();
+  });
+
+  it('measure 4: a scripted all-agreement panel (no critic present, no participant disagrees) flags no_disagreement_observed; one real disagreement clears it', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-no-disagreement');
+    await withRealAgentRoster(projectRoot);
+    const agreementAdapter = new FakePlatformAdapter();
+    agreementAdapter.script(() => true, {
+      text: ['Sounds good, fully on board with this direction.'],
+    });
+    const ctx = createTestContext({ projectRoot, adapter: agreementAdapter });
+    const stepNode = node({
+      id: 'wf:brainstorm-all-agree',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const agreementResult = await runSessionStep(stepNode, ctx);
+    expect(requireRecord(agreementResult).no_disagreement_observed).toBe(true);
+
+    const disagreeProjectRoot = await createTempRepo('anti-groupthink-real-disagreement');
+    await withRealAgentRoster(disagreeProjectRoot);
+    const disagreeAdapter = new FakePlatformAdapter();
+    disagreeAdapter.script((request) => request.stepId.endsWith(':panel:pm'), {
+      text: ['I disagree with the proposed scope -- it drops the invoicing edge cases entirely.'],
+    });
+    disagreeAdapter.script(() => true, { text: ['Sounds good.'] });
+    const disagreeCtx = createTestContext({
+      projectRoot: disagreeProjectRoot,
+      adapter: disagreeAdapter,
+    });
+    const disagreeNode = node({
+      id: 'wf:brainstorm-real-disagreement',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we cut time-to-first-invoice',
+    });
+
+    const disagreeResult = await runSessionStep(disagreeNode, disagreeCtx);
+    expect(requireRecord(disagreeResult).no_disagreement_observed).toBe(false);
+  });
+
+  it('measure 5b: a human decision, when supplied, wins outright over the resolved agent owner -- no DECIDE-phase agent dispatch runs at all', async () => {
+    const projectRoot = await createTempRepo('anti-groupthink-human-outranks');
+    await withRealAgentRoster(projectRoot);
+    const { wrapped, stepIds } = recordingAdapter(new FakePlatformAdapter());
+    const ctx = createTestContext({ projectRoot, adapter: wrapped });
+    const stepNode = node({
+      id: 'wf:brainstorm-human-outranks',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'Should we ship the quick-invoice path',
+    });
+
+    const result = await runSessionStep(stepNode, ctx, {
+      decision: 'Ship the manual path for now, revisit automation next quarter.',
+      owner: 'pm',
+    });
+
+    expect(result.outcome.status).toBe('succeeded');
+    // `architect` is the only role this test's own roster resolves as a real decisions_owned owner
+    // (see `withRealAgentRoster`) -- if the human override did not outrank it, a real `:decide`
+    // dispatch to `architect` would have run.
+    expect(stepIds.some((id) => id.includes(':decide'))).toBe(false);
+    const record = requireRecord(result);
+    expect(record.status).toBe('complete');
+
+    const target = new ProjectPaths(projectRoot).resolveWithin(
+      `docs/forge/sessions/${record.id}.md`,
+    );
+    const text = await readTextFile(target);
+    expect(text).toContain('Ship the manual path for now, revisit automation next quarter.');
+  });
+});

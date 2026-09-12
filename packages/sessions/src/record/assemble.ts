@@ -13,6 +13,7 @@ import { ForgeError } from '@forge/core';
 import { sessionRecordSchema, type SessionRecord } from '@forge/schemas';
 
 import { canComplete } from '../phase-machine/can-complete.ts';
+import { isGenericNonObjection } from '../phase-machine/machine.ts';
 import type { SessionState, SessionStatus } from '../phase-machine/types.ts';
 
 interface ChangelogEntry {
@@ -57,6 +58,29 @@ function resolveStatus(state: SessionState): SessionStatus {
 }
 
 /**
+ * `16` §16.7 point 4's own flag: a real, counted fact over the session's own accumulated
+ * `SessionObjection`s (each already the product of `expressesDisagreement`/`critic`'s own structural
+ * CONVERGE gate, per that function's own doc comment) -- `true` when at least one participant recorded
+ * a real disagreement with another at any point in the session, `false` when the session ran end to
+ * end with every participant in apparent agreement the whole time. Deliberately reads `state.
+ * objections` alone, not `state.clusters`: a cluster with no `eliminatedReason` is not evidence either
+ * way (an idea can go un-eliminated for reasons having nothing to do with agreement), so counting it
+ * would understate real theatre as "some disagreement occurred" on no real evidence.
+ *
+ * Filters each objection's own text through `isGenericNonObjection` before counting it as real
+ * evidence -- defense in depth, not merely a duplicate check: `critic`'s own structural CONVERGE gate
+ * (`advanceToDecide`) only ever requires that *some* objection was recorded, never that its content is
+ * substantive, so a caller that (incorrectly) recorded a generic non-objection anyway must still not
+ * have it counted here as real disagreement. A fresh critic round found an earlier draft counted
+ * `state.objections.length > 0` outright, so a `debate`-mode critic's own literal "CONCEDE" -- recorded
+ * as an objection purely to satisfy that structural gate -- was misread as real, substantive
+ * disagreement, exactly the "theatre" this flag exists to catch, not paper over.
+ */
+function hadRealDisagreement(state: SessionState): boolean {
+  return state.objections.some((objection) => !isGenericNonObjection(objection.text));
+}
+
+/**
  * @throws {ForgeError} `RUN-063` if `state` has not yet passed through FRAME (`state.framing`/
  * `state.startedAt` are unset) -- a programmer-error guard, not a domain refusal (`RECORD` is
  * unreachable in `state.phase` without FRAME already having run), reported through the identical
@@ -94,6 +118,7 @@ export function assembleSessionRecord(
     started: state.startedAt,
     ended: meta.ended,
     cost_usd: meta.costUsd,
+    no_disagreement_observed: !hadRealDisagreement(state),
     schemaVersion: meta.schemaVersion,
     title: meta.title,
     status: resolveStatus(state),

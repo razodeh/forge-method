@@ -239,6 +239,96 @@ describe('dispatchAgentStep', () => {
     expect(result.participants).toHaveLength(6);
   });
 
+  it('debate embeds a caller-supplied steelManRequirement, and the round-1 opposing-case-first instruction, in round 1 only (16 §16.7 point 3) -- neither leaks into round 2', async () => {
+    const projectRoot = await createTempRepo('debate-steelman');
+    const adapter = new FakePlatformAdapter();
+    const prompts: Record<string, string> = {};
+    adapter.script(
+      (request) => {
+        prompts[request.stepId] = request.prompt;
+        return request.stepId.includes(':debate:proposer:round-1');
+      },
+      { text: ['round 1: opposing case first, then mine'] },
+    );
+    adapter.script(
+      (request) => {
+        prompts[request.stepId] = request.prompt;
+        return request.stepId.includes(':debate:critic:round-1');
+      },
+      { text: ['round 1 critique -- not conceding yet'] },
+    );
+    adapter.script(
+      (request) => {
+        prompts[request.stepId] = request.prompt;
+        return request.stepId.includes(':debate:proposer:round-2');
+      },
+      { text: ['round 2: my case'] },
+    );
+    adapter.script(
+      (request) => {
+        prompts[request.stepId] = request.prompt;
+        return request.stepId.includes(':debate:critic:round-2');
+      },
+      { text: ['CONCEDE'] },
+    );
+    adapter.script((request) => request.stepId === 'wf:debate', { text: ['ruling'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle the tradeoff',
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate', {
+      steelManRequirement:
+        'For each of the two contested options, first state the strongest possible case for the other.',
+    });
+
+    expect(result.participants).toHaveLength(4); // 2 rounds x (proposer + critic)
+    const round1Proposer = prompts['wf:debate:debate:proposer:round-1'] ?? '';
+    const round1Critic = prompts['wf:debate:debate:critic:round-1'] ?? '';
+    const round2Proposer = prompts['wf:debate:debate:proposer:round-2'] ?? '';
+    const round2Critic = prompts['wf:debate:debate:critic:round-2'] ?? '';
+
+    expect(round1Proposer).toContain(
+      'For each of the two contested options, first state the strongest possible case for the other.',
+    );
+    expect(round1Proposer).toContain("opposing side's case");
+    expect(round1Critic).toContain(
+      'For each of the two contested options, first state the strongest possible case for the other.',
+    );
+    // Round 1's own requirement is round-1-only content -- it must not leak into round 2's prompts.
+    expect(round2Proposer).not.toContain("opposing side's case");
+    expect(round2Critic).not.toContain("opposing side's case");
+  });
+
+  it('debate omits the steel-man instruction entirely when no steelManRequirement is supplied (ordinary debate, unaffected)', async () => {
+    const projectRoot = await createTempRepo('debate-no-steelman');
+    const adapter = new FakePlatformAdapter();
+    const prompts: Record<string, string> = {};
+    adapter.script(
+      (request) => {
+        prompts[request.stepId] = request.prompt;
+        return request.stepId.includes(':debate:proposer:');
+      },
+      { text: ['I propose X'] },
+    );
+    adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['CONCEDE'] });
+    adapter.script((request) => request.stepId === 'wf:debate', { text: ['ruling'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+    });
+
+    await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate');
+
+    expect(prompts['wf:debate:debate:proposer:round-1']).not.toContain("opposing side's case");
+  });
+
   it("swarm-review's own four 10 §10.1 worked-example perspectives produce one real, de-duplicated ReviewReport — kept at the more severe of two colliding ratings", async () => {
     const projectRoot = await createTempRepo('swarm-review');
     const adapter = new FakePlatformAdapter();

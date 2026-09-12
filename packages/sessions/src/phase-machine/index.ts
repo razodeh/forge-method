@@ -8,6 +8,8 @@ export {
   DIVERGE_IDEA_CAP,
   MAX_AGENT_PARTICIPANTS,
   isStatableInOneSentence,
+  isGenericNonObjection,
+  expressesDisagreement,
   type ConvergeInput,
   type DecideInput,
   type DivergeInput,

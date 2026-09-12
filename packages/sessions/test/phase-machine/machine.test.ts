@@ -14,6 +14,8 @@ import {
   MAX_AGENT_PARTICIPANTS,
   SessionPhaseMachine,
   isStatableInOneSentence,
+  isGenericNonObjection,
+  expressesDisagreement,
 } from '../../src/phase-machine/machine.ts';
 import type { SessionParticipant } from '../../src/phase-machine/types.ts';
 
@@ -386,5 +388,85 @@ describe('DECIDE', () => {
     const machine = newMachine();
     const state = convergingState(machine);
     expect(() => machine.decide(state, {})).toThrow(expect.objectContaining({ code: 'RUN-063' }));
+  });
+
+  // `16` §16.7 point 5's own "the human's position... enters at CONVERGE, where it outranks" -- see
+  // `DecideInput.humanDecision`'s own doc comment for why this piece implements the precedence rule
+  // here, at the point a decision is actually recorded, rather than literally inside CONVERGE.
+  describe('humanDecision precedence (16 §16.7 point 5)', () => {
+    it('a human decision alone is recorded normally', () => {
+      const machine = newMachine();
+      const state = decidingState(machine);
+      const result = machine.decide(state, {
+        humanDecision: { decision: 'Ship the manual path', owner: 'human', artifactRef: 'CAP-020' },
+      });
+      expect(result.state.decisions).toEqual([
+        { id: 'D-001', decision: 'Ship the manual path', owner: 'human', artifactRef: 'CAP-020' },
+      ]);
+    });
+
+    it('a human decision supplied alongside an agent-authored one wins outright -- the agent decision is discarded, not merely deprioritised', () => {
+      const machine = newMachine();
+      const state = decidingState(machine);
+      const result = machine.decide(state, {
+        decisions: [{ decision: 'Ship the automated path', owner: 'pm', artifactRef: 'CAP-009' }],
+        humanDecision: { decision: 'Ship the manual path instead', owner: 'human' },
+      });
+      expect(result.state.decisions).toHaveLength(1);
+      expect(result.state.decisions[0]?.decision).toBe('Ship the manual path instead');
+      expect(result.state.decisions[0]?.owner).toBe('human');
+    });
+  });
+});
+
+describe('isGenericNonObjection (16 §16.7 point 2)', () => {
+  it.each([
+    'This seems fine.',
+    'this all seems fine',
+    'Looks good to me.',
+    'LGTM',
+    'No objections.',
+    'No concerns here.',
+    'I have nothing to add.',
+    'I agree.',
+    '   ',
+    '',
+    'CONCEDE',
+    'Conceded.',
+  ])('rejects the generic non-objection %j', (text) => {
+    expect(isGenericNonObjection(text)).toBe(true);
+  });
+
+  it.each([
+    'The proposed rollout skips a rollback plan for the payments migration -- that is a real risk.',
+    'I disagree with using a single shared database for both tenants.',
+    'This seems fine for the happy path, but it silently drops errors on retry, which is a real bug.',
+  ])('accepts the real, falsifiable objection %j', (text) => {
+    expect(isGenericNonObjection(text)).toBe(false);
+  });
+});
+
+describe('expressesDisagreement (16 §16.7 point 4)', () => {
+  it('a scripted all-agreement panel response does not register as disagreement', () => {
+    expect(expressesDisagreement('Sounds good, I am fully on board with this plan.')).toBe(false);
+  });
+
+  it('a scripted response with one real disagreement does register', () => {
+    expect(
+      expressesDisagreement(
+        'I disagree with shipping without a rollback plan -- that is too risky.',
+      ),
+    ).toBe(true);
+  });
+
+  // A fresh critic round found the marker list has no negation awareness, so routine agreement
+  // phrasing using one of its own marker words was misclassified as real disagreement.
+  it.each([
+    'Looks good, no concerns here.',
+    'Low risk, nothing against it.',
+    'No objections from me -- ship it.',
+    'Minimal risk, not against this at all.',
+  ])('does not register the negated-agreement phrasing %j as disagreement', (text) => {
+    expect(expressesDisagreement(text)).toBe(false);
   });
 });

@@ -152,4 +152,47 @@ describe('assembleSessionRecord', () => {
       expect.objectContaining({ code: 'RUN-066' }),
     );
   });
+
+  // `16` §16.7 point 4 -- "the record flags a session where no participant disagreed with any other,
+  // so the user can see when a session was theatre." `FRAMED` above has zero objections, matching a
+  // real all-agreement panel exactly; these two tests are `PLAN-M10.md` P11's own literal Checks text
+  // for this measure ("a scripted all-agreement panel correctly flags itself; a scripted panel with
+  // one real disagreement does not").
+  describe('no_disagreement_observed (16 §16.7 point 4)', () => {
+    it('a scripted all-agreement session (zero recorded objections) flags itself', () => {
+      const record = assembleSessionRecord(FRAMED, META);
+      expect(record.no_disagreement_observed).toBe(true);
+    });
+
+    it('a scripted session with one real, recorded disagreement does not flag itself', () => {
+      const withDisagreement: SessionState = {
+        ...FRAMED,
+        objections: [{ by: 'architect', text: 'I disagree with the proposed data model.' }],
+      };
+      const record = assembleSessionRecord(withDisagreement, META);
+      expect(record.no_disagreement_observed).toBe(false);
+    });
+
+    // A fresh critic round found an earlier draft trusted `state.objections.length > 0` outright, so
+    // a structurally-required-but-generic objection (e.g. a debate concession recorded verbatim to
+    // satisfy CONVERGE's own gate) was misread as real disagreement.
+    it('a recorded objection whose own text is itself a generic non-objection (e.g. a debate "CONCEDE") does not clear the flag', () => {
+      const criticConceded: SessionState = {
+        ...FRAMED,
+        objections: [{ by: 'critic', text: 'CONCEDE' }],
+      };
+      const record = assembleSessionRecord(criticConceded, META);
+      expect(record.no_disagreement_observed).toBe(true);
+    });
+
+    it('flags itself even when critic is the only participant and never actually objects (structurally impossible to reach RECORD in that shape, but the flag itself is a pure function of state.objections alone)', () => {
+      const criticPresentNoObjection: SessionState = {
+        ...FRAMED,
+        participants: [{ role: 'facilitator' }, { role: 'pm' }, { role: 'critic' }],
+        objections: [],
+      };
+      const record = assembleSessionRecord(criticPresentNoObjection, META);
+      expect(record.no_disagreement_observed).toBe(true);
+    });
+  });
 });
