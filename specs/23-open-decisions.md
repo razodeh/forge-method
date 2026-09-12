@@ -64,17 +64,19 @@ all three paths in CI; the JSON path is the one most likely to rot from disuse.
 
 ---
 
-## 5. CodeMachine's actual CLI surface
+## 5. CodeMachine's actual CLI surface — resolved: descoped, not built
 
-**Question:** `07` §7.4 deliberately declines to pin CodeMachine's interface, because it evolves
-independently and I could not verify it.
+**Question (as originally raised):** `07` §7.4 deliberately declined to pin CodeMachine's interface,
+because it evolves independently and could not be verified.
 
-**Recommendation:** Build the declarative binding as specified, then have someone with a working
-CodeMachine install fill in `binding.yaml` and run the conformance suite. Treat any capability that
-cannot be probed as absent. **Do not guess flags** — a wrong flag produces a confusing runtime
-failure rather than a clean "unsupported" message.
+**Decision:** `@forge/adapter-codemachine` is not being built. FORGE's own scope is a CLI tool/
+framework that drives a real coding-agent runtime; the generic declarative adapter (`07` §7.5) already
+covers "drive some other CLI coding tool" for any tool a user configures, without FORGE needing to
+name and maintain a binding to one specific third-party tool whose own interface was never confirmed.
+`07` §7.4 itself, `specs/22`'s own M11 Build line, and every other spec cross-reference have been
+updated to reflect this — see `07` §7.4's own "descoped" text for the fuller reasoning.
 
-**Decide by:** M11. **Owner action required** — this one needs your environment, not mine.
+**Decided:** M11 planning (before any implementation work began).
 
 ---
 

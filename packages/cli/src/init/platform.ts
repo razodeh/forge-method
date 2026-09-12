@@ -5,7 +5,7 @@
  * "Detect installed platforms" is real `preflight()` calls against real, injected
  * `PlatformAdapter`s (`RunInitDeps.candidateAdapters`) — never a probe for a named binary/env var by
  * this package itself. `07` §7.1's own boundary rule ("nothing above `@forge/adapter-kit` may
- * reference Claude Code, CodeMachine... by name") applies here exactly as it does inside
+ * reference Claude Code... by name") applies here exactly as it does inside
  * `adapter-kit` itself: this function only ever calls the interface, never asks what platform it is.
  *
  * @see specs/03 §3.3

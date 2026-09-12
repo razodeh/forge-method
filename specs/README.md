@@ -2,8 +2,8 @@
 
 **FORGE** is an AI software-product development method and runtime: an `npx`-installable, TUI-driven
 orchestration layer that turns a software product idea into a *shipped, engineered system* using a
-fleet of role-specialised AI agents running on top of coding-agent platforms (Claude Code,
-CodeMachine, and others later).
+fleet of role-specialised AI agents running on top of a coding-agent platform (Claude Code, or any
+other CLI coding tool a user configures via the generic declarative adapter, `07` §7.5).
 
 This directory is the **complete build specification**. It is written to be handed to Claude Code (or
 any competent engineering agent/team) and executed from empty repo to v1.0 without further design
@@ -23,7 +23,7 @@ input.
 | 04 | `04-tui-specification.md` | Every screen, component, keybinding, state machine, rendering rules |
 | 05 | `05-agent-system.md` | Agent roster, agent definition format, personas, tool grants, handoff protocol |
 | 06 | `06-orchestration-and-parallelism.md` | Run graph, scheduler, worktrees, file ownership, merge queue, retries, budgets |
-| 07 | `07-platform-adapters.md` | Adapter interface, Claude Code adapter, CodeMachine adapter, conformance suite |
+| 07 | `07-platform-adapters.md` | Adapter interface, Claude Code adapter, the generic declarative CLI adapter, conformance suite |
 | 08 | `08-knowledge-body.md` | Project memory: layout, schemas, ADRs, indexing, retrieval, staleness, contradiction detection |
 | 09 | `09-spec-driven-development.md` | Artifact hierarchy, IDs, traceability, machine-readable ACs, spec→test→code binding |
 | 10 | `10-workflow-engine-and-lifecycle.md` | Workflow DSL, the FORGE lifecycle, phases/gates, milestone planning, built-in workflows |
@@ -128,7 +128,7 @@ These are the invariants. Every design decision downstream must be checkable aga
 | **Artifact** | Any FORGE-produced document with an ID, front matter, and a schema (Vision, PRD, ADR, Epic, Story, Task, Test Plan, Session Record, …). |
 | **Spec graph** | The typed DAG linking artifacts by traceability edges. |
 | **Agent** | A role definition (persona + mandate + tool grants + I/O contract), instantiated as a platform session. |
-| **Adapter** | Implementation of the platform interface for a coding-agent runtime (Claude Code, CodeMachine, …). |
+| **Adapter** | Implementation of the platform interface for a coding-agent runtime (Claude Code, or any CLI tool bound via the generic declarative adapter). |
 | **Lane** | An isolated execution context (git worktree + branch + session) in which one agent works. |
 | **Run** | One execution of a workflow, with an event log, ledger, and resumable state. |
 | **Step** | One node in a workflow: an agent invocation, a command, a gate, an elicitation, or a sub-workflow. |

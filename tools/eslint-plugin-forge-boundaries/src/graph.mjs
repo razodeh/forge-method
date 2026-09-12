@@ -18,8 +18,10 @@
 /**
  * Every package the `specs/02` §2.2 layout names under `packages/`.
  *
- * The three concrete adapters expand the spec's `adapter-*` shorthand row, since a graph keyed by a
- * glob cannot be checked against real import specifiers.
+ * The two concrete adapters expand the spec's `adapter-*` shorthand row, since a graph keyed by a
+ * glob cannot be checked against real import specifiers. A third, `adapter-codemachine`, was planned
+ * through M10 but was descoped before M11 began (`07` §7.4, `specs/23` open-decision #5) — never
+ * built, so never added here.
  */
 export const FORGE_PACKAGES = /** @type {const} */ ([
   'cli',
@@ -30,7 +32,6 @@ export const FORGE_PACKAGES = /** @type {const} */ ([
   'agents',
   'adapter-kit',
   'adapter-claude-code',
-  'adapter-codemachine',
   'adapter-generic',
   'vcs',
   'methods',
@@ -83,7 +84,6 @@ export const PACKAGE_GRAPH = {
   telemetry: ['schemas'],
   'adapter-kit': ['schemas', 'telemetry'],
   'adapter-claude-code': ['adapter-kit', 'schemas', 'telemetry'],
-  'adapter-codemachine': ['adapter-kit', 'schemas', 'telemetry'],
   'adapter-generic': ['adapter-kit', 'schemas', 'telemetry'],
   methods: ['core', 'kb', 'schemas'],
   catalog: ['schemas'],

@@ -49,7 +49,6 @@ forge/
 │  ├─ agents/                  # @forge/agents        agent registry, persona compilation, handoffs
 │  ├─ adapter-kit/             # @forge/adapter-kit   Platform interface + conformance suite
 │  ├─ adapter-claude-code/     # @forge/adapter-claude-code
-│  ├─ adapter-codemachine/     # @forge/adapter-codemachine
 │  ├─ adapter-generic/         # @forge/adapter-generic  (YAML-declared CLI adapters)
 │  ├─ vcs/                     # @forge/vcs           git, worktrees, branches, merge queue
 │  ├─ methods/                 # @forge/methods       decision frameworks, rubrics, level selection

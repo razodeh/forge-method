@@ -30,7 +30,7 @@ Global flags available on every command:
 | `--project, -C <path>` | path | cwd | Operate on this project root |
 | `--config <path>` | path | — | Explicit config file |
 | `--profile <name>` | string | `default` | Named config profile (e.g. `ci`, `cheap`) |
-| `--platform <id>` | string | from config | Override adapter (`claude-code`, `codemachine`, …) |
+| `--platform <id>` | string | from config | Override adapter (`claude-code`, or a configured generic-adapter id) |
 | `--model-tier <tier>` | enum | from config | `frugal` \| `balanced` \| `max` |
 | `--autonomy <level>` | enum | from config | `supervised` \| `guided` \| `autonomous` (see §3.6) |
 | `--concurrency <n>` | int | auto | Max parallel lanes |
@@ -153,9 +153,9 @@ Steps (each is skippable via flags for `--yes`):
 3. **Mode** — `guided` (full discovery) vs `express` (agents propose everything, human approves at
    gates).
 4. **Level** — auto-proposed L0–L4 with reasoning shown; confirm or override.
-5. **Platform** — detect installed platforms (probe `claude` on PATH, CodeMachine binary/config,
-   `ANTHROPIC_API_KEY`); pick primary + optional fallback; run a **connectivity smoke test** and show
-   the result before continuing.
+5. **Platform** — detect installed platforms (probe `claude` on PATH, `ANTHROPIC_API_KEY`, and any
+   configured generic-declarative-adapter binaries, `07` §7.5); pick primary + optional fallback; run
+   a **connectivity smoke test** and show the result before continuing.
 6. **Autonomy & budget** — autonomy level, per-run budget, per-stage budget, daily cap.
 7. **Paths** — KB root (default `docs/forge`), runtime dir (`.forge`), code root (default repo root).
 8. **Modules** — choose specialisation modules (`fm-web`, `fm-service`, `fm-data`, `fm-mobile`);
@@ -174,7 +174,7 @@ forge init . --yes \
   --name "Acme Billing" \
   --idea-file ./idea.md \
   --level L3 --mode guided \
-  --platform claude-code --fallback-platform codemachine \
+  --platform claude-code \
   --autonomy guided --budget 25 \
   --modules fm-service,fm-web \
   --preset startup-lean --overlay npm:@acme/forge-standards \
@@ -210,7 +210,8 @@ Plus platform-native integration assets, written **only** into their canonical l
 - Claude Code: `.claude/agents/forge-*.md`, `.claude/commands/forge-*.md`,
   `.claude/settings.json` merge (never overwrite: deep-merge with a `forge` marker block),
   optional `.mcp.json` entry for the FORGE MCP server.
-- CodeMachine: per adapter's declared asset layout (see `07`).
+- Any generic declarative adapter (`07` §7.5): per that adapter's own declared asset layout, if it has
+  a native concept of agents/workflows/config to map FORGE roles onto.
 
 **Idempotency:** re-running `init` on an existing project MUST detect it and switch to `upgrade`
 semantics. All generated (regenerable) files carry a header

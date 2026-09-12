@@ -331,9 +331,11 @@ Agents declare a tier; config maps tiers to concrete platform models.
 # .forge/config.yaml
 models:
   tiers:
-    frugal:   { claude-code: haiku,  codemachine: "<cheap-model>" }
-    balanced: { claude-code: sonnet, codemachine: "<mid-model>" }
-    max:      { claude-code: opus,   codemachine: "<top-model>" }
+    # A configured generic-declarative-adapter id (07 §7.5) may add its own column here too, e.g.
+    # my-adapter: "<model-id>" — shown as "frugal" only, for brevity.
+    frugal:   { claude-code: haiku, my-adapter: "<cheap-model>" }
+    balanced: { claude-code: sonnet }
+    max:      { claude-code: opus }
   overrides:
     backend: balanced
     architect: max

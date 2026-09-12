@@ -271,10 +271,12 @@ pnpm forge session brainstorm --question "…" -C fixtures/greenfield-service --
 ## M11 — Distribution, second adapter, security hardening
 
 **Build:** overlay bundle fetching (path, npm, git) with integrity verification, the capability
-consent screen, the static safety scan; `@forge/adapter-generic` (declarative `adapter.yaml`);
-`@forge/adapter-codemachine` as a declarative binding with capability probing and the documented
-degradation matrix; the full security test suite (S1–S12); `forge audit`; `forge doctor` complete
-with `--fix` and `--rebuild-index`.
+consent screen, the static safety scan; `@forge/adapter-generic` (declarative `adapter.yaml`,
+`07` §7.5) as this milestone's own second, real adapter; the full security test suite (S1–S12);
+`forge audit`; `forge doctor` complete with `--fix` and `--rebuild-index`. **Do not build:**
+`@forge/adapter-codemachine` — descoped (`07` §7.4); the generic declarative adapter already covers
+"drive some other CLI coding tool," without a named third-party binding whose own interface was never
+confirmed to exist as originally specified.
 
 **Acceptance**
 - The three distribution channels produce identical resolved output.

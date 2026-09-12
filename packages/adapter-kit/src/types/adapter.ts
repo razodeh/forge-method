@@ -2,7 +2,7 @@
  * `PlatformAdapter` — `07` §7.2's own normative interface, verbatim, folded with `15` §15.6's two
  * provisioning hooks. `id`/`displayName` stay opaque strings, never a closed enum naming a real
  * platform — `07` §7.1's own boundary rule ("nothing above `@forge/adapter-kit` may reference Claude
- * Code, CodeMachine, MCP... or any model name") applies inside this package too, not only above it.
+ * Code, MCP... or any model name") applies inside this package too, not only above it.
  *
  * @see specs/07 §7.1
  * @see specs/07 §7.2
@@ -23,8 +23,8 @@ import type { ResumeRequest, SessionHandle, SessionRequest } from './session.ts'
 import type { StructuredRequest } from './structured.ts';
 
 export interface PlatformAdapter {
-  /** `'claude-code' | 'codemachine' | ...` in practice — typed as an opaque string here, not a closed
-   * enum, so no platform-specific literal is baked into this package's own public surface. */
+  /** `'claude-code' | ...` in practice — typed as an opaque string here, not a closed enum, so no
+   * platform-specific literal is baked into this package's own public surface. */
   readonly id: string;
   readonly displayName: string;
 

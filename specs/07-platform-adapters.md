@@ -5,16 +5,16 @@
 An adapter turns FORGE's platform-neutral concept of "run an agent session with this prompt, these
 tools, in this directory, and tell me what happened" into a concrete coding-agent runtime.
 
-**Boundary rule:** nothing above `@forge/adapter-kit` may reference Claude Code, CodeMachine, MCP,
-subagents, slash commands, or any model name. Enforced by a lint rule that bans those identifiers
-outside `packages/adapter-*`.
+**Boundary rule:** nothing above `@forge/adapter-kit` may reference Claude Code, MCP, subagents, slash
+commands, or any model name. Enforced by a lint rule that bans those identifiers outside
+`packages/adapter-*`.
 
 ## 7.2 The `PlatformAdapter` interface (normative)
 
 ```ts
 // @forge/adapter-kit
 export interface PlatformAdapter {
-  readonly id: string;                 // 'claude-code' | 'codemachine' | ...
+  readonly id: string;                 // 'claude-code' | a generic-declarative-adapter id | ...
   readonly displayName: string;
 
   /** Static + probed capabilities. Called by doctor and by the scheduler. */
@@ -229,41 +229,20 @@ The adapter MAY register an in-process MCP server exposing FORGE-native tools to
 This is strictly better than parsing `FORGE_*` tokens out of prose, and MUST be preferred when the
 adapter reports `mcp: true`. The token parser remains as the universal fallback.
 
-## 7.4 CodeMachine adapter
+## 7.4 CodeMachine adapter — descoped
 
-Package: `@forge/adapter-codemachine`.
+An earlier revision of this spec planned `@forge/adapter-codemachine`, a declarative binding for a
+third-party tool called CodeMachine, built defensively (capability-probing, config-declared) because
+its CLI surface was never pinned down. **This has been dropped, deliberately, not merely deferred.**
+FORGE's own scope is a CLI tool/framework that drives a real coding-agent runtime; Claude Code (§7.3)
+plus the generic declarative adapter (§7.5) already cover that without needing a second, named
+third-party binding whose own interface was never confirmed to exist as described. No
+`@forge/adapter-codemachine` package is planned. A user who wants to drive some other CLI coding tool
+through FORGE does so via §7.5's own generic mechanism directly — that is the general answer this
+section's own removal leaves in place, not a gap.
 
-> **Implementer instruction — treat CodeMachine's exact CLI surface as unverified.** Its interface
-> is not pinned in this spec because it evolves independently. Build the adapter as a thin,
-> **capability-probing, config-declared** binding so it can be corrected without touching the engine.
-
-Required approach:
-
-1. **Declarative binding.** The adapter's behaviour is driven by
-   `packages/adapter-codemachine/binding.yaml` conforming to the *generic CLI adapter schema*
-   (§7.5). All flags, event shapes and paths live in that file, not in TypeScript.
-2. **Probe on preflight.** Run the binary's `--version` and `--help`, parse the flag list, and
-   confirm each required capability's flag exists. Missing → capability reported `false`, and steps
-   requiring it are refused with a precise message.
-3. **Ship a conformance report.** `forge doctor --adapter codemachine` prints the capability matrix
-   so users can see exactly what degrades.
-4. **Degradation matrix:**
-
-| Missing capability | FORGE behaviour |
-|---|---|
-| `streaming` | Lane shows spinner + periodic file-change polling; transcript arrives at the end |
-| `sessionResume` | Resume re-runs the step from its idempotency key after worktree rollback |
-| `interject` | `i` in the TUI queues an addendum for the next step and says so |
-| `structuredOutput` | Fall back to fenced-JSON extraction + schema validation + one repair retry |
-| `toolAllowlist` | Only `supervised`/`guided` autonomy allowed; `autonomous` refused |
-| `costReporting` | Ledger estimates from token counts; marked `estimated` |
-| `cwdIsolation` | Parallelism disabled (sequential lanes in place) |
-| `skills: none` | Highest-priority skill bodies injected inline up to budget; degradation recorded in the run |
-| `mcp: false, toolProxy: true` | FORGE hosts the MCP clients in-process and re-exposes only granted tools |
-| `mcp: false, toolProxy: false` | Steps depending on a granted server are refused with `ADP-02x` naming the server and the limitation |
-
-5. **Asset installation.** If CodeMachine has a native concept of agents/workflows/config, the
-   adapter maps FORGE agents onto it in `installAssets()` so the roles are usable natively too.
+The section number is kept (not renumbered) so existing cross-references to "`07` §7.4" land on this
+explanation rather than silently landing on unrelated content.
 
 ## 7.5 Generic declarative CLI adapter
 
@@ -359,10 +338,11 @@ safety-critical.
 ```yaml
 platform:
   primary: claude-code
-  fallback: codemachine          # used when primary preflight fails or hits provider outage
+  fallback: my-generic-adapter   # a §7.5 generic-declarative-adapter id; used when primary preflight
+                                  # fails or hits provider outage
   perAgent:                      # optional routing
     diagnostician: claude-code
-    sdet: codemachine
+    sdet: my-generic-adapter
   routing:
     onRateLimit: fallback        # fallback | wait | fail
     onOutage: fallback

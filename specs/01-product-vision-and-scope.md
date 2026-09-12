@@ -60,8 +60,9 @@ explains and teaches, but it does not target non-technical users.
 
 ## 1.5 What FORGE is not (non-goals for v1.0)
 
-- **Not an LLM provider or agent harness.** It drives Claude Code / CodeMachine; it does not
-  implement a tool loop, a context manager, or its own model calls for coding work.
+- **Not an LLM provider or agent harness.** It drives Claude Code (and, via the generic declarative
+  adapter, `07` §7.5, whatever other coding-agent CLI a user configures); it does not implement a tool
+  loop, a context manager, or its own model calls for coding work.
   *(Exception: small structured "utility completions" — classification, extraction, summarisation —
   MAY be run through an adapter's one-shot mode. FORGE never implements its own agent loop.)*
 - **Not an IDE, editor, or GUI.** Terminal only in v1.
@@ -127,8 +128,9 @@ FORGE v1.0 is done when all of the following hold:
   work, verified by an automated crash-resume test.
 - **SC4** `forge adopt` on a real existing repo (≥50k LOC) produces a KB whose architecture and data
   model sections are judged accurate by the repo's maintainer, and a drift report.
-- **SC5** Both the Claude Code adapter and the CodeMachine adapter pass the adapter conformance
-  suite; swapping platforms via config changes no workflow, agent, or artifact.
+- **SC5** Both the Claude Code adapter and the generic declarative CLI adapter (`07` §7.5, run against
+  a real scripted binary) pass the adapter conformance suite; swapping platforms via config changes
+  no workflow, agent, or artifact.
 - **SC6** A deliberately introduced bug in the generated system is found and fixed by
   `forge debug <symptom>` with an RCA record and a regression test, with no human diagnosis.
 - **SC7** All gates are enforceable: an attempt to advance a stage with a failing gate is refused,

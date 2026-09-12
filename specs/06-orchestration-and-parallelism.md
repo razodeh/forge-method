@@ -11,7 +11,7 @@ Workflow definition  ──compile──▶  Run Plan (DAG of StepNodes)
                           │             │             │
                      LaneRunner    LaneRunner    LaneRunner
                           │             │             │
-                    PlatformAdapter session (Claude Code / CodeMachine)
+                    PlatformAdapter session (Claude Code or a configured adapter)
                           └─────────────┴─────────────┘
                                         │
                                   Merge Queue ──▶ integration branch ──▶ Gate checks

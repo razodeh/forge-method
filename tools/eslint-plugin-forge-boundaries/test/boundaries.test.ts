@@ -69,7 +69,6 @@ const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   telemetry: ['schemas'],
   'adapter-kit': ['schemas', 'telemetry'],
   'adapter-claude-code': ['adapter-kit', 'schemas', 'telemetry'],
-  'adapter-codemachine': ['adapter-kit', 'schemas', 'telemetry'],
   'adapter-generic': ['adapter-kit', 'schemas', 'telemetry'],
   methods: ['core', 'kb', 'schemas'],
   catalog: ['schemas'],
@@ -85,9 +84,10 @@ const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
 
 describe('specs/02 §2.2 — the package list', () => {
   it('matches the packages/* directories the spec names, exactly', () => {
-    // The §2.2 layout tree names these directories under packages/. adapter-claude-code,
-    // adapter-codemachine and adapter-generic are the three concrete "adapter-*" rows; the spec's
-    // shorthand row is expanded to all three, once, here.
+    // The §2.2 layout tree names these directories under packages/. adapter-claude-code and
+    // adapter-generic are the two concrete "adapter-*" rows; the spec's shorthand row is expanded to
+    // both, once, here. A planned third, adapter-codemachine, was descoped before M11 began (07 §7.4,
+    // specs/23 open-decision #5) and was never built, so it is not expanded here either.
     const fromLayout = [
       'cli',
       'core',
@@ -97,7 +97,6 @@ describe('specs/02 §2.2 — the package list', () => {
       'agents',
       'adapter-kit',
       'adapter-claude-code',
-      'adapter-codemachine',
       'adapter-generic',
       'vcs',
       'methods',

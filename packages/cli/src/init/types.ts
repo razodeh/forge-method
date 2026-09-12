@@ -52,7 +52,7 @@ export interface InitOptions {
 /** `runInit`'s own required collaborators, injected rather than constructed — this project's own
  * determinism/boundary discipline: `@forge/cli` has no way to discover which platforms are installed
  * without a concrete `PlatformAdapter` (`07` §7.1's own "nothing above `@forge/adapter-kit` may
- * reference Claude Code, CodeMachine..." rule), and none exists in this codebase yet (a real,
+ * reference Claude Code..." rule), and none exists in this codebase yet (a real,
  * documented gap — see `SPEC-QUESTIONS.md` Q103). A real caller supplies whatever adapters it has
  * once one exists; tests supply `@forge/testkit`'s `FakeAdapter`. */
 export interface RunInitDeps {

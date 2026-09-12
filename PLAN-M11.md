@@ -2,10 +2,24 @@
 
 Source: `specs/22` M11. **Build:** overlay bundle fetching (path, npm, git) with integrity
 verification, the capability consent screen, the static safety scan; `@forge/adapter-generic`
-(declarative `adapter.yaml`); `@forge/adapter-codemachine` as a declarative binding with capability
-probing and the documented degradation matrix; the full security test suite (S1-S12); `forge audit`;
-`forge doctor` complete with `--fix` and `--rebuild-index`. **Depends on M10** (`22` §22.2's own
-sequencing: `M10 ── M11 ── M12`).
+(declarative `adapter.yaml`, `07` §7.5) as this milestone's own second, real adapter; the full
+security test suite (S1-S12); `forge audit`; `forge doctor` complete with `--fix` and
+`--rebuild-index`. **Do not build:** `@forge/adapter-codemachine` — descoped, per an explicit decision
+made before this plan's own pieces were drafted (see below), not merely a deferral. **Depends on M10**
+(`22` §22.2's own sequencing: `M10 ── M11 ── M12`).
+
+## A real scope change made before this plan's own pieces were drafted
+
+`@forge/adapter-codemachine` (`07` §7.4, formerly this milestone's own "second adapter" alongside
+`@forge/adapter-generic`) has been **descoped**, on the owner's own explicit direction: CodeMachine was
+a specific third-party CLI tool whose own real interface `07` §7.4 always disclosed as "unverified,"
+and FORGE's own scope is a CLI tool/framework that drives a real coding-agent runtime — the generic
+declarative adapter already covers "drive some other CLI coding tool" for anything a user configures,
+without FORGE needing to name and maintain a binding to one specific, never-confirmed third-party
+surface. `specs/07` §7.4, `specs/22`'s own M11 Build line, `specs/23`'s own open-decision #5, and every
+other spec cross-reference have been updated to reflect this directly — this plan was drafted after
+that update, so it never scoped a `@forge/adapter-codemachine` piece at all (an earlier draft did; it
+has been removed rather than left as a stub, and pieces below are numbered as if it never existed).
 
 ## A real, pre-existing gap this plan does not paper over
 
@@ -33,17 +47,13 @@ research passes before this plan was drafted)
   (createAdapter, options)` — takes an arbitrary `() => PlatformAdapter` factory and registers real
   vitest suites against it, with `SAFETY_CRITICAL_CONFORMANCE_IDS = ['C2','C5','C13','C14','C16']`
   already exported for the exact assertion `07` §7.6 and this milestone's own Acceptance line demand.
-  **Neither `@forge/adapter-generic` nor `@forge/adapter-codemachine` needs new conformance tests
-  written — both call this existing function against their own real `createAdapter`.**
-- **`07` §7.4 (CodeMachine) and §7.5 (generic declarative CLI adapter) are both fully, normatively**
-  **specified already**, with worked examples: §7.4's own explicit "treat CodeMachine's exact CLI
-  surface as unverified... build as a thin, capability-probing, config-declared binding," a real
-  `binding.yaml` conforming to the generic adapter schema, preflight probing (`--version`/`--help`),
-  and a complete 10-row degradation matrix (streaming→polling, sessionResume→rollback-rerun,
-  interject→queued addendum, etc.) written verbatim in the spec. §7.5's own `adapter.yaml` schema
-  (`id`/`displayName`/`binary`/`minimumVersion`/`versionRegex`/`capabilities`/`invoke.args+when`/
-  `events.format+map`/`result`/`files.changeDetection`) is complete — this milestone implements the
-  spec's own literal format, it does not design a new one.
+  **`@forge/adapter-generic` needs no new conformance tests written — it calls this existing function
+  against its own real `createAdapter`.**
+- **`07` §7.5 (generic declarative CLI adapter) is fully, normatively specified already**, with a
+  worked example: the complete `adapter.yaml` schema (`id`/`displayName`/`binary`/`minimumVersion`/
+  `versionRegex`/`capabilities`/`invoke.args+when`/`events.format+map`/`result`/
+  `files.changeDetection`) is fully written out — this milestone implements the spec's own literal
+  format, it does not design a new one.
 - **`packages/extensions/src/skills/patterns.ts`'s `INJECTION_PATTERNS`/`SECRET_PATTERNS` are real,**
   **already-built, already-tested detectors** — the exact four instruction-shaped-content patterns
   `15` §15.10 I9 names, and AWS/GitHub/Slack/PEM/Bearer-token shapes. Applied today in two places
@@ -312,9 +322,12 @@ already-declared, unmodified graph row)
 
 **Checks:** `runAdapterConformanceSuite` (the real, already-built, reused-not-reinvented mechanism) runs
 clean against a real `GenericAdapter` instance constructed from a real `adapter.yaml` fixture, driving
-P8's own scripted fake binary — all `SAFETY_CRITICAL_CONFORMANCE_IDS` (C2/C5/C13/C14/C16) pass,
-matching this milestone's own literal Acceptance line ("the generic adapter passes conformance against
-a scripted binary").
+P8's own scripted fake binary — **all 16 conformance ids pass, not merely the five safety-critical
+ones** (`SAFETY_CRITICAL_CONFORMANCE_IDS`: C2/C5/C13/C14/C16 — checked explicitly, but as a subset of
+the full suite, never the whole of it), matching this milestone's own literal Acceptance line ("the
+generic adapter passes conformance against a scripted binary") read as a real, complete gate rather
+than merely the safety-critical subset. A deliberately-broken `adapter.yaml` (a required field
+renamed) fails to even construct an adapter, confirmed as a real refusal, not a silent partial adapter.
 
 **Depends on:** P8 (the scripted binary fixture the conformance suite drives against).
 
@@ -346,65 +359,10 @@ failure-injection modes actually fail the right way) before P7 ever depends on i
 
 ---
 
-## P9 — `@forge/adapter-codemachine`: the declarative, capability-probing binding
-
-**Mandate:** `07` §7.4's own explicit "treat CodeMachine's exact CLI surface as unverified... build as
-a thin, capability-probing, config-declared binding" — a real adapter for a tool this spec deliberately
-does not claim certainty about, built defensively per its own instruction.
-
-**Spec:** `07` §7.4.
-
-**Surface:** new package `packages/adapter-codemachine` (`['adapter-kit', 'schemas', 'telemetry']`, the
-already-declared, unmodified graph row)
-- `binding.yaml` conforming to P7's own real `adapter.yaml` schema (`07` §7.4's own literal "a
-  declarative `binding.yaml` conforming to the generic adapter schema" line) — this package is real,
-  CodeMachine-specific *configuration and probing logic* layered over `@forge/adapter-generic`'s own
-  real `GenericAdapter`, not a second, independent adapter implementation.
-- **Capability probing**: real `--version`/`--help` preflight calls, parsing output to determine which
-  of the declared capabilities the actually-installed CodeMachine binary genuinely supports — `07`
-  §7.4's own explicit design response to "the exact CLI surface is unverified."
-- **The 10-row degradation matrix**, made real: for each capability CodeMachine's own probe reports as
-  unsupported, the documented fallback (streaming→polling, sessionResume→rollback-rerun,
-  interject→queued addendum, etc., transcribed exactly from `07` §7.4's own table) is what
-  `AdapterCapabilities` actually reports and what the adapter actually does, not merely documentation
-  text with no behavioural backing.
-
-**Checks:** `runAdapterConformanceSuite` runs clean against a real `CodemachineAdapter` instance
-constructed from a scripted binary (P8's own fixture, reused, scripted to simulate CodeMachine's own
-declared behaviour) in two configurations — full-capability and every-capability-degraded — proving
-every one of the 10 degradation-matrix rows produces its own documented fallback behaviour for real,
-not merely as asserted spec text.
-
-**Depends on:** P7, P8.
-
----
-
-## P10 — Adapter conformance verification pass for both new adapters
-
-**Mandate:** a dedicated, cross-cutting piece confirming both P7/P9's own adapters genuinely satisfy
-`07` §7.6's own full C1-C16 suite (not merely the safety-critical five already checked inline in P7/P9's
-own pieces) — the milestone's own Acceptance line ("the generic adapter passes conformance against a
-scripted binary") read as a real, standalone gate, not merely an implicit byproduct of P7/P9 existing.
-
-**Spec:** `07` §7.6.
-
-**Surface:** `packages/adapter-generic/test/conformance/`, `packages/adapter-codemachine/test/
-conformance/` (both real files calling `runAdapterConformanceSuite`, matching `@forge/adapter-claude-
-code/test/conformance/`'s own established file layout as the precedent)
-
-**Checks:** all 16 conformance ids pass for `GenericAdapter`; all 16 pass for `CodemachineAdapter` in
-both its full-capability and degraded configurations; a deliberately-broken `adapter.yaml` (a required
-field renamed) fails to even construct an adapter, confirmed as a real refusal, not a silent partial
-adapter.
-
-**Depends on:** P7, P9.
-
----
-
-## P11 — Security invariants S1, S2, S4: containment, denylist composition, network isolation
+## P9 — Security invariants S1, S2, S4: containment, denylist composition, network isolation
 
 **Mandate:** the first batch of `20` §20.10's own S1-S12 adversarial tests — establishing the real
-adversarial-test harness pattern this piece and P12-P14 all reuse, against invariants whose own
+adversarial-test harness pattern this piece and P10-P12 all reuse, against invariants whose own
 enforcement mechanism already exists (this piece adds the missing S-labeled test, not new runtime
 behaviour).
 
@@ -431,7 +389,7 @@ blocks; each test is independently rerunnable and documents its own real attack 
 
 ---
 
-## P12 — Security invariants S3, S5, S6: secret leakage, control-token stripping, taint enforcement
+## P10 — Security invariants S3, S5, S6: secret leakage, control-token stripping, taint enforcement
 
 **Mandate:** the second batch — S5 is the closest to already-done (reuses M10 P16's own real
 `injection-telemetry.ts`), S3 and S6 need real new adversarial scans/tests against existing but
@@ -459,7 +417,7 @@ targeting) independently, not just one as a stand-in for all three.
 
 ---
 
-## P13 — Security invariants S7, S8, S9: destructive-op confirmation, dirty-tree halt, budget enforcement
+## P11 — Security invariants S7, S8, S9: destructive-op confirmation, dirty-tree halt, budget enforcement
 
 **Mandate:** the third batch — **S7 is a genuine, unbuilt mechanism** (confirmed: no "destructive
 operation" typed-confirmation flow exists anywhere in this codebase), the one real piece of new runtime
@@ -493,7 +451,7 @@ new.
 
 ---
 
-## P14 — Security invariants S10, S11, S12: ceiling refusal, doctor secret-safety, orphan-free crash recovery
+## P12 — Security invariants S10, S11, S12: ceiling refusal, doctor secret-safety, orphan-free crash recovery
 
 **Mandate:** the fourth and final batch — all three already have strong existing mechanisms (M10 P2's
 ceiling enforcement, `doctor/secrets.ts`, and the crash-resume/orphan-reclaim infrastructure from M5/
@@ -526,7 +484,7 @@ intent.
 
 ---
 
-## P15 — `forge audit`
+## P13 — `forge audit`
 
 **Mandate:** `20` §20.9's own fully-specified command, genuinely absent from this codebase — built as
 an aggregation/query layer over the already-real `ForgeEvent` catalogue, per this plan's own recorded
@@ -538,7 +496,7 @@ Surface deviation, not new event-producing code.
 commands/audit.ts` (new, thin CLI layer)
 - `queryAuditEvents(projectRoot, options)`: filters `readEvents`'s own real output by the audit-relevant
   categories `20` §20.9 names (gate decisions, ceiling escalations, policy violations, blocked
-  injections, redacted secrets, destructive-op confirmations — reusing P13's own new S7 event if one is
+  injections, redacted secrets, destructive-op confirmations — reusing P11's own new S7 event if one is
   emitted, MCP calls, artifact writes), by a real `--since <date>` cutoff.
 - `forge audit --since <date> [--json]`: renders a real, human-readable report by default, structured
   JSON on the flag — matching this project's own established `--json` stability contract (`22` §22.1
@@ -549,13 +507,13 @@ correctly reported by both output modes; `--since` correctly excludes events bef
 JSON output validates against a real, versioned schema (this command's own first release, so the
 schema itself is new — built once, held stable per rule 4 from here on).
 
-**Depends on:** P13 (if S7 introduces a new destructive-confirmation event type audit should aggregate
-— confirmed concretely once P13 lands; if S7's own confirmation reuses an existing event type instead,
+**Depends on:** P11 (if S7 introduces a new destructive-confirmation event type audit should aggregate
+— confirmed concretely once P11 lands; if S7's own confirmation reuses an existing event type instead,
 this dependency resolves to "none new").
 
 ---
 
-## P16 — `forge doctor --fix` and `--rebuild-index`
+## P14 — `forge doctor --fix` and `--rebuild-index`
 
 **Mandate:** the two real, named gaps in `forge doctor`'s own already-substantial six-check
 implementation — `--fix`'s remedy text already promises this flag exists; `--rebuild-index` is a
@@ -584,21 +542,22 @@ plain `forge doctor` afterward and confirming zero remaining findings.
 
 ## Notes on sequencing and scope
 
-- **Distribution (P1-P6), the two adapters (P7-P10), and security/audit/doctor (P11-P16) are three**
+- **Distribution (P1-P6), the adapter (P7-P8), and security/audit/doctor (P9-P14) are three**
   **genuinely independent subsystems**, matching M10's own precedent — buildable in any order or
   interleaved.
 - **P1-P6 close a real M10 gap (P7/P8) as part of building M11's own, larger distribution scope** —
   recorded explicitly in this plan's own opening section, in `SPEC-QUESTIONS.md`, and in
   `GAUNTLET-LOG.md` once built, so the milestone history stays honest about what closed which gap.
-- **Total: 16 pieces**, plus the two M10 pieces this milestone's own P1-P6 subsume — proportionate to
-  M11's own three-subsystem Build line (distribution, a second real adapter, and a 12-invariant security
-  suite plus two CLI commands), smaller than M10's 20 since M11 has one fewer independent subsystem and
-  reuses more already-built machinery (the conformance suite, the injection/secret detectors, the crash-
-  resume infrastructure) than M10 could.
+- **Total: 14 pieces**, plus the two M10 pieces this milestone's own P1-P6 subsume — proportionate to
+  M11's own three-subsystem Build line (distribution, one real second adapter, and a 12-invariant
+  security suite plus two CLI commands), smaller than M10's 20 since M11 has one fewer independent
+  subsystem, one fewer adapter than originally planned (`@forge/adapter-codemachine` descoped), and
+  reuses more already-built machinery (the conformance suite, the injection/secret detectors, the
+  crash-resume infrastructure) than M10 could.
 - Every piece follows the identical `BUILD-PROMPT.md` gauntlet-loop discipline already established
   across M1-M10: tests-first, a fresh context-free critic per round, judge-and-loop on real findings,
   two-commit pattern, `SPEC-QUESTIONS.md` entries for every real design decision — **plus the process
   fix M10's own final checkpoint should have caught and did not: before declaring this milestone
-  complete, independently verify every one of the 16 `## M11 P<n>` `GAUNTLET-LOG.md` entries actually
+  complete, independently verify every one of the 14 `## M11 P<n>` `GAUNTLET-LOG.md` entries actually
   exists and every named CLI command/flag genuinely does not throw, rather than trusting a clean
   full-suite run alone.**

@@ -743,8 +743,8 @@ ceiling escalations are in force — customization should never be invisible whi
 - **AC15-3** `forge upgrade` across a minor version preserves all overlays, and reports (does not
   silently drop) any overlay whose target no longer exists.
 - **AC15-4** A skill attached to an agent is visible to that agent's sessions on both the Claude Code
-  adapter and the CodeMachine adapter, with the degradation strategy recorded when native support is
-  absent (conformance C15).
+  adapter and the generic declarative CLI adapter (`07` §7.5), with the degradation strategy recorded
+  when native support is absent (conformance C15).
 - **AC15-5** An MCP server granted `[a]` of `[a,b]` permits `a` and denies `b` in a live session
   (conformance C16); ungranted servers are absent entirely.
 - **AC15-6** Each invariant I1–I12 has a compile-time test asserting the specific error code, using a
