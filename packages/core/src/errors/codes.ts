@@ -1322,6 +1322,23 @@ export const ERROR_CODES = {
     message: (d: { detail: string }) => `Extracting the npm tarball failed: ${show(d.detail)}`,
     remedy: 'Check the extraction directory has free space and is writable, then retry.',
   },
+  'CFG-036': {
+    // `packages/extensions/src/install/consent.ts` (`19` §19.5 step 3, `15` §15.11):
+    // `describeRequestedCapabilities`'s own overlay case validates the consent-relevant subset of a
+    // parsed `overlay.yaml` document (`requestsCapabilities`/`provides.mcp`) against a deliberately
+    // partial schema -- no full `overlay.yaml` validator exists anywhere in this codebase yet (see
+    // `PLAN-M11.md` P3's own recorded scope note). A document that fails even this partial shape
+    // (e.g. a `requestsCapabilities` entry that is not one of `network`/`exec`/`mcp-write`, or the
+    // wrong value type for one) cannot be safely described to a user deciding whether to consent, so
+    // it is refused here rather than rendering a silently incomplete or fabricated capability list.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) =>
+      `This overlay's requested capabilities could not be parsed: ${show(d.detail)}`,
+    remedy:
+      'Fix the requestsCapabilities/provides.mcp fields in overlay.yaml to match the documented ' +
+      'shape (15 §15.11), then retry.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the
