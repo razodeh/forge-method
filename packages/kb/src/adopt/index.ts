@@ -88,3 +88,27 @@ export {
   verifyCartographyFinding,
   verifyConventionFinding,
 } from './verification.ts';
+
+export type {
+  ComponentDerivation,
+  ReconstructionDeps,
+  ReconstructionInput,
+  ReconstructionResult,
+  RetroactiveAdrCandidate,
+} from './reconstruction.ts';
+export {
+  RECONSTRUCTION_OWNER,
+  architectureEntries,
+  dataEntries,
+  deliveryEntries,
+  deriveComponents,
+  deriveRetroactiveAdrCandidates,
+  engineeringStandardsEntry,
+  indexVerificationOverrides,
+  productEntries,
+  slugify,
+  toComponentsToC4Input,
+  toDepsToGraphInput,
+  toSchemaIntrospectToErInput,
+  writeReconstruction,
+} from './reconstruction.ts';
