@@ -13880,3 +13880,151 @@ scripts/emit-schemas.mjs` + `node scripts/assert-schema-drift.mjs` confirm `conf
 regenerated and matches. A full, unscoped `node scripts/run-tests.mjs run` (447 files) showed 7785
 passing, 5 skipped, 0 failures — `crash-resume.test.ts` included, passing cleanly this run. `GAUNTLET-
 LOG.md`'s own `M10 P20` entry has the full round-by-round record; this is the final piece of M10.
+
+## Q169 — M11 P9: S1/S2/S4 adversarial security tests — the `vcs` boundary makes the plan's own S1 test
+location impossible, a real hard-denylist mechanism did not exist at all before this piece, and the
+`isHostAllowed` zero-production-callers fact for S4
+
+**Context:** `PLAN-M11.md` P9 asks for three adversarial tests proving `20` §20.10 S1 (path
+containment), S2 (hard-denylist + shell-operator composition), and S4 (`network: none` isolation)
+hold, against mechanisms the plan's own mandate says "already exist." Direct investigation before
+writing any test, per this piece's own instructions, found the premise true for S1, false for S2, and
+partly true for S4 — each recorded below.
+
+**1. S1's own stated surface, `packages/vcs/test/security/s1-containment.test.ts`, is structurally
+impossible.** `@forge/vcs`'s own `specs/02` §2.2 row is `['schemas']` — confirmed directly against
+`tools/eslint-plugin-forge-boundaries/src/graph.mjs` and `packages/vcs/package.json`'s real
+`dependencies` — no edge to `@forge/core` at all, where the real mechanism (`ProjectPaths.
+resolveWithin`) lives. `@forge/vcs` itself implements no path-containment logic of its own (`lanes.ts`
+only manages worktree lifecycle via real `git` subprocesses, and its own `listDirEntriesSorted` doc
+comment says explicitly why it duplicates a tiny `@forge/core/fs` utility rather than depending on the
+package: "this module cannot depend on `@forge/core` at all"). Adding a new graph edge purely to host
+one test file was rejected as disproportionate (`vcs` gains nothing else from `core`, and the edge
+would then need justifying for production code that does not exist). The test now lives at
+`packages/core/test/security/s1-containment.test.ts` instead — the same kind of disclosed Surface
+deviation `PLAN-M11.md` P1 and `PLAN-M10.md` P10/P16 already established precedent for (Q104). The
+test itself goes beyond `../fs/paths.test.ts`'s own pre-existing symlink/traversal coverage (written
+for `PLAN-M1.md` P4, before `20` §20.10's S-numbered table existed): it drives a real end-to-end
+`writeFileAtomic` attempt through each escape, then asserts the outside target's own content is
+unchanged, rather than trusting a thrown error alone.
+
+**2. S2's own premise — "against invariants whose own enforcement mechanism already exists" — was
+false for the hard denylist specifically, confirmed by direct inspection, not assumed.** `20` §20.1 is
+explicit that a hard denylist "overrides every allowlist and every autonomy level," a second,
+allowlist-independent layer. Grepping every `src/` directory in the workspace for `denylist`/
+`DENYLIST`/the ten literal command shapes `20` §20.1 names (`rm -rf /`, `sudo`, `chmod -R 777`, ...)
+found nothing — `isExecAllowed` (`packages/adapter-kit/src/grants/exec.ts`) was a pure, grant-scoped
+*allowlist* matcher, and its own pre-existing test suite explicitly asserted `exec: ['*']` permitted
+`rm -rf /`, documented as "intentional, not a bypass" (true for the allowlist alone; the spec's own
+second layer simply never existed to override it). Separately, and independently, `isExecAllowed`'s
+own wildcard-prefix match (`command.startsWith(prefix)`) was vulnerable to exactly the shell-operator
+composition attack `20` §20.10 S2 names: `exec: ['pnpm test*']` matched `"pnpm test; rm -rf /"`,
+because the prefix genuinely is a prefix of that string. Per this piece's own instructions ("if you
+find a REAL gap... fix it for real, don't just document the gap," the same treatment M10 P4's
+shell-injection fix and M10 P2's path-traversal fix got), both were fixed rather than merely tested
+around:
+
+- **New module `packages/adapter-kit/src/grants/denylist.ts` (`isHardDenylisted`)**, consulted by
+  `isExecAllowed` before any allowlist pattern and unconditionally, even against `exec: ['*']`. Scoped
+  deliberately to the subset of `20` §20.1's ten named shapes that are safely decidable from the
+  command *string* alone: `rm -rf /`/`rm -rf ~` (any flag ordering), `sudo`, `chmod -R 777`, a fetch
+  piped into a shell interpreter (`curl ... | sh`), and an unconditional `git push --force`/`-f`
+  (widened from `20` §20.1's own "to a protected branch" framing to match `20` §20.2 point 4's
+  broader "FORGE never force-pushes" rule, since branch-protection status is not decidable from a bare
+  command string). Three of the ten named shapes are deliberately **not** implemented, disclosed in
+  the module's own doc comment rather than silently dropped: "operations outside the project root" is
+  S1's own job (a different subsystem with real filesystem context this module never has); "`git
+  reset --hard` on the integration branch" and "history rewriting on shared branches" both need to
+  know *which* branch is targeted, which no command string carries, and `@forge/vcs`'s own real
+  `resetLaneWorktree` legitimately runs `git reset --hard` against a *lane* worktree by design (`06`
+  §6.10 step 2) — denying the bare command unconditionally would break real, intended FORGE behaviour;
+  "killing processes outside the lane's process group" needs process-group context the same way;
+  package-publish/disk-formatting were left out as too ecosystem-varied to enumerate safely without a
+  dedicated false-positive audit this piece had no budget for. Every rule runs against each shell-
+  operator-separated clause of the command (splitting on `;`, `&&`, `||`, newlines, and the boundaries
+  of backtick/`$(...)` substitution, plus `|` pipe stages for the fetch-to-shell shape), not the raw
+  string as a whole, so `"pnpm test && rm -rf /"` is caught even though only the second clause is
+  denylisted.
+- **`matchesExecPattern` (`exec.ts`) fixed**: a wildcard-prefix match now also requires the *whole*
+  command contain no shell metacharacter (`;`, `&`, `|`, backtick, `$(`) — an exact-match pattern is
+  unaffected, since an operator the grant author wrote out in full themselves was explicitly
+  authorised, not smuggled in via composition. Matches this same file's own established precedent
+  (`adapter-claude-code`'s `safeBashRule`) of refusing unconditionally rather than building a parser
+  that has to get shell-composition semantics exactly right to be safe.
+- **A deliberate, disclosed test-behaviour change, not a weakened test**: `packages/adapter-kit/test/
+  grants/exec.test.ts`'s pre-existing assertion that `exec: ['*']` permits `rm -rf /` is now `false`.
+  Per the standing "never edit a test to make it pass... if a test is wrong, say so explicitly" rule:
+  this is a case of the *test* being wrong under a spec requirement the code did not yet implement,
+  not the reverse — `20` §20.1 says the hard denylist overrides *every* allowlist, with no stated
+  carve-out for an author who granted unrestricted exec on purpose, and until this piece there was no
+  hard denylist for that "overrides" wording to mean anything against. The surrounding assertions
+  (`''`, `'anything at all'` still permitted under `exec: ['*']`) are unchanged, proving this is a
+  narrow, denylist-specific correction, not a wholesale reversal of the degenerate-wildcard behaviour.
+
+**3. S4: `isHostAllowed` (`packages/adapter-kit/src/grants/network.ts`) has zero production call
+sites anywhere in the workspace**, confirmed by grepping every `src/` directory — the real,
+structural enforcement of `network: none` for a live session is entirely `@forge/adapter-claude-code`'s
+`mapToolGrantToAllowedTools` (which builds `WebFetch(domain:...)` rule strings directly, without ever
+calling `isHostAllowed`) plus the external Claude Code CLI/SDK's own `deny-unlisted` permission mode,
+already confirmed live-functional by M7's own `FORGE_LIVE=1` checkpoint (`filesystem.ts`'s
+`checkC3ToolRestriction` doc comment) but not re-runnable in this automated suite without a live API
+key. Judged out of this piece's own scope to wire `isHostAllowed` into a real production call site:
+no existing FORGE component makes an in-process network call on an agent's behalf today, so
+inventing one only to have something to gate would itself be new, disproportionate runtime behaviour
+this piece's own mandate explicitly warns against. The S4 test (`packages/adapter-kit/test/security/
+s4-network-isolation.test.ts`) instead proves the one thing achievable without a live external
+process: `isHostAllowed` itself, the real exported gate any future in-process caller would consult,
+genuinely distinguishes "reach this real, local listener" from "do not" — with a negative control (an
+identical listener/gate/call path that *does* reach the listener under `network: 'full'`) proving the
+harness is capable of detecting a real connection, so the "blocked" result is not vacuous. Disclosed
+plainly in the test file's own doc comment rather than silently assumed to prove more than it does.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`,
+and `node scripts/check-boundaries.mjs` all clean on every file this piece touched. See `GAUNTLET-
+LOG.md`'s own `M11 P9` entry for the critic round and full-workspace test results.
+
+## Q170 — M11 P8: the scripted-binary fixture's own CLI/NDJSON contract is invented, not spec-literal;
+`writeFiles`/`outFile` cwd-containment defaults; `cwdEquals` string-equality without normalisation
+
+**Context:** `PLAN-M11.md` P8 asks for "a real, scripted external binary fixture for adapter conformance
+testing" — a standalone process (`packages/adapter-generic/test/fixtures/scripted-binary.ts`, run via
+`node --experimental-strip-types`) that a later piece, P7's own `GenericAdapter`, will spawn to drive
+`07` §7.6's conformance suite. `07` §7.5 fully specifies `adapter.yaml`'s own schema and a worked
+example of the *target binary's* NDJSON source vocabulary (`message`/`tool_call`/`done`), but says
+nothing about what a scripted stand-in binary's own control surface (how a test author tells it what
+to do) should look like — that is inherently new, since no real external tool exists to imitate one
+for one's own CLI flags.
+
+**Decision:** the fixture's real argv mirrors `07` §7.5's own worked-example `invoke.args` shape
+exactly (`--prompt-file`/`--cwd`/`--model`/`--version`, plus whatever conditional flags a table wants
+to match on, e.g. `--read-only`), so a real `GenericAdapter`'s own argument templating is genuinely
+exercised end to end — plus exactly one fixture-only control flag, `--forge-fixture-table <path>`,
+spelled with a `forge-fixture-` prefix precisely so it can never collide with a real `adapter.yaml`'s
+own templated arguments. The scripted-response table's own field shape (`text`/`writeFiles`/
+`toolCalls`/`structured`/`errorInfo`/`hang`/`malformedLine`/`delayMsBeforeExit`) deliberately mirrors
+`@forge/testkit`'s own `FakeSessionScript`/`.script()` naming for familiarity, per the plan's own
+explicit instruction, even though the underlying mechanism (a real subprocess matched by argv/prompt,
+not an in-process `SessionRequest` match) is unrelated. Two source-event types the `07` §7.5 worked
+example does not exercise (`usage`, `result`) are disclosed, deliberate extensions for adapters that do
+declare `costReporting`/`structuredOutput` — the worked example's own sample declares neither.
+
+**A real gap two fresh critic rounds found and fixed, recorded here rather than silently patched:**
+the first draft's `resolveInsideCwd` (mirroring `@forge/testkit`'s own same-named function in
+`fake-adapter.ts`) defaulted a missing `cwd` to `.` — this test process's own real launching
+directory — so a table author (or a later conformance test) that forgot `--cwd` would have scripted
+writes land silently inside whatever directory happened to invoke the fixture, reopening exactly the
+`07` §7.6 C2 cwd-isolation hazard the containment check exists to close. Fixed by refusing outright
+whenever `cwd` is absent or non-absolute, matching testkit's own stricter behaviour exactly (not
+merely "close enough"), with a regression test that scripts a write with no `--cwd` at all and asserts
+against a real marker path in this actual repo checkout, not merely a mocked assertion.
+
+**A disclosed, deliberate simplification, not an oversight:** the new `cwdEquals` matcher field (added
+for `07` §7.6 C12's own "N concurrent sessions in distinct cwds" fixture need) compares `cwd` as a raw
+string, with no `path.resolve`/trailing-slash normalisation. A conformance harness's own `cwd` values
+are already canonical absolute paths (typically from `mkdtemp`), so this has no practical effect today;
+documented as a known, narrow limitation in `scripted-binary-protocol.ts` rather than silently assumed
+to handle every formatting variant.
+
+**Verification:** `pnpm typecheck` (21/21 packages, including the new `@forge/adapter-generic`),
+`eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean. See
+`GAUNTLET-LOG.md`'s own `M11 P8` entry for the three critic rounds and full-workspace test results.

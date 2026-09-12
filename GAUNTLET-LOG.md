@@ -10569,3 +10569,93 @@ crash-resume.test.ts` passing cleanly on this run (one of the four accepted load
 of the four fired this run).
 
 **M10 is complete.** All 20 planned pieces (P1-P20) are built, gauntlet-reviewed, and committed.
+
+## M11 P8 — A real, scripted external binary fixture for adapter conformance testing (`07` §7.5, §7.6)
+
+Built: a new package, `packages/adapter-generic`, whose entire scope is genuinely new test
+infrastructure — no existing precedent covers a scripted, NDJSON-emitting *external process* fixture
+(`@forge/testkit`'s own `FakePlatformAdapter` is in-process, never spawned). `test/fixtures/
+scripted-binary.ts` is a real, standalone binary (run via `node --experimental-strip-types`, the same
+pattern `run-engine-child.ts`/`mcp-server.ts` already establish) that reads a scripted response table
+(`test/fixtures/scripted-binary-protocol.ts`, mirroring `@forge/testkit`'s own `.script()` API shape
+for familiarity) matched against real argv/prompt/cwd, and emits real, line-delimited NDJSON events on
+stdout in `07` §7.5's own worked-example source vocabulary (`message`/`tool_call`/`done`), plus two
+disclosed extensions (`usage`/`result`). Three real failure-injection modes: a scripted non-zero exit
+(with or without a typed `error` event, deliberately distinguishable), a scripted hang (ignores
+`SIGTERM`/`SIGINT`, only a real `SIGKILL` ends it), and a deliberately-malformed NDJSON line. `--version`
+matches `07` §7.5's own `versionCommand`/`versionRegex` convention. 30 tests across two files prove the
+fixture itself — its own scripted responses, all three failure-injection modes (including a genuine
+`SIGKILL`-then-`ESRCH` orphan-process proof), and the pure matcher's semantics — before any later piece
+(P7, `@forge/adapter-generic`'s own real `GenericAdapter`, not built by this piece) is allowed to depend
+on it. A necessary two-line addition to the repo-root `test/workspace-floor.test.ts` (`IGNORED_PATHS`)
+exempts the two new non-`*.test.ts` fixture files from the "every source file lives under src/" floor
+check, matching the identical `mcp-server.ts`/`run-engine-child.ts` precedent exactly.
+
+### Round 1 — fresh critic: 2 major, 3 minor
+
+A fresh, context-free critic found: (1) **major** — `delayMsBeforeExit`, a documented and implemented
+scripted-response field, had zero test coverage at all, a real scope failure given this piece's entire
+mandate is "thorough tests of the fixture itself"; (2) **major** — scripted file writes (`writeFiles`/
+`outFile`) had no cwd-containment check whatsoever, directly contradicting the file's own doc comments
+citing `07` §7.6 C2/C14 as the reason these are real disk writes rather than merely claimed ones — a
+scripted `../` escape would have silently written outside the sandboxed cwd, exactly the property a
+containment check exists to prevent, with no test able to exercise the negative case at all; (3)
+**minor** — no test for a missing/malformed `--forge-fixture-table` file, so a future refactor could
+silently change this crash shape unnoticed; (4) **minor** — `cwd` was plumbed into every match call but
+no matcher field ever consumed it, dead data a future author would reasonably expect to be usable; (5)
+**minor** — the `test/workspace-floor.test.ts` edit was checked and found correctly scoped, no issue.
+
+**Judged and fixed:** (1) a real test added, asserting both that output is emitted immediately and that
+wall-clock exit is delayed. (2) fixed properly, not papered over: a new `resolveInsideCwd` function,
+mirroring `@forge/testkit`'s own same-named function in `fake-adapter.ts`, refuses a `..`-traversal or
+absolute-path escape and reports the refusal via a `tool_call` event (`refused: true`), with two new
+tests (a `../` escape and an absolute-path escape). (3) and (4) fixed directly: a missing/malformed-table
+regression test, and a new `cwdEquals` matcher field (for `07` §7.6 C12's own distinct-cwds fixture
+need) with its own unit test.
+
+### Round 2 — fresh critic: 1 blocking-caliber major
+
+A second fresh critic, verifying round 1's fixes rather than re-scanning cold, found the round-1
+containment fix itself still had a hole: `resolveInsideCwd` defaulted a **missing** `cwd` to `.` —
+this real test process's own actual launching directory — so omitting `--cwd` entirely (a careless
+table, or a later conformance test that forgot the flag) silently wrote real files into the repository
+checkout itself, reopening the exact C2/C14 hazard the fix was written to close. Two minors: the doc
+comment's "mirrors `@forge/testkit` ... exactly" claim was now false (testkit's version refuses a
+non-absolute `cwd` outright; this one didn't), and `outFile`'s silent-refusal-on-escape had no test of
+its own (only `writeFiles`, which reports refusal via an event, was covered).
+
+**What the critic caught that the builder missed:** the omitted-`--cwd` default case exactly — every
+test written in round 1 always passed a real `cwd`, so the fallback path had zero coverage and the
+"fix" was only real when a caller remembered the flag it was meant to make unnecessary to remember
+correctly.
+
+**Judged and fixed:** `resolveInsideCwd` now refuses outright when `cwd` is absent or non-absolute,
+before any other check — matching testkit's own stricter behaviour for real this time. A new regression
+test scripts a write with no `--cwd` at all, targeting a real marker filename under this actual repo
+checkout's own `process.cwd()`, and asserts both the reported refusal and the marker's non-existence
+(with a `finally` cleanup as a safety net, not a substitute for the assertion). A new `outFile`-escape
+test closes the second minor. The doc comment was corrected to describe the real, now-accurate
+behaviour instead of restating a mirror-claim that had drifted false.
+
+### Round 3 — fresh critic: clean
+
+A third fresh critic, hand-tracing every branch of the corrected `resolveInsideCwd` against the full
+test matrix (missing/relative `cwd`, absolute/traversal `relativePath`, the resolved-target-equals-cwd
+case), found the fix exhaustive for every input this fixture can actually receive, and confirmed the
+regression test asserts the exact NDJSON sequence (not merely exit code), so a wrong-path failure mode
+would fail the assertion rather than silently pass. Two documented-not-fixed observations, correctly
+judged out of scope: lexical-only containment does not resolve symlinks (irrelevant for a same-machine
+test fixture with no adversarial caller), and the traversal check does not recognise Windows backslash
+separators on POSIX (irrelevant since this fixture only ever runs in this repo's own Linux/macOS CI).
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages, including the new `@forge/adapter-generic`),
+`eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean. A
+full, unscoped `node scripts/run-tests.mjs run` reported **7910 passing, 5 skipped, 2 failures** —
+both of the two failures are the pre-existing, accepted, load-sensitive flakes (`packages/engine/test/
+e2e/crash-resume.test.ts`, `packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test), each
+confirmed passing cleanly and fast when re-run in isolation immediately afterward. `git status`
+throughout confirmed no file outside this piece's own scope (`packages/adapter-generic/`,
+`test/workspace-floor.test.ts`) was ever touched, despite concurrent M11 P1/P9 work proceeding in the
+same working directory.
