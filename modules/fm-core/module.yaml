@@ -1,0 +1,332 @@
+# module.yaml -- fm-core, "always installed; the method itself" (19 §19.1's own shipped-modules
+# table). This is the one module every project installs regardless of level or stack, so its own
+# `provides` is the largest of the five shipped modules by a wide margin.
+#
+# ---------------------------------------------------------------------------------------------------
+# Where the content actually lives (read before assuming a missing `workflows/`/`gates/`/`frameworks/`/
+# `skills/`/`templates/` subdirectory under this module is an oversight -- it is not):
+#
+# `19` §19.1's own module-layout diagram shows `workflows/*.workflow.yaml`, `frameworks/
+# *.framework.yaml`, `gates/*.gate.yaml`, `skills/<id>/SKILL.md` and `templates/**/*.hbs` living
+# directly under a module's own directory. For `fm-core` specifically, that content already exists,
+# already real and already the single thing every consumer in this repo reads -- as `@forge/templates`
+# (`packages/templates/templates/`), not duplicated in here:
+#
+#   - `packages/templates/src/index.ts`'s own `WORKFLOW_INDEX` (20 ids), `GATE_INDEX` (10 ids),
+#     `FRAMEWORK_INDEX` (43 ids), `SKILL_INDEX` (32 ids) and `TEMPLATE_INDEX` (21 artifact-type ids)
+#     are exactly `10` §10.5/§10.3, `11`-`14` and `15` §15.4.4/`18` §18.7's own real, already-built
+#     content, each resolved as a path relative to wherever `@forge/templates` is actually installed.
+#   - `packages/cli/src/init/content.ts` already reads every one of those five indexes directly (via
+#     `resolvePackageRoot('@forge/templates')`) to populate a fresh project's own `.forge/<kind>/`
+#     directories at `forge init` time -- this is not a fixture or a stand-in, it is the real,
+#     currently-shipping mechanism.
+#   - `packages/cli/src/commands/{agent,decide,adr,template,run/gates}.ts` all resolve the same
+#     `@forge/templates` package root directly for the identical reason.
+#
+# Physically copying those same files a second time into `modules/fm-core/{workflows,gates,frameworks,
+# skills,templates}/` would fork one already-real, already-consumed source of truth into two, with no
+# real second consumer to justify the fork and a real drift risk the moment either copy is edited
+# alone. `provides` below names the real ids; each one already resolves to a real file on disk today,
+# just via `@forge/templates`'s own index rather than a path directly under this directory. See
+# `SPEC-QUESTIONS.md` Q150 for the full reasoning and this diagram-vs-real-layout divergence.
+#
+# `agents/` is the one real exception, and needs no such note: `05` §5.3's own canonical load path
+# (`modules/<module>/agents/<id>.agent.yaml`, read by `packages/agents/src/registry/
+# load-agent-registry.ts` today) already reads directly from this module's own directory, so the 29
+# files already there are exactly where they need to stay.
+#
+# `catalog` and `techniques` are declared empty, not omitted: `packages/catalog/catalog/` is real,
+# already-built content (language/framework/datastore entries), but it is stack-and-module-agnostic
+# selection input the catalog engine (`packages/catalog/src`) already loads on its own, never through
+# a module's own `provides.catalog` list -- attaching it to `fm-core` here would be a new, invented
+# ownership relationship this piece was not asked to build. Techniques (`16` §16.4's technique
+# library) are a separate module-layout contribution type `PLAN-M10.md` assigns to a later piece (P9),
+# not this one -- deliberately not enumerated here regardless of what does or doesn't exist under
+# `modules/fm-core/techniques/` at any given moment, so this piece never guesses at or races content
+# P9 alone owns and is still actively shaping; P9's own commit is what populates this list for real.
+# ---------------------------------------------------------------------------------------------------
+
+id: fm-core
+name: The FORGE method
+version: 1.0.0
+forgeVersion: '>=1.0 <2'
+requires: []
+conflicts: []
+levels: [L1, L2, L3, L4]
+
+# Maximum tool grant any agent in this module may hold, one entry per real agent role, transcribed
+# directly from each agent's own already-declared `tools:` block (`modules/fm-core/agents/<id>.
+# agent.yaml`) -- the ceiling equals what the shipped agent already holds today, since `19` §19.1's
+# own "exceeding it requires a recorded, expiring escalation" line makes the ceiling a hard cap a
+# project overlay may narrow within or widen up to, not a headroom allowance invented speculatively
+# here. Every value below was read directly from the corresponding agent file, not estimated.
+ceilings:
+  analyst: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  architect:
+    {
+      write: false,
+      exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*', 'tree*'],
+      network: false,
+      deploy: false,
+    }
+  backend:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  base-engineer:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  compliance: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  critic: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  data-architect:
+    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  data-engineer:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  diagnostician:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  domain-modeler: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  em: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  facilitator: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  finops: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  frontend:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  integration-architect:
+    { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  ml-engineer:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  mobile:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  orchestrator:
+    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  platform:
+    {
+      write: true,
+      exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*', 'pnpm *', 'npm *'],
+      network: false,
+      deploy: false,
+    }
+  pm: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  po: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  release: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  reviewer:
+    {
+      write: false,
+      exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*'],
+      network: false,
+      deploy: false,
+    }
+  sdet:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+  security:
+    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  sre: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: true }
+  techwriter: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  test-architect: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  ux: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+
+provides:
+  # The real 29 agents already on disk under `modules/fm-core/agents/*.agent.yaml`, one id per file
+  # (each file's own `id:` field, confirmed to match its filename for all 29 -- `grep -n "^id:"` above).
+  agents:
+    [
+      analyst,
+      architect,
+      backend,
+      base-engineer,
+      compliance,
+      critic,
+      data-architect,
+      data-engineer,
+      diagnostician,
+      domain-modeler,
+      em,
+      facilitator,
+      finops,
+      frontend,
+      integration-architect,
+      ml-engineer,
+      mobile,
+      orchestrator,
+      platform,
+      pm,
+      po,
+      release,
+      reviewer,
+      sdet,
+      security,
+      sre,
+      techwriter,
+      test-architect,
+      ux,
+    ]
+
+  # `@forge/templates`'s own real `WORKFLOW_INDEX` -- all 20 ids `10` §10.5's own table names (`19`
+  # §19.1's "the ten lifecycle workflows" is that same table's own loose paraphrase of the ten `10`
+  # §10.2 phases, not a literal ten-of-twenty subset -- `SPEC-QUESTIONS.md` Q88 already resolved this
+  # identical question for `@forge/templates` itself; `test/workflows.test.ts` already asserts all 20
+  # parse and compile).
+  workflows:
+    [
+      adopt,
+      build-stage,
+      debug,
+      define-product,
+      deliver-stage,
+      discover,
+      harden,
+      implement-story,
+      initialize-project,
+      intake,
+      migrate,
+      operate,
+      plan-stage,
+      plan-stages,
+      quick-fix,
+      refactor,
+      replan,
+      retro,
+      shape-solution,
+      verify-stage,
+    ]
+
+  # `@forge/templates`'s own real `GATE_INDEX` -- all 10 ids `10` §10.3's own gate catalogue names
+  # ("all gates" per this module's own `19` §19.1 shipped-modules row).
+  gates:
+    [
+      G-Problem,
+      G-Product,
+      G-Design,
+      G-Foundation,
+      G-Ready,
+      G-Verify,
+      G-Stable,
+      G-Integration,
+      G-Deliver,
+      G-Operate,
+    ]
+
+  # `@forge/templates`'s own real `FRAMEWORK_INDEX`, minus exactly one id: `analytical-pipeline-design`
+  # (F-DATA-8, `12` §12.99) is explicitly named in `19` §19.1's own `fm-data` row ("Adds: ... F-DATA-8
+  # ...") as that module's own contribution, not fm-core's -- the only framework of the 43
+  # `FRAMEWORK_INDEX` ships that is not one of fm-core's own base frameworks. F-INIT (7), F-ARCH (7),
+  # F-DATA-1..7 (7, everything but F-DATA-8), F-TECH-1 (1), F-TEST (7), F-DEBUG (3), F-REVIEW (2,
+  # `19` §19.1's own row text omits this family name but neither claims it for any other shipped
+  # module, the same loose-paraphrase pattern as the workflow count above), F-DELIVER/F-OPS (8) = 42.
+  frameworks:
+    [
+      repo-strategy,
+      directory-layout,
+      build-toolchain,
+      vcs-conventions,
+      dev-environment,
+      coding-standards,
+      scaffold-generation,
+      architecture-style,
+      decomposition-boundaries,
+      communication-integration-patterns,
+      pattern-selection,
+      nfr-strategy,
+      threat-modelling,
+      buy-build-borrow,
+      conceptual-logical-modelling,
+      access-pattern-analysis,
+      storage-selection,
+      consistency-transaction-design,
+      caching-strategy,
+      schema-evolution-migrations,
+      data-lifecycle-privacy-retention,
+      stack-selection,
+      test-pyramid-shape,
+      test-oracle-design,
+      test-data-strategy,
+      test-environment-dependency-strategy,
+      coverage-adequacy,
+      flake-control,
+      agent-executable-tests,
+      rca-loop,
+      rca-loop-bounds-escalation,
+      debugging-observability-precondition,
+      review-perspectives,
+      review-boundaries,
+      environment-strategy,
+      build-artifact-strategy,
+      cicd-pipeline-design,
+      deployment-strategy,
+      observability-design,
+      release-management,
+      operational-readiness,
+      cost-model,
+    ]
+
+  # No standalone `*.check.yaml` content exists anywhere in this repo (confirmed: zero files, zero
+  # references outside spec text) -- every deterministic check fm-core's own gates run is declared
+  # inline inside the gate that owns it (each `G-*.gate.yaml`'s own `checks.deterministic[]`), not as
+  # a separately-installable module contribution. Left empty rather than invented.
+  checks: []
+
+  # `@forge/templates`'s own real `SKILL_INDEX` -- all 32 ids `15` §15.4.4's own six-group built-in
+  # skill library table names (base skills, per this module's own `19` §19.1 shipped-modules row).
+  skills:
+    [
+      writing-an-adr,
+      writing-testable-acceptance-criteria,
+      splitting-an-oversized-story,
+      running-an-rca,
+      writing-a-runbook,
+      expand-contract-migration,
+      tdd-loop-discipline,
+      test-oracle-design,
+      contract-testing,
+      property-based-testing,
+      performance-benchmarking,
+      threat-modelling-stride,
+      mermaid-authoring,
+      c4-diagramming,
+      sequence-diagramming,
+      er-diagramming,
+      state-diagramming,
+      diagram-review,
+      nodejs-typescript-conventions,
+      python-conventions,
+      jvm-conventions,
+      go-conventions,
+      rust-conventions,
+      dotnet-conventions,
+      git-hygiene-for-lanes,
+      conventional-commits,
+      debugging-with-traces,
+      reading-a-flamegraph,
+      interpreting-a-coverage-report,
+      house-documentation-style,
+      changelog-writing,
+      api-reference-writing,
+    ]
+
+  # `@forge/templates`'s own real `TEMPLATE_INDEX` -- all 21 artifact stub templates `18` §18.7
+  # registers (base templates, per this module's own `19` §19.1 shipped-modules row).
+  artifactTypes:
+    [
+      Vision,
+      Capability,
+      NFR,
+      Epic,
+      Story,
+      Task,
+      ADR,
+      InterfaceContract,
+      DataModel,
+      Diagram,
+      Risk,
+      Assumption,
+      OpenQuestion,
+      Waiver,
+      SessionRecord,
+      RCA,
+      Defect,
+      Environment,
+      Runbook,
+      GateReport,
+      HandoffRecord,
+    ]
+
+  # See the header comment above: real, already-built content this module does not itself own or
+  # populate. Left empty rather than invented.
+  catalog: []
+  techniques: []
