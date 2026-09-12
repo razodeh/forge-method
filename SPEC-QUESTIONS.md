@@ -12349,3 +12349,192 @@ reported as step success). `pnpm typecheck` (whole workspace, 20/20 packages), `
 (`packages/engine`, `packages/sessions`, `packages/kb`, `packages/core`,
 `tools/eslint-plugin-forge-boundaries`) is 1805/1805 green. `GAUNTLET-LOG.md`'s own `M10 P10` entry has
 the full round-by-round record.
+
+## Q155 — M10 P11: anti-groupthink measures (`16` §16.7) — `session-record`'s own stability tier,
+`steel-man-debate` restricted to `tradeoff`, and the human-outranks rule implemented in DECIDE, not
+literally inside CONVERGE
+
+`PLAN-M10.md` P11 asked this piece to confirm `session-record`'s own stability tier against `19` §19.5's
+table before adding `no_disagreement_observed` (measure 4), and named several places where this piece's
+own reading of `16` §16.7 required a disclosed, non-literal choice rather than a spec transcription.
+
+**1. `session-record` is not one of `19` §19.5's own seven named tiers at all — not a blocker, but a
+real, disclosed gap in that table's own coverage.** Direct inspection of `19` §19.5's table (Agent
+definition schema/Workflow DSL/Skill format/Check format: `stable`; Framework schema/`PlatformAdapter`:
+`evolving`; Internal `@forge/*` APIs: `unstable`) found no row for artifact schemas at all —
+`SessionRecord` (`@forge/schemas/artifacts/session-record.ts`) is an internal, engine-produced runtime
+artifact a third-party module author never writes against, not one of that table's own
+extension-authoring contracts. This is not the "session-record is `stable`, adding a field is
+forbidden" blocker `PLAN-M10.md` P11 asked this piece to watch for and escalate — the table simply has
+no opinion on this schema either way. Proceeded on the same additive-only discipline the closest
+analogous, actually-tiered contract (`evolving`) would require anyway: `no_disagreement_observed` is
+`z.boolean().optional()`, so every `SessionRecord` value valid before this piece stays valid after it.
+
+**2. `steel-man-debate` (measure 3) is wired for `tradeoff` sessions only, not every session type.** `16`
+§16.7 point 3 names the technique without naming which session types use it; `steel-man-debate.
+technique.yaml`'s own `bestFor: Contested decisions` field is a real, direct match to exactly one
+`SESSION_TYPE_DEFAULTS` row's own real nature (`tradeoff`) and no other — `design-review`/`premortem`
+also carry `critic` but are not, by `16` §16.2's own table, framed as a two-sided contested choice the
+way `tradeoff` is. A disclosed reading, not a spec quote; extending this to more session types is
+additive scope a later piece can add without changing this one's own shape. When this project has no
+`steel-man-debate` technique installed at all (no `fm-core` module), CONVERGE degrades to the pre-
+existing `panel` mode rather than failing the session — an optional anti-groupthink enhancement, not a
+new hard dependency on any one module being present.
+
+**3. The human-outranks rule (measure 5) is implemented as a real precedence rule in `@forge/sessions`'s
+own `SessionPhaseMachine.decide`/`DecideInput.humanDecision`, not literally "inside CONVERGE."** `16`
+§16.7 point 5's own literal text is "[the human's position] enters at CONVERGE, where it outranks" —
+but CONVERGE itself never resolves an authoritative decision in this codebase's own anatomy (only DECIDE
+does), so "outranks" has no real effect to implement at the CONVERGE step itself. Implemented instead
+where a decision is actually made: `machine.decide()` discards every agent-authored `decisions` entry
+outright the moment `humanDecision` is present in the same call, rather than merely placing the human's
+entry first alongside them — full override, not mere prioritization, matching this measure's own literal
+"outranks" word rather than a softer "is preferred." `runSessionStep` gained a new, optional third
+parameter, `humanInput?: HumanSessionInput` (`packages/engine/src/interaction/session.ts`), threaded into
+this precedence rule when supplied; no real call site in this milestone's own scope populates it yet
+(`ExecuteStepContext` has no synchronous, interactive human-input channel at all, the identical
+already-recorded gap `PLAN-M10.md` P10 named for `elicit`/`subworkflow`) — the identical "a real, wired
+extension point with no caller yet" shape this same file's own `ElicitationRequested` telemetry event
+already is. A later, interactive `forge session` CLI (`PLAN-M10.md` P13) is the real, intended caller.
+
+**4. Measure 4's "no participant disagreed with any other" is computed over every participant's own
+CONVERGE turn, not only `critic`'s.** Seven of `16` §16.2's own ten session types (`brainstorm`, `retro`,
+`war-room`, `estimation`, `standup`, `discovery-interview`, `story-refinement`) carry no `critic`
+participant at all (confirmed directly against `session.ts`'s own `SESSION_TYPE_DEFAULTS`) — computing
+`no_disagreement_observed` from `critic`'s own structural objection alone would have flagged every one of
+those seven session types as "no disagreement observed" unconditionally, regardless of whether two real,
+non-critic participants substantively disagreed with each other. `expressesDisagreement`
+(`@forge/sessions/phase-machine/machine.ts`), a mechanical, deterministic keyword classifier over CONVERGE
+turn text (the identical "a cheap mechanical proxy, not a judgement" shape `isStatableInOneSentence`
+already established for FRAME), extends real disagreement-recording to every participant, not only
+`critic`; a match is recorded as a real `SessionObjection` attributed to that participant, the same
+structural fact the flag itself is computed from — not a second, parallel signal.
+
+**5. A fresh critic round found real, reachable defects in the first draft, all fixed before this
+entry's own final Verification paragraph.** Two blocking: (a) a `debate`-mode critic's own literal
+"CONCEDE" was recorded verbatim as a real objection (satisfying CONVERGE's structural gate honestly,
+but corrupting `no_disagreement_observed` into reporting real disagreement that never happened) — fixed
+two ways at once: `isGenericNonObjection` now also matches a bare "CONCEDE"/"conceded", and
+`hadRealDisagreement` (`assembleSessionRecord`) now filters every recorded objection's own text through
+`isGenericNonObjection` before counting it as real evidence, rather than trusting `state.objections.
+length > 0` outright — defense in depth, since a structurally-required-but-generic objection can enter
+`state.objections` for reasons the flag's own computation should not blindly trust. (b) a failed critic
+re-prompt session (`ok: false`) silently left `criticFinalText` at its own original, already-rejected
+generic text, which then got recorded as if accepted — fixed by setting it `undefined` on a failed
+re-prompt instead, so `advanceToDecide`'s own real structural gate (`RUN-062`) fires honestly for "critic
+had nothing usable, and the re-prompt itself also failed," matching this same file's own "a failed
+session contributes nothing real" policy everywhere else. Two major, both in the new `debate`-mode
+CONVERGE path: (c) a multi-round debate (no round-1 concession) pushed one duplicate `clusters` entry
+per round for the identical proposer role, breaking `panel` mode's own one-entry-per-perspective
+invariant — fixed by capturing only the *last* round's own proposer text and pushing one cluster after
+the loop, the identical treatment `criticFinalText` already got. (d) an unregistered proposer role
+silently fell back to the neutral `facilitator` agent as the debate's own real author while still
+labelling that content as the unregistered role in the record — both a violation of the facilitator's
+own "contributes no content" invariant and a mislabelled authorship; fixed by requiring a real,
+registered proposer agent for `useDebate` to be `true` at all, degrading to ordinary `panel` mode
+otherwise (`loadSteelManTechnique`'s own identical "a real fallback, not a crash" pattern). One further
+major, `expressesDisagreement`'s own marker list had no negation awareness ("no concerns", "low risk,
+nothing against it" misclassified as real disagreement) — fixed with a `NEGATED_AGREEMENT_PATTERNS`
+short-circuit checked first. A sixth, minor finding (`writeDecisionBack`'s own content-blind idempotency
+can leave a resumed human-override decision's own KB entry stale) was recorded as a disclosed, currently
+unreachable edge case (no real caller populates `HumanSessionInput` yet) rather than reworked, since
+fixing it would touch the identical, already-tested idempotency contract the agent-decision retry path
+depends on.
+
+**Verification:** 12 new tests in `packages/engine/test/interaction/session.test.ts` (one per measure,
+plus fallback/regression cases from the critic round above), 2 new tests in `packages/engine/test/
+interaction/dispatch-agent-step.test.ts` (round-1-only steel-man embedding, and its absence when
+unrequested), 23 new tests in `packages/sessions/test/phase-machine/machine.test.ts`
+(`isGenericNonObjection`, `expressesDisagreement`, `humanDecision` override, plus the critic round's own
+`CONCEDE`/negation regressions), 4 new tests in `packages/sessions/test/record/assemble.test.ts`
+(`no_disagreement_observed`, plus the critic round's own `CONCEDE`-shaped-objection regression), and 4
+new tests in `packages/schemas/test/artifacts/session-record.test.ts` (the new field's own additive
+validity) — 45 new tests total, 188/188 green across all five files. `pnpm --filter @forge/sessions
+--filter @forge/schemas --filter @forge/engine typecheck` clean (whole-workspace `pnpm typecheck` was not
+run standalone: two concurrent, unrelated, in-flight M10 pieces' own untracked files —
+`packages/engine/test/gates/fm-web-checks.test.ts` and `packages/engine/src/adopt/inference.ts` — each
+independently fail `exactOptionalPropertyTypes`/a missing import, confirmed via `git status --short`
+before and during this piece's own work, neither one this piece's own regression). `eslint
+--max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean on every file
+this piece touched. `GAUNTLET-LOG.md`'s own `M10 P11` entry has the full round-by-round record.
+
+## Q156 — M10 P16: `forge adopt` CARTOGRAPHY/INFERENCE — the `kb`/`engine` dispatch-layering resolution,
+why `runParticipantSession` is called directly rather than `dispatchAgentStep`'s own mode switch, and the
+confidence-ceiling enforcement point
+
+`PLAN-M10.md` P16 named a real, unresolved architectural question up front: CARTOGRAPHY/INFERENCE need
+`dispatchAgentStep`'s already-real agent-dispatch mechanism (`architect`/`data-architect`, `20` §20.5
+"read-only... by construction"), but `tools/eslint-plugin-forge-boundaries/src/graph.mjs`'s own
+`PACKAGE_GRAPH` — checked directly before writing a line of this piece — gives `kb: ['core', 'schemas',
+'diagrams']`, no `engine` edge, while `engine: [..., 'kb', ...]` already runs the other way. Three real
+decisions, recorded together since all three were settled while building the same piece.
+
+**1. The `kb`/`engine` layering resolution.** Matching `PLAN-M10.md` P10's own precedent for
+`engine`/`sessions` (`engine -> sessions`, never the reverse, since `sessions` holds pure facilitation
+logic only) exactly: `@forge/kb/adopt` gained three new, dispatch-agnostic, pure modules —
+`evidence.ts` (`buildEvidenceIndex`/`isKnownEvidence`, the closed evidence universe built from P15's own
+real `Survey`/`Inventory`), `cartography.ts` (`assembleCartography`/`validateClaimEvidence`, plus
+`flagSharedWriteTables`), and `inference.ts` (`assembleInference`/`clampInferenceConfidence`) — none of
+which import anything from `@forge/engine`, or know what an LLM session even is; they operate purely on
+plain `RawCartographyClaim`/`RawInferenceClaim` data. The actual LLM-dispatch orchestration
+(`runCartographyPhase`/`runInferencePhase`) lives in a new `@forge/engine/adopt` (`packages/engine/src/
+adopt/{cartography,inference,analysis-node,session-claims}.ts`, `"./adopt": "./src/adopt/index.ts"` added
+to `packages/engine/package.json`'s own `exports`), which calls into `@forge/kb/adopt`'s pure logic —
+`engine -> kb` is already a legal, existing edge, so no graph change was needed at all, unlike P10's own
+piece (which had to add a brand-new `engine -> sessions` edge). This was the smaller, more reversible of
+the two options `PLAN-M10.md` P16's own text named ("place the actual dispatch-calling code in
+`@forge/engine` itself... that CALLS INTO `@forge/kb`'s pure data-shaping/evidence-citation logic").
+
+**2. Why `runCartographyPhase`/`runInferencePhase` call `dispatch-agent-step.ts`'s own
+`runParticipantSession` directly, rather than `dispatchAgentStep(node, agent, ctx, 'panel', {...})`.**
+CARTOGRAPHY/INFERENCE need N independent, read-only agent calls with arbitrary structured claim output and
+*no* committing synthesis step at the end — a shape none of `InteractionMode`'s own seven values name.
+`panel` is the closest fit (independent per-perspective sessions), but `dispatchPanel`'s own
+reconciliation step unconditionally runs a second, real, committing `runAgentStep` call over the
+perspectives' combined text — real write/commit capability, directly contradicting `20` §20.5's "tainted...
+read-only by construction" mandate for `forge adopt`'s own analysis steps. `swarm-review` has no
+committing step, but its own `SWARM_REVIEW_OUTPUT_SCHEMA` and merge logic are fixed to a `{findings,
+checked}` review shape, not an evidence-cited claim shape. Rather than stretch either mode past its own
+real contract, `packages/engine/src/adopt/cartography.ts`/`inference.ts` call `runParticipantSession` — the
+identical read-only, non-committing (`tools.write: false`, `permissionMode: 'deny-unlisted'`, `cwd:
+ctx.projectRoot`, no lane) session-construction primitive `dispatchAgentStep`'s own `pair`/`panel`/
+`debate`/`swarm-review` already build every participant session from — directly, once per CARTOGRAPHY
+category (`component`/`layering`/`runtime-topology`/`data-ownership`/`critical-path`) and once per
+INFERENCE category (`convention`/`intent`/`nfr`/`glossary`), synthesizing nothing. This reuses the
+already-real mechanism at the session-construction level rather than inventing a second one, while never
+running an unwanted committing step for a phase that must stay read-only by construction. `session.ts`
+(`PLAN-M10.md` P11, concurrently in flight in this same milestone) independently reached and needed the
+identical `runParticipantSession` export for its own, unrelated reason (a targeted CONVERGE re-prompt) —
+this piece relies on that already-exported symbol rather than adding a second, competing export of its
+own, so `packages/engine/src/interaction/dispatch-agent-step.ts` and `index.ts` carry zero net diff from
+this piece (confirmed via `git diff --stat` immediately before this piece's own commit).
+
+**3. INFERENCE's `confidence: low|medium`/`status: draft` rule is enforced twice, at two different
+layers, deliberately.** `@forge/kb/adopt`'s own `clampInferenceConfidence` (return type the two-value
+literal union `'low' | 'medium'`, not the full `KbEntryConfidence`) makes it structurally impossible for
+`assembleInference` to produce a `high`/`verified` finding regardless of what a dispatched session
+self-reported, and `InferenceFinding.status` is a fixed `'draft'` literal with no raw-claim field that
+could set it otherwise. Separately, `@forge/kb/write`'s own `KbWriter.write` gained a new
+`KbWriteOptions.confidenceCeiling` parameter and `KB-016` error code (`packages/kb/src/write/writer.ts`,
+`packages/core/src/errors/codes.ts`) — a caller (a future `forge adopt` write-back path, not built by this
+piece, whose own Surface is `cartography.ts`/`inference.ts` only) passes `{confidenceCeiling: 'medium'}`
+on the INFERENCE write path and `KbWriter` itself refuses a higher value, rather than trusting every
+future call site to simply never pass one. Two independent enforcement points because they close two
+different gaps: the first prevents a fabricated *finding* from ever existing at the assembly layer; the
+second prevents a *future, unrelated bug* in whatever eventually calls `KbWriter.write` for this phase
+from silently writing a higher confidence than the phase's own rule allows, the same defense-in-depth
+precedent `08` §8.3's own `## Verification`-required-for-`confidence: verified` `superRefine` check
+already establishes at the schema layer for a different confidence rule.
+
+**Verification:** `pnpm --filter @forge/kb typecheck`, `pnpm --filter @forge/engine typecheck`,
+`pnpm --filter @forge/core typecheck`, `eslint`, `prettier --check`, and `node scripts/check-boundaries.mjs`
+all clean on every file this piece touched. `packages/kb/test/adopt/{evidence,cartography,inference}.test.ts`
+(26 tests, against a real fixture-repo `Survey`/`Inventory` from P15's own `runSurvey`/`runInventory`),
+`packages/kb/test/write/writer.test.ts`'s new `confidenceCeiling` block (4 tests), and
+`packages/engine/test/adopt/{cartography,inference,session-claims}.test.ts` (20 tests, against a real
+`FakePlatformAdapter`) all passing — `packages/kb/test/adopt`, `packages/kb/test/write`,
+`packages/engine/test/adopt`, and `packages/engine/test/interaction` in full (450 tests) all passing.
+Per-file coverage on every new `packages/kb/src/adopt/{evidence,cartography,inference}.ts` and
+`packages/engine/src/adopt/*.ts` file meets `packages/kb`'s/`packages/engine`'s own ≥90% lines/statements/
+functions, ≥85% branches ratchet. `GAUNTLET-LOG.md`'s own `M10 P16` entry has the full round-by-round
+record.

@@ -19,8 +19,10 @@ export {
 export {
   kbEntrySchema,
   KB_ENTRY_TYPES,
+  KB_ENTRY_CONFIDENCE,
   type KbEntry,
   type KbEntryType,
+  type KbEntryConfidence,
   type KbSource,
 } from './kb-entry.ts';
 export { KB_SECTIONS, sectionIdToken, sectionForIdToken, type KbSection } from './sections.ts';

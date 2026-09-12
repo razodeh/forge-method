@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./adopt": "./src/adopt/index.ts",
     "./backpressure": "./src/backpressure/index.ts",
     "./budget": "./src/budget/index.ts",
     "./dispatch": "./src/dispatch/index.ts",

@@ -44,3 +44,30 @@ export { SURVEY_REPORT_RELATIVE_PATH, writeSurveyReport } from './report.ts';
 
 export type { WalkedFile } from './walk.ts';
 export { walkRepository } from './walk.ts';
+
+export type { EvidenceIndex, EvidenceRef } from './evidence.ts';
+export { buildEvidenceIndex, isKnownEvidence } from './evidence.ts';
+
+export type {
+  CartographyClaimKind,
+  CartographyFinding,
+  CartographyResult,
+  RawCartographyClaim,
+  RejectedCartographyClaim,
+  SharedWriteTableFinding,
+} from './cartography.ts';
+export { assembleCartography, validateClaimEvidence } from './cartography.ts';
+
+export type {
+  AdherenceRatio,
+  InferenceClaimKind,
+  InferenceFinding,
+  InferenceResult,
+  RawInferenceClaim,
+  RejectedInferenceClaim,
+} from './inference.ts';
+export {
+  assembleInference,
+  clampInferenceConfidence,
+  validateInferenceEvidence,
+} from './inference.ts';

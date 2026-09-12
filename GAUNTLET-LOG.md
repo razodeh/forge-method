@@ -9461,3 +9461,158 @@ workspace, 20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `
 scripts/check-boundaries.mjs` all clean. Full relevant-package test run (`packages/engine`,
 `packages/sessions`, `packages/kb`, `packages/core`, `tools/eslint-plugin-forge-boundaries`) is
 1805/1805 green. `SPEC-QUESTIONS.md` Q154 has the full record.
+
+## M10 P16 — `forge adopt` phases 3-4: CARTOGRAPHY and INFERENCE, LLM-driven, evidence-bound (`17` §17.2,
+`20` §20.5)
+
+**Mandate:** the first two LLM-driven `forge adopt` phases, under a strict evidence rule -- every claim
+cites a specific piece of evidence from P15's own real SURVEY/INVENTORY output or is rejected outright --
+reusing the already-real `dispatchAgentStep` mechanism (`architect`/`data-architect`, read-only per `20`
+§20.5) rather than inventing a new dispatch mechanism.
+
+Built `packages/kb/src/adopt/evidence.ts` (`buildEvidenceIndex`/`isKnownEvidence`, the closed evidence
+universe from a real `Survey`/`Inventory` pair), `cartography.ts` (`assembleCartography`/
+`validateClaimEvidence`, plus `flagSharedWriteTables` for `17` §17.2's own "highest-value finding"), and
+`inference.ts` (`assembleInference`/`clampInferenceConfidence`, structurally clamping every accepted
+finding to `confidence: low|medium`/`status: draft`) -- all pure, dispatch-agnostic logic with no
+`@forge/engine` import at all. The actual LLM-dispatch orchestration (`runCartographyPhase`/
+`runInferencePhase`) lives in a new `@forge/engine/adopt` (`packages/engine/src/adopt/{cartography,
+inference,analysis-node,session-claims,injection-telemetry}.ts`), calling `dispatch-agent-step.ts`'s own
+`runParticipantSession` directly (read-only, non-committing, no lane) once per CARTOGRAPHY category
+(`component`/`layering`/`runtime-topology`/`data-ownership`/`critical-path`) and once per INFERENCE
+category (`convention`/`intent`/`nfr`/`glossary`), never `dispatchAgentStep`'s own mode switch (`panel`'s
+own reconciliation step is a real, committing `runAgentStep` call, which would grant an analysis-only
+phase real write capability). `KbWriter.write` gained a new `KbWriteOptions.confidenceCeiling` parameter
+and `KB-016` error code, a second, independent enforcement point for the same confidence rule at the
+future write-back layer. `SPEC-QUESTIONS.md` Q156 has the full layering/design-decision record.
+
+### Round 1 — fresh critic: one major finding, one minor finding
+
+**[Major]** Untrusted brownfield content (SURVEY/INVENTORY facts -- file paths, config-key names,
+dependency names, churn-hotspot paths, all extracted from the target repository FORGE did not write, `20`
+§20.5's own literal "brownfield source" example) was interpolated raw into the CARTOGRAPHY/INFERENCE
+dispatch prompt with no delimiting/labelling and no control-token stripping -- `wrapUntrustedContent`
+(`@forge/adapter-kit/control-tokens`, already this codebase's real primitive for exactly this rule, used
+elsewhere by `@forge/agents`'s own `markExternalContent`) was never called. **[Minor]**
+`flagSharedWriteTables` counted an empty-string `owner` as a real, distinct owner, which could make two
+claims look "shared" (or, inversely, hide a real share) when one or both named no real component at all.
+
+**Fixed:** both `cartography.ts`'s and `inference.ts`'s own `promptFor` now wrap the SURVEY/INVENTORY
+evidence block through `wrapUntrustedContent` before embedding it, and thread the real `stripped` count
+back to a new `reportInjectionAttempt` helper (`packages/engine/src/adopt/injection-telemetry.ts`), which
+emits a real `InjectionAttemptBlocked` event when it is non-zero -- disclosed honestly as not currently
+reachable through this piece's own JSON-encoded evidence path (a compact `JSON.stringify` always starts
+with `{`, so it can never itself produce a line matching `stripControlTokens`'s own line-anchored `FORGE_*`
+pattern), tested directly rather than via a fabricated, unrealistic end-to-end trigger. `validateClaim
+Evidence` (`@forge/kb/adopt`) now rejects an empty/whitespace-only `table`/`owner` outright, and
+`flagSharedWriteTables` itself gained a matching `.trim().length > 0` guard as defense in depth. New tests
+pin both: two engine-side dispatch tests assert every real prompt contains the wrap markers and the real
+`source="forge-adopt-survey-inventory"` label; a dedicated `injection-telemetry.test.ts` calls
+`reportInjectionAttempt` directly with a real stripped count and confirms a real event lands via
+`@forge/telemetry`'s own `readEvents`; two new `kb`-side tests confirm an empty-string table/owner is
+rejected the same way a missing one already was.
+
+**Final state:** `packages/kb/test/adopt/{evidence,cartography,inference}.test.ts` (28 tests, against a
+real fixture-repo `Survey`/`Inventory` from P15's own `runSurvey`/`runInventory`), `packages/kb/test/write/
+writer.test.ts`'s `confidenceCeiling` block (4 tests), and `packages/engine/test/adopt/{cartography,
+inference,session-claims,injection-telemetry}.test.ts` (18 tests, against a real `FakePlatformAdapter`)
+all passing -- `packages/kb/test/adopt`, `packages/kb/test/write`, and `packages/engine/test/adopt` in full
+(163 tests) all passing, `packages/engine/test/interaction` alongside them (458 tests combined) unaffected.
+`pnpm --filter @forge/kb typecheck`, `pnpm --filter @forge/engine typecheck`, `pnpm --filter @forge/core
+typecheck`, `eslint`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean on every file
+this piece touched. Per-file coverage on every new `packages/kb/src/adopt/{evidence,cartography,
+inference}.ts` and `packages/engine/src/adopt/*.ts` file meets `packages/kb`'s/`packages/engine`'s own
+≥90% lines/statements/functions, ≥85% branches ratchet. `SPEC-QUESTIONS.md` Q156 has the full record.
+
+## M10 P11 — Anti-groupthink measures (`16` §16.7)
+
+**Mandate:** the five measures `16` §16.7 names, layered onto P10's own `dispatchAgentStep`/
+`runSessionStep` machinery: (1) panel independence, confirmed already real, pinned with a new test; (2)
+`critic`'s CONVERGE mandate extended with a classifier rejecting a generic "this seems fine"-shaped
+non-objection, re-prompted once; (3) `steel-man-debate` requiring each side state the opposing case
+first, as real `debate`-mode sequencing for `tradeoff` sessions; (4) the record flagging a session where
+no participant disagreed with any other, a new additive `no_disagreement_observed` field; (5) the
+human's position hidden during DIVERGE, entering at CONVERGE/DECIDE where it outranks.
+
+**Round 1 (BUILD → CRITIC → JUDGE):** Built all five measures across `packages/sessions` (two new pure
+classifiers, `isGenericNonObjection`/`expressesDisagreement`; a `humanDecision` override in `SessionPhase
+Machine.decide()`; `no_disagreement_observed` in `assembleSessionRecord`) and `packages/engine/src/
+interaction` (a `steelManRequirement` option threaded through `dispatchDebate`'s round 1; `session.ts`
+wired to use `debate` mode for `tradeoff` CONVERGE when the real `steel-man-debate` technique is
+installed; a critic re-prompt path reusing the newly-exported `runParticipantSession`; a new optional
+`humanInput` parameter on `runSessionStep`). 21 tests written first, from the spec text, before most of
+the wiring; all passed on the first real run.
+
+A fresh, context-free critic subagent, given only the diff, `QUALITY-BAR.md`, and `16` §16.3/§16.7/§16.8,
+found six real, reachable defects — the identical *classes* of bug P10's own four-round saga on this same
+dispatch machinery already found once, reopened here in the new code:
+
+**[Blocking]** A `debate`-mode critic's own literal "CONCEDE" was recorded verbatim as a real,
+structural CONVERGE objection (satisfying the phase machine's own gate honestly) but was then also read
+by `no_disagreement_observed`'s own `state.objections.length > 0` check as real, substantive
+disagreement — a session where the critic conceded outright, the clearest possible "no real disagreement
+occurred" case, was flagged as if real disagreement had occurred. The exact inverted-polarity failure
+measure 4 exists to prevent.
+
+**[Blocking]** A failed critic re-prompt session (`ok: false` — an adapter crash/timeout) left
+`criticFinalText` at its own original, already-*rejected* generic non-objection, which was then pushed
+into `objections` unconditionally — resurrecting a real failure into a fabricated, accepted contribution,
+the identical "fabricated success on failure" class P10's own round 1 already fixed for the DECIDE-phase
+dispatch case, reopened here for the CONVERGE re-prompt case.
+
+**[Major]** A multi-round `debate` (no round-1 concession) pushed one duplicate `clusters` entry per
+round for the identical proposer role — panel mode's own one-entry-per-perspective invariant, silently
+broken only in the new debate path.
+
+**[Major]** An unregistered proposer role silently fell back to the neutral `facilitator` agent as the
+debate's own real author, while the record still attributed that facilitator-authored content to the
+unregistered role — both a violation of the facilitator's own "contributes no content" invariant
+(this same file's own top-of-file doc comment) and a mislabelled authorship.
+
+**[Major]** `expressesDisagreement`'s own marker list had no negation awareness: "no concerns", "low
+risk", "nothing against it" — ordinary agreement phrasing that happens to use one of the classifier's own
+marker words — were misclassified as real disagreement, exactly backwards for a signal whose purpose is
+telling disagreement apart from agreement.
+
+**[Minor, disclosed rather than fixed]** `writeDecisionBack`'s own content-blind idempotency (by design,
+predating this piece) can leave a resumed human-override decision's own KB entry stale if the human's
+new decision text differs from an already-written agent decision at the identical deterministic path —
+unreachable in this milestone's own scope (no real caller populates `humanInput` yet), recorded in
+`SPEC-QUESTIONS.md` rather than reworking the shared, already-tested idempotency contract the
+agent-decision retry path also depends on.
+
+**Fixed:** `isGenericNonObjection` now also matches a bare "CONCEDE"/"conceded"; `hadRealDisagreement`
+(`assembleSessionRecord`) now filters every recorded objection's own text through `isGenericNonObjection`
+before counting it as real evidence, rather than trusting `state.objections.length > 0` outright — a
+structurally-required-but-generic objection can enter `state.objections` for reasons this flag's own
+computation should never blindly trust. A failed critic re-prompt now sets `criticFinalText` to
+`undefined` rather than reinstating the rejected text, so `advanceToDecide`'s own real structural gate
+(`RUN-062`) fires honestly. The debate path now captures only the *last* round's own proposer text,
+pushed once after the participant loop (the identical treatment `criticFinalText` already got), and
+`useDebate` now requires a real, registered proposer `AgentDefinition` outright, degrading to ordinary
+`panel` mode otherwise rather than ever silently substituting the facilitator. `expressesDisagreement`
+gained a `NEGATED_AGREEMENT_PATTERNS` short-circuit, checked before the marker list. Six new regression
+tests pin every one of the five real fixes (a debate concession never clearing `no_disagreement_observed`
+to disagreement; a failed re-prompt producing a real `RUN-062` refusal, not a fabricated acceptance; a
+multi-round debate never duplicating a cluster entry; an unregistered proposer degrading to panel mode;
+and the classifier's own negation cases).
+
+**Round 2 (re-verification):** All five measures' own original tests plus the six new regression tests
+re-run together — 188/188 green across `packages/engine/test/interaction/{session,dispatch-agent-step}.
+test.ts`, `packages/sessions/test/{phase-machine/machine,record/assemble}.test.ts`, and `packages/
+schemas/test/artifacts/session-record.test.ts`. `pnpm --filter @forge/sessions --filter @forge/schemas
+--filter @forge/engine typecheck`, `eslint --max-warnings 0`, `prettier --check`, and `node
+scripts/check-boundaries.mjs` all clean on every file this piece touched (whole-workspace `pnpm
+typecheck` was not run standalone: two concurrent, unrelated, in-flight M10 pieces' own untracked files
+independently fail it, confirmed via `git status --short`, neither one this piece's own regression). No
+further findings — the piece won on round 2.
+
+**What the critic caught that the builder missed:** every one of the six findings traces back to the
+identical root cause — content produced to satisfy a *structural* requirement (a CONVERGE gate needing
+*some* objection present; a debate mode needing *some* proposer agent) was trusted as if it also
+satisfied the *substantive* requirement the anti-groupthink measures actually care about (a *real*
+objection; a *real*, attributable author). The builder's own first draft repeatedly conflated "the
+structural gate is satisfied" with "the content is real," the same gap `isGenericNonObjection`'s whole
+existence is meant to close for the one case (a generic critic response) the spec names explicitly —
+extending that same discipline uniformly, rather than only where the spec's own literal example pointed,
+is what the fixes above actually do. `SPEC-QUESTIONS.md` Q155 has the full record.

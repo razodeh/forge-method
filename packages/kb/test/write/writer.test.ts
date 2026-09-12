@@ -204,6 +204,50 @@ describe('KbWriter.write', () => {
   });
 });
 
+describe('KbWriter.write confidenceCeiling (PLAN-M10.md P16)', () => {
+  it('refuses (KB-016) a confidence above the ceiling', async () => {
+    const paths = freshProject();
+    const writer = new KbWriter({ paths, clock: fakeClock() });
+    let error: unknown;
+    try {
+      await writer.write(validInput({ confidence: 'high' }), { confidenceCeiling: 'medium' });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(isForgeError(error) && error.code).toBe('KB-016');
+  });
+
+  it('accepts a confidence at or below the ceiling', async () => {
+    const paths = freshProject();
+    const writer = new KbWriter({ paths, clock: fakeClock() });
+    const entry = await writer.write(validInput({ confidence: 'medium', status: 'draft' }), {
+      confidenceCeiling: 'medium',
+    });
+    expect(entry.confidence).toBe('medium');
+  });
+
+  it('accepts the lowest confidence value against every ceiling, including "low" itself', async () => {
+    const paths = freshProject();
+    const writer = new KbWriter({ paths, clock: fakeClock() });
+    const entry = await writer.write(validInput({ confidence: 'low', status: 'draft' }), {
+      confidenceCeiling: 'low',
+    });
+    expect(entry.confidence).toBe('low');
+  });
+
+  it('has no ceiling at all when the option is omitted -- every pre-existing caller, unchanged', async () => {
+    const paths = freshProject();
+    const writer = new KbWriter({ paths, clock: fakeClock() });
+    const entry = await writer.write(
+      validInput({
+        confidence: 'verified',
+        body: validInput().body + '\n## Verification\nChecked by hand.\n',
+      }),
+    );
+    expect(entry.confidence).toBe('verified');
+  });
+});
+
 describe('KbWriter.propose', () => {
   async function writerWithOneEntry(paths: ProjectPaths, clock: Clock): Promise<KbWriter> {
     const writer = new KbWriter({ paths, clock });

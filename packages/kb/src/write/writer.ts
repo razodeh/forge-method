@@ -28,7 +28,13 @@ import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@f
 import * as YAML from 'yaml';
 
 import { KB_BODY_SECTIONS, sectionLineRange, type KbBodySection } from '../schema/body-sections.ts';
-import { kbEntrySchema, type KbEntry, type KbSource } from '../schema/kb-entry.ts';
+import {
+  kbEntrySchema,
+  KB_ENTRY_CONFIDENCE,
+  type KbEntry,
+  type KbEntryConfidence,
+  type KbSource,
+} from '../schema/kb-entry.ts';
 import { sectionIdToken } from '../schema/sections.ts';
 import { DEFAULT_KB_ROOT, parseKbTree } from '../schema/tree.ts';
 import { appendKbEvent } from './event-log.ts';
@@ -63,6 +69,23 @@ function enqueueForProject<T>(root: string, operation: () => Promise<T>): Promis
  * file's own relative path under the KB root — `08` §8.2 names no rule for choosing one for a
  * brand-new topic, so the caller supplies it (`SPEC-QUESTIONS.md` Q52, point 1). */
 export type KbEntryInput = Omit<KbEntry, 'id' | 'created' | 'updated'> & { readonly path: string };
+
+/** `KB_ENTRY_CONFIDENCE`'s own declared order (`low` < `medium` < `high` < `verified`), as a rank map —
+ * the one thing `write`'s own `confidenceCeiling` option needs to compare two confidence values without
+ * re-deriving the order from the tuple's index every call. */
+const KB_ENTRY_CONFIDENCE_RANK: Readonly<Record<KbEntryConfidence, number>> = Object.fromEntries(
+  KB_ENTRY_CONFIDENCE.map((value, index) => [value, index]),
+) as Record<KbEntryConfidence, number>;
+
+/** Options for `KbWriter.write` beyond the entry itself — currently only the one real caller-side
+ * restriction `PLAN-M10.md` P16 needs: capping how high a confidence value this particular call path may
+ * write, structurally, rather than trusting every future call site to simply never pass a higher one. */
+export interface KbWriteOptions {
+  /** When set, `write` refuses (`KB-016`) an `input.confidence` that ranks above this value. Absent
+   * (the default for every pre-existing caller) means no ceiling — `08` §8.3's own full four-value range
+   * remains writable, unchanged from this option's own introduction. */
+  readonly confidenceCeiling?: KbEntryConfidence;
+}
 
 /** `08` §8.3's own four fixed body sections (`@forge/kb/schema`'s `KB_BODY_SECTIONS`) — the only
  * granularity `KbProposal` targets (`SPEC-QUESTIONS.md` Q52, point 3). Kept under this piece's own
@@ -169,9 +192,11 @@ export class KbWriter {
    * @throws {ForgeError} `KB-006` if the entry fails schema validation for a field other than sources.
    * @throws {ForgeError} `KB-009` if `input.path` already names an existing file — a gauntlet critic
    * found a first version silently overwrote it, permanently losing whatever entry was there before.
+   * @throws {ForgeError} `KB-016` if `options.confidenceCeiling` is set and `input.confidence` ranks
+   * above it.
    */
-  async write(input: KbEntryInput): Promise<KbEntry> {
-    return this.enqueue(() => this.doWrite(input));
+  async write(input: KbEntryInput, options: KbWriteOptions = {}): Promise<KbEntry> {
+    return this.enqueue(() => this.doWrite(input, options));
   }
 
   /**
@@ -197,9 +222,21 @@ export class KbWriter {
     return enqueueForProject(this.projectRoot, operation);
   }
 
-  private async doWrite(input: KbEntryInput): Promise<KbEntry> {
+  private async doWrite(input: KbEntryInput, options: KbWriteOptions): Promise<KbEntry> {
     if (input.sources.length === 0) {
       throw new ForgeError('KB-004', { entryId: input.path });
+    }
+
+    if (
+      options.confidenceCeiling !== undefined &&
+      KB_ENTRY_CONFIDENCE_RANK[input.confidence] >
+        KB_ENTRY_CONFIDENCE_RANK[options.confidenceCeiling]
+    ) {
+      throw new ForgeError('KB-016', {
+        entryId: input.path,
+        confidence: input.confidence,
+        ceiling: options.confidenceCeiling,
+      });
     }
 
     const target = this.paths.resolveWithin(`${this.kbRoot}/${input.path}`);

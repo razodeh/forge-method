@@ -35,7 +35,11 @@ export const KB_ENTRY_TYPES = [
 export type KbEntryType = (typeof KB_ENTRY_TYPES)[number];
 
 const KB_ENTRY_STATUSES = ['draft', 'active', 'superseded', 'deprecated'] as const;
-const KB_ENTRY_CONFIDENCE = ['low', 'medium', 'high', 'verified'] as const;
+/** Exported (unlike the sibling `KB_ENTRY_STATUSES`/`KB_ENTRY_SOURCE_KINDS` above) because `@forge/kb/
+ * write`'s own `KbWriter.write` needs the real, ordered rank of this exact four-value set to enforce a
+ * caller-supplied confidence ceiling (`PLAN-M10.md` P16: INFERENCE's own output must be structurally
+ * confined to `low`/`medium`) — see `KB_ENTRY_CONFIDENCE_RANK` in `../write/writer.ts`. */
+export const KB_ENTRY_CONFIDENCE = ['low', 'medium', 'high', 'verified'] as const;
 const KB_ENTRY_SOURCE_KINDS = ['decision', 'human', 'code'] as const;
 
 const KB_ENTRY_ID_PATTERN = /^KB-([A-Z]+)-\d{4}(-\d+)?$/;
@@ -144,6 +148,7 @@ export const kbEntrySchema = z
   });
 
 export type KbEntry = z.infer<typeof kbEntrySchema>;
+export type KbEntryConfidence = (typeof KB_ENTRY_CONFIDENCE)[number];
 
 /** One `sources` entry — `08` §8.3: "provenance is mandatory." Named separately so `@forge/kb/write`
  * can reference the shape without reaching into `KbEntry['sources'][number]`. */

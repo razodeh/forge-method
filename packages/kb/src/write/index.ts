@@ -12,5 +12,6 @@ export {
   type KbProposal,
   type KbProposalField,
   type KbProposalOutcome,
+  type KbWriteOptions,
 } from './writer.ts';
 export { appendKbEvent, type KbEvent } from './event-log.ts';

@@ -352,6 +352,19 @@ export const ERROR_CODES = {
     message: (d: { id: string }) => `No KB entry, ADR, diagram or runbook with id ${show(d.id)}.`,
     remedy: 'Run `forge kb list` to see every real id in the current KB tree.',
   },
+  // `PLAN-M10.md` P16: CARTOGRAPHY/INFERENCE's own "every output starts at confidence: low|medium"
+  // rule, enforced structurally at the one real choke point every KB write passes through — a caller
+  // (`@forge/engine/adopt`'s own INFERENCE write path) passes a `confidenceCeiling` and `KbWriter.write`
+  // refuses a value that ranks above it, rather than trusting every future call site to simply never
+  // pass a higher one.
+  'KB-016': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entryId: string; confidence: string; ceiling: string }) =>
+      `${show(d.entryId)} has confidence ${show(d.confidence)}, which exceeds this write path's own ceiling of ${show(d.ceiling)}.`,
+    remedy:
+      "Lower the entry's confidence to the allowed ceiling, or use a write path with no ceiling if the higher value is genuinely earned.",
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',
