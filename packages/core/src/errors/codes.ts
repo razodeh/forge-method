@@ -964,6 +964,19 @@ export const ERROR_CODES = {
       'Provide the exact typed confirmation this operation requires (environment/resource), or ask a ' +
       'human operator with the authority to type it -- no autonomy setting can bypass this gate.',
   },
+  // `PLAN-M11.md` P13: `forge audit`'s own CLI report layer is `@forge/telemetry`'s own `TelemetryError`
+  // (`errors.ts`'s own doc comment: "`@forge/engine`... is where a caught `TelemetryError` is wrapped
+  // into a real `ForgeError`") -- `@forge/cli` is the identical kind of caller one layer over, for a
+  // report that spans every run rather than one step, so `RUN-038`'s own `stepId`-shaped payload does
+  // not fit; this is the step-less equivalent a gauntlet critic round's own second finding asked for.
+  'RUN-076': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { telemetryCode: string; telemetryMessage: string }) =>
+      `forge audit failed a telemetry operation (${show(d.telemetryCode)}): ${show(d.telemetryMessage)}`,
+    remedy:
+      "Check the underlying telemetry error's own remedy (chained as this error's cause) for the specific next action.",
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

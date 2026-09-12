@@ -5,6 +5,15 @@
  * @see specs/18 §18.4
  * @see PLAN-M5.md
  */
+export {
+  AUDIT_CATEGORIES,
+  queryAuditEvents,
+  type AuditCategory,
+  type AuditEntry,
+  type AuditQueryOptions,
+  type AuditQueryResult,
+  type AuditUnreadableRun,
+} from './audit.ts';
 export { TelemetryError, type TelemetryErrorInit } from './errors.ts';
 export {
   appendEvent,
