@@ -12969,3 +12969,132 @@ cli/test/e2e/init.test.ts`, `packages/cli/test/commands/agent.test.ts`) all trac
 `unknown-framework "api-versioning"` finding and a schema-drift mismatch — from concurrently-building,
 uncommitted M10 work (`modules/fm-service/`, per `git status` at the time) in this same working directory,
 confirmed via `git status --short` to touch none of this piece's own files.
+
+---
+
+## Q161 — M10 P12: session bounds enforcement and real per-type write-back — configurability surface,
+the DIVERGE/CONVERGE retry designs, `forceToDecide`, the idea-cap-vs-forced-bound split, the cost
+estimate, and ADR/Risk write-back's own primitives
+
+**Mandate:** `16` §16.5's mandatory write-back plus §16.8's cost/time/round bounds table, both real now
+in `runSessionStep` (`@forge/engine/interaction/session.ts`) rather than only pure-gated in
+`@forge/sessions` (P9) or absent entirely (P10/P11).
+
+**1. Where `SessionBounds` lives, and who configures it.** `16` §16.8 says "all configurable," but this
+milestone's own scope has no `forge.config`-reading path that reaches `ExecuteStepContext` construction
+at all (the identical gap `HumanSessionInput`'s own doc comment already discloses for human input).
+`SessionBounds` is declared on `ExecuteStepContext` itself (`dispatch/types.ts`), alongside `model`/
+`tools`/`retainLaneWorktrees` — the other run-wide knobs already resolved from something outside this
+module — with every field optional and `DEFAULT_SESSION_BOUNDS` (exported from `session.ts`) supplying
+`16` §16.8's own literal numbers when unset. No real call site populates it from a config file yet; a
+later `forge session` CLI (P13) or a project-config loader is the real, intended caller. Proceeding.
+
+**2. DIVERGE's round cap is enforced as "retry only the participants that failed," not "always dispatch
+every round."** The architecture inherited from P10 dispatches DIVERGE once, synchronously, to a fixed
+panel — there is no existing "ask for more ideas" protocol an agent could use to request another round,
+and inventing one (a new prompt convention, a new response-parsing heuristic) is a materially bigger
+feature than this piece's own scope. Given that, a design where every DIVERGE round unconditionally
+re-dispatches every perspective would triple the real dispatch cost and stepId count for *every* session
+by default, breaking every existing P10/P11 test's own stepId/count assertions for no round-cap
+benefit in the ordinary case. Instead: round 1 dispatches every real, non-critic perspective; only a
+perspective whose own session came back `ok: false` is re-solicited in round 2/3. A session where every
+perspective succeeds in round 1 (the default case, and every existing test) makes exactly one real
+dispatch, identical to this file's own behaviour before this piece. The round cap now names the real,
+testable "non-converging" case this bound exists for: a participant that keeps failing every retry.
+Proceeding; disclosed rather than the alternative (a synthetic "ask again" heuristic with no real signal
+behind it).
+
+**3. CONVERGE's round cap reuses the real signal that already existed: the critic-objection gate.**
+`advanceToDecide` (`@forge/sessions`) already refuses CONVERGE→DECIDE structurally whenever `critic`
+participates and has not yet produced a real objection — P10/P11 already built a one-shot re-prompt for
+this. This piece extends that into a real, capped retry loop: after each round, a *local* peek (`!
+sessionHasCritic || objectionsByRole.has(CRITIC_ROLE)`) decides whether to stop, without calling the
+pure machine's own `converge()`/`advanceToDecide()` more than once — `machine.converge()` is called
+exactly once, after the whole retry loop, with clusters/objections accumulated in per-role `Map`s across
+every round attempted (last round wins per role), the same "keyed by role, not pushed" dedup the
+existing debate-mode handling already uses for its own multi-round case (P11's own fix for duplicate
+cluster entries). Round 2+ additionally re-solicits only the roles not yet "satisfied" (`critic` until
+it has a real objection, any other role until it has a cluster entry) rather than the full cohort every
+round — a fresh critic round on this piece caught an earlier draft re-dispatching everyone every round,
+needlessly spending real cost against the very bound this piece exists to enforce. A session where the
+existing gate is satisfied by round 1 (every current test) makes the identical single round of dispatch
+calls as before. `debate` mode (the `tradeoff`/steel-man path) is only attempted on round 1 — its own
+internal `maxDebateRounds: 2` already spends the full CONVERGE round budget in one call; a genuinely
+non-converging steel-man session degrades to this loop's own ordinary panel retries from round 2 on.
+
+**4. `SessionPhaseMachine.forceToDecide` is a new, real method on the pure machine, not an engine-side
+state hack.** `16` §16.8's "the facilitator forces convergence with what it has" deliberately overrides
+CONVERGE's own anti-groupthink structural gate once a hard bound (round cap, cost, wall clock) has
+fired — a real, disclosed precedence the pure `@forge/sessions` package needed a real method for, since
+`advanceToDecide` must otherwise refuse. `forceToDecide(state)` transitions DIVERGE or CONVERGE straight
+to DECIDE, setting `truncated: true`, bypassing `advanceToDecide` entirely; it throws `RUN-063` from any
+other phase, matching every other phase-order guard in that file.
+
+**5. The idea cap (`diverge-idea-cap`) is a separate, milder truncation than the other four bounds, and
+is tracked in a separate local variable (`ideaCapBound`, not `truncatedBound`).** P9 already built idea-
+cap enforcement (`SessionPhaseMachine.diverge`'s own cap check, forcing early clustering) — this piece
+does not duplicate it, only makes the cap value itself configurable (`SessionBounds.divergeIdeaCap`,
+threaded into `SessionPhaseMachine`'s own now-configurable `divergeIdeaCap`/`maxAgentParticipants`
+constructor options) and gives the resulting `truncated: true` state a real `truncated_bound: 'diverge-
+idea-cap'` label. Unlike a round-cap/cost/wall-clock breach, hitting the idea cap does *not* skip
+CONVERGE or DECIDE's own real dispatch — `16` §16.3's own anatomy still runs a real CONVERGE and DECIDE
+afterward, per this file's own established pre-P12 behaviour; only the round-cap/cost/wall-clock
+breaches (`truncatedBound`) skip straight to an honestly-inconclusive DECIDE. A fresh critic round found
+an earlier draft never set `ideaCapBound` at all, so an idea-cap-truncated record's own `truncated_bound`
+came back `undefined` — fixed, with a dedicated regression test.
+
+**6. Cost/wall-clock bounds are checked after *every* real dispatch this run can make, including
+DECIDE's own** — a fresh critic round found an earlier draft only ever called `checkTimeAndCost()`
+inside the DIVERGE/CONVERGE round loops, so a real, expensive DECIDE-phase dispatch could push the
+session's own real, tracked cost or wall clock past its bound with the final record still reporting
+`status: 'complete'` — a real breach silently reported as an ordinary success. Fixed with one more
+check immediately after `machine.decide()`, before RECORD: too late to skip DECIDE's own dispatch (it
+already ran, and the real decision/write-back it produced is not discarded merely because that same
+call also tipped the session over budget), but not too late to mark the record honestly. See
+`session.test.ts`'s own dedicated regression test (a bound sized to sit strictly between DIVERGE+
+CONVERGE's own combined real cost and that total plus one more DECIDE-phase dispatch).
+
+**7. The cost bound has no adapter-reported figure to rely on unconditionally, so `estimateSessionCostUsd`
+is a real, disclosed fallback estimate, not a claimed-precise one.** `SessionResult.usage.costUsd` is a
+real, optional field some real adapters populate (`@forge/adapter-claude-code` reads it from a real
+`total_cost_usd`) but `FakePlatformAdapter` — every test in this package's own adapter — never does. The
+real, reported value always wins when present; the fallback (a flat, disclosed per-token rate) is used
+only when it is absent. A dedicated `estimateSessionCostUsd` unit test (exported for this reason) pins
+both branches directly against a constructed `SessionResult`, not merely indirectly through a fake
+adapter that can never exercise the "real costUsd present" branch at all.
+
+**8. ADR/Risk write-back reuses the same three real primitives `forge adr new` (`@forge/cli`) already
+composes — `IdAllocator`, `renderArtifactPath`, schema validation — recomposed directly in
+`@forge/engine`, not cli's own thin wrapper.** `@forge/engine` has no boundary-graph edge to `@forge/cli`
+(`cli`'s own row is "everything," every other row's arrow points the other way) or to `@forge/templates`
+(so `writeAdrBack` cannot start from `ADR.md`'s own pre-fielded template the way `adrNew` does) — every
+`adrSchema`/`risksFileSchema` field is instead synthesized directly and validated via `.safeParse`
+before the file is ever written, the identical "construct the full object, validate, then serialise"
+pattern `persistSessionRecord` already uses for `SessionRecord` itself. `design-review`/`tradeoff`
+decisions become a real ADR (`16` §16.5's own worked "Draft ADR..." reference); `premortem`/`war-room`
+decisions become a real `kb/risks.md` register entry (the worked "Add RISK:..." reference); every other
+session type keeps the plain KB-knowledge write-back P10 already built. Story write-back is deliberately
+out of scope: no session type's own real decisions map cleanly onto a real Story (`STORY-###`, which
+needs a real epic/capability lineage this piece has no mandate to fabricate), so nothing here invents a
+schema-satisfying-but-meaningless Story merely to exercise the type — a disclosed scope limit, not an
+oversight.
+
+**9. Both write-back paths are serialised through the same real, project-keyed FIFO queue
+`persistSessionRecord`'s own session-id allocation already uses (`enqueueForProject`).** A fresh critic
+round found an earlier draft built a brand-new, unqueued `IdAllocator` per call and did a completely
+unserialised read-modify-write of `kb/risks.md` — since `run-engine.ts`'s own scheduler genuinely runs
+multiple `kind: session` steps concurrently in one process (`Promise.all(admitted.map(...))`), two
+concurrent `premortem`/`war-room` steps could race on `kb/risks.md` (whichever `writeFileAtomic` landed
+second silently discarding the first session's own real risk entry, no error at all) and two concurrent
+`design-review`/`tradeoff` steps could independently allocate the identical "next free" ADR id — the
+exact defect class this same file's own `sessionRecordQueues` already exists to prevent for session-
+record ids, not yet applied to the two newer functions shipping alongside it. Fixed by routing both
+functions' entire bodies through the same queue; two new regression tests drive the race for real via
+`Promise.all` (not sequential awaits, which cannot exercise it) and assert both concurrent sessions'
+own writes survive.
+
+**Proceeding** with all nine points as the real, disclosed reading. `packages/engine/test/interaction/
+session.test.ts` has the full regression suite (40 tests total for this file after this piece, up from
+27); `packages/sessions/test/phase-machine/machine.test.ts` covers `forceToDecide` and the two new
+configurable-bound constructor options directly; `packages/schemas/test/artifacts/session-record.test.ts`
+and `packages/sessions/test/record/assemble.test.ts` cover the new `truncated_bound` field end to end.

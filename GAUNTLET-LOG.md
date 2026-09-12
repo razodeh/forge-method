@@ -9889,3 +9889,95 @@ production `adrSchema`), and `test/fm-service-templates.test.ts` (7). Whole-work
 (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs`
 all clean, and a full, unscoped `node scripts/run-tests.mjs run` re-run after the fix shows only the one
 accepted load-sensitive flake remaining. `SPEC-QUESTIONS.md` Q160 has the full record.
+
+## M10 P12 — Session record write-back and cost/time bounds enforcement (`16` §16.5, §16.8)
+
+**Mandate:** wire `16` §16.8's own cost/time/round bounds table into `runSessionStep`'s live dispatch
+loop (P9 built the pure `canComplete` gate only; nothing before this piece actually enforced a bound
+during a run), and make `16` §16.5's mandatory write-back produce the *right* artifact type per decision
+(a real ADR, a real Risk register entry, or a real KB entry) rather than always the one plain KB entry
+P10 already built.
+
+Built: `SessionBounds` (`@forge/engine/dispatch/types.ts`), all-optional, defaulting to `16` §16.8's own
+literal numbers (`DEFAULT_SESSION_BOUNDS`); a real DIVERGE round-retry loop (round 1 dispatches every
+perspective, later rounds re-solicit only the ones that failed); a real CONVERGE round-retry loop
+(reusing the existing critic-objection gate as its own real "done" signal, deduping clusters/objections
+by role across rounds via `Map`s rather than re-triggering P11's own already-fixed duplicate-cluster
+defect); `SessionPhaseMachine.forceToDecide` (`@forge/sessions`), a new real method bypassing
+`advanceToDecide`'s own structural gate on a hard bound breach; configurable `maxAgentParticipants`/
+`divergeIdeaCap` on the machine's own constructor; a real, tracked `costUsd` (previously a disclosed,
+hardcoded `0`) via `estimateSessionCostUsd` (adapter-reported `costUsd` wins when present, a disclosed
+per-token estimate otherwise); a new, additive `truncated_bound` schema field (`@forge/schemas`) naming
+which of the five real bounds fired; and real `writeAdrBack`/`writeRiskBack` functions recomposing the
+same `IdAllocator`/`renderArtifactPath`/schema-validation primitives `forge adr new` already uses,
+dispatched by session type (`design-review`/`tradeoff` → ADR, `premortem`/`war-room` → Risk register,
+everything else → the existing plain KB entry). Nine disclosed design decisions in `SPEC-QUESTIONS.md`
+Q161, including why "retry only who failed" (not "always redispatch every round") is the real, minimal-
+blast-radius reading of the round-cap bound, and why Story write-back is deliberately out of scope.
+
+### Round 1 — fresh critic: three blocking findings, two major findings
+
+**[Blocking 1]** the DIVERGE idea cap's own forced truncation never set the new `truncated_bound` field
+at all — a session truncated by the idea cap got `status: 'truncated'` with `truncated_bound: undefined`,
+directly contradicting `16` §16.8's own "records... the specific bound." **[Blocking 2]** cost/wall-clock
+bounds were only ever checked inside the DIVERGE/CONVERGE round loops, never after DECIDE's own real
+dispatch — a session that stayed under budget through DIVERGE/CONVERGE but was tipped over by an
+expensive DECIDE-phase dispatch reported `status: 'complete'` with no trace that a real bound had been
+breached. **[Blocking 3]** `writeAdrBack`/`writeRiskBack` each built a brand-new, unserialised
+`IdAllocator` per call and did a completely unlocked read-modify-write of `kb/risks.md` — since this
+engine's own scheduler genuinely runs multiple `kind: session` steps concurrently
+(`Promise.all(admitted.map(...))`), two concurrent `premortem`/`war-room` steps could silently overwrite
+each other's real risk entry, and two concurrent `design-review`/`tradeoff` steps could allocate the
+identical "next free" ADR id — the exact defect class this same file's own `sessionRecordQueues` already
+exists to prevent for session-record ids, not yet applied to the two newer functions shipping alongside
+it. **[Major 1]** `estimateSessionCostUsd`'s own doc comment claimed "no adapter this milestone actually
+reports [costUsd]," which the critic proved false directly against `@forge/adapter-claude-code`'s own
+real `total_cost_usd` handling — a comment defect, not a code defect, but a genuinely untested code path
+(the "real costUsd wins" branch) all the same, since `FakePlatformAdapter` never populates it. **[Major
+2]** CONVERGE's own round-retry loop re-dispatched the *entire* participant cohort every round, even
+when only `critic` had failed to produce a real objection — spending real cost against the very bound
+this piece exists to enforce, unlike DIVERGE's own explicit "retry only who failed" design.
+
+**Fixed:** a separate `ideaCapBound` local variable, read back into the final record only as a fallback
+label distinct from the round-cap/cost/wall-clock `truncatedBound` (which alone gates skipping DECIDE's
+own dispatch) — the idea cap still lets CONVERGE/DECIDE run their own real work afterward, exactly as
+this file's own pre-P12 behaviour already did. A final `checkTimeAndCost()` call added immediately after
+`machine.decide()`, before RECORD — too late to skip DECIDE's own already-run dispatch, not too late to
+mark the record honestly. Both `writeAdrBack`/`writeRiskBack` now run their entire bodies inside
+`enqueueForProject`, the same per-project FIFO queue `persistSessionRecord`'s own session-id allocation
+already uses — two new regression tests drive the race for real via `Promise.all` (not sequential
+awaits, which cannot exercise it) and assert both concurrent sessions' own writes survive.
+`estimateSessionCostUsd`'s doc comment corrected and the function exported for a dedicated unit test
+pinning both branches (adapter-reported cost wins; the token estimate is a fallback only) directly
+against a constructed `SessionResult`, independent of `FakePlatformAdapter`. CONVERGE's round 2+ now
+re-solicits only the roles not yet "satisfied" (`critic` until it has a real objection, any other role
+until it has a cluster entry), not the full cohort. Six new regression tests pin every fix: the idea-cap
+bound-naming fix, the post-DECIDE cost-overrun fix (with a real, un-discarded decision still verified on
+disk), the two concurrency races, and the `estimateSessionCostUsd` precedence tests.
+
+**Round 2 (re-verification):** all 40 tests in `packages/engine/test/interaction/session.test.ts` (up
+from 27 before this piece — 8 new round-1 tests plus 5 more from this round's fixes) plus
+`packages/sessions/test/phase-machine/machine.test.ts` (new `forceToDecide`/configurable-bound tests),
+`packages/sessions/test/record/assemble.test.ts`, and `packages/schemas/test/artifacts/session-record.
+test.ts` (`truncated_bound` coverage) all re-run together, green. `pnpm --filter @forge/sessions --filter
+@forge/schemas --filter @forge/engine typecheck` and `eslint --max-warnings 0` clean on every touched
+file. Whole-workspace `pnpm typecheck` (20/20 packages) and `node scripts/check-boundaries.mjs` both
+clean. `prettier --check` initially flagged 4 files (fixed with `--write`, re-verified clean). A full,
+unscoped `node scripts/run-tests.mjs run` shows 3 failures, none touching any file this piece changed:
+the two already-accepted load-sensitive flakes (`crash-resume.test.ts`, `kb/adopt/survey.test.ts`'s
+oversized-fixture test) and one new, load-sensitive `git worktree` ref-collision in `packages/cli/test/
+commands/run/resume.test.ts` ("cannot lock ref... reference already exists") — a real-git-worktree
+concurrency artifact under this run's own heavy parallel load, in a file this piece never touches. No
+further findings — the piece won on round 2.
+
+**What the critic caught that the builder missed:** every blocking finding traces back to the same root
+gap — the builder tracked *whether* a bound had fired (`truncatedBound`) but not consistently *what
+happens next* for every real path that variable's own presence or absence controls: the idea-cap path
+(which should still run DECIDE) shared one variable with the round-cap/cost/wall-clock paths (which
+should not), and the DECIDE dispatch itself sat entirely outside the one function
+(`checkTimeAndCost()`) meant to catch every bound breach. The concurrency finding is the identical
+"already knew the fix, didn't apply it uniformly" pattern this milestone's own checkpoint entries keep
+surfacing: `sessionRecordQueues` existed in this exact file specifically because an earlier round found
+the identical race for session-record ids, and the two new functions this piece added right next to it
+were not built against that same, already-established discipline. `SPEC-QUESTIONS.md` Q161 has the full
+record.
