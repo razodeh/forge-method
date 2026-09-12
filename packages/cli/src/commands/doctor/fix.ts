@@ -99,7 +99,18 @@ async function removeOrphanedWorktreeOnly(cwd: string, targetPath: string): Prom
   } catch {
     // Was never locked at all — an expected, harmless case, not a real failure.
   }
-  await execa('git', ['worktree', 'prune'], { cwd });
+  try {
+    await execa('git', ['worktree', 'prune'], { cwd });
+  } catch {
+    // The real, disk-level removal (`rm` above) already succeeded by the time `prune` runs — a real
+    // gauntlet critic round found a `prune` failure here (transient, or a concurrent git operation)
+    // was reported as this whole orphan's own removal having failed, undercounting a fix that had, in
+    // every way that matters to the user, already happened. `prune` only reconciles git's own
+    // administrative bookkeeping for a directory that is provably already gone; a caller re-running
+    // `forge doctor` afterward reconciles this the identical way `listOrphanedWorktrees`'s own doc
+    // comment already describes for the general case (a leftover git-only registration is still
+    // rediscoverable and re-reclaimable on a later pass), so swallowing this one failure here is safe.
+  }
 }
 
 /** Each real orphan is removed independently, its own real failure isolated from every other's — a
@@ -107,7 +118,22 @@ async function removeOrphanedWorktreeOnly(cwd: string, targetPath: string): Prom
  * permission error, any real transient git failure) abort the whole loop, silently leaving every later
  * orphan in the list untouched and unreported. */
 async function fixOrphanedWorktrees(projectRoot: string): Promise<DoctorFixResult> {
-  const orphans = await listOrphanedWorktrees(projectRoot);
+  let orphans;
+  try {
+    orphans = await listOrphanedWorktrees(projectRoot);
+  } catch (cause) {
+    // A second, independent gauntlet critic round found this exact call — `listOrphanedWorktrees`
+    // itself, not just the per-orphan removal below — unguarded: it internally calls `wrapGitFailure`
+    // (`@forge/vcs`), which throws a real `VcsError` for a `git worktree list --porcelain` failure
+    // that survives even that function's own repair-and-retry path. Left unguarded, this would have
+    // been the exact "one real exception to this file's own never-throws contract" shape a first
+    // critic round already found and fixed once for `kbSync`, just relocated to a new call site.
+    return {
+      id: 'orphaned-worktrees',
+      applied: false,
+      message: `Could not list orphaned lane worktrees to fix them: ${causeMessage(cause)}.`,
+    };
+  }
   if (orphans.length === 0) {
     return {
       id: 'orphaned-worktrees',

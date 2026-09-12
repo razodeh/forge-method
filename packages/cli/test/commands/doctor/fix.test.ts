@@ -101,12 +101,24 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
     const project = await createTestProject();
     await execa(
       'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-aaaa1111', '.forge/state/worktrees/orphan-a'],
+      [
+        'worktree',
+        'add',
+        '-b',
+        'forge/run-1/implement-aaaa1111',
+        '.forge/state/worktrees/orphan-a',
+      ],
       { cwd: project.dir },
     );
     await execa(
       'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-bbbb2222', '.forge/state/worktrees/orphan-b'],
+      [
+        'worktree',
+        'add',
+        '-b',
+        'forge/run-1/implement-bbbb2222',
+        '.forge/state/worktrees/orphan-b',
+      ],
       { cwd: project.dir },
     );
 
@@ -125,46 +137,67 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
     expect(worktrees).not.toContain('orphan-b');
   });
 
-  it('isolates one orphan’s own real removal failure from the rest, reporting a real partial success', async () => {
-    const project = await createTestProject();
-    await execa(
-      'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-aaaa1111', '.forge/state/worktrees/orphan-a'],
-      { cwd: project.dir },
-    );
-    await execa(
-      'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-bbbb2222', '.forge/state/worktrees/orphan-b'],
-      { cwd: project.dir },
-    );
-    // A real, reproducible removal failure for the *second* orphan only: its own worktrees-root parent
-    // directory is made unwritable, so both `git worktree remove` (which must rewrite the shared
-    // administrative dir) and the raw-`rm` fallback genuinely fail with a real `EACCES` — the exact
-    // shape of failure `removeOrphanedWorktreeOnly` has no special handling for, proving the *other*
-    // orphan is still removed and the failure is reported honestly rather than silently swallowed or
-    // propagated out of the whole fix pass.
-    const worktreesRoot = path.join(project.dir, '.forge/state/worktrees');
-    const orphanBPath = path.join(worktreesRoot, 'orphan-b');
-    await chmod(orphanBPath, 0o000);
-
-    try {
-      const outcome = await applyDoctorFix(
-        { id: 'orphaned-worktrees', ok: false, severity: 'warning', message: '2 orphans' },
-        project.paths,
-        project.dir,
+  // `it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)` — the identical,
+  // already-established pattern `packages/vcs/test/git.test.ts`/`claims.test.ts`/`overlay-fetch.test.ts`
+  // and `packages/extensions/test/install/manifest.test.ts` already use for a chmod-induced permission
+  // test: root ignores POSIX permission bits entirely (a real, common CI-container default), so this
+  // test would otherwise silently observe both removals succeed and fail on its own assertion for a
+  // reason that has nothing to do with the code under test; Windows has no equivalent chmod semantics.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'isolates one orphan’s own real removal failure from the rest, reporting a real partial success',
+    async () => {
+      const project = await createTestProject();
+      await execa(
+        'git',
+        [
+          'worktree',
+          'add',
+          '-b',
+          'forge/run-1/implement-aaaa1111',
+          '.forge/state/worktrees/orphan-a',
+        ],
+        { cwd: project.dir },
       );
-      expect(outcome.message).toMatch(/Removed 1 of 2/);
-      expect(outcome.applied).toBe(true);
+      await execa(
+        'git',
+        [
+          'worktree',
+          'add',
+          '-b',
+          'forge/run-1/implement-bbbb2222',
+          '.forge/state/worktrees/orphan-b',
+        ],
+        { cwd: project.dir },
+      );
+      // A real, reproducible removal failure for the *second* orphan only: its own worktrees-root parent
+      // directory is made unwritable, so both `git worktree remove` (which must rewrite the shared
+      // administrative dir) and the raw-`rm` fallback genuinely fail with a real `EACCES` — the exact
+      // shape of failure `removeOrphanedWorktreeOnly` has no special handling for, proving the *other*
+      // orphan is still removed and the failure is reported honestly rather than silently swallowed or
+      // propagated out of the whole fix pass.
+      const worktreesRoot = path.join(project.dir, '.forge/state/worktrees');
+      const orphanBPath = path.join(worktreesRoot, 'orphan-b');
+      await chmod(orphanBPath, 0o000);
 
-      const { stdout: worktrees } = await execa('git', ['worktree', 'list', '--porcelain'], {
-        cwd: project.dir,
-      });
-      expect(worktrees).not.toContain('orphan-a');
-      expect(worktrees).toContain('orphan-b');
-    } finally {
-      await chmod(orphanBPath, 0o700).catch(() => undefined);
-    }
-  });
+      try {
+        const outcome = await applyDoctorFix(
+          { id: 'orphaned-worktrees', ok: false, severity: 'warning', message: '2 orphans' },
+          project.paths,
+          project.dir,
+        );
+        expect(outcome.message).toMatch(/Removed 1 of 2/);
+        expect(outcome.applied).toBe(true);
+
+        const { stdout: worktrees } = await execa('git', ['worktree', 'list', '--porcelain'], {
+          cwd: project.dir,
+        });
+        expect(worktrees).not.toContain('orphan-a');
+        expect(worktrees).toContain('orphan-b');
+      } finally {
+        await chmod(orphanBPath, 0o700).catch(() => undefined);
+      }
+    },
+  );
 });
 
 describe('applyDoctorFix — no safe automatic fix', () => {
