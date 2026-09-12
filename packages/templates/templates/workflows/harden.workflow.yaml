@@ -17,6 +17,37 @@ steps:
     dependsOn: [security-pass]
     outputs: [{ type: Defect, cardinality: many }]
 
+  # `16` §16.6's own placement table, P8 Stabilization: `war-room` "on Sev1", `five-whys` "in RCA"
+  # (`PLAN-M10.md` P14).
+  #
+  # `war-room`'s own trigger is a real, evaluable expression (`@forge/methods`'s own
+  # `SESSION_TRIGGERS['war-room']`, `defect.severity == 'Sev1'`), carried on `when` for a future
+  # scheduler piece to evaluate (no per-step conditional-dispatch mechanism exists yet).
+  #
+  # `five-whys` is not one of `16` §16.2's own ten closed session types — it is an RCA *technique*, the
+  # identical relationship `--technique scamper` already has to `brainstorm` (`16` §16.6's own worked
+  # CLI example). `war-room`'s own purpose already names "RCA hand-off" as a real output, so `five-whys`
+  # is realized as a second, distinct `war-room` session (this workflow's own RCA-phase invocation, not
+  # the Sev1 live-response one above) with the technique folded into its own framed question — the exact
+  # same "technique folded into question text, no forced technique-selection mechanism" stance
+  # `forge session`'s own CLI already takes for `--technique` (`packages/cli/src/commands/loop/
+  # session.ts`). Recorded in `SPEC-QUESTIONS.md` Q165.
+  #
+  # Both are dependency-terminal (nothing depends on either) so neither can block `stable-gate` when its
+  # own trigger does not apply.
+  - id: war-room
+    kind: session
+    sessionType: war-room
+    dependsOn: [security-pass]
+    when: "defect.severity == 'Sev1'"
+    question: 'What is the live blocking failure, who owns which part of the response, and what is the mitigation timeline?'
+
+  - id: five-whys-rca
+    kind: session
+    sessionType: war-room
+    dependsOn: [performance-pass]
+    question: "Running a five-whys: why did this defect actually happen, one 'why' deeper each round, until we reach the real root cause?"
+
   - id: fix-findings
     # A single agent step handling every finding, not a "fanout over run.findings" -- compile.ts's own
     # documented limitation (SPEC-QUESTIONS.md Q71/Q88) means no step outside a fanout can depend on

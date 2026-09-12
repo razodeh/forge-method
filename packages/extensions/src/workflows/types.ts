@@ -31,12 +31,19 @@ export interface WorkflowStepSummary {
   readonly id: string;
   readonly kind: StepKind;
   readonly agent?: string;
+  /** `kind: 'session'` only (`PLAN-M10.md` P14) — needed to tell a mandatory stage retro apart from
+   * every other session step, the same reason `agent` is carried for `protectionReason`'s own
+   * red/review check. */
+  readonly sessionType?: string;
   /** `fanout`'s own nested step, whose `agent` is what actually runs per item. */
   readonly step?: WorkflowStepSummary;
 }
 
 export type WorkflowGuardrailCode =
-  'gate-step-removed' | 'protected-step-removed' | 'insert-after-anchor-missing';
+  | 'gate-step-removed'
+  | 'protected-step-removed'
+  | 'mandatory-retro-step-removed'
+  | 'insert-after-anchor-missing';
 
 export interface WorkflowGuardrailFinding {
   readonly severity: 'error';

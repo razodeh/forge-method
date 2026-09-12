@@ -153,7 +153,17 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
     );
   });
 
-  it("build-stage matches 10 §10.1's own literal worked example byte-for-byte", () => {
+  // `PLAN-M10.md` P14 (`16` §16.6) added one real, deliberate step beyond `10` §10.1's own literal
+  // worked example: a `standup` session step, P6 Implementation's own named built-in placement ("on
+  // long runs, triggered by elapsed time or blocked-lane count"). `10`'s own worked example predates
+  // `16` §16.6 and was never meant to be a ceiling on real, later-milestone content — this test's own
+  // job is "the shipped file has not silently drifted from what a spec-literate author would expect,"
+  // not "the shipped file may never grow past the single worked example `10` happens to show." `worked`
+  // below is therefore the worked example *plus* that one real addition, at the exact dependency
+  // position `packages/templates/templates/workflows/build-stage.workflow.yaml`'s own comment documents
+  // (`dependsOn: [contracts-gate]`, dependency-terminal) — still a real, structural fidelity check on
+  // everything else in the file, not a license to let the comparison silently stop mattering.
+  it("build-stage matches 10 §10.1's own literal worked example byte-for-byte, plus 16 §16.6's own standup addition", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -191,6 +201,13 @@ steps:
     kind: gate
     gate: G-Design
     dependsOn: [ freeze-contracts ]
+
+  - id: standup
+    kind: session
+    sessionType: standup
+    dependsOn: [ contracts-gate ]
+    when: "run.elapsedMs > 3600000 || run.blockedLaneCount >= 2"
+    question: "What is blocking any active lane right now, and does anything need re-planning?"
 
   - id: generate-tests
     kind: fanout

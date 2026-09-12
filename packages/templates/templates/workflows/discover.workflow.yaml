@@ -3,11 +3,25 @@ name: Discovery
 version: 1.0.0
 description: Frames the problem, users, competitive landscape, and success metrics (10 §10.2 P1).
 levels: [L2, L3, L4]
+# `16` §16.6's own placement table, P1 Discovery: `discovery-interview`, `brainstorm` on the problem
+# space — both unconditional, both feeding `frame-problem`'s own synthesis (`PLAN-M10.md` P14).
 steps:
+  - id: discovery-interview
+    kind: session
+    sessionType: discovery-interview
+    question: 'What do we not yet know about the target users, their domain, and this problem that a written problem statement would otherwise silently assume?'
+
+  - id: problem-brainstorm
+    kind: session
+    sessionType: brainstorm
+    dependsOn: [discovery-interview]
+    question: 'Before we commit to one framing, what is the widest real set of ways this problem could be framed and addressed?'
+
   - id: frame-problem
     kind: agent
     agent: analyst
     brief: briefs/frame-problem.md
+    dependsOn: [discovery-interview, problem-brainstorm]
     inputs: ['kb:constraints/**']
     outputs: [{ type: Assumption, cardinality: many }]
 

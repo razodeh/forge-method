@@ -162,6 +162,11 @@ export interface StepNode {
   readonly questions?: readonly ElicitQuestion[] | undefined;
   /** `'session'` only. */
   readonly sessionType?: string | undefined;
+  /** `'session'` only (`PLAN-M10.md` P14) — the authored `SessionStep.when` expression, carried through
+   * verbatim for a future scheduler piece to actually evaluate; see that field's own doc comment
+   * (`@forge/engine/workflow`'s own `types.ts`) for why this piece stops at carrying it, not evaluating
+   * it. */
+  readonly when?: string | undefined;
 }
 
 /** One problem `compilePlan`/`expandFanout` found. Unlike `@forge/engine/workflow`'s own `ValidationIssue`

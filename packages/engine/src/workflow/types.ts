@@ -117,10 +117,38 @@ export interface ElicitStep extends WorkflowStepBase {
 /** No worked example for `session` either. `16` §16.2's own table names ten closed session types
  * (`brainstorm`, `design-review`, ...); kept a plain string here rather than that closed union for the
  * same cross-package reason `AgentStep.mode` is — `@forge/sessions` is a sibling `engine` cannot reach,
- * per `specs/02` §2.2's own graph, not a forward dependency this piece can wait out. */
+ * per `specs/02` §2.2's own graph, not a forward dependency this piece can wait out.
+ *
+ * `question` (`PLAN-M10.md` P14's own addition, `16` §16.6): the literal, already-framed one-sentence
+ * question `16` §16.3 step 1 asks for — confirmed directly against `@forge/engine/interaction/session`'s
+ * own `runSessionStep` (`FRAME` phase: `question: node.brief ?? ''`) and the CLI's own hand-built ad-hoc
+ * session `StepNode` (`buildAdHocSessionStepNode`) that a compiled `session` step's `brief` is read as
+ * *raw question text*, never a `briefs/*.md` file path the way `AgentStep.brief` is — deliberately a
+ * differently-named authored field here (not reusing `AgentStep.brief`'s own name) so the two genuinely
+ * different semantics are not confused at the authoring layer, even though `compileStep` (`compile.ts`)
+ * folds both into the one shared, kind-overloaded `StepNode.brief` this piece cannot rename without
+ * touching `session.ts`, out of `PLAN-M10.md` P14's own scope. Every real `kind: 'session'` step this
+ * piece adds to `@forge/templates`'s own workflow content sets `question`; a step authored without one
+ * still compiles (the field is optional), but fails FRAME with `RUN-061` the moment it actually runs —
+ * `16` §16.3's own honest "no real question at all" outcome, not something this type should paper over.
+ *
+ * `when` (`PLAN-M10.md` P14's own addition, `16` §16.6): a `@forge/methods/expr`-grammar-shaped
+ * condition string for a *triggered* placement (`standup` "on long runs," `premortem` "at L3+," `war-room`
+ * "on Sev1") — carried through compilation onto `StepNode.when` as real, parseable, evaluable data (see
+ * `@forge/methods`'s own `session-triggers.ts`), but **not** evaluated by `compilePlan` or the scheduler
+ * itself: no per-step conditional-inclusion or conditional-dispatch mechanism exists anywhere in this
+ * package today (confirmed directly — `workflow.levels` gates a whole workflow, never one step, and
+ * `compilePlan` compiles every step in `workflow.steps` unconditionally), and building one is a real,
+ * separate, cross-cutting scheduler feature this milestone's own P14 piece does not build. Every
+ * triggered placement this piece adds is therefore positioned as a dependency-terminal step (nothing
+ * else in the same workflow depends on it) precisely so an always-compiled-but-not-yet-runtime-gated
+ * `session` step can never deadlock or block a gate it should not apply to — see the worked comment atop
+ * each edited `*.workflow.yaml` file for the specific reasoning per placement. */
 export interface SessionStep extends WorkflowStepBase {
   readonly kind: 'session';
   readonly sessionType: string;
+  readonly question?: string | undefined;
+  readonly when?: string | undefined;
 }
 
 /** The templated child (`step`) is a full `WorkflowStep` minus the two fields a fanout child never

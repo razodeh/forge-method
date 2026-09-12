@@ -148,6 +148,46 @@ describe('checkWorkflowStepRemoval', () => {
     const findings = checkWorkflowStepRemoval(BASE_STEPS, ['verify', 'review', 'prepare']);
     expect(findings).toHaveLength(2);
   });
+
+  // `PLAN-M10.md` P14, `16` §16.6: the Operate & Learn stage retro is "not optional" — an overlay may
+  // not delete it, the same "structurally load-bearing step" principle `15` §15.7 already establishes
+  // for gate/red/review steps, extended here to a fourth case (`SPEC-QUESTIONS.md` Q165).
+  const MANDATORY_RETRO_STEP: WorkflowStepSummary = {
+    id: 'retro',
+    kind: 'session',
+    sessionType: 'retro',
+  };
+
+  it('refuses removing the mandatory Operate & Learn stage retro session step', () => {
+    const findings = checkWorkflowStepRemoval([MANDATORY_RETRO_STEP], ['retro']);
+    expect(findings).toEqual([
+      {
+        severity: 'error',
+        code: 'mandatory-retro-step-removed',
+        message:
+          'Step "retro" is the mandatory Operate & Learn stage retro and cannot be removed by an overlay.',
+      },
+    ]);
+  });
+
+  it('does not protect a session step of any other type', () => {
+    const brainstorm: WorkflowStepSummary = {
+      id: 'brainstorm',
+      kind: 'session',
+      sessionType: 'brainstorm',
+    };
+    const findings = checkWorkflowStepRemoval([brainstorm], ['brainstorm']);
+    expect(findings).toEqual([]);
+  });
+
+  it('names the retro-specific code, not the generic protected-step-removed code, so a caller can distinguish the two rules', () => {
+    const findings = checkWorkflowStepRemoval(
+      [MANDATORY_RETRO_STEP, ...BASE_STEPS],
+      ['retro', 'review'],
+    );
+    const codes = findings.map((f) => f.code).sort();
+    expect(codes).toEqual(['mandatory-retro-step-removed', 'protected-step-removed']);
+  });
 });
 
 describe('applyInsertAfter', () => {

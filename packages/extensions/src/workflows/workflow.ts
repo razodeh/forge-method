@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type {
   InsertAfterDirective,
+  WorkflowGuardrailCode,
   WorkflowGuardrailFinding,
   WorkflowStepSummary,
 } from './types.ts';
@@ -62,6 +63,8 @@ export type WorkflowStepsDirective = z.infer<typeof workflowStepsDirectiveSchema
 const RED_STEP_AGENT = 'sdet';
 const REVIEW_STEP_AGENT = 'reviewer';
 
+const MANDATORY_RETRO_SESSION_TYPE = 'retro';
+
 /**
  * For a `fanout` step, the nested `step`'s `agent` is what actually runs per item (`10` §10.1's own
  * worked example never sets `agent` on the outer `fanout` wrapper itself) — so a `fanout` step's own
@@ -71,10 +74,21 @@ const REVIEW_STEP_AGENT = 'reviewer';
  */
 function protectionReason(step: WorkflowStepSummary): string | undefined {
   if (step.kind === 'gate') return 'a gate step';
+  if (step.kind === 'session' && step.sessionType === MANDATORY_RETRO_SESSION_TYPE) {
+    return 'the mandatory Operate & Learn stage retro';
+  }
   const agent = step.kind === 'fanout' ? (step.step?.agent ?? step.agent) : step.agent;
   if (agent === RED_STEP_AGENT) return 'the red (test-first) step';
   if (agent === REVIEW_STEP_AGENT) return 'the review step';
   return undefined;
+}
+
+function guardrailCode(step: WorkflowStepSummary): WorkflowGuardrailCode {
+  if (step.kind === 'gate') return 'gate-step-removed';
+  if (step.kind === 'session' && step.sessionType === MANDATORY_RETRO_SESSION_TYPE) {
+    return 'mandatory-retro-step-removed';
+  }
+  return 'protected-step-removed';
 }
 
 /**
@@ -82,6 +96,18 @@ function protectionReason(step: WorkflowStepSummary): string | undefined {
  * (test-first) step or a `review` step is refused." Checked against `removedIds` (the raw `$remove`
  * target list, by id) rather than a post-merge result, so the refusal fires before any removal is
  * ever applied (`SPEC-QUESTIONS.md` Q36 records how "is this the red/review step" is decided).
+ *
+ * A fourth protected shape, `PLAN-M10.md` P14's own addition: a `kind: 'session', sessionType: 'retro'`
+ * step, `16` §16.6's own mandatory Operate & Learn stage retro ("not optional" — "the only mechanism by
+ * which the process improves itself"). `15` §15.7's literal text only names gate/red/review steps; `19`
+ * §19.3's own template-overlay rule 3 ("may not remove a required schema field") is the closer textual
+ * match in spirit but talks about a *field*, not a *step*. This is therefore an explicit, documented
+ * extension of `15` §15.7's own established principle — "some steps are structurally load-bearing enough
+ * that an overlay may not delete them outright" — to a fourth concrete case that principle's own literal
+ * text does not yet enumerate, not a reading of existing spec text that already covers it. Recorded in
+ * `SPEC-QUESTIONS.md` Q165. Given its own distinct `mandatory-retro-step-removed` code (`guardrailCode`)
+ * rather than the generic `protected-step-removed` gate/red/review already share, so a caller (and this
+ * piece's own tests) can name exactly which rule fired.
  */
 export function checkWorkflowStepRemoval(
   baseSteps: readonly WorkflowStepSummary[],
@@ -95,7 +121,7 @@ export function checkWorkflowStepRemoval(
     if (reason === undefined) continue;
     findings.push({
       severity: 'error',
-      code: step.kind === 'gate' ? 'gate-step-removed' : 'protected-step-removed',
+      code: guardrailCode(step),
       message: `Step "${step.id}" is ${reason} and cannot be removed by an overlay.`,
     });
   }

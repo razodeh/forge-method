@@ -35,6 +35,19 @@ steps:
     gate: G-Design
     dependsOn: [freeze-contracts]
 
+  # `16` §16.6's own placement table, P6 Implementation: `standup` "on long runs (triggered by elapsed
+  # time or blocked-lane count)" (`PLAN-M10.md` P14) — a real, evaluable trigger (`@forge/methods`'s own
+  # `SESSION_TRIGGERS.standup`), carried on `when` for a future scheduler piece to evaluate (no per-step
+  # conditional-dispatch mechanism exists yet — see `SessionStep.when`'s own doc comment). Positioned as
+  # a dependency-terminal step (nothing in this workflow depends on it) so it can run alongside the long
+  # implementation fanout without ever blocking `deliver`/`verify`.
+  - id: standup
+    kind: session
+    sessionType: standup
+    dependsOn: [contracts-gate]
+    when: 'run.elapsedMs > 3600000 || run.blockedLaneCount >= 2'
+    question: 'What is blocking any active lane right now, and does anything need re-planning?'
+
   - id: generate-tests
     kind: fanout
     over: 'stage.stories'

@@ -459,3 +459,55 @@ describe('parseWorkflow — deep nesting does not crash, regardless of which lay
     expect(result?.success).toBe(false);
   });
 });
+
+describe('parseWorkflow — session step question/when (PLAN-M10.md P14, 16 §16.6)', () => {
+  const SESSION_WORKFLOW = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: retro
+    kind: session
+    sessionType: retro
+    question: "What did this stage's own real data teach us?"
+  - id: standup
+    kind: session
+    sessionType: standup
+    question: "What is blocking any active lane right now?"
+    when: "run.elapsedMs > 3600000 || run.blockedLaneCount >= 2"
+`;
+
+  it('accepts a session step carrying both a literal question and a when trigger', () => {
+    const result = parseWorkflow(SESSION_WORKFLOW);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const [retro, standup] = result.workflow.steps;
+    expect(retro).toMatchObject({
+      kind: 'session',
+      sessionType: 'retro',
+      question: "What did this stage's own real data teach us?",
+    });
+    expect(standup).toMatchObject({
+      kind: 'session',
+      sessionType: 'standup',
+      when: 'run.elapsedMs > 3600000 || run.blockedLaneCount >= 2',
+    });
+  });
+
+  it('still rejects an unrecognised field on a session step (.strict())', () => {
+    const text = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: retro
+    kind: session
+    sessionType: retro
+    technique: five-whys
+`;
+    const result = parseWorkflow(text);
+    expect(result.success).toBe(false);
+  });
+});

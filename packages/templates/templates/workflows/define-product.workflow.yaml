@@ -12,12 +12,27 @@ steps:
     brief: briefs/write-vision.md
     outputs: [{ type: Vision }]
 
+  # `16` §16.6's own placement table, P2 Product Definition: `brainstorm` on capabilities, before the
+  # capability-producing step; `story-refinement`, once candidate capabilities/stories exist to refine
+  # (`PLAN-M10.md` P14). Both unconditional.
+  - id: capability-brainstorm
+    kind: session
+    sessionType: brainstorm
+    dependsOn: [write-vision]
+    question: 'Given this vision, what capabilities could satisfy it — beyond the obvious first ideas?'
+
   - id: write-prd
     kind: agent
     agent: po
     brief: briefs/write-prd.md
-    dependsOn: [write-vision]
+    dependsOn: [write-vision, capability-brainstorm]
     outputs: [{ type: Capability, cardinality: many }, { type: NFR, cardinality: many }]
+
+  - id: story-refinement
+    kind: session
+    sessionType: story-refinement
+    dependsOn: [write-prd]
+    question: 'Which of these candidate capabilities are ready to become well-formed stories, and what is missing from the ones that are not?'
 
   - id: write-ux-spec
     kind: agent
@@ -29,4 +44,4 @@ steps:
   - id: product-gate
     kind: gate
     gate: G-Product
-    dependsOn: [write-ux-spec]
+    dependsOn: [write-ux-spec, story-refinement]

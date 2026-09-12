@@ -109,6 +109,8 @@ const sessionStepSchema = z
     ...baseStepFields,
     kind: z.literal('session'),
     sessionType: nonBlank(),
+    question: nonBlank().optional(),
+    when: nonBlank().optional(),
   })
   .strict();
 

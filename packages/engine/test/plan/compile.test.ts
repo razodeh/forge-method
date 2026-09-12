@@ -711,6 +711,60 @@ describe('compilePlan — kind-specific fields', () => {
     expect(nodes[0]?.sessionType).toBe('brainstorm');
   });
 
+  // `PLAN-M10.md` P14: a `session` step's own `question` folds into the same shared `StepNode.brief`
+  // field `runSessionStep`'s own FRAME phase already reads (`node.brief ?? ''`) — not a new, separate
+  // compiled field — so a workflow-authored session step's question actually reaches the session
+  // machinery with zero further plumbing.
+  it("carries a session step's own question onto the shared brief field", () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          { kind: 'session', id: 's', sessionType: 'retro', question: 'What did we learn?' },
+        ]),
+        {},
+      ),
+    );
+    expect(nodes[0]?.brief).toBe('What did we learn?');
+  });
+
+  it("an agent step's own brief takes priority over a nonexistent session question (never both set)", () => {
+    const nodes = expectOk(
+      compilePlan(workflow([{ kind: 'agent', id: 'a', agent: 'pm', brief: 'briefs/x.md' }]), {}),
+    );
+    expect(nodes[0]?.brief).toBe('briefs/x.md');
+  });
+
+  it("carries a session step's own when trigger expression verbatim, uninterpreted", () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          {
+            kind: 'session',
+            id: 's',
+            sessionType: 'standup',
+            when: 'run.elapsedMs > 3600000 || run.blockedLaneCount >= 2',
+          },
+        ]),
+        {},
+      ),
+    );
+    expect(nodes[0]?.when).toBe('run.elapsedMs > 3600000 || run.blockedLaneCount >= 2');
+  });
+
+  it('leaves when undefined for a session step that declares none, and for every other kind', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          { kind: 'session', id: 's', sessionType: 'retro' },
+          { kind: 'checkpoint', id: 'c', dependsOn: ['s'] },
+        ]),
+        {},
+      ),
+    );
+    expect(nodes[0]?.when).toBeUndefined();
+    expect(nodes[1]?.when).toBeUndefined();
+  });
+
   it("leaves every other kind's own kind-specific fields undefined", () => {
     const nodes = expectOk(compilePlan(workflow([{ kind: 'checkpoint', id: 'c' }]), {}));
     const node = nodes[0];

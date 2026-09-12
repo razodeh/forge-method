@@ -28,3 +28,17 @@ steps:
     kind: gate
     gate: G-Operate
     dependsOn: [write-runbooks]
+
+  # `16` §16.6's own placement table, P10 Operate & Learn: `retro` "at every stage boundary — not
+  # optional" (`PLAN-M10.md` P14). Unlike every other placement in this piece, this one is compile-time
+  # mandatory: `@forge/extensions/workflows`'s own `checkWorkflowStepRemoval` refuses a project overlay
+  # that names this step's own id in `$remove` (`mandatory-retro-step-removed`, identified by
+  # `sessionType: retro`, not by this specific id) — see that function's own doc comment and
+  # `SPEC-QUESTIONS.md` Q165 for the full reasoning. It consumes real event-log data (cost per story,
+  # gate failure rates, rework ratio, review findings by perspective, flake trends), so it depends on
+  # `operate-gate` (the stage's own last gate) rather than running any earlier.
+  - id: retro
+    kind: session
+    sessionType: retro
+    dependsOn: [operate-gate]
+    question: "What did this stage's own real data (cost, gate failures, rework, review findings, flake trends) actually teach us, and what should change?"

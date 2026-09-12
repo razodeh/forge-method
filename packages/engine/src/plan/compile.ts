@@ -277,6 +277,7 @@ function buildLeafNode(
 ): StepCompileOutcome {
   const issues: CompileIssue[] = [];
   const agentStep = step.kind === 'agent' ? step : undefined;
+  const sessionStep = step.kind === 'session' ? step : undefined;
 
   const node: StepNode = {
     id: compiledId,
@@ -285,7 +286,11 @@ function buildLeafNode(
       agentStep !== undefined
         ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId))
         : undefined,
-    brief: agentStep?.brief,
+    // `AgentStep.brief` is a `briefs/*.md` file path; `SessionStep.question` is the literal, already-
+    // framed question text `runSessionStep`'s own FRAME phase reads straight off this same compiled
+    // field (`SessionStep`'s own doc comment has the full reasoning) — two different authored fields,
+    // one shared, kind-overloaded compiled field, matching `06` §6.2's own `StepNode` shape exactly.
+    brief: agentStep?.brief ?? sessionStep?.question,
     inputs: (agentStep?.inputs ?? []).map((ref) =>
       safeResolveTemplate(ref, context, issues, compiledId),
     ),
@@ -312,7 +317,8 @@ function buildLeafNode(
     workflow: step.kind === 'subworkflow' ? step.workflow : undefined,
     mergePolicy: step.kind === 'merge' ? step.policy : undefined,
     questions: step.kind === 'elicit' ? step.questions : undefined,
-    sessionType: step.kind === 'session' ? step.sessionType : undefined,
+    sessionType: sessionStep?.sessionType,
+    when: sessionStep?.when,
   };
 
   return { nodes: [node], exitIds: [compiledId], issues, groupIds: [] };
