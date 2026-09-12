@@ -1339,6 +1339,46 @@ export const ERROR_CODES = {
       'Fix the requestsCapabilities/provides.mcp fields in overlay.yaml to match the documented ' +
       'shape (15 §15.11), then retry.',
   },
+  // `@forge/extensions/install/safety-scan.ts`'s own pre-install static safety scan (`19` §19.5 step
+  // 4, `15` §15.10 I9, `20` §20.6, `PLAN-M11.md` P4). Next free `CFG-*` slot after `CFG-036` (this
+  // milestone's own concurrent `P3` claimed that one first) — last gate in the same "fetching/
+  // validating an installable bundle" sequence as `CFG-026`-`CFG-036` above, run just before step 5's
+  // `.forge/` install.
+  'CFG-037': {
+    // A fetched-but-not-yet-installed bundle's own skill or template bodies contain instruction-
+    // shaped content, a secret-shaped literal, or prose asking for a wider grant than the bundle's
+    // own declared module ceiling — `findings` is always non-empty when this throws, one line per
+    // location and reason, so a bundle with several problems reports all of them at once rather than
+    // stopping at the first.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { bundlePath: string; findings: readonly string[] }) =>
+      // `d.findings` goes through `show` per-entry, and the whole join is skipped for a non-array
+      // value, rather than a bare `d.findings.map(...)` — the identical "every template renders
+      // `<missing>`, never a raw crash, for a detail object missing a key" contract every other row
+      // in this table gets from `show` alone, which a plain array has no single scalar rendering for.
+      `The static safety scan refused ${show(d.bundlePath)}:\n${
+        Array.isArray(d.findings)
+          ? d.findings.map((f) => `  - ${show(f)}`).join('\n')
+          : show(d.findings)
+      }`,
+    remedy:
+      'Remove the flagged content (or, for a grant-widening finding, either narrow the prose or ' +
+      "widen the module's own declared ceiling) and retry. Nothing was installed.",
+  },
+  'CFG-038': {
+    // `safety-scan.ts`: a skill, template, or prompt file the pre-install scan would otherwise read
+    // in full exceeds its own size cap -- a critic round found the local and git install channels
+    // apply no byte-size limit of their own, so without this check a single oversized file in an
+    // otherwise-ordinary bundle would be read entirely into memory before consent or install ever
+    // run. Refused outright (never silently skipped), matching this same scan's own fail-closed
+    // stance on every other unscannable-content case.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { location: string; size: number; limit: number }) =>
+      `${show(d.location)} is ${show(d.size)} bytes, over the safety scan's own ${show(d.limit)}-byte limit.`,
+    remedy: 'Reduce the file to a reasonable size, or exclude it from the bundle, and retry.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

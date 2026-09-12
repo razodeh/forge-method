@@ -119,6 +119,9 @@ const SAMPLE_DETAILS = {
   source: './acme-standards',
   spec: 'git+https://example.com/acme/repo.git#v1.0.0',
   limit: 67108864,
+  bundlePath: '/tmp/forge-fetch-acme-standards',
+  findings: ['skills/rogue/SKILL.md: contains a secret-shaped literal: "AKIAABCDEFGH…".'],
+  size: 134217728,
 } satisfies Record<string, unknown> as never;
 
 /**
