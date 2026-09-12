@@ -10413,3 +10413,93 @@ gap the builder itself caught (the `build-stage` byte-for-byte invariant) surfac
 full-workspace run, not from the critic round or this piece's own scoped tests, the identical lesson
 `M10`'s own checkpoint entry already draws: a piece's own scoped verification cannot see a cross-cutting
 invariant another, earlier piece owns.
+
+## M10 P19 — `forge adopt` phases 7-8: GAP ANALYSIS, BASELINE, and human confirmation
+
+**Mandate:** `17` §17.2 phases 7 (GAP ANALYSIS) and 8 (BASELINE), plus `17` §17.3's own human-confirmation
+flow (impact×uncertainty ranking, 20-question cap, "I don't know" always available) — and replacing
+`packages/cli/src/commands/adopt.ts`'s M6-era refusal stub with the first real, runnable `forge adopt`
+pipeline tying P15-P18's own already-built phases together end to end.
+
+Built: `packages/kb/src/adopt/gap-analysis.ts` (the 6 real gap-class detectors, each cross-referenced
+against `17` §17.2 phase 7's own worked examples, `renderGapsReport`, `writeGapArtifacts`),
+`confirmation.ts` (`rankClaims`/`buildConfirmationBatch`/`applyConfirmationAnswer`/`runConfirmationFlow`),
+`baseline.ts` (`computeMeasuredFacts`, `evaluateGAdoptGate` — the four `17` §17.2 phase 8 conditions),
+`artifacts.ts` (the real `RISK-###`/`OQ-###` collection-file write-back this piece and confirmation.ts
+both need), `@forge/vcs`'s new `tag.ts` (`createAnnotatedTag`/`tagExists`/`resolveTagCommit`, the real
+BASELINE git primitive), and the full rewrite of `packages/cli/src/commands/adopt.ts` (`adopt`,
+`adoptIncremental`, `adoptReport`, `baselineShow`, `baselineDiff`). Full reasoning in `SPEC-QUESTIONS.md`
+Q167: the actionable-gap-to-`RISK-###`/`OQ-###` (not `Story`) scope, the CARTOGRAPHY/INFERENCE
+dispatch-out-of-scope decision (real `ExecuteStepContext` machinery is disproportionate for a read-only
+scan), `--depth deep`'s own real (if partial) wiring, and the text-based artifact-idempotency residual
+risk.
+
+While building the fixture repo's own real, end-to-end pipeline test, found and fixed a real, previously
+undetected bug in `packages/kb/src/adopt/walk.ts`'s `DEFAULT_IGNORED_DIR_NAMES`: it did not exclude
+`.forge` (FORGE's own state directory), so a second `forge adopt` run against a project that already had
+one walked straight into `.forge/state/` and threw `CFG-004` (`ProjectPaths.resolveWithin`'s own deny-list
+rejection) — fixed by adding `.forge` alongside `.git`.
+
+### Round 1 — fresh critic: 1 blocking, 4 major, 1 minor
+
+A fresh, context-free critic found: (1) **blocking** — `--depth deep` was a silent no-op (PLAN-M10
+promises real git-history-inference/characterisation-test-generation behavior; nothing branched on it at
+all, and it was undisclosed, unlike the CARTOGRAPHY narrowing); (2) **major** — three call sites did
+unvalidated `JSON.parse(...) as T` on self-written report files with bare `SyntaxError`s on corruption,
+never a typed, discriminating failure; (3) **major** — `RISK-###`/`OQ-###` idempotency was keyed on exact
+rendered-text equality with no test that would catch a real collision between two distinct findings
+sharing boilerplate LLM-authored wording; (4) **major** — with CARTOGRAPHY/INFERENCE always empty in real
+wiring, the "no evidenced authorization convention" safety detector was a systematic false positive on
+*every* HTTP route in *every* real run, and `G-Adopt`'s highest-value condition
+(`high-impact-claims-resolved`) vacuously always passed, with no disclosure of either consequence; (5)
+**major** — `BaselineSnapshot.tag` was written as the literal `'BASELINE'` string even when the target
+repo had no commits and no tag was ever created — a fabricated fact; (6) **minor** — several bare `as`
+casts with no invariant comment.
+
+**What the critic caught that the builder missed:** all of it — the builder's own scoped tests never
+exercised `depth: 'deep'`, never fed a malformed self-written report back in, never checked artifact-id
+*distinctness* (only counts), never ran the real pipeline with CARTOGRAPHY/INFERENCE both empty and
+checked what the authz detector actually did with that, and never constructed a no-commits-yet repository
+to adopt.
+
+Fixed all six. While fixing (3), building a real test that asserted id *distinctness* (not just count)
+surfaced a second, more serious, and entirely separate real defect underneath the one the critic named:
+`IdAllocator.allocate('Risk'/'OpenQuestion')` always returned `RISK-001`/`OQ-001` regardless of how many
+entries already existed, because `@forge/core/ids/scan.ts`'s own real project-wide scan only ever reads a
+document's own top-level `id` field, and a `collection: true` type's shared register file has no top-level
+id at all by design — confirmed with a real repro before fixing. `appendRiskEntry`/`appendOpenQuestionEntry`
+no longer use `IdAllocator` for these two types at all; `nextCollectionId` derives the next id directly
+from the in-memory array of already-written rows. The identical shape exists, unfixed, in
+`@forge/engine/interaction/session.ts`'s own established `writeRiskBack` (out of this piece's scope to fix
+there) — disclosed in `SPEC-QUESTIONS.md` Q167 as a real, worthwhile future fix.
+
+### Round 2 — fresh critic: 1 blocking (the floor), 0 new substantive findings
+
+A second fresh, context-free critic verified all six round-1 fixes directly against the current file
+state (not a diff), independently re-confirmed the `IdAllocator` claim by reading `scan.ts` itself, and
+ran the real test suites and typechecks. All six were confirmed genuinely fixed with real, discriminating
+tests and no new regression — but the critic additionally ran `eslint --max-warnings 0` and
+`prettier --check` on the reviewed files (which the builder had not run before declaring the round done)
+and found the floor itself failing: a misplaced `eslint-disable-next-line` that silenced a comment line
+instead of the `console.warn` it was meant for (`no-console` fired anyway), one unused type import, one
+`as string` cast that the project's own lint config requires as `!` in isolation (a false lead — see
+below), and prettier drift on all five reviewed files from never having been run through `--write`.
+**Lesson for future pieces: run the floor commands themselves, not just `typecheck`+the scoped test file,
+before calling a round done.** Fixed the disable-comment placement and the unused import directly;
+attempted the `!`-style fix the critic suggested, which immediately hit a second, stricter rule
+(`no-non-null-assertion`, which bans `!` project-wide) — resolved by following this exact codebase's own
+already-established precedent for the identical conflict (`packages/kb/src/adopt/inventory.ts`'s own
+`requiredGroup`/`firstDefinedGroup`: keep `as string`, add the `non-nullable-type-assertion-style`
+disable comment, cite the precedent) rather than inventing a third approach. Re-ran `prettier --write` on
+every touched file. Nothing else was found in round 2.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (20/20 packages), `node scripts/check-boundaries.mjs` (clean, zero new
+cross-package edges), and `eslint --max-warnings 0`/`prettier --check` on every file this piece touched
+all clean. A full, unscoped `node scripts/run-tests.mjs run` reported 7742/7748 passing, with exactly one
+failure: `packages/engine/test/e2e/crash-resume.test.ts` (one of the four load-sensitive flakes named as
+accepted for this build), confirmed clean and fast (17s) in isolation. `packages/cli/test/commands/run/
+resume.test.ts` also flaked once mid-run under the same full-suite load (a real worktree-branch race, not
+this piece's own code) and was likewise confirmed clean in isolation, matching its own accepted-flake
+listing.

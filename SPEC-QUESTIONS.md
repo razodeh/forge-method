@@ -13690,3 +13690,82 @@ step session placements and, respectively, ordinary load-sensitive contention, c
 `run-upgrade.test.ts` in isolation where it passes cleanly and fast), plus the two already-accepted
 load-sensitive flakes (`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test and
 `packages/engine/test/e2e/crash-resume.test.ts`, both confirmed clean and fast in isolation).
+
+## Q167 — M10 P19: `forge adopt` phases 7-8 (GAP ANALYSIS/BASELINE/human confirmation) — the real
+gate/dispatch/id-allocation decisions this piece made, and one real cross-cutting bug it found
+
+**Context:** `PLAN-M10.md` P19 asks for `17` §17.2 phases 7-8 (GAP ANALYSIS, BASELINE) and §17.3 (human
+confirmation), replacing `packages/cli/src/commands/adopt.ts`'s M6-era refusal stub with the first real,
+runnable `forge adopt` pipeline tying P15-P18's own phases together.
+
+**Decisions and findings, disclosed rather than silently made:**
+
+1. **Actionable-gap-to-artifact scope.** `17` §17.2 phase 7's own prose says an actionable gap is
+   "converted into a story," but `PLAN-M10.md` P19's own Surface bullet names only `RISK-###`/`OQ-###`
+   as the artifact-creation paths to reuse, and no `Story`-artifact-creation primitive exists anywhere in
+   this codebase (a `Story` is a spec-authoring artifact with acceptance-criteria structure, never before
+   synthesized by an automated pipeline). Followed the PLAN's own narrower literal Surface bullet:
+   `high`/`critical` actionable findings become `RISK-###`; actionable `knowledge`-class findings at
+   `low`/`medium` severity become `OQ-###`; every other actionable finding is still reported in
+   `reports/adoption/gaps.md` with a concrete `mitigation` string, but gets no structured KB artifact.
+
+2. **CARTOGRAPHY/INFERENCE dispatch is out of this piece's scope.** `17` §17.2 phases 3-4's real
+   orchestration (`@forge/engine/adopt`'s `runCartographyPhase`/`runInferencePhase`) needs a full
+   `ExecuteStepContext` — the multi-agent run-engine's own worktree/lane/merge-queue/telemetry machinery,
+   built for a concurrent, multi-lane story run, not a single, read-only repository scan. Building one
+   here merely to make two read-only session calls would be disproportionate machinery well outside a
+   ~precise piece's scope. `AdoptContext.runCartography`/`runInference` instead accept the dispatch
+   result directly, so a real caller with a live `ExecuteStepContext` (a future run-engine integration)
+   can supply real results; a caller with none gets an honest, disclosed empty result. A first-round
+   critic found this narrowing had an undisclosed downstream blast radius: with CARTOGRAPHY/INFERENCE
+   always empty, the "no evidenced authorization convention" safety detector fired on every HTTP route in
+   every real run (a systematic false positive, not a real finding), and `G-Adopt`'s
+   "high-impact-claims-resolved" condition was vacuously satisfied rather than a real confirmation. Fixed
+   by adding `GapAnalysisInput.inferenceRan` (gating that one detector — the only one found to be a
+   systematic false positive, not merely inactive, when the phase never ran) and `AdoptRunResult.warnings`
+   (surfacing the limitation explicitly to a caller rather than leaving it to be inferred from an empty
+   array).
+
+3. **`--depth deep`'s own real content.** `17` §17.6 says `deep` "adds git-history inference and
+   per-component characterisation-test generation" — a real dispatch-orchestration change to
+   `runInferencePhase` and a new test-generation mechanism, both out of this piece's own scope (the first
+   for the identical `ExecuteStepContext` reason above; the second names a mechanism that does not exist
+   anywhere in this codebase yet). A first-round critic found an early version accepted `depth: 'deep'`
+   and silently ran the identical `standard` pipeline with no signal anywhere that the deeper analysis
+   never happened — a real R7 "no branch that silently no-ops" violation. Fixed by threading a real
+   `{ deep: boolean }` flag through to `AdoptContext.runCartography`/`runInference`, so a caller that
+   supplies real dispatch functions can act on it; this piece itself does not yet act on it beyond
+   passing it through, disclosed here rather than discovered later.
+
+4. **`RISK-###`/`OQ-###` idempotency is text-based, not id-based, and a real, separate `IdAllocator`
+   defect this piece found underneath it.** `riskSchema`/`openQuestionSchema` are both `.strict()` with
+   no field to carry a caller-side identity key through a round trip, so `appendRiskEntry`/
+   `appendOpenQuestionEntry` (`packages/kb/src/adopt/artifacts.ts`) treat two writes as "the same entry"
+   by exact `statement`/`question` text equality. A first-round critic found this could realistically
+   collapse two distinct findings that happen to share boilerplate LLM-authored wording into one entry.
+   Mitigated (not eliminated — a schema change would be needed for a structural guarantee) by having both
+   real call sites (`gap-analysis.ts`, `confirmation.ts`) embed each finding/claim's own evidence into the
+   stored text before calling these functions, since evidence (file paths, line numbers) is realistically
+   always distinct even when wording is not.
+
+   While building the fix, found a separate, more serious, previously-undetected defect: both functions
+   originally called `IdAllocator.allocate('Risk'/'OpenQuestion')` for a fresh id on every write —
+   but `@forge/core/ids/scan.ts`'s own module doc comment already discloses (`SPEC-QUESTIONS.md` Q29)
+   that its real project-wide scan only ever reads a document's own top-level `id` field, and a
+   `collection: true` type's shared register file (`kb/risks.md`, `kb/open-questions.md`) has no
+   top-level `id` at all by design (`collectionFileBase = baseFrontMatterShape.omit({ id: true })`) —
+   meaning `IdAllocator` can never see the ids already nested inside `risks`/`open_questions` arrays.
+   Confirmed with a real repro: two successive calls to `IdAllocator.allocate('Risk')` against a project
+   whose only Risk ids live inside `kb/risks.md`'s own array both returned `RISK-001`, silently colliding
+   two genuinely distinct risks onto one id. This is the identical shape
+   `@forge/engine/interaction/session.ts`'s own established `writeRiskBack` also has (confirmed by
+   reading it — it makes the identical `allocator.allocate('Risk')` call), left unfixed there as out of
+   this piece's own scope (that file belongs to an earlier milestone's own piece), but real and worth a
+   future fix. This piece's own `appendRiskEntry`/`appendOpenQuestionEntry` no longer use `IdAllocator`
+   for these two types at all — `nextCollectionId` derives the next id directly from the already-in-memory
+   array of existing rows instead.
+
+Whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean on every file this piece touched. A full, unscoped
+`node scripts/run-tests.mjs run` showed only the already-accepted `packages/engine/test/e2e/
+crash-resume.test.ts` flake (confirmed clean and fast in isolation), 7742/7748 tests passing overall.
