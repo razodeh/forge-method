@@ -10080,3 +10080,87 @@ mechanism has to be checked directly for every new module-owned artifact type, n
 already have a real, tested "later module wins" resolution). Frameworks had no such mechanism at all,
 which made the builder's first-draft assumption (mirror the agent pattern) actively wrong rather than
 merely incomplete. `SPEC-QUESTIONS.md` Q162 has the full record.
+
+## M10 P18 — `forge adopt` phase 6: RECONSTRUCTION (writing the KB) (`17` §17.2 phase 6, `08` §8.2,
+§8.11.6)
+
+**Mandate:** write the actual KB from P15-P17's own real findings, in the same layout as a greenfield
+project, reusing the already-real `@forge/diagrams` generators and `KbWriter` rather than building new
+ones; retroactive ADRs clearly labelled as reconstructions; `product/` entries at `confidence: low`
+pending human confirmation.
+
+Built `packages/kb/src/adopt/reconstruction.ts`: a set of small, pure assembly functions
+(`deriveComponents`, `architectureEntries`, `dataEntries`, `deliveryEntries`,
+`engineeringStandardsEntry`, `productEntries`, `deriveRetroactiveAdrCandidates`) plus one async
+orchestrator, `writeReconstruction`, that calls the real `KbWriter` and the real `componentsToC4`/
+`depsToGraph`/`schemaIntrospectToEr` generators. Direct inspection before writing any code found: (1)
+`adrSchema.date` is a real `.date()`-validated ISO date, so `17` §17.2 phase 6's own literal `date:
+unknown` text cannot be written verbatim — resolved by recording the real reconstruction date there
+while the ADR body's own opening line states the *original* decision date is unknown; (2) CARTOGRAPHY's
+`component` findings carry no `id`/`dependsOn` structure of their own, so `deriveComponents` synthesizes
+`architecture/components.md`'s real component inventory by attributing each component's cited evidence
+paths to P15's real `DependencyGraph` module keys, computing `dependsOn` only from real cross-component
+`imports` edges; (3) `schemaIntrospectToEr`'s expected `columns`/`foreignKeys` input has no real source
+anywhere in P15-P17's output at all, so both stay permanently empty rather than fabricated. Full
+reasoning in `SPEC-QUESTIONS.md` Q163.
+
+### Round 1 — fresh critic: two blocking findings, two major findings, two minor findings, all fixed
+
+**[Blocking]** Every KB-entry path this piece writes is deterministic, and `KbWriter.write` refuses an
+existing path unconditionally (`KB-009`) — confirmed empirically (two back-to-back
+`writeReconstruction` calls against the same project) that a second run, whether from a mid-way crash
+or a deliberate repeat, threw on the very first entry with no path to recovery short of deleting KB
+files by hand.
+
+**[Blocking]** Every generated diagram's id, including the data-only `schema-introspect-to-er`
+diagram, was collected into one shared array handed to every `architecture/` entry as its own
+`diagrams` field — confirmed empirically that all four architecture entries (three single-component,
+one layering) carried a reference to the ER diagram, which depicts none of them. Exactly the "confident
+fabrication" `17` §17.1 names as this workflow's core risk, applied to diagram-to-fact linkage.
+
+**[Major]** Retroactive ADRs had no idempotency check at all; because an ADR's file path embeds a
+freshly-allocated (non-deterministic) id, a second run silently wrote a duplicate ADR for the identical
+`layering` finding rather than failing loudly — the mirror-image of the first blocking finding, masked
+in practice only because that finding crashed before this code path was ever reached on a retry.
+
+**[Major]** Every `component`-kind finding produced a full, separate `architecture/<slug>.md` entry
+that restated the exact same one-line statement three times (`## Statement`/`## Rationale`/
+`## Implications`) in addition to its own row in `architecture/components.md` — not incorrect, but
+directly against the KB's own dense-entry design stance and doubling entry count per component by
+default.
+
+**[Minor]** `CONFIDENCE_RANK`'s `Object.fromEntries(...) as Record<...>` cast carried no comment naming
+the invariant that makes it sound. **[Minor]** The doc comment justifying this piece's own un-queued,
+per-call `IdAllocator` asserted safety from a fact (single-allocation-at-a-time) without citing why a
+concurrent, independent writer racing the same id sequence is out of scope.
+
+**Fixed:** `writeKbEntryIdempotent` — a plain existence check against the deterministic target path,
+reusing the id already on disk rather than re-writing, before every `KbWriter.write` call.
+`architectureDiagramIds`/`dataDiagramIds` tracked as two separate arrays from the moment each diagram
+is written, each handed only to its own section's entries. `findExistingRetroactiveAdrId` — a stable,
+greppable `<!-- forge:reconstruction-adr statement=... -->` marker embedded in every retroactive ADR's
+body, scanned across `decisions/*.md` before allocating a new id, the identical mechanism
+`writeAdrBack` (`packages/engine/src/interaction/session.ts`) already uses for the same
+non-deterministic-id problem. A `component`-kind entry's `implications` text now points back at its own
+`architecture/components.md` row instead of repeating the statement. Both casts/comments corrected.
+Four new regression tests: two runs of `writeReconstruction` against the same project converge to
+identical `kbEntryIds`/`adrIds`/`componentIds` with exactly one ADR file on disk; no architecture entry
+cites the ER diagram and no data entry cites an architecture-only diagram; a `slugify` test pins that a
+`../../../etc/passwd`- or `C:\Windows\System32`-shaped statement cannot survive into a path segment.
+
+**Final state:** 37 tests in `packages/kb/test/adopt/reconstruction.test.ts`, all green — every pure
+function's own branches (confidence overrides, aggregation, idempotency) plus seven end-to-end
+`writeReconstruction` tests against a real temp project and the real `parseKbTree`, confirming a full
+run produces a KB tree with zero parse errors, every generated diagram's `depicts` set traces only to
+real ids this run itself produced, and every retroactive ADR carries `status: accepted`, `framework:
+reconstructed`, and an inferred, explicitly-labelled-unknown-date context. Meets the package's own
+per-file coverage ratchet (a scoped `--coverage` run: 97%+ lines/statements/functions, 87% branches for
+`reconstruction.ts`, zero threshold violations). `pnpm --filter @forge/kb typecheck`, whole-workspace
+`pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `node
+scripts/check-boundaries.mjs` all clean on every file this piece touched. A full, unscoped `node
+scripts/run-tests.mjs run`, run twice (before and after the critic-round fixes), shows two failures
+each time, neither touching this piece's own files: `packages/core/test/errors.test.ts`'s `RUN-071`
+remedy-verb check against `M10 P13`'s own uncommitted `forge session resume` changes, and (second run)
+`packages/tui/test/components/question-form.test.tsx`, unrelated to any file this piece touches —
+confirmed via `git status --short`. `crash-resume.test.ts` passed cleanly both times. `SPEC-QUESTIONS.md`
+Q163 has the full record.

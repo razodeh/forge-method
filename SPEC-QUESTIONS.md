@@ -13209,3 +13209,129 @@ against `M10 P13`'s own uncommitted `forge session resume` changes to `packages/
 codes.ts`/`packages/engine/src/interaction/session.ts`; `packages/tui/test/screens/kb.test.tsx`'s
 diagram-diff test, against uncommitted changes under `packages/kb/src/adopt/`). `GAUNTLET-LOG.md`'s own
 `M10 P5` entry has the full round-by-round record.
+
+## Q163 — M10 P18: `forge adopt` phase 6 RECONSTRUCTION — `date: unknown` cannot be written literally,
+the diagram-generator input shapes P15-P17 actually supply, and the retroactive-ADR/KB-entry creation
+paths reused from `writeAdrBack`'s own precedent
+
+`PLAN-M10.md` P18's own Surface asks `packages/kb/src/adopt/reconstruction.ts` to write
+`architecture/`/`data/`/`delivery/`/`engineering/standards.md`/`product/`/`decisions/` via the already-real
+`KbWriter`, generate diagrams via `@forge/diagrams`'s real `componentsToC4`/`depsToGraph`/
+`schemaIntrospectToEr` fed P15/P16's own structured data, and write retroactive ADRs with `status:
+accepted`, `date: unknown`, `framework: reconstructed`, and inferred context.
+
+**1. `date: unknown` is not writable into `adrSchema`'s `date` field, confirmed directly before writing
+any code.** `packages/schemas/src/artifacts/adr.ts`'s `date: z.string().date()` is a real,
+`.date()`-validated ISO date — the literal string `"unknown"` fails that check outright, so `17`
+§17.2 phase 6's own worked text cannot be satisfied on that field verbatim. Resolved by writing `date`
+as the real date this adoption run reconstructed the decision (a true fact, not a fabricated one),
+while the ADR body's own `## Context` section opens with an explicit, unambiguous sentence stating the
+*original* decision date is unknown. Combined with `framework: 'reconstructed'` and `status:
+'accepted'` (both written verbatim, exactly as `17` §17.2 phase 6 asks), this is the same three-part
+"never silently presented as an original ADR" signal the spec text asks for, expressed across the
+fields that can actually carry each part rather than one that cannot carry any of it.
+
+**2. Retroactive ADRs and generated-diagram sidecars are written via the identical
+construct-then-`safeParse`-then-serialise primitives `packages/engine/src/interaction/session.ts`'s
+`writeAdrBack` (`SPEC-QUESTIONS.md` Q161 point 8) already established for the same "no
+`@forge/cli`/`@forge/templates` boundary edge" constraint — `IdAllocator` (`@forge/core/ids`),
+`renderArtifactPath` (`@forge/schemas/registry`), and `adrSchema`/`diagramSchema.safeParse`
+(`@forge/schemas`) — not a second, invented mechanism. One correction to that precedent's own path
+handling: `renderArtifactPath('ADR', ...)`'s path template hardcodes a literal `kb/` root
+(`packages/schemas/src/registry/artifact-types.ts`), which `writeAdrBack` uses unmodified because
+`@forge/engine` has no configurable `kbRoot` reaching it yet; `writeReconstruction` *does* accept a
+configurable `kbRoot` (default `docs/forge/kb`, not `kb`), so it strips that literal prefix and
+substitutes the real one — the identical substitution `forge adr new`
+(`packages/cli/src/commands/adr.ts`) already performs for the same reason. A `.mmd.yaml` diagram
+sidecar is pure YAML with no `---` fencing at all (`packages/kb/src/schema/tree.ts`'s own
+`diagram-sidecar` case calls `parseFrontMatterYaml` directly on the raw file text) — confirmed only
+after a first draft's `---`-wrapped sidecar failed `parseKbTree` with "multiple documents," caught by
+this piece's own first test run before ever reaching a critic round.
+
+**3. The three generators' own real input shapes were confirmed against what P15-P17 actually produce
+before assuming compatibility, per the mandate's own instruction — and one generator's expected
+compatibility does not hold at all.** `componentsToC4`'s `ComponentsToC4Input.components` fields
+(`id`/`label`/`dependsOn`) already match `@forge/kb/schema`'s own `componentSchema` exactly, by that
+schema's own doc comment — but CARTOGRAPHY's `component`-kind `CartographyFinding` carries none of
+`id`/`dependsOn` itself (only `statement`/`evidence`/`confidence`), so this piece's own
+`deriveComponents` synthesizes the missing structure rather than merely projecting it: a component id
+is a deterministic slug of its statement, and `dependsOn` is computed — never fabricated — from P15's
+real `DependencyGraph` (`inventory.ts`) by attributing each component's cited evidence paths to
+dependency-graph module keys, then reporting a cross-component edge only where a real `imports` entry
+crosses from one component's own modules into a different component's own modules. `depsToGraph`'s
+input is a direct, lossless projection of `DependencyGraph.nodes[].module`/`.imports` — no synthesis
+needed at all. `schemaIntrospectToEr`'s expected input (`tables[].columns`, `foreignKeys`) does **not**
+hold: no P15-P17 signal anywhere produces a column list or a foreign-key relationship — CARTOGRAPHY's
+`data-ownership` claims carry only a table name and an owning component. `toSchemaIntrospectToErInput`
+therefore always emits `columns: []` and `foreignKeys: []`, disclosed in its own doc comment rather than
+inventing plausible-looking structure, the identical "documented gap, not attempted here" precedent
+`schemaIntrospectToEr`'s own doc comment already sets for itself (`SPEC-QUESTIONS.md` Q46).
+
+**4. A fresh critic round (round 1) found two blocking defects neither this piece's own first test pass
+nor its own doc-comment reasoning caught, plus two major defects — all fixed, all with new regression
+tests:**
+
+**[Blocking]** Every KB-entry path this piece writes is deterministic (`uniquePath` over
+`slugify(finding.statement)`), and `KbWriter.write` refuses an existing path unconditionally
+(`KB-009`) — so a second `writeReconstruction` call against a project that already ran once (a crash
+mid-way through the first run, or simply a repeat invocation) threw on the very first entry, forever,
+with no path back to a working state short of a human deleting KB files by hand. Confirmed empirically
+by the critic calling `writeReconstruction` twice in a row. Fixed with `writeKbEntryIdempotent`: before
+any `KbWriter.write` call, a plain read of the deterministic target path — if it already exists, its
+own `id` is read back and reused rather than re-written, converging a retry to the same state instead
+of crashing it. A new test runs `writeReconstruction` twice against the same project and asserts
+identical `kbEntryIds`/`adrIds`/`componentIds` come back both times.
+
+**[Blocking]** Every generated diagram's id was collected into one shared array handed wholesale to
+`architectureEntries` as its `diagrams` field — including the `schema-introspect-to-er` diagram, which
+depicts a data table, not a component or a module. Every architecture entry this piece wrote — three
+about a single, distinct component and one about a layering rule — carried a reference to a diagram
+that does not depict it, precisely the "confident fabrication" `17` §17.1 names as this whole
+workflow's core risk, applied here to diagram-to-fact linkage rather than to a claim's own evidence.
+Fixed by tracking `architectureDiagramIds`/`dataDiagramIds` as two separate arrays from the moment each
+diagram is written, each handed only to its own section's entries. A new test asserts no architecture
+entry's `diagrams` field contains the ER diagram's id and no data entry's contains an
+architecture-only diagram's id.
+
+**[Major]** The mirror-image gap of the first blocking finding: retroactive ADRs have no idempotency
+check at all, and because an ADR's own file path embeds a freshly-`IdAllocator`-allocated id (not a
+deterministic one), a second run does not fail loudly — it silently allocates a new id and writes a
+duplicate ADR for the identical `layering` finding every time. Fixed the same way `writeAdrBack` solves
+the identical non-deterministic-id problem: a stable, greppable HTML-comment marker
+(`<!-- forge:reconstruction-adr statement=... -->`) embedded in the body, scanned across every existing
+`decisions/*.md` file before ever allocating a new id. Covered by the same repeat-run regression test
+above, which also asserts exactly one ADR file exists after two runs.
+
+**[Major]** Every `component`-kind CARTOGRAPHY finding produced a full, separate `architecture/
+<slug>.md` KB entry in addition to its own row in `architecture/components.md`, with `## Statement`/
+`## Rationale`/`## Implications` all restating the identical one-line sentence three times — not
+factually wrong, but working directly against the KB's own "dense, high-signal entries" design stance
+(`08` §8.1) and doubling the entry count for every component in every adopted repo by default. The
+entry itself is kept (it is the only place a component-level confidence rating and Verification section
+can be recorded at all — `componentSchema` itself carries no `confidence` field), but its
+`implications` text for a `component`-kind finding now points back at the specific
+`architecture/components.md` row it complements instead of repeating the statement a third time.
+
+**Two minor findings also fixed:** the `CONFIDENCE_RANK` cast (mirroring `writer.ts`'s own identical,
+already-uncommented cast) gained a comment naming the invariant that makes it sound; the doc comment
+justifying this piece's own un-queued, per-call `IdAllocator` instance now cites `CFG-002` (FORGE's
+one-project-per-process invariant) as the actual reason a concurrent, independent writer racing the
+same project's id sequence is out of scope rather than merely asserting it. A new `slugify` test pins
+that neither a `../../../etc/passwd`-shaped nor a `C:\Windows\System32`-shaped LLM-influenced statement
+can survive into a path segment.
+
+**Final state:** 37 tests in `packages/kb/test/adopt/reconstruction.test.ts` (every pure assembly
+function's own branches, including every confidence-override/aggregation edge case, plus seven
+end-to-end `writeReconstruction` tests against a real temp project and the real `parseKbTree`) — all
+green, meeting the package's own per-file coverage ratchet (a scoped `--coverage` run shows zero
+threshold violations for `reconstruction.ts`: 97%+ lines/statements/functions, 87% branches). `pnpm
+--filter @forge/kb typecheck`, whole-workspace `pnpm typecheck` (20/20 packages), `eslint
+--max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean on every file
+this piece touched. A full, unscoped `node scripts/run-tests.mjs run` (run twice, once before and once
+after the critic-round fixes) shows two failures each time, neither in this piece's own files: the
+`RUN-071` remedy-verb check against `M10 P13`'s own uncommitted `forge session resume` changes
+(`packages/core/src/errors/codes.ts`), and (second run) a `packages/tui/test/components/
+question-form.test.tsx` failure unrelated to any file this piece touches — confirmed via `git status
+--short` to touch neither `packages/kb/src/adopt/reconstruction.ts` nor
+`packages/kb/test/adopt/reconstruction.test.ts`. `crash-resume.test.ts` passed cleanly on both full
+runs. `GAUNTLET-LOG.md`'s own `M10 P18` entry has the full round-by-round record.
