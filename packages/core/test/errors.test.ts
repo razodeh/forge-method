@@ -122,6 +122,12 @@ const SAMPLE_DETAILS = {
   bundlePath: '/tmp/forge-fetch-acme-standards',
   findings: ['skills/rogue/SKILL.md: contains a secret-shaped literal: "AKIAABCDEFGH…".'],
   size: 134217728,
+  requiredBy: 'fm-service, fm-mobile',
+  expectedKind: 'module',
+  actualKind: 'overlay',
+  expectedId: 'fm-service',
+  actualId: 'acme-standards',
+  destination: '.forge/modules/acme-mod',
 } satisfies Record<string, unknown> as never;
 
 /**

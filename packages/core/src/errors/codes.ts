@@ -1406,6 +1406,126 @@ export const ERROR_CODES = {
       `${show(d.location)} is ${show(d.size)} bytes, over the safety scan's own ${show(d.limit)}-byte limit.`,
     remedy: 'Reduce the file to a reasonable size, or exclude it from the bundle, and retry.',
   },
+  // `PLAN-M11.md` P5's own real `forge module add/remove/update`/`forge overlay add` lifecycle —
+  // next free `CFG-*` slot after `CFG-038`, same "fetching/validating/installing a bundle" scope as
+  // `CFG-026`-`CFG-038` above, extended to the install/remove/update decisions those codes never
+  // needed a fetched-but-not-yet-parsed bundle for.
+  'CFG-039': {
+    // `moduleRemove`'s own real dependent-module guard (`19` §19.1's `requires` field, checked in the
+    // opposite direction from `resolveInstalledModules`' own `CFG-022`): another still-installed
+    // module's own `requires` names the module a caller is trying to remove.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string; requiredBy: string }) =>
+      `Module ${show(d.id)} cannot be removed while ${show(d.requiredBy)} still requires it.`,
+    remedy: 'Remove the dependent module(s) first, then retry.',
+  },
+  'CFG-040': {
+    // `19` §19.5 step 3's own "nothing is installed on refusal" — `promptForConsent` resolved
+    // `false` (an explicit "no," a non-interactive refusal, or an unanswered prompt), so the install
+    // pipeline stops here, before step 4's safety scan or step 5's install ever run.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `Installing ${show(d.id)} was refused: consent was not granted at the capability screen.`,
+    remedy: 'Approve the capability consent screen to proceed, or point at a different source.',
+  },
+  // `CFG-041` is deliberately unused, not a numbering mistake: it was reserved for an "unsupported
+  // install source scheme" refusal, but `module.ts`'s own `fetchInstallBundle` dispatcher has no such
+  // outcome to report — its three branches (`git+`, `npm:`, and a local-path fallthrough) are
+  // exhaustive by construction, so every `source` string reaches one of P1/P2's own three real
+  // channels rather than a fourth "unrecognised" case. Left visibly reserved here (rather than
+  // silently skipped) so a future reader does not wonder whether a slot went missing.
+  'CFG-042': {
+    // `moduleAdd`/`overlayAdd` refuse an id already present in the manifest — `forge module update`/
+    // `forge overlay update` is the real path for changing an already-installed entry's version, not
+    // a second `add` silently reinstalling over it.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string; kind: 'module' | 'overlay' }) =>
+      `${show(d.kind)} ${show(d.id)} is already installed.`,
+    remedy: 'Run the matching "update" command to change its version, or remove it first.',
+  },
+  'CFG-043': {
+    // A fetched bundle's own manifest kind (`overlay.yaml` vs `module.yaml`, `findManifestKind`'s own
+    // real distinction) does not match the command that fetched it — `forge module add` fetching a
+    // bundle that only has an `overlay.yaml`, or the reverse.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { source: string; expectedKind: string; actualKind: string }) =>
+      `${show(d.source)} contains a ${show(d.actualKind)}, not the expected ${show(d.expectedKind)}.`,
+    remedy: 'Point this command at a source that actually contains a bundle of the expected kind.',
+  },
+  'CFG-044': {
+    // A fetched module bundle's own `module.yaml` declares an `id` different from the one the caller
+    // named (`forge module add <id> <source>`) — refused rather than silently installed under
+    // whichever id the caller happened to type, which would let a manifest row's own `id` key and a
+    // module's own self-declared identity permanently disagree.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { expectedId: string; actualId: string }) =>
+      `The fetched bundle declares id ${show(d.actualId)}, not the requested ${show(d.expectedId)}.`,
+    remedy: "Fix the id argument to match the bundle's own declared id, or point at the intended source.",
+  },
+  'CFG-045': {
+    // `forge module remove`/`forge module update` refuse a manifest row with no recorded install
+    // `source` -- a built-in module (`fm-core` etc., or the synthetic `@forge/templates` row), whose
+    // whole-roster install/uninstall is `forge init`/`forge upgrade`'s own established mechanism
+    // (`module.ts`'s own top-of-file doc comment), not this per-module lifecycle's.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `${show(d.id)} is a built-in module, not managed by forge module add/remove/update.`,
+    remedy:
+      "Choose a different module id, or change the project's requested module roster and run " +
+      'forge upgrade instead.',
+  },
+  'CFG-046': {
+    // `overlayAdd`'s own minimal `overlay.yaml` validation (`15` §15.11's worked example) -- no full
+    // schema exists anywhere in this codebase yet (`install/consent.ts`'s own doc comment records
+    // that as a deliberate, disclosed gap for its own narrower consent-screen purpose); this is the
+    // install-path's own, equally minimal, equally disclosed check.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { source: string; detail: string }) =>
+      `${show(d.source)}'s overlay.yaml is invalid: ${show(d.detail)}.`,
+    remedy: 'Fix the overlay.yaml to match the documented schema and retry.',
+  },
+  'CFG-047': {
+    // `module.ts`'s own `withManifestLock` (`PLAN-M11.md` P5, a critic-round fix): another real,
+    // still-alive process already holds this project's install lock -- the identical "a live holder
+    // is a real, named refusal, never a silent wait or a silently clobbered manifest" stance
+    // `run/lock.ts`'s own `CFG-002` already takes for the run-supervisor lock, applied here to a
+    // second, distinct lock (`.forge/state/module-install.lock`) so a `forge run` in progress and a
+    // `forge module add` in progress never contend with each other's lock file.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: () =>
+      'Another forge module/overlay install is already in progress for this project.',
+    remedy: 'Wait for the other install to finish, then retry.',
+  },
+  'CFG-048': {
+    // `moduleUpdate`'s own real existence check (a round-2 critic-round fix): the manifest still
+    // records this module as per-item-managed (`source` present), but its own installed
+    // `.forge/modules/<id>/module.yaml` is missing -- a corrupted or partial prior install, or
+    // hand-tampering, rather than the "never installed at all" `KB-015` already covers.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { id: string }) =>
+      `${show(d.id)} is recorded as installed, but its own .forge/modules/${show(d.id)}/module.yaml is missing.`,
+    remedy: 'Run forge module remove, then forge module add again, to reinstall it cleanly.',
+  },
+  'CFG-049': {
+    // `installBundleTree`'s own real path-overlap guard (a round-2 critic-round fix): the local
+    // channel installs directly from the caller's own source directory (no temp copy), so a source
+    // that sits inside -- or contains -- the very install destination this call is about to replace
+    // would have `rm`/`cp` delete or recurse into content still being read.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { destination: string; source: string }) =>
+      `${show(d.source)} overlaps its own install destination ${show(d.destination)}.`,
+    remedy: 'Point the source at a directory outside the install destination and retry.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

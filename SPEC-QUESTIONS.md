@@ -14839,3 +14839,75 @@ M11 pieces' own concurrently-running, uncommitted work-in-progress at the time o
 `audit.ts`/`audit.test.ts`; `P14`'s in-flight `doctor/{index,run-doctor,types,fix}.ts` changes, which
 `upgrade`'s own real `runDoctor` call depends on) — confirmed via `git status` immediately before
 committing that none of those files were touched by, or staged in, this piece's own commit.
+
+## Q179 — M11 P14: `forge doctor --fix`/`--rebuild-index` — no CLI wiring exists for `forge doctor` at
+all, orphaned-worktree reclaim deliberately never deletes the branch, and `corrupt-state/` is a
+programmatically-built fixture, not a static directory
+
+**Context:** `PLAN-M11.md` P14 asks for `forge doctor --fix` and `--rebuild-index`, checked against `21`
+E10's own literal acceptance line: "`corrupt-state/` is diagnosed; `--fix` and `--rebuild-index` restore a
+working project." Three real design decisions came out of building this faithfully rather than guessing.
+
+**1. `forge doctor` itself has no CLI argv wiring anywhere in this codebase — confirmed directly, before
+writing anything, the identical premise `Q178`'s own point 2 (M11 P12) already established for S11.**
+`packages/cli/src/bin.ts`'s own top doc comment lists `doctor` explicitly among every command that
+"exists only as a real, already-tested plain function taking a hand-built `*CommandContext`... no real
+argv dispatcher existed... before this file," and the dispatcher deliberately does not wire it up. `--fix`
+and `--rebuild-index` are therefore built as boolean fields on `DoctorOptions` (`run-doctor.ts`), consumed
+by `runDoctor` itself — the exact abstraction level this milestone's own `PLAN-M11.md` P14 surface line
+already names (`run-doctor.ts`, extended — not `bin.ts`) — rather than inventing a parallel, first-ever
+argv-flag convention for one command out of proportion with this piece's own scope. `21` E10's own
+acceptance test is built the same way every other doctor test file in this suite already is: a real,
+programmatically-constructed project on top of `createTestProject`, not a static, checked-in
+`corrupt-state/` directory (no such convention exists anywhere else in this test suite either).
+
+**2. `--fix`'s orphaned-worktree reclaim deliberately stops at the worktree itself, never the branch —
+narrower than `@forge/vcs`'s own `removeLaneWorktree`, on purpose, after a critic round called this out
+directly.** The first version of this piece reused `removeLaneWorktree(..., { retain: false })` for
+`--fix`, which removes both the worktree *and* `git branch -D`s its own lane branch — matching
+`checkOrphanedWorktrees`'s own check logic (same source of truth, `listOrphanedWorktrees`) but going
+further than that same check's own remedy text, which names only `git worktree remove <path>`. A fresh
+gauntlet critic round (round 1) found this a real, unacknowledged data-loss vector: an orphaned worktree
+is exactly the state a crashed or deliberately-retained failed lane leaves behind
+(`execution.retainLaneWorktrees: on-failure`, `18` §18.3), and its branch can carry real, unmerged commits
+no human has reviewed yet — the sibling check, `checkDanglingLaneBranches`, already treats branch
+deletion as the one operation in this whole checklist needing a human to "confirm its work already
+merged" first. `--fix` was silently overriding that judgement call. **Fixed:** a new, local
+`removeOrphanedWorktreeOnly` (duplicating `removeLaneWorktree`'s own real, empirically-verified
+worktree-removal fallback chain — `-f -f`, then raw `rm` + `unlock` + `prune` — deliberately without its
+branch-delete half) is used instead; the branch is left in place, `checkDanglingLaneBranches` picks it up
+honestly on the very next `forge doctor` run, and a human decides from there. `corrupt-state.test.ts`'s
+own "restore a working project" assertion reads `report.ok` (which reads only `severity: 'hard'`
+failures) rather than "zero findings of any kind" for exactly this reason — a genuinely safe fix cannot
+also make every last warning disappear without either fabricating a merge-confirmation it has no way to
+make, or destroying real work.
+
+**3. Two further real critic-round findings, both fixed:** `runDoctor`'s own `await kbSync(...)` for
+`--rebuild-index` was the one unguarded call in an otherwise "no check ever throws out of `runDoctor`"
+file — a broken `.forge/state` *storage location* (a stray file blocking `mkdirSync`, not a merely
+corrupted index file, which `openKbIndex` already tolerates gracefully) still throws `KB-012`, which
+would have rejected the whole `runDoctor` call. **Fixed:** degraded into its own single failed
+`rebuild-index` `DoctorCheck`, the identical shape every other crashing check already produces. Separately,
+the original `fixOrphanedWorktrees` had no per-orphan error isolation: one real failure (a locked
+worktree, a permission error) aborted the whole loop, silently leaving every later orphan untouched and
+unreported. **Fixed:** each orphan's removal is now isolated in its own `try`/`catch`, with an honest
+partial-success message (`"Removed N of M... ; K failed: ..."`) when not every orphan can be reclaimed.
+
+**Verification:** `pnpm typecheck` (21/21 packages) and `pnpm run boundaries` clean. A full, unscoped
+`node scripts/run-tests.mjs run` under heavy concurrent load from other in-flight M11 pieces on this same
+shared working directory reported 5 failed test files: `packages/kb/test/adopt/survey.test.ts`'s own
+pre-accepted oversized-fixture flake, and four failures (`test/workspace-floor.test.ts`'s stray-file/tsc
+checks, `packages/cli/test/commands/{module,overlay}.test.ts`) all tracing to a concurrent piece's own
+in-flight, uncommitted `module.ts`/`overlay.ts` edit at the time of that run — confirmed via `git status
+--short` and by a clean, unscoped `pnpm typecheck` re-run afterward (once that concurrent edit had
+resolved) showing zero errors anywhere, including `module.ts`. `packages/cli/test/commands/upgrade/
+run-upgrade.test.ts`'s own "idempotent" test timed out twice (60s) even re-run in isolation, both times
+under 6 concurrent full-suite `node scripts/run-tests.mjs run` processes from other agents sharing this
+same machine (confirmed via `ps`) — judged environmental resource contention, not a regression: this
+piece touches no file `run-upgrade.test.ts` or its dependencies reference, and `git status` confirmed
+no concurrent edits to any file on that test's own path. This piece's own scoped doctor suite
+(`packages/cli/test/commands/doctor/`, 11 files, 67 tests) passed cleanly and quickly on every run,
+including two full critic-driven rewrites of `fix.ts`. The final commit staged exactly its own 7 files by
+name (no `git add -A`), via a pathspec-scoped `git commit <paths>` rather than a plain `git add` +
+`git commit`, after a concurrent commit from another agent reset this piece's own staged files mid-flight
+once already.
