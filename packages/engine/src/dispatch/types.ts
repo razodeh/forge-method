@@ -5,8 +5,11 @@
  * sessions), and `@forge/engine/gates` (P14) into one call.
  *
  * Five of `10` §10.1's own nine *runtime* kinds have real handlers here (`agent`, `command`, `gate`,
- * `merge`, `checkpoint`); `elicit`/`session`/`subworkflow` each need infrastructure this milestone does not
- * build (a real interactive human-input channel; `16`'s own facilitated-session machinery; recursive
+ * `merge`, `checkpoint`); a sixth, `session`, has a real handler one layer up, in
+ * `@forge/engine/interaction`'s own `runSessionStep` (`PLAN-M10.md` P10) — `execute.ts`'s own `dispatch`
+ * calls it directly rather than adding it to this file's own five, since it needs `16`'s own facilitated-
+ * session machinery (`@forge/sessions`) this file has no reason to import. `elicit`/`subworkflow` still
+ * need infrastructure this milestone does not build (a real interactive human-input channel; recursive
  * workflow invocation) and are refused with a specific, actionable error (`RUN-039`) rather than silently
  * mishandled — the identical "visibly has none" standard `SPEC-QUESTIONS.md` Q62 already holds this whole
  * milestone to for agent/role resolution. `fanout`/`parallel`/`sequence` never reach this module at all:

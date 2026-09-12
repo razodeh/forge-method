@@ -102,6 +102,13 @@ export const PACKAGE_GRAPH = {
     'methods',
     'extensions',
     'testkit',
+    // `PLAN-M10.md` P10's own recorded Surface deviation: `@forge/sessions` holds pure facilitation
+    // logic only (no edge to `@forge/engine`, the identical structural fact `Q104` already
+    // established for `@forge/agents`), so this edge runs the other way — `execute.ts`'s own
+    // `case 'session':` handler drives `dispatchAgentStep` for real agent turns and hands
+    // `@forge/sessions`'s own `SessionPhaseMachine` the results, never the reverse. See
+    // `SPEC-QUESTIONS.md` for the record.
+    'sessions',
   ],
   installer: ['core', 'schemas', 'templates', 'extensions'],
   tui: ['engine', 'core', 'kb', 'telemetry', 'schemas'],

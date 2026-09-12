@@ -249,6 +249,15 @@ importers:
       '@forge/core':
         specifier: workspace:*
         version: link:../core
+      '@forge/kb':
+        specifier: workspace:*
+        version: link:../kb
+      '@forge/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@forge/sessions':
+        specifier: workspace:*
+        version: link:../sessions
       '@forge/telemetry':
         specifier: workspace:*
         version: link:../telemetry

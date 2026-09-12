@@ -9,6 +9,7 @@ import { ForgeError } from '@forge/core/errors';
 import { TelemetryError } from '@forge/telemetry/errors';
 
 import type { StepNode } from '../plan/index.ts';
+import { runSessionStep } from '../interaction/session.ts';
 import {
   runAgentStep,
   runCheckpointStep,
@@ -70,8 +71,18 @@ async function dispatch(node: StepNode, ctx: ExecuteStepContext): Promise<StepOu
       return runMergeStep(node, ctx);
     case 'checkpoint':
       return runCheckpointStep(node, ctx);
-    case 'elicit':
+    // `PLAN-M10.md` P10: `session` now has a real handler (`@forge/engine/interaction`'s own
+    // `runSessionStep`), driving `@forge/sessions`'s pure phase machine through real agent turns
+    // (`dispatchAgentStep`). Only this one node's own `.outcome` half matters to `executeStep`'s own
+    // return type here -- a caller who wants the assembled `SessionRecord` too calls `runSessionStep`
+    // directly, the same "wrap, do not touch the closed `StepOutcomeDetail` union" choice
+    // `InteractionOutcome` (`interaction/types.ts`) already makes for the identical reason.
     case 'session':
+      return (await runSessionStep(node, ctx)).outcome;
+    // `elicit`/`subworkflow` each still need infrastructure this milestone does not build (a real
+    // interactive human-input channel; recursive workflow invocation) -- unchanged, still refused with
+    // the identical `RUN-039` this piece's own scope is exactly `session`, not these two.
+    case 'elicit':
     case 'subworkflow':
       throw new ForgeError('RUN-039', { stepId: node.id, kind: node.kind });
     case 'fanout':

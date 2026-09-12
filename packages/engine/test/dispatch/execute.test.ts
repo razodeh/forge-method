@@ -31,7 +31,10 @@ async function createTempRepo(prefix: string): Promise<string> {
 }
 
 describe('executeStep — unsupported kinds', () => {
-  it.each<StepNodeKind>(['elicit', 'session', 'subworkflow'])(
+  // `session` was removed from this list by `PLAN-M10.md` P10: it now has a real handler
+  // (`@forge/engine/interaction`'s own `runSessionStep`). `elicit`/`subworkflow` are this piece's own
+  // explicit non-scope, unchanged -- see the dedicated regression test below proving that directly.
+  it.each<StepNodeKind>(['elicit', 'subworkflow'])(
     'throws RUN-039 for a %s-kind node, which this milestone does not yet dispatch to',
     async (kind) => {
       const projectRoot = await createTempRepo(`execute-unsupported-${kind}`);
@@ -48,6 +51,22 @@ describe('executeStep — unsupported kinds', () => {
       if (caught instanceof ForgeError) expect(caught.code).toBe('RUN-039');
     },
   );
+
+  it('no longer throws RUN-039 for a well-formed session-kind node -- PLAN-M10.md P10 gave it a real handler, while elicit/subworkflow stay refused, exactly as scoped', async () => {
+    const projectRoot = await createTempRepo('execute-session-real-handler');
+    const ctx = createTestContext({ projectRoot });
+    const stepNode = node({
+      id: 'wf:brainstorm',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How should we cut onboarding time',
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.detail.kind).toBe('agent');
+  });
 
   it('throws RUN-039 for a fanout-kind node -- structurally excluded from a real compiled plan, but a hand-built one reaches this guard directly', async () => {
     // Matches RUN-036's own precedent (@forge/engine/scheduler, P12) for the identical class of guard:

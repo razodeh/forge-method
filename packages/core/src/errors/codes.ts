@@ -808,6 +808,37 @@ export const ERROR_CODES = {
     remedy:
       'Reduce the session to 5 or fewer agent participants (the human does not count against it).',
   },
+  // `@forge/engine/interaction`'s own `runSessionStep` (`16` §16.6, `PLAN-M10.md` P10): two real,
+  // ordinary-authoring-input failure modes this piece found genuinely distinct from `RUN-039`'s own
+  // "this kind is not dispatched at all" meaning -- `kind: 'session'` *is* dispatched now, so reusing
+  // `RUN-039`'s own registered remedy ("remove elicit/session/subworkflow steps... until a later
+  // milestone") would tell an author to delete a step over an ordinary typo, actively wrong rather
+  // than merely generic.
+  'RUN-068': {
+    // A `sessionType` naming something outside `16` §16.2's own closed ten-value table -- the
+    // ordinary shape of a hand-typo'd workflow YAML, not a programmer error in this codebase.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; sessionType: string }) =>
+      `Step ${show(d.stepId)} names sessionType ${show(d.sessionType)}, which is not one of \`16\` §16.2's own ten real session types.`,
+    remedy:
+      'Fix the sessionType against the real ten-value table in specs/16 §16.2 (brainstorm, ' +
+      'design-review, tradeoff, premortem, retro, war-room, estimation, standup, ' +
+      'discovery-interview, story-refinement).',
+  },
+  'RUN-069': {
+    // `allocateSessionId`'s own real, three-digit `SESSION-###` ceiling (`sessionRecordSchema`'s own
+    // id pattern) -- every one of the 1000 real ids already taken. Adversarial/very-low-probability in
+    // practice (a later, real session-id allocator is the actual fix, not a wider guess here), but
+    // distinct in kind from `RUN-068` above, so given its own code rather than folded into it.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string }) =>
+      `No free SESSION-### id remains for step ${show(d.stepId)} -- all 1000 real three-digit ids are already taken.`,
+    remedy:
+      'Free an id by archiving or renumbering existing docs/forge/sessions/ records, or wait for a ' +
+      'later FORGE release with a real, non-hash-based session-id allocator.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

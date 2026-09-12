@@ -57,9 +57,9 @@ const adapter = (relative: string) => `/repo/packages/adapter-claude-code/${rela
  * Transcribed verbatim from the `specs/02` §2.2 dependency-rules block. Three rows are checked
  * separately below instead of through this table, each for its own documented reason:
  * `templates` and `testkit` have no spec entry at all (`SPEC-QUESTIONS.md` Q16); `engine` has a spec
- * entry, but `PACKAGE_GRAPH.engine` deliberately carries one edge beyond it (`SPEC-QUESTIONS.md`
- * Q77) — so asserting `engine` here, against the literal spec text alone, would fail on a graph
- * that is correct on purpose.
+ * entry, but `PACKAGE_GRAPH.engine` deliberately carries two edges beyond it (`SPEC-QUESTIONS.md`
+ * Q77, and `PLAN-M10.md` P10's own `engine -> sessions` edge) — so asserting `engine` here, against
+ * the literal spec text alone, would fail on a graph that is correct on purpose.
  */
 const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   schemas: [],
@@ -160,11 +160,13 @@ describe('specs/02 §2.2 — the dependency graph', () => {
     expect([...PACKAGE_GRAPH.testkit].sort()).toEqual(['adapter-kit', 'schemas']);
   });
 
-  it("gives engine every spec-declared edge, plus testkit for its own dispatch tests' real adapter sessions", () => {
-    // The spec's own nine edges (specs/02 §2.2), unchanged, plus one recorded addition: PLAN-M5.md
+  it("gives engine every spec-declared edge, plus testkit for its own dispatch tests' real adapter sessions, plus sessions for driving real session-step turns", () => {
+    // The spec's own nine edges (specs/02 §2.2), unchanged, plus two recorded additions: PLAN-M5.md
     // P15's dispatch tests need a real FakePlatformAdapter, and testkit otherwise has no permitted
-    // consumer anywhere in this graph despite existing specifically to be one. See
-    // SPEC-QUESTIONS.md Q77.
+    // consumer anywhere in this graph despite existing specifically to be one (SPEC-QUESTIONS.md
+    // Q77); and PLAN-M10.md P10's own `engine -> sessions` edge, the mirror image of the identical
+    // `agents`-cannot-reach-`engine` structural fact Q104 already established -- `@forge/sessions`
+    // stays a sibling with no edge back, `@forge/engine` is the one side that reaches across.
     expect([...PACKAGE_GRAPH.engine].sort()).toEqual(
       [
         'core',
@@ -177,6 +179,7 @@ describe('specs/02 §2.2 — the dependency graph', () => {
         'methods',
         'extensions',
         'testkit',
+        'sessions',
       ].sort(),
     );
   });

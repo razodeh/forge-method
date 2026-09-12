@@ -14,3 +14,4 @@ export type {
   ReviewReport,
   ReviewSeverity,
 } from './types.ts';
+export { runSessionStep, type SessionStepResult } from './session.ts';
