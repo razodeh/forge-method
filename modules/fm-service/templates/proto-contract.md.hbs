@@ -1,0 +1,46 @@
+{{!--
+  Protobuf contract template -- 19 §19.1's own "OpenAPI/proto templates" row. Renders an existing,
+  already-registered InterfaceContract artifact whose body embeds a real, syntactically well-formed
+  proto3 service definition. See openapi-contract.md.hbs's own doc comment for why `created`/`updated`
+  render from `artifact.created` rather than `now`, and why no new artifact type/schema was needed --
+  the identical reasoning applies unchanged here.
+
+  Only Handlebars built-in helpers are used (#each, #if) -- no custom helper is registered anywhere in
+  this repository yet. Every triple-stash {{{ }}} avoids HTML-escaping corrupting a YAML/Markdown
+  scalar. test/fm-service-templates.test.ts checks the embedded proto block's own real structure
+  (a `syntax = "proto3";` line, a matching `service <name> { ... }` block) directly against the
+  rendered text -- no proto parser is a dependency anywhere in this repository, the same "write the
+  minimal real check yourself" precedent test/fm-web-templates.test.ts's own hand-rolled JSON Schema
+  validator already establishes, applied here to proto3 text instead.
+--}}
+---
+id: {{{artifact.id}}}
+type: InterfaceContract
+schemaVersion: 1
+title: {{{inputs.serviceName}}} contract (protobuf)
+status: draft
+created: {{{artifact.created}}}
+updated: {{{artifact.created}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog: []
+---
+
+# {{{inputs.serviceName}}} -- protobuf contract
+
+Owned by **{{{artifact.author}}}** for **{{{project.name}}}**. This file is the frozen,
+machine-readable contract itself; delivery-guarantee and failure-mode notes for the interaction it
+describes live in `architecture/integration/**` (integration-architect's own `kb_propose` claim), not
+here.
+
+```proto
+syntax = "proto3";
+
+package {{{inputs.packageName}}};
+
+service {{{inputs.serviceName}}} {
+{{#each inputs.rpcs}}
+  rpc {{{this.name}}}({{{this.request}}}) returns ({{{this.response}}});
+{{/each}}
+}
+```

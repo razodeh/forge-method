@@ -1,0 +1,64 @@
+{{!--
+  OpenAPI contract template -- 19 §19.1's own "OpenAPI/proto templates" row. Renders an existing,
+  already-registered InterfaceContract artifact (@forge/schemas' own registry) whose body embeds a
+  real, valid OpenAPI 3.1 document -- no new artifact type or schema needed (see module.yaml's own
+  header comment): InterfaceContract's own base front matter already covers "a frozen, machine-readable
+  contract", generically, per its own base template's own prose.
+
+  Renders against 19 §19.2's own real TemplateContext shape. `created`/`updated` deliberately render
+  from `artifact.created`, NOT `now`: unlike fm-web's own two NEW artifact types (whose own schemas
+  were written to accept a full ISO-8601 instant specifically because their templates render `now`
+  directly, PLAN-M10.md P3 round 1's own fixed defect), InterfaceContract is an EXISTING
+  @forge/schemas registry type whose baseFrontMatterShape types created/updated as a bare `date`
+  (packages/schemas/src/registry/front-matter.ts) -- rendering a full instant into that field would
+  fail interfaceContractSchema's own real `.date()` check exactly the way fm-web's own first draft
+  failed its schema's `format: "date"` check for the opposite reason. `19` §19.2's own TemplateContext
+  already carries a separately-resolved `artifact.created` field for exactly this: "resolved at
+  render" by whichever caller populates the context, already in the shape the concrete artifact type
+  expects -- this template trusts that contract rather than reformatting `now` itself (nothing in this
+  codebase's fixed helper set does date-only truncation). A freshly-created artifact's own `updated`
+  equals its own `created` at creation time, so both fields render from the identical value.
+
+  Only Handlebars built-in helpers are used (#each, #if) -- no custom helper is registered anywhere in
+  this repository yet. Every triple-stash {{{ }}} avoids HTML-escaping corrupting a YAML/Markdown
+  scalar. The embedded OpenAPI document is fenced as `yaml` and is real, parseable YAML on its own,
+  not merely well-formed Markdown -- test/fm-service-templates.test.ts parses it directly.
+--}}
+---
+id: {{{artifact.id}}}
+type: InterfaceContract
+schemaVersion: 1
+title: {{{inputs.apiName}}} API contract (OpenAPI)
+status: draft
+created: {{{artifact.created}}}
+updated: {{{artifact.created}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog: []
+---
+
+# {{{inputs.apiName}}} -- OpenAPI contract
+
+Owned by **{{{artifact.author}}}** for **{{{project.name}}}**. This file is the frozen,
+machine-readable contract itself; delivery-guarantee and failure-mode notes for the interaction it
+describes live in `architecture/integration/**` (integration-architect's own `kb_propose` claim), not
+here.
+
+```yaml
+openapi: 3.1.0
+info:
+  title: {{{inputs.apiName}}}
+  version: {{{inputs.apiVersion}}}
+paths:
+{{#each inputs.operations}}
+  {{{this.path}}}:
+    {{{this.method}}}:
+      operationId: {{{this.operationId}}}
+      summary: {{{this.summary}}}
+      responses:
+        '200':
+          description: OK
+{{else}}
+  {}
+{{/each}}
+```

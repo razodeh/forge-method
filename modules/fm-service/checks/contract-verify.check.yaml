@@ -1,0 +1,32 @@
+# checks/contract-verify.check.yaml -- 19 §19.1's own "contract-testing workflow" row and module.yaml's
+# own worked example in 19 §19.1 (checks: [ contract:verify, api:breaking-change ]) -- built to match
+# that exact id. In @forge/engine/gates' own real DeterministicCheck shape (packages/engine/src/gates/
+# types.ts), plus the `remedy` string 19 §19.6 requires for every check.
+#
+# `run` is the same "dependency-free inline script" choice modules/fm-web/checks/*.check.yaml already
+# establishes and for the identical reason: a real contract-testing tool's own output format varies
+# per stack (Pact, Dredd, a hand-rolled OpenAPI-diff harness, ...), and installing one as a real
+# dependency of a target project is a decision this module has no basis to make for it. The inline
+# script instead checks the one thing every real contract-testing setup shares structurally: every
+# frozen contract this project has committed under docs/forge/kb/architecture/views or
+# docs/forge/specs/interfaces has a real, corresponding contract test file under test/contract --
+# contract-test-cycle.workflow.yaml's own `generate-contract-tests` step is exactly what is supposed to
+# have produced that pairing. A contract with no test covering it is a contract nobody is actually
+# verifying, the real defect this check exists to catch. Prints
+# {"contracts": N, "testsCovering": M} -- see test/fm-service-checks.test.ts for the real pass/fail
+# fixture runs 19 §19.3's own Check-authoring "test" row asks for, including running this exact string
+# via a real child process, not a stub.
+id: contract:verify
+name: Contract verification coverage
+description: >
+  Scans every frozen interface contract under docs/forge/specs/interfaces/ and fails if any contract
+  has no corresponding contract test under test/contract/.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");function walk(d,pred){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p,pred));else if(pred(e.name))files.push(p);}return files;}const contracts=walk("docs/forge/specs/interfaces",(n)=>n.toLowerCase().endsWith(".yaml")).map((p)=>path.basename(p,path.extname(p)));const testFiles=new Set(walk("test/contract",(n)=>n.toLowerCase().endsWith(".contract.test.ts")).map((p)=>path.basename(p,".contract.test.ts")));const testsCovering=contracts.filter((name)=>testFiles.has(name)).length;console.log(JSON.stringify({contracts:contracts.length,testsCovering}));'''
+parser: json
+failOn: 'testsCovering < contracts'
+remedy: >
+  Re-run the command above locally and read its printed counts, then for every frozen contract under
+  docs/forge/specs/interfaces/ with no matching test/contract/<name>.contract.test.ts file, either run
+  contract-test-cycle's own generate-contract-tests step against it or write the missing contract test
+  by hand. If a specific contract genuinely has no consumer yet and cannot be tested honestly, record a
+  waiver naming that contract rather than silencing this check.

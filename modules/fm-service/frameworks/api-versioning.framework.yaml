@@ -1,0 +1,54 @@
+# frameworks/api-versioning.framework.yaml -- 19 §19.1's own "API versioning framework" row, in 11
+# §11.0's own weighted-rubric shape (packages/methods/src/schema/schema.ts's own frameworkSchema).
+# Criteria weights sum to exactly 1.0 (0.30 + 0.25 + 0.20 + 0.15 + 0.10), the same real semantic check
+# packages/methods/src/schema/load.ts's own semanticIssues enforces for every framework in this
+# codebase, checked directly by test/fm-service-framework.test.ts.
+#
+# `follow_on.create_stories_from` below names a `templates/stories/*.yaml` file that does not exist
+# yet, matching all 43 of `@forge/templates`' own already-shipped frameworks exactly (confirmed:
+# every one of them names a `templates/stories/*.yaml` seed file, and zero such files exist anywhere
+# in this repository) -- `test/frameworks.test.ts`'s own doc comment already names this a deliberate,
+# system-wide "a real, shippable path for [a later piece] to satisfy," not a per-framework gap this
+# piece is expected to close on its own.
+id: api-versioning
+name: API versioning strategy
+owner_agent: integration-architect
+produces: { adr_category: architecture, kb_section: architecture/integration/api-versioning.md }
+inputs:
+  required: [kb:architecture/integration/**, artifact:InterfaceContract]
+questions:
+  - id: breaking_change_frequency
+    text: "How often do you expect a breaking change to this API's own contract?"
+    type: choice
+    options: [rare, occasional, frequent]
+  - id: consumer_control
+    text: >-
+      Do you control every consumer of this API (purely internal), or are some consumers external /
+      third-party?
+    type: boolean
+options:
+  - id: uri-path-versioning
+  - id: header-versioning
+  - id: content-negotiation-versioning
+  - id: no-versioning-single-evolving-contract
+criteria:
+  - id: consumer-migration-cost
+    weight: 0.30
+  - id: backward-compatibility-clarity
+    weight: 0.25
+  - id: operational-simplicity
+    weight: 0.20
+  - id: cache-and-tooling-friendliness
+    weight: 0.15
+  - id: discoverability
+    weight: 0.10
+scoring: rubric
+rules:
+  # A single, ever-evolving contract with no version marker is only viable when every consumer is
+  # internal and can be forced to move in lockstep with the provider -- the moment one consumer is
+  # external, this option cannot honestly guarantee backward compatibility at all.
+  - if: '!consumer_control'
+    then: { eliminate: [no-versioning-single-evolving-contract] }
+output_template: templates/adr-api-versioning.md.hbs
+follow_on:
+  - create_stories_from: templates/stories/api-versioning-rollout.yaml

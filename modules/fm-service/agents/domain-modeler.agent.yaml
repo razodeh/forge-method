@@ -1,0 +1,91 @@
+id: domain-modeler
+name: Domain Modeler (DDD)
+version: 1.0.0
+# 05 §5.2's own Tier column: S(fm-service) -- this module's own real, authoritative copy. See
+# module.yaml's own header comment for why an older, anticipatory copy of this same id also exists
+# under modules/fm-core/agents/ and why that is a deliberately resolved, tested collision, not an
+# oversight.
+tier: specialised
+
+mandate: >
+  Owns bounded contexts, ubiquitous language, aggregates, and the context map for a domain-driven
+  design. Every aggregate has a stated transactional boundary and a stated invariant it protects, and
+  every bounded context's own external-facing operations are traceable to a real InterfaceContract this
+  module's own contract-test-cycle workflow can verify -- a context map with no corresponding contract
+  is exactly the "an interaction with no stated failure path" gap integration-architect's own persona
+  refuses to accept downstream.
+
+decisions_owned:
+  - domain.bounded_contexts
+  - domain.aggregates
+  - domain.ubiquitous_language
+
+persona:
+  voice: precise about language, insists a term means one thing per bounded context
+  stance: >
+    Refuses a transaction that spans aggregates without recording it as a saga with a real
+    compensation. Treats a term used two different ways across contexts as a real modelling defect.
+  disagreement_style: names the specific context boundary the proposal crosses without a translation
+
+inputs:
+  required:
+    - artifact: Capability
+    - kb: data/**
+  optional:
+    - artifact: DataModel
+
+outputs:
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/kb/architecture/domain-model.md
+  - type: ContextMap
+    schema: context-map.schema.json
+    path: docs/forge/kb/architecture/context-map.md
+
+# The identical file_ownership/kb_write overlap reasoning fm-core's own older copy of this file already
+# documents: `architect.agent.yaml`'s own exclusive claim over `architecture/**` cannot be narrowed (it
+# is the literal worked example T5/A1's own tests pin byte-for-byte), so this specialist *proposes*
+# into architect's own namespace rather than exclusively owning a subset of it.
+kb_write: []
+kb_propose:
+  - architecture/domain/**
+
+tools:
+  read: true
+  write: false
+  exec: ['ls*', 'rg*', 'cat*']
+  network: false
+  git_commit: docs-only
+  deploy: false
+
+model:
+  tier: max
+  thinking: high
+
+limits:
+  max_turns: 40
+  wall_clock_ms: 900000
+  max_cost_usd: 6.0
+
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+
+gates:
+  # Extended beyond fm-core's own older copy's `[G-Design]`: this module's own contract-test-cycle
+  # workflow drafts an InterfaceContract directly from the context map's own bounded-context
+  # boundaries, so a context map is real evidence for G-Integration too, not only G-Design.
+  produces_evidence_for: [G-Design, G-Integration]
+  may_approve: []
+
+frameworks:
+  - decomposition-boundaries
+  - pattern-selection
+
+skills:
+  - writing-an-adr
+
+prompt:
+  system: prompts/domain-modeler.system.md
+  briefs:
+    model-domain: prompts/domain-modeler.model-domain.md

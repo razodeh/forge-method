@@ -1,0 +1,137 @@
+# module.yaml -- fm-service, "Backend services & APIs" (19 §19.1's own shipped-modules table):
+# `domain-modeler`, `integration-architect`, contract-testing workflow, API versioning framework,
+# OpenAPI/proto templates.
+#
+# ---------------------------------------------------------------------------------------------------
+# The `domain-modeler`/`integration-architect` agent ids -- resolving a real collision with fm-core
+# (PLAN-M10.md P1), the identical class of issue M10 P3 already resolved for fm-web's own `frontend`
+# id (SPEC-QUESTIONS.md -- see this module's own entry for the full record, and fm-web/module.yaml's
+# own header comment for the two-mechanism analysis reused here without restating it in full):
+#
+# `05` §5.2's own roster table marks `domain-modeler` as `S(fm-service)` -- a specialised-tier role
+# this module, not fm-core, is supposed to add, worded identically to `frontend`'s own `S(fm-web)`.
+# `integration-architect` is marked bare `S`, with no `(module)` qualifier -- but `05` §5.2's own tier
+# legend defines `S` as "Specialised (installed with a module)" (singular, always some module), and
+# `19` §19.1's own shipped-modules table names `integration-architect` under fm-service's own "Adds"
+# column, the only place in the spec pack that says which module. Treated as the identical "table cell
+# doesn't repeat a qualifier a neighbouring row already established the convention for" spec-terseness
+# already documented for other loose-paraphrase mismatches between `19` §19.1's prose and a precise
+# roster/index table (`fm-core/module.yaml`'s own header comment re: `19` §19.1's workflow/framework
+# counts, SPEC-QUESTIONS.md Q88) -- not a deliberate signal that this role is module-independent. Both
+# ids are therefore resolved the same way.
+#
+# `modules/fm-core/agents/{domain-modeler,integration-architect}.agent.yaml` already exist on disk
+# today (P1), physically under fm-core (the one module-layout exception where agents load straight
+# from a module's own directory -- see fm-core/module.yaml's own header comment) and are *also* named,
+# unconditionally, in fm-core's own `provides.agents`, even though fm-core is "always installed"
+# regardless of which specialised modules a project picks. Both files' own doc comments already
+# anticipated this exact mismatch (`domain-modeler.agent.yaml`'s own `# S(fm-service): installed with
+# the fm-service module, per 05 §5.2's own Tier column`; `integration-architect.agent.yaml`'s own
+# `# S (bare): specialised, not gated to one specific module`) -- anticipatory scaffolding left in
+# fm-core's own directory ahead of this module existing, the identical pattern fm-web's own header
+# comment already documents for `frontend`.
+#
+# This module now ships the real, authoritative copy of both agents under its own directory
+# (`agents/domain-modeler.agent.yaml`, `agents/integration-architect.agent.yaml`) and re-declares both
+# in `provides.agents` below. The same two independent, disagreeing mechanisms fm-web's own module.yaml
+# documents apply here unchanged:
+#
+# - `@forge/agents`' own `loadAgentRegistry` (`packages/agents/src/registry/load-agent-registry.ts`) --
+#   the mechanism a real `forge` run actually uses -- walks `modulesDir`'s own subdirectories via
+#   `listDirEntriesSorted`, pure filesystem-alphabetical order, "a later entry with the same id...
+#   wins." "fm-core" sorts before "fm-service" alphabetically, so a project installing both gets this
+#   module's own real, specialised agents here today -- confirmed directly by
+#   `packages/agents/test/content/fm-service-roster.test.ts`'s own `loadAgentRegistry(modulesDir)` test.
+# - `PLAN-M10.md` P2's own `resolveInstalledModules`/`compareProvideConflicts`
+#   (`packages/extensions/src/module/resolve.ts`) is a SEPARATE mechanism whose own "winner" is
+#   whichever module is LAST in the caller-supplied `installOrder` array, unrelated to
+#   `loadAgentRegistry`'s own directory-scan order. `packages/extensions/test/module/fm-service.test.ts`
+#   tests both the agreeing order (`['fm-core', 'fm-service']`) and the disagreeing one
+#   (`['fm-service', 'fm-core']`), matching `fm-web.test.ts`'s own precedent exactly.
+#
+# The residual gap this piece does not fix (fm-core's own stray `provides.agents` entries for both
+# ids, contradicting `05` §5.2's own tier column) is a defect in fm-core's already-committed file, a
+# different module's own file -- out of this piece's Surface. Recorded, not silently fixed here: see
+# SPEC-QUESTIONS.md.
+#
+# `catalog`/`techniques`/`gates`/`skills` are declared empty below: `19` §19.1's own fm-service row
+# names no catalog depth, technique, gate, or skill of its own (unlike fm-web's a11y/bundle-size
+# checks, nothing in the spec pack names fm-service-specific procedural knowledge beyond the
+# `contract-testing` skill fm-core already ships and `integration-architect` already lists) -- left
+# empty rather than invented, the same "no scaffolding for its own sake" discipline fm-web's own
+# module.yaml already follows for its own empty fields.
+#
+# `frameworks` below names only `api-versioning`, not `integration-design` -- `19` §19.1's own
+# worked-example `module.yaml` (the literal fm-service illustration in that same section) shows
+# `frameworks: [ integration-design, api-versioning ]`, but `PLAN-M10.md` P4's own Surface for this
+# piece names exactly one framework file to build (`frameworks/api-versioning.framework.yaml`) and no
+# `integration-design` framework exists anywhere in this repository today (confirmed: not in
+# `@forge/templates`' own 43-framework `FRAMEWORK_INDEX`, not under any module). Building an
+# unrequested second framework here would be exactly the "no scaffolding for its own sake" the build
+# process forbids; the illustrative worked example is prose demonstrating `module.yaml`'s own shape,
+# not itself a checked, literal deliverable list the way `checks: [ contract:verify,
+# api:breaking-change ]` explicitly is (PLAN-M10.md P4's own Surface: "module.yaml's own worked example
+# in 19 §19.1 already names these two exact check ids; built to match" -- said only of the checks, not
+# the frameworks). Recorded in SPEC-QUESTIONS.md.
+#
+# Two residual, disclosed-not-fixed gaps a critic round confirmed are pre-existing across every
+# module already shipped in this repository (fm-core, fm-web), not a defect this piece newly
+# introduces: (1) neither agent's own `prompt.system`/`prompt.briefs` paths nor this module's own
+# workflow's `brief:` paths resolve to a real file on disk (confirmed: `modules/fm-core/agents/
+# frontend.agent.yaml`'s own `prompt:` block has the identical gap, and no `forge agent validate`/
+# `forge workflow validate` exists yet anywhere in this codebase to enforce `19` §19.1's own worked
+# example or `05` §5.9's own normative "prompts referenced exist" rule); (2) no `README.md` or
+# `tests/` directory exists under this module's own directory, though `19` §19.1's own module-layout
+# diagram and §19.6 both name them -- confirmed neither `modules/fm-core/` nor `modules/fm-web/` has
+# either one either. Fixing either gap here alone, while every sibling module (including the
+# always-installed fm-core) still lacks it, would be inconsistent scope creep relative to established
+# precedent, not a real fix; recorded in SPEC-QUESTIONS.md for whichever later piece builds the real
+# `forge agent/workflow validate`/`forge overlay validate` commands these two rules actually belong to.
+# ---------------------------------------------------------------------------------------------------
+
+id: fm-service
+name: Backend services and APIs
+version: 1.0.0
+forgeVersion: '>=1.0 <2'
+requires: [fm-core]
+conflicts: []
+levels: [L1, L2, L3, L4]
+
+# Transcribed directly from each agent's own already-declared `tools:` block, the same "ceiling equals
+# what the shipped agent already holds today" convention fm-core's and fm-web's own module.yaml already
+# establish. `network` is the real ToolGrant enum (`none`/`allowlist`/`full`), not the boolean the
+# agent's own unrelated base `tools:` schema uses for the same concept.
+ceilings:
+  domain-modeler: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  integration-architect:
+    { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+
+provides:
+  # The two real, authoritative agents this module ships -- see the header comment above.
+  agents: [domain-modeler, integration-architect]
+
+  # The one real, compilable workflow this module ships. See workflows/contract-test-cycle.workflow.yaml.
+  workflows: [contract-test-cycle]
+
+  # See the header comment above for why `integration-design` is deliberately not named here.
+  frameworks: [api-versioning]
+
+  gates: []
+
+  # The two real, standalone `*.check.yaml` files 19 §19.1's own worked example names by exact id.
+  checks: ['contract:verify', 'api:breaking-change']
+
+  skills: []
+
+  # No new artifact type: the OpenAPI/proto contract templates below render the existing, already-
+  # registered `InterfaceContract` type (`@forge/schemas`' own registry) -- that type's own front matter
+  # shape already covers "a frozen, machine-readable contract" generically (its own base template,
+  # `packages/templates/templates/artifacts/InterfaceContract.md`, already names OpenAPI/proto/SDL as
+  # example contract kinds in prose). Unlike fm-web's ComponentSpec/UXReviewRecord (real, structured
+  # fields no existing type had a home for), an OpenAPI/proto contract's own real structure lives
+  # inside the rendered document body, not in front-matter fields a new JSON Schema would need to
+  # constrain -- so no `schemas/*.schema.json` file was invented here. See SPEC-QUESTIONS.md.
+  artifactTypes: []
+
+  catalog: []
+  techniques: []

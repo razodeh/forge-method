@@ -1,0 +1,103 @@
+{{!--
+  API versioning strategy -- ADR output template for the "api-versioning" decision framework (11 §11.0's
+  own execution contract: "produce a ranked recommendation... write an ADR"). Modelled field-for-field
+  on packages/templates/templates/adr-repo-strategy.md.hbs -- the identical real, execution-data shape
+  (not 19 §19.2's own TemplateContext; a framework's own output template renders against its own scoring
+  run's execution data, per that file's own doc comment) every other real *.framework.yaml's own
+  output_template in this codebase already renders against.
+
+  Only Handlebars built-in helpers are used (#each, #if) -- no custom helper is registered anywhere in
+  this repository yet, the same convention every other real .hbs template here already follows. Every
+  triple-stash {{{ }}} is deliberate: a double-stash {{ }} HTML-escapes its value by Handlebars' own
+  default, which would corrupt a YAML scalar containing an apostrophe or an ampersand -- this is a
+  Markdown/YAML render target, not HTML. Every array field's own {{#each}} carries an {{else}} branch
+  rendering a literal "[]", matching adr-repo-strategy.md.hbs's own reasoning: an empty {{#each}}
+  renders nothing at all, which would otherwise leave the YAML key with no value (parses as null, not
+  []) -- adrSchema's own array fields reject null.
+--}}
+---
+id: ADR-{{seq}}
+type: ADR
+schemaVersion: 1
+title: {{{title}}}
+status: {{{status}}}
+category: architecture
+deciders:
+{{#each deciders}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+date: {{{date}}}
+created: {{{date}}}
+updated: {{{date}}}
+revision: 1
+author: {{{author}}}
+reversibility: {{{reversibility}}}
+blast_radius:
+{{#each blastRadius}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+revisit_trigger: {{{revisitTrigger}}}
+supersedes:
+{{#each supersedes}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+superseded_by: null
+related:
+{{#each related}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+diagrams:
+{{#each diagrams}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+framework: api-versioning
+changelog:
+  - revision: 1
+    date: {{{date}}}
+    by: {{{author}}}
+    summary: {{{changelogSummary}}}
+---
+
+## Context
+
+{{{context}}}
+
+## Decision
+
+We choose **{{{chosenOption}}}**.
+
+## Score table
+
+{{!-- 11 §11.0's own "Frameworks MUST show the score table in the ADR". --}}
+{{#if criteria}}
+{{{scoreTable}}}
+{{else}}
+This framework has no comparative "criteria" (11 §11.0) -- its single option was executed
+directly. See "Decision" above for what was done.
+{{/if}}
+
+## Killer risk
+
+{{{killerRisk}}}
+
+## Consequences
+
+{{{consequences}}}
+
+## Alternatives considered
+
+{{#if alternativesConsidered}}
+{{{alternativesConsidered}}}
+{{else}}
+None -- this framework had no eliminated or competing options to record.
+{{/if}}

@@ -35,3 +35,7 @@ packages/templates/templates/adr-*.md.hbs
 # The identical YAML-front-matter-plus-Handlebars shape as the ADR output templates above, same
 # corruption, same fix (PLAN-M10.md P3, 19 §19.1/§19.2).
 modules/fm-web/templates/*.md.hbs
+
+# The identical YAML-front-matter-plus-Handlebars shape, same corruption, same fix (PLAN-M10.md P4,
+# 19 §19.1/§19.2).
+modules/fm-service/templates/*.md.hbs

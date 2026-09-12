@@ -17,6 +17,9 @@ importers:
       '@forge/adapter-claude-code':
         specifier: workspace:*
         version: link:packages/adapter-claude-code
+      '@forge/adapter-kit':
+        specifier: workspace:*
+        version: link:packages/adapter-kit
       '@forge/engine':
         specifier: workspace:*
         version: link:packages/engine
@@ -29,6 +32,9 @@ importers:
       '@forge/templates':
         specifier: workspace:*
         version: link:packages/templates
+      '@forge/testkit':
+        specifier: workspace:*
+        version: link:packages/testkit
       '@types/estree':
         specifier: 1.0.9
         version: 1.0.9
