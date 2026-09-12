@@ -6,7 +6,7 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P20
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -133,6 +133,34 @@ describe('runWorkflow', () => {
       await readFile(path.join(project.dir, '.forge/state/last-run.json'), 'utf8'),
     ) as { runId: string };
     expect(lastRun.runId).toBe('run-fixed');
+  });
+
+  it('20 §20.10 S8: refuses to start a real, non-dry-run run against a dirty working tree, before acquiring the lock or writing any run state', async () => {
+    const project = await createTestProject();
+    // A real, adversarial uncommitted edit to the user's own working tree -- not a FORGE-internal file,
+    // a real source file a human would plausibly still be mid-edit on.
+    await writeFile(path.join(project.dir, 'work-in-progress.txt'), 'not yet committed');
+
+    await expect(
+      runWorkflow(testRunDeps(project), {
+        workflowId: FIXTURE_WORKFLOW_ID,
+        expressionContext: fixtureExpressionContext(),
+        runId: 'run-dirty',
+        host: 'test-host',
+      }),
+    ).rejects.toMatchObject({ code: 'VCS-DIRTY-TREE' });
+
+    // Halted *before* any of runWorkflow's own side effects -- no lock left behind, no manifest/
+    // last-run pointer written for a run that never really started.
+    expect(await readRunLock(project.paths)).toBeUndefined();
+    await expect(
+      readFile(path.join(project.dir, '.forge/state/runs/run-dirty/manifest.json'), 'utf8'),
+    ).rejects.toThrow();
+
+    // The uncommitted work itself survives untouched -- S8's own "never discarded" half.
+    await expect(readFile(path.join(project.dir, 'work-in-progress.txt'), 'utf8')).resolves.toBe(
+      'not yet committed',
+    );
   });
 
   it('a full real run through a real merge step lands the change on the real integration branch', async () => {

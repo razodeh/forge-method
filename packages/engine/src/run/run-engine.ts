@@ -20,8 +20,16 @@
  */
 import { ForgeError } from '@forge/core/errors';
 import { readEvents } from '@forge/telemetry/events';
+import { checkBudget } from '@forge/telemetry/ledger';
 
 import type { ExpressionContext } from '../expr/index.ts';
+import {
+  canAdmit,
+  computeLiveBudgetState,
+  onBudgetBreach,
+  type BudgetConfig,
+} from '../budget/index.ts';
+import type { BudgetState } from '../budget/types.ts';
 import { executeStep } from '../dispatch/execute.ts';
 import type { ExecuteStepContext, StepOutcome } from '../dispatch/types.ts';
 import { compileRunPlan, type StepNode } from '../plan/index.ts';
@@ -44,6 +52,15 @@ export interface RunEngineContext extends ExecuteStepContext {
   readonly seed: string;
   readonly resourceClassOf?: (node: StepNode) => string | undefined;
   readonly canAdmit?: (node: StepNode) => boolean;
+  /** `20` §20.10 S9 (`PLAN-M11.md` P11): when supplied, a real `BudgetState` — computed fresh from this
+   * project's own real cost ledger before every scheduling tick, `../budget/live-state.ts`'s own
+   * `computeLiveBudgetState` — is folded into scheduler admission via `@forge/engine/budget`'s own
+   * `canAdmit`, composed with (never replacing) any `canAdmit` supplied above. Omitted entirely, this
+   * run pays nothing for it and behaves exactly as before: the identical "a caller with no budget
+   * concept pays nothing for it" shape `Scheduler`'s own constructor doc comment already establishes
+   * one layer down — this field is where a real caller (`@forge/cli`'s own `buildRunEngineContext`,
+   * from `.forge/config.yaml`'s own real `budget` block) now supplies one for the first time. */
+  readonly budget?: BudgetConfig;
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {
@@ -105,13 +122,28 @@ export function seedScheduler(
  * batch means nothing could *ever* become newly ready again — whether because every node reached a real
  * terminal status, or because a permanently-blocked dependent (a failed ancestor) can never satisfy
  * `computeReadySet`'s own "dependencies succeeded" rule — both are legitimate, final states for this loop
- * to stop at, not a deadlock to detect and reject. */
+ * to stop at, not a deadlock to detect and reject.
+ *
+ * `refreshBudget`, when supplied (`20` §20.10 S9), runs once at the top of every tick, before
+ * `scheduler.next()` — a real `BudgetState` refresh is genuinely asynchronous I/O (a real ledger read),
+ * unlike `Scheduler.next()`'s own synchronous decision, so it cannot itself be `canAdmit`'s own
+ * per-node callback and must instead update the mutable state that callback closes over ahead of the
+ * call that consults it. Once a real breach makes `canAdmit` refuse every remaining ready node, this
+ * loop's own existing termination condition ("`next()` returns nothing more to admit") already stops
+ * the run correctly with no further branching needed — `06`/`20`'s own three-way `onBreach` choice
+ * (`pause`/`finish-lanes`/`abort`) has no distinguishable runtime effect in this loop's own synchronous,
+ * fully-drained-batch-per-tick execution model: nothing is ever left "in flight" between one tick and
+ * the next for `finish-lanes` to let drain that `abort` would not already have let finish, and `pause`
+ * has no cooperative resume mechanism this milestone builds either (`run.ts`'s own doc comment, "no
+ * cooperative mid-batch pause exists"). Recorded here, not silently assumed distinguishable. */
 async function driveToCompletion(
   nodes: readonly StepNode[],
   scheduler: Scheduler,
   ctx: RunEngineContext,
+  refreshBudget?: () => Promise<void>,
 ): Promise<void> {
   for (;;) {
+    if (refreshBudget !== undefined) await refreshBudget();
     const admitted = scheduler.next();
     if (admitted.length === 0) return;
 
@@ -161,13 +193,71 @@ export async function runEngine(
   const compiled = compileRunPlan(parsed.workflow, context);
   if (!compiled.success) throw new ForgeError('RUN-045', { issues: formatIssues(compiled.issues) });
 
+  // `20` §20.10 S9 (`PLAN-M11.md` P11): `ctx.budget`, when supplied, gets a real, live `BudgetState`
+  // refreshed from this project's own real ledger before every tick (`refreshBudget` below) — composed
+  // with, never replacing, any caller-supplied `ctx.canAdmit`. Captured into locals rather than read
+  // through `ctx.budget`/`ctx.canAdmit` again inside the closures below: the same "a closure re-reading
+  // an optional member access re-widens past a narrowing check" reason `dispatch/steps.ts`'s own
+  // `runCommandStep` already captures `mergePolicy` for.
+  const budgetConfig = ctx.budget;
+  const explicitCanAdmit = ctx.canAdmit;
+  let liveBudgetState: BudgetState | undefined;
+  let budgetBreachEmitted = false;
+
+  function budgetCanAdmit(node: StepNode): boolean {
+    return liveBudgetState === undefined ? true : canAdmit(node, liveBudgetState);
+  }
+
+  const combinedCanAdmit: ((node: StepNode) => boolean) | undefined =
+    budgetConfig === undefined
+      ? explicitCanAdmit
+      : explicitCanAdmit === undefined
+        ? budgetCanAdmit
+        : (node: StepNode) => explicitCanAdmit(node) && budgetCanAdmit(node);
+
   const scheduler = new Scheduler(
     compiled.nodes,
     ctx.limits,
     ctx.seed,
     ctx.resourceClassOf,
-    ctx.canAdmit,
+    combinedCanAdmit,
   );
+
+  // `BudgetBreached` (`18` §18.4's own Cost event group) is emitted once, the first tick a real breach
+  // is observed at either level — not on every tick a breach continues to hold, which would otherwise
+  // write one event per scheduling tick for the remainder of an already-breached run. `onBudgetBreach`
+  // is genuinely consulted here (not merely imported for its own type): its own returned `kind` is what
+  // this event's `response` field reports, so a real caller inspecting the log can see which of
+  // `06` §6.9's own three run-level responses actually applied, not just that a breach happened.
+  const refreshBudget =
+    budgetConfig === undefined
+      ? undefined
+      : async (): Promise<void> => {
+          liveBudgetState = await computeLiveBudgetState(
+            ctx.projectRoot,
+            ctx.runId,
+            new Date(ctx.now()).toISOString(),
+            budgetConfig,
+          );
+          if (budgetBreachEmitted) return;
+          const state = liveBudgetState;
+          const runBreached =
+            checkBudget({ spent: state.runSpentUsd, cap: state.perRunUsd }) === 'breached';
+          const periodBreached =
+            checkBudget({ spent: state.dailySpentUsd, cap: state.dailyUsd }) === 'breached';
+          if (!runBreached && !periodBreached) return;
+          budgetBreachEmitted = true;
+          const level = runBreached ? 'run' : 'period';
+          await ctx.telemetry.emit({
+            type: 'BudgetBreached',
+            payload: {
+              level,
+              capUsd: runBreached ? state.perRunUsd : state.dailyUsd,
+              spentUsd: runBreached ? state.runSpentUsd : state.dailySpentUsd,
+              response: onBudgetBreach(level, state).kind,
+            },
+          });
+        };
 
   if (resumeFrom === undefined) {
     await ctx.telemetry.emit({ type: 'RunPlanned', payload: { planRef: parsed.workflow.id } });
@@ -176,7 +266,7 @@ export async function runEngine(
     seedScheduler(scheduler, compiled.nodes, resumeFrom);
   }
 
-  await driveToCompletion(compiled.nodes, scheduler, ctx);
+  await driveToCompletion(compiled.nodes, scheduler, ctx, refreshBudget);
 
   await ctx.telemetry.emit({
     type: allSucceeded(compiled.nodes, scheduler) ? 'RunCompleted' : 'RunFailed',

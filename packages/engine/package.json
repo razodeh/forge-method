@@ -18,6 +18,7 @@
     "./resume": "./src/resume/index.ts",
     "./run": "./src/run/index.ts",
     "./scheduler": "./src/scheduler/index.ts",
+    "./security": "./src/security/index.ts",
     "./workflow": "./src/workflow/index.ts"
   },
   "engines": {

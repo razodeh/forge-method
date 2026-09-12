@@ -36,6 +36,22 @@ import type {
   StepOutcomeDetail,
 } from './types.ts';
 
+/** A gauntlet critic round found `session.usage`'s own numeric fields are not trustworthy input:
+ * `@forge/adapter-claude-code`'s own real SDK/CLI mapping (`map-message.ts`/`parse-event.ts`) accepts
+ * any `typeof value === 'number'` from raw, external JSON with no finite/non-negative check, unlike
+ * `@forge/adapter-kit`'s own event schema for the generic adapter -- so a real platform's own malformed
+ * or hostile `total_cost_usd` (`NaN`, negative, `Infinity`) could previously flow straight through this
+ * module's own `UsageRecorded` emission into `@forge/telemetry/ledger`'s own `toLedgerEntry`, which
+ * throws for exactly this shape (`isFiniteNonNegativeNumber`) -- turning one bad upstream number into an
+ * unhandled crash of the *entire run* the moment `@forge/engine/budget`'s own live `canAdmit` refresh
+ * next reads this run's own ledger, rather than a graceful, data-shaped step outcome. Sanitised here, at
+ * the one place this module turns adapter-reported usage into a durable event: a non-finite or negative
+ * value is treated the identical "unknown, not fabricated as free" way `session.usage.costUsd ??
+ * 0`'s own missing case already is, never passed through raw. */
+export function sanitizeUsageNumber(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
 function succeeded(
   stepId: string,
   startedAt: number,
@@ -341,6 +357,33 @@ export async function runAgentWork(
     laneId: lane.laneId,
     agentId: node.agent,
     payload: { ok: session.ok },
+  });
+  // `20` §20.10 S9 / `18` §18.5: `@forge/telemetry/ledger`'s own doc comment already names
+  // `UsageRecorded` as "everything a LedgerEntry needs" -- but nothing in this whole codebase ever
+  // emitted one for a real session. `forge cost`, `attributedSpend`, and `@forge/engine/budget`'s own
+  // `canAdmit` were all real and correct, and all permanently fed an empty ledger in every real run --
+  // the identical "the mechanism is real, the wiring to a real call site is not" shape `PLAN-M11.md`
+  // P10 already found for S5's control-token stripping. Emitted here, once per real session that
+  // actually produced a result (a crash before `handle.result()` ever resolves -- the `catch` block
+  // above -- genuinely has no usage figure to report; emitting a fabricated `0` there would misrepresent
+  // "unknown" as "free", not merely round down). `estimated: true` unconditionally: `07` §7.3's own
+  // "adapter-reported figures are client-side estimates, never presented as an invoice" applies to
+  // every real adapter this codebase can construct today, not a caller-decided flag this module has any
+  // basis to vary.
+  await ctx.telemetry.emit({
+    type: 'UsageRecorded',
+    stepId: node.id,
+    agentId: node.agent,
+    payload: {
+      model: ctx.model,
+      platform: ctx.adapter.id,
+      inputTokens: sanitizeUsageNumber(session.usage.inputTokens),
+      outputTokens: sanitizeUsageNumber(session.usage.outputTokens),
+      cacheReadTokens: 0,
+      costUsd: session.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(session.usage.costUsd),
+      estimated: true,
+      durationMs: sanitizeUsageNumber(session.durationMs),
+    },
   });
 
   const detail: StepOutcomeDetail = { kind: 'agent', session };

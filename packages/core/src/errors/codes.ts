@@ -950,6 +950,20 @@ export const ERROR_CODES = {
       'Create a fresh session for any follow-up work instead -- this record has no resumable ' +
       'state (it may predate the resume feature, or its internal state file was removed).',
   },
+  'RUN-075': {
+    // `20` §20.10 S7 (`PLAN-M11.md` P11): `forge deploy <env>`'s own real, wired call into
+    // `@forge/engine/security`'s new `requireDestructiveConfirmation` -- a real destructive-operation
+    // confirmation gate refused, whether because no confirmation was supplied at all, a wrong one was
+    // typed, or this project's own `security.destructiveOps: 'deny'` policy forecloses the operation
+    // outright with no override. `d.reason` is the decision's own already-specific message (naming the
+    // operation/environment/resource and the exact mismatch), not re-derived here.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { reason: string }) => `Destructive operation refused: ${show(d.reason)}.`,
+    remedy:
+      'Provide the exact typed confirmation this operation requires (environment/resource), or ask a ' +
+      'human operator with the authority to type it -- no autonomy setting can bypass this gate.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

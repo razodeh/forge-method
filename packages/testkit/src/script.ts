@@ -44,6 +44,16 @@ export interface FakeSessionScript {
   readonly untrustedContent?: string;
   /** For `SessionResult.structured`, when `SessionRequest.outputSchema` was set. */
   readonly structured?: unknown;
+  /** `SessionResult.usage.costUsd` — this fake's own doc comment used to disclose this as "never
+   * populated... add the mechanism when one does, rather than speculatively now" (`SPEC-QUESTIONS.md`
+   * Q61). `PLAN-M11.md` P11 (`20` §20.10 S9) is that consumer: a real, script-supplied dollar figure
+   * lets a caller test budget/ledger enforcement (`@forge/engine/budget`'s own `canAdmit`, and the real
+   * `UsageRecorded` emission `runAgentWork` now performs) against a deterministic, known cost, the same
+   * way `text`/`writeFiles` already let a caller assert on deterministic, known content. Omitted (not
+   * defaulted to `0`) when the script does not set it — `SessionUsage.costUsd` is itself optional
+   * (`adapter-kit`'s own real platforms may not report cost at all), and a fake that silently invented a
+   * `0` here would make "no cost reported" indistinguishable from "reported, free." */
+  readonly costUsd?: number;
   /** The one thing nothing in `SessionRequest` itself says: that this session needs a granted MCP
    * server to do its job. Refused with a precise message naming the server when the adapter has no way
    * to provision one (`capabilities().mcp === false && capabilities().toolProxy === false`). */

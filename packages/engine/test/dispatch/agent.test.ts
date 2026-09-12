@@ -181,6 +181,9 @@ describe('runAgentStep', () => {
       'SessionStarted',
       'SessionEvent',
       'SessionEnded',
+      // 20 §20.10 S9 (PLAN-M11.md P11): a real UsageRecorded event, now emitted once per completed
+      // session -- the ledger's own sole input, previously never produced by any real dispatch code.
+      'UsageRecorded',
       'LaneCommitted',
       'LaneCommitted',
       'LaneReady',
@@ -214,6 +217,8 @@ describe('runAgentStep', () => {
       'SessionStarted',
       'SessionEvent',
       'SessionEnded',
+      // 20 §20.10 S9 (PLAN-M11.md P11): see the identical addition's own comment above.
+      'UsageRecorded',
       'LaneCommitted',
       'LaneReady',
       'StepSucceeded',
@@ -221,7 +226,7 @@ describe('runAgentStep', () => {
     // seq is monotonic and gapless (18 §18.4's own rule) -- readEvents itself already refuses a gap, so
     // reaching this line at all already proves it; asserting it explicitly documents the property this
     // test relies on, not just leaves it implicit in "did not throw".
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it("StepStarted survives (fsync'd) even when the adapter session itself fails to even start -- proven by injecting a failure between the event write and the session start", async () => {
@@ -338,6 +343,8 @@ describe('runAgentStep', () => {
       'SessionStarted',
       'SessionEvent',
       'SessionEnded',
+      // 20 §20.10 S9 (PLAN-M11.md P11): see agent-events's own identical addition above.
+      'UsageRecorded',
       'LaneReady',
       'StepSucceeded',
     ]);

@@ -17,10 +17,13 @@
  * both; recorded rather than silently left undocumented): `SessionRequest.systemPrompt`,
  * `permissionMode`, and `attachments` are accepted but have no observable effect, since no script field
  * models a platform reacting to them yet. `SessionLimits.wallClockMs`/`maxCostUsd` are accepted but not
- * enforced (this package has no injectable clock — see determinism, `specs/22`), and
- * `SessionResult.usage.costUsd` is never populated despite `costReporting: 'per-turn'` being the default
- * capability. None of these currently have a consumer that needs them; add the mechanism when one does,
- * rather than speculatively now.
+ * enforced (this package has no injectable clock — see determinism, `specs/22`). None of these
+ * currently have a consumer that needs them; add the mechanism when one does, rather than speculatively
+ * now. `SessionResult.usage.costUsd` *was* one such deferred item (this doc comment used to say it "is
+ * never populated... add the mechanism when one does") until `PLAN-M11.md` P11 became that real
+ * consumer: `FakeSessionScript.costUsd` now threads a script-supplied figure straight onto
+ * `usage.costUsd`, omitted (not defaulted to `0`) when unset, matching a real adapter's own "cost
+ * reporting is optional" shape.
  *
  * @see specs/07 §7.2
  * @see specs/15 §15.6
@@ -605,6 +608,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
       inputTokens: 10 * effectiveTurns,
       outputTokens: 5 * effectiveTurns,
       turns: outcome.turnsRun,
+      ...(script.costUsd !== undefined ? { costUsd: script.costUsd } : {}),
     };
     yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
 
@@ -718,6 +722,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
       inputTokens: 10 * effectiveTurns,
       outputTokens: 5 * effectiveTurns,
       turns: outcome.turnsRun,
+      ...(script.costUsd !== undefined ? { costUsd: script.costUsd } : {}),
     };
     yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
 

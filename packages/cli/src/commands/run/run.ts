@@ -14,6 +14,7 @@ import { runEngine } from '@forge/engine/run';
 import type { RunState } from '@forge/engine/resume';
 import { parseWorkflow } from '@forge/engine/workflow';
 import type { ForgeConfig } from '@forge/schemas/config';
+import { assertCleanWorkingTree } from '@forge/vcs';
 
 import { buildRunEngineContext } from './context.ts';
 import { acquireRunLock, releaseRunLock, type RunLock } from './lock.ts';
@@ -105,6 +106,17 @@ export async function runWorkflow(
   if (options.dryRun === true) {
     return dryRunWorkflow(workflowSource, options.expressionContext);
   }
+
+  // `20` §20.10 S8 -- "the user's uncommitted work is sacred": `@forge/vcs`'s own
+  // `assertCleanWorkingTree` is real and correct, but had zero production call sites anywhere in this
+  // codebase (confirmed by grep, `PLAN-M11.md` P11's own investigation) -- a lane worktree is created
+  // fresh from `integrationBase` regardless of the *main* working tree's own state, so a real `forge
+  // run` never actually halted for a dirty tree, it simply never looked. Checked here, before the run
+  // lock/manifest/lane machinery starts (and before any lane worktree is created), so a dirty tree halts
+  // the whole run rather than silently proceeding against a stale base while the user's own uncommitted
+  // edits sit untouched and unmentioned. Never applies to `--dry-run` (already returned above): a
+  // dry-run performs no real work and needs no clean tree to plan against.
+  await assertCleanWorkingTree(deps.projectRoot);
 
   const clock = options.clock ?? SYSTEM_CLOCK;
   // No `Math.random()` (`QUALITY-BAR.md` R10: a seeded/injected source only) — derived instead from

@@ -293,5 +293,14 @@ export async function buildRunEngineContext(
     laneRegistry: new Map(),
     limits: concurrencyLimits(input.config),
     seed: input.runId,
+    // `20` §20.10 S9 (`PLAN-M11.md` P11): the real, first-ever production wiring of `.forge/config.
+    // yaml`'s own `budget` block into `@forge/engine/run`'s own live admission control
+    // (`computeLiveBudgetState`/`canAdmit`) — previously `RunEngineContext.budget` had no caller at
+    // all, so a real `forge run` enforced no budget cap regardless of what this config said.
+    budget: {
+      perRunUsd: input.config.budget.perRunUsd,
+      dailyUsd: input.config.budget.dailyUsd,
+      onBreach: input.config.budget.onBreach,
+    },
   };
 }

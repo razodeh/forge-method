@@ -8,4 +8,5 @@
  */
 export { canAdmit } from './admit.ts';
 export { onBudgetBreach } from './breach.ts';
+export { computeLiveBudgetState, type BudgetConfig } from './live-state.ts';
 export type { BreachResponse, BudgetBreachLevel, BudgetState } from './types.ts';

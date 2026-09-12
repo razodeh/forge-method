@@ -171,6 +171,17 @@ export async function createTestProject(): Promise<TestProject> {
   );
   await writeFile(path.join(dir, AGENTS_ROOT, 'security.yaml'), agentYaml('security', 'Security'));
 
+  // `20` §20.10 S8 (`PLAN-M11.md` P11): `runWorkflow` now genuinely refuses to start against a dirty
+  // working tree -- a real project commits its own workflow/gate/agent/story fixtures, so this fixture
+  // project does too. `.forge/state/` is gitignored, matching `forge init`'s own real `write-tree.ts`
+  // (`IGNORED_PATHS`) -- omitted, `runWorkflow`'s own real lock/manifest files under it would themselves
+  // make an otherwise-clean tree look dirty on any *second* real run this test suite ever performs.
+  await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n');
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'fixture workflows + gates + agents + story'], {
+    cwd: dir,
+  });
+
   const config: ForgeConfig = {
     ...DEFAULT_CONFIG,
     execution: { ...DEFAULT_CONFIG.execution, retainLaneWorktrees: 'always' },

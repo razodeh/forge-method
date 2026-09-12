@@ -172,6 +172,18 @@ export async function createTestProject(
   await mkdir(path.join(dir, CHECKS_ROOT), { recursive: true });
   await writeFile(path.join(dir, CHECKS_ROOT, `${FIXTURE_GATE_ID}.gate.yaml`), FIXTURE_GATE_YAML);
 
+  // `20` §20.10 S8 (`PLAN-M11.md` P11): `runWorkflow` now genuinely refuses to start against a dirty
+  // working tree (`assertCleanWorkingTree`, wired in for the first time) -- a real project commits its
+  // own workflow/gate fixtures rather than leaving them perpetually uncommitted, so this fixture project
+  // does too, matching what every other real caller of `runWorkflow` needs to be true regardless.
+  // `.forge/state/` specifically must be gitignored, exactly as `forge init`'s own real `write-tree.ts`
+  // already writes for every real project (`IGNORED_PATHS`) -- omitted, `acquireRunLock`'s own real
+  // lock file under `.forge/state/` would itself make an otherwise-clean tree look dirty, a false
+  // positive this fixture's own missing setup would produce, not a real product defect.
+  await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n');
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'fixture workflow + gate'], { cwd: dir });
+
   const config: ForgeConfig = {
     ...DEFAULT_CONFIG,
     execution: { ...DEFAULT_CONFIG.execution, retainLaneWorktrees: 'always' },
