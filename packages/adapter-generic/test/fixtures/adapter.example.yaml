@@ -1,0 +1,48 @@
+id: my-platform
+displayName: My Platform
+binary: myagent
+minimumVersion: "1.4.0"
+versionCommand: ["--version"]
+versionRegex: "v?(\\d+\\.\\d+\\.\\d+)"
+
+capabilities:
+  streaming: true
+  sessionResume: false
+  structuredOutput: false
+  toolAllowlist: true
+  cwdIsolation: true
+  costReporting: none
+
+invoke:
+  args:
+    - "--prompt-file"
+    - "{{promptFile}}"
+    - "--cwd"
+    - "{{cwd}}"
+    - "--model"
+    - "{{model}}"
+  when:
+    - if: "tools.write == false"
+      args: ["--read-only"]
+    - if: "limits.maxTurns"
+      args: ["--max-steps", "{{limits.maxTurns}}"]
+  stdin: none
+  env:
+    MYAGENT_NO_COLOR: "1"
+
+events:
+  format: ndjson
+  map:
+    - match: { type: "message", role: "assistant" }
+      emit: { type: "text", text: "{{.content}}" }
+    - match: { type: "tool_call" }
+      emit: { type: "tool.call", name: "{{.tool}}", input: "{{.args}}" }
+    - match: { type: "done" }
+      emit: { type: "session.ended", reason: "complete" }
+
+result:
+  successExitCodes: [0]
+  finalTextFrom: lastAssistantText
+
+files:
+  changeDetection: git-status
