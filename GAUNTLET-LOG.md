@@ -9616,3 +9616,85 @@ structural gate is satisfied" with "the content is real," the same gap `isGeneri
 existence is meant to close for the one case (a generic critic response) the spec names explicitly —
 extending that same discipline uniformly, rather than only where the spec's own literal example pointed,
 is what the fixes above actually do. `SPEC-QUESTIONS.md` Q155 has the full record.
+
+## M10 P3 — `fm-web` module (`19` §19.1)
+
+**Mandate:** `19` §19.1's own `fm-web` row: "Web applications — `frontend` agent, UX-heavy templates, a11y
+checks, browser e2e strategy, frontend catalog depth, bundle-size checks."
+
+Built `modules/fm-web/`: `module.yaml` (`requires: [fm-core]`, a real `frontend`-only ceiling); the real,
+authoritative `agents/frontend.agent.yaml` — resolving a real, pre-existing collision with
+`modules/fm-core/agents/frontend.agent.yaml` (P1) rather than silently duplicating it, since `05` §5.2
+marks `frontend` as `S(fm-web)`; two real, dependency-free standalone `checks/*.check.yaml` files
+(`a11y:audit`, `bundle:size`) — the first standalone check content anywhere in this repository; two new,
+module-owned artifact types (`ComponentSpec`, `UXReviewRecord`, own `schemas/*.schema.json`) with real
+Handlebars templates rendering front matter against `19` §19.2's own real `TemplateContext`; and two real
+`catalog/*.entry.yaml` entries (`tailwind`, `axe-core`) loading cleanly through `@forge/catalog`'s own
+already-real registry. Full reasoning for both the agent-id collision and the two new artifact types in
+`SPEC-QUESTIONS.md` Q157.
+
+### Round 1 — fresh critic: two blocking findings, two major findings
+
+**[Blocking 1]** `modules/fm-web/module.yaml` and both new schema files cited `SPEC-QUESTIONS.md` Q156/
+Q157 as the recorded reasoning for their two most consequential decisions (the agent-id collision, the new
+artifact types) — neither entry existed yet at review time (this piece's own docs commit, like every
+other M10 piece's, writes its `SPEC-QUESTIONS.md` entry only once the round of review that necessitates it
+is done), and worse, a concurrently-landing, unrelated piece (M10 P16) had — between this piece drafting
+its citation and the critic's own review — genuinely claimed Q156 for its own, unrelated topic, so even
+the number itself had gone stale mid-build. **[Blocking 2]** both new schemas declared `created`/`updated`
+as `format: "date"` (bare `YYYY-MM-DD`), but both templates render those fields directly from `now`, which
+`@forge/core`'s own real `Clock.now()` produces as a full ISO-8601 *instant* — the critic rendered a
+template with a real instant substituted for the test's own artificially bare-date fixture and got
+`created: 2026-09-12T05:32:22.557Z`, which the schema's own `format: "date"` rejects outright; the test
+suite's own hand-rolled `validateAgainstSchema` didn't even implement the `format` keyword, so this would
+have sailed through review invisibly. **[Major 1]** the a11y check's own `alt`/`lang` detection used a
+bare `\b` word-boundary regex, which the critic proved also matches at a hyphen — an `<img
+data-alt="...">`/`<html data-lang="...">` (a decoy attribute, not the real one) was silently treated as
+accessible, the exact false negative the check exists to prevent, with zero fixture coverage of the case.
+**[Major 2]** `module.yaml`'s own header comment asserted, as settled fact, that the real roster always
+resolves the `frontend` collision in `fm-web`'s favour "with no code change needed anywhere for that to be
+true today" — the critic found this conflated two genuinely independent mechanisms
+(`loadAgentRegistry`'s real, filesystem-alphabetical resolution, and `resolveInstalledModules`'s own
+separate, caller-supplied-`installOrder`-dependent "winner") and proved them capable of disagreeing by
+running `resolveInstalledModules(['fm-web', 'fm-core'], ...)` — a perfectly legal input nothing rejects —
+and getting `fm-core` reported as the winner, the opposite of what the real roster resolves to.
+
+**Fixed:** every citation renumbered consistently to the real next-free `Q157` (re-checked immediately
+before use, not assumed). Both schemas' `created`/`updated` changed to `date-time` with a real regex
+`pattern` (the test's hand-rolled validator checks `pattern`, not `format`); `test/fm-web-templates.test.ts`'s
+own fixture `now` changed to a realistic ISO instant, plus a new test proving the pattern genuinely
+rejects a bare date. The a11y script's `\balt\s*=`/`\blang\s*=` became `\salt\s*=`/`\slang\s*=` (requiring
+real whitespace, which HTML attributes always have, immediately before the attribute name), pinned with a
+new decoy-attribute (`data-alt`/`data-lang`) regression fixture. `module.yaml`'s own comment rewritten to
+accurately describe the two mechanisms as independent and capable of disagreeing, rather than asserting a
+single safe outcome; a new test in `packages/extensions/test/module/fm-web.test.ts` calls
+`resolveInstalledModules` with the reversed install order and asserts the surprising, disagreeing result
+directly, rather than only describing it in prose.
+
+### Round 2 — a second, fresh critic verifying all four fixes: all four confirmed genuinely fixed, no new
+findings
+
+Verified each fix empirically rather than by reading the round-1 fix description: confirmed every citation
+in the diff now consistently reads `Q157` and that `Q157` was still free at commit time (`SPEC-QUESTIONS.md`'s
+own committed tail ends at `Q156`, claimed by the concurrent, unrelated M10 P16); rendered both templates
+with a real ISO instant and confirmed the output validates, then substituted a bare date and confirmed
+`validateAgainstSchema` rejects it with the specific pattern-mismatch message, not merely a generic
+failure; extracted and ran the a11y check's own literal `run:` command against the exact decoy fixture
+and confirmed 2 violations reported, while single-space/double-space/tab-before-`alt=` all still match
+correctly (no new false positives from tightening the regex); read `resolve.ts`'s own `findProvideConflicts`
+directly and confirmed "last module in `installOrder` wins" is the real, literal behaviour, and that
+`resolveInstalledModules` has zero production call sites anywhere in `packages/` outside its own tests,
+matching the rewritten comment's own claim exactly. Full re-run of all 32 tests across the five touched
+test files, whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-warnings 0`, `prettier
+--check`, and `node scripts/check-boundaries.mjs` all clean, with no fresh regressions introduced by any
+of the four fixes.
+
+**Final state:** 32 real tests — `packages/extensions/test/module/fm-web.test.ts` (7, including the
+reversed-install-order disagreement case), `packages/agents/test/content/fm-web-roster.test.ts` (6,
+including `loadAgentRegistry(modulesDir)` proving the real collision resolution), `packages/engine/test/
+gates/fm-web-checks.test.ts` (8, both checks' own literal `run:` commands executed via real child
+processes against real pass/fail/decoy fixtures through the real, production `evaluateGate`),
+`packages/catalog/test/content/fm-web-catalog.test.ts` (4), and `test/fm-web-templates.test.ts` (7,
+rendering both templates against a real `TemplateContext` fixture, including the date-time regression
+test). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint --max-warnings 0`, `prettier --check`,
+and `node scripts/check-boundaries.mjs` all clean. `SPEC-QUESTIONS.md` Q157 has the full record.

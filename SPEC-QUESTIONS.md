@@ -12538,3 +12538,107 @@ Per-file coverage on every new `packages/kb/src/adopt/{evidence,cartography,infe
 `packages/engine/src/adopt/*.ts` file meets `packages/kb`'s/`packages/engine`'s own ≥90% lines/statements/
 functions, ≥85% branches ratchet. `GAUNTLET-LOG.md`'s own `M10 P16` entry has the full round-by-round
 record.
+
+## Q157 — M10 P3: `fm-web` module — the `frontend` agent-id collision with `fm-core`, and two new
+artifact types instead of reusing an existing `@forge/schemas` registry type
+
+`PLAN-M10.md` P3 asked this piece to investigate directly, rather than silently duplicate, whether `19`
+§19.1's own `fm-web` row ("`frontend` agent...") collides with `modules/fm-core/agents/frontend.agent.yaml`
+(P1, already committed) — it does — and to resolve the collision concretely rather than guess.
+
+**1. `frontend` is a real, pre-existing collision, not one this piece invented, and the fix is to ship the
+real, authoritative agent under `fm-web` and let the real, already-tested resolution machinery sort it
+out — which it does, but through a mechanism this piece had to verify empirically rather than assume.**
+`05` §5.2's own roster table marks `frontend` as `S(fm-web)` — a specialised-tier role `fm-web`, not
+`fm-core`, is supposed to add. `modules/fm-core/agents/frontend.agent.yaml` already exists on disk (P1),
+physically under `fm-core` (the one module-layout exception where agents load straight from a module's own
+directory, `05` §5.3's own canonical path) and is *also* named in `fm-core`'s own `provides.agents`,
+unconditionally — that file's own doc comment ("S(fm-web): installed with the fm-web module, per 05 §5.2's
+own Tier column") shows P1 was aware of the mismatch, reading as anticipatory scaffolding for this exact
+module rather than an oversight. This piece ships the real, authoritative `frontend` agent under
+`modules/fm-web/agents/frontend.agent.yaml` and re-declares it in its own `provides.agents` — a deliberate,
+tested case of two modules both providing the same id, not a silent duplicate.
+
+Two DIFFERENT, DISAGREEING real mechanisms are involved here, and a critic round found the first draft of
+this piece's own reasoning stated their outcome as one settled fact when it is not. `@forge/agents`' own
+`loadAgentRegistry` (`packages/agents/src/registry/load-agent-registry.ts`) — the mechanism a real `forge`
+run actually uses to build its roster — walks `modulesDir`'s own subdirectories via
+`listDirEntriesSorted`, pure filesystem-alphabetical order, and its `AgentRegistry.add` lets "a later entry
+with the same id... win." `"fm-core"` sorts before `"fm-web"` alphabetically, so a project installing both
+gets `fm-web`'s own real, specialised `frontend` agent today — confirmed directly (not merely reasoned
+about) by `packages/agents/test/content/fm-web-roster.test.ts`'s own `loadAgentRegistry(modulesDir)` test.
+`PLAN-M10.md` P2's own `resolveInstalledModules`/`compareProvideConflicts`
+(`packages/extensions/src/module/resolve.ts`) is a SEPARATE mechanism with no relationship to the one
+above: its own "winner" is whichever module is LAST in the caller-supplied `installOrder` array — an
+arbitrary, caller-chosen list with no topological ordering against `requires` enforced anywhere, and
+(confirmed directly: zero call sites anywhere in `packages/` outside its own tests) no real command in
+this codebase consults its report yet. Passing `installOrder: ['fm-web', 'fm-core']` — a legal input
+nothing rejects — makes `resolveInstalledModules` report `fm-core` as the winner, the *opposite* of what
+`loadAgentRegistry` actually hands out; `packages/extensions/test/module/fm-web.test.ts` pins both the
+agreeing order and this disagreeing one, rather than only the convenient case. In short: the real roster a
+`forge` run builds today already resolves to `fm-web`'s own `frontend` agent, independent of any notion of
+"install order"; the separate `resolveInstalledModules` compile-time conflict report is real, tested, and
+currently uncalled, and its own "winner" is not yet a promise about which agent actually loads. Whichever
+later piece wires that report into a real `forge compile --check` output should reconcile the two, which
+is not this piece's own Surface.
+
+The one residual gap this piece does not fix: a project that installs `fm-core` *without* `fm-web` still
+gets `fm-core`'s own stray `frontend` agent, contradicting `05` §5.2's own tier column — a defect in
+`fm-core`'s already-committed `provides.agents`/`ceilings` list, a different module's own file, out of this
+piece's Surface ("do not touch any other PLAN-M10 piece").
+
+**2. `ComponentSpec`/`UXReviewRecord` are new, module-owned artifact types (own `schemas/*.schema.json`,
+per `19` §19.1's own module-layout diagram) rather than reuses of an existing `@forge/schemas` registry
+type.** Both existing candidates were considered and rejected on inspection, not by default: `InterfaceContract`'s
+own real path template (`specs/interfaces/{name}.yaml`, `packages/schemas/src/registry/
+artifact-types.ts`) is a frozen machine-readable contract file (OpenAPI/SDL/proto/...), not a
+prose UX-review write-up, and its own front-matter-only shape carries no field for a component's
+props/states/accessibility notes without inventing them anyway. `SessionRecord`'s own schema
+(`packages/schemas/src/artifacts/session-record.ts`) requires `started`/`ended`/`cost_usd` fields a real,
+already-run collaboration session produces (`16` §16.5) — fields a hand-authored review of one screen has
+no honest value for; forcing a fabricated `cost_usd: 0`/synthetic timestamps onto a document that was never
+a real dispatched session would be worse than defining a new, honestly-scoped type. Both new types are
+deliberately NOT registered in `@forge/schemas`' own registry (`ARTIFACT_TYPES`/`ARTIFACT_SCHEMAS`) — doing
+so would touch shared, cross-package infrastructure well outside this piece's own `modules/fm-web/`
+Surface, for two types no other module or package needs to know about; a hand-rolled JSON Schema file
+under this module's own `schemas/` directory, real Handlebars templates that render front matter matching
+it, and a small, real, hand-rolled JSON-Schema-subset validator in `test/fm-web-templates.test.ts` (the
+same "write the minimal real check yourself" precedent `test/output-templates.test.ts`'s own Handlebars
+AST walker and `@forge/engine/expr`'s own hand-rolled expression evaluator already establish, since no
+JSON Schema validator is a dependency anywhere in this repository) prove the two types are real and
+render correctly without new shared infrastructure.
+
+A critic round rendering both templates against a realistic fixture context found a real defect in this
+design's first draft: both schemas declared `created`/`updated` as `format: "date"` (a bare `YYYY-MM-DD`,
+matching `@forge/schemas`' own `baseFrontMatterShape` convention), but both templates render those fields
+directly from `19` §19.2's own real `TemplateContext.now`, which `@forge/core`'s own real `Clock.now()`
+(`packages/core/src/clock.ts`) documents and implements as a full ISO-8601 *instant*
+(`2026-09-12T05:32:22.557Z`), not a bare date — the templates' own honest use of the real context shape
+produced front matter the schemas themselves rejected. Fixed by declaring `created`/`updated` as
+`date-time` with a real regex `pattern` (the hand-rolled test validator does not implement the `format`
+keyword), not by inventing a nonexistent `{{date fmt}}` helper call to truncate `now` — `19` §19.2's own
+fixed helper set is not registered or implemented anywhere in this repository yet (confirmed: no custom
+Handlebars helper exists anywhere), so a template calling one would itself be an undeclared-helper defect
+of the exact kind `test/output-templates.test.ts`'s own convention already polices.
+
+**3. `checks/a11y.check.yaml`/`checks/bundle-size.check.yaml` are the first standalone `*.check.yaml`
+content anywhere in this repository** (`modules/fm-core/module.yaml`'s own header comment: every
+deterministic check `fm-core`'s own gates run was declared inline inside the owning gate). Both are real,
+dependency-free `node -e` scripts rather than wrappers around a third-party tool (axe-core, pa11y,
+Lighthouse CI): those tools' own JSON output is an array of per-page results, not the flat `{field:
+number}` object `@forge/engine/gates`'s own `failOn` evaluates against, and installing one as a real
+dependency of a target project is a decision this module has no basis to make on a project's behalf. A
+critic round found the a11y script's own `alt`/`lang` detection used a bare `\b` word-boundary regex,
+which also matches at a hyphen — an `<img data-alt="...">`/`<html data-lang="...">` (a decoy attribute,
+not the real one) was wrongly treated as accessible. Fixed by requiring an actual whitespace character
+immediately before the attribute name (`\salt\s*=`/`\slang\s*=` — HTML attributes are always
+whitespace-separated from whatever precedes them), pinned with a real decoy-attribute regression fixture.
+
+**Verification:** 32 real tests across `packages/extensions/test/module/fm-web.test.ts` (7),
+`packages/agents/test/content/fm-web-roster.test.ts` (6), `packages/engine/test/gates/fm-web-checks.test.ts`
+(8, including two real child-process executions of each check's own literal `run:` command against real
+pass/fail fixtures), `packages/catalog/test/content/fm-web-catalog.test.ts` (4), and
+`test/fm-web-templates.test.ts` (7, rendering both templates against a real `TemplateContext` fixture and
+validating the result). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint --max-warnings 0`,
+`prettier --check`, and `node scripts/check-boundaries.mjs` all clean. `GAUNTLET-LOG.md`'s own `M10 P3`
+entry has the full round-by-round record.
