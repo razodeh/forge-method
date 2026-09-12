@@ -306,6 +306,9 @@ importers:
       '@forge/vcs':
         specifier: workspace:*
         version: link:../vcs
+      execa:
+        specifier: 9.6.1
+        version: 9.6.1
       minimatch:
         specifier: 10.2.6
         version: 10.2.6

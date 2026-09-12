@@ -169,6 +169,12 @@ const IGNORED_PATHS = new Set([
   // factories.ts` above already establishes.
   'packages/adapter-generic/test/fixtures/scripted-binary.ts',
   'packages/adapter-generic/test/fixtures/scripted-binary-protocol.ts',
+  // `packages/extensions/test/install/npm-fixture-registry.ts` (`PLAN-M11.md` P2): a real, local
+  // HTTP server speaking minimal npm-registry protocol for `fetch-npm.test.ts`'s own npm-channel
+  // round trip -- the identical "genuinely test-only, shared, importable module, unrecognised by
+  // `TEST_FILE`'s naming heuristic" shape `packages/cli/test/commands/helpers.ts` above already
+  // establishes, for a fixture rather than a suite.
+  'packages/extensions/test/install/npm-fixture-registry.ts',
 ]);
 
 /**

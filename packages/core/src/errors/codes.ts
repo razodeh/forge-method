@@ -1235,6 +1235,93 @@ export const ERROR_CODES = {
     remedy:
       'Check the file and its containing directory are readable by the current user, then retry.',
   },
+  // `@forge/extensions/install/fetch-npm.ts`'s own npm channel (`19` §19.5, `PLAN-M11.md` P2). Next
+  // free `CFG-*` slot after `CFG-028`, same "fetching/validating an installable bundle" scope as
+  // `CFG-026`-`CFG-028` above.
+  'CFG-029': {
+    // `parseNpmOverlaySpec`: `spec` is not a valid `npm:@scope/name` or `npm:@scope/name@version`
+    // per `19` §19.5's own literal format.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { spec: string }) => `${show(d.spec)} is not a valid npm overlay/module spec.`,
+    remedy: 'Provide a spec in the literal format npm:@scope/name or npm:@scope/name@version.',
+  },
+  'CFG-030': {
+    // The real `npm pack <spec> --json` invocation itself failed (a non-zero exit, an unreachable
+    // registry, a package/version that does not exist there, or malformed JSON on stdout) -- wraps
+    // whatever the npm CLI reported rather than leaking a raw `execa` `ExecaError`/`SyntaxError` past
+    // this function's own documented "throws only `ForgeError`" contract.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { spec: string; detail: string }) =>
+      `\`npm pack ${show(d.spec)}\` failed: ${show(d.detail)}`,
+    remedy:
+      'Check the package name/version exists at the configured registry, and that the registry is reachable.',
+  },
+  'CFG-031': {
+    // The tarball `npm pack` wrote to disk does not hash to the `integrity` value its own `--json`
+    // output reported for it -- a corrupted write, a TOCTOU race, or genuine tampering between the
+    // pack step and this check. A real, structural re-verification of the actual on-disk bytes, not
+    // merely trusting the pack step succeeded (`PLAN-M11.md` P2's own literal Checks line).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { spec: string; expected: string }) =>
+      `The tarball packed for ${show(d.spec)} does not match its own reported integrity (${show(d.expected)}).`,
+    remedy: 'Delete the local npm cache and retry; report this as a FORGE bug if it recurs.',
+  },
+  'CFG-032': {
+    // `tar-extract.ts`: an entry this extractor refuses to write -- a symlink, hard link, device,
+    // FIFO, an unsupported GNU-longname/pax extension, or a path that would resolve outside the
+    // extraction directory ("tar slip"). Fail-closed: refused outright rather than attempting a
+    // containment-checked write for a shape this piece's own budget does not cover, the identical
+    // stance `@forge/vcs`'s own `VCS-OVERLAY-SYMLINK-REJECTED` already takes for the git/local
+    // channels (`PLAN-M11.md` P1).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { entry: string; reason: string }) =>
+      `Refusing to extract tar entry ${show(d.entry)}: ${show(d.reason)}.`,
+    remedy:
+      'Fix or replace the package producing this tarball shape; report this as a FORGE bug if the ' +
+      'package looks legitimate.',
+  },
+  'CFG-033': {
+    // The decompressed content of a fetched npm tarball exceeded this extractor's own hard cap --
+    // a decompression-bomb guard (a small, highly-compressed `.tgz` expanding to an unreasonable
+    // size), enforced by counting bytes as they stream out of `zlib`, not merely capping the
+    // compressed file size, which a bomb makes trivially small.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { limit: number }) =>
+      `The npm tarball's decompressed content exceeds the ${show(d.limit)}-byte limit.`,
+    remedy:
+      'Reduce the bundle to a reasonable size, or report this as a FORGE bug if it is genuinely ' +
+      'this large.',
+  },
+  'CFG-034': {
+    // `tar-extract.ts`: the archive itself is structurally broken -- truncated mid-block, not a
+    // valid gzip stream, or an entry declaring more content than the archive actually has. Distinct
+    // from `CFG-030`, whose message/remedy are specific to `npm pack` itself failing or producing
+    // unusable JSON -- a critic round found the first draft reused `CFG-030` for this genuinely
+    // different failure, rendering a registry-focused remedy ("check the registry is reachable") for
+    // a local, already-downloaded file that is simply corrupt.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) =>
+      `The npm tarball is corrupted or truncated: ${show(d.detail)}`,
+    remedy: 'Delete the local npm cache and retry; report this as a FORGE bug if it recurs.',
+  },
+  'CFG-035': {
+    // `tar-extract.ts`: a real local filesystem failure while extracting -- a full disk, a
+    // permission error on the extraction directory, or a crafted tarball whose entries conflict
+    // (e.g. a file entry followed by a directory entry at the same path). Distinct from `CFG-034`:
+    // a second critic round found the first draft's catch-all folded this class into `CFG-034`'s own
+    // "corrupted or truncated" message too, giving the exact same "wrong remedy for an unrelated
+    // failure" defect `CFG-030`/`CFG-034` were already split apart to fix, one layer further down.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { detail: string }) => `Extracting the npm tarball failed: ${show(d.detail)}`,
+    remedy: 'Check the extraction directory has free space and is writable, then retry.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

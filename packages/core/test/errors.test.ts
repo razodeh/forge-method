@@ -118,6 +118,7 @@ const SAMPLE_DETAILS = {
   ceiling: 'medium',
   source: './acme-standards',
   spec: 'git+https://example.com/acme/repo.git#v1.0.0',
+  limit: 67108864,
 } satisfies Record<string, unknown> as never;
 
 /**

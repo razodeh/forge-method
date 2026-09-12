@@ -1,9 +1,11 @@
 /**
  * `vcsFailureDetails` — the `{ vcsCode, vcsMessage }` pair every `@forge/vcs`-wrapping `ForgeError`
  * in this directory needs (`VCS-008`, `VCS-009`), factored once rather than duplicated between
- * `fetch-git.ts` and `fetch-local.ts`.
+ * `fetch-git.ts`, `fetch-local.ts`, and `fetch-npm.ts` (all three wrap the identical
+ * `computeContentChecksum` failure as `VCS-009`).
  *
  * @see PLAN-M11.md P1
+ * @see PLAN-M11.md P2
  */
 import { VcsError } from '@forge/vcs';
 
