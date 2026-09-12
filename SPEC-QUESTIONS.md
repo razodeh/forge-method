@@ -14473,3 +14473,85 @@ conservative default that never silently drops an earlier turn's tokens.
 the time P2 itself committed. `packages/engine/test/e2e/crash-resume.test.ts` (one of the two accepted
 load-sensitive flakes) was re-run in isolation and confirmed passing cleanly. See `GAUNTLET-LOG.md`'s
 own `M11 P7` entry for the full three-round critic findings.
+
+## Q175 — M11 P3: capability consent screen — no `overlay.yaml` schema exists anywhere in this codebase
+yet, so `describeRequestedCapabilities` validates a deliberately partial, consent-relevant-only subset;
+plus two real design decisions `19` §19.5/`15` §15.11 leave silent (the module-case capability source,
+and what a non-interactive `--json` path actually means for consent)
+
+**Context:** `PLAN-M11.md` P3 asks for the real, previously entirely-nonexistent capability consent
+screen `19` §19.5 step 3 requires (`describeRequestedCapabilities(manifest)` / `promptForConsent
+(description, options)`, `packages/extensions/src/install/consent.ts`). Confirmed directly before
+writing anything: no `overlay.yaml` schema/parser exists anywhere in `packages/extensions/src/install/`
+(P1/P2 only determine *which* manifest filename is present via `manifest.ts`'s `findManifestKind`, never
+parsing its content) — unlike the module case, where M10 P2's real `moduleSchema` already validates
+`ceilings`.
+
+**1. No full `overlay.yaml` schema exists to reuse or extend, and building one is out of this piece's
+~400-line surface (`consent.ts` only)** — `overlayCapabilityManifestSchema` is therefore deliberately
+partial: it validates only `id`/`name`/`provides.mcp`/`requestsCapabilities` (the fields this screen
+renders), `.passthrough()`ing everything else (`version`/`forgeVersion`/`requiresModules`/
+`provides.{agents,skills,checks,presets}`/etc.) so a real, valid overlay is never refused here for a
+field this screen has no use for. A future, complete overlay parser (not yet assigned to any M11 piece)
+is free to supersede this without `consent.ts` needing to change. Recorded rather than silently
+expanded into a bigger, out-of-scope schema.
+
+**2. `15` §15.11's own `requestsCapabilities` worked example (`network`/`exec`/`mcp-write`) has no
+field at all for "MCP servers this bundle adds," even though `19` §19.5/`15` §15.11's own prose both
+list "network hosts, MCP servers, and tool grants" as three separate things a consent screen must show**
+— read as the identical worked example's own `provides.mcp: [ acme-jira, acme-confluence ]` field (a
+real, new external reach a user should see before it lands, even though it is not itself a boolean
+grant), not a fourth key invented for `requestsCapabilities`. This lets the screen use only fields the
+spec's own literal worked example already declares, with no invented shape.
+
+**3. The module case (`ceilings`) has no `requestsCapabilities` field of its own at all** — `19` §19.1
+is explicit that ceilings are a maximum grant *per role*, not a flat request list. Read as: every
+`ceilings.<role>` entry's own `exec`/`network`/`allowlistHosts`/`write`/`deploy` fields are each rendered
+as their own capability entry, role-qualified in the text (e.g. `Run shell commands matching "git *"
+(role "backend")`), and **not** folded across roles even when two roles declare the identical literal
+pattern — each role's own grant is its own request, and folding them would hide that a second role also
+holds it. An `allowlist` network level with no `allowlistHosts` declared is rendered with an explicit
+`(no hosts declared)` suffix rather than implying real hosts exist — a real gap a critic round on this
+piece found in an earlier draft.
+
+**4. `--json`'s own meaning for a screen whose default is a live human prompt** — read as: emit
+`{ description, granted }` as a single JSON line instead of human-facing prose, on **both** the grant
+and refusal paths (only genuinely useful for CI logging if it is faithful on both), and refuse (never
+guess "yes") when `--yes` was not also passed, since a real `y/n` prompt is not a contract a non-
+interactive CI runner can satisfy and guessing on its behalf would be exactly the silent default `19`
+§19.5's own "nothing is installed on refusal" line forbids. A first draft only emitted JSON on the
+refusal path, silently falling back to prose whenever `--yes` was also passed — a critic round's own
+finding, fixed by checking `--json` inside the `--yes` branch too.
+
+**Also decided, not spec-mandated:** the interactive prompt is built on plain `node:readline` events
+(`'line'`/`'close'`/`'error'`, each racing the others via a hand-rolled `Promise` with `.off()` cleanup
+in every handler), not `node:readline/promises`' own `question()` — a critic round found `question()`'s
+own returned promise never settles if the input stream closes or errors before an answer is given (a
+real shape: a non-interactive `stdin` with nothing piped to it, or a genuine stdin I/O failure), an
+unbounded-lifetime leak, and, for the error case specifically, Node treats an unhandled `'error'` event
+as fatal to the process — verified empirically against a real `Readable` stream in both cases before and
+after the fix. No `AbortSignal`/timeout option exists on the interactive prompt itself (disclosed, not
+fixed): no other interactive-shaped code anywhere in this codebase establishes that convention, and a
+real terminal prompt has no correct behaviour other than waiting for the human who is meant to answer
+it; a caller wanting a bounded wait passes `--yes`/`--json`/a non-interactive `input` instead.
+
+**Refusal-writes-nothing, made mechanical rather than merely asserted:** a dedicated test greps
+`consent.ts`'s own source text for every filesystem/process-mutation identifier (`writeFile`, `mkdir`,
+`rm(`, `spawn(`, `from 'node:fs'`, etc.) and asserts none are present — the actual, non-tautological
+proof behind this file's own "never touches the filesystem" claim, added after a critic round found the
+original checksum-based `.forge/`-tree test proved only that the *test's own* `if (granted)` gate
+worked, not that `consent.ts` itself was safe (a hardcoded `promptForConsent` returning `false`
+unconditionally would have passed the same test).
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean throughout, re-run after every fix round. A full, unscoped
+`node scripts/run-tests.mjs run` reported 7 failures out of 8170 tests, all confirmed unrelated: two are
+`RUN-075`/`UsageRecorded`-event failures from concurrent, in-flight M11 P11 work (`git status --short`
+confirmed those files were never touched by this piece); one is the `survey.test.ts` oversized-fixture
+flake; the remaining four are the `packages/engine/test/dispatch/agent.test.ts` `UsageRecorded`-event
+assertions (same concurrent P11 cause) plus `crash-resume.test.ts` — the latter re-run in isolation and
+still timing out at the full 120s budget this time (rather than clearing, as it usually does), consistent
+with this being a genuinely load-sensitive flake under the heavy concurrent-build load this piece's own
+work overlapped with, not a regression this piece caused (this piece's own `packages/extensions/` scope
+never touches `packages/engine/`). See `GAUNTLET-LOG.md`'s own `M11 P3` entry for the full critic-round
+findings.

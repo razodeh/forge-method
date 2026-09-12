@@ -11242,3 +11242,113 @@ work and was confirmed passing cleanly and fast when re-run in isolation immedia
 status` throughout confirmed no file outside this piece's own scope (`packages/adapter-generic/`) was
 ever touched, despite concurrent M11 P2/P10 work proceeding in, and completing in, the same working
 directory throughout.
+
+---
+
+## M11 P3 — Capability consent screen (`19` §19.5, `15` §15.11)
+
+**Mandate:** the real, previously entirely-nonexistent mechanism `19` §19.5 step 3 and this milestone's
+own Acceptance line ("nothing installs without consent; the consent screen lists every requested
+capability") both require.
+
+Built `packages/extensions/src/install/consent.ts`: `describeRequestedCapabilities(input)` renders every
+requested shell pattern, network host, added MCP server, and tool grant from either a parsed
+`overlay.yaml` document (validated against a deliberately partial, consent-relevant-only schema — no
+full `overlay.yaml` parser exists anywhere in this codebase yet, `SPEC-QUESTIONS.md` Q175) or an
+already-validated `module.yaml` (M10 P2's real `moduleSchema`, its `ceilings` block rendered per role);
+`promptForConsent(description, options)` shows a real interactive terminal `y`/`n` prompt by default
+(built on plain `node:readline` events, not `readline/promises`' `question()`), with `--yes`/`--json`
+non-interactive paths for CI. Confirmed directly before writing anything: `packages/extensions/src/
+install/{fetch-local,fetch-git,fetch-npm,manifest}.ts` (P1/P2) never parse manifest *content*, only
+which manifest filename is present; `packages/cli/src/init/run-init.ts` already names this exact gap by
+its own `USR-002` refusal comment ("no ... capability-request-screen confirmation `03` §3.3 step 10
+requires").
+
+### Round 1 — fresh critic: 1 blocking, 1 major, 3 minor real findings
+
+A fresh, context-free critic instructed to hunt for CI-contract faithfulness, filesystem-purity claims,
+readline edge cases, and module/overlay schema fidelity found: (1) **blocking** — `promptForConsent
+({ yes: true, json: true })` returned before ever checking `json`, writing free-form prose to the same
+stream the file's own doc comment told a CI author to pipe into `jq`, silently breaking that contract
+exactly when both flags were passed together; (2) **major** — the "refusal leaves `.forge/` byte-
+identical" test was tautological: it gated a manual `if (granted) write(...)` inside the *test itself*,
+so it would pass unchanged even if `promptForConsent` were replaced with a hardcoded `return false`; the
+top-of-file doc comment overclaimed this as "a real, tested guarantee" for the full end-to-end install
+flow, which cannot exist until a separate, not-yet-built plan item (P5) provides a real installer; (3)
+**minor** — `rl.question()`'s own returned promise never settles if the input stream closes before an
+answer is given (a real, non-adversarial shape: a piped `stdin` with nothing written to it), an
+unbounded-lifetime leak across repeated calls in one process; (4) **minor** — a module ceiling with
+`network: 'allowlist'` and no `allowlistHosts` declared rendered identically to one that actually named
+real hosts, implying reachable hosts that were never declared; (5) **minor, disclosed rather than
+required** — no `AbortSignal`/timeout option on the interactive prompt, noted as consistent with the
+rest of the codebase rather than a gap this piece introduced.
+
+**What the critic caught that the builder missed:** the builder's own tests exercised only the intended,
+cooperative shape of each mechanism (`--yes` alone, `--json` alone, a stream that always eventually
+answers or closes) and never the combination or adversarial variant that broke it — the same "tested the
+mechanism's own intended shape, not the literal shape a real caller or dependency produces" blind spot
+this build's own prior pieces already document for themselves.
+
+**Judged and fixed:** (1) `promptForConsent` now checks `options.json` *inside* the `options.yes` branch
+too, emitting `{ description, granted: true }` as JSON when both are passed. (2) the doc comment was
+reworded to stop overclaiming, and a new test was added that greps `consent.ts`'s own source text for
+every filesystem/process-mutation identifier — a real, non-tautological, mechanical proof "this file
+cannot write to disk" — while the original checksum test was kept but relabelled as merely demonstrating
+the safe consumption pattern a real installer must follow, not the guarantee itself. (3) switched from
+`readline/promises`' `question()` to plain `node:readline` events (`'line'`/`'close'`), raced via a
+hand-rolled `Promise` with `.off()` cleanup in each handler so the promise always settles regardless of
+which fires first. (4) `moduleEntries` now appends `" (no hosts declared)"` when `network === 'allowlist'`
+and `allowlistHosts` is empty/absent. (5) left disclosed, unchanged. Regression tests added for every
+fix, including the exact combination (1) needed and the exact empty-allowlist shape (4) needed.
+
+### Round 2 — fresh critic: 3 fixes confirmed genuine, 1 fix incomplete, 1 new minor doc/implementation mismatch found
+
+A second fresh, context-free critic, instructed to verify each round-1 fix by tracing the actual logic
+rather than trusting doc comments, confirmed fixes (1), (2), and (4) were genuinely and completely
+fixed, with no regression. It found fix (3) incomplete: the `'line'`/`'close'` race closed the specific
+reported leak, but neither `rl` nor `input` had an `'error'` listener attached anywhere — a real `input`
+stream I/O failure (a broken pipe, `EIO`, not merely an adversarial input) either reproduced the same
+hang the fix was meant to close, or, since Node treats an unhandled `'error'` event as fatal, crashed the
+process outright; no existing test exercised a stream-error path. It also found a new, minor doc/
+implementation mismatch: `CapabilityDescription.entries`'s own doc comment claimed a value repeated
+"verbatim across roles/entries is folded to one," but `moduleEntries` bakes the role name into every
+entry's own text, so two roles sharing the identical literal pattern (`FM_SERVICE_MODULE`'s own worked
+example: `backend`/`reviewer` both declare `"git *"`) are never folded — the actual, safer behaviour the
+comment itself did not accurately describe.
+
+**What the critic caught that the builder missed:** fix (3)'s own test only exercised the reported
+EOF-before-answer shape, never a distinct real-world failure mode (a stream `'error'`) that shares the
+same "input ends without a `'line'`" surface but requires its own handler — the same "fixed the literal
+reported case, not the general class it belongs to" gap this build's own prior pieces already document.
+
+**Judged and fixed:** confirmed empirically first (a standalone repro against a real `Readable` stream)
+that `readline`'s own `Interface` re-emits an input stream's `'error'` on **itself** (`rl`), not on
+`input` directly — listening on `input.once('error', ...)` alone left the re-emitted `'error'` on `rl`
+unhandled and still fatal. Fixed by listening on `rl.once('error', onError)` instead, included in the
+same race/cleanup structure as `'line'`/`'close'`. The doc comment on `CapabilityDescription.entries`
+was corrected to describe the actual behaviour (identical rendered `text` folds; different `text` —
+role included — does not, deliberately, since each role's own grant is its own request). Regression
+tests added for both: a real stream `'error'` fired asynchronously via `emit('error', ...)` after
+`promptForConsent` had a tick to attach its own listener (verified to reproduce the pre-fix crash before
+the fix, and resolve cleanly to `false` after); and an explicit assertion that `FM_SERVICE_MODULE`'s own
+shared `"git *"` pattern across `backend`/`reviewer` produces two distinct, role-qualified entries.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped `node
+scripts/run-tests.mjs run` reported **8170 tests, 8154 passing, 9 skipped, 7 failures** — all seven
+confirmed unrelated via `git status --short` before this piece touched anything: two are `core/test/
+errors.test.ts` `RUN-075` failures and four are `packages/engine/test/dispatch/agent.test.ts`
+`UsageRecorded`-event-sequence failures, both from concurrent, in-flight M11 P11 work this piece never
+touched (`packages/engine/src/budget/`, `packages/engine/src/security/`); the seventh is `packages/kb/
+test/adopt/survey.test.ts`'s own accepted oversized-fixture flake. `packages/engine/test/e2e/
+crash-resume.test.ts` (the other accepted load-sensitive flake) was re-run in isolation and, unusually,
+still timed out at its own full 120s budget rather than clearing — consistent with a genuinely
+load-sensitive flake under the heavy concurrent-build load (M11 P4, P11 all mid-build in the same
+working directory throughout this piece's own work) rather than a regression, since this piece's own
+scope (`packages/extensions/`) never touches `packages/engine/` at all. `git status` throughout
+confirmed no file outside this piece's own scope (`packages/extensions/src/install/consent.ts`,
+`packages/extensions/test/install/consent.test.ts`, and one isolated `CFG-036` hunk in the shared
+`packages/core/src/errors/codes.ts`, staged via a hand-built patch so concurrent P4/P11 hunks in the same
+file were left untouched) was ever modified.
