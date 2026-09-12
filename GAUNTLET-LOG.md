@@ -11097,3 +11097,148 @@ throughout confirmed no file outside this piece's own scope
 package.json`/`packages/extensions/src/install/{index,vcs-error}.ts`/`test/workspace-floor.test.ts`/
 one `pnpm-lock.yaml` hunk) was ever touched, despite concurrent M11 P7/P10 work proceeding in the same
 working directory throughout.
+
+## M11 P7 — `@forge/adapter-generic`: the declarative `adapter.yaml` binding (`07` §7.5, §7.6)
+
+**Mandate:** a real `PlatformAdapter` implementation driven entirely by a parsed `adapter.yaml`, no
+adapter-specific code per external tool, passing the full 16-id `runAdapterConformanceSuite` (`07`
+§7.6) against P8's own scripted-binary fixture — not merely the five safety-critical ids.
+
+Built `packages/adapter-generic/src/`: `config/{schema,parse,errors}.ts` (real Zod validation of `07`
+§7.5's own worked example, matched exactly, refusing a deliberately-broken document — a renamed
+required field — with a typed error rather than a silent partial adapter); `templates.ts`
+(`invoke.args`/`invoke.when` bare-token resolution against a real `SessionRequest`, `events.map[].emit`
+dot-prefixed resolution against one matched NDJSON line with real-type preservation for a whole-string
+token); `events-map.ts` (NDJSON line parsing, malformed-input-safe); `process.ts` (execa-backed spawn,
+mirroring `@forge/adapter-claude-code`'s own already-aborted-signal short-circuit and adding
+`forceKillAfterDelay` for `07` §7.6 C5's "no orphan child processes"); `preflight.ts` (`<binary>
+--version` probing against `versionCommand`/`versionRegex`/`minimumVersion`); `capabilities.ts` (`07`
+§7.5's six-field `capabilities` block folded into the full 20-field `AdapterCapabilities`, fourteen
+fixed disclosed defaults for fields the schema has no analogue for); `session-stream.ts` (the real
+session lifecycle: template resolution, event mapping/normalisation, a generic tool-call/tool-result
+synthesis mechanism with exec/write grant enforcement this schema has no config field for, control-token
+promotion, final `SessionResult` construction); `session-handle.ts`/`changed-files.ts` (small,
+deliberate duplications of `@forge/adapter-claude-code`'s own proven shapes — no boundary-graph edge
+between sibling adapters); `adapter.ts` (`GenericAdapter`, tying it together, per-session scratch
+directories for `{{promptFile}}`/`{{outFile}}` in an injected `scratchDir`, never `os.tmpdir()`).
+Verified against a real `GenericAdapter` built from a real `parseAdapterConfig()`-loaded `adapter.yaml`
+driving P8's real, separately-spawned `scripted-binary.ts` process: 12 of 16 conformance ids run and
+pass (including every non-skipped safety-critical id: C2/C5/C13/C14, and C16 honestly skipping since
+this adapter implements no `provisionMcp`); C8/C9/C15/C16 skip, honestly, matching `07` §7.5's own
+worked-example capabilities (`sessionResume`/`structuredOutput: false`) verbatim, proven explicitly
+rather than left to chance. Full reasoning in `SPEC-QUESTIONS.md` Q174.
+
+### Round 1 — fresh critic: 6 real gaps found
+
+A fresh, context-free critic instructed to hunt for grant-enforcement bypasses, crash/malformed-input
+handling, resource leaks, and R10 determinism violations found: (1) **blocking** — no adapter-side
+enforcement of `tools.write` beyond trusting the bound external binary to voluntarily honour
+`invoke.when`'s own `--read-only` CLI flag; a binary that ignores it (buggy, or hostile) still got
+`ok: true` reported for a write FORGE's own grant explicitly denied; (2) **blocking** — every session's
+own scratch subdirectory (`{{promptFile}}`/`{{outFile}}`) was never cleaned up, a permanent, unbounded
+disk leak that also retained each session's own real prompt text (a plausible secret/context carrier)
+on disk forever; (3) **major** — `result.finalTextFrom: file:{{outFile}}` was non-functional:
+`{{outFile}}` was never in the `InvokeTemplateVars` vocabulary `invoke.args` templates against, so a
+config author had no way to tell their own bound binary where to write it; (4) **major** — `usage`
+events were overwritten by the last one seen, not accumulated, silently dropping every earlier turn's
+tokens/cost for a multi-turn session; (5) **major** — `capabilities.ts`'s `tokenReporting`/
+`fileEditing`/`bash` were unconditional `true` constants regardless of what a specific `adapter.yaml`
+actually declared — checkably wrong against this package's own worked-example fixture (zero
+`usage`-type `events.map` entries); (6) **major** — `preflight.ts`'s version probe read only `stdout`,
+never `stderr`, misreporting a correctly-installed binary that prints its version to `stderr` as
+`ADP-GENERIC-BINARY-NOT-FOUND`. Two minors: a synthesized `tool.call` id (`tool-${n}`) could collide
+with a real externally-supplied one elsewhere in the same session; the conformance suite's own only
+fixture is authored cooperatively with this adapter's exact conventions, proving self-consistency more
+than genuine third-party interoperation (disclosed, not fixed — an inherent limit of any fixture-based
+conformance test).
+
+**What the critic caught that the builder missed:** every finding traces to the same root cause this
+whole build's own prior gauntlet rounds already document — the builder's own scoped tests exercised
+only cooperative, well-formed input (a binary that honours `--read-only`, a config with a `usage` map
+entry, a version on stdout) and never constructed the adversarial or merely-different shape each defect
+actually needed.
+
+**Judged and fixed:** (1) a generic, disclosed backstop added to `synthesizeToolResult`: a matched
+`tool.call.input` naming a `path`/`relativePath` string is denied whenever `grant.write` is `false`
+(before it was tightened in round 2 — see below). (2) `runGenericSession` now wraps the whole spawned
+session in `try`/`finally`, removing the scratch directory once the generator finishes. (3) `outFile`
+added to `InvokeTemplateVars`, resolved through the same `resolveInvokeTemplate` machinery
+`invoke.args` itself uses. (4) `usage` fields are now summed, not assigned. (5) `tokenReporting`/
+`fileEditing` now derive from the real config (`hasUsageMapping`/`hasWriteConditional`); `bash` stays
+fixed, honestly, since no config field exists to gate it on. (6) `probeBinaryVersion` now matches
+`stdout` then falls back to `stderr`. (10, minor) the synthesized id prefix changed to
+`generic-adapter-tool-${n}`. Regression tests added for every fix.
+
+### Round 2 — fresh critic: 1 regressed major, 1 escalated major
+
+A second fresh, context-free critic, instructed to verify each round-1 fix by reading the actual code
+rather than trusting doc comments, confirmed findings (2)-(6) and (10) were genuinely and completely
+fixed, with correct interaction between the (2)/(3) fixes (`resolveFinalText`'s `file:` read happens
+strictly before the outer `finally`'s cleanup). It found one real regression in fix (1): the write-grant
+backstop denied **any** tool call with a `path`/`relativePath` field when `grant.write` was `false`,
+including legitimate reads — `07` §7.2's own `ToolGrant` has independent `read`/`write` booleans
+precisely because the two are separately grantable, and a session granted `read:true, write:false` (an
+ordinary "review this file" combination) had every path-referencing *read* call misreported `ok: false`,
+a false-positive strictly worse than the false-negative round 1 fixed. It also escalated a round-1-
+accepted item (unbounded `stdoutAccumulator`/`finalTextAccumulator` growth) from "disclosed limitation"
+to a real concern specific to this package's own stated purpose (binding *arbitrary*, possibly
+long-running or misbehaving external binaries, unlike `@forge/adapter-claude-code`'s one specific, known
+CLI).
+
+**What the critic caught that the builder missed:** the round-1 fix for (1) was tested only against a
+call whose own name/intent was implicitly a write (`{path: 'out.txt'}` with no distinguishing name) —
+never against a genuinely read-shaped call with the identical field shape, the same "tested the intended
+behaviour, not the literal implementation against a different-but-equally-valid input" blind spot this
+build's own prior pieces already document for themselves.
+
+**Judged and fixed:** the write-grant check is now gated on the tool's own name being write-shaped
+(`isWriteShapedToolName`: a whole-word, camelCase/underscore/hyphen-boundary-aware match against
+`write`/`edit`/`create`/`delete`/`remove`/`patch`), checked *in addition to* the path-field check, not
+instead of it — a read-shaped call (`read_file`, `cat`, `grep`) with a `path` field now stays `ok: true`
+under `write: false`; a hypothetical `rewrite_summary`/`overwritten_by` tool correctly does not match
+either (whole-word, not substring). The accumulator concern was fixed with a new `appendBounded`
+helper (`MAX_ACCUMULATOR_BYTES = 10_000_000`) applied to both accumulators. Regression tests added,
+including the exact false-positive shape (`read:true, write:false` against a `read_file`-named call)
+and the substring-trap names.
+
+### Round 3 — fresh critic: 1 incomplete fix found
+
+A third fresh, context-free critic verified round 2's `isWriteShapedToolName` fix by hand-tracing every
+named case (`write_file`, `writeFile`, `WRITE_FILE`, `read_file`, `cat`, `grep`, `rewrite_summary`,
+`overwritten_by`) against the actual tokenizer logic and confirmed it holds exactly as claimed —
+genuinely fixed, with non-tautological tests. It found the `appendBounded` fix itself incomplete: the
+guard only ever checked the *existing* accumulator's own length before appending, never bounding the
+*addition* itself — and, critically, verified this empirically by spawning a real child process with
+`execa`'s exact `lines: true` configuration this package itself uses, confirming a single stdout write
+with no embedded newline is delivered as one arbitrarily large "line" regardless of size. A single
+large burst from a near-empty accumulator (`appendBounded('', hugeLine)`) therefore bypassed the cap
+entirely, defeating the exact adversarial-binary threat model the mechanism exists for — the existing
+test only checked overshoot by a few bytes near an already-full accumulator, a shape that would pass
+unchanged whether or not this bug existed.
+
+**What the critic caught that the builder missed:** the round-2 test for `appendBounded` proved the
+cap holds when accumulation happens gradually, but never constructed the "one huge chunk against a
+near-empty accumulator" case a real `execa`-delivered no-newline burst actually produces — the same
+"tested the mechanism's own intended shape, not the literal delivery shape the real dependency
+produces" blind spot, one level deeper than round 2's own finding.
+
+**Judged and fixed:** `appendBounded` now clamps `addition` itself to whatever room remains
+(`current + addition.slice(0, remaining)`), never appending more than the cap allows in one call
+regardless of how large a single addition is. A regression test reproduces the critic's own exact
+scenario (a single addition far exceeding the cap, against an empty accumulator) and asserts the result
+never exceeds `MAX_ACCUMULATOR_BYTES`.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages, including `@forge/adapter-generic`),
+`eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean,
+re-run after every fix round. A full, unscoped `node scripts/run-tests.mjs run` reported **472 test
+files, 8090 passing, 9 skipped, 1 failure** — the one failure (`test/workspace-floor.test.ts`, flagging
+a concurrent M11 P2 in-flight fixture file placement) confirmed, via `git status --short` immediately
+before this piece touched anything, to be an unrelated file this piece never modified; a later,
+identical full run (after P2 itself committed) reported 0 failures. `packages/engine/test/e2e/
+crash-resume.test.ts` (one of the two accepted load-sensitive flakes) fired once during this piece's own
+work and was confirmed passing cleanly and fast when re-run in isolation immediately afterward. `git
+status` throughout confirmed no file outside this piece's own scope (`packages/adapter-generic/`) was
+ever touched, despite concurrent M11 P2/P10 work proceeding in, and completing in, the same working
+directory throughout.

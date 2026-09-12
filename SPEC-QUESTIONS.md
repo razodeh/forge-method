@@ -14393,3 +14393,83 @@ and `node scripts/check-boundaries.mjs` all clean. A full, unscoped `node script
 reported **472 test files, 8090 passing, 9 skipped, 0 failures** (including
 `packages/engine/test/e2e/crash-resume.test.ts` passing cleanly). See `GAUNTLET-LOG.md`'s own `M11 P2`
 entry for the full critic-round findings.
+
+## Q174 — M11 P7: `@forge/adapter-generic` — no config field for write/exec grant enforcement, a real
+generic tool-name convention invented for it, and three genuinely under-specified `07` §7.5 schema
+corners (`events.format: 'text'`, `files.changeDetection: 'fs-watch'`, `result.finalTextFrom`'s own
+`{{outFile}}` origin)
+
+**Context:** `PLAN-M11.md` P7 asks for `@forge/adapter-generic`: a `PlatformAdapter` implementation
+driven entirely by a parsed `adapter.yaml` (`07` §7.5), no adapter-specific code per external tool,
+passing the full `runAdapterConformanceSuite` (`07` §7.6) against P8's own scripted-binary fixture.
+Confirmed directly before writing anything: `07` §7.5's own worked example gives a complete field-level
+schema for `id`/`displayName`/`binary`/`minimumVersion`/`versionRegex`/`capabilities`/`invoke.args`+
+`when`/`events.format`+`map`/`result`/`files.changeDetection`, but is silent (a bare one-line mention,
+or no mention at all) on several things a real, working implementation genuinely needs to decide.
+
+**1. `07` §7.2's own "Adapters MUST fail closed" mandate over `ToolGrant.exec`/`write` has no config
+field in `07` §7.5's own schema to express per-tool-call enforcement at all** — the only real,
+config-driven mechanism the worked example gives is `invoke.when: tools.write == false -> --read-only`,
+a *pre-execution* argument translation that trusts the bound external binary to voluntarily honour a
+CLI flag. Since a real external process has typically already acted by the time its own announcement
+line reaches this adapter, genuine *per-call* enforcement (matching `07` §7.6 C3/C4's own worked
+examples) needed an adapter-side mechanism the schema itself has no field for. Built as a small,
+disclosed, generic convention in `session-stream.ts`'s `synthesizeToolResult`, layered defense-in-depth
+on top of the `invoke.when` mechanism, not a replacement for it: a matched line's own `input` object
+naming a `command` string is checked against `07` §7.2's own shared `isExecAllowed` (`@forge/adapter-
+kit/grants`) regardless of tool name (mirroring P8's own real, already-established `{tool:'exec',
+args:{command}}` convention); a `path`/`relativePath` string field is checked against `grant.write`
+**only when the tool's own name is itself write-shaped** (`isWriteShapedToolName`: a whole-word,
+case/boundary-insensitive match against `write`/`edit`/`create`/`delete`/`remove`/`patch`) — a
+first-draft version keyed the write check on the field's mere *presence*, which a second gauntlet critic
+round found denied every path-referencing *read* call too (`07` §7.2's own `ToolGrant` has independent
+`read`/`write` booleans precisely because the two are separately grantable; a `read:true, write:false`
+grant is an ordinary, arguably default combination for a review-style step). The tightened,
+name-gated version is what shipped; recorded here as a real design decision this schema's own text does
+not specify, not merely an implementation detail.
+
+**2. `events.format: 'text'` and `files.changeDetection: 'fs-watch'` are both real, declared enum
+values `07` §7.5 gives essentially no field-level schema for** — `text` gets exactly one line
+("regex-based extraction (lossy)"), and `fs-watch` gets none beyond its own name. Neither is exercised
+by any fixture this milestone has (P8's own scripted binary only ever emits `ndjson`, and every
+conformance test runs inside a real git worktree). `GenericAdapter.startSession` refuses outright, with
+a clear, typed error naming the unsupported value, rather than silently guessing at an unspecified
+contract for either — the same "a real, disclosed gap, not a fabricated implementation" discipline this
+whole build already establishes for `@forge/adapter-claude-code`'s own permanently-`false`
+`structuredOutput` (`SPEC-QUESTIONS.md` history, `M7`).
+
+**3. `result.finalTextFrom: file:{{outFile}}`'s own `{{outFile}}` is a template token the worked
+example uses but never defines the origin of** — it is not a `SessionRequest` field, and no other part
+of `07` §7.5's schema names it either. Read as a `GenericAdapter`-reserved scratch path mirroring
+`{{promptFile}}`'s own identical origin (a real, per-session temp file this adapter itself creates and
+reserves, in its own injected `scratchDir` — never `os.tmpdir()` directly, R10), threaded through the
+same `InvokeTemplateVars` tree `invoke.args` templates against, so a config author can tell their own
+bound binary where to write it (`invoke.args: [..., "--out", "{{outFile}}"]`) and read it back
+identically. A first-draft version wired `{{outFile}}` through a second, ad hoc, `invoke.args`-
+incompatible substitution mechanism that made this whole `finalTextFrom` form non-functional for any
+config that needed to tell its own binary where to write — a first gauntlet critic round's own finding,
+fixed by folding `outFile` into the one real template-vars tree instead. **Not exercised end-to-end
+against P8's own real scripted-binary fixture**, disclosed rather than silently assumed proven: that
+fixture's own `resolveInsideCwd` containment check (built for a different, real security reason —
+refusing a scripted write that escapes the invocation `--cwd`) also refuses any absolute path outside
+`--cwd`, which a reserved `{{outFile}}` scratch path always is by construction — proven instead via
+direct unit tests of the resolution mechanism itself (`session-stream.test.ts`).
+
+**Also decided, not spec-mandated:** the fourteen `AdapterCapabilities` fields `07` §7.5's own six-field
+`capabilities` block has no analogue for are each a fixed, disclosed default (`capabilities.ts`), except
+`tokenReporting`/`fileEditing`, which a second gauntlet critic round found were checkably wrong as fixed
+constants (both provably false against this package's own `adapter.example.yaml` — `07` §7.5's literal
+worked example) and were made genuinely config-derived instead (`hasUsageMapping`/`hasWriteConditional`).
+`usage` events are accumulated (summed) across a session rather than overwritten by the last one seen —
+unlike `@forge/adapter-claude-code`, this package has no documented guarantee that an arbitrary bound
+tool's own usage events carry cumulative totals rather than per-turn deltas, and summing is the
+conservative default that never silently drops an earlier turn's tokens.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean throughout, re-run after every fix round. A full, unscoped
+`node scripts/run-tests.mjs run` reported **8032 passing, 9 skipped, 1 failure** — the one failure
+(`test/workspace-floor.test.ts`, flagging a concurrent M11 P2 in-flight fixture file) confirmed, via
+`git status --short` before this piece touched anything, to be unrelated to this piece and resolved by
+the time P2 itself committed. `packages/engine/test/e2e/crash-resume.test.ts` (one of the two accepted
+load-sensitive flakes) was re-run in isolation and confirmed passing cleanly. See `GAUNTLET-LOG.md`'s
+own `M11 P7` entry for the full three-round critic findings.
