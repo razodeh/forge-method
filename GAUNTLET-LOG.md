@@ -9322,3 +9322,142 @@ functions, ≥85% branches ratchet. Full workspace test run (`node scripts/run-t
 non-reproducing in isolation (a stray fixture file under the concurrently-committed, unrelated M10 P15
 piece that `test/workspace-floor.test.ts` flags, and two timing-sensitive E2E tests that pass cleanly on
 their own). `SPEC-QUESTIONS.md` Q153 has the full record.
+
+## M10 P10 — `@forge/engine/session`: filling the real `RUN-039` stub, driving real agent turns (`16` §16.3, §16.6)
+
+**Mandate:** the one concrete, marked integration point M10's own research pass found: `execute.ts`'s own
+`case 'session':` threw `RUN-039` unconditionally. Built `packages/engine/src/interaction/session.ts`'s
+`runSessionStep(node, ctx)`, driving P9's pure `SessionPhaseMachine` phase by phase (FRAME -> DIVERGE ->
+CONVERGE -> DECIDE -> RECORD) through real `dispatchAgentStep` calls (`panel` for DIVERGE excluding
+`critic`, `panel` for CONVERGE including `critic`, `solo` for DECIDE to a `decisions_owned`-resolved
+owner or a human-input fallback), feeding each phase's real dispatch output back into the machine as its
+own next input. Added the new, deliberate `engine -> sessions` graph edge
+(`tools/eslint-plugin-forge-boundaries/src/graph.mjs`, with `boundaries.test.ts` updated to match) and
+wired `execute.ts`'s `case 'session':` to the new handler, touching `elicit`/`subworkflow` not at all.
+
+Real, disclosed design work beyond the bare mandate: `16` §16.2's own "Typical participants" column names
+roles, not concrete agents, and no `StepNode`/`SessionStep` field carries a participant list at all
+(confirmed directly against `sessionStepSchema`) — `SESSION_TYPE_DEFAULTS` reads all ten rows into a
+concrete facilitator + participant-role table, disclosed per-row where a row is genuinely generic
+("owners of competing concerns," "whole relevant roster," ...). The facilitator is deliberately excluded
+from `SessionState.participants` (never dispatched as its own "perspective," matching `16` §16.3's own
+"the facilitator does not contribute content" invariant) and DECIDE's owner resolution reads `05` §5.3's
+own `decisions_owned` field literally against the real, on-disk agent roster. RECORD writes a real,
+schema-validated `SessionRecord` (`assembleSessionRecord`, P9), a real `docs/forge/sessions/SESSION-###.md`
+artifact (front matter plus the real Frame/Diverge/Converge/Decisions/Non-decisions/Actions transcript),
+and a real KB write-back (`@forge/kb`'s `KbWriter`) whose entry id becomes the decision's own
+`artifactRef`.
+
+### Round 1 — fresh critic: four blocking findings, four major findings
+
+**[Blocking]** `discovery-interview`'s own row named `analyst` as the facilitator with an empty
+participant list — since the facilitator is never dispatch-eligible, this made the entire session type a
+structural no-op regardless of project data. **[Blocking]** a failed DECIDE-phase dispatch (an adapter
+crash, a lane/commit failure) was recorded as a real, successful decision anyway — `decideOutcome.outcome.
+status`/`session.ok` were never checked. **[Blocking]** DIVERGE/CONVERGE never checked `participant.
+session.ok`, so a crashed participant's empty/garbage output became a real idea, or — worse — a crashed
+`critic` still counted as a genuine structural objection for `16` §16.7 point 2's own anti-groupthink
+gate. **[Blocking]** the KB write-back path was keyed only on `node.id`, so a retried/resumed run of the
+identical session step crashed on `KbWriter`'s own `KB-009` ("already exists"). **[Major]** the panel
+reconciliation dispatch `dispatchPanel` always drives internally is invoked and paid for, then thrown
+away, on every DIVERGE/CONVERGE call. **[Major]** `design-review`'s own roster dropped `sre` for a cap
+reason the same file's own comments elsewhere contradicted (the facilitator is never counted against the
+cap). **[Major]** the assembled `SessionRecord` was never persisted anywhere reachable from a compiled
+workflow run — `execute.ts` keeps only `.outcome`. **[Major]** `numericSessionId`'s three-digit hash had
+no collision check at all.
+
+**Fixed:** `discovery-interview` now uses the generic `facilitator` role with `analyst` as a real
+participant. DECIDE-phase dispatch failure now folds into an honest `inconclusiveReason` and a real
+`StepOutcome{status:'failed'}`, never a fabricated decision. DIVERGE/CONVERGE both skip any participant
+whose `session.ok === false`. `design-review` keeps its full five-participant roster. All four fixes
+pinned with new tests; the reconciliation-cost and persisted-record findings were addressed in round 2
+below once the round 1 critic's own re-verification surfaced they were not yet complete.
+
+### Round 2 — a second, fresh critic verifying round 1's fixes: all four blocking fixes confirmed real; five new findings
+
+Confirmed genuinely fixed, not merely claimed: DECIDE-phase failure handling, DIVERGE/CONVERGE participant
+filtering, and `design-review`'s roster. Found new: **[Blocking]** FRAME's own question-refusal
+(`RUN-061`) and CONVERGE's own critic-objection gate refusal (`RUN-062`) were both re-thrown raw, directly
+contradicting `dispatch/steps.ts`'s own documented contract that a genuine runtime failure is "always
+returned as a `StepOutcome{status:'failed'}`, never thrown" — an ordinary two-sentence `brief` or one
+flaky `critic` dispatch would crash the entire engine run, not just this one step. **[Blocking]**
+DIVERGE/CONVERGE's own discarded reconciliation lanes were never cleaned up — every session step leaked
+two real git worktrees+branches for the rest of the run's own lifetime. **[Major]** the round 1 session-id
+fix (`allocateSessionId`'s linear probe) had no lock at all — two session steps racing inside the same run
+could both pass the same existence probe before either wrote, silently overwriting each other's real,
+completed record. **[Major]** `renderSessionBody`'s table rows interpolated real agent prose with no
+escaping — any decision containing a literal `|` or an embedded newline corrupted the persisted file's own
+table structure. **[Major]** the round 1 "KB write crashes on retry" fix only converted a silent crash
+into a typed `KB-009` crash, not real idempotency.
+
+**Fixed:** `SessionStepResult.record` is now optional; both domain refusals return a real
+`StepOutcome{status:'failed', failure:{source:'gate',...}}` via a new `domainRefusalOutcome` helper
+instead of throwing. A new `cleanupPhaseLane` removes the DIVERGE/CONVERGE reconciliation lane immediately
+after its own `.participants` are read. `allocateSessionId`/`persistSessionRecord` now run inside one
+`enqueueForProject` call — a per-project-root FIFO queue matching `@forge/kb`'s own `KbWriter` precedent
+exactly. A new `escapeTableCell` (pipe-escape, newline-collapse) is applied to every table-rendered field.
+`writeDecisionBack` now checks for an already-written file first and reuses its real `id` rather than
+retrying the write. Six new tests pin all five fixes plus the two domain-refusal paths.
+
+### Round 3 — a third, fresh critic verifying round 2's fixes: four of five confirmed real; the lane-leak fix was only half done
+
+Confirmed genuinely fixed: domain refusals as data, KB write-back idempotency (code correct, though the
+critic noted the round 2 test coverage for the id-race and table-escaping fixes only proved the mechanism
+existed, not that it held under real concurrency or real hostile content — addressed directly below).
+Found: **[Blocking]** DECIDE's own dispatch creates a real lane exactly the same structural way
+DIVERGE/CONVERGE's reconciliation dispatch does, but round 2's `cleanupPhaseLane` fix was only ever wired
+to the DIVERGE/CONVERGE call sites — the DECIDE lane leaked on every session that reached a resolved
+decision owner, which is the normal, successful path for nearly every completed session (strictly worse
+in prevalence than the round 2 finding it was supposed to close). **[Minor]** `RUN-039` was reused for two
+genuinely distinct session-specific failure modes (an unrecognized `sessionType`, session-id exhaustion)
+whose fixed remedy text ("remove elicit/session/subworkflow steps... until a later milestone") actively
+told an author to delete a step over an ordinary typo.
+
+**Fixed:** a new `mergeDecideLane` merges the decider's own real lane into `ctx.integrationBase` via
+`ctx.mergeQueue.process` (`conflictPolicy: 'abort'`, needing no configured `conflictResolver` for the
+overwhelmingly common non-conflicting case) rather than discarding or leaking it — the decider's own real
+work (`05` §5.3: "the decider... can genuinely write a real ADR file") is not disposable the way a
+reconciliation lane's synthesis text is. Two new, dedicated error codes (`RUN-068` for an unrecognized
+`sessionType`, `RUN-069` for real session-id exhaustion) replace the misleading `RUN-039` reuse, each with
+its own accurate remedy. New tests pin the lane merge, the concurrent id-allocation race (via a real
+`Promise.all`, not merely sequential calls), and Markdown-table escaping against a real embedded pipe and
+newline together in one decision.
+
+### Round 4 — a fourth, fresh critic focused on verifying round 3's `mergeDecideLane` fix specifically: one blocking, one already-established-precedent finding, one adversarial-only minor
+
+Confirmed `conflictPolicy: 'abort'` needs no `conflictResolver` for the real, common clean-merge case (read
+directly against `@forge/vcs`'s own `processMergeCandidate`) and that RUN-068/RUN-069 are wired correctly.
+Found: **[Blocking]** `mergeDecideLane` itself never inspected `outcome.kind` beyond the
+clean/conflict-resolved cases — a genuine merge conflict (or a thrown `VcsError`) fell through with no
+signal reaching its own caller at all, so `runSessionStep`'s own `StepOutcome` still reported `'succeeded'`
+even though the decider's own real content never reached integration — the identical "fabricated success"
+class round 1 already fixed for the *dispatch*-failure case, reopened here for the *merge*-failure case.
+**[Major, already-established codebase precedent, not a new gap this piece introduced]** a lane that fails
+inside `runLaneLifecycle` itself (a lane/commit/claim failure) is never registered in `ctx.laneRegistry` at
+all (`dispatch/steps.ts`'s own unconditional-success-only `ctx.laneRegistry.set`) — the identical shape
+`runMergeStep`'s own "a predecessor with no registered lane... succeeds vacuously" test already accepts
+for every other kind of step; `cleanupPhaseLane`/`mergeDecideLane`'s own doc comments were corrected to
+name this accurately rather than mischaracterising it as "never created." **[Minor, adversarial-only]** the
+`sessionType` allow-list check used the `in` operator, which also matches inherited `Object.prototype`
+members (`"toString"`, `"constructor"`, ...) — a hostile/fuzzed value would skip the intended `RUN-068` and
+crash `buildParticipants` with an opaque `TypeError` instead.
+
+**Fixed:** `mergeDecideLane` now returns the real failure (or `undefined`) instead of a bare `Promise<void>`;
+`runSessionStep` folds it into `decideFailure` the identical way a dispatch failure already is (`??=`, so
+an earlier-recorded dispatch failure is never silently overwritten). The `sessionType` guard now uses
+`Object.hasOwn`, not `in`. A new test stubs `ctx.mergeQueue` to return a real `conflict-unresolved` outcome
+and asserts the step reports `status: 'failed'` with `failure.source: 'merge'`, while the lane itself is
+correctly retained (not discarded) for the next run's own orphan-reclaim.
+
+**Final state:** 15 real tests in `packages/engine/test/interaction/session.test.ts` covering every Check
+`PLAN-M10.md` P10 names (a real end-to-end `brainstorm` session against `FakePlatformAdapter` producing a
+real, valid, complete `SessionRecord`; `critic` confirmed genuinely absent from DIVERGE's own dispatch
+calls and genuinely present in CONVERGE's, via a real request-recording adapter wrapper, not an assertion
+on instructions; a DECIDE-phase owner resolving to no real agent falling back to a real
+`ElicitationRequested` event, not a silent skip or a thrown error; `RUN-039` no longer reachable for a
+well-formed `kind: 'session'` node while staying reachable, unchanged, for `elicit`/`subworkflow`) plus
+eleven regression tests for every real defect four full critic rounds found. `pnpm typecheck` (whole
+workspace, 20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `node
+scripts/check-boundaries.mjs` all clean. Full relevant-package test run (`packages/engine`,
+`packages/sessions`, `packages/kb`, `packages/core`, `tools/eslint-plugin-forge-boundaries`) is
+1805/1805 green. `SPEC-QUESTIONS.md` Q154 has the full record.

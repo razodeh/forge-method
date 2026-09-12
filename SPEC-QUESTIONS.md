@@ -12264,3 +12264,88 @@ establishes — reusing the established primitive rather than duplicating its
 other containment boundary in this codebase already throws, not a new code. A real symlink-escape test
 (planting a genuine symlink under a fixture `modulesDir` pointing outside it) was added to
 `resolve.test.ts` to pin this permanently.
+
+## Q154 — M10 P10: `runSessionStep` — participant-role table reading, the facilitator excluded from
+dispatch, DECIDE's owner resolution, and two new error codes replacing a misleading `RUN-039` reuse
+
+`PLAN-M10.md` P10 fills the one concrete, marked integration point M10's own research pass found:
+`execute.ts`'s own `case 'session':` threw `RUN-039` unconditionally. Several real, disclosed design
+decisions this piece made building `packages/engine/src/interaction/session.ts`'s `runSessionStep`, none
+of them a spec quote:
+
+**1. `SESSION_TYPE_DEFAULTS` reads `16` §16.2's own "Typical participants" column into a concrete
+facilitator + participant-role table — genuinely new content, not a spec transcription.** No
+`StepNode`/`SessionStep` field carries a participant list at all (confirmed directly:
+`sessionStepSchema` validates `sessionType` alone), so this piece had to decide, per session type, who
+actually gets dispatched. Read verbatim where `16` §16.2's own row already names concrete roles
+(`brainstorm`: pm/analyst/architect/ux); read as a disclosed, concrete stand-in where the row is
+genuinely generic (`tradeoff`'s "owners of competing concerns" -> `architect`; `premortem`'s "whole
+relevant roster" -> a representative three; `retro`'s "roles that participated" -> two representative
+roles; `war-room`'s "owners" -> `diagnostician`/`sre`; `estimation`'s "engineers" -> `po`/`architect`;
+`standup`'s "active lanes" -> `em`). `discovery-interview` is the one row this piece could not read
+literally at all: `16` §16.2 names `analyst` as *both* the facilitator and the sole real participant, but
+this module's own facilitator role is never dispatch-eligible by design (see point 2) — naming `analyst`
+as the facilitator verbatim would make this one session type a structural no-op regardless of project
+data (a real defect a gauntlet critic found in an early draft). Resolved by using the generic,
+structural `facilitator` role here instead, keeping `analyst` as a real, dispatch-eligible participant —
+a disclosed deviation from `16` §16.2's own literal "Facilitator: analyst" cell.
+
+**2. The facilitator is never added to `SessionState.participants` at all.** `16` §16.3's own
+facilitation invariant ("the facilitator does not contribute content, only structure") is not merely
+descriptive prose here: `@forge/sessions`'s own `frame()`/`endDiverge()` derive their dispatch-eligible
+participant list directly from `state.participants`, with no special case excluding "the facilitator" by
+name. Including it there would have DIVERGE/CONVERGE dispatch a real agent turn asking the facilitator to
+answer "from the facilitator perspective" — a real, structural violation of the invariant, not a
+theoretical one. A disclosed narrowing from `16` §16.5's own worked example (which lists `facilitator` in
+`SessionRecord.participants`): this module's own assembled record omits it too, since
+`assembleSessionRecord` has no participant list independent of `state.participants`. The synthetic
+`AgentDefinition` this piece builds for the facilitator's own voice always carries `decisions_owned: []`,
+so it can also never resolve as DECIDE's own decision owner.
+
+**3. DECIDE's owner resolution reads `05` §5.3's own `decisions_owned` field literally, against the real,
+on-disk `modules/<module>/agents/*.agent.yaml` roster** — the first non-critic, non-facilitator
+participant role that both resolves to a real, registered `AgentDefinition` and declares a non-empty
+`decisions_owned`. No participant role resolving this way (including the ordinary case of a bare tmp-dir
+project with no `modules/` directory at all) is read as the real, honest "nobody here owns this" case,
+falling back to a real `ElicitationRequested` telemetry event rather than a silent skip or a thrown
+error — `16` §16.3 step 4's own "the decision owner... rules, or the human does," made concrete. This is
+a real semantic gap this piece discloses rather than hides: nothing checks that the resolved owner's own
+`decisions_owned` entries are actually *relevant* to the framed question (a `po` could resolve as owner
+for a `war-room` about a database outage) — a later piece's own refinement, not this one's.
+
+**4. RECORD writes a real, persisted `docs/forge/sessions/SESSION-###.md` artifact, not merely an
+in-memory return value** — front matter (`assembleSessionRecord`'s own schema-validated output) plus a
+real rendered body (`## Frame`/`## Diverge`/`## Converge`/`## Decisions`/`## Non-decisions`/`## Actions`,
+built from the real `SessionState` this run actually produced). A gauntlet critic found an early draft
+returned the assembled record from `runSessionStep` without ever persisting it anywhere reachable from a
+compiled-workflow run (`execute.ts`'s own `case 'session':` keeps only `.outcome`, the same "wrap, do not
+touch the closed `StepOutcomeDetail` union" choice `InteractionOutcome` already makes) — `16.1`'s own "a
+session that produces only a transcript has failed" was not met by an artifact nothing outside a direct
+`runSessionStep` caller could ever see. `sessionRecordSchema`'s own id pattern requires exactly three
+digits after `SESSION-`, never the arbitrary text a real `StepNode.id` contains, so this piece allocates
+one via a deterministic hash of `nodeId` plus a linear probe against real, already-written files under
+`docs/forge/sessions/` — a real, disclosed 1000-id ceiling (`RUN-069` if ever exhausted) pending a later
+piece's own real session-id allocator, not a spec-given sequence.
+
+**5. Two new error codes, `RUN-068`/`RUN-069`, replace a misleading `RUN-039` reuse.** `RUN-039`'s own
+registered remedy ("remove elicit/session/subworkflow steps... until a later milestone builds real
+support for them") is actively wrong, not merely generic, for an ordinary hand-typo'd `sessionType` (an
+easy, real authoring mistake since `sessionStepSchema` validates it as merely `nonBlank()`, never against
+`16` §16.2's own closed ten-value enum) — it tells the author to delete the step rather than fix the typo.
+`RUN-068` (unrecognized `sessionType`) and `RUN-069` (the real 1000-id ceiling from point 4, exhausted)
+each carry their own accurate remedy instead.
+
+**Verification:** 15 real tests in `packages/engine/test/interaction/session.test.ts` covering every
+Check `PLAN-M10.md` P10 names, plus eleven regression tests for real defects four full critic rounds
+found (a session type that could never dispatch to any agent; a failed DECIDE-phase dispatch fabricated
+into a successful decision; failed participant sessions polluting DIVERGE/CONVERGE; a KB write-back that
+crashed on retry; an incorrect participant-roster trim; a discarded `SessionRecord` artifact; a
+session-id collision with no probe at all; FRAME/CONVERGE domain refusals thrown raw instead of returned
+as failed `StepOutcome`s; DIVERGE/CONVERGE reconciliation lanes leaked forever; a session-id allocation
+race under real concurrency; unescaped Markdown table cells; and, found in the final round, the
+DECIDE-phase's own lane leaking the identical way and a genuine merge conflict on it being silently
+reported as step success). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint --max-warnings 0`,
+`prettier --check`, and `node scripts/check-boundaries.mjs` all clean. Full relevant-package test run
+(`packages/engine`, `packages/sessions`, `packages/kb`, `packages/core`,
+`tools/eslint-plugin-forge-boundaries`) is 1805/1805 green. `GAUNTLET-LOG.md`'s own `M10 P10` entry has
+the full round-by-round record.
