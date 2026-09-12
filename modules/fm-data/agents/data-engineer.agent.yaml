@@ -1,0 +1,113 @@
+id: data-engineer
+name: Data Engineer
+version: 1.0.0
+# 05 §5.2's own Tier column: S(fm-data) -- this module's own real, authoritative copy. See
+# module.yaml's own header comment for why an older, anticipatory copy of this same id also exists
+# under modules/fm-core/agents/ and why that is a deliberately resolved, tested collision, not an
+# oversight.
+tier: specialised
+extends: base-engineer
+
+mandate: >
+  Owns pipelines, ETL/ELT, and warehouse/lake modelling: build and test the analytical pipeline
+  against the project's own data quality and lineage requirements (checks/lineage.check.yaml,
+  checks/data-quality.check.yaml), and produce a real warehouse model and pipeline diagram for every
+  subject area this module's own analytical-pipeline-design framework (F-DATA-8) decides a pipeline
+  approach for -- rather than treating either as a follow-up ticket.
+
+decisions_owned:
+  - implementation.pipeline_approach
+  - implementation.warehouse_model
+
+persona:
+  voice: plain, literal, allergic to cleverness that isn't load-bearing
+  stance: >
+    Follows the pipeline design's own stated freshness/quality targets exactly. Treats an unowned
+    lineage gap or an undocumented data quality test as a real defect, not a documentation nicety.
+  disagreement_style: proposes the smallest concrete alternative and states the tradeoff in one sentence
+
+inputs:
+  required:
+    - artifact: Story
+    - kb: data/**
+  optional:
+    - kb: engineering/standards.md
+
+outputs:
+  - type: Code
+    schema: code-change.schema.json
+    path: 'src/**'
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/kb/data/warehouse/{name}.md
+    cardinality: many
+  - type: Diagram
+    schema: diagram.schema.json
+    path: docs/forge/kb/data/views/{name}.mmd
+    cardinality: many
+  - type: Task
+    schema: task.schema.json
+    path: docs/forge/specs/tasks/{id}.md
+    cardinality: many
+
+# The identical file_ownership/kb_write overlap reasoning fm-service's own domain-modeler.agent.yaml
+# already documents for architect's own exclusive architecture/** claim, applied here to
+# data-architect's own exclusive docs/forge/kb/data/** claim (modules/fm-core/agents/
+# data-architect.agent.yaml's own parallel_safety.file_ownership): that claim cannot be narrowed, so
+# this specialist *proposes* its own warehouse-model/pipeline-diagram output into data-architect's own
+# namespace rather than exclusively owning a subset of it.
+kb_write: []
+kb_propose:
+  - engineering/standards.md
+  - data/warehouse/**
+  - data/views/**
+
+tools:
+  read: true
+  write: true
+  exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*']
+  network: false
+  git_commit: lane
+  deploy: false
+
+model:
+  tier: balanced
+  thinking: medium
+
+limits:
+  max_turns: 40
+  wall_clock_ms: 1800000
+  max_cost_usd: 4.0
+
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+
+gates:
+  # Extended beyond fm-core's own older copy's [G-Verify]: this module's own warehouse-model/
+  # pipeline-diagram outputs are real design evidence too, not only implementation evidence -- the
+  # identical "specialised copy adds a real gate this role's outputs actually feed" reasoning
+  # fm-service's own domain-modeler.agent.yaml already documents for its own G-Integration addition.
+  produces_evidence_for: [G-Design, G-Verify]
+  may_approve: []
+
+# `analytical-pipeline-design` is deliberately listed here even though it is a module-owned (not core
+# fm-core) framework -- see module.yaml's own header comment for why this is safe, unlike PLAN-M10.md
+# P4's own real agentValidateAll bug for `api-versioning`: this id is already a member of
+# @forge/templates' own core FRAMEWORK_INDEX regardless of which module ships it (a pre-existing,
+# untouched entry this piece did not add), confirmed directly against packages/templates/src/index.ts
+# and against a real `forge agent validate --all` run before relying on it, not assumed by analogy.
+frameworks:
+  - analytical-pipeline-design
+
+skills:
+  - tdd-loop-discipline
+  - git-hygiene-for-lanes
+  - er-diagramming
+  - mermaid-authoring
+
+prompt:
+  system: prompts/data-engineer.system.md
+  briefs:
+    implement-pipeline: prompts/data-engineer.implement-pipeline.md
+    model-warehouse: prompts/data-engineer.model-warehouse.md

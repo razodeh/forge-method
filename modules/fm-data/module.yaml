@@ -1,0 +1,132 @@
+# module.yaml -- fm-data, "Data platforms & pipelines" (19 §19.1's own shipped-modules table):
+# `data-engineer`, F-DATA-8, lineage/quality checks, warehouse modelling templates, pipeline diagrams.
+#
+# ---------------------------------------------------------------------------------------------------
+# The `data-engineer` agent id -- resolving a real collision with fm-core (PLAN-M10.md P1), the
+# identical class of issue M10 P3/P4 already resolved for fm-web's own `frontend` id and fm-service's
+# own `domain-modeler`/`integration-architect` ids (SPEC-QUESTIONS.md -- see those modules' own entries
+# for the full two-mechanism analysis, reused here without restating it in full):
+#
+# `05` §5.2's own roster table marks `data-engineer` as `S(fm-data)` -- a specialised-tier role this
+# module, not fm-core, is supposed to add. `modules/fm-core/agents/data-engineer.agent.yaml` already
+# exists on disk today (P1), physically under fm-core (the one module-layout exception where agents
+# load straight from a module's own directory) and is *also* named, unconditionally, in fm-core's own
+# `provides.agents` -- that file's own doc comment ("S(fm-data): installed with the fm-data module, per
+# 05 §5.2's own Tier column") already anticipated this exact mismatch, the identical anticipatory-
+# scaffolding pattern fm-web's/fm-service's own header comments already document for their own ids.
+#
+# This module now ships the real, authoritative copy under its own directory
+# (`agents/data-engineer.agent.yaml`) and re-declares it in `provides.agents` below. The same two
+# independent, disagreeing mechanisms fm-web's/fm-service's own module.yaml already document apply here
+# unchanged: `@forge/agents`' own `loadAgentRegistry` walks `modulesDir`'s own subdirectories in pure
+# filesystem-alphabetical order and lets "a later entry with the same id... win" -- "fm-core" sorts
+# before "fm-data" alphabetically, so a project installing both gets this module's own real,
+# specialised agent today (confirmed by `packages/agents/test/content/fm-data-roster.test.ts`'s own
+# `loadAgentRegistry(modulesDir)` test); `PLAN-M10.md` P2's own `resolveInstalledModules`/
+# `compareProvideConflicts` is a separate mechanism whose own "winner" is whichever module is LAST in
+# the caller-supplied `installOrder`, unrelated to `loadAgentRegistry`'s own directory-scan order
+# (`packages/extensions/test/module/fm-data.test.ts` pins both the agreeing and disagreeing order).
+#
+# The residual gap this piece does not fix: fm-core's own stray `provides.agents`/`ceilings` entry for
+# `data-engineer`, contradicting `05` §5.2's own tier column -- a defect in fm-core's already-committed
+# file, a different module's own file, out of this piece's Surface. Recorded in SPEC-QUESTIONS.md.
+#
+# ---------------------------------------------------------------------------------------------------
+# F-DATA-8 / `analytical-pipeline-design` -- a DIFFERENT situation from the agent collision above, and
+# resolved differently on purpose:
+#
+# Unlike `data-engineer` (an agent id fm-core's own `provides.agents` wrongly still claims), fm-core's
+# `module.yaml` already correctly EXCLUDES `analytical-pipeline-design` from its own `provides.frameworks`
+# (that file's own header comment: "minus exactly one id... explicitly named in 19 §19.1's own `fm-data`
+# row... as that module's own contribution, not fm-core's"). fm-core is not claiming ownership of this
+# framework id at the manifest level; there is no `provides`-level conflict to resolve, unlike the agent
+# case above.
+#
+# The framework's REAL content -- unlike `data-engineer` above -- lives entirely in
+# `packages/templates/templates/frameworks/analytical-pipeline-design.framework.yaml`, one of
+# `@forge/templates`' own real, already-consumed 43-entry `FRAMEWORK_INDEX` (`packages/templates/src/
+# index.ts`), because that is the ONLY mechanism anywhere in this codebase that actually loads a
+# framework into a real `forge init`/`forge agent validate` run (`packages/cli/src/init/content.ts`'s
+# own `readFrameworkFiles`, `packages/cli/src/commands/agent.ts`'s own `agentValidateAll`) -- confirmed
+# directly: no `loadFrameworkRegistry`-shaped module scanner exists anywhere alongside `@forge/agents`'
+# own real `loadAgentRegistry` to prefer a module-local copy the way agents can. A first draft of this
+# piece shipped a second, module-local copy at `frameworks/analytical-pipeline-design.framework.yaml`
+# with the corrected `owner_agent` -- a critic round caught that this made F-DATA-8 "real" only inside
+# this piece's own isolated tests, never in a real `forge init` or `agentValidateAll` run, which
+# actually load the OTHER, never-touched copy. Fixed by deleting that dead module-local copy and
+# correcting `owner_agent: data-architect` -> `owner_agent: data-engineer` directly on the one real,
+# live-loaded file instead (`19` §19.1's real ownership assignment for F-DATA-8/`data-engineer`) -- the
+# identical "one real source of truth, fixed in place" discipline `fm-core/module.yaml`'s own header
+# comment already establishes for its other 42 frameworks, applied here to the one framework this
+# module, not fm-core, actually owns. `test/fm-data-framework.test.ts` loads and runs this same real,
+# corrected file end to end (via `FRAMEWORK_INDEX['analytical-pipeline-design']`, not a module-local
+# path), and a dedicated assertion there confirms `agentValidateAll`'s own real roster check
+# (`packages/cli/test/commands/agent.test.ts`, `packages/cli/test/bin.test.ts`) already passes against
+# it unmodified. Listing `analytical-pipeline-design` under `data-engineer.agent.yaml`'s own
+# `frameworks:` field is deliberately SAFE, unlike `PLAN-M10.md` P4's own real `agentValidateAll` bug
+# (`api-versioning` was never in `FRAMEWORK_INDEX` at all): this id already is, and remains, a member
+# of that same core index regardless of which module ships it.
+#
+# ---------------------------------------------------------------------------------------------------
+# Warehouse-modelling templates and pipeline diagrams reuse EXISTING, already-registered infrastructure
+# rather than inventing new artifact types or a new diagram generator:
+#
+# - `templates/warehouse-model.md.hbs` renders the already-registered `DataModel` type (`@forge/schemas`'
+#   own registry) -- that type's own base front matter has no invented business fields (SPEC-QUESTIONS.md
+#   Q20), so a subject-area dimensional model's own real structure (grain, facts, dimensions, SCD
+#   strategy) lives in the rendered document body, the identical "reuse an existing type, put structure
+#   in the body" choice fm-service's own module.yaml already makes for its OpenAPI/proto contract
+#   templates against `InterfaceContract`.
+# - `templates/pipeline-diagram.md.hbs` renders the already-registered `Diagram` type, with its own real
+#   `source`/`depicts`/`generator` fields populated from `@forge/diagrams`' own already-real
+#   `pipelineToFlow` generator (`packages/diagrams/src/generate/generators.ts`) -- confirmed directly
+#   against that file before assuming a new generator was needed: `pipelineToFlow`'s own "stage list,
+#   each with its own dependencies, rendered as a left-to-right flowchart" shape is exactly a data
+#   pipeline's own stage-to-stage flow (source systems -> landing -> staging -> curated -> serving), no
+#   different in shape from the CI-stage list its own doc comment names as its source of truth. See
+#   `test/fm-data-templates.test.ts` for the real, end-to-end generator-to-rendered-Diagram proof.
+#
+# `catalog`/`techniques`/`gates`/`skills`/`workflows`/`artifactTypes` are declared empty below: `19`
+# §19.1's own fm-data row names no catalog depth, technique, gate, skill, or workflow of its own beyond
+# what fm-core already ships, and both templates above reuse existing, already-registered artifact
+# types rather than defining new ones -- left empty rather than invented, the same "no scaffolding for
+# its own sake" discipline every sibling module's own module.yaml already follows.
+# ---------------------------------------------------------------------------------------------------
+
+id: fm-data
+name: Data platforms and pipelines
+version: 1.0.0
+forgeVersion: '>=1.0 <2'
+requires: [fm-core]
+conflicts: []
+levels: [L1, L2, L3, L4]
+
+# Transcribed directly from data-engineer.agent.yaml's own already-declared `tools:` block, the same
+# "ceiling equals what the shipped agent already holds today" convention every sibling module.yaml
+# already establishes. `network` is the real ToolGrant enum (`none`/`allowlist`/`full`).
+ceilings:
+  data-engineer:
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+
+provides:
+  # The one real, authoritative agent this module ships -- see the header comment above.
+  agents: [data-engineer]
+
+  workflows: []
+
+  # See the header comment above for the full F-DATA-8 reasoning.
+  frameworks: [analytical-pipeline-design]
+
+  gates: []
+
+  # The two real, standalone `*.check.yaml` files this module's own Surface names by exact id.
+  checks: ['lineage:coverage', 'data-quality:tests']
+
+  skills: []
+
+  # See the header comment above: both templates reuse existing, already-registered `@forge/schemas`
+  # types (`DataModel`, `Diagram`) rather than defining new ones.
+  artifactTypes: []
+
+  catalog: []
+  techniques: []

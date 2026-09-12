@@ -27,6 +27,7 @@
     "@eslint/js": "9.39.5",
     "@forge/adapter-claude-code": "workspace:*",
     "@forge/adapter-kit": "workspace:*",
+    "@forge/diagrams": "workspace:*",
     "@forge/engine": "workspace:*",
     "@forge/methods": "workspace:*",
     "@forge/schemas": "workspace:*",

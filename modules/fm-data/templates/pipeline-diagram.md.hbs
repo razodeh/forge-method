@@ -1,0 +1,80 @@
+{{!--
+  Pipeline diagram template ("19 §19.1's own "pipeline diagrams" row) -- renders the already-registered
+  `Diagram` type (@forge/schemas' own registry) around a real Mermaid flowchart produced by
+  @forge/diagrams' own already-real `pipelineToFlow` generator (packages/diagrams/src/generate/
+  generators.ts), per module.yaml's own header comment: no new generator or artifact type was needed.
+
+  `source`/`depicts`/`generator` below are NOT authored by hand -- a real caller runs `pipelineToFlow`
+  first and passes its own `GeneratedDiagram.source`/`.depicts` straight into this template's context,
+  matching the Diagram schema's own "generated: true requires a generator" rule
+  (@forge/schemas/artifacts/diagram.ts). See test/fm-data-templates.test.ts for the real, end-to-end
+  proof (a real pipeline stage fixture -> pipelineToFlow -> this template -> diagramSchema).
+
+  `sourceJson` (front matter) vs `rawSource` (the fenced code block in the body) are deliberately two
+  separate context fields carrying the identical Mermaid text: `pipelineToFlow`'s own real output is a
+  multi-line string ("flowchart LR\n  a --> b\n..."), and no 19 §19.2 `{{indent n text}}` helper is
+  registered anywhere in this repository yet (the same "no custom helper exists" constraint every other
+  real .hbs template here already documents) to fold a raw multi-line value into a YAML block scalar
+  safely. `sourceJson` is the caller-supplied `JSON.stringify(generatedDiagram.source)` -- a valid,
+  already-escaped inline YAML/JSON double-quoted scalar, newlines included -- while `rawSource` is the
+  same text unescaped, safe to place inside a fenced Markdown code block in the body (outside the YAML
+  front matter entirely).
+
+  `fence` is ALSO caller-computed, not a hard-coded ` ```mermaid `/` ``` ` pair: a critic round found
+  that a hard-coded triple-backtick fence around a caller-controlled `rawSource` is not safe against a
+  pipeline stage name containing three or more literal backticks (`@forge/diagrams`' own
+  `sanitizeMermaidLabel` only ever escapes `"`, never a backtick -- confirmed directly against
+  packages/diagrams/src/generate/sanitize.ts) -- such a stage name would prematurely close the fence
+  and let arbitrary Markdown/structure leak into the rendered document body. The real caller computes
+  `fence` as a run of backticks one longer than the longest run of consecutive backticks anywhere in
+  `rawSource` (minimum three, the ordinary case), the standard CommonMark "fenced code block" escaping
+  rule -- see test/fm-data-templates.test.ts for the real regression fixture (a stage name containing
+  four literal backticks).
+
+  Renders against 19 §19.2's own real TemplateContext shape, the same convention warehouse-model.md.hbs
+  documents. Only Handlebars built-in helpers are used (#each, #if).
+--}}
+---
+id: {{{artifact.id}}}
+type: Diagram
+schemaVersion: 1
+title: {{{title}}}
+status: {{{status}}}
+created: {{{now}}}
+updated: {{{now}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog:
+  - revision: 1
+    date: {{{now}}}
+    by: {{{artifact.author}}}
+    summary: {{{changelogSummary}}}
+kind: {{{kind}}}
+notation: mermaid
+source: {{{sourceJson}}}
+generated: true
+generator: {{{generator}}}
+depicts:
+{{#each depicts}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+explains:
+{{#each explains}}
+  - {{{this}}}
+{{else}}
+  []
+{{/each}}
+caption: {{{caption}}}
+alt_text: {{{altText}}}
+owner: {{{artifact.author}}}
+---
+
+## Pipeline stages
+
+{{{caption}}}
+
+{{{fence}}}mermaid
+{{{rawSource}}}
+{{{fence}}}

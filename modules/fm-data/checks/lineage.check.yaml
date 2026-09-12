@@ -1,0 +1,48 @@
+# checks/lineage.check.yaml -- 19 §19.1's own "lineage/quality checks" row, in `@forge/engine/gates`'s
+# own real `DeterministicCheck` shape (`id`/`run`/`parser`/`failOn`, packages/engine/src/gates/
+# types.ts), plus the `remedy` string 19 §19.6's own documentation-obligation rule requires.
+#
+# `run` is the same "dependency-free inline script" choice `modules/fm-web/checks/a11y.check.yaml`
+# documents, and it deliberately interpolates NO caller-supplied or environment-sourced value into the
+# command it runs -- unlike `modules/fm-service/checks/api-breaking-change.check.yaml`'s own
+# `FORGE_BASE_REF`, there is nothing here for a hostile input to inject through; the script only ever
+# reads a fixed, project-relative directory (`docs/forge/kb/data/pipelines/`) via `node:fs`, never
+# `child_process`/a shell at all. Confirmed directly, not merely by omission, since a critic round
+# specifically checked for this exact class of defect (`modules/fm-service/checks/
+# api-breaking-change.check.yaml`'s own doc comment names the real shell-injection bug PLAN-M10.md P4's
+# own first draft introduced there).
+#
+# `12` §12 F-DATA-8's own "lineage" concern, made mechanically checkable: every real pipeline document
+# under `docs/forge/kb/data/pipelines/*.md` must carry a real `## Lineage` section naming both a
+# `Source:` and a `Target:` line -- the smallest real, mechanically-detectable proxy for "this
+# pipeline's own lineage is actually documented, not merely implied." A pipeline doc missing the
+# heading, or missing either line, counts as a violation. Prints `{"violations": N,
+# "pipelinesScanned": M}` -- see test/fm-data-checks.test.ts for the real pass/fail fixture runs (built
+# against a real, temporary directory tree, not a stub).
+#
+# A project with no `docs/forge/kb/data/pipelines/` directory yet (no pipeline documented at all)
+# passes vacuously (`{"violations": 0, "pipelinesScanned": 0}`) rather than crashing on a missing
+# directory -- the identical "no dist/ yet" convention `checks/a11y.check.yaml`/`checks/
+# bundle-size.check.yaml` already establish for their own fixed directory.
+#
+# A critic round found the first draft's own `hasSource`/`hasTarget` regexes ran against the WHOLE
+# file text rather than the "## Lineage" section's own content -- a doc with an empty "## Lineage"
+# section plus an unrelated "Source:"/"Target:"-shaped line anywhere else in the file (a changelog
+# entry, an unrelated section) passed with 0 violations despite having no real lineage documented.
+# Fixed: `lineageSection` extracts only the text between the "## Lineage" heading and the next
+# level-2 heading (or end of file) via a real, tested regex, and `hasSource`/`hasTarget` are checked
+# against that extracted section only -- see test/fm-data-checks.test.ts's own regression fixture
+# (an empty Lineage section followed by an unrelated Changelog section naming Source/Target).
+id: lineage:coverage
+name: Pipeline lineage coverage
+description: >
+  Scans docs/forge/kb/data/pipelines/*.md and fails if any pipeline doc lacks a real "## Lineage"
+  section naming both a Source and a Target within that section.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="docs/forge/kb/data/pipelines";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function lineageSection(text){const m=/##[ \t]*lineage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text);return m?m[1]:null;}let violations=0,pipelinesScanned=0;for(const f of walk(dir)){pipelinesScanned++;const text=fs.readFileSync(f,"utf8");const section=lineageSection(text);const hasSource=section!==null&&/\bsource:\s*\S/i.test(section);const hasTarget=section!==null&&/\btarget:\s*\S/i.test(section);if(!hasSource||!hasTarget)violations++;}console.log(JSON.stringify({violations,pipelinesScanned}));'''
+parser: json
+failOn: 'violations > 0'
+remedy: >
+  Re-run the command above locally and read its printed counts, then open each pipeline doc under
+  docs/forge/kb/data/pipelines/ named by a violation: add a "## Lineage" section naming both a real
+  Source and Target (e.g. "Source: postgres.orders" / "Target: warehouse.fct_orders"). If a pipeline
+  genuinely has no lineage to record yet, record a waiver rather than silencing this check.

@@ -39,3 +39,7 @@ modules/fm-web/templates/*.md.hbs
 # The identical YAML-front-matter-plus-Handlebars shape, same corruption, same fix (PLAN-M10.md P4,
 # 19 §19.1/§19.2).
 modules/fm-service/templates/*.md.hbs
+
+# The identical YAML-front-matter-plus-Handlebars shape, same corruption, same fix (PLAN-M10.md P5,
+# 19 §19.1/§19.2).
+modules/fm-data/templates/*.md.hbs

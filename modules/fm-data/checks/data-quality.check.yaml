@@ -1,0 +1,52 @@
+# checks/data-quality.check.yaml -- 19 §19.1's own "lineage/quality checks" row (the second half), in
+# `@forge/engine/gates`'s own real `DeterministicCheck` shape, plus the `remedy` string 19 §19.6
+# requires.
+#
+# `run` is the same "dependency-free inline script, no shell interpolation of any caller-supplied or
+# environment-sourced value" choice `checks/lineage.check.yaml` documents and for the identical reason
+# -- confirmed directly against a critic round's own specific ask for this exact class of defect.
+#
+# `12` §12 F-DATA-8's own "data quality tests" concern, made mechanically checkable: every real
+# pipeline document under `docs/forge/kb/data/pipelines/*.md` must have a matching, non-empty real test
+# file under `test/data-quality/` whose own filename's stem is EXACTLY that pipeline doc's own basename
+# (e.g. `docs/forge/kb/data/pipelines/orders.md` needs a `test/data-quality/orders.<anything>` file
+# with real content) -- the smallest real, mechanically-detectable proxy for "this pipeline has a real,
+# executable data quality test, not merely a documented intention." A pipeline doc with no matching
+# non-empty test file counts as a violation. Prints `{"violations": N, "pipelinesScanned": M}` -- see
+# test/fm-data-checks.test.ts for the real pass/fail fixture runs.
+#
+# A critic round found the first draft's own match used `name.startsWith(base)`, a naive prefix test:
+# pipeline `orders` was wrongly satisfied by an unrelated `orders-archive.dq.test.ts` (which
+# `.startsWith("orders")`), and conversely a genuinely untested `orders` pipeline could hide behind
+# any unrelated `ordersXYZ.*` file. Fixed: the match now requires the test filename to start with the
+# pipeline's own basename followed immediately by a literal `.` (`^<base>\.`, the basename regex-
+# escaped first) -- `orders-archive.dq.test.ts` no longer matches `orders`, and `orders.dq.test.ts`
+# still does. See test/fm-data-checks.test.ts's own regression fixture (two pipelines, `orders` and
+# `orders-archive`, with only `orders-archive`'s own test file present).
+#
+# A project with no `docs/forge/kb/data/pipelines/` directory yet passes vacuously
+# (`{"violations": 0, "pipelinesScanned": 0}`), the identical convention `checks/lineage.check.yaml`
+# already establishes.
+#
+# A second critic round found the fixed-regex draft above still accepted a DIRECTORY whose name
+# happened to match the stem pattern (`fs.readdirSync(testsDir)` with no `withFileTypes`, then
+# `fs.statSync(...).size > 0` -- a directory entry can satisfy both, since a non-empty directory's own
+# `size` is filesystem-dependent and not necessarily 0). Fixed: `testFiles` now comes from
+# `fs.readdirSync(testsDir, {withFileTypes: true})` filtered to `.isFile()` before the stem pattern is
+# ever tested, so only a real file can satisfy a pipeline's own requirement. See
+# test/fm-data-checks.test.ts's own regression fixture (a directory named `orders.dq.test.ts/`
+# containing a real file, with no actual `orders.*` file present).
+id: data-quality:tests
+name: Pipeline data quality test coverage
+description: >
+  Scans docs/forge/kb/data/pipelines/*.md and fails if any pipeline doc has no matching, non-empty
+  real test file under test/data-quality/ whose filename stem exactly matches the pipeline's basename.
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const pipelinesDir="docs/forge/kb/data/pipelines";const testsDir="test/data-quality";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function escapeRegExp(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}let testEntries=[];try{testEntries=fs.readdirSync(testsDir,{withFileTypes:true});}catch(e){if(e.code!=="ENOENT")throw e;}const testFiles=testEntries.filter((e)=>e.isFile()).map((e)=>e.name);let violations=0,pipelinesScanned=0;for(const f of walk(pipelinesDir)){pipelinesScanned++;const base=path.basename(f,".md");const stemPattern=new RegExp("^"+escapeRegExp(base)+"\\.");const match=testFiles.find((name)=>stemPattern.test(name)&&fs.statSync(path.join(testsDir,name)).size>0);if(!match)violations++;}console.log(JSON.stringify({violations,pipelinesScanned}));'''
+parser: json
+failOn: 'violations > 0'
+remedy: >
+  Re-run the command above locally and read its printed counts, then for each pipeline doc named by a
+  violation, add a real, non-empty test file under test/data-quality/ whose filename starts with that
+  doc's own basename (row counts, null checks, freshness/SLA assertions -- whatever this pipeline's own
+  design named as its quality bar). If a pipeline genuinely has no data quality test yet by deliberate,
+  reviewed decision, record a waiver rather than silencing this check.

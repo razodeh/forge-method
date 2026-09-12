@@ -1,0 +1,66 @@
+{{!--
+  Warehouse-modelling template ("19 §19.1's own "warehouse modelling templates" row) -- renders the
+  already-registered `DataModel` type (@forge/schemas' own registry), matching module.yaml's own header
+  comment: DataModel's own base front matter has no invented business fields (SPEC-QUESTIONS.md Q20),
+  so a subject-area dimensional model's own real structure (grain, facts, dimensions, SCD strategy)
+  lives in the rendered document body, the identical "reuse an existing type, put structure in the
+  body" choice modules/fm-service/module.yaml already makes for its own OpenAPI/proto contract
+  templates against InterfaceContract.
+
+  Renders against 19 §19.2's own real TemplateContext shape (project/artifact/inputs/style/now/forge),
+  matching modules/fm-web/templates/*.md.hbs's own established convention for a template that is not a
+  framework's own output_template. Only Handlebars built-in helpers are used (#each, #if) -- no custom
+  helper is registered anywhere in this repository yet. `created`/`updated` render `{{{now}}}` through
+  a caller-supplied bare-date fixture (@forge/schemas' own baseFrontMatterShape declares both as
+  `z.string().date()`, unlike modules/fm-web's own two schemas, which deliberately declare
+  `date-time` -- DataModel/Diagram invent no fields of their own, so this template does not either).
+--}}
+---
+id: {{{artifact.id}}}
+type: DataModel
+schemaVersion: 1
+title: {{{title}}}
+status: {{{status}}}
+created: {{{now}}}
+updated: {{{now}}}
+revision: 1
+author: {{{artifact.author}}}
+changelog:
+  - revision: 1
+    date: {{{now}}}
+    by: {{{artifact.author}}}
+    summary: {{{changelogSummary}}}
+---
+
+## Subject area
+
+{{{subjectArea}}}
+
+## Grain
+
+{{{grain}}}
+
+## Facts
+
+| fact table | measures | grain |
+|---|---|---|
+{{#each facts}}
+| {{{name}}} | {{{measures}}} | {{{grain}}} |
+{{/each}}
+
+## Dimensions
+
+| dimension | type | attributes |
+|---|---|---|
+{{#each dimensions}}
+| {{{name}}} | {{{scdType}}} | {{{attributes}}} |
+{{/each}}
+
+## Partitioning and freshness
+
+- **Partitioning strategy:** {{{partitioning}}}
+- **Freshness target:** {{{freshnessTarget}}}
+
+## Lineage
+
+{{{lineage}}}
