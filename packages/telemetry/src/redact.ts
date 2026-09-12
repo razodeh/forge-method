@@ -4,16 +4,27 @@
  * function: walks a structured, JSON-shaped value and returns a new one with matches replaced, never
  * mutating its input.
  *
- * Two independent checks, both real requirements: `patterns` match against *key names* (the shape of
+ * Three independent checks, all real requirements: `patterns` match against *key names* (the shape of
  * `18` §18.3's own worked example — `api[_-]?key`, `authorization` — are words you'd expect to see as a
  * field name, not appear literally inside a secret value), redacting that key's entire value regardless
  * of its own shape; `knownSecrets` match against *string values* by exact equality, wherever they appear,
  * regardless of the key they're under — a resolved secret can leak through an innocuously-named field a
- * pattern would never catch.
+ * pattern would never catch; `valuePatterns` match against *string values* by shape (`PLAN-M11.md` P10's
+ * own `20` §20.10 S3 fixture-run test found this third check missing entirely: an AWS/GitHub/Slack/PEM/
+ * Bearer-token-*shaped* literal landing in an innocuously-named field, e.g. a session's own free-text
+ * `message`, was caught by neither of the first two checks — `patterns` never matches on a key named
+ * `message`, and `knownSecrets` defaults empty since resolved-secret-value tracking is not yet wired
+ * into any real caller, `SPEC-QUESTIONS.md` Q62 — so a real secret-shaped value passed straight through
+ * to `.forge/state/runs/<runId>/events.ndjson` unredacted). `valuePatterns` is exactly `SECRET_PATTERNS`-
+ * shaped: a value is redacted in full the moment any pattern matches anywhere inside it, mirroring
+ * `@forge/extensions`'s own `isSecretShapedLiteral` (`mcp/validate.ts`) rather than inventing a second
+ * "is this string secret-shaped" rule.
  *
  * @see specs/18 §18.4
  * @see specs/20 §20.4
+ * @see specs/20 §20.10 S3
  * @see PLAN-M5.md P6
+ * @see PLAN-M11.md P10
  */
 import { TelemetryError } from './errors.ts';
 
@@ -65,19 +76,30 @@ function assertNotCircular(value: object, ancestors: ReadonlySet<object>): void 
   }
 }
 
+/** Fresh `RegExp` per test, for the identical stateful-`lastIndex`-on-a-`g`-flagged-pattern reason
+ * `matchesAnyPattern` above already documents — a value-shape pattern is exactly as likely to carry a
+ * caller-supplied `g` flag as a key-name one. */
+function matchesAnyValuePattern(value: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => new RegExp(pattern.source, pattern.flags).test(value));
+}
+
 function redactValue(
   value: unknown,
   patterns: readonly RegExp[],
   knownSecrets: readonly string[],
+  valuePatterns: readonly RegExp[],
   ancestors: ReadonlySet<object>,
 ): unknown {
   if (typeof value === 'string') {
-    return knownSecrets.includes(value) ? REDACTED_MARKER : value;
+    if (knownSecrets.includes(value)) return REDACTED_MARKER;
+    return matchesAnyValuePattern(value, valuePatterns) ? REDACTED_MARKER : value;
   }
   if (Array.isArray(value)) {
     assertNotCircular(value, ancestors);
     const nextAncestors = new Set(ancestors).add(value);
-    return value.map((entry: unknown) => redactValue(entry, patterns, knownSecrets, nextAncestors));
+    return value.map((entry: unknown) =>
+      redactValue(entry, patterns, knownSecrets, valuePatterns, nextAncestors),
+    );
   }
   if (isPlainObject(value)) {
     assertNotCircular(value, ancestors);
@@ -95,7 +117,7 @@ function redactValue(
       Object.defineProperty(result, key, {
         value: matchesAnyPattern(key, patterns)
           ? REDACTED_MARKER
-          : redactValue(entryValue, patterns, knownSecrets, nextAncestors),
+          : redactValue(entryValue, patterns, knownSecrets, valuePatterns, nextAncestors),
         enumerable: true,
         writable: true,
         configurable: true,
@@ -109,11 +131,14 @@ function redactValue(
 /** `knownSecrets` defaults empty since full `${secret:name}` resolution (`20` §20.4) is not yet built
  * anywhere in the dependency graph this piece can reach (`SPEC-QUESTIONS.md` Q62) — the parameter exists
  * so a future caller that *does* have resolved secret values can pass them in without this function's
- * own shape changing. */
+ * own shape changing. `valuePatterns` defaults empty for the identical "additive, opt-in" reason —
+ * existing callers that construct their own `redactPatterns`/`knownSecrets` pair and never touch this
+ * third parameter see byte-identical behaviour to before it existed. */
 export function redactPayload(
   payload: unknown,
   patterns: readonly RegExp[],
   knownSecrets: readonly string[] = [],
+  valuePatterns: readonly RegExp[] = [],
 ): unknown {
-  return redactValue(payload, patterns, knownSecrets, new Set());
+  return redactValue(payload, patterns, knownSecrets, valuePatterns, new Set());
 }

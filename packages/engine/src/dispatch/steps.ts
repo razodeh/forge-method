@@ -24,6 +24,7 @@ import { ForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { StepNode } from '../plan/index.ts';
+import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import { GateNotFoundError } from './facades.ts';
 import { runShellCommand } from './shell.ts';
 import type {
@@ -478,15 +479,24 @@ export async function runGateStep(node: StepNode, ctx: ExecuteStepContext): Prom
   });
   const finishedAt = ctx.now();
   const detail: StepOutcomeDetail = { kind: 'gate', report };
-  if (!report.approved) {
+  // `20` §20.10 S6 / `15` §15.5.4: a tainted step cannot approve a gate, checked structurally here
+  // regardless of whether every deterministic check passed -- `taint-guard.ts`'s own doc comment has
+  // the full reasoning for why gate approval is the one of S6's three named surfaces with a real,
+  // already-wired per-step runtime call site to attach this check to.
+  const taintDecision = assertGateApprovalAllowed(node.taint);
+  if (!report.approved || taintDecision.refused) {
     await ctx.telemetry.emit({
       type: 'GateRejected',
       stepId: node.id,
-      payload: { gateId: node.gate },
+      payload: taintDecision.refused
+        ? { gateId: node.gate, reason: taintDecision.reason }
+        : { gateId: node.gate },
     });
     return failed(node.id, startedAt, finishedAt, detail, {
       source: 'gate',
-      message: `Gate ${node.gate} was not approved.`,
+      message: taintDecision.refused
+        ? `Gate ${node.gate} cannot be approved: ${taintDecision.reason}.`
+        : `Gate ${node.gate} was not approved.`,
     });
   }
   await ctx.telemetry.emit({

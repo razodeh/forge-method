@@ -167,6 +167,20 @@ export interface StepNode {
    * (`@forge/engine/workflow`'s own `types.ts`) for why this piece stops at carrying it, not evaluating
    * it. */
   readonly when?: string | undefined;
+  /** `20` §20.5 point 3 / `15` §15.5.4: set when this step's own context includes untrusted content
+   * (`@forge/agents`'s own `markExternalContent`) — `'external'` is the only value either of those
+   * describes, so a plain optional literal rather than a wider enum. Additive: no compiler in this
+   * package sets it yet (a step's own taint is a runtime fact about what context it was actually built
+   * with, not something `compilePlan` can determine from authored workflow YAML alone), so every
+   * existing `StepNode` construction is unaffected and this defaults to `undefined` (not tainted)
+   * everywhere it is not explicitly set. **This means every real, compiled `StepNode` in this codebase
+   * has `taint: undefined` today** — `markExternalContent` itself has zero production callers
+   * (confirmed by grep) — so `runGateStep`'s own real consumption of this field
+   * (`@forge/engine/security`'s own `assertGateApprovalAllowed`) is a real, correct, always-on check
+   * that simply never yet has a real tainted step to refuse. See `taint-guard.ts`'s own doc comment for
+   * why this is disclosed as "the enforcement exists, the signal does not yet," not "S6 gate approval is
+   * enforced in production today." */
+  readonly taint?: 'external' | undefined;
 }
 
 /** One problem `compilePlan`/`expandFanout` found. Unlike `@forge/engine/workflow`'s own `ValidationIssue`

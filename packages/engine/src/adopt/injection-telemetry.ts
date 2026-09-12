@@ -7,18 +7,23 @@
  * module doc comment and `SPEC-QUESTIONS.md` Q57 -- a caller with `core`/`telemetry` access, which
  * `@forge/engine` is, is exactly what that doc comment says must construct the real event).
  *
- * Kept as its own tiny, directly-testable function rather than inlined at each of the two call sites:
- * a JSON-encoded evidence block (`JSON.stringify({...})`, always starting with `{`) can never itself
- * produce a line matching `stripControlTokens`'s own line-anchored `FORGE_*` pattern (`scan.ts`'s own
- * `TOKEN_LINE_PATTERN` requires a match at the line's own start), so `strippedCount > 0` is not
- * realistically reachable through this piece's own real evidence-building path today -- but the branch
- * exists because that JSON-shape assumption is not a checked invariant, and a defense that only turns on
- * once new evidence formatting makes it reachable is exactly the kind of dead code review would otherwise
- * flag as untested. Testing this function directly, independent of whether a real evidence string can
- * currently trigger it, gives it real coverage without fabricating an artificial end-to-end scenario.
+ * Kept as its own tiny, directly-testable function rather than inlined at each of the two call sites,
+ * since both `cartography.ts` and `inference.ts` need it identically.
+ *
+ * `strippedCount > 0` was, for a while, believed to be structurally unreachable through this piece's own
+ * real evidence-building path: both callers built their evidence block with one `JSON.stringify({...})`
+ * call and stripped the *result*, and a JSON-encoded blob's own escaped newlines can never satisfy
+ * `stripControlTokens`'s own line-anchored `FORGE_*` pattern (`scan.ts`'s own `TOKEN_LINE_PATTERN`).
+ * `PLAN-M11.md` P10's own `20` §20.10 S5 investigation found that belief was itself the bug, not a
+ * proof of safety: it meant a real `FORGE_*`-shaped file path or fact extracted from a hostile brownfield
+ * repository was never actually stripped either, not merely never logged. Both callers now sanitise
+ * every evidence string leaf individually, *before* serialising (`./evidence-sanitize.ts`'s own
+ * `sanitizeEvidenceForPrompt`), so this branch is genuinely reachable today, not merely defensive.
  *
  * @see specs/20 §20.5 point 2
+ * @see specs/20 §20.10 S5
  * @see PLAN-M10.md P16
+ * @see PLAN-M11.md P10
  */
 import type { ExecuteStepContext } from '../dispatch/types.ts';
 import type { AgentId } from '../plan/index.ts';

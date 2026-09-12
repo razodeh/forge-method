@@ -24,6 +24,7 @@ import {
 import { runParticipantSession } from '../interaction/dispatch-agent-step.ts';
 import type { ExecuteStepContext } from '../dispatch/types.ts';
 import { analysisNode } from './analysis-node.ts';
+import { sanitizeEvidenceForPrompt } from './evidence-sanitize.ts';
 import { reportInjectionAttempt } from './injection-telemetry.ts';
 import { claimsFromSession, parseEvidenceList } from './session-claims.ts';
 
@@ -117,16 +118,17 @@ function parseClaim(
  * repository); `nfr` reads config/data signals (timeouts, retries, caches, indexes, rate limits are
  * config- and datastore-shaped); `glossary` reads the public API surface, where domain vocabulary
  * actually surfaces in route/command/symbol names. */
-/** Wraps the SURVEY/INVENTORY evidence excerpt through `wrapUntrustedContent` before embedding it --
- * see `cartography.ts`'s own `promptFor` doc comment for why this evidence counts as `20` §20.5's own
+/** Sanitises then wraps the SURVEY/INVENTORY evidence excerpt before embedding it -- see
+ * `cartography.ts`'s own `promptFor` doc comment for why this evidence counts as `20` §20.5's own
  * "brownfield source" untrusted content regardless of how innocuous a path/config-key name usually
- * looks, and why `strippedCount` is threaded back for a real `InjectionAttemptBlocked` event. */
+ * looks, why sanitisation happens per-leaf *before* `JSON.stringify` rather than on the serialised
+ * whole, and why `strippedCount` is threaded back for a real `InjectionAttemptBlocked` event. */
 function promptFor(
   kind: InferenceClaimKind,
   survey: Survey,
   inventory: Inventory,
 ): { readonly prompt: string; readonly strippedCount: number } {
-  const evidenceText = JSON.stringify(
+  const rawEvidence =
     kind === 'nfr'
       ? { configSurface: inventory.configSurface, datastores: survey.datastores }
       : kind === 'glossary'
@@ -136,8 +138,9 @@ function promptFor(
             publicApiSurface: inventory.publicApiSurface,
             existingDocs: survey.existingDocs,
             health: survey.health,
-          },
-  );
+          };
+  const sanitized = sanitizeEvidenceForPrompt(rawEvidence);
+  const evidenceText = JSON.stringify(sanitized.value);
   const ratioNote =
     kind === 'convention'
       ? ' Every "convention" claim MUST include a real {"matched": n, "total": m} adherence count -- ' +
@@ -154,7 +157,7 @@ function promptFor(
     `Report your findings as claims of kind "${kind}".${ratioNote} Every claim from this phase is treated ` +
     `as low- or medium-confidence draft material regardless of how confident you are -- report your own ` +
     `honest confidence anyway, it will simply be capped.`;
-  return { prompt, strippedCount: wrapped.stripped.length };
+  return { prompt, strippedCount: sanitized.strippedCount + wrapped.stripped.length };
 }
 
 async function dispatchInferenceKind(

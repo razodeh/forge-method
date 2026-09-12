@@ -115,6 +115,10 @@ export interface AppendEventOptions {
   /** Matched against payload *key names* — `redactPayload`'s own doc comment has the full reasoning. */
   readonly redactPatterns?: readonly RegExp[];
   readonly knownSecrets?: readonly string[];
+  /** Matched against payload *string values* by shape, regardless of key name — `redactPayload`'s own
+   * doc comment has the full `20` §20.10 S3 reasoning for why this is a separate check from
+   * `redactPatterns`/`knownSecrets`, not a redundant third form of the same one. */
+  readonly valuePatterns?: readonly RegExp[];
 }
 
 /** `runId` reaches this function from a caller, not from anything this package itself generates or
@@ -403,6 +407,7 @@ export async function appendEvent(
       event.payload,
       options.redactPatterns ?? [],
       options.knownSecrets ?? [],
+      options.valuePatterns ?? [],
     );
     const fullEvent: ForgeEvent = { ...event, v: 1, seq, payload: redactedPayload };
     try {

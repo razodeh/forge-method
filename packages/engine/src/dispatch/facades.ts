@@ -9,6 +9,7 @@
  * @see PLAN-M5.md P15
  */
 import { appendEvent, type NewForgeEvent } from '@forge/telemetry/events';
+import { SECRET_PATTERNS } from '@forge/extensions/skills';
 import {
   commitInLane,
   createLaneWorktree,
@@ -97,7 +98,20 @@ function omitUndefinedValues<T extends object>(value: T): WithoutUndefinedValues
 
 /** `runId`/`ts` are the two fields `TelemetryFacade.emit`'s own callers never supply (`types.ts`'s own doc
  * comment) — injected here, once, from this facade's own construction (`runId`) and from `now` (`ts`,
- * ISO-8601, matching `ForgeEvent.ts`'s own documented format) on every call. */
+ * ISO-8601, matching `ForgeEvent.ts`'s own documented format) on every call.
+ *
+ * Every event this facade ever appends is passed through `@forge/telemetry`'s own real
+ * `valuePatterns` redaction using `@forge/extensions`'s own `SECRET_PATTERNS` — the exact AWS/GitHub/
+ * Slack/PEM/Bearer-token shapes `20` §20.10 S3 names — not left to each of this module's own dozen call
+ * sites to remember individually. `PLAN-M11.md` P10's own real fixture-run test found this facade's
+ * predecessor called `appendEvent` with no options at all: a secret-shaped value landing in any event
+ * payload field (a session's own free-text `message`, say) reached `.forge/state/runs/<runId>/
+ * events.ndjson` completely unredacted, since `redactPayload`'s own two pre-existing checks are a
+ * key-name-shape match (never fires on an innocuous key like `message`) and an exact-known-secret-value
+ * match (`knownSecrets` defaults empty — resolved-secret tracking is not yet wired anywhere in this
+ * dependency graph, `SPEC-QUESTIONS.md` Q62). Defaulting `valuePatterns` here, at the one real
+ * production constructor every live run's own `@forge/cli` context (`run/context.ts`) already calls
+ * unchanged, closes the gap for every caller at once. */
 export function createTelemetryFacade(
   projectRoot: string,
   runId: string,
@@ -110,7 +124,7 @@ export function createTelemetryFacade(
         runId,
         ts: new Date(now()).toISOString(),
       }) as NewForgeEvent;
-      return appendEvent(projectRoot, runId, fullEvent);
+      return appendEvent(projectRoot, runId, fullEvent, { valuePatterns: SECRET_PATTERNS });
     },
   };
 }

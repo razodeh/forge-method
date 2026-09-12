@@ -1,0 +1,138 @@
+/**
+ * `20` §20.5 point 3 / `15` §15.5.4's own three named privileged actions a tainted step (one whose
+ * context includes untrusted MCP/fetched/brownfield content, `@forge/agents`'s own
+ * `markExternalContent`) may never perform: approve a gate, escalate a tool grant, or target a
+ * production environment. `20` §20.10 S6 is the adversarial-test obligation for exactly this.
+ *
+ * `PLAN-M11.md` P10's own direct investigation (before writing any test, per this piece's own mandate)
+ * found no `taint` concept anywhere in `@forge/engine`'s step/plan/dispatch model at all — not merely
+ * untested, genuinely absent — for all three surfaces:
+ *
+ * - **Gate approval** has a real, already-wired per-step runtime mechanism (`runGateStep`, `dispatch/
+ *   steps.ts`): a `gate`-kind `StepNode` unconditionally emitted `GateApproved` once its deterministic
+ *   checks passed, with zero notion of whether the step that reached that point was ever tainted. This
+ *   is the one surface of the three this module's own guard is wired into a real production *call
+ *   site* for — see `StepNode.taint`'s own doc comment (`plan/types.ts`) and `runGateStep`'s own use of
+ *   `assertGateApprovalAllowed` below. **Read that precisely, not more broadly than it says: the call
+ *   site is real, but nothing in this codebase's real compile/dispatch pipeline populates `taint` on any
+ *   real `StepNode` yet** (`markExternalContent`, `20` §20.5's own taint-marking function, has zero
+ *   production callers of its own — confirmed by grep, and disclosed above). Until some future piece
+ *   wires taint detection into plan compilation or dispatch, `assertGateApprovalAllowed` is consulted
+ *   on every real gate step and correctly returns "allowed" every time, because every real `node.taint`
+ *   is `undefined`. This closes the *enforcement* half of the gap (the check exists, is correct, and
+ *   fires the moment a real taint signal exists) — it does not, and cannot by itself, close the
+ *   *signal* half (nothing produces that signal today). A gauntlet critic reviewing this piece read an
+ *   earlier draft of this doc comment as implying S6 gate-approval is enforced in production today; it
+ *   is not, and this paragraph exists specifically so a future reader does not make the same reading.
+ * - **A second, taint-blind path to `GateApproved` exists and is out of this piece's scope, disclosed
+ *   rather than silently ignored**: `forge gate approve <id>` (`@forge/cli`'s own `packages/cli/src/
+ *   commands/run/gate-commands.ts`, `gateApprove`) emits a real `GateApproved` event directly, with no
+ *   taint concept, no `StepNode`, and no check of the gate's own deterministic results at all — the
+ *   same unconditional shape `gateReject`/`gateWaive` already have. Judged a legitimately separate,
+ *   spec-external channel rather than a bypass of *this* invariant: `20` §20.5 point 3 and `15` §15.5.4
+ *   both say "a tainted **step** cannot approve a gate" — a human operator typing this command has
+ *   reviewed the gate themselves and is not a step the run dispatched, the identical class of
+ *   human-override `gateWaive`'s own real waiver mechanism already is for gate rule 1. Not fixed (there
+ *   is no step, and therefore no taint, for this command to consult), and not silently assumed covered.
+ * - **Grant escalation** has no live runtime call site at all: the only escalation mechanism this
+ *   codebase implements, `.forge/config.yaml`'s own `security.toolCeilingEscalations` (`15` §15.3.2),
+ *   is applied once, at *compile* time, before any step exists to be tainted — a running step has no
+ *   action that widens its own already-compiled grant. Inventing one now, only to have something for a
+ *   taint check to guard, would itself be new, disproportionate runtime behaviour this milestone's own
+ *   mandate explicitly warns against (the identical judgement `PLAN-M11.md` P9 already made for S4's
+ *   `isHostAllowed`, which likewise has zero production callers).
+ * - **Production targeting** has exactly one real, typed "which environment" call site in this
+ *   codebase, `forge deploy <env>` (`@forge/cli`'s own `packages/cli/src/commands/loop/deploy.ts`) — but
+ *   it is a top-level, human-invoked CLI verb outside `@forge/engine`'s own step-dispatch model entirely
+ *   (it *compiles and runs a workflow*, it is not itself a step a running workflow can dispatch), and no
+ *   per-step "this step is the one targeting environment X" fact exists anywhere in `StepNode`/
+ *   `ExecuteStepContext` for a guard to attach to — `CompileEnv`'s own same-named `env` field is
+ *   internal compile-recursion bookkeeping, unrelated to a workflow-authored `{{env}}` expression
+ *   value. Threading a generic "environment" concept through `compilePlan`/`StepNode` broadly enough to
+ *   attach a real guard would mean inventing engine-wide semantics `20`/`15` do not specify (which step
+ *   in an arbitrary workflow "targets" its own run's environment — all of them? only ones whose `run`
+ *   field happens to template `{{env}}`?) — a materially larger, riskier change than this piece's own
+ *   proportionate scope.
+ *
+ * `assertGrantEscalationAllowed`/`assertProductionTargetAllowed` are still real, exported, and directly
+ * tested here (with a genuine positive/negative control each, `20` §20.10 S6's own test) — any future
+ * caller that *does* gain a real runtime escalation or environment-targeting action has a structural
+ * primitive to consult from day one, rather than each needing to invent its own taint check. Disclosed
+ * here, and in `SPEC-QUESTIONS.md`, exactly as plainly as P9 disclosed S4's own zero-callers fact, not
+ * silently assumed to already be wired in.
+ *
+ * @see specs/15 §15.3.2
+ * @see specs/15 §15.5.4
+ * @see specs/20 §20.5 point 3
+ * @see specs/20 §20.10 S6
+ * @see PLAN-M11.md P9
+ * @see PLAN-M11.md P10
+ */
+
+/** The one taint value `20` §20.5 point 3 / `15` §15.5.4 ever name — a plain optional literal on
+ * `StepNode`/callers here, not a wider enum a future taint kind would need to be added to in lockstep
+ * with every consumer. */
+export type StepTaint = 'external' | undefined;
+
+export interface TaintRefused {
+  readonly refused: true;
+  readonly reason: string;
+}
+
+export interface TaintAllowed {
+  readonly refused: false;
+}
+
+export type TaintDecision = TaintRefused | TaintAllowed;
+
+const ALLOWED: TaintAllowed = { refused: false };
+
+const SPEC_CITATION = '20 §20.5 point 3; 15 §15.5.4';
+
+/** `runGateStep`'s own real, structural consumer — see this module's own doc comment for why gate
+ * approval is the one of the three named surfaces with a real per-step runtime call site today. */
+export function assertGateApprovalAllowed(taint: StepTaint): TaintDecision {
+  if (taint === 'external') {
+    return {
+      refused: true,
+      reason: `a tainted step (taint: external) cannot approve a gate (${SPEC_CITATION})`,
+    };
+  }
+  return ALLOWED;
+}
+
+/** No production call site invokes this today — see this module's own doc comment, "Grant escalation,"
+ * for why: `.forge/config.yaml`'s own `security.toolCeilingEscalations` is the only escalation
+ * mechanism this codebase implements, and it is compile-time-only. Real and tested regardless, so a
+ * future runtime escalation action has a structural guard to consult from day one. */
+export function assertGrantEscalationAllowed(taint: StepTaint): TaintDecision {
+  if (taint === 'external') {
+    return {
+      refused: true,
+      reason: `a tainted step (taint: external) cannot escalate a tool grant (${SPEC_CITATION})`,
+    };
+  }
+  return ALLOWED;
+}
+
+/** `15` §15.5.1's own worked example spells `production` in full; `prod` is accepted too, matching how
+ * every other real environment-shaped string this codebase already normalises informally (`forge
+ * deploy prod` reads the same as `forge deploy production` to a human operator) — a guard that only
+ * recognised one spelling would be trivially bypassed by the other. No production call site invokes
+ * this today — see this module's own doc comment, "Production targeting," for the full reasoning. */
+const PRODUCTION_ENVIRONMENTS: ReadonlySet<string> = new Set(['production', 'prod']);
+
+export function assertProductionTargetAllowed(
+  taint: StepTaint,
+  environment: string,
+): TaintDecision {
+  if (taint === 'external' && PRODUCTION_ENVIRONMENTS.has(environment)) {
+    return {
+      refused: true,
+      reason:
+        `a tainted step (taint: external) cannot target the production environment ` +
+        `${JSON.stringify(environment)} (${SPEC_CITATION})`,
+    };
+  }
+  return ALLOWED;
+}
