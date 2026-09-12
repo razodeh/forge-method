@@ -14750,3 +14750,92 @@ test/dispatch/agent.test.ts`, `packages/cli/src/commands/{loop/deploy,run/run,ru
 tests, `packages/testkit/src/{fake-adapter,script}.ts`, and one isolated `RUN-075` hunk in the shared
 `packages/core/src/errors/codes.ts`) was ever touched, and the final commit staged exactly its own 21
 files by name.
+
+## Q178 — M11 P12: security invariants S10/S11/S12 — the plan's own premise held for S10 and S12, but
+`forge doctor` itself is not a wired CLI command at all, which reframes what S11 can test
+
+**Context:** `PLAN-M11.md` P12 asks for adversarial tests proving `20` §20.10 S10 (ceiling refusal), S11
+(doctor secret safety) and S12 (orphan-free crash recovery) hold, against mechanisms the plan's own
+mandate characterises as "all three already have strong existing mechanisms... this piece adds the
+missing S-labeled adversarial tests." Direct investigation before writing any test, per this piece's own
+instructions (P9-P11 each found a real gap in this same plan's own "how done is this" characterisation),
+found the premise genuinely true for S10 and S12, but materially incomplete for S11.
+
+**1. S10 confirmed genuinely real and already wired at the layer the spec names.** `M10 P2`'s own
+`checkModuleCeilings`/`moduleOwning` (`packages/extensions/src/module/ceiling.ts`) is real, correct, and
+already unit-tested (`test/module/ceiling.test.ts`). The one real gap: no production caller anywhere in
+this codebase resolves a `ModuleDefinition`'s own `ceilings[role]` (a zod-inferred type carrying every
+optional field as `T | undefined`) into the `ToolGrant` shape `checkModuleCeilings` actually consumes —
+confirmed directly by grep, the identical "real mechanism, zero production callers" shape `M11 P10`'s own
+`Q172` already found for S6's `markExternalContent`. Judged out of proportionate scope for an
+S-adversarial-test piece (inventing the missing compile-time wiring would be new runtime behaviour, not
+a test), so the new `packages/extensions/test/security/s10-ceiling-refusal.test.ts` exercises the real
+`checkModuleCeilings`/`moduleOwning` pair directly, normalising the zod-inferred ceiling shape into a
+`ToolGrant` locally (`toToolGrant`, mirroring `agents/ceiling.ts`'s own `mergeGrants` normalisation for
+the identical `exactOptionalPropertyTypes` reason) rather than fabricating the missing production
+resolver just to have something to call.
+
+**2. S11's own stated "console text, `--json` output, or any written report file" framing describes a
+CLI surface that does not exist.** `packages/cli/src/bin.ts`'s own top doc comment lists `doctor`
+explicitly among every command that "exists only as a real, already-tested plain function taking a
+hand-built `*CommandContext`... no real argv dispatcher existed... before this file" and which the real
+dispatcher deliberately does not wire up — confirmed directly: no `'doctor'` case/dispatch arm, no
+`--json`-flag handling, and no report-file-writing code path exists anywhere in `packages/cli/src` for
+doctor. `runDoctor` has exactly one real caller today (`upgrade/run-upgrade.ts`), which only reads the
+returned `DoctorReport` object and never renders or writes it anywhere. This does not make S11
+untestable: `DoctorReport` (`{ v, ok, checks: DoctorCheck[] }`) is a plain, fully-serialisable data
+envelope with no other formatting layer between it and any of S11's three named surfaces — there is
+nothing else in the object for a future `--json` flag or report-writer to add or leave out, and
+`message`/`fix` are the only human-readable fields a console renderer would ever print. `packages/cli/
+test/security/s11-doctor-secret-safety.test.ts` exercises the real, whole `DoctorReport` object end to
+end (a real secret value genuinely present in the injected `env`, a hostile `env` with 25 unreferenced
+decoy secrets, a decoy literal embedded directly in fixture file content) and asserts zero occurrences
+of any real or decoy secret value across the object, its JSON serialisation, and a real written-and-
+read-back temp report file — the one honest way to test the named invariant against a CLI surface this
+codebase has not built yet, rather than fabricating a `--json` flag/report-writer that would itself be
+new, out-of-scope production behaviour for an adversarial-test piece.
+
+**3. S12 confirmed genuinely real, but E3's own existing coverage (`crash-resume.test.ts`) left three
+real gaps this piece's own adversarial framing needed to close, not merely relabel.** The post-M9
+crash-resume/orphan-reclaim infrastructure (`Q149`) is real, and `crash-resume.test.ts` itself already
+asserts `listOrphanedWorktrees(...) === []` after each of its own 20 randomised kill points — but (a) it
+never checks `listOrphanedLaneBranches`/`listOrphanedWorktreeDirectories`, two of Q149's own five real
+leftover shapes; (b) it never independently confirms the *process* side of "no orphaned children" from
+the real OS process table, only inferring it from clean worktree state afterward; (c) its own 20 kill
+points are randomised across the whole run, leaving the one real, narrow `git worktree add` race window
+to chance. `packages/engine/test/security/s12-orphan-free-crash.test.ts` closes all three: it checks all
+three leftover shapes, independently queries the real process table (`ps -e -o pid=,pgid=`) to confirm
+zero survivors of the killed run's own process group, and kills at a deterministic, empirically-derived
+set of event counts (`[8, 9, 10, 11, 12]`, captured from a real recorded event trace of this exact
+fixture/seed — `StepStarted` for both fanout lanes lands at seq 8/9, immediately followed by their own
+`LaneCreated` at seq 10/11, so the real "git worktree add subprocess still running" window sits between
+those) — plus a `raceWindowHitCount` assertion that empirically confirms, per run, that the chosen points
+actually landed inside a real leftover-producing window at least once, rather than trusting the hardcoded
+numbers blindly. Gated `it.skipIf(process.platform === 'win32')` (the identical, already-established
+pattern `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` use for the same class
+of POSIX-only mechanism): `ps`'s own `-o pid=,pgid=` field selection and negative-pid process-group
+signalling have no Windows equivalent, and CI's own floor matrix runs `pnpm test` on `windows-latest`.
+The real spawn/group-kill helpers (`createTempRepo`, `spawnAndKillAfter`, `waitForProcessGone`) are
+extracted into a new, shared `packages/engine/test/e2e/crash-helpers.ts` rather than duplicated a second
+time verbatim, so Q149's own group-kill fidelity fix has exactly one place to fix if it ever regresses.
+
+**Gauntlet rounds:** round 1's critic found the S12 draft had a real, guaranteed-failure Windows
+incompatibility (the un-guarded `ps` call, given CI's own `windows-latest` floor leg) and an unverified
+"these kill points hit the race window" claim with no test that would catch it being wrong — both fixed
+as described in point 3 above. Round 2, a fresh critic, confirmed both fixes genuinely resolved (ran the
+suite itself; confirmed `it.skipIf` wraps the whole test correctly, `raceWindowHitCount`'s assertion runs
+unconditionally and is wired to the real leftover-detection functions with correct arguments and
+ordering, and the `crash-helpers.ts` extraction is a byte-for-byte-equivalent refactor with no default-
+value trap), with no new blocking/major issue introduced by the fixes themselves.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`pnpm run boundaries` all clean on every file this piece touched. A full, unscoped
+`node scripts/run-tests.mjs run` reported 6 failed test files out of 485 (9 failed tests of 8286): two are
+this build's own pre-accepted load-sensitive flakes (`crash-resume.test.ts`, `kb/test/adopt/survey.test.ts`'s
+oversized-fixture test — the former re-run in isolation, clean, 25-73s depending on host load); the
+remaining four (`test/workspace-floor.test.ts`'s stray-file check, `packages/cli/test/commands/
+audit.test.ts`, `packages/cli/test/commands/upgrade/{backup,run-upgrade}.test.ts`) all trace to other
+M11 pieces' own concurrently-running, uncommitted work-in-progress at the time of this run (`P13`'s new
+`audit.ts`/`audit.test.ts`; `P14`'s in-flight `doctor/{index,run-doctor,types,fix}.ts` changes, which
+`upgrade`'s own real `runDoctor` call depends on) — confirmed via `git status` immediately before
+committing that none of those files were touched by, or staged in, this piece's own commit.

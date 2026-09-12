@@ -11584,3 +11584,106 @@ real cross-contamination from, this same working directory earlier in the sessio
 
 **Rounds: 2 critic rounds (round 1: 2 blocking, both fixed; round 2: 0 new blocking/major, 1 minor,
 fixed). Outcome: WON.** Committed `4805394` (feat).
+
+## M11 P12 — Security invariants S10, S11, S12: ceiling refusal, doctor secret-safety, orphan-free
+crash recovery (`20` §20.10 S10/S11/S12)
+
+**Rounds:** 2 (round 1: build + fresh critic, two blocking findings on S12, zero on S10/S11; round 2:
+fresh critic verifying round 1's fixes against actual current file content, confirmed both resolved,
+zero new blocking/major issues).
+
+**Round 1 findings:**
+1. (Blocking, accidental-reachable) `s12-orphan-free-crash.test.ts` shelled out to `ps -e -o
+   pid=,pgid=` with no platform guard, and CI's own floor matrix runs `pnpm test` on `windows-latest` —
+   every ordinary Windows CI run would fail this test, since `ps` does not exist there. Fixed:
+   `it.skipIf(process.platform === 'win32')` wrapping the whole test, the identical pattern
+   `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` already establish for this
+   exact class of POSIX-only mechanism.
+2. (Blocking, accidental-reachable) The original `KILL_POINTS = [1..8]` was an unverified guess at
+   where `implement`'s own fanout-lane `git worktree add` race window falls — the only check tying it
+   to reality (`totalEvents > KILL_POINTS.length`) proved nothing about *where* the window actually is,
+   so the test would have passed vacuously (testing nothing real) if the guess were wrong, with no way
+   to catch that. Fixed: a real, hand-captured event trace of the fixture workflow found `StepStarted`
+   for both fanout lanes at seq 8/9 and their own `LaneCreated` at seq 10/11 (the real "subprocess still
+   running" window sits between those); `KILL_POINTS` moved to `[8, 9, 10, 11, 12]`, and a new
+   `raceWindowHitCount` check records, per iteration, whether a real git-visible leftover existed
+   *before* `resumeRun` ran, asserting `raceWindowHitCount > 0` across all iterations at the end — an
+   empirical tripwire that fails loudly if a future fixture-scheduling change silently moves the window
+   out from under these fixed points, rather than leaving the test passing while covering nothing.
+3. (Major, accidental-reachable, disclosed rather than left unfixed) ~90 lines of process-spawn/
+   group-kill helpers (`createTempRepo`, `spawnAndKillAfter`, `waitForProcessGone`) were duplicated
+   verbatim from the pre-existing `crash-resume.test.ts` — a real maintenance hazard (the one real,
+   previously-fixed group-kill fidelity bug, `Q149`, would need fixing in two places if it ever
+   regressed). Fixed: extracted into a new, shared `packages/engine/test/e2e/crash-helpers.ts`; both
+   `crash-resume.test.ts` (refactored to import it, `seed` made an explicit required parameter instead
+   of a file-local constant) and the new S12 test import from it instead of duplicating.
+4. (Minor, non-gating) S11's three "surfaces" (report object / `--json` / report file) checks are
+   admitted-padding, not independent detection power (a leak would be caught by the first check alone;
+   the other two can only ever pass or fail in lockstep with it since `DoctorReport` is the whole
+   contract). Judged honest disclosure rather than a defect — the test file's own doc comment already
+   says so outright — kept as-is.
+5. (Clean) S10 (`s10-ceiling-refusal.test.ts`) had no blocking or major finding: `checkFor` routes every
+   case through the real `moduleOwning`/`provideConflicts` resolution rather than a hand-asserted
+   ceiling object, includes a provides-conflict-loser test specifically defeating the "wrong module's
+   ceiling" vacuous-check failure mode, and includes an explicit positive control proving the suite can
+   distinguish allow from deny rather than always failing closed.
+
+**What the critic caught that the build missed:** the Windows incompatibility (finding 1) and the
+unverified race-window claim (finding 2) were both real gaps in the build's own adversarial rigor, not
+merely style — a test that silently never exercises the mechanism it claims to, or that fails every
+Windows CI run outright, is exactly the "false sense of security" and "accidental-reachable regression"
+shape this build's own review-loop rules exist to catch before a critic does.
+
+**Round 2:** a fresh critic independently re-read the actual current content of all five touched/new
+files, ran the S12 suite itself (confirmed the win32 skip-guard doesn't just avoid crashing — the whole
+test, including the `raceWindowHitCount > 0` assertion, actually passes on this POSIX host), ran
+`crash-resume.test.ts` itself to confirm the `crash-helpers.ts` extraction didn't regress the original
+E3 coverage, verified `listOrphanedWorktrees`/`listOrphanedLaneBranches`/`listOrphanedWorktreeDirectories`
+are called with correct arguments strictly before `resumeToCompletion`, and re-ran `pnpm typecheck`/
+`eslint` on every touched file. Verdict: all fixes genuinely, not cosmetically, resolved; no new
+blocking/major issue introduced by the fixes themselves.
+
+**Also found and disclosed, not a critic finding but investigation before any test was written (see
+`SPEC-QUESTIONS.md` Q178 for the full record):** `forge doctor` is not a wired CLI command anywhere in
+this codebase — no `--json` flag, no report-file writer, confirmed via `packages/cli/src/bin.ts`'s own
+explicit "still unwired" list. S11's test exercises the real, whole `DoctorReport` object directly
+(the one real data source any such surface would ever render) rather than fabricating CLI machinery
+that does not exist.
+
+### Mandatory full-workspace verification — clean, modulo two pre-accepted flakes and unrelated
+concurrent-work-in-progress failures
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean on every file this piece touched. A full, unscoped
+`node scripts/run-tests.mjs run` reported **479 test files passed, 6 failed, 8268 tests passed, 9
+skipped** (8286 total). Of the 6 failures: `packages/engine/test/e2e/crash-resume.test.ts` and
+`packages/kb/test/adopt/survey.test.ts`'s own oversized-fixture test are the two load-sensitive flakes
+this build's own instructions name as accepted (`crash-resume.test.ts` re-run in isolation immediately
+after: clean, 25-73s depending on concurrent host load). The remaining four
+(`test/workspace-floor.test.ts`'s stray-file check, `packages/cli/test/commands/audit.test.ts`,
+`packages/cli/test/commands/upgrade/backup.test.ts`, `packages/cli/test/commands/upgrade/
+run-upgrade.test.ts`) are none of this piece's own files — confirmed via `git status --short` before
+committing that `packages/cli/src/commands/audit.ts`/`packages/telemetry/src/audit.ts` (P13's own
+in-flight work) and `packages/cli/src/commands/doctor/{index,run-doctor,types,fix}.ts` (P14's own
+in-flight work, which `upgrade`'s real `runDoctor` call depends on) were concurrently modified/untracked
+by other, unrelated M11 pieces at the time of this run, not by this piece.
+
+**A real, shared-working-directory hazard hit and corrected during this piece's own commit, not before
+it:** the first `git commit` (no `-A`, only this piece's own five files individually `git add`ed)
+nonetheless committed 12 files, not 5 — a concurrent piece (`P14`) ran its own `git add` on its own
+files in the shared index between this piece's `git add` and its `git commit`, and a plain `git commit`
+with no pathspec commits the whole index regardless of which paths were most recently added by this
+process. Caught immediately by inspecting the commit's own `--stat` output rather than trusting the
+command's exit code; corrected via `git reset --soft HEAD~1` (undoes the commit, keeps the working tree
+untouched) followed by `git reset -- <P14's seven files>` (unstages them without discarding P14's own
+working-tree content) and a clean re-commit of exactly this piece's own five files, verified via
+`git diff --cached --stat` immediately before the second commit attempt. No other piece's work was lost
+or altered.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`,
+`pnpm run boundaries` all clean on every file this piece touched, re-run after both critic rounds. See
+`SPEC-QUESTIONS.md` Q178 for the full record of the S11 CLI-wiring premise gap and the S10/S12
+investigation findings.
+
+**Rounds: 2 critic rounds (round 1: 2 blocking + 1 major on S12, 1 minor on S11 disclosed not fixed,
+0 on S10; round 2: 0 new blocking/major). Outcome: WON.** Committed `04539a7` (test).
