@@ -11,6 +11,7 @@ export * from './compile/index.ts';
 export * from './invariants/index.ts';
 export * from './mcp/index.ts';
 export * from './merge/index.ts';
+export * from './module/index.ts';
 export * from './presets/index.ts';
 export * from './resolve/index.ts';
 export * from './skills/index.ts';

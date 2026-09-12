@@ -999,6 +999,64 @@ export const ERROR_CODES = {
     message: () => 'No real .forge/config.yaml found -- this project has never been initialized.',
     remedy: 'Run `forge init` first.',
   },
+  // `@forge/extensions/module`'s own L1 module compilation (`19` §19.1, `PLAN-M10.md` P2). Next free
+  // `CFG-*` slot after `CFG-020`, in the same "config/manifest validity" scope: a `module.yaml` is a
+  // manifest like `config.yaml`/`.forge/manifest.yaml` above it, and `requires`/`conflicts`/
+  // `forgeVersion` are all manifest-content facts, not a new prefix's worth of concern.
+  'CFG-021': {
+    // A `module.yaml` that fails schema validation outright (malformed YAML, or a shape
+    // `moduleSchema` rejects) -- distinct from `CFG-022`-`CFG-024` below, which are all schema-valid
+    // manifests that fail a cross-module or cross-version check instead.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; detail: string }) =>
+      `Module manifest at ${show(d.path)} is invalid: ${show(d.detail)}`,
+    remedy: 'Fix the module.yaml schema violation named above, then re-parse.',
+  },
+  'CFG-022': {
+    // `19` §19.1's own `requires: [ fm-core ]` worked example: a module naming a `requires` entry
+    // that is not itself installed in the same project.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string; requires: string }) =>
+      `Module ${show(d.moduleId)} requires ${show(d.requires)}, which is not installed.`,
+    remedy: 'Install the missing module, or remove it from requires.',
+  },
+  'CFG-023': {
+    // `19` §19.1's own "conflicts between two modules" line -- a module naming a `conflicts` entry
+    // that IS installed in the same project. Distinct from the *other* sense of "conflict" `19`
+    // §19.1 also uses (two modules both `provides`-ing the same id), which is never an error: that
+    // one resolves by install order and is reported as an informational diff line, not this code.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string; conflictsWith: string }) =>
+      `Module ${show(d.moduleId)} conflicts with the installed module ${show(d.conflictsWith)}.`,
+    remedy: 'Remove one of the two conflicting modules.',
+  },
+  'CFG-024': {
+    // A module's own `forgeVersion` range (e.g. `">=1.0 <2"`) not satisfied by the running FORGE
+    // version.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string; forgeVersion: string; required: string }) =>
+      `Module ${show(d.moduleId)} requires forge ${show(d.required)}, but the running version is ${show(d.forgeVersion)}.`,
+    remedy:
+      "Upgrade FORGE to satisfy the module's forgeVersion range, or install a compatible module version.",
+  },
+  'CFG-025': {
+    // A critic round on `PLAN-M10.md` P2 found `resolveInstalledModules` built a manifest path as
+    // `modulesDir/<installOrder-entry>/module.yaml` with no check on the entry itself -- a real
+    // path-traversal hole for an installed-module id like `"../../etc"`. Every real module id is
+    // lower-kebab-case (`moduleSchema`'s own `moduleIdSchema`/`MODULE_ID_PATTERN`), which cannot
+    // contain `.`, `/`, or a drive letter at all, so rejecting anything else here before it is ever
+    // joined into a path closes the hole at the one point the untrusted string is still just a string.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string }) =>
+      `${show(d.moduleId)} is not a valid module id (must be lower-kebab-case).`,
+    remedy:
+      "Fix the project manifest's installed-module list to name only real, lower-kebab-case module ids.",
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

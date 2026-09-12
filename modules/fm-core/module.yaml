@@ -65,66 +65,72 @@ levels: [L1, L2, L3, L4]
 # own "exceeding it requires a recorded, expiring escalation" line makes the ceiling a hard cap a
 # project overlay may narrow within or widen up to, not a headroom allowance invented speculatively
 # here. Every value below was read directly from the corresponding agent file, not estimated.
+#
+# `network` below is `none`/`allowlist`/`full` (`@forge/extensions/agents`'s own `ToolGrant`, `15`
+# §15.3.2's ceiling/grant shape, read off this same spec's own `module.yaml` worked example) -- NOT
+# the boolean each agent's own base `tools:` block itself uses (`modules/fm-core/agents/<id>.
+# agent.yaml`'s own separate, unrelated schema). Every agent this module ships holds `network: false`
+# in its own file, which transcribes here as `network: none` (`PLAN-M10.md` P2's own real-fixture
+# fix, not a change in what any agent is actually granted).
 ceilings:
-  analyst: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  analyst: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
   architect:
     {
       write: false,
       exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*', 'tree*'],
-      network: false,
+      network: none,
       deploy: false,
     }
   backend:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
   base-engineer:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
-  compliance: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  critic: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+  compliance: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  critic: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
   data-architect:
-    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
   data-engineer:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
   diagnostician:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
-  domain-modeler: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  em: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  facilitator: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  finops: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+  domain-modeler: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  em: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  facilitator: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  finops: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
   frontend:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
   integration-architect:
-    { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
   ml-engineer:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
   mobile:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
   orchestrator:
-    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
   platform:
     {
       write: true,
       exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*', 'pnpm *', 'npm *'],
-      network: false,
+      network: none,
       deploy: false,
     }
-  pm: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  po: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  release: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
+  pm: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  po: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  release: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
   reviewer:
     {
       write: false,
       exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*'],
-      network: false,
+      network: none,
       deploy: false,
     }
   sdet:
-    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: false }
-  security:
-    { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  sre: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: false, deploy: true }
-  techwriter: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  test-architect: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
-  ux: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: false, deploy: false }
+    { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: false }
+  security: { write: false, exec: ['git log*', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  sre: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*'], network: none, deploy: true }
+  techwriter: { write: true, exec: ['git *', 'ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  test-architect: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  ux: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
 
 provides:
   # The real 29 agents already on disk under `modules/fm-core/agents/*.agent.yaml`, one id per file

@@ -111,6 +111,9 @@ const SAMPLE_DETAILS = {
   expected: 'CONVERGE',
   techniqueId: 'scamper',
   agentCount: 7,
+  moduleId: 'fm-service',
+  requires: 'fm-core',
+  forgeVersion: '1.4.0',
 } satisfies Record<string, unknown> as never;
 
 /**
