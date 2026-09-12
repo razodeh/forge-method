@@ -146,6 +146,36 @@ export const ERROR_CODES = {
     message: (d: { lane: string }) => `Merge conflict in lane ${show(d.lane)}.`,
     remedy: 'Resolve the conflict in the lane worktree, or set `execution.conflictPolicy: human`.',
   },
+  // `@forge/extensions/install`'s own git-channel overlay/module fetch (`19` §19.5, `PLAN-M11.md`
+  // P1). `@forge/vcs`'s own `fetchGitOverlay` throws a `VcsError` (that package has no `core` edge,
+  // per `git.ts`'s own doc comment), so `fetchGitOverlayBundle` -- the one orchestration function
+  // every git-channel caller goes through -- wraps it here, the identical `vcsCode`/`vcsMessage`
+  // wrapping shape `RUN-037` already establishes for `@forge/engine`'s own lane-lifecycle wrapping,
+  // reused rather than re-invented: both exist so a caller inspecting the *wrapped* error's own
+  // details sees the real underlying `VcsError`'s code/message directly, with the full `ForgeError`
+  // (and its own registered remedy) still reachable via `cause` for a reader who wants it.
+  'VCS-008': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { spec: string; vcsCode: string; vcsMessage: string }) =>
+      `Fetching ${show(d.spec)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
+    remedy:
+      'Check the git spec is a real, reachable git+<url>#<tag-or-sha> and that the ref exists, ' +
+      'then retry.',
+  },
+  // `fetchLocalOverlay`'s own local-channel sibling of `VCS-008` above: `computeContentChecksum`
+  // (`@forge/vcs`) throws only `VcsError` (that package has no `core` edge), so the local channel
+  // wraps it here too, the identical `vcsCode`/`vcsMessage` shape, for a `stat`/`readFile` failure
+  // (a permission error, a rejected symlink, a TOCTOU race) while checksumming an otherwise-valid
+  // local directory -- distinct from `CFG-026`/`CFG-027` above, which are about the source path or
+  // its manifest, not about reading its content for the checksum.
+  'VCS-009': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; vcsCode: string; vcsMessage: string }) =>
+      `Computing the checksum of ${show(d.path)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
+    remedy: 'Fix the underlying file access problem named above, then retry.',
+  },
   'SPEC-021': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -1168,6 +1198,42 @@ export const ERROR_CODES = {
       `${show(d.moduleId)} is not a valid module id (must be lower-kebab-case).`,
     remedy:
       "Fix the project manifest's installed-module list to name only real, lower-kebab-case module ids.",
+  },
+  // `@forge/extensions/install`'s own overlay/module bundle fetch (`19` §19.5, `PLAN-M11.md` P1).
+  // Next free `CFG-*` slot after `CFG-025`, same "manifest validity" scope: whether a fetched
+  // bundle's own local path is real, and whether it actually contains an installable manifest, are
+  // both facts about the manifest a caller is about to parse, not a new prefix's worth of concern.
+  'CFG-026': {
+    // A local overlay/module source path (`forge overlay add ./acme-standards`) that does not exist,
+    // or exists but is not a directory -- distinct from `CFG-027` below, which is a real, existing
+    // directory that simply has no manifest in it.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) => `${show(d.path)} does not exist or is not a directory.`,
+    remedy: 'Provide a real, existing directory path for a local overlay/module source.',
+  },
+  'CFG-027': {
+    // `19` §19.5 step 2: "Parse overlay.yaml / module.yaml" -- a fetched bundle (local path or git
+    // channel alike) whose root has neither file is not an installable overlay or module at all.
+    // Shared across both channels: the caller passes whichever description of the source (a local
+    // path, or a `git+...#ref` spec) is meaningful to the person reading the error.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { source: string }) =>
+      `${show(d.source)} does not contain a real overlay.yaml or module.yaml.`,
+    remedy:
+      'Point the install source at a directory containing a real overlay.yaml or module.yaml.',
+  },
+  'CFG-028': {
+    // `findManifestKind` (`packages/extensions/src/install/manifest.ts`): a `stat` failure on a
+    // candidate manifest filename that is *not* "the file does not exist" -- a permission error, most
+    // realistically. Distinct from `CFG-027`: that code means "no manifest is here at all"; this one
+    // means "a manifest might be here, but it could not even be checked."
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) => `Could not check whether ${show(d.path)} is a real file.`,
+    remedy:
+      'Check the file and its containing directory are readable by the current user, then retry.',
   },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union

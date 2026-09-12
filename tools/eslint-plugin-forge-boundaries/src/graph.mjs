@@ -88,7 +88,13 @@ export const PACKAGE_GRAPH = {
   methods: ['core', 'kb', 'schemas'],
   catalog: ['schemas'],
   diagrams: ['core', 'schemas'],
-  extensions: ['schemas', 'core', 'templates'],
+  // `PLAN-M11.md` P1's own recorded Surface deviation: the git-channel overlay/module fetch needs
+  // `@forge/vcs`'s own real git primitives (`simple-git`/`execa`, already `02` §2.1's chosen
+  // dependency), so `@forge/extensions`'s new `install/` orchestration layer calls a new `@forge/vcs`
+  // export directly rather than `@forge/extensions` re-implementing git plumbing of its own — the
+  // identical kind of deliberate, disclosed graph-edge decision `Q104`/`PLAN-M10.md` P10/P16 already
+  // made for `engine -> sessions`. See `SPEC-QUESTIONS.md` for the record.
+  extensions: ['schemas', 'core', 'templates', 'vcs'],
   agents: ['core', 'kb', 'schemas', 'adapter-kit', 'templates', 'extensions'],
   sessions: ['core', 'kb', 'agents', 'schemas'],
   engine: [

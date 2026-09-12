@@ -116,6 +116,8 @@ const SAMPLE_DETAILS = {
   forgeVersion: '1.4.0',
   confidence: 'high',
   ceiling: 'medium',
+  source: './acme-standards',
+  spec: 'git+https://example.com/acme/repo.git#v1.0.0',
 } satisfies Record<string, unknown> as never;
 
 /**

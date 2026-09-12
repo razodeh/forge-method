@@ -21,6 +21,15 @@ export {
 export { SYSTEM_CLOCK, type VcsClock } from './clock.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';
 export {
+  computeContentChecksum,
+  fetchGitOverlay,
+  parseGitOverlaySpec,
+  type FetchGitOverlayOptions,
+  type GitOverlayFetchResult,
+  type GitOverlaySpec,
+  type GitRefKind,
+} from './overlay-fetch.ts';
+export {
   analyzeGitProfile,
   type ChurnHotspot,
   type CoChangePair,

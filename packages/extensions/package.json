@@ -15,7 +15,8 @@
     "./style": "./src/style/index.ts",
     "./invariants": "./src/invariants/index.ts",
     "./compile": "./src/compile/index.ts",
-    "./module": "./src/module/index.ts"
+    "./module": "./src/module/index.ts",
+    "./install": "./src/install/index.ts"
   },
   "engines": {
     "node": ">=20.10"
@@ -26,6 +27,7 @@
   "dependencies": {
     "@forge/core": "workspace:*",
     "@forge/schemas": "workspace:*",
+    "@forge/vcs": "workspace:*",
     "minimatch": "10.2.6",
     "yaml": "2.9.0",
     "zod": "3.25.76"

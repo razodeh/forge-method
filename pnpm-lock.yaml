@@ -120,6 +120,8 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/adapter-generic: {}
+
   packages/adapter-kit:
     dependencies:
       '@forge/schemas':
@@ -301,6 +303,9 @@ importers:
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      '@forge/vcs':
+        specifier: workspace:*
+        version: link:../vcs
       minimatch:
         specifier: 10.2.6
         version: 10.2.6

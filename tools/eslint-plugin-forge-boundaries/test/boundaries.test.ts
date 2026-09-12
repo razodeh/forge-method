@@ -54,12 +54,15 @@ const schemas = (relative: string) => `/repo/packages/schemas/${relative}`;
 const adapter = (relative: string) => `/repo/packages/adapter-claude-code/${relative}`;
 
 /**
- * Transcribed verbatim from the `specs/02` §2.2 dependency-rules block. Three rows are checked
+ * Transcribed verbatim from the `specs/02` §2.2 dependency-rules block. Four rows are checked
  * separately below instead of through this table, each for its own documented reason:
  * `templates` and `testkit` have no spec entry at all (`SPEC-QUESTIONS.md` Q16); `engine` has a spec
  * entry, but `PACKAGE_GRAPH.engine` deliberately carries two edges beyond it (`SPEC-QUESTIONS.md`
- * Q77, and `PLAN-M10.md` P10's own `engine -> sessions` edge) — so asserting `engine` here, against
- * the literal spec text alone, would fail on a graph that is correct on purpose.
+ * Q77, and `PLAN-M10.md` P10's own `engine -> sessions` edge); `extensions` has a spec entry, but
+ * `PACKAGE_GRAPH.extensions` deliberately carries one edge beyond it (`PLAN-M11.md` P1's own
+ * `extensions -> vcs` edge, for the real git-channel overlay/module fetch) — so asserting either of
+ * these two here, against the literal spec text alone, would fail on a graph that is correct on
+ * purpose.
  */
 const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   schemas: [],
@@ -73,7 +76,6 @@ const SPEC_TABLE: Readonly<Record<string, readonly string[]>> = {
   methods: ['core', 'kb', 'schemas'],
   catalog: ['schemas'],
   diagrams: ['core', 'schemas'],
-  extensions: ['schemas', 'core', 'templates'],
   agents: ['core', 'kb', 'schemas', 'adapter-kit', 'templates', 'extensions'],
   sessions: ['core', 'kb', 'agents', 'schemas'],
   installer: ['core', 'schemas', 'templates', 'extensions'],
@@ -138,7 +140,8 @@ describe('specs/02 §2.2 — the dependency graph', () => {
         pkg !== 'cli' &&
         pkg !== 'templates' &&
         pkg !== 'testkit' &&
-        pkg !== 'engine',
+        pkg !== 'engine' &&
+        pkg !== 'extensions',
     );
     expect(undeclared).toEqual([]);
   });
@@ -180,6 +183,17 @@ describe('specs/02 §2.2 — the dependency graph', () => {
         'testkit',
         'sessions',
       ].sort(),
+    );
+  });
+
+  it('gives extensions every spec-declared edge, plus vcs for the real git-channel overlay/module fetch', () => {
+    // The spec's own three edges (specs/02 §2.2), unchanged, plus one recorded addition:
+    // `PLAN-M11.md` P1's own `extensions -> vcs` edge, so `@forge/extensions`'s new `install/`
+    // orchestration layer can call `@forge/vcs`'s real git primitives directly for the pinned-ref
+    // clone the git channel needs, rather than re-implementing git plumbing inside `extensions`
+    // itself. See `SPEC-QUESTIONS.md` for the record.
+    expect([...PACKAGE_GRAPH.extensions].sort()).toEqual(
+      ['schemas', 'core', 'templates', 'vcs'].sort(),
     );
   });
 
