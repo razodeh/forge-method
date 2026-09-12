@@ -13464,6 +13464,104 @@ the identical TUI-test flake *class* `M10 P18`'s own SPEC-QUESTIONS entry indepe
 different TUI file (`question-form.test.tsx`) under the same heavy parallel load, not one this entry
 claims to fully explain.
 
+## Q165 — M10 P14: workflow-step session placements — where the real workflow content actually lives,
+`question`/`when` (two new `SessionStep` fields), five real design decisions, and the mandatory-retro
+compile-time guard
+
+**Context:** `PLAN-M10.md` P14 asked for `16` §16.6's own seven built-in session placements wired into
+"`@forge/methods`'s own already-real ten lifecycle workflows," in `packages/methods/src`. Confirmed
+directly, before writing anything, that this is imprecise: `packages/methods/src` holds `dod`/`level`/
+`schema`/`score`/`expr` logic only — zero workflow YAML. The real, editable lifecycle workflow content
+is `packages/templates/templates/workflows/*.workflow.yaml` (twenty files, `@forge/templates`'s own
+`WORKFLOW_INDEX`), matching what M10 P1's `module.yaml` doc comment already found for `fm-core`. This
+piece edits those seven files directly: `discover` (P1 Discovery), `define-product` (P2 Product
+Definition), `shape-solution` (P3 Solution Shaping), `plan-stage` — singular, "Plan One Stage," not the
+plural `plan-stages` meta-workflow that decomposes the product into stages — (P5 Planning),
+`build-stage` (P6 Implementation), `harden` (P8 Stabilization), and `operate` (P10 Operate & Learn).
+
+**1. Every new session step needed a real, literal, one-sentence framed question — `SessionStep` had no
+field for one at all.** Confirmed directly against `@forge/engine/interaction/session`'s own
+`runSessionStep` (`question: node.brief ?? ''`, FRAME phase) and the CLI's own hand-built ad-hoc session
+`StepNode` (`buildAdHocSessionStepNode(id, sessionType, brief)`) that a compiled `session` step's
+`brief` is read as *raw question text*, never a `briefs/*.md` file path the way `AgentStep.brief` is. A
+workflow-authored `session` step with no question at all would compile cleanly and then fail at FRAME
+with `RUN-061` the moment it actually ran — exactly the "placeholder" outcome this piece's own mandate
+explicitly forbids. Fixed with a new `SessionStep.question?: string` field (deliberately not reusing
+`AgentStep.brief`'s own name, so the two genuinely different semantics — file path vs. literal text —
+are not confused at the authoring layer), wired through `compile.ts`'s `buildLeafNode`
+(`brief: agentStep?.brief ?? sessionStep?.question`) onto the one shared, kind-overloaded `StepNode.
+brief` field `runSessionStep` already reads — zero changes to `session.ts` itself, per this piece's own
+scope boundary.
+
+**2. `standup`/`premortem`/`war-room` each name a real trigger condition, not "always"** ("on long runs
+(triggered by elapsed time or blocked-lane count)", "at L3+", "on Sev1") — and no per-step conditional-
+inclusion or conditional-dispatch mechanism exists anywhere in `@forge/engine` today (confirmed
+directly: `workflow.levels` gates a whole *workflow*, never one step, and `compilePlan` compiles every
+step in `workflow.steps` unconditionally; `StepReadStatus`'s own `'skipped'` value is P16's own future
+*replan* decision, not an authoring-time conditional). Building real per-step conditional dispatch is a
+genuine, separate, cross-cutting scheduler feature well outside a ~400-line placement piece. Resolved
+with a new `SessionStep.when?: string` field (carried through `compile.ts` onto a new
+`StepNode.when?: string`, verbatim, uninterpreted) plus a new `@forge/methods/session-triggers.ts`
+module exporting `SESSION_TRIGGERS` — real, well-formed, non-tautological expressions in this package's
+own `expr.ts` grammar (`level == 'L3' || level == 'L4'`; `run.elapsedMs > 3600000 ||
+run.blockedLaneCount >= 2`; `defect.severity == 'Sev1'`) plus `evaluateSessionTrigger`, reusing the
+exact same `evaluateCondition` the framework-rule engine (`score.ts`) already trusts. This proves the
+trigger is real and evaluable without fabricating scheduler wiring that does not exist: every triggered
+placement is positioned as a dependency-terminal step (nothing else depends on it) so an always-
+compiled-but-not-yet-gated `session` step can never deadlock or wrongly block a gate — most concretely,
+`premortem` no longer gates `design-gate` the way `design-review` explicitly must (`16` §16.6's own "before
+G-Design" text), so a real L2 run is never stuck waiting on a session that should not fire at L2.
+
+**3. `five-whys` is not one of `16` §16.2's own ten closed session types at all** — confirmed directly
+against `SESSION_TYPES`/`sessionRecordSchema` and `runSessionStep`'s own `RUN-068` closed-set check.
+Resolved the same way `forge session`'s own `--technique` flag already resolves an analogous gap (`Q164`
+item 3: "folded into the framed question's own text, no forced technique-selection mechanism") — a
+second, distinct `war-room` session step in `harden.workflow.yaml` (`five-whys-rca`, dependent on
+`performance-pass`), whose own `question` names the five-whys technique directly, rather than inventing
+a `sessionType: 'five-whys'` that would fail `RUN-068` the moment it ran, or a new `technique` field on
+`SessionStep` with no real selection mechanism behind it either.
+
+**4. The mandatory Operate & Learn retro ("not optional") is enforced by extending
+`@forge/extensions/workflows`'s own `checkWorkflowStepRemoval`** (`15` §15.7's already-real "gate steps
+never deleted, red/review step removal refused" guardrail), not by a new, separate mechanism. `19`
+§19.3's own literal "may not remove a required schema field" text is about template *fields*, not
+workflow *steps* — the closer match in principle is `15` §15.7's own existing step-protection rule,
+whose *literal* text only enumerates gate/red/review. Protecting `kind: 'session', sessionType: 'retro'`
+is therefore an explicit, documented *extension* of `15` §15.7's own established principle to a fourth
+concrete case, not a reading of already-existing text — given its own distinct
+`mandatory-retro-step-removed` code (a new `WorkflowGuardrailCode`, `WorkflowStepSummary` extended with
+`sessionType`) rather than reusing the generic `protected-step-removed` gate/red/review already share,
+so a caller can name exactly which rule fired. Verified against the real, shipped `operate.workflow.yaml`
+content (not only a hand-built fixture): parsing it and running its real steps through
+`checkWorkflowStepRemoval` with `$remove: [retro]` produces exactly one `mandatory-retro-step-removed`
+finding.
+
+**5. `build-stage.workflow.yaml` (`10` §10.1's own literal spec worked example) already has a real,
+pre-existing, documented compile gap unrelated to this piece** — `merge`'s own
+`dependsOn: ['review:{{item.id}}']` cannot resolve `item.id` outside a fanout's own per-item scope
+(`compile.ts`'s own `buildLeafNode` doc comment). `compilePlan` never succeeds for this file at all, with
+or without this piece's own `standup` addition, so this piece's own placement test for P6 Implementation
+checks the *parsed*, uncompiled `Workflow` document directly (still real `parseWorkflow` structural
+validation) rather than a full compiled-node check, the only one of the seven placements that could not
+be checked at the compiled-plan level for a reason this piece did not create and has no way to close.
+
+**Verification:** new tests in `packages/engine/test/workflow/parse.test.ts` (session step `question`/
+`when` parse, `.strict()` still rejects an unrecognised field), `packages/engine/test/plan/compile.test.ts`
+(both fields survive compilation onto the shared `StepNode.brief`/new `StepNode.when`), `packages/methods/
+test/session-triggers.test.ts` (every trigger parses, is non-tautological, and evaluates correctly true/
+false against realistic fixtures for all three triggered placements), `packages/extensions/test/workflows/
+workflow.test.ts` (the new mandatory-retro guardrail, both via a hand-built fixture and confirming it does
+*not* protect a non-retro session step), and a new `packages/cli/test/commands/workflow-session-placements.
+test.ts` loading all seven real, shipped workflow files via `readWorkflowFiles` and asserting each
+placement lands at the correct compiled dependency position — plus one end-to-end test running the real,
+shipped `operate.workflow.yaml` through `checkWorkflowStepRemoval`. Whole-workspace `pnpm typecheck`
+(engine/extensions/methods/cli individually clean; the only other failure anywhere, `packages/kb/src/
+adopt/gap-analysis.ts`, is concurrent M10 P19 work, confirmed via `git status --short` before this piece
+touched anything), `eslint --max-warnings 0`, and `prettier --check` all clean on every file this piece
+touched. `node scripts/check-boundaries.mjs` clean (this piece added zero new cross-package import
+edges — `@forge/cli`'s own test already had `@forge/extensions`/`@forge/engine`/`@forge/templates`
+reachable).
+
 ## Q166 — M10 P6: `fm-mobile` module — the `mobile` agent-id collision with `fm-core`, the reused
 `G-Deliver` gate instead of an invented "app-store review readiness" gate, the `ADR`-reuse for
 offline-first patterns, and a real critic-found platform-detection false-positive in
