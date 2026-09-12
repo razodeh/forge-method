@@ -5,5 +5,6 @@
  * @see PLAN-M4.md P2
  */
 export { describeGrant } from './describe.ts';
+export { isHardDenylisted } from './denylist.ts';
 export { isExecAllowed } from './exec.ts';
 export { isHostAllowed } from './network.ts';
