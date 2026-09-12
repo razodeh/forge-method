@@ -12089,3 +12089,74 @@ never enforced, now `RUN-067`; a documented one-sentence-heuristic limitation no
 case-sensitive critic-role matching that silently bypassed both `16` §16.7 anti-groupthink gates, now
 fixed with a case/whitespace-insensitive `isCriticRole`/`isHumanRole` pair; and undocumented
 `truncated`/`inconclusive` status precedence, now `truncated`-first with a recorded rationale).
+
+## Q152 — M10 P15: `forge adopt` SURVEY/INVENTORY — the `kb`/`vcs` layering resolution, INVENTORY's
+JS/TS-only dependency-graph scope, and the size-threshold gate's default numbers
+
+Three real decisions this piece made proceeding on spec silence or an unresolved cross-package layering
+question `PLAN-M10.md` P15's own text flagged rather than answered, recorded together since all three
+were settled while building the same piece.
+
+**1. The `kb`/`vcs` layering question.** `17` §17.2 phase 1's own signal table names "Git profile" (age,
+commit count, contributor count, churn hotspots, files changed together) as a SURVEY signal, and SURVEY's
+natural home is `@forge/kb` (adoption's whole job is producing KB content). But `tools/eslint-plugin-
+forge-boundaries/src/graph.mjs`'s own `PACKAGE_GRAPH` — checked directly before writing a line of this
+piece — gives `kb: ['core', 'schemas', 'diagrams']`: no `vcs` edge, confirmed by `pnpm run boundaries`
+staying clean throughout and by grepping `packages/kb/src/adopt/**` for any `@forge/vcs` reference
+(none — every hit is doc-comment prose, not an import, type-only included). **Decided:** the git-profile
+primitive (`analyzeGitProfile`, a genuinely new export — no existing `@forge/vcs` function reads git
+*history* via `git log`, only current working-tree/ref state) lives in `@forge/vcs` itself, alongside
+every other real git subprocess call in this repo, rather than adding a `kb → vcs` edge to the graph for
+one new signal. `@forge/kb`'s `runSurvey` never imports `@forge/vcs`: it accepts an already-computed
+`GitProfileFacts` value as a plain data parameter, structurally identical to `@forge/vcs`'s own
+`GitProfile` shape so no adapter or import is needed for the two to agree — supplied by whichever caller
+already legally depends on both packages (`@forge/cli`, `cli ← everything` per `specs/02` §2.2, is the
+obvious real one; this piece's own tests supply a literal stub instead, keeping `packages/kb/test/adopt/`
+exactly as import-clean as `packages/kb/src/adopt/`). This was the one option among the two named in the
+plan's own flagged-question text — "either place the git-profile-analysis code in `@forge/vcs` itself...
+or find whatever legal path the graph actually permits" — that did not require touching the graph at all,
+which made it the smaller, more reversible change.
+
+**2. INVENTORY's dependency-graph extractor is JS/TS-only, not the five-tool-per-language shape `17`
+§17.2's own text describes** (`madge`/`dependency-cruiser`, `import-linter`, `go list`, `jdeps`,
+`cargo tree` — one tool per ecosystem). Building all five real, language-appropriate extractors is
+outside a single ~400-line piece (`PLAN-M10.md` P15's own budget); JS/TS was chosen as the one fully-built
+ecosystem because it is the only one with real, working recursive `import`/`require` resolution
+(`resolveRelativeImport`/`buildDependencyGraph`, including cycle detection via DFS) backing it, tested
+against a real fixture with a deliberately-constructed cycle, a bare-package-import exclusion, an
+extensionless-import resolution, a directory-import `/index` fallback, and a dangling-import edge
+recorded as a fact rather than silently dropped. A target repository in another language still gets
+every other INVENTORY signal (public API surface heuristics, external dependencies from its own
+manifest, config surface); only `dependencyGraph` comes back empty. Recorded here rather than left for a
+future reader to discover by comparing `inventory.ts` against the spec's own five-tool list — the
+scope-narrowing is disclosed in `inventory.ts`'s own module doc comment too.
+
+**3. Size-threshold gate defaults.** `17` §17.2 phase 1's own text ("if the repo exceeds size
+thresholds, `adopt` proposes a scoped adoption... rather than attempting the whole thing") gives no
+numbers for either threshold. **Decided:** `DEFAULT_SIZE_THRESHOLDS = { maxFiles: 5000, maxLines:
+500_000 }`, both overridable per call (`RunSurveyInput.sizeThresholds`) — round, conservative figures
+picked to trigger scoped adoption well before a full recursive walk plus per-file text scan becomes
+slow on an ordinary developer machine, not derived from any spec text or measured benchmark. The gate
+itself is real and tested against a genuinely oversized fixture (5001 files under the real default
+threshold, not merely a fixture-with-a-lowered-threshold stand-in, though the latter is also tested
+separately for the manifest-rooted-subproject scope-proposal path) — see `packages/kb/test/adopt/
+survey.test.ts`'s "size-threshold gate" and "serverless entry points, negative compose/k8s, and dedup"
+describe blocks. Revisit if a real target repository's own adoption run shows either number is
+mis-calibrated in either direction.
+
+**Verification:** `pnpm --filter @forge/kb typecheck`, `pnpm --filter @forge/vcs typecheck`, `eslint`,
+`prettier --check`, and `node scripts/check-boundaries.mjs` all clean. `packages/kb/test/adopt` (57
+tests) and `packages/vcs/test/git-profile.test.ts` (6 tests) all passing; `packages/kb/test` and
+`packages/vcs/test` in full (517 tests) all passing. Per-file coverage on `packages/kb/src/adopt/
+{survey,inventory}.ts` and `packages/vcs/src/{git-profile,clock}.ts` meets `packages/kb`'s/`packages/
+vcs`'s own ≥90% lines/statements/functions, ≥85% branches ratchet — reached only after a first critic
+round found both new `kb` files short on branch coverage specifically (mutation-blind gaps in
+`resolveRelativeImport`/`buildDependencyGraph`, and five of six CI systems/four of five test frameworks/
+compose+k8s/changelog+ADR signals from `17` §17.2's own table having zero exercising tests), closed with
+real, mutation-sensitive tests rather than incidental ones. That same first round also caught a genuine
+bug, unrelated to this entry's own three decisions but fixed in the same piece: `extensionOf('.env')`
+returned `''` (the dot sits at position 0), so a literal `.env` file — the single most common real-world
+secrets/config filename — was invisible to both the datastore-connection-string scan and the config-
+surface env-var/secret-reference scan; fixed with a dedicated `isDotEnvFile` check (`.env` or a
+`.env.`-prefixed name) in both `survey.ts` and `inventory.ts`, each with a real test against a literal
+`.env` file, not only `app.env`.

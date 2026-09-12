@@ -9155,3 +9155,84 @@ five new `RUN-06x` codes). 100% statement/branch/function/line coverage on `pack
 boundaries confirmed by direct inspection that `packages/sessions/src` imports only `@forge/core` and
 `@forge/schemas`, nothing wider than the graph's own row permits. `SPEC-QUESTIONS.md` Q151 has the full
 record, including the `five-whys`/`phases`-array deviation from the plan's own singular-`phase` wording.
+
+## M10 P15 — `forge adopt` phases 1-2: SURVEY and INVENTORY (`17` §17.2)
+
+**Mandate:** deterministic, read-only SURVEY (size/language stats, 5-toolchain manifest detection,
+entry-point/deployable-unit/datastore/test-setup/CI signal extraction, a genuinely new git-history
+profile, a size-threshold gate) and INVENTORY (dependency graph, public API surface, data surface,
+config surface, external dependencies) — the two deterministic-tooling phases before `17` §17.2's LLM
+phases begin. The open question `PLAN-M10.md` P15's own text flagged rather than answered — how SURVEY's
+git-profile signal reaches `@forge/kb` when `kb`'s own `specs/02` §2.2 row has no `vcs` edge — was
+resolved concretely before writing any code: `tools/eslint-plugin-forge-boundaries/src/graph.mjs`
+confirmed the missing edge directly, and `analyzeGitProfile` (a real, new `@forge/vcs` export — no
+existing export reads git *history*, only current ref/tree state) lives in `vcs`, with `kb`'s `runSurvey`
+accepting an already-computed, structurally-typed `GitProfileFacts` value as a plain parameter rather
+than importing `vcs` at all. Full reasoning, plus two further scope decisions (INVENTORY's dependency
+graph is JS/TS-only; the size-gate's default thresholds), in `SPEC-QUESTIONS.md` Q152.
+
+### Round 1 — fresh critic: two real blocking findings, four real major findings, no padding
+
+**[Blocking 1]** the package's own coverage ratchet failed outright for both new `@forge/kb` files —
+`survey.ts` at 86.74% lines/82.79% statements/67.77% branches and `inventory.ts` at 71.21% branches,
+against kb's real ≥90/90/90/85 floor — confirmed by the critic running the actual coverage command
+rather than trusting the five scoped-check commands it was also given, all of which passed in isolation
+while the real floor still failed. **[Blocking 2]** `extensionOf('.env')` returned `''`, not `'env'` —
+the dot sits at position 0 in a bare `.env` filename, so a literal `.env` file (the single most common
+real-world secrets/config filename) was invisible to both the datastore-connection-string scanner and
+the config-surface env-var/secret-reference scanner, completely untested by any fixture. **[Major 1]**
+the two functions the task specifically named for inspection, `resolveRelativeImport`/
+`buildDependencyGraph`, had several real behaviours — bare-package-import exclusion, extensionless-import
+resolution, the `/index` directory-import fallback, dangling-import-as-recorded-fact — with zero test
+coverage; the critic proved this by naming the exact line deletions/swaps that would produce no test
+failure. **[Major 2]** five of the six named CI systems, four of five test frameworks, and both compose/
+k8s deployable-unit branches from `17` §17.2's own signal table were implemented but never exercised by
+any test — same "delete this and nothing fails" property. **[Major 3]** `SPEC-QUESTIONS.md` citations in
+the diff pointed at a nonexistent `Q152` and a real-but-unrelated `Q151` (M10 P9's own topic) as the
+record for this piece's own architectural decisions — actively misleading, not merely absent. **[Major
+4]** `analyzeGitProfile`'s own doc comment claimed `@throws {VcsError} ENV-GIT-MISSING/VCS-NOT-A-REPO`,
+but the function never called `assertGitAvailable` and could not produce either code — the actual thrown
+code for a non-repo `cwd` was the generic `VCS-GIT-OPERATION-FAILED`, and the one test covering that path
+asserted only `toBeInstanceOf(VcsError)`, which would pass regardless of which code came out. Two minor
+findings also raised and fixed: `walk.ts`'s own "walked once" doc claim was false (`runSurvey`/
+`runInventory` each walked independently); a bare `throw new Error` in two regex-capture-group helpers
+violated R2 (no `ForgeError` code exists for "this tool's own regex disagrees with itself", so a bare
+throw was used instead of leaving the case unhandled).
+
+**Fixed:** fixture-driven tests added for every zero-coverage branch the critic named (bare-import
+exclusion, extensionless + `/index` resolution, a dangling-import fact, all five non-GitHub CI systems,
+all five test frameworks, compose services, a k8s Deployment manifest, CHANGELOG.md/docs/adr, an
+oversized-file read-boundary case, and two malformed-`package.json` cases) plus a dedicated `isDotEnvFile`
+check (`.env` or `.env.`-prefixed) wired into both scanners, each with a real test against a literal
+`.env` file; `analyzeGitProfile` now calls `assertGitAvailable(cwd)` for real, and its test asserts the
+specific `.code` for both `VCS-NOT-A-REPO` and `ENV-GIT-MISSING` rather than only `instanceof`; both
+`runSurvey`/`runInventory` accept an optional pre-computed `files` list (proven by a test that deletes a
+file from disk *after* walking but *before* calling the function with the stale-on-disk-but-still-valid
+list); the two bare throws became `match[index] as string` plus a correctly-scoped
+`eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style`, following an existing
+same-shape precedent in `packages/adapter-kit/src/control-tokens/strip.ts` rather than inventing a new
+escape hatch — discovered only after `!` (the rule's own suggested fix) turned out to be independently
+banned by `no-non-null-assertion`, the two rules jointly leaving exactly one legal spelling for this
+shape in this codebase.
+
+### Round 2 — a second, fresh critic verifying all eight fixes: seven confirmed genuine and
+mutation-resistant, one (the `SPEC-QUESTIONS.md` entry itself) correctly flagged as not yet written at
+review time
+
+The critic re-read the actual code rather than trusting the round-1 fix descriptions, named exact line
+numbers for each verified fix, and confirmed the `.env`/dependency-graph/CI-system/framework/
+shared-walk/assertion-style fixes were all real and would catch the corresponding mutation. It flagged
+one accurate, expected gap: every in-code citation now consistently pointed at `Q152`, but the entry
+itself did not exist in `SPEC-QUESTIONS.md` yet at review time — by design, written immediately after
+this review, which is what the entry you are reading now is. One informational note, not a finding: a
+single coverage run under heavy concurrent machine load produced a spurious 6.71%-branch reading for
+`inventory.ts` that three subsequent clean runs (including one in isolation) did not reproduce — v8
+coverage-merge flakiness under contention, not a defect in this piece.
+
+**Final state:** 57 tests in `packages/kb/test/adopt/` (walk 3, report 2, inventory 19, survey 27, 6 in
+`packages/vcs/test/git-profile.test.ts`), all passing; the full `packages/kb`/`packages/vcs` suites (517
+tests) passing; per-file coverage on `survey.ts`/`inventory.ts`/`git-profile.ts`/`clock.ts` meeting kb's
+and vcs's own ≥90/90/90/85 ratchet. `pnpm --filter @forge/kb typecheck`, `pnpm --filter @forge/vcs
+typecheck`, `eslint`, `prettier --check`, `node scripts/check-boundaries.mjs` all clean — boundaries
+confirmed both by the tool and by direct grep that no file under `packages/kb/src/adopt/` references
+`@forge/vcs` except in doc-comment prose. `SPEC-QUESTIONS.md` Q152 has the full record.
