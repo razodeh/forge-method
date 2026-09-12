@@ -11687,3 +11687,132 @@ investigation findings.
 
 **Rounds: 2 critic rounds (round 1: 2 blocking + 1 major on S12, 1 minor on S11 disclosed not fixed,
 0 on S10; round 2: 0 new blocking/major). Outcome: WON.** Committed `04539a7` (test).
+
+## M11 P14 — `forge doctor --fix` and `--rebuild-index` (`03` §3.7, `21` E10)
+
+**Mandate:** the two real, named gaps in `forge doctor`'s own already-substantial six-check
+implementation — `--fix`'s remedy text (`locks-and-worktrees.ts`) already promises this flag exists;
+`--rebuild-index` a near-trivial wire-up to `@forge/kb`'s own already-built `rebuildIndex`. `21` E10's own
+literal acceptance test: a `corrupt-state/` project (a stale lock, a corrupted search index, an orphaned
+worktree) diagnosed accurately by plain `forge doctor`, genuinely restored by `--fix`/`--rebuild-index`,
+confirmed by a plain re-run afterward.
+
+**Built:** `DoctorOptions` gained `fix?`/`rebuildIndex?` boolean fields (`run-doctor.ts`) — no CLI argv
+wiring for `forge doctor` exists anywhere in this codebase (confirmed directly; see `Q179`), so both
+flags are consumed at this same abstraction level, matching the plan's own surface line. `--rebuild-index`
+invokes `@forge/kb`'s own real `rebuildIndex` via `kb.ts`'s own `kbSync` wrapper before any check runs.
+`--fix` (new `fix.ts`) applies real, safe, automatic remediation for the two checks that have one:
+`stale-lock` (`releaseRunLock` once the pid is confirmed dead) and `orphaned-worktrees` (removes each
+orphan's own worktree, deliberately never its lane branch — see `Q179` point 2). Every other failing
+check honestly reports `applied: false` with its own remedy text. New tests: `fix.test.ts`,
+`rebuild-index.test.ts`, and `corrupt-state.test.ts` (the literal `21` E10 acceptance test, built as a
+real, programmatically-constructed project carrying all three named corruptions at once).
+
+### Round 1 — fresh critic: 2 blocking, 1 major
+
+A fresh, context-free critic given only the diff and the relevant spec sections found: (1) **blocking** —
+`runDoctor`'s own `await kbSync(...)` for `--rebuild-index` had no try/catch, the one real exception to
+this file's own "no check ever throws" contract — a broken `.forge/state` storage location (not merely a
+corrupted index file, which `openKbIndex` already tolerates) still throws `KB-012` and would have
+rejected the whole `runDoctor` call; (2) **blocking** — `fixOrphanedWorktrees` had no per-orphan error
+isolation: one real `removeLaneWorktree` failure (a locked worktree, a permission error) propagated
+straight out of the whole `--fix` pass, aborting every later orphan untouched and unreported, with no
+partial-success reporting path at all; (3) **major** — `--fix`'s orphaned-worktree reclaim reused
+`removeLaneWorktree(..., { retain: false })`, which deletes the worktree's own lane branch too via `git
+branch -D`, going further than `checkOrphanedWorktrees`'s own remedy text (`git worktree remove` only)
+and silently overriding the sibling `checkDanglingLaneBranches` check's own "confirm merged first" policy
+for branch deletion — a real, unacknowledged data-loss vector for a branch that can carry unmerged
+commits from a crashed or deliberately-retained failed lane.
+
+**What the critic caught:** all three were genuine correctness/safety gaps this piece's own review had
+missed — none had been considered during BUILD. (1) and (2) are real crash paths (2)'s own multi-orphan
+partial-failure shape in particular had no test at all covering more than one orphan, so nothing would
+have caught it before a real user hit it. (3) is a design judgement call this piece got wrong in the
+first pass: it treated "genuinely restore a clean project" as requiring the branch to disappear too,
+rather than recognising that a genuinely *safe* fix cannot make every last warning disappear without
+either fabricating a merge-confirmation it has no way to make or destroying real work.
+
+**Judged and fixed:** (1) `kbSync` wrapped in try/catch, degraded into its own failed `rebuild-index`
+`DoctorCheck` on failure, carried through to the post-fix report too since `--fix` has no automatic remedy
+for a rebuild that itself crashed. (2) each orphan's own removal isolated in its own try/catch, with an
+honest `"Removed N of M...; K failed: ..."` partial-success message when not every orphan can be
+reclaimed. (3) a new, local `removeOrphanedWorktreeOnly` (duplicating `removeLaneWorktree`'s own real
+worktree-removal fallback chain — `-f -f`, then raw `rm` + `unlock` + `prune` — deliberately without its
+branch-delete half) replaces the reused `removeLaneWorktree` call; the branch is left in place, and
+`checkDanglingLaneBranches` reports it honestly on the next run. Regression tests added for all three: a
+broken `.forge/state` storage-location test, a multi-orphan chmod-induced partial-failure test, and
+updated assertions across `fix.test.ts`/`corrupt-state.test.ts` confirming the branch survives and
+`dangling-lane-branches` correctly (not silently) flags it afterward.
+
+### Round 2 — fresh critic: 1 blocking, 1 major, 1 minor
+
+A second, independent, context-free critic was given only the round-1-fixed diff and instructed to
+specifically verify round 1's own three fixes held (not merely trust their descriptions) and hunt for
+anything new. It confirmed all three round-1 fixes genuinely held against the real code, then found:
+(1) **blocking** — `fixOrphanedWorktrees`'s own `await listOrphanedWorktrees(projectRoot)` call was
+itself unguarded, despite this file's own doc comment claiming every real, external operation in it is
+wrapped; `listOrphanedWorktrees` (`@forge/vcs`) internally calls `wrapGitFailure`, which throws a real
+`VcsError` for a `git worktree list --porcelain` failure surviving even that function's own repair-and-
+retry path — the exact "one real exception to the never-throws contract" shape round 1 already found and
+fixed once for `kbSync`, just relocated to a new call site instead of eliminated as a pattern; (2)
+**major** — the new chmod-based multi-orphan partial-failure test is root-fragile: root ignores POSIX
+permission bits entirely (a common CI-container default), so the test would silently observe both
+removals succeed and fail on its own assertion for a reason unrelated to the code under test, with no
+Windows equivalent either; (3) **minor** — inside `removeOrphanedWorktreeOnly`'s own fallback chain, a
+`git worktree prune` failure *after* the real, disk-level `rm` already succeeded was reported as that
+whole orphan's own removal having failed, undercounting a fix that had, in every way that matters to a
+user, already happened.
+
+**What the critic caught:** finding (1) is the same class of bug as round 1's own `kbSync` fix, just at a
+different call site this piece's own round-1 review did not think to re-check once one instance of the
+pattern was fixed — a genuine miss, not a new problem introduced by the round-1 fix itself. Finding (2)
+is a real test-reliability gap this piece's own review did not consider (root-executing test runners are
+common in CI Docker images); finding (3) is a real, if minor, honesty gap in the partial-success
+accounting the round-1 fix for finding (2)-of-round-1 introduced without covering every one of its own
+internal failure points.
+
+**Judged and fixed:** (1) `listOrphanedWorktrees` wrapped in its own try/catch, degrading to an honest
+`applied: false` `DoctorFixResult` rather than throwing. (2) the multi-orphan chmod test now uses this
+codebase's own already-established `it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)`
+convention (`packages/vcs/test/git.test.ts`/`claims.test.ts`/`overlay-fetch.test.ts`,
+`packages/extensions/test/install/manifest.test.ts` all already use it for the identical class of test).
+(3) the trailing `git worktree prune` call is now itself wrapped in its own try/catch and swallowed —
+the real, disk-level removal it follows has already succeeded by the time it runs, and a leftover git-
+only administrative registration is safely rediscoverable and re-reclaimable on a later `forge doctor`
+pass, the identical reconciliation `listOrphanedWorktrees`'s own doc comment already describes for the
+general case. No third critic round dispatched: round 2's own findings, once fixed, left the full doctor
+test suite (11 files, 67 tests) passing cleanly, and none of the three findings reopened round 1's own
+resolved issues — a genuinely clean round, matching this build's own established "closing a mechanical/
+narrow finding without a further critic pass" precedent (`M11 P11`'s own round 2, `M11 P2`'s own round
+3).
+
+### Mandatory full-workspace verification
+
+Whole-workspace `pnpm typecheck` (21/21 packages) and `pnpm run boundaries` clean, re-run after both fix
+rounds, final run clean. A full, unscoped `node scripts/run-tests.mjs run`, run three times across this
+piece's two fix rounds under heavy, varying concurrent load from several other in-flight M11 pieces
+sharing this same working directory, reported different failure sets each time — every one of them
+confirmed, via `git status --short` immediately before treating it as acceptable, to trace to either this
+build's own two pre-established accepted flakes or a concurrent, uncommitted edit from another agent,
+never to this piece's own files: (run 1, before round 2) `packages/kb/test/adopt/survey.test.ts`'s own
+pre-accepted oversized-fixture flake, plus four failures (`test/workspace-floor.test.ts`, `packages/cli/
+test/commands/{module,overlay}.test.ts`) tracing to a concurrent piece's own in-flight, uncommitted
+`module.ts`/`overlay.ts` edit at the time — confirmed resolved by a clean, unscoped `pnpm typecheck`
+re-run once that edit landed; `packages/cli/test/commands/upgrade/run-upgrade.test.ts`'s own "idempotent"
+test additionally timed out twice, including in isolation, under 6 concurrent full-suite test-runner
+processes from other agents on this same machine (confirmed via `ps`) — judged environmental resource
+contention, this piece touching no file that test or its dependencies reference. (run 2, after round 2)
+`test/workspace-floor.test.ts`'s own stray-file check flagged `packages/engine/test/e2e/crash-helpers.ts`
+(another concurrent piece's own new, untracked file, confirmed via `git status --short`);
+`crash-resume.test.ts` (this build's own other pre-accepted flake) and `packages/cli/test/commands/run/
+resume.test.ts` both failed on a real `git index.lock` collision — a second, concurrent SIGKILL-resume
+test from another in-flight piece racing this run for the same real git-level lock, not a logic bug in
+either test. This piece's own scoped doctor suite (`packages/cli/test/commands/doctor/`, 11 files, 67
+tests) passed cleanly and quickly on every run across both rounds. `git status` throughout confirmed no
+file outside this piece's own scope was ever touched; the final commit staged exactly its own 7 files by
+name via a pathspec-scoped `git commit <paths>` (no `git add -A`), after a concurrent commit from another
+agent reset this piece's own staged index once already mid-flight.
+
+**Rounds: 2 critic rounds (round 1: 2 blocking + 1 major, all fixed; round 2: 1 blocking + 1 major + 1
+minor, all fixed). Outcome: WON.** Committed `af427ad` (feat).
+
