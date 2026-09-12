@@ -11463,3 +11463,124 @@ the identical isolation technique `M11 P3`'s own entry records for its own `CFG-
 
 **Rounds: 1 critic round (2 blocking, 1 major, 3 minor, all fixed except one disclosed-and-accepted
 minor). Outcome: WON.** Committed `b53d067` (feat), `f7585b3` (fix: citation correction).
+
+## M11 P11 — Security invariants S7, S8, S9: destructive-op confirmation, dirty-tree halt, budget
+enforcement (`20` §20.10 S7/S8/S9)
+
+**Mandate:** the third batch of `20` §20.10's own S-labeled adversarial security tests — S7 explicitly
+flagged by the plan as a genuine, unbuilt mechanism (confirmed directly, before writing anything: no
+"destructive operation"/typed-confirmation concept exists anywhere in this codebase); S8/S9 stated as
+"reuses already-real enforcement," the identical premise `M11 P9`/`M11 P10` already found partly false
+for S2/S3/S5/S6 — investigated with the same skepticism rather than trusted.
+
+**Investigation found the plan's own premise true for S7, and genuinely worse than described for both
+S8 and S9.** S7: confirmed — grepping the whole workspace found no destructive-operation classification
+or confirmation concept anywhere. S8: `@forge/vcs`'s own `assertCleanWorkingTree` is real, correct, and
+already thoroughly unit-tested (`packages/vcs/test/git.test.ts`) — but had **zero production call
+sites**: `buildRunEngineContext` creates a lane worktree fresh from `integrationBase` regardless of the
+*main* working tree's own state, so a real `forge run` never actually checked the user's own
+uncommitted work at all, let alone halted for it. S9 was the deepest gap of the three: `@forge/engine/
+budget`'s own `canAdmit`/`onBudgetBreach` (M5 P17) and `@forge/telemetry/ledger`'s own `attributedSpend`/
+`checkBudget` (M5 P7) are all real, correct, and fully unit-tested, but (a) nothing in `@forge/engine/
+dispatch` ever emitted a `UsageRecorded` event for a real session — `forge cost`, `attributedSpend`, and
+`canAdmit` were all permanently fed an empty ledger in every real run; (b) `@forge/engine/run`'s own
+`runEngine` never constructed a real `BudgetState` at all, so `Scheduler`'s own `canAdmit` parameter
+always fell back to "always admit" regardless of what `.forge/config.yaml`'s own real `budget.perRunUsd`/
+`budget.dailyUsd` said; (c) `06` §6.8's own retry machinery (`decideRetry`/`computeBackoff`) has zero
+production callers — `driveToCompletion` marks a failed step `'failed'` on its first attempt and never
+retries it, meaning S9's own "retries are attributed to the originating step" premise had nothing real
+to attribute a retry's cost to in the first place. (a) and (b) were fixed for real; (c) is disclosed, not
+fixed — building a full retry loop is disproportionate scope for a security-invariant piece, the
+identical judgement `taint-guard.ts` already made for S6's grant-escalation surface.
+
+**Built:** `packages/engine/src/security/destructive-confirmation.ts` (new) — `requireDestructiveConfirmation`,
+built from this project's own already-declared-but-never-consulted `security.destructiveOps` config
+field (`confirm`/`deny`/`allow-in-lane`) rather than an invented operation catalogue, wired into the one
+real "which environment" call site this codebase has (`deployEnvironment`, the identical fact `taint-
+guard.ts` already established for S6). Force-push is deliberately excluded from this module's own
+confirmable operations: S2's hard denylist (`M11 P9`) already, unconditionally forecloses it with no
+override path, and a confirmation gate offering to "confirm past" that would directly contradict it.
+`packages/cli/src/commands/run/run.ts` now calls `assertCleanWorkingTree` before any lock/manifest/lane
+machinery starts (S8). `packages/engine/src/dispatch/steps.ts`'s `runAgentWork` now emits a real
+`UsageRecorded` event per completed session; `packages/engine/src/budget/live-state.ts` (new)
+`computeLiveBudgetState` projects the real, on-disk ledger (across every run for the daily cap, this run
+alone for the per-run cap) into a live `BudgetState`; `packages/engine/src/run/run-engine.ts` wires a
+real `canAdmit` (composed with any caller-supplied one) into its `Scheduler`, refreshed before every
+scheduling tick, with a `BudgetBreached` event emitted the first tick a real breach is observed;
+`packages/cli/src/commands/run/context.ts` supplies a real one from `.forge/config.yaml`. `packages/
+testkit/src/fake-adapter.ts`/`script.ts` gained a scriptable `costUsd` field — `SPEC-QUESTIONS.md` Q61
+had already disclosed this as "add the mechanism when one does"; this piece is that consumer.
+
+### Round 1 — fresh critic: 2 blocking, 0 major/minor
+
+A fresh, context-free critic instructed to specifically probe for ways the S7 confirmation gate could
+be bypassed or spoofed, plus S8/S9 wiring correctness, found: (1) **blocking** — `destructiveConfirmationPhrase`'s
+own naive `${environment}/${resource}` join is genuinely ambiguous whenever either side contains a `/`:
+`('a', 'b/c')` and `('a/b', 'c')` both join to the identical `'a/b/c'`, meaning a human correctly
+confirming one real operation would silently also satisfy a confirmation check for a *different* real
+operation whose own environment/resource happen to concatenate to the same string — found by this
+piece's own review before the critic round even started, but the critic's own job was verifying the fix
+held, see round 2; (2) **blocking** — a real adapter's own SDK/CLI usage-reporting has no upstream
+finite/non-negative validation, so a genuinely malformed (`NaN`/negative/`Infinity`) `costUsd` flowing
+through the new `UsageRecorded` emission would crash the *entire run* the next time `@forge/engine/
+budget`'s live refresh read this run's own ledger back (`@forge/telemetry/ledger`'s own `toLedgerEntry`
+throws for exactly this shape, and `live-state.ts` deliberately lets the *current* run's own corruption
+propagate rather than masking it).
+
+**What the critic caught:** finding (1) was actually found and half-fixed (via doubling every literal
+`/` before joining, an "escape the delimiter" scheme) by this piece's own review *before* the critic
+round — the critic's real, independent finding was that the doubling scheme **itself still collided**
+at a boundary case neither this piece's own first fix nor its own regression test had constructed:
+`('a/', 'b')` and `('a', '/b')` both doubled to the identical `'a///b'`. Finding (2) traces to the same
+root cause `M11 P9`/`M11 P10` already documented for this codebase's own adapter boundary: happy-path
+usage figures were the only shape ever tested, never a genuinely hostile or malformed upstream number.
+
+**Judged and fixed:** (1) rather than chase a third, possibly-also-subtly-wrong escaping scheme,
+`requireDestructiveConfirmation` now fails closed instead: `canJoinUnambiguously` refuses the whole
+operation outright — never comparing a confirmation at all — whenever either `environment` or `resource`
+contains a `/`, the same "do not cleverly disambiguate an adversarial shape, refuse it" stance
+`denylist.ts`/`taint-guard.ts` already take. (2) a new `sanitizeUsageNumber` helper
+(`Number.isFinite(value) && value >= 0 ? value : 0`) applied to every numeric field (`inputTokens`,
+`outputTokens`, `costUsd`, `durationMs`) before `UsageRecorded` is emitted — "unknown/malformed," not
+fabricated as free, matching this same function's own existing `costUsd ?? 0` convention for a missing
+value. Regression tests added for both: the exact boundary-collision counterexample for (1), and a
+parametrized `NaN`/negative/`Infinity` sweep proving no crash and a well-formed, zeroed ledger entry
+for (2).
+
+### Round 2 — fresh critic: 0 new blocking/major, 1 minor
+
+A second fresh, context-free critic verified both round-1 fixes against real counterexamples rather than
+trusting the fix's own doc comments — confirmed (1) genuinely holds (proved `canJoinUnambiguously`
+sufficient by construction: with neither side containing `/`, the joined string has exactly one `/`,
+which can only be the separator; confirmed every path reaching the confirmation comparison passes
+through the ambiguity check first, with no `policy` branch able to skip it) and (2) genuinely holds
+(confirmed every numeric field reaching the emitted payload is sanitized, `cacheReadTokens` is a safe
+hardcoded literal never adapter-influenced, and the sanitizer correctly zeroes every non-finite/negative
+shape including untyped runtime values). One minor gap noted: the round-1 regression test for (2) only
+parametrized `costUsd` (the one field the fake adapter's own script can control), leaving `inputTokens`/
+`outputTokens`/`durationMs` unproven against bad values through the same shared sanitizer.
+
+**Judged and fixed:** `sanitizeUsageNumber` exported and given a direct unit test sweeping every
+non-finite/negative shape, closing the coverage gap without needing to extend the fake adapter's own
+scripting surface further. No third critic round dispatched: round 2's own finding was mechanical (a
+coverage gap in an already-correct function), not a design or security flaw, matching this build's own
+established "closing a mechanical finding without a further critic pass" precedent (`M11 P2`'s own round
+3).
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped `node
+scripts/run-tests.mjs run` reported **477 test files, 8178 passing, 9 skipped, 1 failure** —
+`packages/tui/test/screens/specs.test.tsx` (a traceability-path focus assertion), confirmed via `git
+status --short` to lie entirely outside this piece's own touched surface (`packages/tui/` untouched)
+and confirmed passing cleanly and fast (23/23) when re-run in isolation immediately afterward — a
+load-sensitive flake under the full-suite run, not a regression. Neither of this build's own two named,
+accepted flakes (`crash-resume.test.ts`, `survey.test.ts`'s oversized-fixture test) fired on this run;
+`crash-resume.test.ts` itself passed cleanly. `git status` throughout confirmed no file outside this
+piece's own scope was ever touched, and the final commit staged exactly its own 21 files by name (no
+`git add -A`), despite concurrent M11 P3/P4 work completing in, and P4's own gauntlet entry recording
+real cross-contamination from, this same working directory earlier in the session.
+
+**Rounds: 2 critic rounds (round 1: 2 blocking, both fixed; round 2: 0 new blocking/major, 1 minor,
+fixed). Outcome: WON.** Committed `4805394` (feat).

@@ -14645,3 +14645,108 @@ throughout confirmed no file outside this piece's own scope was ever modified; t
 core/src/errors/codes.ts` was staged via a hand-built patch isolating only this piece's own `CFG-037`/
 `CFG-038` addition, leaving the concurrent, uncommitted `RUN-075` hunk in the same file untouched — the
 identical isolation technique `M11 P3`'s own entry records for its own `CFG-036` addition.
+
+## Q177 — M11 P11: security invariants S7/S8/S9 — S7 confirmed genuinely new; S8/S9 both had real,
+correct, unit-tested mechanisms with zero production wiring; S9's own retry-attribution premise had
+nothing real to attribute a retry to, since no real retry loop exists
+
+**Context:** `PLAN-M11.md` P11 asks for `20` §20.10's third S-labeled batch. S7 is explicitly flagged by
+the plan itself as "a genuine, unbuilt mechanism" — confirmed directly (grepping the whole workspace for
+a destructive-operation/typed-confirmation concept found none). S8/S9 are framed as "reuses already-real
+enforcement" needing only adversarial tests — the identical premise `M11 P9` (Q169) found partly false
+for S2 and `M11 P10` (Q172) found false for S3/S5/S6, so both were investigated with the same
+skepticism before writing any test, per this piece's own instructions.
+
+**1. S7 — built from this project's own already-declared, never-consulted config field, not an invented
+catalogue.** `.forge/config.yaml`'s own `security.destructiveOps` (`z.enum(['confirm', 'deny',
+'allow-in-lane'])`, `@forge/schemas`' `securitySchema`) has been declared, defaulted (`'confirm'`), and
+documented since `@forge/schemas` shipped, but was read by zero production code anywhere in this
+workspace until this piece — the real "existing operation catalogue" `PLAN-M11.md` P11 itself asks this
+mechanism to be confirmed against, rather than inventing a fictional list of destructive operations from
+scratch. `requireDestructiveConfirmation` (`packages/engine/src/security/destructive-confirmation.ts`)
+consults it directly. Wired into `deployEnvironment` (`packages/cli/src/commands/loop/deploy.ts`) — the
+one real, typed "which environment" call site this codebase has, the identical fact `taint-guard.ts`
+already established for S6's "production targeting" surface — disclosed honestly as closing only the
+*library* gap this piece can reach, since no `forge deploy` CLI verb is registered anywhere in
+`@forge/cli`'s own command tree yet. Force-push is deliberately excluded from this module's own
+confirmable-operation examples (`PLAN-M11.md`'s own worked list names it alongside "dropping a database
+table"/"deleting a production resource"): `20` §20.10 S2's own hard denylist (`M11 P9`) already,
+permanently, and unconditionally forecloses `git push --force`/`-f` with no override path at all — a
+`deny`-with-no-appeal policy strictly stronger than anything a typed confirmation could unlock, so
+offering to "confirm past" it would directly contradict S2 rather than complement it.
+
+**2. S8 — the mechanism was real and already thoroughly tested; the gap was that nothing in this
+codebase's real run pipeline ever called it.** `@forge/vcs`'s own `assertCleanWorkingTree` (real,
+correct, already covered by `packages/vcs/test/git.test.ts`'s own dirty-file/permission-failure/
+no-commits-yet cases) had zero production call sites anywhere in this workspace, confirmed by grep:
+`buildRunEngineContext` creates a lane worktree fresh from `integrationBase`, entirely independent of the
+*main* working tree's own state, so a real `forge run` never actually inspected the user's own
+uncommitted work at all — not merely "didn't halt for it," genuinely never looked. Fixed by calling
+`assertCleanWorkingTree(deps.projectRoot)` in `runWorkflow` (`packages/cli/src/commands/run/run.ts`)
+before any lock/manifest/lane machinery starts, for every real (non-dry-run) run. Every existing test
+fixture that constructs a git repo for `runWorkflow` (`packages/cli/test/commands/run/helpers.ts`,
+`packages/cli/test/commands/loop/helpers.ts`) had to be updated to actually commit its own written
+workflow/gate/agent/story fixtures and gitignore `.forge/state/` — both fixtures previously left those
+files permanently uncommitted, which this new wiring correctly, and for the first time, flagged as a
+dirty tree.
+
+**3. S9 — the deepest of the three gaps, found in three separate, compounding pieces, only two of which
+were proportionate to fix in this piece.** `@forge/engine/budget`'s own `canAdmit`/`onBudgetBreach`
+(`PLAN-M5.md` P17) and `@forge/telemetry/ledger`'s own `attributedSpend`/`checkBudget` (P7) are all real,
+correct, and already unit-tested — `Scheduler`'s own test suite already proves `canAdmit` works *when a
+caller supplies one*. Investigation found three real gaps beneath that already-correct machinery: (a)
+nothing in `@forge/engine/dispatch` ever emitted a `UsageRecorded` event for a real session —
+`runAgentWork` captured a real adapter's own `SessionResult.usage` into the step outcome but never
+turned it into the one event type `@forge/telemetry/ledger`'s own doc comment names as "everything a
+LedgerEntry needs," so `forge cost`/`attributedSpend`/`canAdmit` were all permanently fed an empty
+ledger in every real run; (b) `@forge/engine/run`'s own `runEngine` never constructed a real
+`BudgetState` at all or passed a real `canAdmit` into its `Scheduler` construction, so a real `forge run`
+enforced no budget cap regardless of what `.forge/config.yaml`'s own real `budget.perRunUsd`/
+`budget.dailyUsd` said; (c) `06` §6.8's own retry machinery (`decideRetry`/`computeBackoff`,
+`@forge/engine/failures`) has zero production callers anywhere in this codebase — `driveToCompletion`
+marks a failed step `'failed'` on its very first attempt and never retries it, meaning S9's own "retries
+are attributed to the originating step" text describes a property of a mechanism (`attributedSpend`)
+that is real and correctly tested, but which no real `forge run` today ever actually exercises with more
+than one attempt, since no real retry ever happens.
+
+**Answer taken:** (a) and (b) fixed for real — `runAgentWork` now emits a real `UsageRecorded` event per
+completed session (`packages/engine/src/dispatch/steps.ts`); a new `packages/engine/src/budget/
+live-state.ts` (`computeLiveBudgetState`) projects the real, on-disk ledger (every run this project has
+executed, for the daily cap; this run alone, for the per-run cap) into a live `BudgetState`; `runEngine`
+(`packages/engine/src/run/run-engine.ts`) wires a real `canAdmit` — composed with, never replacing, any
+caller-supplied one — into its `Scheduler`, refreshed before every scheduling tick, with a real
+`BudgetBreached` event emitted the first tick a genuine breach is observed; `buildRunEngineContext`
+(`packages/cli/src/commands/run/context.ts`) supplies a real one from `.forge/config.yaml`. (c) is
+disclosed, not fixed: building a full retry loop is judged disproportionate scope for a
+security-invariant piece — a materially larger, riskier change than S9's own proportionate ask — the
+identical judgement `taint-guard.ts`'s own doc comment already made for S6's grant-escalation surface.
+`attributedSpend`'s own "sums every entry for a stepId, across every retry" property is tested directly
+against the ledger, at the level a real future retry loop would actually rely on, not against a live
+`driveToCompletion` retry that does not exist today. Also found and fixed along the way: `06`/`20`'s own
+three-way `onBreach` choice (`pause`/`finish-lanes`/`abort`) has no distinguishable runtime effect in
+`driveToCompletion`'s own synchronous, fully-drained-batch-per-tick execution model — nothing is ever
+left genuinely "in flight" between ticks for `finish-lanes` to let drain that `abort` would not already
+have let finish — disclosed in `run-engine.ts`'s own doc comment rather than implemented as three
+distinguishable behaviours the current execution model cannot actually produce.
+
+**Two real gauntlet-critic findings, both fixed (full detail in `GAUNTLET-LOG.md`'s own M11 P11
+entry):** a first, self-identified fix for S7's confirmation-phrase join ambiguity (`('a','b/c')` and
+`('a/b','c')` both naively joining to `'a/b/c'`) itself still collided at a boundary case
+(`('a/','b')`/`('a','/b')` both doubling to `'a///b'`) — closed for real by failing closed on any
+ambiguous join rather than trusting a third escaping scheme; and a real adapter's own unsanitized
+`NaN`/negative/`Infinity` cost reporting could crash an entire run once budget enforcement read it back
+from the ledger — closed by sanitizing every numeric usage field before emission.
+
+**Verification:** `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped `node
+scripts/run-tests.mjs run` reported 477 test files, 8178 passing, 9 skipped, 1 failure
+(`tui/test/screens/specs.test.tsx`, confirmed via `git status --short` to lie entirely outside this
+piece's own touched surface and confirmed passing cleanly in isolation immediately afterward — a
+load-sensitive flake under the full-suite run, not a regression); neither of this build's own two named,
+accepted flakes fired. `git status` throughout confirmed no file outside this piece's own scope
+(`packages/engine/src/security/`, `packages/engine/src/budget/`, `packages/engine/src/dispatch/
+steps.ts`, `packages/engine/src/run/run-engine.ts`, `packages/engine/test/security/`, `packages/engine/
+test/dispatch/agent.test.ts`, `packages/cli/src/commands/{loop/deploy,run/run,run/context}.ts` and their
+tests, `packages/testkit/src/{fake-adapter,script}.ts`, and one isolated `RUN-075` hunk in the shared
+`packages/core/src/errors/codes.ts`) was ever touched, and the final commit staged exactly its own 21
+files by name.
