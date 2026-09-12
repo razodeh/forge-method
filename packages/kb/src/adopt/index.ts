@@ -167,3 +167,11 @@ export {
   diffBaselines,
   evaluateGAdoptGate,
 } from './baseline.ts';
+
+export type { AdoptAutonomyLevel, ClaimPolicy } from './claim-policy.ts';
+export { resolveClaimPolicy } from './claim-policy.ts';
+
+export type { BlastRadiusResult, TestScopeExpansion } from './blast-radius.ts';
+export { computeBlastRadius, expandTestScope } from './blast-radius.ts';
+
+export { extractVerificationCommand } from './verify.ts';

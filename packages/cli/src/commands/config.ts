@@ -24,7 +24,10 @@ export interface ConfigCommandContext {
   readonly paths: ProjectPaths;
 }
 
-const CONFIG_REL_PATH = '.forge/config.yaml';
+// Exported so `adopt.ts` can locate the same, single real config file to write its own
+// `project.adopted` marker back into (`PLAN-M10.md` P20) — one real source of truth for the path,
+// never a second, independently-spelled literal that could drift from this one.
+export const CONFIG_REL_PATH = '.forge/config.yaml';
 
 /** Every real leaf key `configSchema` declares, derived from the schema itself (`configLeafPaths`)
  * rather than the separately-hand-maintained `ConfigKeyPath` union — this is what lets `get`/`set`

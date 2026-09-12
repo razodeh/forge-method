@@ -33,6 +33,10 @@ function goldenConfig(): Record<string, unknown> {
       level: 'L3',
       mode: 'guided',
       repoUrl: 'https://github.com/acme/billing',
+      // Not part of `18` §18.3's own literal example (written before `PLAN-M10.md` P20 added this
+      // field) — `false` is the honest default for a hand-authored config transcription that never
+      // went through `forge adopt`.
+      adopted: false,
     },
     paths: {
       kb: 'docs/forge/kb',

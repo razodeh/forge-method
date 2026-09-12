@@ -16,8 +16,10 @@ import path from 'node:path';
 
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
-import { pathExists, ProjectPaths } from '@forge/core/fs';
+import { pathExists, readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
+import { configSchema, DEFAULT_CONFIG } from '@forge/schemas/config';
 
 import {
   adopt,
@@ -389,6 +391,70 @@ describe('adoptIncremental — the literal M10 exit test (one new, undocumented 
 
     expect(report.newRoutes).toEqual([]);
     expect(report.gapDeltas).toBeUndefined();
+  });
+});
+
+describe('project.adopted marker — 17 §17.4 / PLAN-M10.md P20', () => {
+  it('writes project.adopted: true to a real .forge/config.yaml once a full run completes', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    await writeFileAtomic(
+      new ProjectPaths(dir).resolveWithin('.forge/config.yaml'),
+      YAML.stringify(DEFAULT_CONFIG),
+    );
+
+    const result = await adopt(ctxFor(dir), {});
+
+    const updated = configSchema.parse(
+      YAML.parse(await readTextFile(new ProjectPaths(dir).resolveWithin('.forge/config.yaml'))),
+    );
+    expect(updated.project.adopted).toBe(true);
+    // No warning about a missing/invalid config, since a real one existed and was updated.
+    expect(result.warnings.some((w) => w.includes('project.adopted was not recorded'))).toBe(false);
+  });
+
+  it('is tolerant of a target repository with no .forge/config.yaml yet — a disclosed warning, not a throw', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+
+    const result = await adopt(ctxFor(dir), {});
+
+    expect(result.baseline).toBeDefined();
+    expect(result.warnings.some((w) => w.includes('project.adopted was not recorded'))).toBe(true);
+  });
+
+  it('does not set the marker on a `quick`-depth run, which never reaches the end of the pipeline', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    await writeFileAtomic(
+      new ProjectPaths(dir).resolveWithin('.forge/config.yaml'),
+      YAML.stringify(DEFAULT_CONFIG),
+    );
+
+    await adopt(ctxFor(dir), { depth: 'quick' });
+
+    const config = configSchema.parse(
+      YAML.parse(await readTextFile(new ProjectPaths(dir).resolveWithin('.forge/config.yaml'))),
+    );
+    expect(config.project.adopted).toBe(false);
+  });
+
+  it('is idempotent: a second full run against an already-marked project leaves it marked, no throw', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    await writeFileAtomic(
+      new ProjectPaths(dir).resolveWithin('.forge/config.yaml'),
+      YAML.stringify(DEFAULT_CONFIG),
+    );
+    const ctx = ctxFor(dir);
+
+    await adopt(ctx, {});
+    await adopt(ctx, {});
+
+    const config = configSchema.parse(
+      YAML.parse(await readTextFile(new ProjectPaths(dir).resolveWithin('.forge/config.yaml'))),
+    );
+    expect(config.project.adopted).toBe(true);
   });
 });
 

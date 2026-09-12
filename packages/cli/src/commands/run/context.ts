@@ -28,6 +28,7 @@ import type { ConcurrencyLimits } from '@forge/engine/scheduler';
 import { parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
 import type { ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
+import { resolveClaimPolicy } from '@forge/kb/adopt';
 
 import { loadGateRegistry } from './gates.ts';
 
@@ -282,7 +283,11 @@ export async function buildRunEngineContext(
     model,
     tools: DEFAULT_TOOLS,
     retainLaneWorktrees: input.config.execution.retainLaneWorktrees !== 'never',
-    claimPolicy: 'strict',
+    // `17` §17.4 point 5 / `06` §6.7's own per-autonomy default table, via `resolveClaimPolicy`
+    // (`PLAN-M10.md` P20) — this used to be the bare literal `'strict'` unconditionally, silently
+    // correct for `autonomous`/`supervised` but wrong for `guided` (`06` §6.7 defaults `guided` to
+    // `warn`), and blind to whether the project is a `forge adopt`-adopted brownfield codebase at all.
+    claimPolicy: resolveClaimPolicy(input.config.execution.autonomy, input.config.project.adopted),
     signCommits: input.config.vcs.signCommits,
     now,
     laneRegistry: new Map(),

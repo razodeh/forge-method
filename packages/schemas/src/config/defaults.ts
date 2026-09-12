@@ -20,6 +20,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     level: 'L0',
     mode: 'guided',
     repoUrl: '',
+    adopted: false,
   },
   paths: {
     kb: 'docs/forge/kb',

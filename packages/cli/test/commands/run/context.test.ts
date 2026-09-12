@@ -202,7 +202,12 @@ describe('buildRunEngineContext', () => {
     // A real, adapter-reported model id — never the bare tier label ('balanced') a stale version of
     // this code once hardcoded.
     expect(ctx.model).toBe(FAKE_MODEL_ID);
-    expect(ctx.claimPolicy).toBe('strict');
+    // `PLAN-M10.md` P20 / `06` §6.7: the fixture project's own config uses the built-in default
+    // (`execution.autonomy: 'guided'`, `project.adopted: false`), which `resolveClaimPolicy` resolves
+    // to `warn` — this used to assert the bare, hard-coded `'strict'` literal `context.ts` wrote
+    // regardless of autonomy; see the dedicated `claimPolicy` describe block below for the full
+    // per-autonomy/adopted matrix.
+    expect(ctx.claimPolicy).toBe('warn');
     expect(ctx.signCommits).toBe(project.config.vcs.signCommits);
     expect(ctx.gateRegistry.has(FIXTURE_GATE_ID)).toBe(true);
     expect(ctx.laneRegistry.size).toBe(0);
@@ -243,6 +248,43 @@ describe('buildRunEngineContext', () => {
       checksRoot: CHECKS_ROOT,
     });
     expect(ctx.retainLaneWorktrees).toBe(false);
+  });
+
+  describe('claimPolicy — 06 §6.7 / 17 §17.4 point 5 (PLAN-M10.md P20)', () => {
+    interface ClaimPolicyCase {
+      readonly autonomy: 'supervised' | 'guided' | 'autonomous';
+      readonly adopted: boolean;
+    }
+
+    async function claimPolicyFor(overrides: ClaimPolicyCase): Promise<string> {
+      const project = await createTestProject();
+      const merged = {
+        ...project.config,
+        execution: { ...project.config.execution, autonomy: overrides.autonomy },
+        project: { ...project.config.project, adopted: overrides.adopted },
+      };
+      const ctx = await buildRunEngineContext({
+        paths: project.paths,
+        projectRoot: project.dir,
+        config: merged,
+        runId: 'run-1',
+        adapter: fixtureAdapter(),
+        checksRoot: CHECKS_ROOT,
+      });
+      return ctx.claimPolicy;
+    }
+
+    it('06 §6.7: autonomous defaults to strict on a non-adopted project', async () => {
+      expect(await claimPolicyFor({ autonomy: 'autonomous', adopted: false })).toBe('strict');
+    });
+
+    it('06 §6.7: guided defaults to warn on a non-adopted project', async () => {
+      expect(await claimPolicyFor({ autonomy: 'guided', adopted: false })).toBe('warn');
+    });
+
+    it('17 §17.4 point 5: an adopted project forces strict even at guided autonomy', async () => {
+      expect(await claimPolicyFor({ autonomy: 'guided', adopted: true })).toBe('strict');
+    });
   });
 
   it('throws RUN-052 when the real adapter reports no available models', async () => {

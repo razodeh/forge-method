@@ -501,6 +501,9 @@
     "project": {
       "additionalProperties": false,
       "properties": {
+        "adopted": {
+          "type": "boolean"
+        },
         "description": {
           "type": "string"
         },
@@ -537,7 +540,8 @@
         "description",
         "level",
         "mode",
-        "repoUrl"
+        "repoUrl",
+        "adopted"
       ],
       "type": "object"
     },

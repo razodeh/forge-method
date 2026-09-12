@@ -78,6 +78,10 @@ import {
   tagExists,
   type VcsClock,
 } from '@forge/vcs';
+import { configSchema, type ForgeConfig } from '@forge/schemas/config';
+import * as YAML from 'yaml';
+
+import { CONFIG_REL_PATH } from './config.ts';
 
 const INVENTORY_REPORT_RELATIVE_PATH = 'reports/adoption/inventory.json';
 
@@ -308,6 +312,48 @@ async function readSurveyReport(paths: ProjectPaths): Promise<Survey | undefined
 }
 
 /**
+ * `17` §17.4's own six brownfield adjustments key off a project's own `adopted: true` marker
+ * (`PLAN-M10.md` P20) — no prior piece ever wrote one (confirmed directly before writing this
+ * function: `grep -rn "adopted" packages/kb/src/adopt` returns nothing but doc-comment prose). Sets
+ * `.forge/config.yaml`'s own `project.adopted` to `true`, once, the same schema-revalidate-then-
+ * `writeFileAtomic` write `packages/cli/src/commands/config.ts`'s own `configSet` already establishes
+ * for every other config write in this codebase — not a second, invented write path.
+ *
+ * Tolerant of a missing or invalid config file rather than throwing: `adopt.ts`'s own real test fixtures
+ * (and, realistically, a target repository reached via `03` §3.1's own "adopt-or-init" branch before
+ * `forge init` has ever run) may have no `.forge/config.yaml` at all yet. A caller that cares whether
+ * the marker was actually written reads `AdoptRunResult.warnings` for the disclosed reason it was not,
+ * rather than this function throwing and aborting an otherwise-successful adoption run over a config
+ * file it has no mandate to create from scratch (`forge init`'s own job, not this one's).
+ */
+async function markProjectAdopted(paths: ProjectPaths): Promise<string | undefined> {
+  const configTarget = paths.resolveWithin(CONFIG_REL_PATH);
+  if (!(await pathExists(configTarget))) {
+    return (
+      'project.adopted was not recorded: no .forge/config.yaml exists yet for this project ' +
+      '(run forge init to create one, then re-run forge adopt, so the marker can persist).'
+    );
+  }
+  let raw: unknown;
+  try {
+    raw = YAML.parse(await readTextFile(configTarget));
+  } catch {
+    return 'project.adopted was not recorded: .forge/config.yaml could not be parsed as YAML.';
+  }
+  const parsed = configSchema.safeParse(raw);
+  if (!parsed.success) {
+    return 'project.adopted was not recorded: .forge/config.yaml did not validate against the real config schema.';
+  }
+  if (parsed.data.project.adopted) return undefined;
+  const updated: ForgeConfig = {
+    ...parsed.data,
+    project: { ...parsed.data.project, adopted: true },
+  };
+  await writeFileAtomic(configTarget, YAML.stringify(updated));
+  return undefined;
+}
+
+/**
  * Runs `17` §17.2's full eight-phase pipeline (or a `quick` prefix of it — see `AdoptRunResult`'s own
  * doc comment) against a real, on-disk target repository. Every deterministic phase runs for real
  * (SURVEY, INVENTORY, VERIFICATION unless `--no-verify`, RECONSTRUCTION, GAP ANALYSIS, BASELINE); the
@@ -473,6 +519,13 @@ export async function adopt(
     ctx.paths.resolveWithin(BASELINE_REPORT_RELATIVE_PATH),
     `${JSON.stringify(baseline, null, 2)}\n`,
   );
+
+  // `17` §17.4's own brownfield adjustments key off this marker (`markProjectAdopted`'s own doc
+  // comment) — set once a full (non-`quick`, non-scoped-proposal) run reaches this point, regardless
+  // of whether `G-Adopt` itself passed: "this project went through adoption" is a fact about its
+  // origin, not a quality gate outcome.
+  const adoptedMarkerWarning = await markProjectAdopted(ctx.paths);
+  if (adoptedMarkerWarning !== undefined) warnings.push(adoptedMarkerWarning);
 
   return {
     survey: surveyResult,

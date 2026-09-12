@@ -29,6 +29,16 @@ const projectSchema = z
     level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
     mode: z.enum(['guided', 'express']),
     repoUrl: z.string(),
+    // `17` §17.4: brownfield adjustments (narrower file-claim defaults among them) key off whether
+    // this project went through `forge adopt` at all — a fact about the project's own origin, not a
+    // per-run flag, so it lives here rather than in `execution` alongside the per-run autonomy level
+    // it modifies. Set once by `forge adopt`'s own pipeline (`packages/cli/src/commands/adopt.ts`)
+    // after a full, non-`quick` run completes; never set by this package itself (`@forge/schemas` only
+    // knows the shape, never derives project facts — the same split every other config field already
+    // follows). See `SPEC-QUESTIONS.md` for the record — `17` §17.2's own text names this marker only
+    // in passing ("a project's own `adopted: true` marker"), with no prior piece ever having written
+    // one.
+    adopted: z.boolean(),
   })
   .strict();
 

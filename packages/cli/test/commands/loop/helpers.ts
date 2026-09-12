@@ -211,11 +211,12 @@ Fixture story body.
 `;
 }
 
-/** `relativePath` must match the fixture workflow's own resolved `produces` glob exactly — `06`
- * §6.7's real claim enforcement (`ctx.claimPolicy: 'strict'`, `buildRunEngineContext`'s own default)
- * fails a step whose lane changed a file outside its own declared claim, so a fixture adapter that
- * always wrote the identical filename regardless of what each command's own resolved `produces`
- * actually named would fail every real (non-dry-run) test but `implement.test.ts`'s own default. */
+/** `relativePath` must match the fixture workflow's own resolved `produces` glob exactly, so every
+ * real (non-dry-run) test writes a file its own step actually claimed — matching what a well-behaved
+ * step does regardless of `06` §6.7's own claim-enforcement policy (`ctx.claimPolicy`, resolved by
+ * `buildRunEngineContext` via `resolveClaimPolicy`; this file's own fixture config resolves to `warn`,
+ * since `createTestProject`'s default `ForgeConfig` is `guided`/non-adopted, but none of these tests
+ * exercise the out-of-claim path either way, so which policy applies is not itself under test here). */
 export function fixtureAdapter(relativePath = 'out.txt'): PlatformAdapter {
   const adapter = new FakePlatformAdapter();
   adapter.script(() => true, {

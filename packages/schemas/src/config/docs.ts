@@ -16,6 +16,7 @@ export type ConfigKeyPath =
   | 'project.level'
   | 'project.mode'
   | 'project.repoUrl'
+  | 'project.adopted'
   | 'paths.kb'
   | 'paths.specs'
   | 'paths.plans'
@@ -105,6 +106,10 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'project.level': 'The rigor level (L0..L4) that scales gate strictness and required artifacts.',
   'project.mode': 'guided (a human is in the loop) or express (fewer stops, more autonomy).',
   'project.repoUrl': "The project's source repository URL, or empty if none is configured yet.",
+  'project.adopted':
+    'Whether this project went through `forge adopt` (`17` §17.4) — set once, automatically, when a ' +
+    'full adoption run completes. Narrows some defaults (e.g. out-of-claim file writes default to ' +
+    'strict even at guided autonomy) to account for unknown coupling in a brownfield codebase.',
   'paths.kb': 'Repo-relative path to the knowledge body.',
   'paths.specs': 'Repo-relative path to spec artifacts.',
   'paths.plans': 'Repo-relative path to delivery plans.',

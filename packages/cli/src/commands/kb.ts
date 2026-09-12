@@ -1,22 +1,30 @@
 /**
- * `forge kb <list|show|search|lint|diff|sync|open|graph>` — `03` §3.2.2.
+ * `forge kb <list|show|search|lint|diff|sync|open|graph|verify>` — `03` §3.2.2, `17` §17.4 point 6 /
+ * §17.6 for `verify`.
  *
  * @see specs/03 §3.2.2
+ * @see specs/17 §17.4
+ * @see specs/17 §17.6
  */
+import { execa } from 'execa';
+
 import { ForgeError } from '@forge/core/errors';
 import type { ProjectPaths } from '@forge/core/fs';
 import {
+  extractVerificationCommand,
   lintKb,
   openKbIndex,
   parseKbTree,
   rebuildIndex,
   type KbFinding,
+  type KbParsedEntry,
   type KbTree,
   type LintKbSpecArtifacts,
 } from '@forge/kb';
 import type { Capability, Epic } from '@forge/schemas';
 import type { ProjectLevel } from '@forge/methods/level';
 import { SYSTEM_CLOCK } from '@forge/core';
+import { errorMessage } from '@forge/vcs';
 
 import { listSpecArtifacts, summarize, type KbEntrySummary } from './shared.ts';
 
@@ -157,6 +165,145 @@ export async function kbGraph(
   } finally {
     backend.close();
   }
+}
+
+export type KbVerifyOutcome = 'pass' | 'fail' | 'timeout' | 'error' | 'skipped';
+
+export interface KbVerifyFinding {
+  readonly id: string;
+  readonly path: string;
+  readonly command: string | undefined;
+  readonly outcome: KbVerifyOutcome;
+  readonly detail: string;
+}
+
+/** Conservative, same order of magnitude as `@forge/engine/adopt`'s own `DEFAULT_BUILD_TIMEOUT_MS`/
+ * `DEFAULT_TEST_TIMEOUT_MS` (`17` §17.2 phase 5) — this command has the identical "no spec-given
+ * number for a stored command's own runtime budget" gap, resolved the same way. */
+const KB_VERIFY_TIMEOUT_MS = 300_000;
+
+function isKnowledgeEntry(
+  entry: KbParsedEntry,
+): entry is Extract<KbParsedEntry, { readonly kind: 'kb-entry' }> {
+  return entry.kind === 'kb-entry';
+}
+
+/** Runs `command` for real, in the live project's own current working tree (never a sandboxed clone —
+ * unlike `forge adopt`'s own phase-5 VERIFICATION, this checks whether the code a developer already
+ * has checked out still matches what a KB entry claims, not an isolated snapshot of it) and reports the
+ * one real outcome. Mirrors `@forge/engine/adopt`'s own `runCommandCheck` (`17` §17.2 phase 5) for the
+ * exit-code/timeout/signal handling — not shared, since that function's own sandbox-clone lifecycle
+ * (`createSandboxClone`/`finally { rm(cloneDir) }`) does not apply here and `@forge/cli` has no
+ * boundary-graph edge into `@forge/engine`'s internal, unexported helpers regardless. */
+async function runStoredVerificationCommand(
+  id: string,
+  path: string,
+  command: string,
+  cwd: string,
+): Promise<KbVerifyFinding> {
+  try {
+    const result = await execa(command, {
+      cwd,
+      shell: true,
+      reject: false,
+      timeout: KB_VERIFY_TIMEOUT_MS,
+    });
+    if (result.timedOut) {
+      return {
+        id,
+        path,
+        command,
+        outcome: 'timeout',
+        detail: `"${command}" did not finish within ${String(KB_VERIFY_TIMEOUT_MS)}ms and was killed.`,
+      };
+    }
+    if (result.exitCode === 0) {
+      return { id, path, command, outcome: 'pass', detail: `"${command}" exited 0.` };
+    }
+    // Truncated for the identical reason `runCommandCheck`'s own doc comment gives: a genuinely broken
+    // command's own output can run to many kilobytes, and the fact that it failed (plus enough output
+    // to act on) matters more here than every byte of it.
+    const output = (result.stderr || result.stdout).slice(0, 2000);
+    const exitDescription =
+      result.exitCode === undefined
+        ? `was terminated by signal ${result.signal ?? 'unknown'}`
+        : `exited ${String(result.exitCode)}`;
+    return {
+      id,
+      path,
+      command,
+      outcome: 'fail',
+      detail: `"${command}" ${exitDescription}: ${output}`,
+    };
+  } catch (cause) {
+    return {
+      id,
+      path,
+      command,
+      outcome: 'error',
+      detail: `"${command}" could not be run: ${errorMessage(cause)}`,
+    };
+  }
+}
+
+/**
+ * `forge kb verify` — `17` §17.4 point 6 / §17.6: "run stored verification commands." Walks every real
+ * KB entry with `confidence: 'verified'` (`08` §8.3's own rule: only a `verified` entry is required to
+ * carry a `## Verification` section with real content at all), extracts the one, real, machine-runnable
+ * command each entry's own section names via the established `` Command: `<cmd>` `` convention
+ * (`extractVerificationCommand`, `SPEC-QUESTIONS.md` Q159/`PLAN-M10.md` P20), and runs it for real
+ * against the live project. An entry whose section has no such line is reported `skipped`, never
+ * `fail` — a human-only verification step ("open the admin panel and confirm...") is not drift, it is
+ * simply not machine-checkable by this command.
+ *
+ * This is the real, disclosed-as-missing CLI surface `SPEC-QUESTIONS.md` Q159 named: the underlying
+ * command-running mechanism (`@forge/engine/adopt`'s `runVerificationPhase`) exists for `forge adopt`'s
+ * own onboarding-time, sandboxed-clone use; this command is deliberately not that — it runs directly
+ * against the caller's own already-checked-out working tree, since its job is "does reality still match
+ * what the KB claims right now," not "does a clean clone build."
+ *
+ * **Trust model, considered directly, not overlooked.** `command` ultimately traces back (via
+ * RECONSTRUCTION, `PLAN-M10.md` P18) to a `package.json` `scripts.build`/`scripts.test` entry the
+ * *target repository itself* wrote, and this function runs it unsandboxed. That is not a new class of
+ * risk this command introduces: `@forge/engine/dispatch/shell.ts`'s own `runShellCommand` already runs
+ * every gate check's own `run:` field and every `execution.testCommands` entry the identical way —
+ * `execa(command, { cwd, shell: true })`, no sandbox, directly in the live project tree — because once
+ * a codebase is *your own* FORGE project (adopted or not), running its own configured build/test
+ * commands in its own working tree is the established norm this entire codebase already uses
+ * everywhere else a project's own command runs post-onboarding; sandboxing exists specifically for
+ * VERIFICATION's own onboarding-time scan of a repository nobody has decided to adopt yet
+ * (`SPEC-QUESTIONS.md` Q159's own sandbox-clone rationale), not for a project you already run
+ * `npm test`/`npm run build` against directly yourself. A hostile `package.json` script is a risk
+ * `npm run build` itself already carries the moment a human runs it — this command does not create a
+ * materially new attack surface, only automates a check a human could already run by hand.
+ */
+export async function kbVerify(ctx: KbCommandContext): Promise<readonly KbVerifyFinding[]> {
+  const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
+  const projectRoot = ctx.paths.resolveWithin('.');
+  const verifiedEntries = tree.entries
+    .filter(isKnowledgeEntry)
+    .filter((entry) => entry.value.confidence === 'verified');
+
+  const findings: KbVerifyFinding[] = [];
+  for (const entry of verifiedEntries) {
+    const command = extractVerificationCommand(entry.value.body);
+    if (command === undefined) {
+      findings.push({
+        id: entry.value.id,
+        path: entry.path,
+        command: undefined,
+        outcome: 'skipped',
+        detail:
+          'no machine-runnable "Command: `...`" line found in this entry\'s own ## Verification ' +
+          'section — it may still be a genuine, human-checkable verification step.',
+      });
+      continue;
+    }
+    findings.push(
+      await runStoredVerificationCommand(entry.value.id, entry.path, command, projectRoot),
+    );
+  }
+  return findings;
 }
 
 /** `diff`: `03` §3.2.2 names this subcommand but no real mechanism to diff two versions of a KB
