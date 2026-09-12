@@ -94,7 +94,16 @@ export const PACKAGE_GRAPH = {
   // export directly rather than `@forge/extensions` re-implementing git plumbing of its own — the
   // identical kind of deliberate, disclosed graph-edge decision `Q104`/`PLAN-M10.md` P10/P16 already
   // made for `engine -> sessions`. See `SPEC-QUESTIONS.md` for the record.
-  extensions: ['schemas', 'core', 'templates', 'vcs'],
+  // `PLAN-M11.md` P6's own recorded Surface deviation: `runModuleConformance`
+  // (`packages/extensions/src/install/conformance.ts`) runs a module's own `tests/*.test.ts` files
+  // against a real `@forge/testkit` `FakePlatformAdapter` as a genuine, blocking production step of
+  // `forge module add`/`forge module update` -- not a test-only dependency the way every other
+  // `-> testkit` edge in this graph is (see `engine`'s own row's doc comment: that edge exists only
+  // for `packages/engine/test/**`, never `packages/engine/src/**`). This is the first package whose
+  // own production `src/` genuinely imports `@forge/testkit` at runtime, the identical kind of
+  // deliberate, disclosed graph-edge decision the `extensions -> vcs` edge above already made. See
+  // `SPEC-QUESTIONS.md` for the record.
+  extensions: ['schemas', 'core', 'templates', 'vcs', 'testkit'],
   agents: ['core', 'kb', 'schemas', 'adapter-kit', 'templates', 'extensions'],
   sessions: ['core', 'kb', 'agents', 'schemas'],
   engine: [

@@ -6,8 +6,9 @@
  * `forge upgrade` only ever (re)write the *whole* resolved built-in module set at once
  * (`buildManifest`/`writeRegenerableContent`), and no per-module install/uninstall mechanism existed
  * anywhere in this codebase. This piece is that mechanism, built on top of the three distribution
- * channels (`PLAN-M11.md` P1/P2), the capability consent screen (P3), and the static safety scan (P4)
- * this same milestone already shipped — chaining `19` §19.5's own installation flow end to end:
+ * channels (`PLAN-M11.md` P1/P2), the capability consent screen (P3), the static safety scan (P4),
+ * and P6's own module conformance runner — this same milestone already shipped all four — chaining
+ * `19` §19.5's own installation flow end to end:
  *
  * 1. Fetch (`fetchInstallBundle`, dispatching on `source`'s own literal prefix to whichever of the
  *    three real channels applies).
@@ -16,10 +17,15 @@
  * 3. The capability consent screen (`describeRequestedCapabilities`/`promptForConsent`); nothing past
  *    this point runs on refusal.
  * 4. The static safety scan (`scanBundleForSafety`); nothing past this point runs on any finding.
- * 5. Install into `.forge/modules/<id>/`, record in `manifest.yaml` with version, checksum, and the
+ * 5. The module conformance suite (`runModuleConformance`, `PLAN-M11.md` P6): every `provides` entry
+ *    re-validated against the fetched bundle's own real content, and every `tests/*.test.ts` file the
+ *    module ships run for real against `@forge/testkit`'s `FakePlatformAdapter`; a module that fails
+ *    either is refused here, before anything is written to `.forge/` (module-only — `overlay.ts`'s
+ *    own `overlayAdd` never calls this, since an overlay has no `provides` concept, `19` §19.1).
+ * 6. Install into `.forge/modules/<id>/`, record in `manifest.yaml` with version, checksum, and the
  *    real install `source` (so `moduleUpdate` can re-fetch from the same place, and so `moduleRemove`/
  *    `moduleUpdate` can tell a per-module-managed row apart from a built-in one — see `CFG-045`).
- * 6. Report what changed — a real `InstallChangeReport`, not a full `forge compile` re-run: `forge
+ * 7. Report what changed — a real `InstallChangeReport`, not a full `forge compile` re-run: `forge
  *    compile`'s own command (`compile.ts`) already documents, as a disclosed pre-existing gap, that no
  *    "gather this project's own real content into `CompileSources`" resolver exists anywhere in this
  *    codebase yet, so a `moduleAdd` that tried to actually invoke it would either fabricate a resolver
@@ -53,6 +59,7 @@
  * @see specs/03 §3.2.8
  * @see specs/19 §19.5
  * @see PLAN-M11.md P5
+ * @see PLAN-M11.md P6
  */
 import { cp, mkdir, open, rename, rm } from 'node:fs/promises';
 // `fsyncTreeBestEffort` below only ever uses this to decide whether to recurse/fsync each entry of an
@@ -69,13 +76,19 @@ import path from 'node:path';
 import * as YAML from 'yaml';
 
 import { ForgeError, readTextFile, type ProjectPaths } from '@forge/core';
-import { listDirEntriesSorted, pathExists, writeFileAtomic, type AbsolutePath } from '@forge/core/fs';
+import {
+  listDirEntriesSorted,
+  pathExists,
+  writeFileAtomic,
+  type AbsolutePath,
+} from '@forge/core/fs';
 import {
   describeRequestedCapabilities,
   fetchGitOverlayBundle,
   fetchLocalOverlay,
   fetchNpmOverlay,
   promptForConsent,
+  runModuleConformance,
   scanBundleForSafety,
   type ConsentPromptOptions,
   type OverlayManifestKind,
@@ -483,7 +496,10 @@ export interface InstallChangeReport {
   readonly action: 'installed' | 'updated' | 'removed';
   readonly version?: string;
   readonly previousVersion?: string;
-  readonly resolvedSetDelta: { readonly added: readonly string[]; readonly removed: readonly string[] };
+  readonly resolvedSetDelta: {
+    readonly added: readonly string[];
+    readonly removed: readonly string[];
+  };
   /** Every capability entry newly requested by this change: every entry for `installed`, only the
    * entries absent from the previously-installed version for `updated` (a real diff, never a blanket
    * re-list), `[]` for `removed`. */
@@ -547,7 +563,10 @@ async function moduleAddLocked(
   // Ids are one shared namespace across modules and overlays (`overlayAdd`'s own identical check
   // treats them that way too) — a module and an overlay sharing one id would leave `moduleInfo`/
   // `overlayExplain`/any future id-keyed lookup unable to tell the two rows apart.
-  if (doc.modules.some((module) => module.id === id) || doc.overlays.some((overlay) => overlay.id === id)) {
+  if (
+    doc.modules.some((module) => module.id === id) ||
+    doc.overlays.some((overlay) => overlay.id === id)
+  ) {
     throw new ForgeError('CFG-042', { id, kind: 'module' });
   }
 
@@ -573,11 +592,24 @@ async function moduleAddLocked(
     }
 
     await scanBundleForSafety(bundle.path);
+    // `PLAN-M11.md` P6's own real, blocking pre-install gate: a module that fails its own declared
+    // conformance suite (a `provides` entry with no real, matching content, or a failing
+    // `tests/*.test.ts`) is refused here, before anything is written to `.forge/` — the identical
+    // "every gate throws before the filesystem write" discipline every gate above already follows.
+    // `bundle.path` cast the same way `moduleYamlAbsPath` casts it just above -- never a
+    // project-relative write target here either: `runModuleConformance` only ever reads under
+    // this path, and writes its own ephemeral work only under the separately-supplied `workDir`.
+    await runModuleConformance(bundle.path as AbsolutePath, { workDir: options.workDir });
 
     const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
     await installBundleTree(destAbs, bundle.path);
 
-    const record: InstalledModuleRow = { id, version: moduleDef.version, checksum: bundle.checksum, source };
+    const record: InstalledModuleRow = {
+      id,
+      version: moduleDef.version,
+      checksum: bundle.checksum,
+      source,
+    };
     await writeManifestDocument(ctx.paths, {
       version: 1,
       modules: [...doc.modules, record],
@@ -770,7 +802,9 @@ async function moduleUpdateLocked(
     const newDescription = describeRequestedCapabilities({ kind: 'module', module: newDef });
     const newEntries = newDescription.entries.filter(
       (entry) =>
-        !currentDescription.entries.some((old) => old.kind === entry.kind && old.text === entry.text),
+        !currentDescription.entries.some(
+          (old) => old.kind === entry.kind && old.text === entry.text,
+        ),
     );
     if (newEntries.length > 0) {
       const diffText = [
@@ -785,11 +819,22 @@ async function moduleUpdateLocked(
     }
 
     await scanBundleForSafety(bundle.path);
+    // See `moduleAddLocked`'s own identical call for why — the new version is refused, before any
+    // write, the same way a first install of it would be.
+    // `bundle.path` cast the same way `moduleYamlAbsPath` casts it just above -- never a
+    // project-relative write target here either: `runModuleConformance` only ever reads under
+    // this path, and writes its own ephemeral work only under the separately-supplied `workDir`.
+    await runModuleConformance(bundle.path as AbsolutePath, { workDir: options.workDir });
 
     const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
     await installBundleTree(destAbs, bundle.path);
 
-    const record: InstalledModuleRow = { id, version: newDef.version, checksum: bundle.checksum, source };
+    const record: InstalledModuleRow = {
+      id,
+      version: newDef.version,
+      checksum: bundle.checksum,
+      source,
+    };
     await writeManifestDocument(ctx.paths, {
       version: 1,
       modules: doc.modules.map((module) => (module.id === id ? record : module)),

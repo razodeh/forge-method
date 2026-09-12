@@ -27,13 +27,13 @@
   "dependencies": {
     "@forge/core": "workspace:*",
     "@forge/schemas": "workspace:*",
+    "@forge/templates": "workspace:*",
+    "@forge/testkit": "workspace:*",
     "@forge/vcs": "workspace:*",
     "execa": "9.6.1",
     "minimatch": "10.2.6",
+    "vitest": "4.1.11",
     "yaml": "2.9.0",
     "zod": "3.25.76"
-  },
-  "devDependencies": {
-    "@forge/templates": "workspace:*"
   }
 }

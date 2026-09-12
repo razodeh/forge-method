@@ -40,9 +40,15 @@ interface ModuleBundleOverrides {
   /** Written as `skills/rogue/SKILL.md` when present — lets a test inject secret/injection-shaped
    * content the static safety scan (`PLAN-M11.md` P4) is supposed to refuse. */
   readonly rogueSkillBody?: string;
+  /** `module.yaml`'s own `provides` block — `{}` by default (nothing for `PLAN-M11.md` P6's own
+   * conformance runner to check), overridable so a test can exercise its real refusal path. */
+  readonly provides?: Record<string, readonly string[]>;
 }
 
-async function writeModuleBundle(dir: string, overrides: ModuleBundleOverrides = {}): Promise<void> {
+async function writeModuleBundle(
+  dir: string,
+  overrides: ModuleBundleOverrides = {},
+): Promise<void> {
   await mkdir(dir, { recursive: true });
   const doc = {
     id: overrides.id ?? 'sample-mod',
@@ -53,7 +59,7 @@ async function writeModuleBundle(dir: string, overrides: ModuleBundleOverrides =
     conflicts: overrides.conflicts ?? [],
     levels: ['L1'],
     ceilings: overrides.ceilings ?? {},
-    provides: {},
+    provides: overrides.provides ?? {},
   };
   await writeFile(path.join(dir, 'module.yaml'), YAML.stringify(doc));
   if (overrides.rogueSkillBody !== undefined) {
@@ -81,7 +87,8 @@ function nullWritable(): Writable {
 }
 
 function installOptions(overrides: Partial<InstallOptions> = {}): InstallOptions {
-  const consent = overrides.consent === undefined ? undefined : { output: nullWritable(), ...overrides.consent };
+  const consent =
+    overrides.consent === undefined ? undefined : { output: nullWritable(), ...overrides.consent };
   return {
     workDir: '',
     npmCwd: '',
@@ -270,13 +277,78 @@ describe('moduleAdd — local channel', () => {
     await mkdir(bundleDir, { recursive: true });
     await writeFile(
       path.join(bundleDir, 'overlay.yaml'),
-      YAML.stringify({ id: 'acme-overlay', name: 'Acme', version: '1.0.0', forgeVersion: '>=1.0 <2' }),
+      YAML.stringify({
+        id: 'acme-overlay',
+        name: 'Acme',
+        version: '1.0.0',
+        forgeVersion: '>=1.0 <2',
+      }),
     );
 
     await expect(
       moduleAdd(ctx, 'acme-overlay', bundleDir, installOptions({ consent: { yes: true } })),
     ).rejects.toMatchObject({ code: 'CFG-043' });
   });
+
+  it('refuses a bundle whose provides names an agent file that does not exist (CFG-050, PLAN-M11.md P6), installing nothing', async () => {
+    const project = await createTestProject();
+    const ctx = ctxFor(project);
+    const bundleDir = await tempDir('forge-module-bundle-');
+    await writeModuleBundle(bundleDir, { id: 'acme-mod', provides: { agents: ['ghost'] } });
+
+    await expect(
+      moduleAdd(ctx, 'acme-mod', bundleDir, installOptions({ consent: { yes: true } })),
+    ).rejects.toMatchObject({ code: 'CFG-050' });
+    expect(existsSync(path.join(project.dir, '.forge/modules/acme-mod'))).toBe(false);
+  });
+
+  it('refuses a bundle whose own tests/*.test.ts fails (CFG-051, PLAN-M11.md P6), installing nothing', async () => {
+    const project = await createTestProject();
+    const ctx = ctxFor(project);
+    const bundleDir = await tempDir('forge-module-bundle-');
+    await writeModuleBundle(bundleDir, { id: 'acme-mod' });
+    await mkdir(path.join(bundleDir, 'tests'), { recursive: true });
+    await writeFile(
+      path.join(bundleDir, 'tests', 'fail.test.ts'),
+      "import { describe, it, expect } from 'vitest';\n" +
+        "describe('conformance', () => { it('fails', () => { expect(1).toBe(2); }); });\n",
+    );
+    const workDir = await tempDir('forge-module-workdir-');
+
+    await expect(
+      moduleAdd(ctx, 'acme-mod', bundleDir, installOptions({ consent: { yes: true }, workDir })),
+    ).rejects.toMatchObject({ code: 'CFG-051' });
+    expect(existsSync(path.join(project.dir, '.forge/modules/acme-mod'))).toBe(false);
+  }, 30_000);
+
+  it('installs a bundle whose real provides and real, passing tests/*.test.ts both satisfy conformance (PLAN-M11.md P6)', async () => {
+    const project = await createTestProject();
+    const ctx = ctxFor(project);
+    const bundleDir = await tempDir('forge-module-bundle-');
+    await writeModuleBundle(bundleDir, { id: 'acme-mod', provides: { agents: ['tester'] } });
+    await mkdir(path.join(bundleDir, 'agents'), { recursive: true });
+    await writeFile(path.join(bundleDir, 'agents', 'tester.agent.yaml'), 'id: tester\n');
+    await mkdir(path.join(bundleDir, 'tests'), { recursive: true });
+    await writeFile(
+      path.join(bundleDir, 'tests', 'pass.test.ts'),
+      "import { describe, it, expect } from 'vitest';\n" +
+        "import { FakePlatformAdapter } from '@forge/testkit';\n" +
+        "describe('conformance', () => { it('constructs a real fake adapter', async () => {\n" +
+        '  const adapter = new FakePlatformAdapter();\n' +
+        '  expect((await adapter.capabilities()).mcp).toBe(true);\n' +
+        '}); });\n',
+    );
+    const workDir = await tempDir('forge-module-workdir-');
+
+    const report = await moduleAdd(
+      ctx,
+      'acme-mod',
+      bundleDir,
+      installOptions({ consent: { yes: true }, workDir }),
+    );
+    expect(report.action).toBe('installed');
+    expect(existsSync(path.join(project.dir, '.forge/modules/acme-mod/module.yaml'))).toBe(true);
+  }, 30_000);
 });
 
 describe('moduleAdd — git channel', () => {
@@ -316,7 +388,12 @@ describe('moduleAdd — npm channel dispatch', () => {
     const ctx = ctxFor(project);
 
     await expect(
-      moduleAdd(ctx, 'acme-mod', 'npm:not-a-valid-spec', installOptions({ workDir: await tempDir('forge-module-npm-') })),
+      moduleAdd(
+        ctx,
+        'acme-mod',
+        'npm:not-a-valid-spec',
+        installOptions({ workDir: await tempDir('forge-module-npm-') }),
+      ),
     ).rejects.toMatchObject({ code: 'CFG-029' });
   });
 });
@@ -442,9 +519,9 @@ describe('moduleUpdate', () => {
   it('throws KB-015 for a module id that is not really installed', async () => {
     const project = await createTestProject();
     const ctx = ctxFor(project);
-    await expect(
-      moduleUpdate(ctx, 'not-real', '/nowhere', installOptions()),
-    ).rejects.toMatchObject({ code: 'KB-015' });
+    await expect(moduleUpdate(ctx, 'not-real', '/nowhere', installOptions())).rejects.toMatchObject(
+      { code: 'KB-015' },
+    );
   });
 
   it('refuses to update a built-in module not managed by this lifecycle (CFG-045)', async () => {
@@ -473,7 +550,11 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
       }),
     );
     const { overlayAdd } = await import('../../src/commands/overlay.ts');
-    await overlayAdd({ paths: project.paths }, overlayDir, installOptions({ consent: { yes: true } }));
+    await overlayAdd(
+      { paths: project.paths },
+      overlayDir,
+      installOptions({ consent: { yes: true } }),
+    );
 
     const moduleDir = await tempDir('forge-module-collide-');
     await writeModuleBundle(moduleDir, { id: 'shared-id' });
@@ -503,7 +584,11 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
       }),
     );
     const { overlayAdd } = await import('../../src/commands/overlay.ts');
-    await overlayAdd({ paths: project.paths }, overlayDir, installOptions({ consent: { yes: true } }));
+    await overlayAdd(
+      { paths: project.paths },
+      overlayDir,
+      installOptions({ consent: { yes: true } }),
+    );
 
     await expect(moduleRemove(ctx, 'needed-mod')).rejects.toMatchObject({ code: 'CFG-039' });
     await expect(moduleRemove(ctx, 'needed-mod')).rejects.toThrow(/dependent-overlay/);
@@ -564,7 +649,7 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
     expect(report.action).toBe('installed');
   });
 
-  it('refuses immediately (CFG-047) when the lock names this process\'s own still-alive pid', async () => {
+  it("refuses immediately (CFG-047) when the lock names this process's own still-alive pid", async () => {
     const project = await createTestProject();
     const ctx = ctxFor(project);
     const lockPath = project.paths.resolveState('module-install.lock');

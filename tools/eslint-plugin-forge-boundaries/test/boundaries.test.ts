@@ -186,14 +186,18 @@ describe('specs/02 §2.2 — the dependency graph', () => {
     );
   });
 
-  it('gives extensions every spec-declared edge, plus vcs for the real git-channel overlay/module fetch', () => {
-    // The spec's own three edges (specs/02 §2.2), unchanged, plus one recorded addition:
+  it('gives extensions every spec-declared edge, plus vcs for the real git-channel overlay/module fetch, plus testkit for runModuleConformance', () => {
+    // The spec's own three edges (specs/02 §2.2), unchanged, plus two recorded additions:
     // `PLAN-M11.md` P1's own `extensions -> vcs` edge, so `@forge/extensions`'s new `install/`
     // orchestration layer can call `@forge/vcs`'s real git primitives directly for the pinned-ref
     // clone the git channel needs, rather than re-implementing git plumbing inside `extensions`
-    // itself. See `SPEC-QUESTIONS.md` for the record.
+    // itself; and `PLAN-M11.md` P6's own `extensions -> testkit` edge, a genuine production (not
+    // test-only) dependency: `runModuleConformance` runs a module's own `tests/*.test.ts` files
+    // against a real `@forge/testkit` `FakePlatformAdapter` as a blocking step of `forge module
+    // add`/`forge module update` itself, unlike every other `-> testkit` edge in this graph (which
+    // exists only for a package's own test suite). See `SPEC-QUESTIONS.md` for the record.
     expect([...PACKAGE_GRAPH.extensions].sort()).toEqual(
-      ['schemas', 'core', 'templates', 'vcs'].sort(),
+      ['schemas', 'core', 'templates', 'vcs', 'testkit'].sort(),
     );
   });
 

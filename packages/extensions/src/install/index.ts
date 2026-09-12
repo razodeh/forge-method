@@ -2,8 +2,9 @@
  * `@forge/extensions/install` — the overlay/module bundle fetch orchestration layer (`19` §19.5,
  * `PLAN-M11.md` P1/P2): the local path, git, and npm channels, all refusing the identical way when
  * the fetched content is not a real, installable overlay/module; `PLAN-M11.md` P3's own capability
- * consent screen; plus `PLAN-M11.md` P4's own static safety scan, the pre-install gate that runs on
- * whatever a channel above fetched, strictly before anything is written to `.forge/`.
+ * consent screen; plus `PLAN-M11.md` P4's own static safety scan and `PLAN-M11.md` P6's own module
+ * conformance runner, the two pre-install gates that run on whatever a channel above fetched,
+ * strictly before anything is written to `.forge/`.
  *
  * `describeRequestedCapabilities`/`promptForConsent` were not re-exported here by P3 itself (confirmed
  * by direct inspection before this piece added the two-line fix above) — `PLAN-M11.md` P5's own real
@@ -18,6 +19,7 @@
  * @see PLAN-M11.md P3
  * @see PLAN-M11.md P4
  * @see PLAN-M11.md P5
+ * @see PLAN-M11.md P6
  */
 export {
   describeRequestedCapabilities,
@@ -29,6 +31,11 @@ export {
   type ConsentPromptOptions,
   type OverlayCapabilityManifest,
 } from './consent.ts';
+export {
+  runModuleConformance,
+  type ModuleConformanceReport,
+  type RunModuleConformanceOptions,
+} from './conformance.ts';
 export { fetchGitOverlayBundle, type GitOverlayBundleResult } from './fetch-git.ts';
 export { fetchLocalOverlay, type LocalOverlayFetchResult } from './fetch-local.ts';
 export {

@@ -1465,7 +1465,8 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.usage,
     message: (d: { expectedId: string; actualId: string }) =>
       `The fetched bundle declares id ${show(d.actualId)}, not the requested ${show(d.expectedId)}.`,
-    remedy: "Fix the id argument to match the bundle's own declared id, or point at the intended source.",
+    remedy:
+      "Fix the id argument to match the bundle's own declared id, or point at the intended source.",
   },
   'CFG-045': {
     // `forge module remove`/`forge module update` refuse a manifest row with no recorded install
@@ -1500,8 +1501,7 @@ export const ERROR_CODES = {
     // `forge module add` in progress never contend with each other's lock file.
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: () =>
-      'Another forge module/overlay install is already in progress for this project.',
+    message: () => 'Another forge module/overlay install is already in progress for this project.',
     remedy: 'Wait for the other install to finish, then retry.',
   },
   'CFG-048': {
@@ -1525,6 +1525,54 @@ export const ERROR_CODES = {
     message: (d: { destination: string; source: string }) =>
       `${show(d.source)} overlaps its own install destination ${show(d.destination)}.`,
     remedy: 'Point the source at a directory outside the install destination and retry.',
+  },
+  'CFG-050': {
+    // `runModuleConformance`'s own provides-vs-content re-validation (`19` §19.1/§19.3,
+    // `PLAN-M11.md` P6): a module's own `module.yaml` `provides` block names an agent/workflow/
+    // framework/gate/check/skill/artifactType/catalog/technique id with no real, matching file (or
+    // directory, for a skill) anywhere under the module's own source tree -- "a template that cannot
+    // produce a valid artifact is broken at authoring time" (`19` §19.3), extended to "a module that
+    // claims content it does not ship is broken at install time." Blocks `forge module add`/`forge
+    // module update` before any write to `.forge/`, the identical "every gate throws before the
+    // filesystem write" discipline `module.ts`'s own top-of-file doc comment already establishes for
+    // every other install-time gate.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string; detail: string }) =>
+      `${show(d.moduleId)}'s own provides declaration does not match its real content: ${show(d.detail)}.`,
+    remedy:
+      'Add the missing agent/workflow/framework/gate/check/skill/artifactType/catalog/technique ' +
+      "file under the module's own directory (matching its own declared id), or remove the entry " +
+      'from provides if it was never really shipped.',
+  },
+  'CFG-051': {
+    // `runModuleConformance`'s own `tests/*.test.ts` run (`19` §19.1's "module conformance tests",
+    // `PLAN-M11.md` P6): at least one of the module's own hand-written conformance tests failed
+    // against `@forge/testkit`'s real `FakePlatformAdapter` -- the module's own content does not
+    // satisfy the contracts it claims to, by its own declared test suite (or the run itself timed out
+    // or produced no report — treated identically, since a module whose own declared tests cannot
+    // even run is exactly as unconformant as one whose tests run and fail). Blocks install/update the
+    // same way `CFG-050` does, before any write to `.forge/`.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { moduleId: string; detail: string }) =>
+      `${show(d.moduleId)}'s own conformance tests failed: ${show(d.detail)}.`,
+    remedy:
+      "Fix the module's own failing test(s) under its tests/ directory (or the content they " +
+      'exercise), then retry the install.',
+  },
+  'CFG-052': {
+    // `runModuleConformance`'s own per-file byte cap on a `provides`-referenced file it is about to
+    // parse in full (`PLAN-M11.md` P6) -- the identical resource-exhaustion shape `CFG-038` already
+    // covers for `scanBundleForSafety`'s own skill/template/prompt bodies, reusing that same numeric
+    // cap but a distinct code and message: this fires from provides re-validation, not the safety
+    // scan, and a message claiming "the safety scan's own limit" for a finding that scan never
+    // produced would be actively misleading.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { location: string; size: number; limit: number }) =>
+      `${show(d.location)} is ${show(d.size)} bytes, over module conformance's own ${show(d.limit)}-byte parse limit.`,
+    remedy: 'Reduce the file to a reasonable size, or remove it from the module, and retry.',
   },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
