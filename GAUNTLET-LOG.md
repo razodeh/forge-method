@@ -10955,3 +10955,145 @@ rounds. See `SPEC-QUESTIONS.md` Q172 for the full record of the three real, prev
 enforcement gaps found and fixed (telemetry value-shape redaction; JSON-serialisation defeating
 control-token stripping; zero taint enforcement anywhere in the step-dispatch model) and the two
 structurally-impossible plan-stated file locations (S3, S5) relocated with disclosure.
+
+## M11 P2 — Overlay/module bundle fetch: npm channel, with integrity verification (`19` §19.5)
+
+**Mandate:** the third `19` §19.5 distribution channel, deliberately built via the real,
+already-installed `npm` CLI (`npm pack <spec> --json` via `execa`) rather than a new `pacote`/`tar`
+dependency — this plan's own recorded Surface deviation.
+
+Built `packages/extensions/src/install/fetch-npm.ts` (`parseNpmOverlaySpec`, `fetchNpmOverlay`,
+`verifyTarballIntegrity`, `parseNpmPackJson`) and `packages/extensions/src/install/tar-extract.ts` (a
+new, hand-rolled minimal USTAR `.tar.gz` extractor — no `tar`/`pacote` dependency exists anywhere in
+this workspace, and adding one is this piece's own explicit Surface deviation not to do). Private/
+scoped registries are supported by running `npm pack` with a caller-supplied `cwd`, letting npm's own
+real `.npmrc` resolution do the work rather than reimplementing a parser for it. Seven new `CFG-*`
+error codes (`CFG-029`-`CFG-035`). A new local, real npm-registry-protocol HTTP test fixture
+(`npm-fixture-registry.ts`, built from a real `npm pack` of a real fixture directory) makes both the
+round-trip and private-registry Checks genuine end-to-end tests rather than mocked ones — the
+npm-channel equivalent of `PLAN-M11.md` P1's own local `file://` git remote fixture. Full reasoning in
+`SPEC-QUESTIONS.md` Q173.
+
+### Round 1 — fresh critic: 1 blocking, 5 major, 2 minor
+
+A fresh, context-free critic, instructed to specifically probe for npm-specific risks (shell
+metacharacters reaching `execa`, tar-slip path traversal, zip-bomb sizing), found: (1) **blocking** —
+a duplicate-object-key compile error: this piece's own `packages/core/test/errors.test.ts`
+`SAMPLE_DETAILS` addition reused `entry`/`reason`/`detail` keys the fixture object already declared,
+so `packages/core` failed to typecheck at all with the diff applied; (2) **major** —
+`parseNpmPackJson` indexed `parsed[0]` as a `Record<string, unknown>` without checking it was even an
+object first, so a real, malformed `npm pack --json` output whose first array element is `null` threw
+a raw `TypeError`, past this module's own documented "throws only `ForgeError`" contract; (3)
+**major** — `verifyTarballIntegrity` read the entire tarball into one unbounded `Buffer` via
+`readFile`, ahead of the decompression-bomb guard the rest of the piece was otherwise carefully built
+around; (4) **major** — `readOctalField`'s `Number.parseInt(str, 8)` silently mis-parsed a field like
+`"19999999999"` (a valid leading octal digit followed by an invalid one) as `1` instead of refusing
+it, desynchronising the parser's notion of where an entry's content ends; (5) **major** — the
+extractor's own truncated/corrupted-archive errors were reported as `CFG-030` ("npm pack ... failed"),
+whose remedy tells the user to check the registry — actively wrong guidance for a local file `npm
+pack` already wrote successfully; (6) **major** — no test exercised a Windows-shaped absolute path
+(`C:\...`, `\\server\share\...`) even though `resolveEntryPath` already guarded for it via
+`path.win32.isAbsolute`; two minors — `sha1` accepted as a valid integrity algorithm, and `ChunkReader`
+re-concatenated its whole buffered region on every incoming chunk (O(cap²) total copying).
+
+**What the critic caught that the builder missed:** every finding traces to the same root cause as
+prior pieces' own gauntlet rounds — happy-path-only tests (a clean JSON array, a well-formed tarball,
+a POSIX path, a canonical hash algorithm) never constructed the adversarial or merely-malformed shape
+each defect actually needed to surface.
+
+**Judged and fixed:** (1) removed the duplicate keys, keeping only the genuinely new `limit` field.
+(2) an explicit `typeof rawEntry !== 'object' || rawEntry === null` guard before indexing, with a
+regression test feeding `[null]`. (3) a new `hashFileCapped` helper streaming via `createReadStream`
+with an incrementally-checked byte cap, replacing the plain `readFile`. (4) every character validated
+against `/^[0-7]+$/` before `parseInt` ever runs. (5) a new `CFG-034` code (distinct message/remedy)
+for archive corruption/truncation, `CFG-030` reserved for genuine `npm pack` failures. (6) two new
+tests (drive-letter and UNC-share absolute paths). Minors: `sha1` removed from the accepted algorithm
+set; `ChunkReader` rewritten to hold an array of not-yet-consumed chunks plus a running length,
+concatenating each incoming chunk at most once rather than repeatedly.
+
+### Round 2 — fresh critic: 1 major, 1 minor (verifying round 1's fixes, not re-scanning cold)
+
+A second fresh critic, tracing round 1's fixes against concrete byte-level inputs rather than trusting
+the intent, confirmed all eight round-1 items held — and found: (1) **major** — the round-1
+`hashFileCapped` fix still had no `try`/`catch` around its own `for await` loop, so a missing/
+deleted/unreadable tarball file (a permission error, a concurrent deletion) surfaced as a raw Node
+stream error past `verifyTarballIntegrity`'s (and transitively `fetchNpmOverlay`'s) own "throws only
+`ForgeError`" contract — the identical bug class round 1 had just fixed in `parseNpmPackJson`, in a
+sibling function that fix never touched; (2) **minor** — the extractor's own catch-all (already fixed
+in round 1 to use `CFG-034` instead of `CFG-030`) still folded a real local filesystem failure
+(`ENOSPC`/`EACCES`/`ENOTDIR`/`EEXIST`, e.g. a crafted tarball with a file entry and a directory entry
+at the same path) into `CFG-034`'s own "corrupted or truncated" message — the identical "wrong remedy
+for an unrelated failure class" defect round 1 had just split `CFG-030`/`CFG-034` apart to fix, one
+layer further down.
+
+**What the critic caught that the builder missed:** both findings are the same lesson round 1 already
+taught, applied to a sibling code path the round-1 fix's own scope did not reach — a fix scoped to the
+one call site a critic's own repro happened to exercise, not generalised to every call site sharing
+the same root cause.
+
+**Judged and fixed:** (1) `hashFileCapped`'s loop wrapped in `try`/`catch`, wrapping any non-`ForgeError`
+as `CFG-030` (a real npm-pack-output-handling failure, not an archive-corruption one), with a new
+regression test verifying a missing tarball path. (2) a new `CFG-035` code plus an `isFsErrorCode`/
+`FS_ERROR_CODES` check (a set of real Node fs-syscall error codes) routing genuine filesystem failures
+away from `CFG-034`, with a regression test crafting a file-then-directory path conflict — the first
+version of `FS_ERROR_CODES` omitted `EEXIST` entirely, caught only by actually running that test
+against real Node (`mkdir(..., { recursive: true })` on an existing file raises `EEXIST`, not the
+`ENOTDIR` the doc comment had assumed) rather than trusting the intended set.
+
+### Round 3 — fresh critic: 0 correctness/security findings; 1 major (mechanical), 1 minor
+
+A third fresh critic, independently reproducing rounds 1-2's fixed scenarios against real Node/npm
+(not merely reading the code), confirmed every prior fix held — and separately ran the repository's
+own mandated `--coverage` command against exactly the tests this piece shipped, finding both new files
+under the workspace's real per-file 85%-branches floor (`fetch-npm.ts` 82.14%, `tar-extract.ts`
+82.75%) — a real, mechanically-reproducible gate failure, not a nitpick, with the single most
+load-bearing gap being zero test coverage of the USTAR `prefix`+`name` long-path join this file's own
+header comment cites as the empirical reason GNU longname/PAX support was skipped (confirmed working
+correctly by the critic's own direct execution against a real oversized-path `npm pack` output — just
+never exercised by a shipped test). One further minor: `FS_ERROR_CODES` (round 2's own fix) omitted
+two further real Node fs-syscall codes, `EDQUOT`/`EBUSY`.
+
+**What the critic caught that the builder missed:** coverage of the exact feature (`prefix`+`name`
+long-path splitting) the module's own doc comment holds up as its load-bearing justification for
+refusing GNU longname/PAX support — correct in practice, but never proven by a shipped test, the same
+"documented but unverified" gap a reader five years from now would have no way to tell from a
+"corrected but untested" regression.
+
+**Judged and fixed:** eight targeted tests closing the specific uncovered branches (a non-array/
+empty-array `npm pack --json` output; a hand-built USTAR fixture proving the `prefix`+`name` join
+round-trips; default-options, trailing-separator-`destDir`, blank-size-field, full-width-no-NUL-name,
+clean-EOF-immediately-after-header, and stripped-to-nothing-regular-file-entry cases) — each closing
+one real branch, not a redundant duplicate of an already-tested shape. Separately, found and removed
+genuinely dead code along the way rather than writing an unreachable test to game the tool: a
+`!Number.isFinite(value) || value < 0` check that can never fire once every character is already
+validated as a real octal digit, and several `Buffer[i] ?? default`/regex-group `?? ''` patterns —
+dead branches `noUncheckedIndexedAccess` forces even though the value is guaranteed present by
+construction — replaced with `Buffer.prototype.readUInt8` (a real method returning a plain `number`)
+and a `requiredGroup` helper mirroring `packages/kb/src/adopt/inventory.ts`'s own established
+precedent for the identical "the pattern guarantees this, the type checker cannot see it" shape.
+`FS_ERROR_CODES` extended with `EDQUOT`/`EBUSY`. Final coverage: `fetch-npm.ts` 91.3% branches,
+`tar-extract.ts` 97.33% branches — both self-verified directly against the repository's own coverage
+tool (typecheck/lint/prettier/full test suite all re-run clean after every fix), closing this round
+without a fourth critic dispatch given the findings were mechanical (a coverage gate and an error-code
+enumeration gap), not a design or security flaw.
+
+**Also found and fixed along the way (this piece's own regression, not a critic finding):** the new
+test-only `npm-fixture-registry.ts` tripped `test/workspace-floor.test.ts`'s "every workspace source
+file lives under `src/`" floor check — closed with a two-line `IGNORED_PATHS` addition, the identical
+precedent `packages/cli/test/commands/helpers.ts` already establishes for a genuinely test-only,
+shared, importable fixture module.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (21/21 packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped
+`node scripts/run-tests.mjs run` reported **472 test files, 8090 passing, 9 skipped, 0 failures** —
+including `packages/engine/test/e2e/crash-resume.test.ts` (one of the two accepted load-sensitive
+flakes) passing cleanly on this run, and the other named flake
+(`packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test) not firing either. `git status`
+throughout confirmed no file outside this piece's own scope
+(`packages/extensions/src/install/{fetch-npm,tar-extract}.ts` and their tests, plus the shared
+`packages/core/src/errors/codes.ts`/`packages/core/test/errors.test.ts`/`packages/extensions/
+package.json`/`packages/extensions/src/install/{index,vcs-error}.ts`/`test/workspace-floor.test.ts`/
+one `pnpm-lock.yaml` hunk) was ever touched, despite concurrent M11 P7/P10 work proceeding in the same
+working directory throughout.
