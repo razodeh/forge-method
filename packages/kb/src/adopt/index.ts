@@ -71,3 +71,20 @@ export {
   clampInferenceConfidence,
   validateInferenceEvidence,
 } from './inference.ts';
+
+export type {
+  RawVerificationCheck,
+  VerificationCheckKind,
+  VerificationFinding,
+  VerificationGap,
+  VerificationOutcome,
+  VerificationPromotion,
+  VerificationResult,
+  VerificationSubject,
+} from './verification.ts';
+export {
+  assembleVerification,
+  classifyCartographyCheckKind,
+  verifyCartographyFinding,
+  verifyConventionFinding,
+} from './verification.ts';

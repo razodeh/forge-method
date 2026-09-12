@@ -12,3 +12,11 @@ export { runCartographyPhase } from './cartography.ts';
 
 export type { InferenceDispatchInput } from './inference.ts';
 export { runInferencePhase } from './inference.ts';
+
+export type { VerificationPhaseInput } from './verification.ts';
+export {
+  DEFAULT_BUILD_TIMEOUT_MS,
+  DEFAULT_TEST_TIMEOUT_MS,
+  runBuildAndTestChecks,
+  runVerificationPhase,
+} from './verification.ts';
