@@ -12690,3 +12690,144 @@ repository's own meta-tests were exercised" — the standing gauntlet-loop disci
 broader cross-package sanity pass before a milestone boundary is declared complete (the same practice
 `GAUNTLET-LOG.md`'s own M9 pieces followed before each commit); this checkpoint is the concrete reason
 that practice matters, not a hypothetical one.
+
+## Q159 — M10 P17: `forge adopt` phase 5 VERIFICATION — no `verificationCommand` front-matter field
+exists (a corrected premise), the `kb`/`vcs`+`engine` layering split, the sandbox-clone location, and four
+disclosed scope narrowings
+
+`PLAN-M10.md` P17's own text asserted, as an already-confirmed fact, that "`08` §8.3's own already-real
+`verificationCommand` field is what promotion to `confidence: verified` should populate." Direct inspection
+of `packages/kb/src/schema/kb-entry.ts` (the real, current `kbEntrySchema`) and `specs/08-knowledge-body.md`
+§8.3 itself, done before writing any code per this piece's own mandate to verify rather than assume, found
+this premise false: `kbEntrySchema` has no `verificationCommand` field of any kind, and `08` §8.3's own
+worked example shows `## Verification` as **free-text body content** ("how an agent can check this is
+still true: a command, a file, a test"), not a structured front-matter field — `hasVerificationContent`
+(already real, already enforced by `kbEntrySchema`'s own `superRefine`) checks exactly that body section,
+nothing else.
+
+**Decided:** rather than add a new front-matter field to the shared, already-stable `kbEntrySchema` — a
+bigger, cross-cutting schema change this piece has no mandate to make on the strength of one wrong premise
+— `packages/kb/src/adopt/verification.ts`'s own `VerificationFinding.command` field carries the real
+command a build/test check actually ran, for RECONSTRUCTION (`PLAN-M10.md` P18, not yet built) to write
+into the entry's own `## Verification` body section at write time, matching `08` §8.3's own literal shape.
+This piece does not write any KB entry itself — like P16's own `CartographyResult`/`InferenceResult`, it
+only produces structured findings for a later phase to write.
+
+**The `kb`/`vcs`+`engine` layering split, the identical shape `Q152`/`Q156` already established once each
+for SURVEY's git-profile signal and for CARTOGRAPHY/INFERENCE's own LLM dispatch.** `tools/eslint-plugin-
+forge-boundaries/src/graph.mjs`'s own `PACKAGE_GRAPH` gives `kb: ['core', 'schemas', 'diagrams']` — no
+`vcs`/`engine` edge — confirmed directly before writing this piece. `17` §17.2 phase 5's own mandatory real
+build/test execution needs a real git clone and a real subprocess with a real timeout, neither of which
+`@forge/kb` can reach. `packages/kb/src/adopt/verification.ts` stays pure: `assembleVerification` (the
+promotion/downgrade/gap rule) and two structural re-checks (`verifyCartographyFinding`,
+`verifyConventionFinding`) that re-run a prior claim's own cited evidence against a freshly built
+`EvidenceIndex` — no I/O beyond what `evidence.ts` already does. `packages/engine/src/adopt/
+verification.ts` (`engine -> kb`, already legal) does the real work: a sandboxed clone, real command
+execution with a real `execa` timeout, and `runVerificationPhase`, which calls both sides and assembles
+the combined result.
+
+**The sandbox clone lives under `<sourceRoot>/.forge/state/adopt-verify/`, not the OS temp directory.**
+`QUALITY-BAR.md` R10 forbids reading an ambient host fact such as `os.tmpdir()` from production code — a
+real `no-restricted-imports` lint rule, caught immediately by the floor, not a style preference — since it
+makes the exact clone location machine-dependent. `@forge/vcs`'s own `createLaneWorktree` already
+establishes the identical project-relative pattern for a different kind of temporary git state
+(`.forge/state/worktrees/<laneId>/`); this reuses the same base rather than inventing a second one.
+Duration is deliberately never measured (no `startedAt`/`durationMs` in any `RawVerificationCheck`): R10
+also forbids `Date.now()`/`performance.now()` outside a test file, and `@forge/core`'s own `Clock` is an
+ISO-8601-string clock, not a millisecond one — there is no legitimate injected source for a duration
+number here, so the detail messages report exit status and captured output only, never a fabricated or
+ambient-derived elapsed time.
+
+**Four scope narrowings, disclosed in the code's own doc comments rather than left for a future reader to
+discover by diffing against the spec:**
+1. Build/test command detection reads only a Node `package.json`'s `scripts.build`/`scripts.test` —
+   matching `Q152`'s own established JS/TS-only precedent for INVENTORY's dependency graph, not the
+   five-tool-per-ecosystem shape `17` §17.2's table implies. A non-Node target repo still gets a `test`
+   check when its CI config names one (`survey.testSetup.ciTestCommands`, already toolchain-agnostic).
+2. `verifyConventionFinding` (the pure, kb-side re-check) is fully implemented for a caller that supplies
+   a freshly recomputed adherence ratio, but `runVerificationPhase`'s own real orchestration never computes
+   one — recounting a grep ratio needs a real re-scan of the target repo's own source keyed to whatever
+   free-text convention statement INFERENCE produced, which has no fixed extraction rule the way a build
+   command does. Every real `convention` check is therefore `inconclusive` today, honestly reported as a
+   gap rather than a guessed pass/fail.
+3. `intent`/`nfr`/`glossary` INFERENCE claim kinds are never given to VERIFICATION at all: `17` §17.2's own
+   phase-5 table has no row for "apparent intent" or "a glossary term is accurate," and inventing one would
+   itself be the confident fabrication `17` §17.1 warns against. They stay at INFERENCE's own
+   `low`/`medium`/`draft` rating pending human confirmation (`17` §17.3), a later, different phase.
+4. Test coverage is never parsed from a real test run's output — no generic, tool-agnostic percentage
+   extractor exists — so `RawVerificationCheck.coverage` stays `undefined` for every real check this piece
+   produces; the field exists on the type for a future piece to populate without a shape change.
+
+**`forge kb verify` does not exist.** Searched `packages/cli/src/commands/` directly (only `kb.ts`, no
+`verify` subcommand or `kb verify` path inside it) — confirmed as a real, disclosed gap for `PLAN-M10.md`
+P20 (which the plan itself already lists as depending on this piece) rather than built here: this piece's
+own Surface is the VERIFICATION phase logic (`packages/kb/src/adopt/verification.ts` plus its real,
+sandboxed engine-side half), not CLI wiring the plan's own P17 section never asks it to build.
+
+**Round 1 — fresh critic, one blocking finding, one major finding, one minor finding fixed (two further
+minors accepted without action, recorded below):**
+
+**[Blocking]** `createSandboxClone` (`packages/engine/src/adopt/verification.ts`) calls `mkdtemp` — which
+creates a real, empty directory on disk — *before* `git clone` runs into it. When the clone itself failed
+(a non-git `sourceRoot`, a permission error — exactly the scenario the "reports a real clone failure...
+never throwing" test already exercised), the already-created directory was never removed: the caller's own
+`try`/`catch` around the whole function had no path back to it, and the `finally` block that does clean up
+only wraps the *second* try (command execution), never reached on a clone failure. Since `17` §17.5's own
+`--incremental` re-runs VERIFICATION repeatedly, this would accumulate orphaned directories inside the very
+repository being adopted, unbounded, on every target repo where the clone step is flaky.
+
+**[Major]** `detectCommands`'s own manifest read (`path.join(sourceRoot, nodeManifest.path)`) had no
+containment check at all before this fix — `nodeManifest.path` originates from an earlier SURVEY pass over
+the *untrusted* target repository, so a manifest path containing `..` segments, or a symlink planted inside
+the target repo pointing outside it, could make this read arbitrary host files outside the sandbox
+entirely. `@forge/core/fs`'s own `ProjectPaths.resolveWithin` already establishes the "resolve, then verify
+containment" discipline for every ordinary project write; nothing equivalent existed for this read of
+attacker-influenced repo content.
+
+**[Minor, fixed]** A command whose own shell process was terminated by a signal (`kill -9 $$` inside the
+command, or an OOM killer) reports `result.exitCode` as `undefined` with `result.signal` set instead — the
+original code's `result.exitCode ?? 1` fallback silently reported this as "exited 1," discarding the one
+piece of information (which signal) that actually explains what happened.
+
+**Fixed:** `createSandboxClone` now wraps its own `git clone` call in a `try`/`catch` that removes the
+already-created directory before re-throwing, so the directory-creation and cleanup responsibility for the
+clone step lives in the one function that knows the directory exists, rather than leaking that knowledge to
+every caller. A new `resolveContainedManifestPath` helper resolves `nodeManifest.path` against `sourceRoot`
+and checks containment twice — a cheap lexical check first (`..`/absolute-path rejection with no I/O), then
+a `realpath`-based check on both sides (rejecting a symlink escape a lexical check alone cannot see) —
+before `detectCommands` ever reads the resolved path; a path that fails either check is treated identically
+to "no manifest usable," never read. The signal-terminated case now reports `"<command>" was terminated by
+signal <signal>` instead of a fabricated exit code. New tests pin all three: a clone-failure test now also
+asserts the `.forge/state/adopt-verify/` directory is empty afterward; a new test supplies a
+`../../../etc/passwd`-shaped manifest path and confirms it is refused (no command detected, no throw); a
+new test sends `kill -9 $$` as the build command and confirms the detail names the signal, never "exited
+1."
+
+**Accepted without action (two further minors the same critic round raised):** the broad `catch` in
+`detectCommands` also swallows a genuine I/O failure (a permission error) alongside a malformed
+`package.json`, collapsing both to "no command detected" rather than a distinct, reported failure — kept
+as-is and the doc comment corrected to describe both cases honestly, since the *consequence* either way is
+already the safe direction (a check is silently skipped, never fabricated as passing), matching this
+codebase's own `runShellCommand` precedent of resolving to data rather than distinguishing every possible
+cause of a read failure. Several assertions use `toMatchObject` rather than a full `toEqual` — an accepted,
+already-common pattern across this repository's own `packages/kb/test/adopt/*.test.ts` and `packages/
+engine/test/adopt/*.test.ts` files, not a gap specific to this piece.
+
+**Final state:** 17 tests in `packages/kb/test/adopt/verification.test.ts` (the promotion/downgrade/gap
+rule, `classifyCartographyCheckKind`'s evidence-only classification, both structural re-checks) and 11 in
+`packages/engine/test/adopt/verification.test.ts` (real sandboxed build/test execution against real
+`mkdtemp`+`git init` fixtures — a passing suite promoted with its command stored, a broken build recorded
+as a real, measured failure without aborting the batch, a real `execa` timeout killing a genuinely hanging
+command, the clone-failure/leak/containment/signal regression tests above, and one end-to-end
+`runVerificationPhase` test combining a disproved CARTOGRAPHY claim with a real build check). Both new
+`src/adopt/verification.ts` files meet their package's own per-file coverage ratchet (confirmed via a
+scoped `--coverage` run showing zero threshold violations for either file). `pnpm --filter @forge/kb
+--filter @forge/engine typecheck`, whole-workspace `pnpm typecheck` (20/20 packages), `eslint --max-
+warnings 0`, `prettier --check`, and `node scripts/check-boundaries.mjs` all clean on every file this piece
+touched. A full, unscoped `node scripts/run-tests.mjs run` shows 5 failures, none in this piece's own two
+test files: the already-accepted `crash-resume.test.ts` load-sensitive timeout (`Q149`'s own established
+precedent) and four failures (`scripts/schema-drift.test.ts`, `packages/cli/test/bin.test.ts`, `packages/
+cli/test/e2e/init.test.ts`, `packages/cli/test/commands/agent.test.ts`) all tracing to the same cause — an
+`unknown-framework "api-versioning"` finding and a schema-drift mismatch — from concurrently-building,
+uncommitted M10 work (`modules/fm-service/`, per `git status` at the time) in this same working directory,
+confirmed via `git status --short` to touch none of this piece's own files.
