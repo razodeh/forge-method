@@ -15002,3 +15002,134 @@ Round 2 found the new `--since` validation error and an escaping `TelemetryError
 rather than this codebase's own registered `ForgeError` (`USR-002` reused; a new `RUN-076` added), and a
 malformed event `ts` could silently defeat `--since` filtering via `NaN`. Round 3 found nothing new. All
 fixed and re-verified; see the log for exact fixes and test names.
+
+## Q182 — M11 P6: module conformance runner — three new production dependency edges, a documented
+core-registry fallback, and a disclosed pre-install code-execution trade-off
+
+**Context:** `19` §19.1's own `tests/` module-layout directory ("module conformance tests") had no
+runner anywhere in this repository before this piece (`PLAN-M10.md` P8 originally scoped it and was
+never built; `PLAN-M11.md` P6 completes that real gap as part of this milestone's own distribution
+pipeline). `runModuleConformance` (`packages/extensions/src/install/conformance.ts`) re-validates a
+module's own `provides` block against its real, on-disk content and runs its own `tests/*.test.ts`
+files for real against `@forge/testkit`'s `FakePlatformAdapter`, wired as a real, blocking pre-install
+gate in `moduleAdd`/`moduleUpdate` (`packages/cli/src/commands/module.ts`).
+
+**Decision 1 — three new, disclosed production dependency edges.** Before this piece, nothing in
+`@forge/extensions`' own production `src/` genuinely imported `@forge/testkit` or ran `vitest` itself,
+and nothing in it imported `@forge/templates`' real content-loading indexes (only its own test suite
+and one unused doc-comment mention did). This piece is the first real consumer of all three, at
+runtime, from `moduleAdd`/`moduleUpdate` itself:
+- `@forge/testkit` — every other `-> testkit` edge in `tools/eslint-plugin-forge-boundaries/src/
+  graph.mjs`'s `PACKAGE_GRAPH` (e.g. `engine -> testkit`) exists only for that package's own *test*
+  suite, per that file's own doc comment. `extensions -> testkit` is new and different: `@forge/
+  extensions` ships as part of the real `forge` CLI, so `runModuleConformance`
+  spawning a real `vitest` subprocess that aliases the bare specifier `@forge/testkit` to this
+  package's own real, resolved copy (`import.meta.resolve('@forge/testkit')`) means every `forge`
+  install now carries `@forge/testkit` (and `vitest` itself, its own new `dependencies` entry, pulling
+  its whole transitive tree — esbuild, vite/rollup, …) as a real, non-dev dependency, not merely a
+  devDependency of the monorepo. This is a real footprint/attack-surface growth, not a hypothetical
+  one, and is not offset by anything in this piece (no lazy-load, no `import()`-on-demand): recorded
+  here as the deliberate, disclosed cost of the literal mandate (`19` §19.4, `PLAN-M11.md` P6: "runs
+  them against `@forge/testkit`'s `FakePlatformAdapter`") rather than a silent side effect. A future
+  piece revisiting this could load `vitest`/`@forge/testkit` lazily (only once a module is confirmed to
+  actually ship a `tests/` directory) to shrink the always-installed footprint without changing the
+  behaviour this piece implements.
+- `@forge/templates` — already a spec-declared edge for `@forge/extensions` (`specs/02` §2.2), but only
+  ever a `devDependency` in `package.json` before this piece (its one prior mention was in a doc
+  comment, not a real import). Promoted to a real `dependencies` entry alongside the new import of
+  `WORKFLOW_INDEX`/`FRAMEWORK_INDEX`/`GATE_INDEX`/`SKILL_INDEX`/`TEMPLATE_INDEX` (see Decision 2).
+- The two graph/boundaries-test changes (`tools/eslint-plugin-forge-boundaries/src/graph.mjs`,
+  `tools/eslint-plugin-forge-boundaries/test/boundaries.test.ts`) record the `testkit` edge explicitly
+  as production, not test-only, matching this file's own established style for the identical
+  `extensions -> vcs` disclosure `PLAN-M11.md` P1 already made.
+
+**Decision 2 — a module's own `provides` entry may be backed by a `@forge/templates` core registry
+instead of a module-local file.** Confirmed directly against real, already-shipped content, not
+invented: `modules/fm-data/module.yaml`'s own header comment documents that its
+`provides.frameworks: [analytical-pipeline-design]` is genuinely backed by `@forge/templates`' own
+`packages/templates/templates/frameworks/analytical-pipeline-design.framework.yaml` — "the ONLY
+mechanism anywhere in this codebase that actually loads a framework into a real `forge init`/`forge
+agent validate` run... no `loadFrameworkRegistry`-shaped module scanner exists... to prefer a
+module-local copy the way agents can." A first draft of this piece checked only a module's own
+directory and would have failed `fm-data` — one of this piece's own four required-to-pass real modules
+(`PLAN-M11.md` P6's own Checks line) — on every conformance run; caught by running this piece's own
+tests against all four real modules before considering it done. `isBackedByCoreRegistry` extends the
+identical fallback to `workflows`/`gates`/`skills`/`artifactTypes` (every kind `@forge/templates`
+actually exports an index for — `agents`/`checks`/`catalog`/`techniques` have no such index and remain
+always module-owned), verified against the real, resolved file (or directory) on disk, never index-key
+membership alone.
+
+**Decision 3 — real, disclosed code execution before this pipeline's own consent/safety gates finish
+deciding whether a module is trustworthy.** `scanBundleForSafety` (`PLAN-M11.md` P4) is purely static —
+pattern matching over file content, nothing ever executed. `runModuleConformance`'s own `tests/*.test.ts`
+execution genuinely is not: it spawns a real `vitest` subprocess that runs the fetched module's own,
+third-party-authored test files with the installing user's own OS privileges, and it runs *before*
+`moduleAdd`/`moduleUpdate` have finished deciding the module is safe to install (indeed, this gate is
+itself one of the things deciding that). This is not a shortcut this piece invented to save work: `19`
+§19.4 and `PLAN-M11.md` P6's own literal mandate is "runs them against `@forge/testkit`'s
+`FakePlatformAdapter`," and no version of "prove a module's own tests pass" exists that does not
+execute the module's own test code somewhere. Two real, applied mitigations, not merely named ones: a
+bounded execution timeout (`CONFORMANCE_TEST_TIMEOUT_MS`, 300 000ms, overridable per-call for tests —
+so a hung or deliberately-adversarial test file cannot hang `forge module add` forever, the identical
+"run untrusted, externally-authored content under a timeout" precedent `packages/cli/src/commands/
+kb.ts`'s own `runStoredVerificationCommand` already established) and a per-file byte cap on every file
+this piece reads in full before parsing, including `module.yaml` itself (`CFG-052`, reusing
+`scanBundleForSafety`'s own `CFG-038` numeric ceiling under a distinct code and message, since `CFG-038`
+literally says "the safety scan's own limit," which this is not). Real process/filesystem/network
+sandboxing of the vitest subprocess itself is **not** attempted here — recorded as a disclosed,
+deliberate scope gap for a later piece to close (e.g. running it inside the same kind of isolated
+worktree/container `packages/engine/src/adopt/verification.ts` already uses for adopted-codebase
+verification), not a silent one.
+
+**Gauntlet findings (all fixed, see `GAUNTLET-LOG.md`'s own M11 P6 entry for the full round-by-round
+record):** round 1 found the `execa` subprocess call had no timeout (a hung or hostile test file could
+hang `forge module add` forever), the ephemeral vitest work directory was created *inside* the
+fetched module's own directory (which the local channel documents as read-only and never copied, so
+this both failed against a real read-only source and could leak a stray directory into an eventual
+`.forge/modules/<id>/` install), a bare `finally { await rm(...) }` could mask a real result or a real
+thrown error with an opaque filesystem error, no byte-size cap existed on any `provides`-referenced
+file before parsing it, and `resolveTemplatesRoot()` re-walked the filesystem on every unmatched id
+instead of memoizing. Round 2 found the round-1 fixes themselves left real gaps: `mkdir`/`mkdtemp`/
+`writeFile` failures (and any other raw exception) still escaped as untyped errors rather than a real
+`ForgeError`; `module.yaml` itself — the one file re-read on every single call — was the one file the
+new byte cap did not cover; the `skills` provides check only verified a path built *from* the claimed
+id (which can never mismatch by construction) rather than genuinely parsing and comparing the file's
+own declared id, unlike every other kind; and a spawn-level-failure branch added to fix a round-1
+finding was matched on `execa`'s own `result.failed` alone, which is also `true` for an ordinary
+non-zero exit from a real failing test — a regression this piece's own tests caught immediately (a
+real "one test failed" report was being discarded in favour of a useless generic shell-command
+summary) before it was considered fixed; corrected by keying the spawn-failure branch on
+`result.exitCode === undefined` instead, the actual distinguishing fact between the two cases. Round 3
+found the round-2 fix for that same branch was still incomplete: `execa`'s own documented meaning for
+`exitCode === undefined` covers *two* real cases, not one — "never spawned" and "spawned, ran to
+completion, wrote a real report, and was then killed by a signal" (execa's own default `maxBuffer`
+killing an ordinary, verbose failing test is a concrete, non-hostile way this happens) — so keying on
+that field alone could still discard a real, already-written, more useful report in the second case.
+Corrected structurally rather than by adding a third condition to check: the real `results.json` is now
+attempted first, unconditionally, in every non-timeout case, and only the genuine "no report exists at
+all" case falls back to `execa`'s own `shortMessage`/captured output — so which branch fires is decided
+by what is actually on disk, not by re-deriving it from `execa`'s own summary of the subprocess's exit
+shape. Round 3 also found `resolveTemplatesRoot()`'s own not-found path was still a bare, untyped
+`Error` reachable from `checkProvides` with no surrounding `try`/`catch` (`runConformanceTests` already
+wrapped everything by round 2; this sibling function did not) — wrapped into `RUN-034`, `@forge/core`'s
+own existing generic filesystem/environment-failure code, rather than inventing a new one for what is
+only ever an install-corruption case. A third, narrower finding (the `@forge/templates` core-registry
+fallback's only real test coverage rode on `fm-data`'s own current, incidental `module.yaml` content
+rather than a dedicated fixture asserting the documented contract directly) was fixed by adding exactly
+that dedicated fixture, independent of any real module's own shape. Round 4 (past `BUILD-PROMPT.md`'s
+own three-round cap, continued because each round was still finding genuinely new, real issues rather
+than repeating one unresolved finding) found the round-3 fixes' own discipline had not been applied
+uniformly: `assertWithinParseCap`'s own raw `node:fs` `stat` call (unlike every other real filesystem
+read in this file, which already went through `@forge/core`'s own `RUN-034`-wrapped `readTextFile`/
+`pathExists`/`listDirEntriesSorted`) let a dangling symlink under a `provides`-referenced directory
+escape as a raw, untyped `ENOENT` — `listDirEntriesSorted`'s own `Dirent.isDirectory()` never follows a
+symlink, so one reaches this call; `resolveTemplatesRoot`'s own `readFileSync`/`JSON.parse` pair (a
+sibling branch of the very same loop round 3 already fixed one throw site in) was still unwrapped; and
+`readSkillFrontMatterId`'s own catch-all re-threw only `CFG-052`, silently collapsing a genuine I/O
+failure (a `RUN-034`) into the identical "no usable id" verdict a real content defect gets. All three
+are the same underlying class of bug (an untyped throw reachable with no surrounding `try`/`catch`)
+recurring in code round 3 itself added without applying the identical discipline everywhere. Fixed by
+wrapping `stat` and `readFileSync`/`JSON.parse` into real `RUN-034`s, and by separating "read the file"
+(propagates a real `ForgeError` directly) from "parse its content" (the only step whose own failure is
+legitimately swallowed as "no usable id") in `readSkillFrontMatterId` and both `collectDeclared*`
+helpers. All fixed and re-verified; see the log for exact commits and test names.
