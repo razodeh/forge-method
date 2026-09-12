@@ -157,6 +157,18 @@ const IGNORED_PATHS = new Set([
   // naming heuristic.
   'packages/kb/test/adopt/fixtures.ts',
   'packages/engine/test/adopt/fixtures.ts',
+  // `packages/adapter-generic/test/fixtures/scripted-binary.ts` (`PLAN-M11.md` P8): a real,
+  // standalone scripted external binary fixture -- the `07` §7.5/§7.6 conformance suite's own
+  // spawned-process stand-in for a real external CLI tool (`node --experimental-strip-types`,
+  // never imported by any `*.test.ts` file and never run as a vitest suite itself). The identical
+  // "outside src/" exemption `mcp-server.ts` above already establishes, for the identical "real
+  // child process run via `node --experimental-strip-types`, unrecognised by `TEST_FILE`'s naming
+  // heuristic" reason. `scripted-binary-protocol.ts` is its sibling, shared types-plus-pure-matcher
+  // module (imported by both the fixture itself and `scripted-binary-protocol.test.ts`) -- the
+  // identical "shared, importable module, not a runnable suite" shape `packages/kb/test/lint/
+  // factories.ts` above already establishes.
+  'packages/adapter-generic/test/fixtures/scripted-binary.ts',
+  'packages/adapter-generic/test/fixtures/scripted-binary-protocol.ts',
 ]);
 
 /**
