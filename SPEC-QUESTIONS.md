@@ -12642,3 +12642,51 @@ pass/fail fixtures), `packages/catalog/test/content/fm-web-catalog.test.ts` (4),
 validating the result). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint --max-warnings 0`,
 `prettier --check`, and `node scripts/check-boundaries.mjs` all clean. `GAUNTLET-LOG.md`'s own `M10 P3`
 entry has the full round-by-round record.
+
+## Q158 — M10 checkpoint: three real quality-gate failures no single piece's own scoped verification
+could have caught
+
+After P1/P2/P3/P9/P10/P11/P15/P16 all independently reported clean verification, a full, unscoped
+`node scripts/run-tests.mjs run` (no path argument — every package, every root-level meta-test) found 4
+real failures none of those eight pieces' own runs surfaced, because each piece's own verification was
+correctly scoped to the packages it touched, and these particular checks are root-level, whole-repository
+meta-tests no single piece's own scope would ever exercise on its own:
+
+1. **`KB-016`'s remedy failed R2's "opens with an imperative verb" proxy check** — "Lower the entry's
+   confidence..." opens with a verb not in `packages/core/test/errors.test.ts`'s own `IMPERATIVE_VERBS`
+   allow-list. **Fixed:** reworded to "Reduce," already on the list, no meaning change.
+2. **`KB-016`'s own end-to-end render test failed separately** — the shared `SAMPLE_DETAILS` fixture
+   every error code's own render test reuses (`errors.test.ts`'s own doc comment: "a superset of every
+   code's declared details... adding a code without adding its keys fails, which is the point") had no
+   `confidence`/`ceiling` keys, so the code's own message template rendered the literal string
+   `<missing>` for both. **Fixed:** added both keys to the shared fixture — exactly the failure mode that
+   comment says this mechanism exists to catch, working as designed.
+3. **`session-record.schema.json` was stale** — M10 P11 added `SessionRecord.no_disagreement_observed`
+   but never ran `pnpm emit-schemas`, so the committed JSON Schema and the real zod schema it should
+   mirror had drifted, caught by `specs/22` M1's own exit test (`scripts/schema-drift.test.ts`).
+   **Fixed:** regenerated via `pnpm emit-schemas`; confirmed via `git diff --stat` that only this one
+   file actually changed (a separately-observed `story.schema.json` drift message in one run's own
+   output was confirmed transient — re-emitting produced no diff for it at all, and it never reappeared
+   on retry).
+4. **Two new shared test-fixture helpers tripped `test/workspace-floor.test.ts`'s "no stray non-`src/`**
+   **source" check** — `packages/kb/test/adopt/fixtures.ts` and `packages/engine/test/adopt/fixtures.ts`
+   (M10 P15/P16) are real, imported-by-several-test-files shared fixture modules, the identical shape
+   roughly a dozen other pre-existing files in this repo already have (`packages/kb/test/lint/
+   factories.ts`, `packages/cli/test/commands/helpers.ts`, etc.) — every one of them needed its own
+   named `IGNORED_PATHS` entry the first time it was added, since `TEST_FILE`'s own naming heuristic
+   (`*.test.ts`/`*.spec.ts`) structurally cannot recognise a shared helper module by name alone.
+   **Fixed:** added both new paths, following the exact established pattern and comment style.
+
+**Two further failures observed in one full-suite run were confirmed real but not fixable — genuine
+load-sensitivity, not logic bugs**, both already an accepted, disclosed category in this repository (`Q149`
+already established the identical reasoning for `crash-resume.test.ts`): `packages/kb/test/adopt/
+survey.test.ts`'s own "fires against a genuinely oversized fixture" test writes 5,001 real files via a
+concurrent `Promise.all` and occasionally exceeds its own 30s budget only under heavy concurrent
+full-suite load — confirmed passing in 826ms total, every time, in isolation.
+
+**Lesson for later M10 pieces (recorded, not merely fixed around)**: a piece's own "all clean" verification
+claim should be understood as "clean within the scope that piece actually ran," never as "the whole
+repository's own meta-tests were exercised" — the standing gauntlet-loop discipline already asks for a
+broader cross-package sanity pass before a milestone boundary is declared complete (the same practice
+`GAUNTLET-LOG.md`'s own M9 pieces followed before each commit); this checkpoint is the concrete reason
+that practice matters, not a hypothetical one.

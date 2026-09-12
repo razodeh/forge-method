@@ -9698,3 +9698,36 @@ processes against real pass/fail/decoy fixtures through the real, production `ev
 rendering both templates against a real `TemplateContext` fixture, including the date-time regression
 test). `pnpm typecheck` (whole workspace, 20/20 packages), `eslint --max-warnings 0`, `prettier --check`,
 and `node scripts/check-boundaries.mjs` all clean. `SPEC-QUESTIONS.md` Q157 has the full record.
+
+## M10 checkpoint — three real quality-gate failures found by a full, unscoped test run after P1/P2/P3/
+P9/P10/P11/P15/P16
+
+**Mandate:** none of the eight M10 pieces committed so far build directly on this — a plain
+`node scripts/run-tests.mjs run` (no path argument) after P3 landed, done as a sanity check rather than
+trusting each piece's own scoped "all clean" report, found 4 real failures and 2 confirmed-transient/
+load-sensitive ones no individual piece's own verification pass would ever have exercised.
+
+**Found and fixed:**
+1. `KB-016`'s remedy ("Lower the entry's confidence...") failed R2's imperative-verb proxy check —
+   reworded to "Reduce" (already on the allow-list), no meaning change.
+2. `KB-016`'s own end-to-end render test failed separately: the shared `SAMPLE_DETAILS` fixture every
+   error code's render test reuses had no `confidence`/`ceiling` keys, so the message rendered the
+   literal string `<missing>` for both — added both keys.
+3. `session-record.schema.json` was stale after M10 P11 added `no_disagreement_observed` without running
+   `pnpm emit-schemas` — regenerated; confirmed only that one file actually needed it.
+4. Two new shared test-fixture helpers (`packages/kb/test/adopt/fixtures.ts`, `packages/engine/test/
+   adopt/fixtures.ts`) tripped `workspace-floor.test.ts`'s "no stray non-`src/` source" check — added both
+   to its `IGNORED_PATHS`, the exact same pattern roughly a dozen pre-existing shared test helpers already
+   needed.
+
+**Confirmed real but not fixable — accepted load-sensitivity, matching `Q149`'s own precedent for**
+**`crash-resume.test.ts`**: a separately-observed `story.schema.json` drift message (re-emitting produced
+no diff, never reappeared) and `packages/kb/test/adopt/survey.test.ts`'s 5,001-real-file fixture test
+(826ms and clean every time in isolation, only slow under heavy concurrent full-suite load).
+
+**Final state:** whole-workspace `pnpm typecheck` (20/20), `eslint`, `prettier --check` all clean; the 3
+real fixes verified individually (343/343 in their own scoped run) and the full suite re-run shows only
+the two accepted load-sensitive flakes remaining. `SPEC-QUESTIONS.md` Q158 has the full record.
+
+This is not one of M10's 20 planned pieces — a cross-cutting fix the milestone's own concurrent-build
+process surfaced the need for, recorded here for the same reason the post-M9 crash-resume checkpoint was.
