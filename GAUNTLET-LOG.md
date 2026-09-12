@@ -11352,3 +11352,114 @@ confirmed no file outside this piece's own scope (`packages/extensions/src/insta
 `packages/extensions/test/install/consent.test.ts`, and one isolated `CFG-036` hunk in the shared
 `packages/core/src/errors/codes.ts`, staged via a hand-built patch so concurrent P4/P11 hunks in the same
 file were left untouched) was ever modified.
+
+## M11 P4 — Static safety scan, extended to templates and moved to the pre-install gate (`19` §19.5,
+`15` §15.10 I9, `20` §20.6)
+
+**Mandate:** `19` §19.5 step 4's own literal "skill and template bodies scanned for injection-shaped
+content and grant-widening attempts" — reusing the already-real `INJECTION_PATTERNS`/`SECRET_PATTERNS`
+detectors, extended to templates (currently uncovered), run before install (currently only re-checked
+at compile time on already-installed content).
+
+Confirmed directly before writing anything, per this piece's own instructions: read `packages/
+extensions/src/skills/patterns.ts` (the real, shared `INJECTION_PATTERNS`/`SECRET_PATTERNS`), `skills/
+validate.ts` (applies both to a `SKILL.md` body only), and `invariants/security.ts` (`checkNoInjectionContent`/
+`checkNoSecretLiterals`, I9/I8, re-asserting the same two pattern sets over the whole resolved compile
+set, run at `forge compile` time) — the plan's own premise held on both counts: templates were genuinely
+uncovered by any of the three, and the only enforcement point was post-install. Built `packages/
+extensions/src/install/safety-scan.ts`: `findBundleSafetyFindings(bundlePath)` (non-throwing, returns
+every finding) and `scanBundleForSafety(bundlePath)` (the throwing gate, `CFG-037`) walk every `skills/
+<id>/SKILL.md` and every `templates/**/*.hbs` for the same two pattern sets, plus a heuristic
+grant-widening check for module bundles (a skill body's prose implying a wider `ToolGrant` than the
+module's own declared `ceilings` for the roles it `applies_to`, reusing `checkToolCeiling` — M10 P2's
+own real ceiling-comparison logic — directly rather than re-deriving a second grant-diffing routine).
+
+### Round 1 — fresh critic: 2 blocking, 1 major, 3 minor real findings
+
+A fresh, context-free critic instructed to check the diff against `19` §19.1/§19.2's full file-layout
+surface (not only the plan's own named surface) and against install-channel resource limits found:
+(1) **blocking** — `prompts/*.md` (`19` §19.1's own module layout, alongside `templates/**/*.hbs`) is a
+real content surface that renders directly into a live system prompt (`19` §19.2: "the same engine
+renders agent briefs and system prompts"), at least as sensitive as a template body, and this piece's
+own first draft never scanned it — nor does any other layer in the codebase (`compile/types.ts`'s own
+`DOCUMENT_KINDS` was checked and confirmed to never list `prompts` either), so I9 went entirely
+unenforced for a module's prompt overrides at every stage, not only pre-install; (2) **blocking** —
+the module's own doc comment cited `SPEC-QUESTIONS.md Q175` for the grant-widening scope decision, but
+no `Q175` entry existed in the repo at review time — a real, then-true citation failure, not merely a
+future one; (3) **major, adversarial-leaning but unmitigated** — neither `fetch-local.ts` nor
+`fetch-git.ts` caps an individual file's byte size, so an oversized `.hbs`/`SKILL.md`/prompt file in an
+otherwise-ordinary local or git bundle would be read entirely into memory by this scan before consent or
+install ever ran, and the piece's own disclosure list named only the *missing entry-count/depth* cap
+(reusing the npm channel's own reasoning), never the *missing per-file size* cap, which is strictly
+easier to trigger; (4) **minor** — the pattern scan reported only the first match per pattern, so two
+distinct secret-shaped literals of the identical pattern in one file produced one finding, not two;
+(5) **minor** — the grant-widening fallback for "no role declares a ceiling at all" leaked the literal
+placeholder string `"(no role declares a ceiling)"` into the user-facing finding message; (6) noted, not
+raised to major — `mcp/`, the third overlay directory `15` §19.1 names, is also unscanned, judged a
+materially different (server-manifest, not prose-into-context) surface than the `prompts/*.md` gap.
+
+**What the critic caught that the builder missed:** the builder verified the plan's own two named claims
+(templates uncovered, pre-install timing missing) rigorously and correctly, then implemented exactly
+that named surface without independently re-deriving the *complete* file-layout grammar `19` §19.1
+actually defines — the identical "checked the plan's own claim, not the fuller spec surface underneath
+it" shape this build's own calibration notes already warn about. The Q175 citation failure was a race
+against a concurrently-committing piece (`M11 P3`), not a fabrication, but the critic was right that the
+citation was false at the moment it reviewed the diff, and the correct discipline is checking a citation
+resolves at commit time, not assuming it will by the time all commits land.
+
+**Judged and fixed:** (1) added recursive `prompts/**/*.md` scanning (recursive rather than the flat
+top-level the `19` §19.1 tree diagram literally shows, closing a directory-nesting evasion the diagram's
+own flatness would otherwise leave open — the identical reasoning already applied to `templates/**/
+*.hbs`), injection/secret only, no grant-widening (a prompt override has no `applies_to.agents`-shaped
+per-role scoping to check against). Refactored the template/prompt walkers into one shared, extension-
+parameterised `collectFilesByExtension` rather than two near-duplicate recursive walks. (2) fixed the
+citation to `Q176` (the real next-free number, re-checked at fix time) in a small, separate `fix:`
+commit once `M11 P3`'s own feat commit had already landed and claimed `Q175` for real — recorded as its
+own line in `SPEC-QUESTIONS.md` Q176 rather than silently corrected with no trace. (3) added
+`assertWithinScanCap`, reusing `tar-extract.ts`'s own `DEFAULT_MAX_DECOMPRESSED_BYTES` as this scan's
+per-file cap (rather than inventing a second number) and refusing outright (`CFG-038`) before reading
+any file that exceeds it, for every scanned skill/template/prompt file. (4) switched pattern matching to
+a freshly-constructed global `RegExp` per call over `text.matchAll`, reporting every occurrence rather
+than the first. (5) gave the "no role declares any ceiling at all" case its own dedicated, sentinel-free
+message. (6) left as a disclosed, unfixed scope note (`SPEC-QUESTIONS.md` Q176), matching the critic's
+own judgement that it is a materially different surface, not the same gap as (1).
+
+Regression tests added for every fix: a `prompts/*.md` injection test, a `prompts/*.md` secret test, and
+a nested-subdirectory `prompts/` test proving the recursion actually closes the evasion; a size-cap test
+using a real, sparse-truncated file one byte over the real cap (asserting `CFG-038`) and a second at
+exactly the cap boundary (asserting acceptance); a repeated-secret-literal test asserting two findings,
+not one; and a zero-declared-ceilings test asserting the new message names the real condition and never
+contains the old placeholder string.
+
+### Calibration note
+
+Every finding was real, and the pattern is now a two-time repeat within this same milestone: `M11 P9`'s
+Q169 entry, `M11 P10`'s Q172 entry, and now this piece all found a plan-stated (or self-derived) scope
+boundary that held for the named claim but not for the fuller spec surface one document section away.
+Worth naming as a standing failure mode rather than three unrelated near-misses: verifying a plan's own
+premise against the specific files it names is necessary but not sufficient — the check that actually
+catches this class of gap is re-reading the *layout section* (a module tree, a directory diagram) in
+full and asking "what else lives here that the same reasoning would apply to," not only confirming the
+plan's own named files behave as described.
+
+### Mandatory full-workspace verification — clean
+
+Whole-workspace `pnpm typecheck` (all packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped `node
+scripts/run-tests.mjs run` reported 10 failures out of 8183 tests, all confirmed unrelated via
+`git status --short` before this piece touched anything: two `core/test/errors.test.ts` `RUN-075`
+failures and three `packages/engine/test/dispatch/agent.test.ts` `UsageRecorded`-event-sequence
+failures, both from concurrent, in-flight M11 P11 work this piece never touched — the identical
+contamination `M11 P3`'s own entry already recorded, confirming it as an ongoing cross-piece effect
+rather than something specific to either piece; the pre-declared accepted `survey.test.ts` and
+`crash-resume.test.ts` flakes; and two further failures (`tui/test/components/stream-view.test.tsx`,
+and `cli/test/commands/upgrade/run-upgrade.test.ts` twice) that were re-run in isolation immediately
+afterward and passed cleanly, confirming load-sensitive flakes under the heavy concurrent-build load
+(M11 P4 and P11 both mid-build in the same working directory throughout), not regressions. `git status`
+throughout confirmed no file outside this piece's own scope was ever modified; the shared `packages/
+core/src/errors/codes.ts` was staged via a hand-built patch isolating only this piece's own `CFG-037`/
+`CFG-038` addition (the concurrent, uncommitted `RUN-075` hunk in the same file was left untouched) —
+the identical isolation technique `M11 P3`'s own entry records for its own `CFG-036` addition.
+
+**Rounds: 1 critic round (2 blocking, 1 major, 3 minor, all fixed except one disclosed-and-accepted
+minor). Outcome: WON.** Committed `b53d067` (feat), `f7585b3` (fix: citation correction).

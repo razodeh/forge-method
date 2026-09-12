@@ -14555,3 +14555,93 @@ with this being a genuinely load-sensitive flake under the heavy concurrent-buil
 work overlapped with, not a regression this piece caused (this piece's own `packages/extensions/` scope
 never touches `packages/engine/`). See `GAUNTLET-LOG.md`'s own `M11 P3` entry for the full critic-round
 findings.
+
+## Q176 — M11 P4: static safety scan — the plan's own "templates, extended" framing under-scoped a
+real, equally-sensitive `prompts/*.md` surface a critic round found; grant-widening is module-only
+because no `overlay.yaml` capability schema exists yet; and a real per-file size cap the plan never
+named was added after a critic round found neither install channel enforces one
+
+**Context:** `PLAN-M11.md` P4 asks for `scanBundleForSafety(bundlePath)`: the real `19` §19.5 step 4
+static safety scan, extended from skills-only to also cover `templates/**/*.hbs`, and moved from a
+compile-time re-check on already-installed content to a real, blocking pre-install gate. Confirmed
+directly before writing anything, per this piece's own instructions: `packages/extensions/src/skills/
+validate.ts` and `packages/extensions/src/invariants/security.ts` were both read in full, and neither
+one — nor any third call site — ever reads a `templates/**/*.hbs` file, and the only place either
+pattern set (`INJECTION_PATTERNS`/`SECRET_PATTERNS`) is applied runs over content already inside
+`.forge/`. Both parts of the plan's own premise held up: templates were genuinely uncovered, and the
+check genuinely only ran post-install. A first draft built exactly what the plan named — skills and
+templates, a pre-install gate — and a dispatched critic round found the plan's own framing itself was
+too narrow.
+
+**1. `prompts/*.md` is at least as sensitive a surface as `templates/**/*.hbs`, and was left unscanned
+by the plan's own named surface — closed, not merely documented.** `19` §19.1's own module layout lists
+`prompts/*.md` alongside `templates/**/*.hbs` as a top-level directory, and `19` §19.2 states plainly:
+"the same engine renders agent briefs and system prompts" — a `prompts/*.md` override renders directly
+into a live system prompt, exactly the class of content `15` §15.10 I9 targets, not a lesser case of a
+template. `compile/types.ts`'s own `DOCUMENT_KINDS` was checked directly and confirmed it never lists
+`prompts` either, so this gap existed at every layer, not only the pre-install one this piece was
+building. Fixed by scanning `prompts/**/*.md` for the identical injection/secret patterns (recursively,
+not only the flat top level `19` §19.1's own tree diagram shows — a hostile bundle nesting its override
+one directory deeper would otherwise evade a literal reading of that diagram, the same reasoning
+`templates/**/*.hbs` already gets applied for real). Never grant-widening, which stays scoped to skill
+bodies checked against `applies_to.agents`; a prompt override has no per-role scoping to check against.
+
+**2. Grant-widening detection is module-only, not overlay, because no `overlay.yaml` capability schema
+exists anywhere in this codebase yet** — `moduleSchema`'s own `ceilings` field (`19` §19.1, real and
+already committed) is the only declared-capability schema this codebase has. `overlay.yaml`'s own
+`requestsCapabilities` field (`15` §15.11) has none: `M11 P3` (`SPEC-QUESTIONS.md` Q175), building
+concurrently in this same working directory, introduced the first one — a schema this piece's own
+critic round confirmed is itself deliberately partial and scoped to P3's own consent-screen rendering
+needs, not a general-purpose overlay capability parser this piece could safely depend on mid-build. An
+overlay bundle still gets the full injection/secret scan (skills, templates, prompts); only the
+grant-widening check is module-only. `mcp/`, the third directory `15` §19.1's overlay tree names
+alongside `skills/`/`templates/`, is also left unscanned: it is a server manifest, not prose rendering
+into agent context the way a skill/template/prompt body does — a materially different surface than the
+one I9 names, not the same gap as `prompts/*.md` was.
+
+**3. Neither the local nor the git install channel enforces a per-file byte-size cap of its own — a
+real, accidental-reachable resource-exhaustion gap a critic round found this piece's own first draft
+left both unmitigated and undisclosed.** `packages/extensions/src/install/fetch-local.ts` and
+`fetch-git.ts` were both read directly to confirm this: only the npm channel's own `tar-extract.ts`
+enforces a decompressed-size cap, and only on the whole archive, not any individual entry. Without a
+cap in this scan, a single oversized `SKILL.md`, template, or prompt file in an otherwise-ordinary local
+or git bundle would be read entirely into memory by this gate before consent or install ever ran. Fixed
+by reusing `tar-extract.ts`'s own `DEFAULT_MAX_DECOMPRESSED_BYTES` as this scan's own per-file cap
+(rather than inventing a second number) and refusing outright (`CFG-038`) before reading any file that
+exceeds it — so a bundle already accepted by the npm channel can never fail this check purely for being
+large in a way that channel already tolerated.
+
+**4. Two smaller, real findings from the same critic round, both fixed:** the pattern scan
+(`checkPatterns`'s own single-`exec`-per-pattern shape, inherited from `skills/validate.ts`) reported
+only the first match of a repeated pattern — two distinct secret-shaped literals of the identical
+pattern in one file produced one finding, not two; fixed by matching every occurrence via a
+freshly-constructed global `RegExp` per call (never mutating `INJECTION_PATTERNS`/`SECRET_PATTERNS`'
+own shared instances). And the grant-widening check's own fallback for "a module declares no ceiling
+for any role at all, and the skill does not scope itself to one either" leaked a debug-sentinel string
+(`"(no role declares a ceiling)"`) into the user-facing finding message as though it were a real role
+name; fixed with a dedicated message for that specific case naming the actual condition instead.
+
+**Also caught and fixed before the critic round, self-identified while writing this entry:** the code
+comment citing this very entry originally said `Q175` — the real next-free number at the moment the
+code was written, but `M11 P3`'s own docs commit landed first and claimed it for real before this
+piece's own docs commit could. Corrected to `Q176` in a small, separate `fix:` commit once the real
+next-free number was re-checked immediately before writing this entry, per this project's own standing
+instruction to re-verify that number right before a docs commit rather than trust an earlier check.
+
+**Verification:** `pnpm typecheck` (all packages), `eslint --max-warnings 0`, `prettier --check`, and
+`node scripts/check-boundaries.mjs` all clean, re-run after every fix round. A full, unscoped `node
+scripts/run-tests.mjs run` reported 10 failures out of 8183 tests, all confirmed unrelated via
+`git status --short` before this piece touched anything: two are `core/test/errors.test.ts` `RUN-075`
+failures and three are `packages/engine/test/dispatch/agent.test.ts` `UsageRecorded`-event-sequence
+failures, both from concurrent, in-flight M11 P11 work this piece never touched (`packages/engine/src/
+budget/`, `packages/engine/src/security/`) — the identical contamination `M11 P3`'s own entry (Q175)
+already recorded, confirming it is a real, ongoing cross-piece effect and not specific to either piece;
+one is the `survey.test.ts` oversized-fixture flake and one is `crash-resume.test.ts`, both pre-declared
+accepted flakes; the remaining two (`tui/test/components/stream-view.test.tsx` and `cli/test/commands/
+upgrade/run-upgrade.test.ts`, twice) were re-run in isolation immediately afterward and passed cleanly,
+confirming they were load-sensitive flakes under the heavy concurrent-build load (M11 P4 and P11 both
+mid-build in the same working directory throughout this piece's own work), not regressions. `git status`
+throughout confirmed no file outside this piece's own scope was ever modified; the shared `packages/
+core/src/errors/codes.ts` was staged via a hand-built patch isolating only this piece's own `CFG-037`/
+`CFG-038` addition, leaving the concurrent, uncommitted `RUN-075` hunk in the same file untouched — the
+identical isolation technique `M11 P3`'s own entry records for its own `CFG-036` addition.
