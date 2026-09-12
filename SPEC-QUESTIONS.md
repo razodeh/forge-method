@@ -11975,3 +11975,73 @@ removed `.git` pointer file, not a mocked git) rather than relying on the slow, 
 alone. `pnpm typecheck`, `eslint packages/vcs packages/engine`, `prettier --check packages/vcs
 packages/engine`, `pnpm run boundaries` all clean. Full cross-package gate: 1289/1289 passing.
 `GAUNTLET-LOG.md`'s own "Post-M9 checkpoint" entry has the same record in narrative form.
+
+---
+
+## Q150 — M10 P1: `fm-core/module.yaml`'s real workflow/gate/framework/skill/template content lives in
+`@forge/templates`, not `@forge/methods`, and is referenced rather than physically duplicated
+
+`PLAN-M10.md` P1's own Surface text, written before this piece was built, says fm-core's `module.yaml`
+should point `provides` at "real workflow/gate/framework ids already built elsewhere in this repo
+(`@forge/methods`'s own ten lifecycle workflows, `@forge/methods`'s own gates, the eight F-* framework
+families)" and that `workflows/`, `gates/`, `frameworks/` under `modules/fm-core/` should be "thin
+`*.workflow.yaml`/`*.gate.yaml`/`*.framework.yaml` files ... confirmed directly against
+`packages/methods/src` before deciding whether these need to be genuinely new content or a re-expression
+of existing content."
+
+Direct inspection of `packages/methods/src` (four subtrees: `dod/`, `level/`, `schema/`, `score/`) found
+no workflow, gate or framework content there at all — it is definition-of-done evaluation, scale-level
+phase/proposal logic, and scoring rules, none of which are the "ten lifecycle workflows"/"all gates"/
+"frameworks F-INIT/ARCH/DATA/TECH/TEST/DEBUG/DELIVER/OPS" `19` §19.1's own fm-core shipped-modules row
+names. The real, already-built, already-shipping source of that exact content is a different package
+entirely: `@forge/templates` (`packages/templates/templates/{workflows,checks,frameworks,skills,
+artifacts}/`), exposed as typed indexes (`WORKFLOW_INDEX`: 20 ids, `GATE_INDEX`: 10 ids,
+`FRAMEWORK_INDEX`: 43 ids, `SKILL_INDEX`: 32 ids, `TEMPLATE_INDEX`: 21 artifact-type ids) in
+`packages/templates/src/index.ts`. `packages/cli/src/init/content.ts` already reads every one of those
+five indexes directly (via `resolvePackageRoot('@forge/templates')`) to populate a fresh project's own
+`.forge/<kind>/` directories at real `forge init` time, and `packages/cli/src/commands/{agent,decide,adr,
+template,run/gates}.ts` all resolve the same package root directly for the identical reason. This is not
+fixture or stand-in content — it is the one real, currently-consumed source every one of those call sites
+already depends on.
+
+**Decided:** `fm-core/module.yaml`'s `provides.workflows`/`provides.gates`/`provides.frameworks`/
+`provides.skills`/`provides.artifactTypes` name the real ids from those five indexes, and
+`modules/fm-core/` does **not** grow its own `workflows/`, `gates/`, `frameworks/`, `skills/` or
+`templates/` subdirectories duplicating them. `19` §19.1's own module-layout diagram shows those
+subdirectories living physically under a module's own directory, and this is a real, disclosed
+divergence from that literal diagram, not a hidden one — but physically copying files `@forge/templates`
+already ships and every one of the call sites above already reads would fork one currently-single,
+currently-consumed source of truth into two, with no real second consumer to justify the fork and a real
+drift risk the moment either copy is edited alone (a workflow fixed in one copy and not the other, with
+nothing to catch the divergence). `agents/` is the one directory that stays physically under
+`modules/fm-core/`, because it already is the real, canonical load path (`05` §5.3, read directly by
+`packages/agents/src/registry/load-agent-registry.ts` today) with no second copy anywhere to fork from.
+
+Also decided along the way: `provides.frameworks` names every `FRAMEWORK_INDEX` id except
+`analytical-pipeline-design` (F-DATA-8), since `19` §19.1's own `fm-data` row explicitly names F-DATA-8 as
+that module's own contribution, not fm-core's (42 of 43). `provides.workflows` names all 20
+`WORKFLOW_INDEX` ids, not a literal ten-of-twenty subset. The phrase "the ten lifecycle workflows"
+appears verbatim in both `19` §19.1's own fm-core shipped-modules row and `22`'s own M6 Build line; `Q88`
+already read it, in the identical `22` context, as that spec's own loose paraphrase of the ten `10` §10.2
+phases, not a literal ten-of-twenty subset instruction — the same reading applies here unchanged, so
+fm-core ships everything `@forge/templates` ships.
+`provides.checks`/`provides.catalog`/`provides.techniques` are declared empty rather than omitted: no
+standalone `*.check.yaml` content exists anywhere in this repo (every deterministic check lives inline
+inside the gate that owns it); `packages/catalog/catalog/`'s real entries are stack-and-module-agnostic
+selection input the catalog engine already loads on its own, never through a module's `provides.catalog`
+list, and attaching that ownership to fm-core here would be invented, not confirmed; techniques (`16`
+§16.4) are `PLAN-M10.md`'s own later, separate piece (P9) to build and to populate this list for — left
+empty here regardless of what real content P9's own still-in-flight, not-yet-committed work does or does
+not have on disk under `modules/fm-core/techniques/` at any given moment, so this piece never guesses at
+or races content P9 alone owns.
+
+**Verification:** every one of the 29 agents + 20 workflows + 10 gates + 42 frameworks + 32 skills + 21
+artifact types named in `provides` cross-checked programmatically against the real files on disk (agent
+files under `modules/fm-core/agents/`, the five `@forge/templates` indexes and the files they point at
+under `packages/templates/templates/`) — `test/fm-core-module.test.ts`'s 166 real assertions, not a
+schema-shape check (no `module.yaml` schema/parser exists yet; that is `PLAN-M10.md` P2's own job). Every
+one of the 29 `ceilings` entries transcribed directly from its own agent's real `tools:` block
+(`write`/`exec`/`network`/`deploy`), spot-checked independently by a fresh critic subagent against ten of
+the twenty-nine. `pnpm typecheck` (whole workspace excluding the concurrently in-flight, unrelated
+`@forge/sessions` package), `eslint`, `prettier --check`, `pnpm run boundaries` all clean;
+`node scripts/run-tests.mjs run test/fm-core-module.test.ts` 166/166 passing.

@@ -9031,3 +9031,48 @@ packages/telemetry/test/events.test.ts packages/cli/test/commands/run packages/k
 initial attempt to reuse `@forge/core/fs`'s own `listDirSorted` wrapper was reverted in favour of
 duplicating the small, already-proven "sort explicitly, contained disable comment" pattern locally, once
 `forge-boundaries/no-undeclared-package-import` correctly flagged the undeclared graph edge.
+
+## M10 P1 — `fm-core`'s own `module.yaml` and the rest of its real module layout (`19` §19.1)
+
+**Mandate:** the one module every project always installs, which had only its 29-file agent roster and
+no `module.yaml` at all. `PLAN-M10.md` P1's own Surface text pointed at `@forge/methods` as the source of
+fm-core's real workflows/gates/frameworks — direct inspection of `packages/methods/src` found no such
+content there at all (it's `dod`/`level`/`schema`/`score` logic). The real, already-shipping source is a
+different package: `@forge/templates` (`packages/templates/src/index.ts`'s own `WORKFLOW_INDEX`/
+`GATE_INDEX`/`FRAMEWORK_INDEX`/`SKILL_INDEX`/`TEMPLATE_INDEX`), already read directly by
+`packages/cli/src/init/content.ts` and several other CLI commands. Built `modules/fm-core/module.yaml`
+pointing `provides` at that real content (29 agents, 20 workflows, 10 gates, 42 of 43 frameworks —
+`analytical-pipeline-design`/F-DATA-8 excluded as `fm-data`'s own per `19` §19.1's shipped-modules row —
+32 skills, 21 artifact types) and 29 real per-agent `ceilings`, each transcribed directly from that
+agent's own `tools:` block, rather than physically duplicating `@forge/templates`'s files a second time
+under `modules/fm-core/`. Full reasoning in `SPEC-QUESTIONS.md` Q150.
+
+### Round 1 — fresh critic: two real blocking findings
+
+**[Finding 1]** the header comment claimed techniques have "no current home anywhere in this repo" —
+false: a separate, concurrent, unrelated piece of work (`PLAN-M10.md` P9, building in the same working
+tree at the same time) had already landed 25 real `*.technique.yaml` files under
+`modules/fm-core/techniques/`. **[Finding 2]** both `module.yaml` and the test file cited a
+`SPEC-QUESTIONS.md` "Q150" entry that did not exist yet at review time. **Fixed:** reworded the
+techniques paragraph to state a scope boundary that holds regardless of filesystem state — `provides.
+techniques` stays empty because P9 alone owns and is still actively shaping that content, not because no
+such content exists — and wrote the real `Q150` entry the citations pointed at (this repo already
+established that citing a not-yet-written `SPEC-QUESTIONS.md` entry in code, then adding it in the same
+piece before commit, is an accepted pattern — see `Q149`'s own note in `59e3fde`).
+
+### Round 2 — a second, fresh critic verifying both fixes: confirmed real and correct, one further minor
+prose defect found and fixed immediately
+
+Both round-1 fixes verified genuinely resolved — the reworded comment makes no claim checkable against
+the filesystem, and `Q150` exists with content matching every citation. One new, minor issue: `Q150`'s
+own text had a stray unmatched quotation mark and mis-attributed "the ten lifecycle workflows" to only
+one of the two specs it verbatim appears in (`19` §19.1 and `22`'s own M6 Build line). Not blocking (nothing downstream
+parses this prose), triaged and fixed anyway — rewritten to cite both, with the quoting corrected.
+
+**Final state: 166 real tests** (`test/fm-core-module.test.ts`), every one of them checking a real
+filesystem fact (a real agent/workflow/gate/framework/skill/artifact-type file existing on disk, an
+agent's own real `tools:` block matching its ceiling) rather than a schema-shape assertion — no
+`module.yaml` schema or parser exists yet (`PLAN-M10.md` P2's own job). `pnpm typecheck` (whole workspace
+excluding the concurrently in-flight, unrelated `@forge/sessions` package under active construction by a
+different task in the same working tree), `eslint`, `prettier --check`, `pnpm run boundaries` all clean.
+`SPEC-QUESTIONS.md` Q150 has the full record.
