@@ -12268,3 +12268,107 @@ the disclosure text itself — both real, both fixed, neither discovered by the 
 
 **Rounds: 2 critic rounds (2 major + 1 minor round 1, all disclosed or fixed; 1 minor round 2, fixed; no
 third round needed). Outcome: WON.**
+
+## M12 P1 — The real CLI dispatcher: run lifecycle + init
+
+Wired `forge init` and the whole `forge run`/`resume`/`pause`/`abort`/`lanes`/`logs`/`gate`/`merge`
+execution family into the real CLI argv dispatcher (`packages/cli/src/bin.ts`), closing the single
+largest, most load-bearing gap `PLAN-M12.md`'s own "real, central finding" names: SC1-SC3/SC7's own
+literal proof commands were unreachable from a real shell before this piece.
+
+### Round 1: 3 blocking + 4 major
+
+**Blocking — the floor itself failed.** `pnpm lint` was never actually run against the diff before
+the first critic round; it failed with 20 real ESLint errors, not zero:
+- `forge-boundaries/no-platform-concept` (6 hits): a literal `import { ClaudeCodeAdapter,
+  claudeCodeAdapterConfigSchema } from '@forge/adapter-claude-code'` in `bin.ts`, plus the literal
+  string `'claude-code'` — the rule's own doc comment names this *exact* pattern as its own worked
+  example of the failure it exists to catch, quoted verbatim by the critic.
+- `no-restricted-syntax` (R10, 4 hits): direct `process.env`/`Date.now()`/`os.hostname()` reads, with
+  no carve-out anywhere in `eslint.config.js` for `bin.ts` covering this rule (only `no-console` was
+  ever exempted there).
+- Plus a `restrict-template-expressions` real bug (`runState.runStatus` could print the literal string
+  `"undefined"`), a `prefer-optional-chain` violation, and a `non-nullable-type-assertion-style`
+  violation.
+
+**Major:** `forge gate approve`/`reject` ignored `--json` entirely, always printing plain text;
+unrecognized/misspelled flags were silently dropped or misparsed across `run`/`gate`/`merge` (a typo of
+`--epic` ran with no error at all); gate/merge failures used ad-hoc `0`/`1` exit codes instead of the
+project's own `EXIT_CODES` taxonomy (`EXIT_CODES.gateFailed = 3` existed and was never used);
+`pause`/`abort`'s `--json` output omitted the real `pid` present in the human-readable form.
+
+**What the critic caught that I missed:** I ran `pnpm typecheck`/the test suite/`pnpm boundaries`
+before the first critic round but never `pnpm lint` — a real, avoidable process gap, not a subtle bug.
+The boundary violation itself was a genuine architectural miss: nothing in this codebase before this
+piece had ever needed to construct a concrete `PlatformAdapter` from `packages/cli`, so the "how" was
+never worked out, and the obvious-looking direct import turned out to be exactly the one thing
+`no-platform-concept` was written to forbid.
+
+**Judged and fixed:** a new `@forge/adapter-kit/registry` module (`KNOWN_ADAPTER_MODULES`/
+`loadAdapterFactory`) that dynamically `import()`s an adapter package by a runtime string (legitimate
+inside `adapter-kit`, which is itself exempt from the rule), plus a matching `createAdapter` factory
+export added to `@forge/adapter-claude-code` — `bin.ts` now contains zero literal platform tokens. A
+new, narrowly-filtered `BIN_TS_DETERMINISM_SYNTAX_RULES` carve-out in `eslint.config.js` (see round 2
+below for why the *first* version of this fix was itself wrong). `gate approve`/`reject` now honor
+`--json`. A new generic `parseCommandFlags` helper rejects any undeclared `--flag` as a real `USR-002`
+across every new command. `EXIT_CODES.gateFailed`/`.failure`/`.usage` used consistently.
+`pause`/`abort` JSON now includes `pid`. A `renderRunStatus` helper guards the `"undefined"` string
+case. `SPEC-QUESTIONS.md` Q184 records the full set of disclosed decisions.
+
+### Round 2: 4 major
+
+A fresh critic round confirmed round 1's fixes were real in the code, then found: `parseCommandFlags`
+was applied to `run`/`gate`/`merge`/`logs` but **not** to `pause`/`resume`/`abort`/`lanes`, which still
+silently dropped stray flags — and `abort` specifically could misread a stray flag token as a candidate
+`runId` and throw a misleading "no active run" `RUN-048` even when a run genuinely was active; the
+`eslint.config.js` fix for R10 turned off the *entire* `no-restricted-syntax` rule for `bin.ts` instead
+of only the two selectors that needed relaxing, silently also lifting the `Math.random()`/crypto/
+`Date.now()`/alias/computed-key/listing/locale bans — the identical over-broad-exemption mistake this
+same config file's own pre-existing `system-temp.ts` override comment already names and rejects, for a
+different rule; `gate list --run <id>` was accepted as a real flag and silently did nothing with it;
+and round 1's fixes were almost entirely unproven by any test.
+
+**What the critic caught that I missed:** fixing four of eight new commands with the new flag-parsing
+discipline and treating the family as "done" without checking the other four — the exact "fixed an
+instance, not the class" gap this build's own `GAUNTLET-LOG.md` has recorded before, on a different
+piece. The eslint over-exemption was the same failure mode as a documented mistake in the *same file*
+for a *different* rule, which should have been caught by re-reading that file's own existing comments
+before writing a new override, not after a critic pointed at it.
+
+**Judged and fixed:** `parseOptionalRunIdPositional`/`assertNoArgs` helpers applied to all four
+remaining commands, routed through the identical `parseCommandFlags` validation. A `BIN_TS_
+DETERMINISM_SYNTAX_RULES` array filtered from the shared `DETERMINISM_SYNTAX_RULES` by message text,
+keeping every selector except the two that genuinely need relaxing (13 of 16 stay enforced for
+`bin.ts`). `gate list`'s own flag spec no longer declares `--run` at all. Six new tests: a misspelled
+`--epic` typo rejected, `gate approve --json` producing real JSON, `EXIT_CODES.gateFailed` (3) on a
+real failing gate (a new `RUN_FAILING_GATE_ID` fixture), `gate list --run` now erroring,
+`pause`/`resume`/`abort`/`lanes` all rejecting a stray flag, and a real, live-locked `pause --json`
+test (a genuine `sleep 2` workflow step giving `SIGTERM` a real wall-clock window to land against a
+still-running child process, polled via the real lock file rather than a fixed sleep).
+
+### Round 3: converged
+
+A fresh critic round verified every round 1 and round 2 fix against the real, current code (re-running
+`pnpm eslint`, `pnpm typecheck`, `pnpm boundaries`, and the full 38-test `bin.test.ts` file itself,
+not trusting the prior rounds' own descriptions) and found no blocking or major issues. Minor,
+accepted-as-is findings: `parseCommandFlags` has no `--flag=value` support (consistent with this
+package's own pre-existing `findRuleFlag`/`findRawTestRuleFlag` convention, not a new regression); a
+bare `--` end-of-options marker is treated as an unrecognized flag (no realistic id starts with `--`);
+one test's own doc comment overstated what "already-initialized" skips (adapter *construction* still
+happens, only `preflight()` does not) — fixed directly since it was a one-line comment correction; and
+`pnpm lint`'s prettier check still fails on 4 pre-existing files this piece never touched
+(`packages/cli/src/commands/overlay.ts` and three doctor/overlay test files), confirmed via `git diff`
+to be unrelated drift already present in the tree before this piece began.
+
+**Checks:** `packages/cli/test/bin.test.ts` — 38 real subprocess-dispatch tests, including a real
+`forge init` end-to-end (skipped, not faked, when no live platform CLI is on `PATH`) and a real `forge
+run` through to a `'completed'` `RunState` with zero live platform sessions started anywhere in the
+suite (an agent-free fixture workflow). Full-workspace floor: `pnpm typecheck` (21/21 packages),
+`pnpm run boundaries` (clean), `pnpm lint`'s ESLint pass (clean; the prettier-only failure is the
+pre-existing, unrelated drift named above), and the full, unscoped `node scripts/run-tests.mjs run`
+(8339 passed, 2 failed — both on this build's own pre-approved known-flake list,
+`packages/engine/test/e2e/crash-resume.test.ts` and `packages/kb/test/adopt/survey.test.ts`'s
+oversized-fixture test, reproduced under the same heavy concurrent load that produced them here).
+
+**Rounds: 3 critic rounds (3 blocking + 4 major round 1, all fixed; 4 major round 2, all fixed; 0
+blocking/major round 3 — converged). Outcome: WON.** Committed `7869307` (feat).

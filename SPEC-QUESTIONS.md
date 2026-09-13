@@ -15209,3 +15209,92 @@ paragraph in the same table). Restructuring CI suite-tiering was never part of t
 surface, so implementing it here would be scope creep, not a fix this piece is dodging. Recorded here,
 not silently dropped, per this project's own standing "specs win, disagreements go in SPEC-QUESTIONS.md"
 rule — left for a future, dedicated CI-architecture piece.
+
+## Q184 — M12 P1: the real CLI dispatcher for `init`/`run`/`resume`/`pause`/`abort`/`lanes`/`logs`/
+`gate`/`merge` — real `PlatformAdapter` construction cannot live in `packages/cli` as a literal import;
+several real flag-surface gaps the literal `03` §3.2.4 table leaves silent
+
+`PLAN-M12.md` P1's own mandate is to wire `forge init` and the whole `run`/`resume`/`pause`/`abort`/
+`lanes`/`logs`/`gate`/`merge` execution family into `packages/cli/src/bin.ts`, translating real argv
+into the already-real, already-tested library functions under `src/init/`/`src/commands/run/` with no
+new business logic. Several real, concrete decisions this piece had to make and disclose:
+
+**1. `RunInitDeps.candidateAdapters`/`RunDeps.adapter` cannot be constructed via a literal
+`import { ClaudeCodeAdapter } from '@forge/adapter-claude-code'` in `bin.ts`.** A first draft did
+exactly that — a real, hostile-critic-caught mistake: `forge-boundaries/no-platform-concept`'s own doc
+comment names this *exact* pattern as the failure it exists to catch ("nothing above `@forge/
+adapter-kit` may reference Claude Code... by name," `07` §7.1), and forbids it mechanically regardless
+of `specs/02` §2.2's own dependency graph technically permitting the *package* edge (`cli ← everything`
+already includes `adapter-claude-code`). The real, sanctioned fix that same rule's doc comment names:
+"load it dynamically through `adapter-kit`'s registry (a specifier built from configuration, never a
+literal)." A new `@forge/adapter-kit/registry` module (`KNOWN_ADAPTER_MODULES`/`loadAdapterFactory`)
+now holds the one real, literal mapping from platform id to npm package name — legitimate there since
+`adapter-kit` is itself exempt from `no-platform-concept` (`location.pkg.startsWith('adapter-')`,
+identical to `adapter-claude-code`'s own exemption) — and dynamically `import()`s the named package by
+a runtime string, never a literal, from `bin.ts`'s own perspective. `@forge/adapter-claude-code` gained
+a matching `createAdapter` factory export (`AdapterFactory`) for the registry to call.
+`@forge/adapter-generic` is deliberately not in that registry: `GenericAdapter` (`07` §7.5) needs a
+real, parsed `adapter.yaml` to construct from, and no project template anywhere in this workspace ships
+one — there is nothing this dispatcher could honestly parse to build a default from. This is the
+identical, already-disclosed gap `RunInitDeps.modulesDir`'s own doc comment names (Q103), now applied
+to the adapter-selection side of the same problem. `forge run`/`resume` never re-run platform
+*selection* (`03` §3.3 step 5 is `init`'s own job alone) — they reconstruct the identical real adapter
+for whatever id a project's own `.forge/config.yaml` `platform.primary` already recorded, defaulting to
+the registry's own first real entry when that field is unset (`''`, `03` §3.3's own documented default).
+
+**2. `bin.ts` needs a real, composition-root-scoped R10 (`no-restricted-syntax`) carve-out that did not
+exist before this piece** — real adapter construction needs a real ambient environment snapshot
+(`RunInitDeps.env`) and real per-invocation host facts (`RunWorkflowOptions.host`/`ResumeOptions.host`),
+neither of which any file above `bin.ts` could inject instead, since `bin.ts` *is* this codebase's own
+composition root (`bin/forge.mjs` spawns it directly, inheriting the real process environment). A first
+draft turned off the *entire* `no-restricted-syntax` rule for this one file, caught by a critic round as
+silently also lifting the `Math.random()`/crypto-randomness/`Date.now()`/global-alias/computed-key/
+unsorted-listing/locale bans this file has no real reason to need lifted — the identical over-broad-
+exemption mistake this same `eslint.config.js`'s own pre-existing `system-temp.ts` override comment
+already names and rejects, for a different rule. Fixed via a new `BIN_TS_DETERMINISM_SYNTAX_RULES`
+array, filtered from the shared `DETERMINISM_SYNTAX_RULES` by message text (removing only the two real
+selectors this file needs relaxed: `process.env` and host facts), so every other real selector in that
+array — 13 of 16 — stays enforced for `bin.ts`, and any future addition to the shared array is inherited
+automatically rather than needing a second, hand-maintained copy.
+
+**3. `03` §3.2.4's own literal command table is silent on several real flag-surface questions the
+underlying library functions actually need answered** — each decided concretely rather than guessed at
+silently:
+   - `forge gate <check|approve|reject|waive> <id>` and `forge merge <--lane|--all>` both need a real
+     run id (`GateCommandContext.runId`/`MergeContext.runId`), but the table names no `[runId]`/`--run`
+     for either. A `--run <id>` flag was added to both (defaulting to the project's own last-run
+     pointer, `last-run.json`, exactly as `forge lanes`/`forge logs` already do for their own optional
+     `[runId]`) — except `gate list`, which needs no run id at all (it only ever reads the checks
+     directory) and so does not accept `--run` at all, rather than accepting and silently ignoring it.
+   - `forge gate waive <id> --reason --expires` (the table's own literal row) omits `--owner`, but
+     `WaiveInput.owner` is a real, required field with no sensible default — a required `--owner <name>`
+     flag was added, disclosed here rather than invented silently.
+   - `forge abort [runId]` names an optional `[runId]`, but the real `abortRun`/`stopLockedProcess`
+     machinery (`commands/run/lock.ts`) always targets whichever process currently holds this project's
+     one real lock — there is no way to target a specific *past* run by id. A given `runId` that does
+     not match the actually-locked run's own id is refused (`RUN-048`) rather than silently aborting the
+     wrong run or silently ignoring the mismatch.
+   - `forge logs [--lane <id>] [--follow] [--step <id>]`'s own `--lane`/`--follow` are both real,
+     already-disclosed gaps one layer down (`RunLogsOptions` carries no `laneId` field at all, and no
+     live-tail loop exists anywhere in this codebase) — both refused (`USR-003`) rather than silently
+     ignored.
+   - `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>]`'s own `--epic`/`--story` have no
+     dedicated `ExpressionContext` field (only `item`/`stage`/`run`/`config`/`kb`/`failures`/`vars`
+     exist) — both fold into `vars`, the one field workflow expressions already read arbitrary
+     caller-supplied values from.
+
+Every one of these flag-surface decisions is enforced by a new, generic `parseCommandFlags` helper
+(`bin.ts`) that every new command routes through: an undeclared `--`-shaped token is a real, reported
+`USR-002`, never silently dropped or misparsed — the identical discipline `parseGlobalFlags`/
+`parseInitFlags` already establish elsewhere in this package, closing a real gap a critic round found in
+an early draft (`forge run wf --epci foo`, a typo of `--epic`, ran with no error and no `vars.epic` at
+all).
+
+**Checks:** `packages/cli/test/bin.test.ts` — 38 real subprocess-dispatch tests, including a real,
+end-to-end `forge init` against a live platform CLI preflight (skipped, not faked, when no such CLI is
+on `PATH`, matching this codebase's own already-established disclosed-skip discipline for `22` §22.1
+rule 1 — this repository's own CI installs none), a real `forge run` through to a `'completed'`
+`RunState` with no live platform session ever started (an agent-free, `command`+`gate`-only fixture
+workflow), real `gate`/`merge`/`lanes`/`logs`/`pause`/`abort` exercised against that real run's own real
+state (including a real, live-locked `pause --json` against a genuinely still-running child process),
+and explicit negative tests for every flag-surface decision above.
