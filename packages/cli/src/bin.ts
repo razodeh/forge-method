@@ -4,17 +4,17 @@
  * --all && pnpm forge template validate --all`, plus `pnpm forge --json status`) — not a complete
  * dispatcher for every command this codebase has built since C1.
  *
- * **A real, deliberate scope boundary, not an oversight.** Every command built in C1-C8 (`kb`, `spec`,
- * `adr`, `diagram`, `uninstall`, `run`/`resume`/`pause`/`abort`/`lanes`/`logs`/`gate`/`merge`,
- * `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`test`/`ask`/`session`, `doctor`,
- * `upgrade`, `module`, `config`, `cost`, `export`, `help`, `customize`, `compile`, `overlay`,
- * `preset`, `skill`, `mcp`, and the rest of `agent`/`workflow` beyond `validate`) exists only as a
- * real, already-tested plain function taking a hand-built `*CommandContext` — confirmed directly, no
- * real argv dispatcher existed anywhere in this repository before this file. Wiring every one of them
- * into this dispatcher (deciding each command's own real flag shape, output formatting, and exit-code
- * mapping) is real, substantial work this milestone's own C9 mandate does not ask for — its own
- * Surface text names only `forge template validate --all` and `scripts/assert-json-contract.mjs`, not
- * a general CLI. See `SPEC-QUESTIONS.md` for the full record of this decision.
+ * **A real, deliberate scope boundary through M11, closed for one family by M12 P1.** Every command
+ * built in C1-C8 (`kb`, `spec`, `adr`, `diagram`, `uninstall`, `implement`/`debug`/`refactor`/`deploy`/
+ * `review`/`panel`/`test`/`ask`/`session`, `doctor`, `upgrade`, `module`, `config`, `cost`, `export`,
+ * `help`, `customize`, `compile`, `overlay`, `preset`, `skill`, `mcp`, and the rest of `agent`/
+ * `workflow` beyond `validate`) exists only as a real, already-tested plain function taking a
+ * hand-built `*CommandContext` — confirmed directly, no real argv dispatcher existed anywhere in this
+ * repository before this file. Wiring every one of them into this dispatcher (deciding each command's
+ * own real flag shape, output formatting, and exit-code mapping) is real, substantial work this
+ * milestone's own C9 mandate did not ask for — its own Surface text named only `forge template
+ * validate --all` and `scripts/assert-json-contract.mjs`, not a general CLI. See `SPEC-QUESTIONS.md`
+ * for the full record of this decision.
  *
  * `spec validate --rule <name> --json` (M8 P2) and `test run [--rule lint|typecheck] --json`
  * (M8 P4) were added narrowly, for the identical reason: `G-Ready.gate.yaml`/`G-Verify.gate.yaml`/
@@ -24,14 +24,32 @@
  * package's own exported functions today, never through a shipped gate). The rest of `spec`/`test`
  * remain exactly as unwired as the paragraph above still says.
  *
+ * `init` and the whole `run`/`resume`/`pause`/`abort`/`lanes`/`logs`/`gate`/`merge` execution family
+ * are wired below by `PLAN-M12.md` P1 — `specs/22` M12's own "the real CLI dispatcher is this
+ * milestone's own first, blocking subsystem" finding (SC1-SC3/SC7's own literal proof commands).
+ * `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` and the remaining
+ * `kb`/`spec`/`adr`/`diagram`/`customize`/`compile`/`preset`/`skill`/`mcp`/`help`/`module`/`overlay`/
+ * `upgrade`/`export`/`doctor`/`audit`/`config`/`cost`/`uninstall` surface is `PLAN-M12.md` P2-P4's own
+ * mandate, still unwired here.
+ *
  * @see specs/22 M6
  * @see specs/22 M8
+ * @see specs/22 M12
  * @see PLAN-M6.md C9
  * @see PLAN-M8.md P2
  * @see PLAN-M8.md P4
+ * @see PLAN-M12.md P1
  */
-import { isForgeError } from '@forge/core/errors';
-import { ProjectPaths } from '@forge/core/fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/registry';
+import type { PlatformAdapter } from '@forge/adapter-kit/types';
+import { SYSTEM_CLOCK } from '@forge/core';
+import { EXIT_CODES, ForgeError, isForgeError } from '@forge/core/errors';
+import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
+import type { ExpressionContext } from '@forge/engine/expr';
+import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
 import { readConfig } from './commands/config.ts';
@@ -41,7 +59,33 @@ import { testCoverage } from './commands/loop/test/coverage.ts';
 import { testFlaky } from './commands/loop/test/flaky.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
 import { testRun } from './commands/loop/test/run.ts';
-import { runStatus, runStatusJson } from './commands/run/status.ts';
+import {
+  abortRun,
+  assertStopped,
+  ensureIntegrationWorktree,
+  gateApprove,
+  gateCheck,
+  gateList,
+  gateReject,
+  gateWaive,
+  mergeAbort,
+  mergeAllReady,
+  mergeLane,
+  pauseRun,
+  readRunLock,
+  resumeWorkflow,
+  runLanes,
+  runLogs,
+  runStatus,
+  runWorkflow,
+  type GateCommandContext,
+  type MergeContext,
+  type RunDeps,
+} from './commands/run/index.ts';
+import { runStatusJson } from './commands/run/status.ts';
+import { parseInitFlags } from './init/parse-init-flags.ts';
+import { resolvePackageRoot } from './init/package-root.ts';
+import { runInit } from './init/run-init.ts';
 import {
   specValidateRule,
   VALIDATE_RULE_IDS,
@@ -115,6 +159,603 @@ async function runStatusCommand(
     console.log(JSON.stringify(status, null, 2));
   }
   return 0;
+}
+
+/**
+ * `init`/`run`/`resume`/`gate`/`merge` — real dispatcher wiring for `03` §3.2.4/§3.3's own execution
+ * and greenfield-wizard surface (`PLAN-M12.md` P1). Every one of these commands needs a real,
+ * concrete `PlatformAdapter` — `@forge/cli/init`'s own `RunInitDeps.candidateAdapters` and
+ * `@forge/cli/commands/run`'s own `RunDeps.adapter` were both left as an injected seam because no
+ * concrete adapter existed anywhere in this codebase at the time (`SPEC-QUESTIONS.md` Q103).
+ *
+ * This file never imports an adapter package or names a platform by identifier — `specs/07` §7.1's
+ * own boundary rule ("nothing above `@forge/adapter-kit` may reference Claude Code... by name") and
+ * its mechanical enforcement, `forge-boundaries/no-platform-concept`, both forbid that here exactly as
+ * much as inside `@forge/adapter-kit` itself; a first draft of this piece got this wrong (a literal
+ * `import { ClaudeCodeAdapter } from '@forge/adapter-claude-code'`), caught by a critic round quoting
+ * the lint rule's own doc comment naming that literal import as its own worked example of the failure
+ * it exists to catch. The real, sanctioned fix that same doc comment names: "load it dynamically
+ * through `adapter-kit`'s registry (a specifier built from configuration, never a literal)" —
+ * `@forge/adapter-kit/registry`'s own `KNOWN_ADAPTER_MODULES`/`loadAdapterFactory`, used below. Every
+ * platform id this file ever touches is a runtime string flowing out of that registry or a project's
+ * own `.forge/config.yaml`, never typed as a literal here. See `SPEC-QUESTIONS.md` for the record. */
+function realEnvSnapshot(): Readonly<Record<string, string>> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
+/** The real `modules/` roster directory (`RunInitDeps.modulesDir`'s own doc comment) resolved from
+ * this package's own real install location — this only ever finds the *workspace* `modules/`
+ * directory (two levels above `@forge/cli`'s own package root), since no publishing/distribution
+ * mechanism for `modules/` exists yet (the identical, already-disclosed gap `RunInitDeps.modulesDir`'s
+ * own doc comment names, `SPEC-QUESTIONS.md` Q103) — real for every real use of this dispatcher today
+ * (a workspace checkout), not yet real for a published, installed `forge-method` package. */
+function resolveModulesDir(): string {
+  return path.join(resolvePackageRoot('@forge/cli'), '..', '..', 'modules');
+}
+
+/** Real wall-clock time via `@forge/core`'s own injected-clock seam (R10) — never `Date.now()`
+ * directly, matching `commands/run/context.ts`'s own identical `Date.parse(clock.now())` pattern. */
+function realNow(): number {
+  return Date.parse(SYSTEM_CLOCK.now());
+}
+
+/** Every real candidate `forge init` offers `selectPlatform` — every module `@forge/adapter-kit/
+ * registry`'s own `KNOWN_ADAPTER_MODULES` names, each loaded and constructed dynamically (see this
+ * section's own top doc comment for why this can never be a literal, direct import instead). Real,
+ * disclosed gap: `@forge/adapter-generic` is not in that registry (no shipped `adapter.yaml` exists
+ * anywhere in this workspace to construct one from) — see `SPEC-QUESTIONS.md`. */
+async function buildCandidateAdapters(
+  env: Readonly<Record<string, string>>,
+): Promise<readonly PlatformAdapter[]> {
+  const adapters: PlatformAdapter[] = [];
+  for (const spec of KNOWN_ADAPTER_MODULES) {
+    const factory = await loadAdapterFactory(spec.packageName);
+    adapters.push(factory({ env, now: realNow }));
+  }
+  return adapters;
+}
+
+/** Reconstructs the identical real adapter a project's own `.forge/config.yaml` already recorded at
+ * `forge init` time (`platform.primary`) — `forge run`/`resume` never re-run platform *selection*
+ * (`03` §3.3 step 5's own "detect installed platforms... pick primary" is `init`'s job alone); this
+ * only ever re-builds the one real adapter this dispatcher knows how to construct for the id already
+ * on record, reading that platform's own real `platform.adapterConfig` blob back in.
+ * @throws {ForgeError} `ENV-004` for any recorded `platform.primary` this registry has no real module
+ * for — the identical, disclosed "not every real platform id has a real construction path here" gap
+ * this section's own top doc comment names, now surfaced for a *recorded* id this dispatcher genuinely
+ * cannot honour rather than silently defaulting to the wrong adapter. An empty `platform.primary`
+ * (`03` §3.3's own "unset" default) falls back to this registry's own first real entry. */
+async function buildAdapterForConfig(
+  config: ForgeConfig,
+  env: Readonly<Record<string, string>>,
+): Promise<PlatformAdapter> {
+  const platformId = config.platform.primary;
+  const spec =
+    platformId === ''
+      ? KNOWN_ADAPTER_MODULES[0]
+      : KNOWN_ADAPTER_MODULES.find((candidate) => candidate.id === platformId);
+  if (spec === undefined) {
+    throw new ForgeError('ENV-004', {
+      tool: platformId === '' ? 'a platform adapter' : platformId,
+    });
+  }
+  const factory = await loadAdapterFactory(spec.packageName);
+  return factory({ env, now: realNow, config: config.platform.adapterConfig[spec.id] });
+}
+
+async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string): Promise<RunDeps> {
+  const config = await readConfig(paths);
+  const env = realEnvSnapshot();
+  return {
+    paths,
+    projectRoot,
+    config,
+    adapter: await buildAdapterForConfig(config, env),
+    workflowsRoot: WORKFLOWS_ROOT,
+    checksRoot: CHECKS_ROOT,
+  };
+}
+
+async function runInitCommand(
+  initArgs: readonly string[],
+  yes: boolean,
+  json: boolean,
+): Promise<number> {
+  const { dir, options } = parseInitFlags(initArgs, yes);
+  const env = realEnvSnapshot();
+  const result = await runInit(dir, options, {
+    candidateAdapters: await buildCandidateAdapters(env),
+    env,
+    modulesDir: resolveModulesDir(),
+  });
+  if (json) {
+    console.log(JSON.stringify({ v: 1, result }));
+  } else if (result.kind === 'already-initialized') {
+    console.log(`forge init: ${result.projectRoot} is already initialized.`);
+  } else {
+    console.log(
+      `forge init: wrote ${String(result.files.length)} files to ${result.projectRoot} ` +
+        `(level ${result.level}, platform ${result.platform ?? 'none'}).`,
+    );
+  }
+  // `03` §3.3's own idempotency rule ("MUST detect it and switch to upgrade semantics") has no real
+  // `upgrade` conflict-resolution mechanism yet (`PLAN-M12.md` P3's own mandate) — reported honestly as
+  // a real, non-zero "nothing happened" outcome rather than a silent success, matching this
+  // dispatcher's own "detect, don't yet resolve" scope for P1.
+  return result.kind === 'already-initialized' ? 1 : 0;
+}
+
+/**
+ * A minimal, generic flag parser local to one command's own `rest`/`afterCommand` slice —
+ * generalising the "not a global flag, found locally" pattern `findRuleFlag`/`findRawTestRuleFlag`
+ * above already establish for `spec validate`/`test run`, but (unlike the first draft's own
+ * `findFlagValue`) validated against a real, exhaustive `spec` of every flag the calling command
+ * actually recognises: any `--`-shaped token not named in `spec` is a real, reported `USR-002`, never
+ * silently dropped — the identical "an unrecognised flag is a reportable error" discipline
+ * `parseGlobalFlags`/`parseInitFlags` already apply everywhere else in this package, which a fresh
+ * critic round found the first draft's per-flag `findFlagValue` calls did not: `forge run wf --epci
+ * foo` (a typo of `--epic`) silently ran with no error and no `vars.epic` at all.
+ *
+ * A declared value-flag's very next token is always consumed as its value, whatever it looks like —
+ * `spec[flag] === true` means "this flag takes a value," full stop, so `--reason "--skip until next
+ * sprint"` works correctly rather than the first draft's own heuristic (any value starting with `--`
+ * is rejected) misfiring on a legitimate value that merely starts with two dashes. Missing a required
+ * value (the flag is the last token, or immediately followed by another recognised flag) is still a
+ * real `USR-002`.
+ */
+function parseCommandFlags(
+  args: readonly string[],
+  spec: Readonly<Record<string, boolean>>,
+): {
+  readonly values: ReadonlyMap<string, string>;
+  readonly flags: ReadonlySet<string>;
+  readonly positionals: readonly string[];
+} {
+  const values = new Map<string, string>();
+  const flags = new Set<string>();
+  const positionals: string[] = [];
+  const remaining = [...args];
+
+  for (let token = remaining.shift(); token !== undefined; token = remaining.shift()) {
+    if (!token.startsWith('--')) {
+      positionals.push(token);
+      continue;
+    }
+    const takesValue = spec[token];
+    if (takesValue === undefined) {
+      throw new ForgeError('USR-002', { flag: token, value: '' });
+    }
+    flags.add(token);
+    if (takesValue) {
+      const value = remaining.shift();
+      if (value === undefined) {
+        throw new ForgeError('USR-002', { flag: token, value: '' });
+      }
+      values.set(token, value);
+    }
+  }
+
+  return { values, flags, positionals };
+}
+
+/** `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>]` (`03` §3.2.4) into
+ * `@forge/engine/expr`'s `ExpressionContext` — `stage` maps directly to its own named field;
+ * `epic`/`story` have no dedicated `ExpressionContext` field (only `item`/`stage`/`run`/`config`/`kb`/
+ * `failures`/`vars` exist), so both fold into `vars`, the one field `10`/`06`'s own workflow
+ * expressions already read arbitrary caller-supplied values from. A real, disclosed decision — see
+ * `SPEC-QUESTIONS.md`. */
+function buildExpressionContext(values: ReadonlyMap<string, string>): ExpressionContext {
+  const stage = values.get('--stage');
+  const epic = values.get('--epic');
+  const story = values.get('--story');
+  const vars: Record<string, string> = {};
+  if (epic !== undefined) vars['epic'] = epic;
+  if (story !== undefined) vars['story'] = story;
+  return {
+    ...(stage !== undefined ? { stage } : {}),
+    ...(Object.keys(vars).length > 0 ? { vars } : {}),
+  };
+}
+
+/** Renders a real `RunState['runStatus']` for a human — `undefined` (no `RunStarted` event was ever
+ * recorded at all, an empty log) is a real, reachable state `String(...)` would otherwise stringify
+ * as the literal text `"undefined"`, the exact user-facing anti-pattern this codebase's own render
+ * helpers elsewhere are written to avoid. */
+function renderRunStatus(runStatus: string | undefined): string {
+  return runStatus ?? 'unknown';
+}
+
+/** Real run/resume failure exit codes: `EXIT_CODES.failure` (a genuine runtime failure — a step
+ * failed or the run was aborted mid-flight), never `EXIT_CODES.usage` (this is not a caller mistake)
+ * and never `EXIT_CODES.gateFailed` (a gate-shaped failure is reported by `forge gate`, not by the
+ * run's own bare status here). */
+function runOutcomeExitCode(runStatus: string | undefined): number {
+  return runStatus === 'failed' || runStatus === 'aborted'
+    ? EXIT_CODES.failure
+    : EXIT_CODES.success;
+}
+
+/** `forge pause`/`forge resume [runId]`/`forge abort [runId]`/`forge lanes [runId]` (`03` §3.2.4) all
+ * take no real flags at all, only an optional bare `[runId]` positional — parsed through the identical
+ * `parseCommandFlags` validation every other new command below uses, so a stray or misspelled flag
+ * (`forge pause --forc`, `forge resume run1 --extra`) is a real, reported `USR-002` here too, not
+ * silently dropped the way a fresh critic round found a first draft of these four specifically left it
+ * (the four commands `parseCommandFlags` itself was added for, missed at the call site). */
+function parseOptionalRunIdPositional(args: readonly string[]): string | undefined {
+  const { positionals } = parseCommandFlags(args, {});
+  if (positionals.length > 1) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[1] ?? '' });
+  }
+  return positionals[0];
+}
+
+/** `forge pause` takes no positional at all, unlike its three siblings above. */
+function assertNoArgs(args: readonly string[]): void {
+  const { positionals } = parseCommandFlags(args, {});
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+}
+
+const RUN_FLAGS = { '--stage': true, '--epic': true, '--story': true } as const;
+
+async function runRunCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  workflowId: string | undefined,
+  rest: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  if (workflowId === undefined || workflowId.startsWith('--')) {
+    console.error('forge: "run" needs a real <workflow> id.');
+    return EXIT_CODES.usage;
+  }
+  const { values, positionals } = parseCommandFlags(rest, RUN_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const expressionContext = buildExpressionContext(values);
+  const result = await runWorkflow(deps, {
+    workflowId,
+    expressionContext,
+    dryRun,
+    host: os.hostname(),
+  });
+
+  if (result.kind === 'dry-run') {
+    if (json) {
+      console.log(JSON.stringify({ v: 1, plan: result.plan }));
+    } else if (result.plan.success) {
+      console.log(
+        `forge run ${workflowId} --dry-run: compiled ${String(result.plan.nodes.length)} steps.`,
+      );
+    } else {
+      for (const issue of result.plan.issues) console.error(issue.message);
+    }
+    // A malformed workflow is a real usage error regardless of which real compilation stage caught
+    // it -- `RUN-045` (`parseWorkflow` itself failing) already maps to `EXIT_CODES.usage`; a
+    // structurally-parseable workflow `compileRunPlan` still rejects (a bad dependency, a duplicate
+    // step id) is the identical class of caller mistake, not a second, different exit code.
+    return result.plan.success ? EXIT_CODES.success : EXIT_CODES.usage;
+  }
+
+  if (json) {
+    console.log(JSON.stringify({ v: 1, runId: result.runId, runState: result.runState }));
+  } else {
+    console.log(
+      `forge run ${workflowId}: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
+    );
+  }
+  return runOutcomeExitCode(result.runState.runStatus);
+}
+
+async function runResumeCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  runId: string | undefined,
+  json: boolean,
+): Promise<number> {
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const result = await resumeWorkflow(deps, {
+    ...(runId !== undefined ? { runId } : {}),
+    host: os.hostname(),
+  });
+  if (json) {
+    console.log(JSON.stringify({ v: 1, runId: result.runId, runState: result.runState }));
+  } else {
+    console.log(
+      `forge resume: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
+    );
+  }
+  return runOutcomeExitCode(result.runState.runStatus);
+}
+
+async function runPauseCommand(paths: ProjectPaths, json: boolean): Promise<number> {
+  const result = await pauseRun(paths);
+  assertStopped(result);
+  console.log(
+    json
+      ? JSON.stringify({
+          v: 1,
+          runId: result.lock.runId,
+          pid: result.lock.pid,
+          stopped: result.stopped,
+        })
+      : `forge pause: stopped run ${result.lock.runId} (pid ${String(result.lock.pid)}).`,
+  );
+  return EXIT_CODES.success;
+}
+
+/** `forge abort [runId]` — `03` §3.2.4's own row names an optional `[runId]`, but the real
+ * `abortRun`/`stopLockedProcess` machinery (`commands/run/lock.ts`) always targets whichever process
+ * currently holds this *project's* one real lock — there is no way to target a specific *past* run by
+ * id, only the run (if any) currently in flight. A given `runId` that does not match the actually
+ * locked run's own id is refused (`RUN-048`, "no active run") rather than silently aborting the wrong
+ * one or silently ignoring the mismatch. See `SPEC-QUESTIONS.md`. */
+async function runAbortCommand(
+  paths: ProjectPaths,
+  runId: string | undefined,
+  json: boolean,
+): Promise<number> {
+  if (runId !== undefined) {
+    const lock = await readRunLock(paths);
+    if (lock?.runId !== runId) {
+      throw new ForgeError('RUN-048', undefined);
+    }
+  }
+  const result = await abortRun(paths);
+  assertStopped(result);
+  console.log(
+    json
+      ? JSON.stringify({
+          v: 1,
+          runId: result.lock.runId,
+          pid: result.lock.pid,
+          stopped: result.stopped,
+        })
+      : `forge abort: stopped run ${result.lock.runId} (pid ${String(result.lock.pid)}).`,
+  );
+  return EXIT_CODES.success;
+}
+
+async function runLanesCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  runId: string | undefined,
+  json: boolean,
+): Promise<number> {
+  const lanes = await runLanes(paths, projectRoot, runId);
+  if (json) {
+    console.log(JSON.stringify({ v: 1, lanes }));
+  } else if (lanes.length === 0) {
+    console.log('forge lanes: no real lanes yet.');
+  } else {
+    for (const lane of lanes)
+      console.log(`${lane.laneId} ${lane.status} step=${lane.stepId ?? '-'}`);
+  }
+  return EXIT_CODES.success;
+}
+
+const LOGS_FLAGS = { '--follow': false, '--lane': true, '--run': true, '--step': true } as const;
+
+/** `forge logs [--step <id>] [--run <id>]` — `--follow` (live-tail) and `--lane <id>` filtering are
+ * both real, already-disclosed gaps in `runLogs` itself (`commands/run/status.ts`'s own doc comment:
+ * "a future piece's own job", and `RunLogsOptions` carries no `laneId` field at all), refused here
+ * rather than silently ignored. `--run <id>` is this dispatcher's own addition (`03` §3.2.4's row
+ * names none, but `runLogs` needs one to resolve when it is not the last run) — defaults to the last
+ * run exactly as `runLogs` itself already does for `undefined`. */
+async function runLogsCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, flags, positionals } = parseCommandFlags(args, LOGS_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  if (flags.has('--follow')) {
+    throw new ForgeError('USR-003', {
+      feature: 'forge logs --follow (no live-tail loop exists yet)',
+    });
+  }
+  if (flags.has('--lane')) {
+    throw new ForgeError('USR-003', {
+      feature: 'forge logs --lane (runLogs only filters by --step today)',
+    });
+  }
+  const runId = values.get('--run');
+  const stepId = values.get('--step');
+  const options = {
+    ...(runId !== undefined ? { runId } : {}),
+    ...(stepId !== undefined ? { stepId } : {}),
+  };
+  for await (const event of runLogs(paths, projectRoot, options)) {
+    console.log(json ? JSON.stringify({ v: 1, event }) : JSON.stringify(event));
+  }
+  return EXIT_CODES.success;
+}
+
+/** Resolves the real run id `gate`/`merge` operate against: an explicit `--run <id>` override
+ * (already parsed by the caller's own `parseCommandFlags` call), or the project's own last-run
+ * pointer (`last-run.json`, written by `runWorkflow` — the identical file `commands/run/status.ts`'s
+ * own private `resolveRunId` and `commands/run/resume.ts`'s own private `readLastRunId` each already
+ * read, neither of which is exported for this dispatcher to reuse directly).
+ * @throws {ForgeError} `RUN-048` when neither is available. */
+async function resolveDispatchRunId(
+  paths: ProjectPaths,
+  explicitRunId: string | undefined,
+): Promise<string> {
+  if (explicitRunId !== undefined) return explicitRunId;
+  const pointer = paths.resolveState('last-run.json');
+  if (!(await pathExists(pointer))) {
+    throw new ForgeError('RUN-048', undefined);
+  }
+  const { runId } = JSON.parse(await readTextFile(pointer)) as { readonly runId: string };
+  return runId;
+}
+
+/** The real, exhaustive flag set each `gate` subcommand accepts — a plain `switch` (not a `Record`
+ * lookup) so a missing/misspelled subcommand narrows to `undefined` without an unsafe index or a
+ * non-null assertion at the call site. */
+function gateSubFlags(sub: string): Readonly<Record<string, boolean>> | undefined {
+  switch (sub) {
+    // `list` alone takes no real `--run` at all -- it never needs a runId (see `runGateCommand`'s own
+    // `sub === 'list'` branch), so accepting one here would only silently do nothing with it, the
+    // identical "recognised but ineffective flag" failure mode `parseCommandFlags` itself exists to
+    // close everywhere else.
+    case 'list':
+      return {};
+    case 'check':
+      return { '--run': true };
+    case 'approve':
+    case 'reject':
+      return { '--run': true, '--reason': true };
+    case 'waive':
+      return { '--run': true, '--reason': true, '--owner': true, '--expires': true };
+    default:
+      return undefined;
+  }
+}
+
+async function runGateCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const subFlags = sub === undefined ? undefined : gateSubFlags(sub);
+  if (sub === undefined || subFlags === undefined) {
+    console.error('forge: "gate" needs a real subcommand (list|check|approve|reject|waive).');
+    return EXIT_CODES.usage;
+  }
+  const { values, positionals } = parseCommandFlags(rest, subFlags);
+
+  // `list` alone needs no real run id at all -- `gateList` only ever reads `ctx.paths`/`ctx.checksRoot`
+  // (`commands/run/gate-commands.ts`), so it must not force a real prior `forge run` to exist just to
+  // enumerate this project's own registered gate definitions.
+  if (sub === 'list') {
+    if (positionals.length > 0) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+    }
+    const gates = await gateList({ paths, projectRoot, checksRoot: CHECKS_ROOT, runId: '' });
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, gates })
+        : gates.map((gate) => gate.id).join('\n') || 'forge gate list: no real gates.',
+    );
+    return EXIT_CODES.success;
+  }
+
+  const gateId = positionals[0];
+  if (gateId === undefined || positionals.length > 1) {
+    console.error(`forge: "gate ${sub}" needs exactly one real <gate> id.`);
+    return EXIT_CODES.usage;
+  }
+  const runId = await resolveDispatchRunId(paths, values.get('--run'));
+  const ctx: GateCommandContext = { paths, projectRoot, checksRoot: CHECKS_ROOT, runId };
+
+  if (sub === 'check') {
+    const report = await gateCheck(ctx, gateId);
+    console.log(
+      json ? JSON.stringify({ v: 1, report }) : `${gateId}: passed=${String(report.passed)}`,
+    );
+    return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
+  }
+  if (sub === 'approve') {
+    const reason = values.get('--reason');
+    await gateApprove(ctx, gateId, reason);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, gateId, recorded: true })
+        : `forge gate approve ${gateId}: recorded.`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'reject') {
+    const reason = values.get('--reason');
+    if (reason === undefined) {
+      console.error('forge: "gate reject" needs --reason <text>.');
+      return EXIT_CODES.usage;
+    }
+    await gateReject(ctx, gateId, reason);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, gateId, recorded: true })
+        : `forge gate reject ${gateId}: recorded.`,
+    );
+    return EXIT_CODES.success;
+  }
+  // `sub === 'waive'`: the only remaining case `gateSubFlags` returns a real flag set for.
+  const reason = values.get('--reason');
+  const owner = values.get('--owner');
+  const expiresAt = values.get('--expires');
+  if (reason === undefined || owner === undefined || expiresAt === undefined) {
+    console.error('forge: "gate waive" needs --reason <text> --owner <name> --expires <iso-date>.');
+    return EXIT_CODES.usage;
+  }
+  const report = await gateWaive(ctx, gateId, { reason, owner, expiresAt });
+  console.log(
+    json ? JSON.stringify({ v: 1, report }) : `${gateId}: passed=${String(report.passed)}`,
+  );
+  return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
+}
+
+const MERGE_FLAGS = { '--lane': true, '--all': false, '--abort': false, '--run': true } as const;
+
+async function runMergeCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, flags, positionals } = parseCommandFlags(args, MERGE_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  if (flags.has('--abort')) {
+    mergeAbort();
+  }
+  const laneId = values.get('--lane');
+  const all = flags.has('--all');
+  if (laneId === undefined && !all) {
+    console.error('forge: "merge" needs --lane <id> or --all.');
+    return EXIT_CODES.usage;
+  }
+
+  const config = await readConfig(paths);
+  const runId = await resolveDispatchRunId(paths, values.get('--run'));
+  const integrationBranch = config.execution.integrationBranch.replace('{stage}', 'current');
+  const integrationPath = await ensureIntegrationWorktree(
+    paths,
+    projectRoot,
+    integrationBranch,
+    'main',
+  );
+  const ctx: MergeContext = { paths, projectRoot, runId, integrationPath };
+
+  if (all) {
+    const results = await mergeAllReady(ctx);
+    console.log(json ? JSON.stringify({ v: 1, results }) : JSON.stringify(results, null, 2));
+    const anyFailed = results.some(
+      (result) => result.outcome.kind !== 'clean' && result.outcome.kind !== 'conflict-resolved',
+    );
+    return anyFailed ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  // `laneId` is real here: `all` is `false` and the guard above already refused the only other case.
+  const outcome = await mergeLane(ctx, laneId ?? '');
+  console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
+  return outcome.kind === 'clean' || outcome.kind === 'conflict-resolved'
+    ? EXIT_CODES.success
+    : EXIT_CODES.failure;
 }
 
 function isValidateRuleId(value: string | undefined): value is ValidateRuleId {
@@ -364,6 +1005,57 @@ async function main(): Promise<number> {
       return 2;
     }
     return runTestFlakyCommand(paths, flags.json);
+  }
+
+  // `afterCommand` (unlike `sub`/`rest` above) makes no assumption that the token right after the
+  // command is a literal subcommand keyword — `forge run <workflow>`/`forge resume [runId]` both put
+  // a real, free-form id (or nothing at all) in that position, and `forge merge`'s own flags
+  // (`--lane`/`--all`/`--abort`) can appear with no positional before them at all. Every branch below
+  // parses its own slice of this locally, the same "each command owns its own local flag-finding"
+  // precedent `findRuleFlag`/`findRawTestRuleFlag` above already establish, rather than forcing every
+  // new command's own argument shape through the `[command, sub, ...rest]` destructure above, which
+  // fits only the closed-subcommand-keyword shape `agent`/`workflow`/`template`/`spec`/`test` all share.
+  const afterCommand = flags.positionals.slice(1);
+
+  if (command === 'init') {
+    return runInitCommand(afterCommand, flags.yes, flags.json);
+  }
+  if (command === 'run') {
+    const [workflowId, ...runRest] = afterCommand;
+    return runRunCommand(paths, projectRoot, workflowId, runRest, flags.dryRun, flags.json);
+  }
+  if (command === 'resume') {
+    return runResumeCommand(
+      paths,
+      projectRoot,
+      parseOptionalRunIdPositional(afterCommand),
+      flags.json,
+    );
+  }
+  if (command === 'pause') {
+    assertNoArgs(afterCommand);
+    return runPauseCommand(paths, flags.json);
+  }
+  if (command === 'abort') {
+    return runAbortCommand(paths, parseOptionalRunIdPositional(afterCommand), flags.json);
+  }
+  if (command === 'lanes') {
+    return runLanesCommand(
+      paths,
+      projectRoot,
+      parseOptionalRunIdPositional(afterCommand),
+      flags.json,
+    );
+  }
+  if (command === 'logs') {
+    return runLogsCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'gate') {
+    const [gateSub, ...gateRest] = afterCommand;
+    return runGateCommand(paths, projectRoot, gateSub, gateRest, flags.json);
+  }
+  if (command === 'merge') {
+    return runMergeCommand(paths, projectRoot, afterCommand, flags.json);
   }
 
   console.error(

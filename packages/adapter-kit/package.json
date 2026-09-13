@@ -9,7 +9,8 @@
     "./events": "./src/events/index.ts",
     "./grants": "./src/grants/index.ts",
     "./control-tokens": "./src/control-tokens/index.ts",
-    "./conformance": "./src/conformance/index.ts"
+    "./conformance": "./src/conformance/index.ts",
+    "./registry": "./src/registry.ts"
   },
   "engines": {
     "node": ">=20.10"

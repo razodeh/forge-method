@@ -167,6 +167,27 @@ const DETERMINISM_SYNTAX_RULES = [
 ];
 
 /**
+ * `bin.ts`'s own narrowed R10 carve-out (`PLAN-M12.md` P1) — filtered from `DETERMINISM_SYNTAX_RULES`
+ * by message text rather than hand-copied, so every other real selector in that array (the time bans,
+ * the random bans, the alias ban, the computed-key ban, the unsorted-listing ban, every locale ban)
+ * still applies here and is inherited automatically if a new one is ever added there. Only the two
+ * selectors this one file's own real composition-root role genuinely needs relaxed are removed:
+ * `process.env` (a real ambient environment snapshot has to originate somewhere, and this is the one
+ * process that receives it directly, per `bin/forge.mjs`'s own inherited-`stdio`/`env` spawn) and host
+ * facts (`os.hostname()`, for `RunWorkflowOptions.host`/`ResumeOptions.host`) — a fresh critic round
+ * caught a first draft of this carve-out turning the *whole* rule off for this file instead, silently
+ * also lifting the `Math.random()`/crypto-randomness/`Date.now()`/alias/computed-key/listing/locale
+ * bans this file has no real reason to need lifted, the identical over-broad-exemption mistake this
+ * same config file's own `system-temp.ts` override comment already names and rejects for a different
+ * rule.
+ */
+const BIN_TS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
+  (rule) =>
+    !rule.message.includes('process.env directly') &&
+    !rule.message.includes('host facts vary by machine'),
+);
+
+/**
  * QUALITY-BAR.md R11: cross-platform correctness — disk paths are composed with `node:path`, never
  * by concatenating a literal `/` separator, which is wrong on Windows. Not folded into
  * `DETERMINISM_SYNTAX_RULES` above: that array applies everywhere, and a global ban on `'/'` in a
@@ -479,9 +500,21 @@ export default tseslint.config(
     // identical "command entry points print to the console" carve-out `scripts/*.mjs` already gets
     // above, narrowed to this exact file by name rather than a `packages/cli/src/**` glob that would
     // silently relax the rule for every other real command module in this package too.
+    //
+    // `no-restricted-syntax` (R10) joins that same carve-out as of `PLAN-M12.md` P1, for the identical
+    // reason the comment above line 412 of this file already names but never actually wired onto this
+    // file's own name: "the test harness and the launcher are the layer that *pins* the clock, the
+    // locale and the environment... R10 constrains production code" — this file is that launcher's
+    // real composition root (`bin/forge.mjs` spawns it directly), the one place a real ambient
+    // environment snapshot (`RunInitDeps.env`/`PlatformAdapter` construction) and a real per-invocation
+    // host fact (`RunWorkflowOptions.host`/`ResumeOptions.host`, `commands/run/lock.ts`'s own real
+    // per-machine `RunLock.host`) must originate, with nothing above it left to inject either from. No
+    // other file in `packages/cli/src/**` gets this relaxed — every command module downstream of this
+    // one still takes both as real, injected parameters, exactly as R10 asks.
     files: ['packages/cli/src/bin.ts'],
     rules: {
       'no-console': 'off',
+      'no-restricted-syntax': ['error', ...BIN_TS_DETERMINISM_SYNTAX_RULES],
     },
   },
   {

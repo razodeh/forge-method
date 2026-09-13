@@ -188,6 +188,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@forge/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapter-claude-code
       '@forge/adapter-kit':
         specifier: workspace:*
         version: link:../adapter-kit
@@ -319,6 +322,9 @@ importers:
       '@forge/schemas':
         specifier: workspace:*
         version: link:../schemas
+      '@forge/templates':
+        specifier: workspace:*
+        version: link:../templates
       '@forge/testkit':
         specifier: workspace:*
         version: link:../testkit
@@ -340,10 +346,6 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
-    devDependencies:
-      '@forge/templates':
-        specifier: workspace:*
-        version: link:../templates
 
   packages/kb:
     dependencies:

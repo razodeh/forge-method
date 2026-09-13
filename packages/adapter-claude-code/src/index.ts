@@ -37,3 +37,4 @@ export {
   type SdkTransportModule,
   type LoadSdkTransport,
 } from './adapter.ts';
+export { createAdapter } from './create-adapter.ts';

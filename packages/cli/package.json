@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@forge/adapter-claude-code": "workspace:*",
     "@forge/adapter-kit": "workspace:*",
     "@forge/agents": "workspace:*",
     "@forge/core": "workspace:*",
