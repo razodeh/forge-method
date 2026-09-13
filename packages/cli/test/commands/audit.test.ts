@@ -194,6 +194,10 @@ describe('auditReport', () => {
     expect(text).toContain('run-corrupt');
   });
 
+  // `canTestPermissionFailures` (top of file): chmod 0o000 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely, so neither platform would exercise the real
+  // permission-denial failure this test targets — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     'wraps a genuine TelemetryError escaping queryAuditEvents (e.g. an unreadable runs/ directory itself) into a real, registered RUN-076, not a raw TelemetryError',
     async () => {

@@ -312,6 +312,9 @@ describe('enforceClaim', () => {
     );
   });
 
+  // POSIX permission bits only, and never as root — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for why: chmod 0o555 has no Windows ACL equivalent that blocks git's own unlink the
+  // same way, and root bypasses the permission check entirely.
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'strict: reverts every file it can even when one fails, and the thrown error names both what failed and what still succeeded',
     async () => {
@@ -352,6 +355,9 @@ describe('enforceClaim', () => {
     },
   );
 
+  // POSIX permission bits only, and never as root — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for why: chmod 0o555 has no Windows ACL equivalent that blocks git's own unlink the
+  // same way, and root bypasses the permission check entirely.
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'strict: the thrown error reports "(none)" reverted when every out-of-claim file fails',
     async () => {

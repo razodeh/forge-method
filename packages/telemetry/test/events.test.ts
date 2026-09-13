@@ -620,6 +620,9 @@ describe('readEvents', () => {
     },
   );
 
+  // `canTestPermissionFailures` (top of file): chmod 0o000 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     'propagates a genuine, non-ENOENT read failure as a TelemetryError, not silently treated as "no log yet"',
     async () => {
@@ -653,6 +656,9 @@ describe('readEvents', () => {
 });
 
 describe('appendEvent — resilience', () => {
+  // `canTestPermissionFailures` (top of file): chmod 0o400 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     'a failed append (after successfully determining the next seq from a pre-existing file) does not wedge the per-run queue for a later, successful append',
     async () => {
@@ -691,6 +697,9 @@ describe('appendEvent — resilience', () => {
     },
   );
 
+  // `canTestPermissionFailures` (top of file): chmod 0o000 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     'determineLastSeq propagates a genuine, non-ENOENT read failure as a TelemetryError',
     async () => {
@@ -722,6 +731,9 @@ describe('appendEvent — resilience', () => {
     },
   );
 
+  // `canTestPermissionFailures` (top of file): chmod 0o500 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     "a failed mkdir for a brand-new run's own directory is wrapped as a TelemetryError, not left as a bare Node error",
     async () => {
@@ -845,6 +857,9 @@ describe('torn trailing write recovery', () => {
     expect(raw).not.toContain('RunCom');
   });
 
+  // `canTestPermissionFailures` (top of file): chmod 0o400 has no Windows ACL equivalent, and root
+  // ignores POSIX permission bits entirely — see `packages/vcs/test/git.test.ts`'s identical
+  // precedent for the same class of mechanism.
   it.skipIf(!canTestPermissionFailures)(
     'wraps a failure to recover a torn trailing write as a TelemetryError, not a bare Node error',
     async () => {
