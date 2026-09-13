@@ -27,10 +27,13 @@
  * `init` and the whole `run`/`resume`/`pause`/`abort`/`lanes`/`logs`/`gate`/`merge` execution family
  * are wired below by `PLAN-M12.md` P1 — `specs/22` M12's own "the real CLI dispatcher is this
  * milestone's own first, blocking subsystem" finding (SC1-SC3/SC7's own literal proof commands).
- * `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` and the remaining
- * `kb`/`spec`/`adr`/`diagram`/`customize`/`compile`/`preset`/`skill`/`mcp`/`help`/`module`/`overlay`/
- * `upgrade`/`export`/`doctor`/`audit`/`config`/`cost`/`uninstall` surface is `PLAN-M12.md` P2-P4's own
- * mandate, still unwired here.
+ * `module add/remove/update`, `overlay add`, `upgrade`, `export`, `doctor`, `audit`, `config
+ * get/set/edit`, `cost`, and `uninstall` are wired below by `PLAN-M12.md` P2 — M10/M11's own real
+ * distribution, security, and lifecycle surface (SC9's own literal proof command). `implement`/
+ * `debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` and the remaining `kb`/`spec`/`adr`/
+ * `diagram`/`customize`/`compile`/`preset`/`skill`/`mcp`/`help`, plus `module list/info` and
+ * `overlay list/remove/update/explain/diff/doctor/eject` (real `03` §3.2.8 rows this piece's own
+ * literal Surface line does not name), remain `PLAN-M12.md` P4's own mandate, still unwired here.
  *
  * @see specs/22 M6
  * @see specs/22 M8
@@ -39,6 +42,7 @@
  * @see PLAN-M8.md P2
  * @see PLAN-M8.md P4
  * @see PLAN-M12.md P1
+ * @see PLAN-M12.md P2
  */
 import os from 'node:os';
 import path from 'node:path';
@@ -52,7 +56,33 @@ import type { ExpressionContext } from '@forge/engine/expr';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
-import { readConfig } from './commands/config.ts';
+import { auditReport, formatAuditReport, type AuditCommandContext } from './commands/audit.ts';
+import {
+  configEdit,
+  configGet,
+  configSet,
+  readConfig,
+  type ConfigCommandContext,
+} from './commands/config.ts';
+import { costReport, type CostCommandContext } from './commands/cost.ts';
+import { runDoctor } from './commands/doctor/index.ts';
+import {
+  exportHtml,
+  exportMarkdownBundle,
+  exportThirdParty,
+  type ExportCommandContext,
+} from './commands/export.ts';
+import {
+  moduleAdd,
+  moduleRemove,
+  moduleUpdate,
+  type InstallChangeReport,
+  type InstallOptions,
+  type ModuleCommandContext,
+} from './commands/module.ts';
+import { overlayAdd, type OverlayCommandContext } from './commands/overlay.ts';
+import { uninstall } from './commands/uninstall.ts';
+import { runUpgrade } from './commands/upgrade/index.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
@@ -84,7 +114,7 @@ import {
 } from './commands/run/index.ts';
 import { runStatusJson } from './commands/run/status.ts';
 import { parseInitFlags } from './init/parse-init-flags.ts';
-import { resolvePackageRoot } from './init/package-root.ts';
+import { readPackageVersion, resolvePackageRoot } from './init/package-root.ts';
 import { runInit } from './init/run-init.ts';
 import {
   specValidateRule,
@@ -203,6 +233,15 @@ function realNow(): number {
   return Date.parse(SYSTEM_CLOCK.now());
 }
 
+/** The real, running Node version — `forge doctor`/`forge upgrade`'s own `processVersion` input
+ * (`DoctorOptions`/`UpgradeDeps`), read once, here, and threaded through as a real, injected parameter
+ * from there on (never read ambiently inside `runDoctor`/`runUpgrade` themselves) — the identical
+ * `realEnvSnapshot`/`realNow` precedent immediately above, named the same way for the same reason: one
+ * real boundary read per ambient fact, never re-read inline at each call site. */
+function realProcessVersion(): string {
+  return process.version;
+}
+
 /** Every real candidate `forge init` offers `selectPlatform` — every module `@forge/adapter-kit/
  * registry`'s own `KNOWN_ADAPTER_MODULES` names, each loaded and constructed dynamically (see this
  * section's own top doc comment for why this can never be a literal, direct import instead). Real,
@@ -245,6 +284,40 @@ async function buildAdapterForConfig(
   }
   const factory = await loadAdapterFactory(spec.packageName);
   return factory({ env, now: realNow, config: config.platform.adapterConfig[spec.id] });
+}
+
+/** `forge doctor`/`forge upgrade`'s own real, degraded adapter-construction path — unlike `run`/
+ * `resume`/`merge` (which genuinely cannot proceed without a real adapter, so `buildAdapterForConfig`'s
+ * own `ENV-004` throw is the right, loud failure there), `doctor`'s entire job is diagnosing exactly
+ * this one narrow environment problem: `checkPlatformAdapter(undefined, ...)` already has a real,
+ * honest degraded outcome for "no adapter" — a `warning`, not a `hard` failure — precisely so a
+ * project whose `platform.primary` names an id this registry cannot construct (a stale/foreign value,
+ * a test fixture built against `@forge/testkit`'s own `FakePlatformAdapter`, never a real registry
+ * entry) still gets a real, runnable `forge doctor` instead of an opaque `ENV-004` crash on the one
+ * command whose whole purpose is surfacing environment problems like this.
+ *
+ * **Scoped narrowly to exactly that one, named `ENV-004` case — never a blanket catch.** A genuine
+ * construction *crash* for a different reason (`loadAdapterFactory`'s own dynamic `import()` failing
+ * on a corrupted or incompatible adapter package, or a factory throwing for a reason unrelated to
+ * `platform.primary`) still propagates as a real, loud failure here, identically to how
+ * `buildAdapterForConfig` already behaves, unguarded, for `run`/`resume`/`merge` above — this function
+ * does not invent a broader "swallow every adapter-construction error" contract `doctor`'s own
+ * `runDoctor`/`DoctorCheck` shape has no real per-check slot to route such a crash into anyway (that
+ * would need `runDoctor` itself extended with a new construction-failure check, out of this piece's own
+ * scope). A genuine construction *success* whose `preflight()` then fails (the real CLI binary missing
+ * from `PATH`) is still reported as the real, hard failure `checkPlatformAdapter` already gives it —
+ * only the one named `ENV-004` construction failure is degraded here, never a preflight result and
+ * never any other exception shape. */
+async function buildAdapterForDiagnostics(
+  config: ForgeConfig,
+  env: Readonly<Record<string, string>>,
+): Promise<PlatformAdapter | undefined> {
+  try {
+    return await buildAdapterForConfig(config, env);
+  } catch (error) {
+    if (isForgeError(error) && error.code === 'ENV-004') return undefined;
+    throw error;
+  }
 }
 
 async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string): Promise<RunDeps> {
@@ -930,6 +1003,451 @@ async function runTestFlakyCommand(paths: ProjectPaths, json: boolean): Promise<
     : 0;
 }
 
+// ---------------------------------------------------------------------------------------------
+// `module`/`overlay`/`upgrade`/`export`/`doctor`/`audit`/`config`/`cost`/`uninstall` — `PLAN-M12.md`
+// P2's own real distribution, security, and lifecycle surface.
+// ---------------------------------------------------------------------------------------------
+
+/** Strips C0 control characters, `DEL`, and the whole C1 range (`\x00`-`\x1f`, `\x7f`-`\x9f` —
+ * contiguous once `DEL` and C1 are combined) from untrusted text before it reaches either a real
+ * terminal or a `--json` consumer. `report.newGrants`/`.warnings` below originate from a fetched
+ * module's/overlay's own `module.yaml`/`overlay.yaml` — real, hostile-author-controlled free text
+ * (`moduleEntries`'s own `ceilings.<role>.exec`/`.allowlistHosts` patterns, `@forge/extensions/module`'s
+ * own schema has no charset restriction on them) on exactly the git/npm-fetch install path the
+ * consent screen exists to guard (`19` §19.5 step 3), never validated against a printable-only
+ * charset upstream. A fresh critic round found a crafted `ESC` sequence embedded in a capability
+ * pattern could otherwise overwrite or hide the very consent-relevant lines a human operator is meant
+ * to read before typing `--yes`.
+ *
+ * **Applied to both output modes, not only the human-readable one.** An earlier version of this fix
+ * stripped only the plain-text rendering below, reasoning that `JSON.stringify` already escapes every
+ * control character into a literal, harmless `\uXXXX` sequence — a second critic round proved that
+ * reasoning false by direct inspection: `JSON.stringify` escapes only `U+0000`-`U+001F` (plus `"`/`\`)
+ * per ECMA-262; `DEL` (`\x7f`) and the entire C1 block (`\x80`-`\x9f`, `CSI`'s own 8-bit form `\x9b`
+ * included) pass through a JSON string completely unescaped as raw bytes, leaving `--json` output
+ * exactly as exposed as the un-fixed plain-text path was. Sanitizing the report's own fields once,
+ * before either renderer sees them, is what actually closes both paths with one real fix instead of
+ * two divergent ones that can drift. */
+function stripControlChars(text: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them.
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+}
+
+/** Applies `stripControlChars` to every real, untrusted free-text field an `InstallChangeReport`
+ * carries — `id`/`version`/`resolvedSetDelta` are all schema- or pattern-validated upstream
+ * (`OVERLAY_ID_PATTERN`, a real semver, a real id already present in the trusted manifest) and need no
+ * sanitizing; only `newGrants`/`warnings` are unconstrained free text a hostile bundle author controls
+ * directly. */
+function sanitizeInstallChangeReportForDisplay(report: InstallChangeReport): InstallChangeReport {
+  return {
+    ...report,
+    newGrants: report.newGrants.map(stripControlChars),
+    warnings: report.warnings.map(stripControlChars),
+  };
+}
+
+/** A real, human-readable rendering of one `moduleAdd`/`moduleRemove`/`moduleUpdate`/`overlayAdd`
+ * outcome — the identical fields `--json` mode reports verbatim, just not silently dropped for a
+ * human running this interactively. Takes an already-`sanitizeInstallChangeReportForDisplay`'d report
+ * — never sanitizes its own input, so this alone is not safe to call directly on a raw report. */
+function renderInstallChangeReport(report: InstallChangeReport): string {
+  const lines: string[] = [
+    `forge: ${report.action} ${report.id}${report.version === undefined ? '' : ` v${report.version}`}.`,
+  ];
+  if (report.resolvedSetDelta.added.length > 0) {
+    lines.push(`  added to the resolved set: ${report.resolvedSetDelta.added.join(', ')}`);
+  }
+  if (report.resolvedSetDelta.removed.length > 0) {
+    lines.push(`  removed from the resolved set: ${report.resolvedSetDelta.removed.join(', ')}`);
+  }
+  for (const grant of report.newGrants) lines.push(`  new capability grant: ${grant}`);
+  for (const warning of report.warnings) lines.push(`  warning: ${warning}`);
+  return lines.join('\n');
+}
+
+function printInstallChangeReport(report: InstallChangeReport, json: boolean): void {
+  const sanitized = sanitizeInstallChangeReportForDisplay(report);
+  console.log(
+    json ? JSON.stringify({ v: 1, report: sanitized }) : renderInstallChangeReport(sanitized),
+  );
+}
+
+/** A fresh, real `InstallOptions` for one `module`/`overlay` command invocation — `workDir` is a real,
+ * process-unique scratch path (`createSystemTempPath`, the identical real seam `test run`'s own
+ * wiring above already uses) a git/npm-channel fetch needs; the local channel never touches it.
+ * `consent.yes` mirrors the global `--yes` flag exactly like every other destructive real operation in
+ * this dispatcher (`runInit`/`uninstall` below) — without it, a real interactive prompt still runs,
+ * reading this process's own real stdin/stdout (`promptForConsent`'s own default), never faked or
+ * silently auto-granted. */
+function buildInstallOptions(projectRoot: string, yes: boolean, json: boolean): InstallOptions {
+  return {
+    workDir: createSystemTempPath('forge-install'),
+    npmCwd: projectRoot,
+    forgeVersion: readPackageVersion('@forge/agents'),
+    consent: { yes, json },
+  };
+}
+
+/** `forge module <add|remove|update>` (`19` §19.5, `03` §3.2.8) — `list`/`info` are real,
+ * already-tested functions (`moduleList`/`moduleInfo`) this piece's own mandate (`PLAN-M12.md` P2's
+ * literal Surface line) does not name; disclosed as still-unwired here (`PLAN-M12.md` P4's own
+ * remaining-commands mandate), never silently completed. */
+async function runModuleCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  yes: boolean,
+  json: boolean,
+): Promise<number> {
+  const ctx: ModuleCommandContext = { paths, modulesDir: resolveModulesDir() };
+  const options = buildInstallOptions(projectRoot, yes, json);
+
+  if (sub === 'add') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id, source] = positionals;
+    if (id === undefined || source === undefined || positionals.length > 2) {
+      console.error('forge: "module add" needs a real <id> <source>.');
+      return EXIT_CODES.usage;
+    }
+    printInstallChangeReport(await moduleAdd(ctx, id, source, options), json);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'remove') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "module remove" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    printInstallChangeReport(await moduleRemove(ctx, id), json);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'update') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id, source] = positionals;
+    if (id === undefined || source === undefined || positionals.length > 2) {
+      console.error('forge: "module update" needs a real <id> <source>.');
+      return EXIT_CODES.usage;
+    }
+    printInstallChangeReport(await moduleUpdate(ctx, id, source, options), json);
+    return EXIT_CODES.success;
+  }
+  console.error(
+    `forge: "module ${sub ?? ''}" needs a real subcommand this dispatcher wires yet (add|remove|update).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+/** `forge overlay add <source>` (`19` §19.5, `03` §3.2.8) — `list`/`remove`/`update`/`explain`/`diff`/
+ * `doctor`/`eject` are real `03` §3.2.8 rows this piece's own mandate does not name (`overlayExplain`
+ * already exists and is real, but wiring it is `PLAN-M12.md` P4's own job, not this one's). */
+async function runOverlayCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  yes: boolean,
+  json: boolean,
+): Promise<number> {
+  if (sub !== 'add') {
+    console.error(
+      `forge: "overlay ${sub ?? ''}" needs a real subcommand this dispatcher wires yet (add).`,
+    );
+    return EXIT_CODES.usage;
+  }
+  const { positionals } = parseCommandFlags(rest, {});
+  const [source] = positionals;
+  if (source === undefined || positionals.length > 1) {
+    console.error('forge: "overlay add" needs a real <source>.');
+    return EXIT_CODES.usage;
+  }
+  const ctx: OverlayCommandContext = { paths };
+  const options = buildInstallOptions(projectRoot, yes, json);
+  printInstallChangeReport(await overlayAdd(ctx, source, options), json);
+  return EXIT_CODES.success;
+}
+
+const UPGRADE_FLAGS = { '--to': true } as const;
+
+/** `forge upgrade [--to <version>]` (`03` §3.4) — `--dry-run` is already a real global flag
+ * (`parseGlobalFlags`' own `KNOWN_FLAGS`), so it never reaches `rest` here; this only ever parses
+ * `--to`, the one flag `03` §3.4 names that is not already global. */
+async function runUpgradeCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, UPGRADE_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const to = values.get('--to');
+  const config = await readConfig(paths);
+  const env = realEnvSnapshot();
+  const adapter = await buildAdapterForDiagnostics(config, env);
+  const report = await runUpgrade(
+    paths,
+    projectRoot,
+    { dryRun, ...(to !== undefined ? { to } : {}) },
+    {
+      modulesDir: resolveModulesDir(),
+      specsRoot: SPECS_ROOT,
+      config,
+      env,
+      processVersion: realProcessVersion(),
+      ...(adapter !== undefined ? { adapter } : {}),
+    },
+  );
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, report })
+      : `forge upgrade${dryRun ? ' --dry-run' : ''}: ${report.installedVersion} -> ` +
+          `${report.targetVersion} (${String(report.migratedDocuments.length)} documents checked).`,
+  );
+  return report.doctor?.ok === false ? EXIT_CODES.prerequisiteMissing : EXIT_CODES.success;
+}
+
+/** `forge export <target>` (`03` §3.2.7) — `markdown-bundle`/`html` are real; `jira`/`linear`/
+ * `github-issues` are real, dry-run-only refusals (`exportThirdParty`'s own doc comment), surfaced
+ * here verbatim rather than a generic "not wired" message. */
+async function runExportCommand(
+  paths: ProjectPaths,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { positionals } = parseCommandFlags(args, {});
+  const [target] = positionals;
+  if (target === undefined || positionals.length > 1) {
+    console.error(
+      'forge: "export" needs a real <target> (markdown-bundle|html|jira|linear|github-issues).',
+    );
+    return EXIT_CODES.usage;
+  }
+  const ctx: ExportCommandContext = { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+  if (target === 'markdown-bundle') {
+    const content = await exportMarkdownBundle(ctx);
+    console.log(json ? JSON.stringify({ v: 1, target, content }) : content);
+    return EXIT_CODES.success;
+  }
+  if (target === 'html') {
+    const content = await exportHtml(ctx);
+    console.log(json ? JSON.stringify({ v: 1, target, content }) : content);
+    return EXIT_CODES.success;
+  }
+  // `exportThirdParty` is typed `never` (it always throws) — an explicit `return` here, not a bare
+  // statement, makes this function's own reliance on that contract visible at the call site: if a
+  // future edit ever gave `exportThirdParty` a real, normally-returning case, this line would stop
+  // compiling (a `never` is no longer assignable to `Promise<number>`'s resolved `number`) instead of
+  // silently falling through to a missing return with no compiler signal at all.
+  return exportThirdParty(target);
+}
+
+const DOCTOR_FLAGS = { '--fix': false, '--rebuild-index': false } as const;
+
+/** `forge doctor [--fix] [--rebuild-index] [--json]` (`03` §3.7) — the first real CLI wiring this
+ * command has ever had (confirmed by `SPEC-QUESTIONS.md` Q179/Q181, per `PLAN-M12.md`'s own finding).
+ * Exit `5` (`EXIT_CODES.prerequisiteMissing`) iff any hard check still fails after the real checks
+ * (and, with `--fix`, the real fix pass) run — `03` §3.7's own literal "exit code 5 if any hard
+ * prerequisite fails, 0 with warnings otherwise" contract, read directly off `DoctorReport.ok`. */
+async function runDoctorCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { flags, positionals } = parseCommandFlags(args, DOCTOR_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const config = await readConfig(paths);
+  const env = realEnvSnapshot();
+  const adapter = await buildAdapterForDiagnostics(config, env);
+  const report = await runDoctor({
+    paths,
+    projectRoot,
+    config,
+    ...(adapter !== undefined ? { adapter } : {}),
+    env,
+    processVersion: realProcessVersion(),
+    fix: flags.has('--fix'),
+    rebuildIndex: flags.has('--rebuild-index'),
+  });
+  if (json) {
+    console.log(JSON.stringify(report));
+  } else {
+    for (const check of report.checks) {
+      console.log(`${check.ok ? 'ok' : check.severity} ${check.id}: ${check.message}`);
+    }
+    for (const fix of report.fixes ?? []) {
+      console.log(`fix ${fix.applied ? 'applied' : 'not applied'} ${fix.id}: ${fix.message}`);
+    }
+  }
+  return report.ok ? EXIT_CODES.success : EXIT_CODES.prerequisiteMissing;
+}
+
+const AUDIT_FLAGS = { '--since': true } as const;
+
+/** `forge audit [--since <date>] [--json]` (`20` §20.9) — a thin CLI layer over `auditReport`'s own
+ * already-real query/format pipeline; `parseSince`'s own `USR-002` validation is what actually
+ * rejects a malformed `--since` value, surfaced through this dispatcher's own real `main()` catch. */
+async function runAuditCommand(
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, AUDIT_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const since = values.get('--since');
+  const ctx: AuditCommandContext = { projectRoot };
+  const report = await auditReport(ctx, since === undefined ? {} : { since });
+  console.log(json ? JSON.stringify(report) : formatAuditReport(report));
+  return EXIT_CODES.success;
+}
+
+/** `forge config <get|set|edit>` (`03` §3.2.7) — `list`/`explain` are real, already-tested functions
+ * this piece's own mandate does not name; disclosed as still-unwired (`PLAN-M12.md` P4's own
+ * remaining-commands mandate), never silently completed. */
+async function runConfigCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx: ConfigCommandContext = { paths };
+  if (sub === 'get') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [key] = positionals;
+    if (key === undefined || positionals.length > 1) {
+      console.error('forge: "config get" needs a real <key>.');
+      return EXIT_CODES.usage;
+    }
+    const value = await configGet(ctx, key);
+    console.log(json ? JSON.stringify({ v: 1, key, value }) : `${key}: ${JSON.stringify(value)}`);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'set') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [key, value] = positionals;
+    if (key === undefined || value === undefined || positionals.length > 2) {
+      console.error('forge: "config set" needs a real <key> <value>.');
+      return EXIT_CODES.usage;
+    }
+    await configSet(ctx, key, value);
+    // A round-3 critic finding: `configSet` (`commands/config.ts`) real-YAML-parses `value` before
+    // writing (`execution.concurrency 4` stores the real number `4`, not the string `"4"`) — echoing
+    // the raw, unparsed `value` string here made `config set --json`'s own `value` field disagree in
+    // *type* with the identical key's `config get --json` field for the exact same stored data, a real
+    // `--json` stable-contract violation. Reading the real, just-written value back via `configGet`
+    // (rather than re-parsing `value` a second time here) reports what is genuinely on disk, not a
+    // second, independently-derived guess at it.
+    const stored = await configGet(ctx, key);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, key, value: stored })
+        : `forge config set ${key}: ${JSON.stringify(stored)}.`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'edit') {
+    const { positionals } = parseCommandFlags(rest, {});
+    if (positionals.length > 0) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+    }
+    // `configEdit` is typed `never` (it always throws) — an explicit `return`, not a bare statement,
+    // makes this branch's own reliance on that contract visible: see `runExportCommand`'s identical
+    // `exportThirdParty` call for the fuller reasoning.
+    return configEdit();
+  }
+  console.error(
+    `forge: "config ${sub ?? ''}" needs a real subcommand this dispatcher wires yet (get|set|edit).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+const COST_FLAGS = { '--run': true, '--since': true } as const;
+
+/** `forge cost [--run <id>] [--since <date>]` (`03` §3.2.8) — `costReport` always aggregates every
+ * real run this project has ever executed, with no per-run or per-date scoping mechanism at all
+ * (unlike `forge audit`'s own real `queryAuditEvents`, which does support `since`) — both flags are
+ * real, disclosed gaps refused honestly here, the identical "refuse rather than silently ignore or
+ * fabricate" stance `forge logs --follow`/`--lane` already take above, rather than this dispatcher
+ * inventing a filtering mechanism `costReport` itself does not have. See `SPEC-QUESTIONS.md`. */
+async function runCostCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, COST_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  if (values.has('--run')) {
+    throw new ForgeError('USR-003', {
+      feature: 'forge cost --run (costReport has no real per-run scope yet)',
+    });
+  }
+  if (values.has('--since')) {
+    throw new ForgeError('USR-003', {
+      feature: 'forge cost --since (costReport has no real per-date scope yet)',
+    });
+  }
+  const config = await readConfig(paths);
+  const ctx: CostCommandContext = { paths, projectRoot, config };
+  const report = await costReport(ctx);
+  if (json) {
+    console.log(
+      JSON.stringify({
+        v: 1,
+        totalUsd: report.totalUsd,
+        byRun: Object.fromEntries(report.byRun),
+        byAgent: Object.fromEntries(report.byAgent),
+        byModel: Object.fromEntries(report.byModel),
+        budgetStatus: report.budgetStatus,
+      }),
+    );
+  } else {
+    console.log(`forge cost: total=$${report.totalUsd.toFixed(2)} budget=${report.budgetStatus}`);
+    for (const [runId, amount] of report.byRun) {
+      console.log(`  run ${runId}: $${amount.toFixed(2)}`);
+    }
+  }
+  return report.budgetStatus === 'breached' ? EXIT_CODES.budgetExceeded : EXIT_CODES.success;
+}
+
+const UNINSTALL_FLAGS = { '--remove-docs': false } as const;
+
+/** `forge uninstall [--remove-docs]` (`03` §3.2.1) — `--yes` (already global) is required, matching
+ * `uninstall`'s own real `USR-002` refusal without it. */
+async function runUninstallCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  yes: boolean,
+  json: boolean,
+): Promise<number> {
+  const { flags, positionals } = parseCommandFlags(args, UNINSTALL_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const removeDocs = flags.has('--remove-docs');
+  const result = await uninstall(paths, projectRoot, {
+    yes,
+    ...(removeDocs ? { removeDocs: true } : {}),
+  });
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, ...result })
+      : `forge uninstall: removed ${result.removed.join(', ') || '(nothing)'}; backup at ${result.backupDir}.`,
+  );
+  return EXIT_CODES.success;
+}
+
 async function main(): Promise<number> {
   const flags = parseGlobalFlags(process.argv.slice(2));
   const [command, sub, ...rest] = flags.positionals;
@@ -1056,6 +1574,36 @@ async function main(): Promise<number> {
   }
   if (command === 'merge') {
     return runMergeCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'module') {
+    const [moduleSub, ...moduleRest] = afterCommand;
+    return runModuleCommand(paths, projectRoot, moduleSub, moduleRest, flags.yes, flags.json);
+  }
+  if (command === 'overlay') {
+    const [overlaySub, ...overlayRest] = afterCommand;
+    return runOverlayCommand(paths, projectRoot, overlaySub, overlayRest, flags.yes, flags.json);
+  }
+  if (command === 'upgrade') {
+    return runUpgradeCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);
+  }
+  if (command === 'export') {
+    return runExportCommand(paths, afterCommand, flags.json);
+  }
+  if (command === 'doctor') {
+    return runDoctorCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'audit') {
+    return runAuditCommand(projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'config') {
+    const [configSub, ...configRest] = afterCommand;
+    return runConfigCommand(paths, configSub, configRest, flags.json);
+  }
+  if (command === 'cost') {
+    return runCostCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'uninstall') {
+    return runUninstallCommand(paths, projectRoot, afterCommand, flags.yes, flags.json);
   }
 
   console.error(

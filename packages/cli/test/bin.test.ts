@@ -8,7 +8,7 @@
  * @see PLAN-M6.md C9
  */
 import { createRequire } from 'node:module';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,10 @@ import { existsSync } from 'node:fs';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { execa } from 'execa';
+import { ProjectPaths } from '@forge/core/fs';
+import { appendEvent } from '@forge/telemetry/events';
+
+import { acquireRunLock } from '../src/commands/run/lock.ts';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/registry';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
@@ -277,6 +281,18 @@ function run(
     };
     return { status: execError.status ?? 1, stdout: execError.stdout, stderr: execError.stderr };
   }
+}
+
+/** `forge module add`/`forge overlay add --json` print two real, separate JSON lines to stdout, not
+ * one — `promptForConsent`'s own real `--yes --json` auto-accept line (`{description, granted}`),
+ * then this dispatcher's own real `InstallChangeReport` envelope — matching this codebase's own NDJSON
+ * `--json` convention (`03` §3.5's own "JSON... NDJSON events on stdout"), not a single-object
+ * contract. This reads back only the last real line, the one this piece's own report actually is. */
+function lastJsonLine(stdout: string): unknown {
+  const lines = stdout.split('\n').filter((line) => line.trim().length > 0);
+  const last = lines.at(-1);
+  if (last === undefined) throw new Error('expected at least one real JSON line on stdout');
+  return JSON.parse(last);
 }
 
 describe('forge (real subprocess dispatch)', () => {
@@ -750,5 +766,653 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
     };
     expect(typeof parsed.pid).toBe('number');
     expect(parsed.stopped).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// `module`/`overlay`/`upgrade`/`export`/`doctor`/`audit`/`config`/`cost`/`uninstall` — `PLAN-M12.md`
+// P2's own real dispatcher wiring, driven end to end as a real subprocess exactly like every command
+// above.
+// -------------------------------------------------------------------------------------------------
+
+interface ModuleBundleOverrides {
+  readonly forgeVersion?: string;
+  readonly requires?: readonly string[];
+  readonly ceilings?: Record<string, unknown>;
+}
+
+/** A real, minimal, schema-valid `module.yaml` — permissive enough (`forgeVersion: '>=0.0.0'`) to
+ * install against whatever `@forge/agents` version this workspace happens to be running, the same
+ * "no real hardcoded version to keep in sync" reasoning every other real fixture in this file already
+ * follows for its own real content. */
+async function writeModuleBundleFixture(
+  dir: string,
+  id: string,
+  overrides: ModuleBundleOverrides = {},
+): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, 'module.yaml'),
+    YAML.stringify({
+      id,
+      name: `Fixture module ${id}`,
+      version: '1.0.0',
+      forgeVersion: overrides.forgeVersion ?? '>=0.0.0',
+      requires: overrides.requires ?? [],
+      conflicts: [],
+      levels: ['L0', 'L1', 'L2', 'L3'],
+      ceilings: overrides.ceilings ?? {},
+      provides: {},
+    }),
+  );
+}
+
+/** A real, minimal, schema-valid `overlay.yaml` — the overlay-channel counterpart of
+ * `writeModuleBundleFixture` above. */
+async function writeOverlayBundleFixture(dir: string, id: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, 'overlay.yaml'),
+    YAML.stringify({
+      id,
+      name: `Fixture overlay ${id}`,
+      version: '1.0.0',
+      forgeVersion: '>=0.0.0',
+      requiresModules: [],
+    }),
+  );
+}
+
+describe('forge module/overlay add/remove/update (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge module add <id> <source> --yes --json` for real end to end against a real local-channel fixture', async () => {
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-'));
+    dirs.push(bundleDir);
+    await writeModuleBundleFixture(bundleDir, 'acme-fixture-mod');
+
+    const result = run([
+      'module',
+      'add',
+      'acme-fixture-mod',
+      bundleDir,
+      '--yes',
+      '--json',
+      '-C',
+      dir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const parsed = lastJsonLine(result.stdout) as {
+      readonly report: { readonly id: string; readonly action: string };
+    };
+    expect(parsed.report).toMatchObject({ id: 'acme-fixture-mod', action: 'installed' });
+    expect(existsSync(path.join(dir, '.forge/modules/acme-fixture-mod/module.yaml'))).toBe(true);
+  });
+
+  it('refuses `forge module add` without --yes against a non-interactive stdin, exiting non-zero with no write', async () => {
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-noyes-'));
+    dirs.push(bundleDir);
+    await writeModuleBundleFixture(bundleDir, 'acme-noyes-mod');
+
+    const result = run(['module', 'add', 'acme-noyes-mod', bundleDir, '-C', dir]);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(path.join(dir, '.forge/modules/acme-noyes-mod'))).toBe(false);
+  });
+
+  it('exits 2 for `forge module add` with a missing <source>', async () => {
+    const dir = await realProject();
+
+    const result = run(['module', 'add', 'acme-fixture-mod', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('module add');
+  });
+
+  it('exits 2 for a real, unrecognised `forge module <sub>`, naming the real wired subcommands', async () => {
+    const dir = await realProject();
+
+    const result = run(['module', 'list', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('add|remove|update');
+  });
+
+  it('runs `forge module remove <id> --json` for real after a real add', async () => {
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-rm-'));
+    dirs.push(bundleDir);
+    await writeModuleBundleFixture(bundleDir, 'acme-remove-mod');
+    expect(run(['module', 'add', 'acme-remove-mod', bundleDir, '--yes', '-C', dir]).status).toBe(0);
+
+    const result = run(['module', 'remove', 'acme-remove-mod', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly report: { readonly action: string } };
+    expect(parsed.report.action).toBe('removed');
+    expect(existsSync(path.join(dir, '.forge/modules/acme-remove-mod'))).toBe(false);
+  });
+
+  it('runs `forge module update <id> <source> --yes --json` for real after a real add', async () => {
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-up-'));
+    dirs.push(bundleDir);
+    await writeModuleBundleFixture(bundleDir, 'acme-update-mod');
+    expect(run(['module', 'add', 'acme-update-mod', bundleDir, '--yes', '-C', dir]).status).toBe(0);
+
+    const updatedDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-up2-'));
+    dirs.push(updatedDir);
+    await mkdir(updatedDir, { recursive: true });
+    await writeFile(
+      path.join(updatedDir, 'module.yaml'),
+      YAML.stringify({
+        id: 'acme-update-mod',
+        name: 'Fixture module acme-update-mod',
+        version: '2.0.0',
+        forgeVersion: '>=0.0.0',
+        requires: [],
+        conflicts: [],
+        levels: ['L0', 'L1', 'L2', 'L3'],
+        ceilings: {},
+        provides: {},
+      }),
+    );
+
+    const result = run([
+      'module',
+      'update',
+      'acme-update-mod',
+      updatedDir,
+      '--yes',
+      '--json',
+      '-C',
+      dir,
+    ]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly action: string; readonly version: string };
+    };
+    expect(parsed.report).toMatchObject({ action: 'updated', version: '2.0.0' });
+  });
+
+  it('runs `forge overlay add <source> --yes --json` for real end to end against a real local-channel fixture', async () => {
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-overlay-'));
+    dirs.push(bundleDir);
+    await writeOverlayBundleFixture(bundleDir, 'acme-fixture-overlay');
+
+    const result = run(['overlay', 'add', bundleDir, '--yes', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = lastJsonLine(result.stdout) as {
+      readonly report: { readonly id: string; readonly action: string };
+    };
+    expect(parsed.report).toMatchObject({ id: 'acme-fixture-overlay', action: 'installed' });
+    expect(existsSync(path.join(dir, '.forge/overlays/acme-fixture-overlay/overlay.yaml'))).toBe(
+      true,
+    );
+  });
+
+  it('exits 2 for a real, unrecognised `forge overlay <sub>`', async () => {
+    const dir = await realProject();
+
+    const result = run(['overlay', 'list', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('add');
+  });
+
+  it("strips a real, hostile ESC/DEL/C1 sequence out of this dispatcher's own install-change report before printing it, in both plain and --json modes", async () => {
+    // A round-2 critic finding: `describeRequestedCapabilities`'s own `moduleEntries` interpolates a
+    // module's real, unconstrained `ceilings.<role>.exec` pattern verbatim into capability text
+    // (`@forge/extensions/module`'s own schema has no charset restriction on it) — a hostile module
+    // author on this exact git/npm-fetch install path could embed a real ANSI escape/DEL/C1 byte to
+    // corrupt or hide the very consent-relevant report a human is meant to read. This piece's own fix
+    // (`stripControlChars`/`sanitizeInstallChangeReportForDisplay`) only ever sanitizes *this
+    // dispatcher's own* `InstallChangeReport` rendering — `promptForConsent`'s own separate, real
+    // auto-accept banner (`@forge/extensions/install`, a different package, pre-existing behavior this
+    // piece's own ~400-line dispatcher-wiring mandate does not touch) still echoes the raw description
+    // text unsanitized, a real, disclosed, out-of-scope gap recorded in `SPEC-QUESTIONS.md` rather than
+    // silently fixed here. This test therefore asserts only against the report line(s) this dispatcher
+    // itself prints (everything from the real `forge: installed ...` line onward), not the whole
+    // subprocess's stdout.
+    const dir = await realProject();
+    const bundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-hostile-'));
+    dirs.push(bundleDir);
+    const hostilePattern = '\x1b[2Krm -rf *\x7f\x9b';
+    await writeModuleBundleFixture(bundleDir, 'acme-hostile-mod', {
+      ceilings: { backend: { exec: [hostilePattern] } },
+    });
+
+    const plain = run(['module', 'add', 'acme-hostile-mod', bundleDir, '--yes', '-C', dir]);
+    expect(plain.status).toBe(0);
+    const reportIndex = plain.stdout.indexOf('forge: installed');
+    expect(reportIndex).toBeGreaterThanOrEqual(0);
+    const reportText = plain.stdout.slice(reportIndex);
+    expect(reportText).not.toContain('\x1b');
+    expect(reportText).not.toContain('\x7f');
+    expect(reportText).not.toContain('\x9b');
+    expect(reportText).toContain('rm -rf *');
+
+    const jsonBundleDir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-module-hostile2-'));
+    dirs.push(jsonBundleDir);
+    await writeModuleBundleFixture(jsonBundleDir, 'acme-hostile-mod-2', {
+      ceilings: { backend: { exec: [hostilePattern] } },
+    });
+    const jsonResult = run([
+      'module',
+      'add',
+      'acme-hostile-mod-2',
+      jsonBundleDir,
+      '--yes',
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(jsonResult.status).toBe(0);
+    const parsed = lastJsonLine(jsonResult.stdout) as {
+      readonly report: { readonly newGrants: readonly string[] };
+    };
+    const lastLine = jsonResult.stdout.trim().split('\n').at(-1) ?? '';
+    expect(lastLine).not.toContain('\x1b');
+    expect(lastLine).not.toContain('\x7f');
+    expect(lastLine).not.toContain('\x9b');
+    expect(parsed.report.newGrants.some((grant) => grant.includes('rm -rf *'))).toBe(true);
+  });
+});
+
+describe('forge upgrade (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge upgrade --dry-run --json` for real, reporting a real plan and writing nothing', async () => {
+    const dir = await realProject();
+
+    const result = run(['upgrade', '--dry-run', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly dryRun: boolean; readonly backupPath?: string };
+    };
+    expect(parsed.report.dryRun).toBe(true);
+    expect(parsed.report.backupPath).toBeUndefined();
+    expect(existsSync(path.join(dir, '.forge/backups'))).toBe(false);
+  });
+
+  it('runs `forge upgrade --to <version> --dry-run --json` for real, actually pinning the real target version', async () => {
+    // A round-3 critic finding: every other `forge upgrade` test either omits `--to` entirely or
+    // exercises the downgrade-refusal path through a hand-edited manifest, never through `--to` itself
+    // — so `UPGRADE_FLAGS`'s own real `values.get('--to')` -> `runUpgrade` options-object wiring had no
+    // real coverage of its own. `5.0.0` is a genuine, real *upgrade* target (ahead of this workspace's
+    // own real, currently-running `0.0.0`), so this exercises the pin without also tripping CFG-018.
+    const dir = await realProject();
+
+    const result = run(['upgrade', '--to', '5.0.0', '--dry-run', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly targetVersion: string; readonly dryRun: boolean };
+    };
+    expect(parsed.report).toMatchObject({ targetVersion: '5.0.0', dryRun: true });
+  });
+
+  it('runs `forge upgrade --json` for real end to end, writing a real backup and re-running doctor', async () => {
+    const dir = await realProject();
+
+    const result = run(['upgrade', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: {
+        readonly dryRun: boolean;
+        readonly backupPath?: string;
+        readonly doctor?: { readonly ok: boolean };
+      };
+    };
+    expect(parsed.report.dryRun).toBe(false);
+    expect(typeof parsed.report.backupPath).toBe('string');
+    expect(parsed.report.doctor?.ok).toBe(true);
+  });
+
+  it('refuses a real downgrade with a real CFG-018, writing nothing', async () => {
+    // This workspace's own real, currently-running `@forge/agents` version is `0.0.0` (every
+    // package here is still pre-release) — there is no real, parseable version string below that to
+    // pass as `--to`, so a genuine downgrade is instead simulated the other real way `03` §3.4 step 7
+    // means it: a project whose own real `manifest.yaml` already names a version *ahead* of this
+    // CLI's own, e.g. one upgraded by a newer CLI build and now opened by an older one.
+    const dir = await realProject();
+    const manifestPath = path.join(dir, '.forge/manifest.yaml');
+    const manifest = YAML.parse(await readFile(manifestPath, 'utf8')) as {
+      readonly modules: readonly { id: string; version: string }[];
+    };
+    for (const module of manifest.modules) {
+      if (module.id !== '@forge/templates') module.version = '9.9.9';
+    }
+    await writeFile(manifestPath, YAML.stringify(manifest), 'utf8');
+
+    const result = run(['upgrade', '-C', dir]);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(path.join(dir, '.forge/backups'))).toBe(false);
+  });
+});
+
+describe('forge export (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge export markdown-bundle` for real, printing real content to stdout', async () => {
+    const dir = await realProject();
+
+    const result = run(['export', 'markdown-bundle', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.length).toBeGreaterThan(0);
+  });
+
+  it('runs `forge export html --json` for real, printing a real {"v":1,...} envelope', async () => {
+    const dir = await realProject();
+
+    const result = run(['export', 'html', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly target: string;
+      readonly content: string;
+    };
+    expect(parsed.target).toBe('html');
+    expect(parsed.content).toContain('<!doctype html>');
+  });
+
+  it('surfaces the real, already-disclosed USR-003 refusal for `forge export jira` through the real CLI path', async () => {
+    const dir = await realProject();
+
+    const result = run(['export', 'jira', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('not yet supported');
+  });
+
+  it('exits 2 for a real, unrecognised `forge export` target', async () => {
+    const dir = await realProject();
+
+    const result = run(['export', 'not-a-real-target', '-C', dir]);
+
+    expect(result.status).toBe(2);
+  });
+});
+
+/** A real, now-dead pid — a genuine child process spawned and awaited to exit, the identical real
+ * convention `packages/cli/test/commands/run/lock.test.ts`/`corrupt-state.test.ts` already establish
+ * for "a lock naming a dead pid," never a hand-picked magic number. */
+async function spawnDeadPid(): Promise<number> {
+  const child = spawn('node', ['-e', 'process.exit(0)']);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('child process failed to spawn (no pid)');
+  await new Promise((resolve) => child.on('exit', resolve));
+  return pid;
+}
+
+describe('forge doctor (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge doctor --json` for real end to end, exiting 0 against a real, clean project', async () => {
+    const dir = await realProject();
+
+    const result = run(['doctor', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly v: number; readonly ok: boolean };
+    expect(parsed).toMatchObject({ v: 1, ok: true });
+  });
+
+  it("diagnoses a real, live corruption (`21` E10's own stale-lock case) via a plain `forge doctor` run, then genuinely restores it via `--fix`", async () => {
+    const dir = await realProject();
+    const paths = new ProjectPaths(dir);
+    const deadPid = await spawnDeadPid();
+    await acquireRunLock(paths, {
+      pid: deadPid,
+      host: 'bin-corrupt-state-host',
+      runId: 'bin-corrupt-state-run',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    // `stale-lock`'s own real severity is `warning`, not `hard` (`locks-and-worktrees.ts`'s own
+    // `checkStaleLock`) — a plain `forge doctor` run still exits 0 (only a `hard` failure blocks
+    // `DoctorReport.ok`), but the specific check still honestly reports the real corruption.
+    const diagnosed = run(['doctor', '--json', '-C', dir]);
+    expect(diagnosed.status).toBe(0);
+    const diagnosedReport = JSON.parse(diagnosed.stdout) as {
+      readonly checks: readonly { readonly id: string; readonly ok: boolean }[];
+    };
+    expect(diagnosedReport.checks.find((c) => c.id === 'stale-lock')?.ok).toBe(false);
+
+    const fixed = run(['doctor', '--fix', '--json', '-C', dir]);
+    expect(fixed.status).toBe(0);
+    const fixedReport = JSON.parse(fixed.stdout) as {
+      readonly ok: boolean;
+      readonly fixes?: readonly { readonly id: string; readonly applied: boolean }[];
+    };
+    expect(fixedReport.ok).toBe(true);
+    expect(fixedReport.fixes?.find((f) => f.id === 'stale-lock')?.applied).toBe(true);
+  });
+
+  it('exits 2 for a real, unrecognised `forge doctor` flag', async () => {
+    const dir = await realProject();
+
+    const result = run(['doctor', '--forc', '-C', dir]);
+
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge audit (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge audit --json` for real, printing a real, schema-shaped report against a real, event-free project', async () => {
+    const dir = await realProject();
+
+    const result = run(['audit', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly v: number;
+      readonly since: string | null;
+      readonly counts: Record<string, number>;
+      readonly entries: readonly unknown[];
+    };
+    expect(parsed.v).toBe(1);
+    expect(parsed.since).toBeNull();
+    expect(parsed.entries).toEqual([]);
+  });
+
+  it('runs `forge audit --since <date>` for real, echoing the real cutoff back in --json', async () => {
+    const dir = await realProject();
+
+    const result = run(['audit', '--since', '2026-01-01', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly since: string | null };
+    expect(parsed.since).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('exits 2 with a real USR-002 for a real, malformed `forge audit --since` value', async () => {
+    const dir = await realProject();
+
+    const result = run(['audit', '--since', 'not-a-real-date', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--since');
+  });
+});
+
+describe('forge config (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge config get <key> --json` for real against a real, default project config', async () => {
+    const dir = await realProject();
+
+    const result = run(['config', 'get', 'execution.concurrency', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly key: string; readonly value: unknown };
+    expect(parsed.key).toBe('execution.concurrency');
+  });
+
+  it('runs `forge config set <key> <value>` for real, durably writing the real config file', async () => {
+    const dir = await realProject();
+
+    const result = run(['config', 'set', 'execution.concurrency', '7', '-C', dir]);
+    expect(result.status).toBe(0);
+
+    const after = run(['config', 'get', 'execution.concurrency', '--json', '-C', dir]);
+    const parsed = JSON.parse(after.stdout) as { readonly value: number };
+    expect(parsed.value).toBe(7);
+  });
+
+  it('runs `forge config set <key> <value> --json` for real, echoing back the real, type-parsed stored value — not the raw argv string', async () => {
+    // A round-3 critic finding: `configSet` real-YAML-parses `value` before writing (a bare numeric
+    // string becomes a real number on disk), so echoing the untouched argv string back in `--json`
+    // mode disagreed in *type* with `config get --json`'s own field for the identical key —
+    // `"7"` (string) here versus `7` (number) there, a real `--json` stable-contract violation.
+    const dir = await realProject();
+
+    const result = run(['config', 'set', 'execution.concurrency', '7', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly value: number };
+    expect(parsed.value).toBe(7);
+    expect(typeof parsed.value).toBe('number');
+  });
+
+  it('exits 2 with a real USR-002 for `forge config get` against an unknown key', async () => {
+    const dir = await realProject();
+
+    const result = run(['config', 'get', 'not.a.real.key', '-C', dir]);
+
+    expect(result.status).toBe(2);
+  });
+
+  it('surfaces the real, already-disclosed USR-003 refusal for `forge config edit` through the real CLI path', async () => {
+    const dir = await realProject();
+
+    const result = run(['config', 'edit', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('not yet supported');
+  });
+});
+
+describe('forge cost (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('runs `forge cost --json` for real, exiting 0 with a real, zeroed report against a project with no real runs', async () => {
+    const dir = await realProject();
+
+    const result = run(['cost', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly v: number; readonly totalUsd: number };
+    expect(parsed).toMatchObject({ v: 1, totalUsd: 0 });
+  });
+
+  it('surfaces the real, disclosed USR-003 refusal for `forge cost --run`, a real gap in costReport itself', async () => {
+    const dir = await realProject();
+
+    const result = run(['cost', '--run', 'some-run', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('not yet supported');
+  });
+
+  it('surfaces the real, disclosed USR-003 refusal for `forge cost --since`, the symmetric real gap', async () => {
+    const dir = await realProject();
+
+    const result = run(['cost', '--since', '2026-01-01', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('not yet supported');
+    expect(result.stderr).toContain('--since');
+  });
+
+  it('exits with a real EXIT_CODES.budgetExceeded (4) for `forge cost --json` against a real, over-budget project', async () => {
+    // `DEFAULT_CONFIG`'s own real `budget.dailyUsd` cap is $100 (`packages/schemas/src/config/
+    // defaults.ts`) — a single real `UsageRecorded` event well past that, appended directly to a real
+    // run's own real event log (the identical fixture shape `packages/cli/test/commands/cost.test.ts`
+    // already establishes), gives `costReport`'s own real `checkBudget` a genuine `'breached'` status
+    // to report, proving the real exit-code mapping this dispatcher itself adds rather than only its
+    // vacuous, always-`'ok'`, no-runs-yet happy path above.
+    const dir = await realProject();
+    await appendEvent(dir, 'run-breach', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-breach',
+      type: 'UsageRecorded',
+      stepId: 'story-001:implement',
+      agentId: 'engineer',
+      payload: {
+        model: 'test-model-1',
+        platform: 'anthropic',
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        costUsd: 250,
+        estimated: false,
+        durationMs: 1000,
+      },
+    });
+
+    const result = run(['cost', '--json', '-C', dir]);
+
+    expect(result.status).toBe(4);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly totalUsd: number;
+      readonly budgetStatus: string;
+    };
+    expect(parsed).toMatchObject({ totalUsd: 250, budgetStatus: 'breached' });
+  });
+});
+
+describe('forge uninstall (real subprocess dispatch, PLAN-M12.md P2)', () => {
+  it('exits non-zero for `forge uninstall` with no real --yes, removing nothing', async () => {
+    const dir = await realProject();
+
+    const result = run(['uninstall', '-C', dir]);
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(path.join(dir, '.forge'))).toBe(true);
+  });
+
+  it('runs `forge uninstall --yes --json` for real end to end, removing .forge/ and writing a real backup', async () => {
+    const dir = await realProject();
+
+    const result = run(['uninstall', '--yes', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly removed: readonly string[];
+      readonly backupDir: string;
+    };
+    expect(parsed.removed).toContain('.forge');
+    expect(existsSync(path.join(dir, '.forge'))).toBe(false);
+    expect(existsSync(parsed.backupDir)).toBe(true);
+    dirs.push(parsed.backupDir);
+  });
+
+  it('runs `forge uninstall --yes --remove-docs --json` for real, also removing docs/forge/', async () => {
+    const dir = await realProject();
+    await mkdir(path.join(dir, 'docs/forge'), { recursive: true });
+    await writeFile(path.join(dir, 'docs/forge/marker.md'), 'fixture', 'utf8');
+
+    const withoutFlag = run(['uninstall', '--yes', '--json', '-C', dir]);
+    expect(withoutFlag.status).toBe(0);
+    // A plain `--yes` (no `--remove-docs`) leaves `docs/forge/` alone — the real, opt-in scope
+    // `uninstall`'s own `removeDocs` option documents.
+    expect(existsSync(path.join(dir, 'docs/forge'))).toBe(true);
+    const withoutFlagParsed = JSON.parse(withoutFlag.stdout) as { readonly backupDir: string };
+    dirs.push(withoutFlagParsed.backupDir);
+
+    // `.forge/` is already gone from the run above -- re-init it so a second, real uninstall pass has
+    // something real to remove alongside `docs/forge/` this time.
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(DEFAULT_CONFIG), 'utf8');
+
+    const result = run(['uninstall', '--yes', '--remove-docs', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly removed: readonly string[];
+      readonly backupDir: string;
+    };
+    expect(parsed.removed).toEqual(expect.arrayContaining(['.forge', 'docs/forge']));
+    expect(existsSync(path.join(dir, 'docs/forge'))).toBe(false);
+    dirs.push(parsed.backupDir);
   });
 });
