@@ -29,11 +29,21 @@
  * milestone's own first, blocking subsystem" finding (SC1-SC3/SC7's own literal proof commands).
  * `module add/remove/update`, `overlay add`, `upgrade`, `export`, `doctor`, `audit`, `config
  * get/set/edit`, `cost`, and `uninstall` are wired below by `PLAN-M12.md` P2 — M10/M11's own real
- * distribution, security, and lifecycle surface (SC9's own literal proof command). `implement`/
- * `debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` and the remaining `kb`/`spec`/`adr`/
- * `diagram`/`customize`/`compile`/`preset`/`skill`/`mcp`/`help`, plus `module list/info` and
- * `overlay list/remove/update/explain/diff/doctor/eject` (real `03` §3.2.8 rows this piece's own
- * literal Surface line does not name), remain `PLAN-M12.md` P4's own mandate, still unwired here.
+ * distribution, security, and lifecycle surface (SC9's own literal proof command).
+ *
+ * `kb`, the full `spec` surface (`validate`'s own bare form included, alongside the narrower,
+ * gate-shelled `--rule` form above), `adr`, `diagram`, `customize`, `compile`, `preset`, `skill`,
+ * `mcp`, `help`, `plan` (a real `commands/run/` sibling of `run`/`gate`/`merge` above, left unwired by
+ * P1's own narrower, explicitly-named Surface list — closed here rather than left dangling with no
+ * later piece ever allocated to it, see `SPEC-QUESTIONS.md`), and the agent-facing `implement`/
+ * `debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` loop family are wired below by
+ * `PLAN-M12.md` P4 — completing the dispatcher. A handful of named-but-still-genuinely-unbuilt rows
+ * remain honestly refused rather than fabricated (`kb diff`, `spec new` for a non-spec artifact type,
+ * `diagram legend`/`render --open`, `customize` entirely, `preset diff`, `skill new/attach/detach/
+ * test/import`, `mcp add/test/grant/revoke/trace`, `forge help <topic>`, `forge ask`, `forge plan
+ * data/testing`, `forge test plan/generate/report`) — each a real, disclosed `USR-003`, not a generic
+ * "not wired" fallback. `module list/info` and `overlay list/remove/update/explain/diff/doctor/eject`
+ * (real `03` §3.2.8 rows P2's own literal Surface line did not name) remain genuinely unwired.
  *
  * @see specs/22 M6
  * @see specs/22 M8
@@ -43,6 +53,7 @@
  * @see PLAN-M8.md P4
  * @see PLAN-M12.md P1
  * @see PLAN-M12.md P2
+ * @see PLAN-M12.md P4
  */
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +67,15 @@ import type { ExpressionContext } from '@forge/engine/expr';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
+import {
+  adrAccept,
+  adrList,
+  adrNew,
+  adrReject,
+  adrShow,
+  adrSupersede,
+  type AdrCommandContext,
+} from './commands/adr.ts';
 import { auditReport, formatAuditReport, type AuditCommandContext } from './commands/audit.ts';
 import {
   configEdit,
@@ -64,7 +84,20 @@ import {
   readConfig,
   type ConfigCommandContext,
 } from './commands/config.ts';
+import { forgeCompile } from './commands/compile.ts';
 import { costReport, type CostCommandContext } from './commands/cost.ts';
+import { customize } from './commands/customize.ts';
+import {
+  diagramDiff,
+  diagramGenerate,
+  diagramLegend,
+  diagramList,
+  diagramRender,
+  diagramShow,
+  diagramSync,
+  diagramValidate,
+  type DiagramCommandContext,
+} from './commands/diagram.ts';
 import { runDoctor } from './commands/doctor/index.ts';
 import {
   exportHtml,
@@ -72,6 +105,42 @@ import {
   exportThirdParty,
   type ExportCommandContext,
 } from './commands/export.ts';
+import { helpRecommendNext, type HelpCommandContext } from './commands/help.ts';
+import {
+  kbDiff,
+  kbGraph,
+  kbLint,
+  kbList,
+  kbOpen,
+  kbSearch,
+  kbShow,
+  kbSync,
+  kbVerify,
+  type KbCommandContext,
+} from './commands/kb.ts';
+import { ask } from './commands/loop/ask.ts';
+import {
+  debugFromFailure,
+  debugSymptom,
+  type DebugDeps,
+  type DebugResult,
+} from './commands/loop/debug.ts';
+import { deployEnvironment } from './commands/loop/deploy.ts';
+import { implementStory } from './commands/loop/implement.ts';
+import { panelQuestion, type PanelDeps } from './commands/loop/panel.ts';
+import { refactorTarget } from './commands/loop/refactor.ts';
+import { reviewChange, type ReviewDeps } from './commands/loop/review.ts';
+import {
+  isSessionType,
+  sessionExport,
+  sessionList,
+  sessionResume,
+  sessionShow,
+  startSession,
+  type SessionCommandDeps,
+  type StartSessionOptions,
+} from './commands/loop/session.ts';
+import { mcpList, mcpValidate, type McpCommandContext } from './commands/mcp.ts';
 import {
   moduleAdd,
   moduleRemove,
@@ -81,6 +150,24 @@ import {
   type ModuleCommandContext,
 } from './commands/module.ts';
 import { overlayAdd, type OverlayCommandContext } from './commands/overlay.ts';
+import {
+  presetApply,
+  presetEject,
+  presetList,
+  presetShow,
+  type PresetCommandContext,
+} from './commands/preset.ts';
+import { skillList, skillValidate, type SkillCommandContext } from './commands/skill.ts';
+import {
+  specList,
+  specMatrix,
+  specNew,
+  specOrphans,
+  specShow,
+  specTrace,
+  specValidate,
+  type SpecCommandContext,
+} from './commands/spec.ts';
 import { uninstall } from './commands/uninstall.ts';
 import { runUpgrade } from './commands/upgrade/index.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
@@ -108,8 +195,10 @@ import {
   runLogs,
   runStatus,
   runWorkflow,
+  workflowIdForPlanPhase,
   type GateCommandContext,
   type MergeContext,
+  type PlanPhase,
   type RunDeps,
 } from './commands/run/index.ts';
 import { runStatusJson } from './commands/run/status.ts';
@@ -122,6 +211,10 @@ import {
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
+import { ARTIFACT_TYPES } from '@forge/schemas';
+import type { ArtifactTypeId } from '@forge/schemas';
+import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
+import type { DryRunResult, RealRunResult } from './commands/run/run.ts';
 
 const AGENTS_ROOT = '.forge/agents';
 const WORKFLOWS_ROOT = '.forge/workflows';
@@ -333,6 +426,27 @@ async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string):
   };
 }
 
+/** The identical real `paths`/`projectRoot`/`config`/`adapter`/`checksRoot` shape `RunDeps` already
+ * builds, plus `agentsRoot` — the one extra field `forge debug`/`forge review`/`forge panel` each need
+ * (`loadProjectAgent`) that `RunDeps` itself has no reason to carry (`runWorkflow` never loads an agent
+ * directly). Structurally assignable to `SessionCommandDeps` too (a strict subset of this shape), so
+ * `forge session` reuses the identical builder rather than a fifth, near-duplicate one. */
+async function buildLoopDepsForProject(
+  paths: ProjectPaths,
+  projectRoot: string,
+): Promise<DebugDeps & ReviewDeps & PanelDeps & SessionCommandDeps> {
+  const config = await readConfig(paths);
+  const env = realEnvSnapshot();
+  return {
+    paths,
+    projectRoot,
+    config,
+    adapter: await buildAdapterForConfig(config, env),
+    checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
+  };
+}
+
 async function runInitCommand(
   initArgs: readonly string[],
   yes: boolean,
@@ -452,6 +566,36 @@ function runOutcomeExitCode(runStatus: string | undefined): number {
     : EXIT_CODES.success;
 }
 
+/** The identical `DryRunResult | RealRunResult` rendering `forge run` establishes above, shared by
+ * every other command that dispatches through the same `runWorkflow` (`forge plan <phase>`,
+ * `forge implement`/`forge refactor`/`forge deploy` — `PLAN-M12.md` P4) so the JSON contract and
+ * human-readable shape stay identical across every real caller of that one mechanism, rather than
+ * drifting across four independently-hand-rolled copies. */
+function printWorkflowDispatchResult(
+  label: string,
+  result: DryRunResult | RealRunResult,
+  json: boolean,
+): number {
+  if (result.kind === 'dry-run') {
+    if (json) {
+      console.log(JSON.stringify({ v: 1, plan: result.plan }));
+    } else if (result.plan.success) {
+      console.log(`forge ${label} --dry-run: compiled ${String(result.plan.nodes.length)} steps.`);
+    } else {
+      for (const issue of result.plan.issues) console.error(issue.message);
+    }
+    return result.plan.success ? EXIT_CODES.success : EXIT_CODES.usage;
+  }
+  if (json) {
+    console.log(JSON.stringify({ v: 1, runId: result.runId, runState: result.runState }));
+  } else {
+    console.log(
+      `forge ${label}: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
+    );
+  }
+  return runOutcomeExitCode(result.runState.runStatus);
+}
+
 /** `forge pause`/`forge resume [runId]`/`forge abort [runId]`/`forge lanes [runId]` (`03` §3.2.4) all
  * take no real flags at all, only an optional bare `[runId]` positional — parsed through the identical
  * `parseCommandFlags` validation every other new command below uses, so a stray or misspelled flag
@@ -501,32 +645,7 @@ async function runRunCommand(
     dryRun,
     host: os.hostname(),
   });
-
-  if (result.kind === 'dry-run') {
-    if (json) {
-      console.log(JSON.stringify({ v: 1, plan: result.plan }));
-    } else if (result.plan.success) {
-      console.log(
-        `forge run ${workflowId} --dry-run: compiled ${String(result.plan.nodes.length)} steps.`,
-      );
-    } else {
-      for (const issue of result.plan.issues) console.error(issue.message);
-    }
-    // A malformed workflow is a real usage error regardless of which real compilation stage caught
-    // it -- `RUN-045` (`parseWorkflow` itself failing) already maps to `EXIT_CODES.usage`; a
-    // structurally-parseable workflow `compileRunPlan` still rejects (a bad dependency, a duplicate
-    // step id) is the identical class of caller mistake, not a second, different exit code.
-    return result.plan.success ? EXIT_CODES.success : EXIT_CODES.usage;
-  }
-
-  if (json) {
-    console.log(JSON.stringify({ v: 1, runId: result.runId, runState: result.runState }));
-  } else {
-    console.log(
-      `forge run ${workflowId}: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
-    );
-  }
-  return runOutcomeExitCode(result.runState.runStatus);
+  return printWorkflowDispatchResult(`run ${workflowId}`, result, json);
 }
 
 async function runResumeCommand(
@@ -1448,6 +1567,1155 @@ async function runUninstallCommand(
   return EXIT_CODES.success;
 }
 
+// ---------------------------------------------------------------------------------------------
+// `kb`/`spec`/`adr`/`diagram`/`customize`/`compile`/`preset`/`skill`/`mcp`/`help`/`plan`, plus the
+// agent-facing `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` loop family
+// — `PLAN-M12.md` P4's own remaining-commands mandate.
+// ---------------------------------------------------------------------------------------------
+
+/** Parses a caller-supplied JSON value out of one flag's own raw string — the identical "this package
+ * cannot gather it itself... passed straight through from the caller" seam `diagram.generate`/`diff`/
+ * `sync`'s own `generatorInput` parameter and `compile`'s own `sources` parameter both already
+ * establish (their own doc comments), since no real "locate my own real project content at runtime"
+ * resolver exists anywhere in this codebase yet (`SPEC-QUESTIONS.md`). A malformed JSON string is a
+ * real, reported `USR-002`, never a raw `JSON.parse` `SyntaxError` reaching the caller. */
+function parseJsonFlag(flag: string, raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new ForgeError('USR-002', { flag, value: raw });
+  }
+}
+
+// --- `forge kb <sub>` (`03` §3.2.2, `17` §17.4/§17.6) -------------------------------------------------
+
+const KB_SUBCOMMANDS = [
+  'list',
+  'show',
+  'search',
+  'lint',
+  'diff',
+  'sync',
+  'open',
+  'graph',
+  'verify',
+] as const;
+
+async function buildKbContext(paths: ProjectPaths): Promise<KbCommandContext> {
+  const config = await readConfig(paths);
+  return { paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: config.project.level };
+}
+
+const KB_GRAPH_FLAGS = { '--hops': true } as const;
+
+async function runKbCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx = await buildKbContext(paths);
+
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const entries = await kbList(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, entries })
+        : entries.map((entry) => `${entry.kind} ${entry.id} ${entry.title}`).join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "kb show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const entry = await kbShow(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, entry })
+        : `${entry.kind} ${entry.id} ${entry.title} (${entry.path})`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'search') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const query = positionals.join(' ');
+    if (query === '') {
+      console.error('forge: "kb search" needs a real <query>.');
+      return EXIT_CODES.usage;
+    }
+    const hits = await kbSearch(ctx, query);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, hits })
+        : hits.map((hit) => `${hit.id} (${hit.score.toFixed(2)}) ${hit.title}`).join('\n') ||
+            'forge kb search: no real hits.',
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'lint') {
+    parseCommandFlags(rest, {});
+    const findings = await kbLint(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, findings })
+        : findings
+            .map(
+              (f) =>
+                `${f.severity} ${f.ruleId}${f.entryId === undefined ? '' : ` ${f.entryId}`}: ${f.message}`,
+            )
+            .join('\n') || 'forge kb lint: no real findings.',
+    );
+    return findings.some((f) => f.severity === 'error') ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 'diff') {
+    parseCommandFlags(rest, {});
+    return kbDiff();
+  }
+  if (sub === 'sync') {
+    parseCommandFlags(rest, {});
+    const result = await kbSync(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, ...result })
+        : `forge kb sync: indexed ${String(result.entryCount)} entries.`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'open') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "kb open" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const result = await kbOpen(ctx, id);
+    console.log(json ? JSON.stringify({ v: 1, ...result }) : result.path);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'graph') {
+    const { values, positionals } = parseCommandFlags(rest, KB_GRAPH_FLAGS);
+    if (positionals.length > 1) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[1] ?? '' });
+    }
+    const hopsRaw = values.get('--hops');
+    let hops = 1;
+    if (hopsRaw !== undefined) {
+      if (!/^\d+$/.test(hopsRaw))
+        throw new ForgeError('USR-002', { flag: '--hops', value: hopsRaw });
+      hops = Number(hopsRaw);
+    }
+    const edges = await kbGraph(ctx, positionals[0], hops);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, edges })
+        : edges.map((edge) => `${edge.from} -> ${edge.to}`).join('\n') ||
+            'forge kb graph: no real edges.',
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'verify') {
+    parseCommandFlags(rest, {});
+    const findings = await kbVerify(ctx);
+    const failing = findings.filter(
+      (f) => f.outcome === 'fail' || f.outcome === 'timeout' || f.outcome === 'error',
+    );
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, findings })
+        : findings.map((f) => `${f.outcome} ${f.id}: ${f.detail}`).join('\n') ||
+            'forge kb verify: no real, verifiable entries.',
+    );
+    return failing.length > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+
+  console.error(`forge: "kb ${sub ?? ''}" needs a real subcommand (${KB_SUBCOMMANDS.join('|')}).`);
+  return EXIT_CODES.usage;
+}
+
+// --- `forge spec <sub>` (`03` §3.2.2) -------------------------------------------------------------
+
+const SPEC_SUBCOMMANDS = ['list', 'show', 'validate', 'trace', 'matrix', 'orphans', 'new'] as const;
+
+function buildSpecContext(paths: ProjectPaths): SpecCommandContext {
+  return { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+}
+
+/** `spec validate` with no real `--rule` — `03` §3.2.2's own bare form, distinct from `spec validate
+ * --rule <name>` above (`PLAN-M8.md` P2's own narrow gate-shelled wiring, unchanged by this piece):
+ * the full `18` §18.6 two-phase document check plus `09` §9.4's graph-level required-edge/cycle
+ * checks, never invoked by any real gate YAML today. */
+async function runSpecValidateCommand(
+  paths: ProjectPaths,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  parseCommandFlags(rest, {});
+  const ctx = buildSpecContext(paths);
+  const result = await specValidate(ctx);
+  const hasProblems =
+    result.documents.some((doc) => !doc.valid) ||
+    result.missingRequiredEdges.length > 0 ||
+    result.cycles.length > 0;
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if (!hasProblems) {
+    console.log('forge spec validate: no real problems.');
+  } else {
+    for (const doc of result.documents) {
+      if (!doc.valid) for (const error of doc.errors) console.error(`${doc.path}: ${error}`);
+    }
+    for (const violation of result.missingRequiredEdges) console.error(violation.message);
+    for (const cycle of result.cycles) console.error(`cycle: ${cycle.path.join(' -> ')}`);
+  }
+  return hasProblems ? EXIT_CODES.failure : EXIT_CODES.success;
+}
+
+async function runSpecCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx = buildSpecContext(paths);
+
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const specs = await specList(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, specs })
+        : specs.map((spec) => `${spec.id} ${spec.type} ${spec.title}`).join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "spec show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const doc = await specShow(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, path: doc.path, frontMatter: doc.frontMatter })
+        : `${doc.path}\n${JSON.stringify(doc.frontMatter, null, 2)}`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'trace') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "spec trace" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const result = await specTrace(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, ...result })
+        : `parents: ${result.parents.map((p) => p.id).join(', ') || '(none)'}\n` +
+            `children: ${result.children.map((c) => c.id).join(', ') || '(none)'}`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'matrix') {
+    parseCommandFlags(rest, {});
+    const matrix = await specMatrix(ctx);
+    console.log(json ? JSON.stringify({ v: 1, ...matrix }) : JSON.stringify(matrix, null, 2));
+    return EXIT_CODES.success;
+  }
+  if (sub === 'orphans') {
+    parseCommandFlags(rest, {});
+    const orphans = await specOrphans(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, orphans })
+        : orphans.map((orphan) => `${orphan.kind} ${orphan.id}: ${orphan.reason}`).join('\n') ||
+            'forge spec orphans: no real orphans.',
+    );
+    return orphans.length > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 'new') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [type, title] = positionals;
+    if (type === undefined || title === undefined || positionals.length > 2) {
+      console.error(
+        'forge: "spec new" needs a real <type> <title> (a multi-word title must be one quoted argument).',
+      );
+      return EXIT_CODES.usage;
+    }
+    if (!ARTIFACT_TYPES.some((candidate) => candidate.id === type)) {
+      console.error(
+        `forge: "spec new" needs a real <type> (one of: ${ARTIFACT_TYPES.map((candidate) => candidate.id).join(', ')}).`,
+      );
+      return EXIT_CODES.usage;
+    }
+    // `specNew` itself throws `USR-003` for a real, registered `ArtifactTypeId` that is not one of
+    // `spec.ts`'s own eight `docs/forge/specs/**`-rooted types (`ADR`/`Risk`/etc.) — the cast here is
+    // safe (`type` just passed the real registry-membership check above), and that further, narrower
+    // refusal is genuine, disclosed spec.ts behaviour, not something this dispatcher invents.
+    const doc = await specNew(ctx, type as ArtifactTypeId, title);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, path: doc.path, id: doc.get(['id']) })
+        : `forge spec new ${type}: wrote ${doc.path}.`,
+    );
+    return EXIT_CODES.success;
+  }
+
+  console.error(
+    `forge: "spec ${sub ?? ''}" needs a real subcommand (${SPEC_SUBCOMMANDS.join('|')}).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge adr <sub>` (`03` §3.2.2) --------------------------------------------------------------
+
+const ADR_SUBCOMMANDS = ['new', 'list', 'show', 'supersede', 'accept', 'reject'] as const;
+
+function buildAdrContext(paths: ProjectPaths): AdrCommandContext {
+  return { paths, kbRoot: KB_ROOT };
+}
+
+async function runAdrCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx = buildAdrContext(paths);
+
+  if (sub === 'new') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [title] = positionals;
+    if (title === undefined || positionals.length > 1) {
+      console.error('forge: "adr new" needs a real <title>.');
+      return EXIT_CODES.usage;
+    }
+    const doc = await adrNew(ctx, title);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, path: doc.path, id: doc.get(['id']) })
+        : `forge adr new: wrote ${doc.path}.`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const entries = await adrList(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, entries })
+        : entries.map((entry) => `${entry.id} ${entry.title}`).join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "adr show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const doc = await adrShow(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, path: doc.path, frontMatter: doc.frontMatter })
+        : `${doc.path}\n${JSON.stringify(doc.frontMatter, null, 2)}`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'supersede') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id, newTitle] = positionals;
+    if (id === undefined || newTitle === undefined || positionals.length > 2) {
+      console.error('forge: "adr supersede" needs a real <id> <newTitle>.');
+      return EXIT_CODES.usage;
+    }
+    const result = await adrSupersede(ctx, id, newTitle);
+    console.log(
+      json
+        ? JSON.stringify({
+            v: 1,
+            superseded: result.superseded.path,
+            replacement: result.replacement.path,
+          })
+        : `forge adr supersede ${id}: ${result.superseded.path} -> ${result.replacement.path}.`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'accept' || sub === 'reject') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error(`forge: "adr ${sub}" needs a real <id>.`);
+      return EXIT_CODES.usage;
+    }
+    const doc = sub === 'accept' ? await adrAccept(ctx, id) : await adrReject(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, path: doc.path, status: doc.get(['status']) })
+        : `forge adr ${sub} ${id}: recorded.`,
+    );
+    return EXIT_CODES.success;
+  }
+
+  console.error(
+    `forge: "adr ${sub ?? ''}" needs a real subcommand (${ADR_SUBCOMMANDS.join('|')}).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge diagram <sub>` (`03` §3.2.2) ----------------------------------------------------------
+
+const DIAGRAM_SUBCOMMANDS = [
+  'list',
+  'show',
+  'validate',
+  'render',
+  'sync',
+  'generate',
+  'diff',
+  'legend',
+] as const;
+
+function buildDiagramContext(paths: ProjectPaths): DiagramCommandContext {
+  return { paths, kbRoot: KB_ROOT };
+}
+
+const DIAGRAM_RENDER_FLAGS = { '--open': false } as const;
+const DIAGRAM_INPUT_FLAGS = { '--input': true } as const;
+
+async function runDiagramCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx = buildDiagramContext(paths);
+
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const entries = await diagramList(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, entries })
+        : entries.map((entry) => `${entry.id} ${entry.title}`).join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "diagram show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const diagram = await diagramShow(ctx, id);
+    console.log(json ? JSON.stringify({ v: 1, diagram }) : diagram.source);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'validate') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "diagram validate" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const findings = await diagramValidate(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, findings })
+        : findings.map((f) => `${f.severity} ${f.message}`).join('\n') ||
+            'forge diagram validate: no real findings.',
+    );
+    return findings.some((f) => f.severity === 'error') ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 'render') {
+    const { flags, positionals } = parseCommandFlags(rest, DIAGRAM_RENDER_FLAGS);
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "diagram render" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    if (flags.has('--open')) {
+      throw new ForgeError('USR-003', {
+        feature: 'forge diagram render --open (no real browser-launch mechanism exists yet)',
+      });
+    }
+    const html = await diagramRender(ctx, id);
+    console.log(json ? JSON.stringify({ v: 1, id, html }) : html);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'generate') {
+    const { values, positionals } = parseCommandFlags(rest, DIAGRAM_INPUT_FLAGS);
+    const [generatorName] = positionals;
+    if (generatorName === undefined || positionals.length > 1) {
+      console.error('forge: "diagram generate" needs a real <generator>.');
+      return EXIT_CODES.usage;
+    }
+    const inputRaw = values.get('--input');
+    const input = inputRaw === undefined ? undefined : parseJsonFlag('--input', inputRaw);
+    const generated = diagramGenerate(generatorName, input);
+    console.log(json ? JSON.stringify({ v: 1, generated }) : generated.source);
+    return EXIT_CODES.success;
+  }
+  if (sub === 'diff') {
+    const { values, positionals } = parseCommandFlags(rest, DIAGRAM_INPUT_FLAGS);
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "diagram diff" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const inputRaw = values.get('--input');
+    if (inputRaw === undefined) {
+      console.error(
+        'forge: "diagram diff" needs a real --input <json> (this generator\'s own real input).',
+      );
+      return EXIT_CODES.usage;
+    }
+    const result = await diagramDiff(ctx, id, parseJsonFlag('--input', inputRaw));
+    console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+    return result.hasDrift ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 'sync') {
+    const { values, positionals } = parseCommandFlags(rest, DIAGRAM_INPUT_FLAGS);
+    if (positionals.length > 0) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+    }
+    const inputRaw = values.get('--input');
+    if (inputRaw === undefined) {
+      console.error(
+        'forge: "diagram sync" needs a real --input <json>, a JSON object mapping diagram id to that ' +
+          "diagram's own real generator input.",
+      );
+      return EXIT_CODES.usage;
+    }
+    const parsedInput = parseJsonFlag('--input', inputRaw);
+    if (typeof parsedInput !== 'object' || parsedInput === null || Array.isArray(parsedInput)) {
+      throw new ForgeError('USR-002', { flag: '--input', value: inputRaw });
+    }
+    const generatorInputs = new Map(
+      Object.entries(parsedInput as Readonly<Record<string, unknown>>),
+    );
+    const results = await diagramSync(ctx, generatorInputs);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, results })
+        : results
+            .map((result) =>
+              result.kind === 'ok'
+                ? `${result.id}: ${result.result.hasDrift ? 'drifted' : 'in sync'}`
+                : `${result.id}: error ${result.message}`,
+            )
+            .join('\n') || 'forge diagram sync: no real diagrams with a generator to check.',
+    );
+    return results.some((result) => result.kind === 'error' || result.result.hasDrift)
+      ? EXIT_CODES.failure
+      : EXIT_CODES.success;
+  }
+  if (sub === 'legend') {
+    parseCommandFlags(rest, {});
+    return diagramLegend();
+  }
+
+  console.error(
+    `forge: "diagram ${sub ?? ''}" needs a real subcommand (${DIAGRAM_SUBCOMMANDS.join('|')}).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge customize`/`forge compile [--check]` (`03` §3.2.8) -----------------------------------
+
+function runCustomizeCommand(args: readonly string[]): number {
+  parseCommandFlags(args, {});
+  return customize();
+}
+
+const COMPILE_FLAGS = { '--check': false, '--sources': true } as const;
+
+/** `forge compile [--check] --sources <path>` — `compile.ts`'s own doc comment names the real,
+ * disclosed gap this wiring works within: no "gather this project's own real customization-layer
+ * sources at runtime" resolver exists anywhere in this codebase, so `sources` is read from a real,
+ * caller-supplied JSON file rather than fabricated by this dispatcher — the identical `--input <json>`
+ * seam `forge diagram generate`/`diff`/`sync` already establish for the structurally identical
+ * situation, just from a file rather than an inline flag value (`CompileSources` is too large a
+ * document for one shell argument). See `SPEC-QUESTIONS.md`. */
+async function runCompileCommand(
+  paths: ProjectPaths,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { flags, values, positionals } = parseCommandFlags(args, COMPILE_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const sourcesPath = values.get('--sources');
+  if (sourcesPath === undefined) {
+    console.error(
+      'forge: "compile" needs a real --sources <path> (a JSON file holding this project\'s own real ' +
+        'CompileSources — no automatic project-content-gathering mechanism exists yet; see SPEC-QUESTIONS.md).',
+    );
+    return EXIT_CODES.usage;
+  }
+  const resolved = paths.resolveWithin(sourcesPath);
+  if (!(await pathExists(resolved))) {
+    throw new ForgeError('CFG-001', { path: sourcesPath, line: 0 });
+  }
+  let sources: CompileSources;
+  try {
+    sources = JSON.parse(await readTextFile(resolved)) as CompileSources;
+  } catch {
+    throw new ForgeError('USR-002', { flag: '--sources', value: sourcesPath });
+  }
+  const options: CompileOptions = flags.has('--check') ? { check: true } : {};
+  const result = forgeCompile(sources, options);
+  console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+  return result.violations.length > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+}
+
+// --- `forge preset <sub>` (`03` §3.2.8) -----------------------------------------------------------
+
+const PRESET_SUBCOMMANDS = ['list', 'show', 'apply'] as const;
+const PRESET_APPLY_FLAGS = { '--eject': false } as const;
+
+async function runPresetCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const presets = presetList();
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, presets })
+        : presets.map((preset) => `${preset.id} (${preset.posture})`).join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "preset show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const preset = presetShow(id);
+    console.log(json ? JSON.stringify({ v: 1, preset }) : JSON.stringify(preset, null, 2));
+    return EXIT_CODES.success;
+  }
+  if (sub === 'apply') {
+    const { flags, positionals } = parseCommandFlags(rest, PRESET_APPLY_FLAGS);
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "preset apply" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    if (flags.has('--eject')) {
+      const overlays = presetEject(id);
+      console.log(
+        json
+          ? JSON.stringify({ v: 1, overlays })
+          : overlays.map((overlay) => overlay.path).join('\n'),
+      );
+      return EXIT_CODES.success;
+    }
+    const ctx: PresetCommandContext = { paths };
+    const applied = await presetApply(ctx, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, applied })
+        : `forge preset apply ${id}: wrote ${String(applied.files.length)} file(s).`,
+    );
+    return EXIT_CODES.success;
+  }
+
+  // `diff` is `03` §3.2.8's own named subcommand with no real mechanism anywhere in this codebase
+  // (`preset.ts`'s own surface has no `presetDiff` at all) — a real, disclosed gap, not fabricated here.
+  console.error(
+    `forge: "preset ${sub ?? ''}" needs a real subcommand this dispatcher wires yet ` +
+      `(${PRESET_SUBCOMMANDS.join('|')}) — "diff" has no real mechanism yet (see SPEC-QUESTIONS.md).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge skill <sub>` (`03` §3.2.8) ------------------------------------------------------------
+
+const SKILL_SUBCOMMANDS = ['list', 'validate'] as const;
+
+async function runSkillCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const ctx: SkillCommandContext = { paths };
+
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const ids = await skillList(ctx);
+    console.log(json ? JSON.stringify({ v: 1, ids }) : ids.join('\n'));
+    return EXIT_CODES.success;
+  }
+  if (sub === 'validate') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "skill validate" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const outcome = await skillValidate(ctx, id);
+    console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
+    return outcome.valid ? EXIT_CODES.success : EXIT_CODES.failure;
+  }
+
+  // `new`/`attach`/`detach`/`test`/`import` are `03` §3.2.8's own named subcommands with no real
+  // mechanism anywhere in `@forge/extensions/skills` — a real, disclosed gap, not fabricated here.
+  console.error(
+    `forge: "skill ${sub ?? ''}" needs a real subcommand this dispatcher wires yet (${SKILL_SUBCOMMANDS.join('|')}).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge mcp <sub>` (`03` §3.2.8) --------------------------------------------------------------
+
+const MCP_SUBCOMMANDS = ['validate', 'list'] as const;
+const MCP_VALIDATE_FLAGS = { '--environment': true } as const;
+
+async function runMcpCommand(
+  paths: ProjectPaths,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  if (sub === 'validate') {
+    const { values, positionals } = parseCommandFlags(rest, MCP_VALIDATE_FLAGS);
+    if (positionals.length > 0) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+    }
+    const environment = values.get('--environment');
+    if (environment === undefined) {
+      console.error('forge: "mcp validate" needs a real --environment <env>.');
+      return EXIT_CODES.usage;
+    }
+    const ctx: McpCommandContext = { paths };
+    const outcome = await mcpValidate(ctx, environment);
+    console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
+    return outcome.valid ? EXIT_CODES.success : EXIT_CODES.failure;
+  }
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    return mcpList();
+  }
+
+  // `add`/`test`/`grant`/`revoke`/`trace` are `03` §3.2.8's own named subcommands with no real
+  // mechanism anywhere in `@forge/extensions/mcp` — a real, disclosed gap, not fabricated here.
+  console.error(
+    `forge: "mcp ${sub ?? ''}" needs a real subcommand this dispatcher wires yet (${MCP_SUBCOMMANDS.join('|')}).`,
+  );
+  return EXIT_CODES.usage;
+}
+
+// --- `forge help [topic]` (`03`'s own closing line) -----------------------------------------------
+
+/** `topic` — `helpRecommendNext` itself has no real per-topic content of its own (only the bare,
+ * state-aware "you are here" recommendation `03` explicitly demands); a real `forge help <topic>` is a
+ * genuine, disclosed gap, refused rather than fabricated. */
+async function runHelpCommand(
+  paths: ProjectPaths,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { positionals } = parseCommandFlags(args, {});
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-003', {
+      feature: `forge help ${positionals[0] ?? ''} (no real per-topic help content exists yet)`,
+    });
+  }
+  const ctx: HelpCommandContext = { paths, specsRoot: SPECS_ROOT };
+  const recommendation = await helpRecommendNext(ctx);
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, recommendation })
+      : `${recommendation.command} — ${recommendation.reason}`,
+  );
+  return EXIT_CODES.success;
+}
+
+// --- `forge plan <phase>` (`03` §3.2.3) -----------------------------------------------------------
+
+/** `10` §10.5's own 20-workflow table has no real workflow for `data`/`testing` — `workflowIdForPlanPhase`
+ * itself throws `USR-003` for those two, the identical `PLAN-M6.md` C4 disclosure `forge merge --abort`
+ * already establishes for the sibling gap in the same family; this dispatcher surfaces it verbatim
+ * rather than inventing a generic "not wired" message. Genuinely a `run/`-family command sharing
+ * `runWorkflow` with `forge run`/`implement`/`refactor`/`deploy` — left unwired by `PLAN-M12.md` P1's
+ * own narrower, explicitly-named Surface list, closed here rather than left dangling with no piece of
+ * this milestone ever allocated to it. See `SPEC-QUESTIONS.md`. */
+const PLAN_PHASES: readonly PlanPhase[] = [
+  'product',
+  'architecture',
+  'data',
+  'init',
+  'testing',
+  'delivery',
+  'stages',
+  'stage',
+  'replan',
+];
+
+function isPlanPhase(value: string | undefined): value is PlanPhase {
+  return value !== undefined && (PLAN_PHASES as readonly string[]).includes(value);
+}
+
+/** `{{stageId}}` (`plan-stage.workflow.yaml`'s own real template reference) resolves against
+ * `ExpressionContext` at the top level — the same narrow, honest extension `implement.ts`'s own
+ * `ImplementStoryExpressionContext` already documents for the identical reason. */
+interface PlanStageExpressionContext extends ExpressionContext {
+  readonly stageId: string;
+}
+
+/** Builds the real `ExpressionContext` `forge plan <phase>` dispatches with — `stageId` (when present)
+ * is added via a variable typed as the real, narrow `PlanStageExpressionContext` extension, never a
+ * fresh object literal assigned directly to the wider `ExpressionContext` type, which would trip
+ * TypeScript's excess-property check on the one field that type does not itself declare (the identical
+ * pattern `implement.ts`'s own `ImplementStoryExpressionContext` already establishes). */
+function buildPlanExpressionContext(
+  stageId: string | undefined,
+  vars: Readonly<Record<string, string>>,
+): ExpressionContext {
+  const base: ExpressionContext = Object.keys(vars).length > 0 ? { vars } : {};
+  if (stageId === undefined) return base;
+  const withStage: PlanStageExpressionContext = { ...base, stageId };
+  return withStage;
+}
+
+const PLAN_FLAGS = { '--from': true } as const;
+
+async function runPlanCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  phase: string | undefined,
+  rest: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  if (!isPlanPhase(phase)) {
+    console.error(`forge: "plan" needs a real <phase> (${PLAN_PHASES.join('|')}).`);
+    return EXIT_CODES.usage;
+  }
+  const { values, positionals } = parseCommandFlags(rest, PLAN_FLAGS);
+
+  let stageId: string | undefined;
+  if (phase === 'stage') {
+    [stageId] = positionals;
+    if (stageId === undefined || positionals.length > 1) {
+      console.error('forge: "plan stage" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+  } else if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+
+  const workflowId = workflowIdForPlanPhase(phase);
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const from = values.get('--from');
+  const vars: Record<string, string> = {};
+  if (from !== undefined) vars['from'] = from;
+  const expressionContext = buildPlanExpressionContext(stageId, vars);
+
+  const result = await runWorkflow(deps, {
+    workflowId,
+    expressionContext,
+    dryRun,
+    host: os.hostname(),
+  });
+  return printWorkflowDispatchResult(`plan ${phase}`, result, json);
+}
+
+// --- the agent-facing loop family: `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/
+// `session` (`03` §3.2.5/§3.2.6) --------------------------------------------------------------------
+
+async function runImplementCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const { positionals } = parseCommandFlags(args, {});
+  const [storyId] = positionals;
+  if (storyId === undefined || positionals.length > 1) {
+    console.error('forge: "implement" needs a real <storyId>.');
+    return EXIT_CODES.usage;
+  }
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const result = await implementStory(deps, storyId, {
+    specsRoot: SPECS_ROOT,
+    dryRun,
+    host: os.hostname(),
+  });
+  return printWorkflowDispatchResult(`implement ${storyId}`, result, json);
+}
+
+const REFACTOR_FLAGS = { '--goal': true } as const;
+
+async function runRefactorCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, REFACTOR_FLAGS);
+  const [target] = positionals;
+  if (target === undefined || positionals.length > 1) {
+    console.error('forge: "refactor" needs a real <target>.');
+    return EXIT_CODES.usage;
+  }
+  const goal = values.get('--goal');
+  if (goal === undefined) {
+    console.error('forge: "refactor" needs a real --goal <text>.');
+    return EXIT_CODES.usage;
+  }
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const result = await refactorTarget(deps, target, goal, { dryRun, host: os.hostname() });
+  return printWorkflowDispatchResult(`refactor ${target}`, result, json);
+}
+
+const DEPLOY_FLAGS = { '--confirm': true } as const;
+
+async function runDeployCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, DEPLOY_FLAGS);
+  const [env] = positionals;
+  if (env === undefined || positionals.length > 1) {
+    console.error('forge: "deploy" needs a real <env>.');
+    return EXIT_CODES.usage;
+  }
+  const deps = await buildRunDepsForProject(paths, projectRoot);
+  const confirmation = values.get('--confirm');
+  const result = await deployEnvironment(deps, env, {
+    dryRun,
+    host: os.hostname(),
+    ...(confirmation !== undefined ? { confirmation } : {}),
+  });
+  return printWorkflowDispatchResult(`deploy ${env}`, result, json);
+}
+
+const DEBUG_FLAGS = { '--from-failure': true } as const;
+
+async function runDebugCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  budgetUsd: number | undefined,
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, DEBUG_FLAGS);
+  const fromFailure = values.get('--from-failure');
+  const deps: DebugDeps = await buildLoopDepsForProject(paths, projectRoot);
+  const options = budgetUsd === undefined ? {} : { costBudgetUsd: budgetUsd };
+
+  let result: DebugResult;
+  if (fromFailure !== undefined) {
+    if (positionals.length > 0) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+    }
+    result = await debugFromFailure(deps, fromFailure, options);
+  } else {
+    const [symptom] = positionals;
+    if (symptom === undefined || positionals.length > 1) {
+      console.error('forge: "debug" needs a real <symptom>, or --from-failure <runId>.');
+      return EXIT_CODES.usage;
+    }
+    result = await debugSymptom(deps, symptom, options);
+  }
+  console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+  return result.outcome === 'recorded' ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
+const REVIEW_FLAGS = { '--diff': true } as const;
+
+async function runReviewCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, REVIEW_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const deps: ReviewDeps = await buildLoopDepsForProject(paths, projectRoot);
+  const diff = values.get('--diff');
+  const outcome = await reviewChange(deps, diff === undefined ? {} : { diff });
+  console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
+  return outcome.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
+const PANEL_FLAGS = { '--roles': true } as const;
+
+function splitCommaList(raw: string | undefined): readonly string[] | undefined {
+  if (raw === undefined) return undefined;
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  return parts.length > 0 ? parts : undefined;
+}
+
+async function runPanelCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, PANEL_FLAGS);
+  const [question] = positionals;
+  if (question === undefined || positionals.length > 1) {
+    console.error('forge: "panel" needs a real <question>.');
+    return EXIT_CODES.usage;
+  }
+  const roles = splitCommaList(values.get('--roles'));
+  if (roles === undefined) {
+    console.error('forge: "panel" needs a real --roles <a,b,c>.');
+    return EXIT_CODES.usage;
+  }
+  const deps: PanelDeps = await buildLoopDepsForProject(paths, projectRoot);
+  const outcome = await panelQuestion(deps, question, roles);
+  console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
+  return outcome.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
+function runAskCommand(args: readonly string[]): number {
+  parseCommandFlags(args, {});
+  return ask();
+}
+
+const SESSION_KEYWORDS = ['list', 'show', 'resume', 'export'] as const;
+const SESSION_START_FLAGS = {
+  '--question': true,
+  '--target': true,
+  '--scope': true,
+  '--stage': true,
+  '--defect': true,
+  '--options': true,
+  '--technique': true,
+  '--roles': true,
+} as const;
+
+async function runSessionCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const deps: SessionCommandDeps = await buildLoopDepsForProject(paths, projectRoot);
+
+  if (sub === 'list') {
+    parseCommandFlags(rest, {});
+    const sessions = await sessionList(deps);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, sessions })
+        : sessions
+            .map(
+              (session) =>
+                `${session.id} ${session.sessionType} ${session.status} ${session.title}`,
+            )
+            .join('\n'),
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'show') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "session show" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const doc = await sessionShow(deps, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, record: doc.record, body: doc.body, path: doc.path })
+        : `${doc.path}\n\n${doc.body}`,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'resume') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "session resume" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const result = await sessionResume(deps, id);
+    console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+    return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
+  }
+  if (sub === 'export') {
+    const { positionals } = parseCommandFlags(rest, {});
+    const [id] = positionals;
+    if (id === undefined || positionals.length > 1) {
+      console.error('forge: "session export" needs a real <id>.');
+      return EXIT_CODES.usage;
+    }
+    const result = await sessionExport(deps, id);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, ...result })
+        : `forge session export ${id}: wrote ${result.path}.`,
+    );
+    return EXIT_CODES.success;
+  }
+
+  if (sub === undefined || !isSessionType(sub)) {
+    console.error(
+      `forge: "session ${sub ?? ''}" needs a real session <type>, or one of (${SESSION_KEYWORDS.join('|')}).`,
+    );
+    return EXIT_CODES.usage;
+  }
+  const { values } = parseCommandFlags(rest, SESSION_START_FLAGS);
+  const question = values.get('--question');
+  const target = values.get('--target');
+  const scope = values.get('--scope');
+  const stage = values.get('--stage');
+  const defect = values.get('--defect');
+  const options: StartSessionOptions = {
+    ...(question !== undefined ? { question } : {}),
+    ...(target !== undefined ? { target } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(stage !== undefined ? { stage } : {}),
+    ...(defect !== undefined ? { defect } : {}),
+    ...(splitCommaList(values.get('--options')) !== undefined
+      ? { options: splitCommaList(values.get('--options')) }
+      : {}),
+    ...(splitCommaList(values.get('--technique')) !== undefined
+      ? { technique: splitCommaList(values.get('--technique')) }
+      : {}),
+    ...(splitCommaList(values.get('--roles')) !== undefined
+      ? { roles: splitCommaList(values.get('--roles')) }
+      : {}),
+  };
+  const result = await startSession(deps, sub, options);
+  console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+  return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
 async function main(): Promise<number> {
   const flags = parseGlobalFlags(process.argv.slice(2));
   const [command, sub, ...rest] = flags.positionals;
@@ -1482,14 +2750,42 @@ async function main(): Promise<number> {
   }
   if (command === 'spec' && sub === 'validate') {
     const ruleFlag = findRuleFlag(rest);
+    // `PLAN-M12.md` P4: the bare, no-`--rule` form (`03` §3.2.2's own real `spec validate` row) is now
+    // wired below — `ruleFlag === undefined` means no `--rule` was given at all, distinct from `''`
+    // (a real, trailing valueless `--rule`) or any other misspelled value, both of which still name
+    // the one real, gate-shelled `--rule` form's own error message.
+    if (ruleFlag === undefined) {
+      return runSpecValidateCommand(paths, rest, flags.json);
+    }
     if (!isValidateRuleId(ruleFlag)) {
       console.error(
         `forge: "spec validate" needs a real --rule <name> (one of: ${VALIDATE_RULE_IDS.join(', ')}); ` +
-          `got ${JSON.stringify(ruleFlag)}. The bare, no-rule form of "spec validate" is not wired here yet.`,
+          `got ${JSON.stringify(ruleFlag)}.`,
       );
       return 2;
     }
     return runSpecValidateRule(paths, ruleFlag, flags.json);
+  }
+  if (command === 'kb') {
+    return runKbCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'spec') {
+    return runSpecCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'adr') {
+    return runAdrCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'diagram') {
+    return runDiagramCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'preset') {
+    return runPresetCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'skill') {
+    return runSkillCommand(paths, sub, rest, flags.json);
+  }
+  if (command === 'mcp') {
+    return runMcpCommand(paths, sub, rest, flags.json);
   }
   if (command === 'test' && sub === 'run') {
     const rawRule = findRawTestRuleFlag(rest);
@@ -1604,6 +2900,44 @@ async function main(): Promise<number> {
   }
   if (command === 'uninstall') {
     return runUninstallCommand(paths, projectRoot, afterCommand, flags.yes, flags.json);
+  }
+  if (command === 'customize') {
+    return runCustomizeCommand(afterCommand);
+  }
+  if (command === 'compile') {
+    return runCompileCommand(paths, afterCommand, flags.json);
+  }
+  if (command === 'help') {
+    return runHelpCommand(paths, afterCommand, flags.json);
+  }
+  if (command === 'plan') {
+    const [phase, ...planRest] = afterCommand;
+    return runPlanCommand(paths, projectRoot, phase, planRest, flags.dryRun, flags.json);
+  }
+  if (command === 'implement') {
+    return runImplementCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);
+  }
+  if (command === 'refactor') {
+    return runRefactorCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);
+  }
+  if (command === 'deploy') {
+    return runDeployCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);
+  }
+  if (command === 'debug') {
+    return runDebugCommand(paths, projectRoot, afterCommand, flags.budget, flags.json);
+  }
+  if (command === 'review') {
+    return runReviewCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'panel') {
+    return runPanelCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'ask') {
+    return runAskCommand(afterCommand);
+  }
+  if (command === 'session') {
+    const [sessionSub, ...sessionRest] = afterCommand;
+    return runSessionCommand(paths, projectRoot, sessionSub, sessionRest, flags.json);
   }
 
   console.error(

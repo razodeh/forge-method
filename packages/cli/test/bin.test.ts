@@ -318,8 +318,11 @@ describe('forge (real subprocess dispatch)', () => {
   });
 
   it('exits 2 and names the command for a real, not-yet-wired subcommand', async () => {
+    // `kb list` used to be the example here — `PLAN-M12.md` P4 wired the whole `kb` surface, so this
+    // now uses `agent list` instead: `agent validate --all` is the only real, wired `agent` subcommand
+    // (`PLAN-M6.md` C9), `list`/`show`/`new`/`compile` remain genuinely unwired.
     const dir = await realProject();
-    const result = run(['kb', 'list', '-C', dir]);
+    const result = run(['agent', 'list', '-C', dir]);
     expect(result.status).toBe(2);
   });
 
@@ -1415,4 +1418,659 @@ describe('forge uninstall (real subprocess dispatch, PLAN-M12.md P2)', () => {
     expect(existsSync(path.join(dir, 'docs/forge'))).toBe(false);
     dirs.push(parsed.backupDir);
   });
+});
+
+// -------------------------------------------------------------------------------------------------
+// `PLAN-M12.md` P4 — the remaining dispatcher: kb/spec/adr/diagram/customize/compile/preset/skill/mcp/
+// help/plan, and the agent-facing implement/debug/refactor/deploy/review/panel/ask/session family.
+// -------------------------------------------------------------------------------------------------
+
+/** A real, schema-valid KB entry (`kbEntrySchema`) — the identical fixture shape `packages/cli/test/
+ * commands/helpers.ts`'s own `writeKbEntryFixture` already establishes for the unit-level tests,
+ * reused here at the real-subprocess level. */
+async function writeKbEntryFixture(dir: string, id = 'KB-ARCH-0001'): Promise<void> {
+  const relPath = `docs/forge/kb/architecture/${id}.md`;
+  await mkdir(path.dirname(path.join(dir, relPath)), { recursive: true });
+  const content = `---
+id: ${id}
+type: knowledge
+section: architecture
+title: Fixture knowledge entry
+status: active
+confidence: verified
+owner: architect
+sources:
+  - kind: human
+    ref: architect interview, 2026-01-01
+created: 2026-01-01
+updated: 2026-01-01
+review_by: 2030-01-01
+supersedes: []
+superseded_by: null
+related: []
+diagrams: []
+tags: []
+applies_to: []
+---
+
+## Verification
+
+Command: \`true\`
+`;
+  await writeFile(path.join(dir, relPath), content, 'utf8');
+}
+
+/** A real, schema-valid diagram sidecar (`diagramSchema`) — the identical fixture shape `helpers.ts`'s
+ * own `writeDiagramFixture` already establishes. */
+async function writeDiagramFixtureAt(dir: string, id = 'DIAG-001'): Promise<void> {
+  const relPath = 'docs/forge/kb/architecture/views/fixture.mmd.yaml';
+  await mkdir(path.dirname(path.join(dir, relPath)), { recursive: true });
+  const content = `id: ${id}
+type: Diagram
+schemaVersion: 1
+title: Fixture diagram
+status: active
+created: 2026-01-01
+updated: 2026-01-01
+revision: 1
+author: architect
+changelog: []
+kind: flowchart
+notation: mermaid
+source: |
+  flowchart TD
+    UserService --> Database
+generated: false
+depicts: []
+explains: []
+caption: A fixture flowchart.
+alt_text: A fixture flowchart from A to B.
+owner: architect
+`;
+  await writeFile(path.join(dir, relPath), content, 'utf8');
+}
+
+/** Clears a real, `forge init`-written project's own `platform.primary` back to `''` — `realProject()`
+ * (this file's own fixture, above) always records the fake test adapter's own id
+ * (`forge-fake-adapter`), which `buildAdapterForConfig` can never resolve (it is not a real, registered
+ * `KNOWN_ADAPTER_MODULES` entry — that would defeat the whole point of a fake test double). Every P4
+ * command that needs a real, *constructible* (not live) adapter — `plan`/`implement`/`refactor`/
+ * `deploy`/`debug`/`review`/`panel`/`session` — needs this real, resolvable value instead, the identical
+ * `''` default `realRunProject()`'s own `DEFAULT_CONFIG` fixture already relies on above for the
+ * `run`/`resume`/`gate`/`merge` family. */
+async function clearPlatformPrimary(dir: string): Promise<void> {
+  const configPath = path.join(dir, '.forge/config.yaml');
+  const parsed = YAML.parse(await readFile(configPath, 'utf8')) as {
+    platform: { primary: string };
+  };
+  parsed.platform.primary = '';
+  await writeFile(configPath, YAML.stringify(parsed), 'utf8');
+}
+
+describe('forge kb (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('lists real KB entries via `forge kb list --json`, empty on a fresh project', async () => {
+    const dir = await realProject();
+    const result = run(['kb', 'list', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly entries: readonly unknown[] };
+    expect(parsed.entries).toEqual([]);
+  });
+
+  it('runs `forge kb show <id>`/`forge kb search`/`forge kb sync`/`forge kb graph` for real against a real entry', async () => {
+    const dir = await realProject();
+    await writeKbEntryFixture(dir);
+
+    const show = run(['kb', 'show', 'KB-ARCH-0001', '--json', '-C', dir]);
+    expect(show.status).toBe(0);
+    expect((JSON.parse(show.stdout) as { readonly entry: { readonly id: string } }).entry.id).toBe(
+      'KB-ARCH-0001',
+    );
+
+    const sync = run(['kb', 'sync', '--json', '-C', dir]);
+    expect(sync.status).toBe(0);
+    expect((JSON.parse(sync.stdout) as { readonly entryCount: number }).entryCount).toBe(1);
+
+    const search = run(['kb', 'search', 'Fixture', '--json', '-C', dir]);
+    expect(search.status).toBe(0);
+    const searchParsed = JSON.parse(search.stdout) as { readonly hits: readonly { id: string }[] };
+    expect(searchParsed.hits.map((h) => h.id)).toContain('KB-ARCH-0001');
+
+    const graph = run(['kb', 'graph', '--json', '-C', dir]);
+    expect(graph.status).toBe(0);
+
+    const lint = run(['kb', 'lint', '--json', '-C', dir]);
+    expect(lint.status).toBe(0);
+
+    const verify = run(['kb', 'verify', '--json', '-C', dir]);
+    expect(verify.status).toBe(0);
+    const verifyParsed = JSON.parse(verify.stdout) as {
+      readonly findings: readonly { readonly outcome: string }[];
+    };
+    expect(verifyParsed.findings[0]?.outcome).toBe('pass');
+  });
+
+  it('exits non-zero for `forge kb show` with an unknown id (real KB-015)', async () => {
+    const dir = await realProject();
+    const result = run(['kb', 'show', 'KB-NOPE', '-C', dir]);
+    expect(result.status).not.toBe(0);
+  });
+
+  it('exits non-zero with a real USR-003 for `forge kb diff` — never implemented, refused rather than guessed at', async () => {
+    const dir = await realProject();
+    const result = run(['kb', 'diff', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('kb diff');
+  });
+
+  it('exits 2 for a real, unrecognised `forge kb` subcommand', async () => {
+    const dir = await realProject();
+    const result = run(['kb', 'nope', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge kb open` with no real <id>', async () => {
+    const dir = await realProject();
+    const result = run(['kb', 'open', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge spec new Vision`/`forge spec list`/`forge spec show`/`forge spec trace` for real end to end', async () => {
+    const dir = await realProject();
+
+    const created = run(['spec', 'new', 'Vision', 'Fixture Vision', '--json', '-C', dir]);
+    expect(created.status).toBe(0);
+    const { id } = JSON.parse(created.stdout) as { readonly id: string };
+    expect(id).toMatch(/^VIS-/);
+
+    const list = run(['spec', 'list', '--json', '-C', dir]);
+    expect(list.status).toBe(0);
+    const listParsed = JSON.parse(list.stdout) as { readonly specs: readonly { id: string }[] };
+    expect(listParsed.specs.map((s) => s.id)).toContain(id);
+
+    const show = run(['spec', 'show', id, '-C', dir]);
+    expect(show.status).toBe(0);
+
+    const trace = run(['spec', 'trace', id, '--json', '-C', dir]);
+    expect(trace.status).toBe(0);
+
+    const matrix = run(['spec', 'matrix', '--json', '-C', dir]);
+    expect(matrix.status).toBe(0);
+
+    const orphans = run(['spec', 'orphans', '--json', '-C', dir]);
+    expect(orphans.status).toBe(0);
+  });
+
+  it('runs `forge spec validate` (the bare, no-rule form) for real, exiting 0 against a clean project', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'validate', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+  });
+
+  it('still routes `forge spec validate --rule <name>` to the narrow, gate-shelled form, unaffected by the new bare form', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'validate', '--rule', 'oversized-stories', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toHaveProperty('errors', 0);
+  });
+
+  it('exits 2 for `forge spec new` with an unrecognised <type>', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'new', 'NotARealType', 'Title', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it("exits non-zero with a real USR-003 for `forge spec new ADR` — a real, registered type outside spec.ts's own eight-type domain", async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'new', 'ADR', 'Title', '-C', dir]);
+    expect(result.status).not.toBe(0);
+  });
+
+  it('exits 2 for a real, unrecognised `forge spec` subcommand', async () => {
+    const dir = await realProject();
+    const result = run(['spec', 'nope', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge adr (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge adr new`/`list`/`show`/`accept`/`reject`/`supersede` for real end to end', async () => {
+    const dir = await realProject();
+
+    const created = run(['adr', 'new', 'Fixture Decision', '--json', '-C', dir]);
+    expect(created.status).toBe(0);
+    const { id } = JSON.parse(created.stdout) as { readonly id: string };
+    expect(id).toMatch(/^ADR-/);
+
+    const list = run(['adr', 'list', '--json', '-C', dir]);
+    expect(list.status).toBe(0);
+    expect(
+      (JSON.parse(list.stdout) as { readonly entries: readonly { id: string }[] }).entries.map(
+        (e) => e.id,
+      ),
+    ).toContain(id);
+
+    const show = run(['adr', 'show', id, '-C', dir]);
+    expect(show.status).toBe(0);
+
+    const accept = run(['adr', 'accept', id, '--json', '-C', dir]);
+    expect(accept.status).toBe(0);
+    expect((JSON.parse(accept.stdout) as { readonly status: string }).status).toBe('accepted');
+
+    const created2 = run(['adr', 'new', 'Second Fixture Decision', '--json', '-C', dir]);
+    const { id: id2 } = JSON.parse(created2.stdout) as { readonly id: string };
+    const reject = run(['adr', 'reject', id2, '--json', '-C', dir]);
+    expect(reject.status).toBe(0);
+    expect((JSON.parse(reject.stdout) as { readonly status: string }).status).toBe('rejected');
+
+    const created3 = run(['adr', 'new', 'Third Fixture Decision', '--json', '-C', dir]);
+    const { id: id3 } = JSON.parse(created3.stdout) as { readonly id: string };
+    const supersede = run(['adr', 'supersede', id3, 'Replacement Decision', '--json', '-C', dir]);
+    expect(supersede.status).toBe(0);
+    const supersedeParsed = JSON.parse(supersede.stdout) as {
+      readonly superseded: string;
+      readonly replacement: string;
+    };
+    expect(supersedeParsed.superseded).not.toBe(supersedeParsed.replacement);
+  });
+
+  it('exits non-zero for `forge adr show` with an unknown id', async () => {
+    const dir = await realProject();
+    const result = run(['adr', 'show', 'ADR-0999', '-C', dir]);
+    expect(result.status).not.toBe(0);
+  });
+
+  it('exits 2 for `forge adr new` with no real <title>', async () => {
+    const dir = await realProject();
+    const result = run(['adr', 'new', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge diagram (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge diagram list`/`show`/`validate`/`render` for real against a real diagram fixture', async () => {
+    const dir = await realProject();
+    await writeDiagramFixtureAt(dir);
+
+    const list = run(['diagram', 'list', '--json', '-C', dir]);
+    expect(list.status).toBe(0);
+    expect(
+      (JSON.parse(list.stdout) as { readonly entries: readonly { id: string }[] }).entries.map(
+        (e) => e.id,
+      ),
+    ).toContain('DIAG-001');
+
+    const show = run(['diagram', 'show', 'DIAG-001', '-C', dir]);
+    expect(show.status).toBe(0);
+    expect(show.stdout).toContain('flowchart TD');
+
+    const validate = run(['diagram', 'validate', 'DIAG-001', '--json', '-C', dir]);
+    expect(validate.status).toBe(0);
+
+    const render = run(['diagram', 'render', 'DIAG-001', '-C', dir]);
+    expect(render.status).toBe(0);
+    expect(render.stdout.length).toBeGreaterThan(0);
+  });
+
+  it('exits non-zero with a real USR-003 for `forge diagram render --open` — no real browser-launch mechanism exists', async () => {
+    const dir = await realProject();
+    await writeDiagramFixtureAt(dir);
+    const result = run(['diagram', 'render', 'DIAG-001', '--open', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('--open');
+  });
+
+  it('exits non-zero with a real USR-003 for `forge diagram legend` — never implemented, refused rather than guessed at', async () => {
+    const dir = await realProject();
+    const result = run(['diagram', 'legend', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('legend');
+  });
+
+  it('exits 2 for `forge diagram diff` with no real --input', async () => {
+    const dir = await realProject();
+    await writeDiagramFixtureAt(dir);
+    const result = run(['diagram', 'diff', 'DIAG-001', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge diagram sync` with no real --input', async () => {
+    const dir = await realProject();
+    const result = run(['diagram', 'sync', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge diagram generate` with an unrecognised generator', async () => {
+    const dir = await realProject();
+    const result = run(['diagram', 'generate', 'not-a-real-generator', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge customize / forge compile (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('exits non-zero with a real USR-003 for `forge customize` — never implemented, refused rather than guessed at', async () => {
+    const dir = await realProject();
+    const result = run(['customize', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('customize');
+  });
+
+  it('exits 2 for `forge compile` with no real --sources', async () => {
+    const dir = await realProject();
+    const result = run(['compile', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge compile --sources <path> --json` for real end to end against a real, empty CompileSources', async () => {
+    const dir = await realProject();
+    const sourcesPath = path.join(dir, 'sources.json');
+    await writeFile(
+      sourcesPath,
+      JSON.stringify({
+        agents: {},
+        workflows: {},
+        frameworks: {},
+        templates: {},
+        checks: {},
+        skills: {},
+      }),
+      'utf8',
+    );
+    const result = run(['compile', '--sources', 'sources.json', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly result: { readonly violations: readonly unknown[] };
+    };
+    expect(parsed.result.violations).toEqual([]);
+  });
+});
+
+describe('forge preset / forge skill / forge mcp (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge preset list`/`show`/`apply`/`apply --eject` for real end to end', async () => {
+    const dir = await realProject();
+
+    const list = run(['preset', 'list', '--json', '-C', dir]);
+    expect(list.status).toBe(0);
+    const { presets } = JSON.parse(list.stdout) as { readonly presets: readonly { id: string }[] };
+    expect(presets.length).toBeGreaterThan(0);
+    const [preset] = presets;
+    if (preset === undefined) throw new Error('expected at least one real, registered preset');
+
+    const show = run(['preset', 'show', preset.id, '--json', '-C', dir]);
+    expect(show.status).toBe(0);
+
+    const eject = run(['preset', 'apply', preset.id, '--eject', '--json', '-C', dir]);
+    expect(eject.status).toBe(0);
+
+    const apply = run(['preset', 'apply', preset.id, '--json', '-C', dir]);
+    expect(apply.status).toBe(0);
+  });
+
+  it('exits 2 for a real, unrecognised `forge preset diff` — a named row with no real mechanism', async () => {
+    const dir = await realProject();
+    const result = run(['preset', 'diff', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge skill list` for real, listing the real, built-in skill library `forge init` materializes', async () => {
+    const dir = await realProject();
+    const result = run(['skill', 'list', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    const { ids } = JSON.parse(result.stdout) as { readonly ids: readonly string[] };
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).toContain('writing-an-adr');
+  });
+
+  it('exits 2 for `forge skill validate` with no real <id>', async () => {
+    const dir = await realProject();
+    const result = run(['skill', 'validate', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for a real, unrecognised `forge skill new` — a named row with no real mechanism', async () => {
+    const dir = await realProject();
+    const result = run(['skill', 'new', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge mcp validate --environment` for real end to end against a real, clean config', async () => {
+    const dir = await realProject();
+    const result = run(['mcp', 'validate', '--environment', 'dev', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    expect(
+      (JSON.parse(result.stdout) as { readonly outcome: { valid: boolean } }).outcome.valid,
+    ).toBe(true);
+  });
+
+  it('exits 2 for `forge mcp validate` with no real --environment', async () => {
+    const dir = await realProject();
+    const result = run(['mcp', 'validate', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits non-zero with a real USR-003 for `forge mcp list` — never implemented, refused rather than guessed at', async () => {
+    const dir = await realProject();
+    const result = run(['mcp', 'list', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('mcp list');
+  });
+});
+
+describe('forge help (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('recommends `forge doctor` for real, state-aware, against a real, freshly-initialized project', async () => {
+    const dir = await realProject();
+    const result = run(['help', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly recommendation: { readonly command: string };
+    };
+    expect(parsed.recommendation.command).toBe('forge doctor');
+  });
+
+  it('recommends `forge init` for real against a real, never-initialized directory', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-help-'));
+    dirs.push(dir);
+    const result = run(['help', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    expect(
+      (JSON.parse(result.stdout) as { readonly recommendation: { readonly command: string } })
+        .recommendation.command,
+    ).toBe('forge init');
+  });
+
+  it('exits non-zero with a real USR-003 for `forge help <topic>` — no real per-topic content exists yet', async () => {
+    const dir = await realProject();
+    const result = run(['help', 'workflows', '-C', dir]);
+    expect(result.status).not.toBe(0);
+  });
+});
+
+describe('forge plan (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge plan init --dry-run` for real, compiling without ever starting a run', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['plan', 'init', '--dry-run', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toHaveProperty('plan');
+  });
+
+  it('runs `forge plan stage <id> --dry-run` for real, threading a real {{stageId}} through', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['plan', 'stage', 'STAGE-1', '--dry-run', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+  });
+
+  it('runs `forge plan replan --from a-gate-failure --dry-run` for real', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run([
+      'plan',
+      'replan',
+      '--from',
+      'a-gate-failure',
+      '--dry-run',
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(result.status).toBe(0);
+  });
+
+  it('exits non-zero with a real USR-003 for `forge plan data`/`forge plan testing` — no corresponding real workflow', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const dataResult = run(['plan', 'data', '-C', dir]);
+    expect(dataResult.status).not.toBe(0);
+    const testingResult = run(['plan', 'testing', '-C', dir]);
+    expect(testingResult.status).not.toBe(0);
+  });
+
+  it('exits 2 for `forge plan` with an unrecognised <phase>', async () => {
+    const dir = await realProject();
+    const result = run(['plan', 'not-a-real-phase', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge plan stage` with no real <id>', async () => {
+    const dir = await realProject();
+    const result = run(['plan', 'stage', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge implement / forge refactor / forge deploy (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('runs `forge implement <storyId> --dry-run` for real, reaching the real production template — a real, pre-existing, disclosed gap (SPEC-QUESTIONS.md) means it reports a real compile issue rather than a fabricated success', async () => {
+    // `implementStory`'s own `ImplementStoryExpressionContext` (`loop/implement.ts`, built before this
+    // piece) supplies `storyId`/`ownerRole` but never populates `ExpressionContext.run`
+    // (`testPaths`/`filesExpected`) — the real, shipped `implement-story.workflow.yaml` template
+    // references `{{run.testPaths}}`/`{{run.filesExpected}}`, so a real dry-run against the genuine
+    // production template (as opposed to the simplified fixture template `loop/implement.test.ts`'s
+    // own unit tests use) genuinely cannot compile today, for *any* real Story. Confirmed directly by
+    // running this exact command against a real project — a real, pre-existing gap this dispatcher-
+    // wiring piece surfaces rather than silently working around; fixing `implementStory` itself is
+    // outside this piece's own mandate (wiring an already-real function, not completing it).
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    await writeOversizedStory(dir);
+    const result = run(['implement', 'STORY-001', '--dry-run', '--json', '-C', dir]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly plan: { readonly success: boolean; readonly issues: readonly { code: string }[] };
+    };
+    expect(parsed.plan.success).toBe(false);
+    expect(parsed.plan.issues.some((issue) => issue.code === 'template-resolution-failed')).toBe(
+      true,
+    );
+  });
+
+  it('exits 2 for `forge implement` with no real <storyId>', async () => {
+    const dir = await realProject();
+    const result = run(['implement', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge refactor <target> --goal <text> --dry-run` for real', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run([
+      'refactor',
+      'src/foo.ts',
+      '--goal',
+      'reduce duplication',
+      '--dry-run',
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(result.status).toBe(0);
+  });
+
+  it('exits 2 for `forge refactor` with no real --goal', async () => {
+    const dir = await realProject();
+    const result = run(['refactor', 'src/foo.ts', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge deploy <env> --dry-run` for real, never requiring a destructive confirmation for a dry-run', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['deploy', 'staging', '--dry-run', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+  });
+
+  it('exits 2 for `forge deploy` with no real <env>', async () => {
+    const dir = await realProject();
+    const result = run(['deploy', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+});
+
+describe('forge debug / forge review / forge panel / forge ask / forge session (real subprocess dispatch, PLAN-M12.md P4)', () => {
+  it('exits 2 for `forge debug` with neither a real <symptom> nor --from-failure', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['debug', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge review` with a real, unrecognised extra positional', async () => {
+    const dir = await realProject();
+    const result = run(['review', 'extra', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge panel` with no real <question>', async () => {
+    const dir = await realProject();
+    const result = run(['panel', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge panel <question>` with no real --roles', async () => {
+    const dir = await realProject();
+    const result = run(['panel', 'should we do X?', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits non-zero with a real USR-003 for `forge ask` — never implemented, refused rather than guessed at', async () => {
+    const dir = await realProject();
+    const result = run(['ask', 'what is the plan?', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('forge ask');
+  });
+
+  it('runs `forge session list` for real, empty on a fresh project', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['session', 'list', '--json', '-C', dir]);
+    expect(result.status).toBe(0);
+    expect(
+      (JSON.parse(result.stdout) as { readonly sessions: readonly unknown[] }).sessions,
+    ).toEqual([]);
+  });
+
+  it('exits 2 for `forge session show` with no real <id>', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['session', 'show', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for a real, unrecognised `forge session <type>`', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['session', 'not-a-real-type', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  // A real, full `debug`/`review`/`panel`/`session` happy path genuinely dispatches a live agent
+  // session (`dispatchAgentStep`/`runSessionStep`) — unlike `forge init`'s own `REAL_ADAPTER_CLI`-gated
+  // test above (a cheap `preflight()` probe only), actually running one of these to completion spends
+  // real tokens against a real model and takes real wall-clock time whenever a developer's own machine
+  // happens to have a real platform CLI on `PATH` (confirmed directly: a real, local run of `forge
+  // panel` against this exact fixture spent real, non-trivial API cost). Deliberately not exercised
+  // here for that reason — the usage-error paths above already prove every one of these commands is
+  // genuinely reachable via real argv up to the one real, live call this test suite must not make on a
+  // developer's behalf; see `SPEC-QUESTIONS.md`.
 });
