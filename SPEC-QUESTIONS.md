@@ -15133,3 +15133,79 @@ wrapping `stat` and `readFileSync`/`JSON.parse` into real `RUN-034`s, and by sep
 (propagates a real `ForgeError` directly) from "parse its content" (the only step whose own failure is
 legitimately swallowed as "no usable id") in `readSkillFrontMatterId` and both `collectDeclared*`
 helpers. All fixed and re-verified; see the log for exact commits and test names.
+
+## Q183 — M12 P6: Windows CI closure — the 13 real Unix-permission-bit `skipIf(win32)` sites have no
+safe Windows-equivalent test, and are recorded here as a permanent, disclosed limitation
+
+**Context:** `21` §21.6 names `ubuntu-latest, macos-latest, windows-latest` for the CI matrix, and
+M12's own Acceptance line wants "CI green on the full matrix (3 OS × 3 Node)." `ci.yml`'s `floor` job
+matrix was missing `macos-latest` entirely — fixed by adding it. Separately, a pre-plan research pass
+named 12 (actually 13, once each file was read directly rather than trusted from the approximate line
+numbers) real `it.skipIf(...)` call sites across 8 test files gated on Unix permission-bit semantics:
+`packages/cli/test/commands/audit.test.ts` (1), `packages/cli/test/commands/doctor/fix.test.ts` (1),
+`packages/extensions/test/install/manifest.test.ts` (1), `packages/vcs/test/overlay-fetch.test.ts` (1),
+`packages/vcs/test/claims.test.ts` (2), `packages/vcs/test/git.test.ts` (1),
+`packages/telemetry/test/events.test.ts` (5), `packages/engine/test/security/
+s12-orphan-free-crash.test.ts` (1).
+
+**Decision: every one of the 13 sites keeps its skip; none gets a fabricated Windows-equivalent test.**
+Each site injects a failure by either `chmod`-ing a file or directory to `0o000`/`0o400`/`0o500`/`0o555`
+(POSIX permission bits — 12 sites) or by querying the real OS process table with `ps -e -o pid=,pgid=`
+and sending a negative-pid process-group signal (a POSIX-only concept — the 1 remaining site, S12).
+Neither mechanism has a real Windows analogue:
+
+- Windows has no POSIX permission-bit model at all. `chmod` on Windows only ever toggles the read-only
+  attribute bit (roughly `0o200`'s write bit) — it cannot express "root/owner can still stat the entry
+  but any read/write/exec is denied," the specific failure shape all 12 chmod-based tests target. The
+  real Windows equivalent (constructing a security descriptor / ACL that denies the current process's
+  own token read or write access to a path) is a fundamentally different API family (`icacls`,
+  `SetNamedSecurityInfo`) with different failure semantics, and fabricating a same-shaped Windows test
+  using it would not actually prove the same invariant these tests prove today — it would prove "some
+  ACL denial produces a typed error," a materially weaker and differently-shaped claim.
+- `ps`'s own `-o pid=,pgid=` field selection and negative-pid process-group signaling are themselves
+  POSIX-only concepts with no direct Windows equivalent; Windows process groups (job objects) are a
+  different mechanism entirely, and `s12-orphan-free-crash.test.ts`'s own group-kill helper
+  (`spawnAndKillAfter`, `packages/engine/test/e2e/crash-helpers.ts`) already documents this.
+
+**Why not build the real Windows-equivalent version anyway:** doing so honestly would mean writing and
+maintaining a second, ACL/job-object-based failure-injection mechanism this codebase has no other use
+for, purely to keep a skip count at zero — new production-adjacent test infrastructure with no
+Windows-side consumer anywhere else in the repo, verified against an environment (real Windows CI) this
+build cannot directly run interactively to validate iteratively. Per this project's own standing rule
+("no scaffolding for its own sake"), that cost is not justified when the underlying invariant each test
+proves (a real filesystem/process failure is wrapped into this codebase's own typed `ForgeError`, never
+left as a raw Node error) is already exercised on the two other matrix legs (`ubuntu-latest`,
+`macos-latest`, both POSIX) — the *contract* under test (error wrapping, not the OS-specific injection
+mechanism) has real coverage; only the specific `win32` injection path does not.
+
+**What was verified honestly, and what remains disclosed uncertainty:** every site was re-read directly
+in this pass (not trusted from the pre-plan research's approximate line numbers, which were off by one
+overall — 13 real sites, not 12) and confirmed to already skip only under `win32`/root, never silently
+narrowing coverage further. Each site now carries a specific, reviewable comment at the call site (not
+merely a distant, shared top-of-file rationale) explaining exactly which POSIX mechanism it depends on
+and why Windows/root cannot exercise the same failure. This cannot be confirmed to actually skip
+correctly on a real `windows-latest` GitHub Actions runner from this darwin environment — that is
+disclosed here explicitly, not claimed as verified; CI's own now-3-OS matrix (this piece's other half)
+is what will observe it directly and is the intended source of truth going forward.
+
+**Verification:** `pnpm typecheck`, `pnpm run boundaries`, and a full, unscoped `node scripts/run-tests.
+mjs run` all clean (comment-only changes to the 8 test files; no assertion or skip condition was
+altered). `.github/workflows/ci.yml`'s `floor` matrix now reads `[ubuntu-latest, macos-latest,
+windows-latest]`.
+
+**A genuine, disclosed, out-of-scope-for-this-piece gap a round-1 critic surfaced:** `21` §21.6's own
+table specifies suite differentiation by OS — "unit + integration everywhere; e2e on ubuntu only (all
+Node versions); live nightly on ubuntu" — not merely the OS/Node axes this piece fixes. `ci.yml`'s
+`floor` job runs the identical, undifferentiated `pnpm test` on every OS leg, a gap that predates this
+piece (`windows-latest` already ran the full suite before P6 touched anything) and is not introduced or
+worsened in kind by adding `macos-latest` — macOS is POSIX, so every one of the 13 permission-bit/
+process-group mechanisms these tests depend on behaves identically to `ubuntu-latest` there, unlike on
+Windows. Implementing real suite-tiered CI scheduling (splitting `pnpm test` into unit/integration/e2e
+invocations gated per OS, plus the separately-missing `forge compile --check`, `pnpm audit`, nightly
+mutation testing, bundle-size, and schema-drift jobs `21` §21.6 also names) is a materially larger,
+separate CI-architecture change than P6's own named Mandate/Surface/Checks lines ever committed to (the
+OS-matrix gap and the 13 skip sites, specifically — not the Suites axis or the additional-jobs
+paragraph in the same table). Restructuring CI suite-tiering was never part of this piece's own named
+surface, so implementing it here would be scope creep, not a fix this piece is dodging. Recorded here,
+not silently dropped, per this project's own standing "specs win, disagreements go in SPEC-QUESTIONS.md"
+rule — left for a future, dedicated CI-architecture piece.

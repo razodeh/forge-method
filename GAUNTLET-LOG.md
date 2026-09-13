@@ -12228,3 +12228,43 @@ wiring, installing nothing.
 **Rounds: 4 critic rounds (3 blocking + 0 major round 1; 2 major + 1 major-regression-self-caught + 1
 minor round 2; 1 blocking + 1 major round 3; 2 major round 4; all real findings fixed, no fifth round
 needed). Outcome: WON.** Committed `d3c6e0b` (feat).
+
+## M12 P6 — Windows CI closure: macOS matrix gap + the 12 (actually 13) real skipIf(win32) sites
+
+**Piece:** `.github/workflows/ci.yml`'s `floor` matrix was missing `macos-latest` entirely, against
+`21` §21.6's own named 3-OS matrix and M12's own Acceptance line. Separately, a pre-plan research pass
+named 12 real `it.skipIf(...)` sites across 8 test files gated on Unix permission-bit or POSIX-only
+process-group semantics; re-reading every file directly found 13 real sites, not 12 (the plan's own
+title undercounted by one).
+
+**Round 1 (fresh critic):** confirmed the 13-site inventory and comment coverage were both genuinely
+complete and accurate, the CI matrix diff correct (verified GitHub Actions' matrix-job result
+aggregation reasoning independently), and nothing outside this piece's own files touched. Found two
+real issues neither blocking: (1) major — `21` §21.6 also specifies suite-by-OS differentiation ("e2e
+on ubuntu only"), which `ci.yml` does not implement (runs the identical `pnpm test` on every OS leg) —
+a pre-existing gap this piece's commit message cited `21` §21.6 for without addressing; (2) major — "CI
+green on all 9 matrix cells" cannot actually be confirmed from this darwin dev environment, only
+asserted; (3) minor — commit message parenthetical listing only the 8 sites touched in this commit
+could be misread as claiming all 13 were touched.
+
+**Judged:** (1) and (2) are genuine but out of this piece's own named Mandate/Surface/Checks scope
+(suite-tiering is a materially larger CI-architecture change; darwin cannot exercise a real Windows/
+macOS runner) — both recorded as explicit, disclosed limitations in `SPEC-QUESTIONS.md` Q183 rather than
+silently dropped or fixed by silently expanding this piece's scope. (3) accepted as a documentation nit
+for this log, not worth a commit-message rewrite.
+
+**Round 2 (fresh critic):** re-verified the Q183 disclosure against the actual plan and spec text and
+judged the scope call legitimate and the macOS-POSIX-equivalence reasoning sound (not a rationalization)
+— found exactly one minor issue: the disclosure's "shared working tree, four concurrent pieces" risk
+clause overstated a real conflict risk (only P6 touches `ci.yml` per `PLAN-M12.md`). Fixed by tightening
+that sentence to rest on the real argument (suite-tiering was never part of P6's own named surface)
+rather than an unverified merge-risk claim. No blocking or major findings in round 2 — critic explicitly
+stated it was not padding the list.
+
+**What the critic caught that the builder missed:** the exact wording gap in round 1 (commit message
+implying all 13 sites were freshly commented, when 5 already had adequate comments from earlier
+milestones and were deliberately left untouched) and, in round 2, one unsupported rhetorical claim in
+the disclosure text itself — both real, both fixed, neither discovered by the builder's own read.
+
+**Rounds: 2 critic rounds (2 major + 1 minor round 1, all disclosed or fixed; 1 minor round 2, fixed; no
+third round needed). Outcome: WON.**
