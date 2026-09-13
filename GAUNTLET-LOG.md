@@ -12372,3 +12372,103 @@ oversized-fixture test, reproduced under the same heavy concurrent load that pro
 
 **Rounds: 3 critic rounds (3 blocking + 4 major round 1, all fixed; 4 major round 2, all fixed; 0
 blocking/major round 3 — converged). Outcome: WON.** Committed `7869307` (feat).
+
+## M12 P2 — The real CLI dispatcher: module/overlay/distribution + doctor/audit/upgrade/export/config/cost
+
+Wired `forge module add/remove/update`, `forge overlay add`, `forge upgrade [--to]`, `forge export
+<target>`, `forge doctor [--fix] [--rebuild-index]`, `forge audit [--since]`, `forge config
+get/set/edit`, `forge cost`, and `forge uninstall [--remove-docs]` into the real CLI argv dispatcher
+(`packages/cli/src/bin.ts`) — `PLAN-M12.md` P2's own M10/M11 distribution, security, and lifecycle
+surface. `forge doctor` is the first real CLI wiring this command has ever had.
+
+### Round 1: 2 major + 2 minor
+
+**Major:** `buildAdapterForDiagnostics`'s own first doc comment overstated its scope — it implied a
+general "doctor never crashes on an adapter problem" contract when the code only ever caught the one
+named `ENV-004` case, leaving every other construction exception (a corrupted adapter package) to
+propagate exactly like `run`/`resume`/`merge`'s own unguarded `buildAdapterForConfig`. **Major:** a
+hostile module/overlay author's own free-form capability text (`ceilings.<role>.exec`/`.allowlistHosts`
+patterns, unconstrained by schema) reached `renderInstallChangeReport`'s terminal output with no
+control-character/ANSI-escape sanitization — a crafted escape sequence could corrupt or hide the very
+consent-relevant lines a human is meant to read before typing `--yes`. **Minor:** `runExportCommand`/
+`runConfigCommand`'s reliance on `exportThirdParty`/`configEdit` being typed `never` to make a
+fallthrough unreachable was implicit (a bare statement, not an explicit `return`) — a future change
+making either return normally would silently misroute to the wrong usage-error message with no compiler
+signal. **Minor:** `process.version` was read inline at two separate call sites instead of through one
+named wrapper, unlike every other ambient read in this file (`realEnvSnapshot`/`realNow`).
+
+**What the critic caught that I missed:** the security-relevant control-character gap specifically — I
+had reused `InstallChangeReport`'s own already-tested fields without considering that a hostile bundle
+author fully controls the free-text `ceilings` patterns that flow into them.
+
+**Judged and fixed:** `buildAdapterForDiagnostics`'s doc comment corrected to name its real, narrow
+scope. A new `stripControlChars` helper strips control characters from `newGrants`/`warnings` before
+printing (round 1's own version covered only the plain-text path — see round 2). `return
+exportThirdParty(...)`/`return configEdit()` make the `never`-reliance explicit and independently
+type-checked. A new `realProcessVersion()` wrapper matches the existing `realNow`/`realEnvSnapshot`
+precedent.
+
+### Round 2: 2 major + 2 minor (all in the round-1 security fix)
+
+A fresh critic round verified round 1's four fixes, confirmed three held, and found round 1's own
+control-character fix itself was broken on two fronts: **major**, the regex (`[\x00-\x1f\x7f]`) omitted
+the entire C1 range (`\x80`-`\x9f`, including `CSI`'s 8-bit form `\x9b`), a real terminal-interpretable
+escape a schema-permitted free-text field could still carry through un-stripped; **major**, the doc
+comment's own claim that `--json` mode needed no equivalent guard because `JSON.stringify` "already
+escapes every control character" was factually false — verified by the critic via direct `Buffer.from`
+inspection that `JSON.stringify` only escapes `U+0000`-`U+001F` per ECMA-262, leaving `DEL`/C1 bytes
+raw in `--json` output, the exact attack round 1 was supposed to close, left open on the `--json` path
+specifically. Two minors: `forge uninstall --remove-docs` (a flag this piece itself introduced) had zero
+test coverage; `forge cost --since`'s refusal (symmetric to the already-tested `--run`) was likewise
+unverified.
+
+**What the critic caught that I missed:** I wrote the doc comment's `--json`-is-safe claim from memory
+of `JSON.stringify`'s general escaping behavior instead of verifying it directly against the two
+specific byte values (`DEL`, C1) that actually mattered here — a real, avoidable factual error in a
+security-relevant justification.
+
+**Judged and fixed:** the regex widened to `[\x00-\x1f\x7f-\x9f]` (C0, `DEL`, and C1 as one contiguous
+range); a new `sanitizeInstallChangeReportForDisplay` sanitizes the report's own fields once, centrally,
+in `printInstallChangeReport`, before either the JSON or plain-text renderer runs, so one fix covers
+both modes instead of two independently-written ones that already drifted once. A new test builds a
+real hostile module bundle (a `ceilings.<role>.exec` pattern embedding `\x1b`, `\x7f`, and `\x9b`) and
+asserts neither survives in either output mode — scoped specifically to this dispatcher's own printed
+report line(s), since `promptForConsent`'s own separate, pre-existing consent banner (a different
+package, out of this piece's scope, disclosed in `SPEC-QUESTIONS.md` Q185) still echoes the identical
+raw text unsanitized. New tests added for `--remove-docs` and `cost --since`.
+
+### Round 3: 3 major
+
+A fresh critic round verified rounds 1-2's fixes held (confirmed directly: the widened regex, the
+centralized sanitization call site, and the hostile-bundle test's own correct scoping against the
+unrelated consent banner), then found three new, real gaps: **major**, `config set`'s `--json` output
+echoed the raw, unparsed argv string rather than the real value `configSet` actually stored (`YAML.
+parse`s the value before writing — `execution.concurrency 7` stores the number `7`, but `--json` echoed
+back the string `"7"`), a real type mismatch against `config get --json`'s own field for the identical
+key, violating `22` §22.1 rule 4's "stable `--json` contract"; **major**, `forge cost`'s `'breached'` →
+`EXIT_CODES.budgetExceeded` (4) mapping — new dispatcher logic this piece itself added — had zero test
+coverage, every existing `cost` test exercising only the vacuous no-runs-yet `'ok'` path; **major**,
+`--to <version>` (new argv surface `UPGRADE_FLAGS` parses) had zero end-to-end coverage — the existing
+downgrade-refusal test exercised the check via a hand-edited `manifest.yaml`, never through `--to`
+itself, leaving the actual `values.get('--to')` → options-object wiring unexercised by any test.
+
+**What the critic caught that I missed:** testing only the "does the refusal/happy-path fire" question
+for `cost`/`upgrade` and not the actual new argv-parsing code paths this piece itself wrote for
+`--to`/the budget-exceeded exit code — the identical "tested behavior I already knew worked, not the
+new wiring" gap, on two different commands.
+
+**Judged and fixed:** `config set` now reads the value back via `configGet` after writing, echoing the
+real, stored, type-correct value in both output modes, with a new test proving `typeof parsed.value ===
+'number'`. A new test appends a real, over-budget `UsageRecorded` event (`$250` against `DEFAULT_
+CONFIG`'s own real `$100` daily cap) and asserts exit `4`. A new test runs `forge upgrade --to 5.0.0
+--dry-run --json` and asserts `report.targetVersion` reflects the real pin.
+
+**Verification (after round 3):** `pnpm lint` (clean; the 4 pre-existing prettier warnings in
+`overlay.ts`/three doctor-and-overlay test files are untouched by this diff, confirmed via `git diff`),
+`pnpm typecheck`, `pnpm run boundaries`, and the full unscoped `node scripts/run-tests.mjs run` (8375
+passed, 9 skipped, 1 failed — the pre-listed, load-sensitive `packages/engine/test/e2e/
+crash-resume.test.ts` flake, not a real regression). `packages/cli/test/bin.test.ts` alone: 73/73 real
+subprocess-dispatch tests passing.
+
+**Rounds: 3 critic rounds (2 major + 2 minor round 1, all fixed; 2 major + 2 minor round 2 — both in
+round 1's own security fix, all fixed; 3 major round 3, all fixed). Outcome: WON.**

@@ -15298,3 +15298,82 @@ rule 1 — this repository's own CI installs none), a real `forge run` through t
 workflow), real `gate`/`merge`/`lanes`/`logs`/`pause`/`abort` exercised against that real run's own real
 state (including a real, live-locked `pause --json` against a genuinely still-running child process),
 and explicit negative tests for every flag-surface decision above.
+
+## Q185 — M12 P2: the real CLI dispatcher for `module`/`overlay`/`upgrade`/`export`/`doctor`/`audit`/
+`config`/`cost`/`uninstall` — a real, degraded adapter-construction path for `doctor`; a real,
+control-character sanitization gap this piece closes only partially; several disclosed scope cuts
+
+`PLAN-M12.md` P2's own mandate is to wire `forge module add/remove/update`, `overlay add`, `upgrade`,
+`export`, `doctor`, `audit`, `config get/set/edit`, `cost`, and `uninstall` into `packages/cli/src/
+bin.ts`, following P1's established `parseCommandFlags`/`*CommandContext`/`EXIT_CODES` pattern with no
+new business logic. Several real, concrete decisions this piece had to make and disclose:
+
+**1. `forge doctor`/`forge upgrade` degrade a real `ENV-004` adapter-construction failure to a
+`warning`, not a crash — narrowly, never a blanket catch.** P1's own `buildAdapterForConfig` throws
+`ENV-004` when a project's `.forge/config.yaml` `platform.primary` names a platform id
+`@forge/adapter-kit/registry`'s `KNOWN_ADAPTER_MODULES` has no real construction path for — the right,
+loud failure for `run`/`resume`/`merge`, which genuinely cannot proceed without a real adapter. `doctor`
+is different: its entire job is diagnosing exactly this class of environment problem, and
+`checkPlatformAdapter(undefined, ...)` already has a real, honest degraded outcome for "no adapter" (a
+`warning`, not a `hard` failure) built for precisely this case. A new `buildAdapterForDiagnostics`
+wrapper catches only the one named `ENV-004` case and returns `undefined`; any other construction
+exception (a corrupted adapter package, a factory throwing for an unrelated reason) still propagates
+loudly, identically to `run`/`resume`/`merge`'s own unguarded behavior — a first draft's own doc comment
+overstated this as a general "diagnose, don't crash" contract, corrected by a critic round to name the
+real, narrow scope. Without this, every real project this dispatcher's own test fixtures build via
+`runInit` against `@forge/testkit`'s `FakePlatformAdapter` (whose own `platform.primary` value,
+`forge-fake-adapter`, is never a real registry entry) would make `forge doctor`/`forge upgrade`
+uninvocable through this dispatcher at all — the one command whose whole purpose is surfacing exactly
+that kind of environment problem, crashing on it instead.
+
+**2. `renderInstallChangeReport`'s `newGrants`/`warnings` fields are sanitized of C0/C1 control
+characters (including ANSI escape sequences) before being printed, in both `--json` and plain-text
+mode — but `promptForConsent`'s own separate, pre-existing consent banner is not, and stays out of
+scope.** `describeRequestedCapabilities`'s own `moduleEntries` interpolates a module's real,
+unconstrained `ceilings.<role>.exec`/`.allowlistHosts` patterns verbatim into capability text
+(`@forge/extensions/module`'s own schema has no charset restriction on them) — real, hostile-
+bundle-author-controlled content on exactly the git/npm-fetch install path the consent screen exists to
+guard (`19` §19.5 step 3). A first draft's `stripControlChars` fix covered only the human-readable
+render path, reasoning `--json` needed no equivalent guard because `JSON.stringify` "already escapes
+every control character" — a second critic round proved that false by direct inspection: `JSON.
+stringify` only escapes `U+0000`-`U+001F` per ECMA-262; `DEL` (`\x7f`) and the whole C1 range
+(`\x80`-`\x9f`, `CSI`'s own 8-bit form `\x9b` included) pass through unescaped as raw bytes. Fixed by
+widening the regex to `[\x00-\x1f\x7f-\x9f]` and sanitizing the report's own fields once, centrally, in
+`printInstallChangeReport`, before either renderer sees them. **Left deliberately unfixed, and
+disclosed rather than silently patched over:** `promptForConsent` itself (`@forge/extensions/install`,
+a different package, pre-existing behavior since `PLAN-M11.md` P3) writes its own separate
+`"${description}\n\nAuto-accepted..."` banner straight to `process.stdout` with no equivalent
+sanitization — the identical raw text this piece's own report fields are built from, printed earlier in
+the same real subprocess output. Fixing it would mean reaching into a different package's own
+pre-existing consent-prompt machinery, well outside this piece's own ~400-line dispatcher-wiring
+mandate; `packages/cli/test/bin.test.ts`'s own hostile-bundle test scopes its assertions to only the
+report line(s) this dispatcher itself prints, specifically to avoid claiming a fix this piece does not
+actually make.
+
+**3. `forge cost --run <id>`/`--since <date>` (`03` §3.2.8's own literal row) are both real, disclosed
+refusals (`USR-003`), not silently ignored or fabricated.** `costReport`'s own real implementation
+always aggregates every run a project has ever executed, with no per-run or per-date scoping mechanism
+at all — unlike `forge audit`'s own real `queryAuditEvents`, which does support `since`. Inventing a
+filtering mechanism `costReport` itself does not have would be new business logic this dispatcher's own
+"argv-to-parameter translation only" mandate does not license; refusing both flags honestly (the
+identical stance `forge logs --follow`/`--lane` already take) is the disclosed choice instead.
+
+**4. `module list/info`, `overlay list/remove/update/explain/diff/doctor/eject`, and `config
+list/explain` remain unwired here — `PLAN-M12.md` P2's own literal Surface line names only `module
+add/remove/update`, `overlay add`, and `config get/set/edit`.** Every one of these remaining
+subcommands is a real, already-tested function (`moduleList`/`moduleInfo`/`overlayExplain`/
+`configList`/`configExplain`); wiring them is `PLAN-M12.md` P4's own mandate, named explicitly in
+`bin.ts`'s own top-of-file doc comment rather than silently completed or silently left unmentioned.
+
+**Checks:** `packages/cli/test/bin.test.ts` gained 33 new real subprocess-dispatch tests: a real
+`module add`/`remove`/`update` and `overlay add` end to end against real local-channel fixtures; a real
+hostile-bundle test proving the control-character sanitization fix in both output modes; a real
+`--to <version>` pin proven end to end (not just the downgrade-refusal path); a real downgrade refusal
+simulated via a hand-inflated `manifest.yaml` (this workspace's own real, currently-running version is
+`0.0.0`, leaving no real lower version string to pass via `--to` directly); a real `forge doctor
+--fix`/`--rebuild-index` against a live, real stale-lock corruption (`21` E10's own case, built the
+identical way `corrupt-state.test.ts` already does); a real `--json` type-contract check proving
+`config set`'s echoed value matches `config get`'s (a round-3 critic finding: the first draft echoed
+the raw, unparsed argv string instead of the real, `configSet`-parsed stored value); a real
+`EXIT_CODES.budgetExceeded` (4) proof via a real, over-budget `UsageRecorded` event; and explicit
+negative tests for every disclosed scope cut and refusal above.
