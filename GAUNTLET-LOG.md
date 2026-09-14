@@ -12795,3 +12795,77 @@ owns. `bench-marks.json` committed with this piece's own first real measurement 
 disclosed first-frame budget miss (`Q188` point 3) this piece's own scope does not fix.
 
 **Outcome: WON**, with the above real, disclosed exceptions to a full 3-round convergence loop.
+
+## M12 P7 — Documentation: README, getting-started, method guide, authoring guide, adapter guide
+
+**Piece:** `README.md` + `docs/{getting-started,method-guide,authoring-guide,adapter-guide}.md` — five
+new, from-scratch docs, written against the real, current `forge` CLI (`PLAN-M12.md` P1-P4's now-landed
+dispatcher), per `PLAN-M12.md` P7.
+
+**Rounds: 2.** Round 1 (fresh, context-free critic) found 1 blocking + 1 major finding, both real, both
+fixed. Round 2 (a second, separately fresh critic) verified both fixes independently against the live
+CLI, did its own further spot-check across all five files, and found nothing new.
+
+**Round 1 findings:**
+- **Blocking:** `docs/getting-started.md` presented all 8 `spec new` type names as equally usable; in
+  reality only 5 work (`Vision`/`Capability`/`NFR`/`Epic`/`Task`) — `Story`/`InterfaceContract`/
+  `DataModel` crash every time with a misleading `Invalid configuration in <Type> at line 0` error,
+  because their path template needs a slug/name variable the CLI's two-positional `spec new <type>
+  <title>` form has no way to supply. The critic reproduced this on two independent clean `forge init`
+  projects before reporting it — not a guess from reading source.
+- **Major:** `docs/getting-started.md` §3 grouped `forge workflow validate --all` with the genuinely-
+  clean, "empty is expected" exploration commands; on a stock, freshly-initialized project it actually
+  reports 3 real `unknown-artifact-type` findings against `build-stage`/`implement-story` and exits
+  non-zero, every time. The doc's own opening claim ("every command below was run... none of it is
+  aspirational") was still technically true (the command *was* run) but the doc silently omitted what
+  running it actually produced.
+- Both are real, pre-existing defects in the CLI dispatcher / shipped module content, not documentation
+  typos — fixing them is out of scope for a pure-documentation piece, so both are disclosed inline,
+  exactly where a reader following the walkthrough would hit them, rather than fixed or hidden. Recorded
+  in full in `SPEC-QUESTIONS.md` Q190, including root cause for each, for whichever future piece owns
+  the CLI dispatcher or `fm-core` module content next.
+
+**What the critic caught that a self-review would have missed:** both findings required *running* the
+documented commands against a live, freshly-initialized project rather than trusting that a command
+which is real and wired necessarily behaves cleanly — a self-review, having just verified each command
+was reachable and produced the exact output quoted in the doc during initial authoring, would have had
+no independent reason to re-run the full sequence end-to-end afterward looking for drift between the
+individually-quoted outputs and how the doc *frames* them (the workflow-validate finding is a framing
+problem, not an output-accuracy problem — the quoted text nowhere appears verbatim in the original
+draft; the doc simply implied a clean run by omission).
+
+**Round 2 spot-checks (independent, not a re-check of round 1's own findings):** `forge overlay add` with
+a real (deliberately invalid) local directory refuses with real schema errors rather than crashing or
+silently succeeding; `forge preset apply startup-lean --eject` writes real overlay files; `forge config
+set` on a real nested key round-trips correctly and correctly refuses an out-of-schema nested key the
+docs never claim is settable that way; `forge skill validate` against a real shipped skill id returns
+valid JSON; the authoring guide's agent-overlay YAML (`tools.exec.$append`, `tools.allowlistHosts.$set`,
+the six merge operators) was cross-checked against the real schema/merge-operator source and a real
+shipped `.agent.yaml` file, not just against the spec prose; every cross-link across all five files and
+into `specs/`/`BUILD-PROMPT.md`/`GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md`/`PLAN-M12.md` resolves.
+
+**Verification (final):** `pnpm lint` — `npx prettier --check README.md docs/*.md` clean (eslint itself
+fails only on `PLAN-M12.md` P5's own concurrent, unrelated `scripts/bench*.mjs` work, confirmed by every
+failing line naming a file this piece never touched). `pnpm run boundaries` clean. `pnpm typecheck`
+fails only on the same P5 `scripts/bench*.mjs` files (markdown is never type-checked, so this piece's own
+diff cannot be responsible). The full, unscoped `node scripts/run-tests.mjs run` showed load-induced
+failures (`run-upgrade.test.ts`, `run-init.test.ts`, `scripts/bench-ratchet.test.ts`) under heavy
+concurrent-agent contention (individual tests taking 30-60s instead of milliseconds); `run-upgrade.test.ts`
+and `run-init.test.ts` were re-run in isolation and passed 41/41, confirming contention rather than a
+real regression — this piece's diff contains zero source files, so it cannot have caused a test failure
+in either. `packages/cli/test/bin.test.ts` (the CLI-dispatcher suite most relevant to doc accuracy) run in
+isolation: 154/155 passed, the one failure a `forge diagram render` subprocess-spawn flake already
+named and explained in this file's own M12 P4 entry above as load-sensitive and non-reproducible under
+direct, non-concurrent invocation — not a new failure this piece introduces.
+
+**Doc-CLI accuracy verification method (the plan's own Checks line, satisfied concretely):** a real,
+manual verification pass, disclosed as such — every command and flag named in any of the five docs was
+independently run against `node --experimental-strip-types packages/cli/bin/forge.mjs <args>` in a real,
+freshly-initialized scratch project (not read off `bin.ts`'s own doc comment alone), across both build
+rounds and both critic rounds (each critic round re-ran a further, independently-chosen sample rather
+than trusting the prior round's own evidence). `KNOWN_ADAPTER_MODULES` (`packages/adapter-kit/src/
+registry.ts`), the CodeMachine-descoping text (`specs/07` §7.4), and the `adapter.yaml` schema
+(`packages/adapter-generic/src/config/schema.ts`, cross-checked against its own test fixtures) were each
+read directly, not summarized from memory.
+
+**Outcome: WON.**

@@ -15909,3 +15909,52 @@ commands/upgrade/run-upgrade.test.ts` (17/17) all pass in full, run in isolation
 failures above were traced to contention rather than a real regression. `node dist/forge.mjs --version`/
 `status --json`/an unknown-subcommand refusal, and the identical dev-mode invocation via `bin/forge.mjs`,
 all verified by direct, manual execution. `npm publish --dry-run` succeeds structurally.
+
+## Q190 — M12 P7: documentation — two genuine, pre-existing CLI/library defects surfaced by verification,
+disclosed in the docs themselves rather than fixed or hidden
+
+**Context:** `PLAN-M12.md` P7 asks for five new docs (`README.md`, `docs/getting-started.md`,
+`docs/method-guide.md`, `docs/authoring-guide.md`, `docs/adapter-guide.md`), written against the real,
+current `forge` CLI, with every command/flag verified by direct invocation rather than read off `bin.ts`'s
+own doc comment. Verifying `docs/getting-started.md`'s walkthrough step by step (a fresh `forge init`,
+then every command named in the doc) surfaced two real, pre-existing defects, neither of which this
+piece's own mandate (pure documentation) is scoped to fix:
+
+1. **`forge spec new` works for only 5 of its own 8 documented type names.** `Vision`, `Capability`,
+   `NFR`, `Epic`, `Task` all write a real artifact as expected; `Story`, `InterfaceContract`, `DataModel`
+   fail every time with `Invalid configuration in <Type> at line 0` — a config-layer error message that
+   is actively misleading, since nothing about `.forge/config.yaml` is involved. Root cause (confirmed
+   by reading `packages/schemas/src/registry/artifact-types.ts` and `packages/cli/src/commands/spec.ts`):
+   these three types' `pathTemplate` needs a `{slug}`/`{name}` variable that `specNew` receives via a
+   `vars` parameter, but `bin.ts`'s own `spec new` dispatcher parses only two positionals (`<type>
+   <title>`) and rejects a third — there is no way through the documented, real CLI surface to supply
+   it. This is a real defect in the CLI dispatcher (a `PLAN-M12.md` P4 concern) or the schema/command
+   layer beneath it, not a documentation typo.
+2. **`forge workflow validate --all` does not come back clean on a stock, freshly-initialized project.**
+   It reports three real `unknown-artifact-type` findings (`StagePlan` and `ReviewReport`, referenced by
+   the shipped `build-stage`/`implement-story` workflows but not registered as real artifact types) and
+   exits non-zero, every time, on every fresh `forge init`. This is a real defect in the shipped module
+   content (`fm-core`'s own workflow/schema pairing), not something this project or this doc's reader
+   caused.
+
+**Decision:** disclose both, inline, exactly where the walkthrough would otherwise hit them —
+`docs/getting-started.md` §3 gives `workflow validate --all` its own paragraph naming the real output and
+exit code instead of grouping it with the genuinely-clean exploration commands; §4 names exactly which
+five `spec new` types work and explains why the other three don't, with the literal error text a reader
+will actually see. `README.md`'s and `docs/getting-started.md`'s own "everything here was verified against
+the real CLI" claims are worded to already cover this (verified *and disclosed*, not verified-and-clean)
+rather than overclaiming a defect-free surface — the standing `BUILD-PROMPT.md` rule this piece is bound
+by ("a getting-started doc naming a command that doesn't actually run is worse than no doc") is about
+silently showing a reader something that will fail, not about hiding every real gap a genuinely-run
+verification pass turns up. **Not fixed here**: both are real defects one or two layers below documentation
+(the CLI dispatcher's own flag-parsing surface for `spec new`, and `fm-core`'s own shipped workflow/
+artifact-type pairing) — fixing either is real, scoped engineering work outside a pure-documentation
+piece's own mandate, and neither blocks the five docs from being accurate about current, real behaviour.
+Left here, in `GAUNTLET-LOG.md`'s own M12 P7 entry, and disclosed directly in the docs themselves, for
+whichever future piece owns the CLI dispatcher or `fm-core` module content next.
+
+**Found by:** a fresh, context-free critic subagent's own round-1 review, independently reproducing both
+failures against the live CLI rather than trusting the first draft's prose — round 2 (a second, separately
+fresh critic) confirmed both fixes accurate and found nothing new after a further, independent spot-check
+across all five files (overlay/preset/config/skill commands, a real shipped agent-overlay schema
+cross-check, gate/workflow/conformance-suite counts, and every cross-link).
