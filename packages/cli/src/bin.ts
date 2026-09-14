@@ -42,8 +42,11 @@
  * `diagram legend`/`render --open`, `customize` entirely, `preset diff`, `skill new/attach/detach/
  * test/import`, `mcp add/test/grant/revoke/trace`, `forge help <topic>`, `forge ask`, `forge plan
  * data/testing`, `forge test plan/generate/report`) — each a real, disclosed `USR-003`, not a generic
- * "not wired" fallback. `module list/info` and `overlay list/remove/update/explain/diff/doctor/eject`
- * (real `03` §3.2.8 rows P2's own literal Surface line did not name) remain genuinely unwired.
+ * "not wired" fallback. `module list/info`, `overlay list/remove/update/explain/diff/doctor/eject`,
+ * and `config list/explain` (real rows P2's own literal Surface line did not name) remain genuinely
+ * unwired, as does the rest of `agent`/`workflow` beyond `validate --all` (`03` §3.2.7's own `list`/
+ * `show`/`new`/`compile`/`graph` rows) — no piece of `PLAN-M12.md` ever named these as its own mandate;
+ * disclosed here rather than silently implied complete.
  *
  * @see specs/22 M6
  * @see specs/22 M8
@@ -174,6 +177,7 @@ import { uninstall } from './commands/uninstall.ts';
 import { runUpgrade } from './commands/upgrade/index.ts';
 import { workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
+import { test as runTestRefusal } from './commands/loop/test.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
 import { testFlaky } from './commands/loop/test/flaky.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
@@ -3042,6 +3046,16 @@ async function main(): Promise<number> {
       return 2;
     }
     return runTestFlakyCommand(paths, flags.json);
+  }
+  // `test plan`/`test generate`/`test report` (`03` §3.2.5) — real, disclosed `USR-003` refusals
+  // (`loop/test.ts`'s own doc comment: no real test-strategy-planning/generation/reporting mechanism
+  // exists anywhere in this codebase) that no prior dispatcher piece ever wired at all (M8 P4/P6/P7
+  // each wired only `run`/`coverage`/`flaky`) — closed here for real dispatcher completeness, the
+  // identical "a real, disclosed-USR-003 sibling left dangling by a narrower per-piece Surface line"
+  // reasoning `forge plan`'s own doc comment above already gives.
+  if (command === 'test' && (sub === 'plan' || sub === 'generate' || sub === 'report')) {
+    assertNoArgs(rest);
+    return runTestRefusal(sub);
   }
 
   // `afterCommand` (unlike `sub`/`rest` above) makes no assumption that the token right after the

@@ -483,6 +483,13 @@ describe('forge (real subprocess dispatch)', () => {
     expect(parsed.flaky).toBe(0);
     expect(parsed.quarantined).toBe(0);
   });
+
+  it('exits non-zero with a real USR-003 for `forge test plan`/`forge test generate`/`forge test report` — never implemented, refused rather than guessed at (PLAN-M12.md P4: closed for real dispatcher completeness, no prior piece ever wired this)', async () => {
+    const dir = await realProject();
+    expect(run(['test', 'plan', '-C', dir]).status).not.toBe(0);
+    expect(run(['test', 'generate', '-C', dir]).status).not.toBe(0);
+    expect(run(['test', 'report', '-C', dir]).status).not.toBe(0);
+  });
 });
 
 describe('forge init (real subprocess dispatch, PLAN-M12.md P1)', () => {
