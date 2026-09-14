@@ -15377,3 +15377,128 @@ identical way `corrupt-state.test.ts` already does); a real `--json` type-contra
 the raw, unparsed argv string instead of the real, `configSet`-parsed stored value); a real
 `EXIT_CODES.budgetExceeded` (4) proof via a real, over-budget `UsageRecorded` event; and explicit
 negative tests for every disclosed scope cut and refusal above.
+
+## Q186 — M12 P3: `forge:generated` conflict resolution — module placement, the real re-init scope
+decision, the `--yes` default, and why `merge` cannot be a true three-way merge
+
+**Module placement.** The header-stamping half (`generatedHeader`/`withGeneratedHeader`/`sha256`)
+already existed at `packages/cli/src/init/generated-header.ts`/`hash.ts` before this piece (M6 C2) —
+confirmed by direct inspection. This piece adds the previously entirely-missing other half (drift
+detection + `keep-mine`/`take-theirs`/`merge`/`show-diff` resolution) at a new top-level
+`packages/cli/src/generated-header.ts`, matching `PLAN-M12.md` P3's own suggested path, rather than
+moving the existing stamping code there too (which would touch every existing call site —
+`write-tree.ts`, `manifest.ts`, `init/index.ts` — for no behavioural gain) or nesting the new module
+under `init/` (which would misname it: `runUpgrade` needs the identical mechanism and already depends
+on `@forge/cli/init` only incidentally, for `writeRegenerableContent`).
+
+**Real re-init scope decision.** `03` §3.3 says re-running `init` on an existing project "MUST detect
+it and switch to upgrade semantics." Read literally, `runUpgrade` (`@forge/cli/upgrade`, M6 C7) is a
+real, heavier seven-step version-migration procedure (manifest version compare, schema migrations, a
+full `.forge`/`docs/forge` backup, `forge doctor`) keyed on an actual version delta. Invoking the whole
+pipeline from a bare re-`init` (no version change implied) would be surprising and would require a
+well-formed `.forge/manifest.yaml` `runInit` has never needed before. This piece scopes "switch to
+upgrade semantics" narrowly and honestly to the one real, load-bearing piece re-`init` needs: upgrade's
+own step 5 (regenerate the regenerable directories), now going through real conflict resolution. Every
+other wizard step (`name`, level, platform selection, `FORGE.md`, `config.yaml`, the docs skeleton, git)
+is deliberately left untouched on re-`init` — none of it is in `03` §3.3's own "regenerable" file-tree
+list, and re-deriving it would risk silently discarding real project-specific answers a human already
+gave. `InitResult`'s `already-initialized` variant is replaced with `reinitialized` (carrying the real
+`files` list, each entry's `conflict` field naming any resolution applied) — a real, disclosed behavior
+change from the pre-P3 placeholder that reported "already-initialized" and stopped (that placeholder's
+own doc comment, in `types.ts`, explicitly named the not-yet-built conflict-resolution mechanism as the
+reason it stopped there — this piece is exactly that promised follow-up, not a new decision).
+
+**The `--yes`/non-interactive default: `keep-mine`.** `PLAN-M12.md` P3 requires this piece to decide
+and disclose which mode a non-interactive invocation picks. `keep-mine` is chosen: it is the one mode
+that never destroys either side's content outright (the human's file is left alone; the freshly
+generated content is simply not written, unlike `merge`, which at least preserves the generated content
+in a sidecar). `take-theirs` was rejected as the default because it would silently discard a human's
+local edit with no `--yes`-flag-reading human ever having seen what was discarded — worse than "nothing
+happened." The real CLI dispatcher (`bin.ts`'s `defaultNonInteractiveConflictMode`) applies this
+whenever `--yes`/`--json` is set and no explicit `--on-conflict` was given, for both `init` and
+`upgrade`, so the two real callers of this mechanism cannot independently drift on this decision. A
+consequence worth naming: `runInit` itself requires `--yes` unconditionally to run at all (a pre-
+existing constraint, not introduced by this piece), so the real interactive prompt can never trigger
+through a real `forge init` CLI invocation specifically — only through `forge upgrade` (which has no
+such blanket `--yes` requirement) or through a direct, non-CLI call to `runInit` (exercised by this
+piece's own unit tests via injected `conflictInput`/`conflictOutput` streams).
+
+**Why `merge` is not a true three-way merge.** A real three-way merge (this workspace already shells
+out to `git` elsewhere — `run-init.ts`'s `ensureGit` — and `git merge-file` is a real, already-available
+three-way merge tool) needs three real texts: the common ancestor, "mine," and "theirs." This mechanism,
+by the spec's own literal header format, persists only a *hash* of the ancestor, never its content —
+there is no real ancestor text to feed such a tool. `merge` mode is therefore honestly scoped to what
+two real texts in hand actually allow: the newly generated content is written to a real sibling file
+(`<path>.forge-incoming`), the human's file at `<path>` is left completely untouched, and a real line
+diff between the two is printed so a human doing the actual reconciliation has something concrete to
+start from. The `.forge-incoming` suffix was checked against every real content-scanning glob in
+`init/content.ts` (`*.workflow.yaml`, `*.framework.yaml`, etc.) to confirm it can never be mistaken for
+real regenerable content on a later run.
+
+**Why no diffing library/tool dependency was added.** No `diff`/`jsdiff` package exists anywhere in this
+workspace (checked directly against every `package.json` and `pnpm-lock.yaml`). Shelling out to `git
+diff --no-index` for a two-way, in-memory diff was considered and rejected: it would need two real temp
+files on disk purely to hand it two strings already held in memory, plus a `git`-version/locale-
+dependent output format this piece would then have to re-parse. `lineDiff` (a small, self-contained
+LCS-based line diff) is used instead — the same "prefer a native implementation over a new dependency
+for one feature" call this codebase's own backup-format decision already made (Q110: a recursive
+directory copy instead of a `tar` dependency).
+
+**A pre-existing bug fixed as part of this piece.** `write-tree.ts`'s `writeGenerated` stamped every
+header with a hardcoded `MANIFEST_VERSION = '1'` literal, forever, regardless of which real FORGE
+version actually generated the file — useless for a human trying to tell "was this generated by an old
+version" from the header alone, the one thing `03` §3.3's header format exists to let them do without
+cross-referencing `.forge/manifest.yaml` separately. Fixed to use the real, currently-running
+`readPackageVersion('@forge/agents')`, the identical source `buildManifest`/`runUpgrade`'s own
+`targetVersion` default already use for "the real, current FORGE version."
+
+**A real, accepted CRLF-normalization trade-off (found in critic round 2).** `extractGeneratedHeader`
+normalizes `\r\n` to `\n` before comparing a regenerable file's on-disk body against its recorded hash —
+without this, every regenerable file appears permanently "drifted" on any CRLF-normalized checkout
+(`core.autocrlf=true`, the common Windows Git default), since the header/body this mechanism generates
+is always LF-only. The accepted cost: a human who deliberately re-saves an otherwise-untouched generated
+file with CRLF line endings and changes nothing else is, by the same normalization, treated as "not
+drifted" — the next `init`/`upgrade` silently rewrites it back to LF with no conflict prompt, the one
+real, narrow case where this mechanism's "never silently overwritten" rule does not hold. Accepted
+because the alternative (treating every CRLF checkout as drifted, forever, on every file, every run) is
+strictly worse and was the actual, real bug this fix closes.
+
+**A real, disclosed (not fixed) asymmetry between `forge init` and `forge upgrade`'s non-interactive
+safety (found in critic round 2).** `runInit` unconditionally requires `--yes` to run at all, so
+`runInitCommand`'s own non-interactive `keep-mine` default is always active by the time a re-`init`
+reaches conflict resolution — the real interactive prompt is structurally unreachable through `forge
+init`. `runUpgrade` has no such gate: a bare `forge upgrade` (no `--yes`/`--json`/`--on-conflict`) is a
+real, legal, common invocation that can still open a real interactive prompt on a real, open-but-silent
+`stdin` (a detached process, a CI runner piping a long-lived stream it never closes). This is the
+identical class of limitation this codebase's one other real terminal prompt (`@forge/extensions/
+install/consent.ts`'s `promptForConsent`) already discloses as accepted and unfixed ("no other
+interactive-shaped code in this codebase establishes [a timeout] convention either, and a real terminal
+prompt genuinely has no other correct behaviour than waiting for the human at the other end") — not a
+new gap this piece invents, but one this piece's own `forge upgrade` wiring is the first call site able
+to actually reach. No timeout/cancellation mechanism was added, matching that same established
+precedent; disclosed in both `runUpgradeCommand`'s own doc comment and here rather than silently
+assumed away.
+
+**A real `--json` output-contract bug found and fixed in critic round 3.** `--on-conflict show-diff`
+combined with `--json` (on either `init` or `upgrade`) used to write `printDiff`'s own human-readable
+diff straight to `process.stdout` — landing ahead of the command's own single JSON line and making
+`JSON.parse(stdout)` throw, corrupting the "`--json` output is exactly one JSON line" contract every
+other branch in `bin.ts` honors. `03` §3.5's own output-mode table is the exact, literal fix: `--json`
+mode's own contract is "NDJSON events on stdout... human logs to stderr" — `runInitCommand`/
+`runUpgradeCommand` now pass `conflictOutput: process.stderr` whenever `json` is `true`, so `show-diff`'s
+diff text lands on stderr instead. Reproduced live against the real CLI before the fix, and covered by
+a real `run(['upgrade'/'init', '--json', '--on-conflict', 'show-diff', ...])` subprocess test on both
+call sites asserting `JSON.parse(stdout)` succeeds and the diff text never reaches stdout. (`bin.test.ts`'s
+own shared `run()` helper discards stderr on a *successful* exit — only `execFileSync`'s stdout return
+value is captured there — so the test's own stderr-content assertion was narrowed to what the harness
+can actually prove; the real stderr routing was independently, manually verified against the actual CLI.)
+
+**A cosmetic (non-exercising) regression test, caught and replaced in critic round 3.** Round 2's own
+new test for the file-path-sanitization fix hand-built `bin.ts`'s print template *inside the test
+itself* rather than calling any real, shared function — it could never fail for a real regression in
+`bin.ts`'s actual composition. Fixed two ways: (1) `sanitizeWrittenFilePaths` (previously a private
+`bin.ts` helper) moved to the shared `generated-header.ts` module and exported, so `runInitCommand`/
+`runUpgradeCommand` both route every printed path (in both their `--json` and plain-text renderers)
+through the identical, single, now-directly-unit-tested call, rather than two separate inline
+`sanitizeForTerminal` call sites that could drift; (2) the round-2 test itself replaced with a real call
+to `sanitizeWrittenFilePaths`.

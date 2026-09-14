@@ -12472,3 +12472,110 @@ subprocess-dispatch tests passing.
 
 **Rounds: 3 critic rounds (2 major + 2 minor round 1, all fixed; 2 major + 2 minor round 2 — both in
 round 1's own security fix, all fixed; 3 major round 3, all fixed). Outcome: WON.**
+
+## M12 P3 — `forge:generated` header/hash and real re-init/upgrade conflict resolution
+
+Built the previously entirely-missing half of `03` §3.3's idempotency rule: a new shared
+`packages/cli/src/generated-header.ts` module detects a regenerable file's real hash drift (a human's
+local edit since it was generated) and offers real `keep-mine`/`take-theirs`/`merge`/`show-diff`
+conflict resolution — interactive by default, `--on-conflict <mode>`-overridable, `keep-mine` as the
+disclosed, safe non-interactive default. Wired into both `forge init`'s re-init path (`run-init.ts`'s
+`already-initialized` placeholder replaced with a real `reinitialized` outcome that actually
+regenerates) and `forge upgrade` step 5's regeneration (`run-upgrade.ts`). Fixed a pre-existing bug
+along the way: the header's `v=` field was hardcoded `'1'` forever instead of the real, running
+`@forge/agents` version.
+
+### Round 1: 2 blocking + 2 major + 2 minor
+
+**Blocking:** `sanitizeForTerminal`'s regex stopped at `\x7F`, missing the entire 8-bit C1 control range
+(`\x80`-`\x9F`) — including `\x9B`/`\x9D`, the 8-bit single-byte forms of CSI/OSC — despite this exact
+file's own doc comment claiming to close the identical gap a prior `PLAN-M12.md` P2 critic round found
+elsewhere in `bin.ts`. **Blocking:** `HEADER_LINE`'s regex anchored on a bare `$`, so a trailing `\r`
+(any CRLF-normalized checkout, e.g. Windows `core.autocrlf=true`) made every regenerable file's header
+fail to match — `hasGeneratedFileDrifted`'s own fail-closed default then reported *every* such file as
+permanently "drifted," forever, on every single `init`/`upgrade`, with nothing a human did ever having
+touched them. **Major:** the `v=1` → real-version stamp fix had zero test asserting the actual version
+value — the only existing assertion checked the header merely "starts with `v=`," which passes
+identically for the old, buggy hardcoded literal. **Major:** `--on-conflict` validation on `forge init`
+(`parse-init-flags.ts`) had no unit test at all, for either the accept or reject path. **Minor:** two
+independently-declared `Set`s of the same four conflict-mode literals (`bin.ts` and
+`parse-init-flags.ts`) could silently drift apart. **Minor:** `lineDiff`'s LCS implementation was
+`O(n·m)` with no size guard — a real, if adversarial-only, CLI-hang risk on a large hand-edited or
+corrupted file.
+
+**What the critic caught that I missed:** the C1 gap specifically — I wrote the sanitizer's own doc
+comment citing this codebase's own prior fix for the identical bug class without actually matching that
+fix's real character range; and the CRLF gap, a genuine cross-platform correctness bug (R11) I hadn't
+considered at all when designing the header-line regex.
+
+**Judged and fixed:** widened the sanitizer regex to the full C0/DEL/C1 range. `extractGeneratedHeader`
+normalizes `\r\n` to `\n` before matching/hashing (a `\r?$` tolerance on the header line plus a whole-body
+normalization, so a line-ending-only difference is correctly treated as unchanged). New tests assert the
+real version string appears in the header. New `parse-init-flags.test.ts` cases cover valid, invalid,
+and omitted `--on-conflict`. The two mode-literal sets centralized into one exported
+`CONFLICT_RESOLUTION_MODES` array. `lineDiff` gained a 4,000-line size guard with a bounded fallback
+message, tested at and past the boundary.
+
+### Round 2: 1 blocking + 1 major + 2 minor
+
+**Blocking:** the new per-file conflict-report printing in `bin.ts` (both `runInitCommand` and
+`runUpgradeCommand`, both `--json` and plain-text) printed `WrittenFile.path` with no sanitization —
+`.forge/agents/<id>.yaml`'s own `<id>` traces back to a module's real `AgentDefinition.id`, validated
+only as a non-empty string with no character-class restriction, so a hostile or corrupted module could
+inject raw terminal escapes there without ever escaping the project root. **Major:** `forge upgrade`
+(unlike `forge init`, which mandates `--yes`) can still open a real interactive prompt on a real,
+open-but-silent stdin, and the round-1-era doc comment claimed a symmetry with `init` that didn't
+actually hold. **Minor:** `CONFLICT_RESOLUTION_MODES` had no compile-time exhaustiveness guarantee
+against the `ConflictResolutionMode` union — a future 5th literal added to one and not the other would
+compile cleanly. **Minor:** the CRLF-normalization trade-off (a deliberate CRLF-only re-save being
+treated as "unchanged" and silently normalized back to LF) was real but undisclosed.
+
+**What the critic caught that I missed:** the print-path sanitization gap specifically — I'd sanitized
+every other place hostile content could reach a terminal in this piece (the diff, the interactive
+prompt) but missed the new conflict-report lines I added in the same round.
+
+**Judged and fixed:** every printed path routed through `sanitizeForTerminal` (both renderers, both
+commands). The `init`/`upgrade` asymmetry corrected in the doc comment and disclosed in
+`SPEC-QUESTIONS.md` as an accepted limitation matching this codebase's own pre-existing
+`promptForConsent` precedent (no timeout mechanism exists anywhere in this codebase for a real terminal
+prompt; none was invented here either) — the misleading test name/comment was also corrected to stop
+overclaiming coverage it didn't have. `CONFLICT_RESOLUTION_MODES` gained a type-level `Exclude`-based
+exhaustiveness assertion. The CRLF trade-off got an explicit doc-comment disclosure plus a
+`SPEC-QUESTIONS.md` entry.
+
+### Round 3: 2 major
+
+**Major:** `--on-conflict show-diff` combined with `--json` (on either `init` or `upgrade`) wrote the
+human-readable diff straight to `process.stdout`, landing ahead of the command's own single JSON line
+and making `JSON.parse(stdout)` throw — reproduced live against the real CLI before the fix. **Major:**
+round 2's own new "hostile file-path" regression test hand-built `bin.ts`'s print template inside the
+test itself rather than calling any real, shared function — it could never fail for a real regression in
+`bin.ts`'s actual composition, a cosmetic fix rather than a real one.
+
+**What the critic caught that I missed:** the exact interaction between two of my own round-1/round-2
+fixes (`--on-conflict show-diff` and `--json`) that neither individual fix's own tests exercised
+together — and that my own round-2 test, while well-intentioned, tested a hand-reimplementation of the
+real code instead of the real code itself.
+
+**Judged and fixed:** `03` §3.5's own output-mode table ("`--json`: NDJSON events on stdout... human
+logs to stderr") is the literal fix — both commands now route `conflictOutput` to `process.stderr`
+whenever `--json` is set, verified with a real subprocess test on both `init` and `upgrade` asserting
+`JSON.parse(stdout)` succeeds and the diff text never reaches stdout.
+`sanitizeWrittenFilePaths` (previously a private `bin.ts` helper) moved to the shared
+`generated-header.ts` module and exported; both commands' `--json` and plain-text renderers now route
+every printed path through the identical, single, directly-unit-tested call instead of two separate
+inline `sanitizeForTerminal` call sites; the round-2 test replaced with a real call to the exported
+function.
+
+**Verification (after round 3):** `pnpm lint`/`pnpm typecheck`/`pnpm run boundaries` clean on every file
+this piece owns (this piece's own commit isolates its exact hunks out of `packages/cli/src/bin.ts` and
+`packages/cli/test/bin.test.ts`, both concurrently being extended by `PLAN-M12.md` P4 in the same shared
+working tree — verified via a hand-built patch reconstruction matching the staged diff byte-for-byte).
+The full unscoped `node scripts/run-tests.mjs run`: 8496 passed, 9 skipped, 3 failed —
+`packages/engine/test/e2e/crash-resume.test.ts` and `packages/cli/test/commands/run/resume.test.ts`
+(both pre-listed, load-sensitive flakes) and one `forge diagram render` test belonging to the concurrent
+P4 dispatcher work, not this piece. Every test this piece added or changed passed, including the
+`packages/cli/test/bin.test.ts` real-subprocess `init`/`upgrade`/`--on-conflict` suite (20/20).
+
+**Rounds: 3 critic rounds (2 blocking + 2 major + 2 minor round 1, all fixed; 1 blocking + 1 major + 2
+minor round 2, all fixed/disclosed; 2 major round 3, all fixed). Outcome: WON.**
