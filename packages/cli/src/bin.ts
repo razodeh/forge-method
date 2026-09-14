@@ -1232,7 +1232,18 @@ function sanitizeDeep<T>(value: T): T {
     const items = value as readonly unknown[];
     return items.map((item) => sanitizeDeep(item)) as unknown as T;
   }
-  if (value !== null && typeof value === 'object') {
+  // A round-2 critic round found this walked *every* non-null object, not only real plain ones —
+  // `Object.entries`/`Object.fromEntries` on a `Date`/`Map`/`Set`/class instance silently drops its
+  // own real internal state (`Object.entries(new Date(...))` is `[]`), corrupting it into `{}` with no
+  // error. Nothing this dispatcher prints today carries such a value (every real timestamp field in
+  // this codebase's own schemas is an ISO string, not a `Date`), but this is exactly the class of
+  // latent bug a five-year-maintenance codebase eventually trips over — walked only for a real plain
+  // object (`Object.getPrototypeOf(value)` is `Object.prototype` or `null`), left untouched otherwise.
+  const isPlainObject =
+    value !== null &&
+    typeof value === 'object' &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  if (isPlainObject) {
     const entries: readonly (readonly [string, unknown])[] = Object.entries(
       value as Readonly<Record<string, unknown>>,
     ).map(([key, entryValue]) => [key, sanitizeDeep(entryValue)] as const);
@@ -2022,8 +2033,7 @@ async function runSpecCommand(
     // *validity* check here still needs the full registry (to tell "not a real type at all" apart from
     // "a real type, just not one `spec new` accepts" — the latter is `specNew`'s own real, distinct
     // `USR-003`, not this dispatcher's `USR-002`), but the message now names only the eight real
-    // `spec new` accepts (`isSpecArtifactType`'s own real domain, exported by `spec.ts` for exactly
-    // this).
+    // `spec new` accepts (`SPEC_ARTIFACT_TYPES`, exported by `spec.ts` for exactly this).
     if (!ARTIFACT_TYPES.some((candidate) => candidate.id === type)) {
       console.error(
         `forge: "spec new" needs a real <type> (one of: ${[...SPEC_ARTIFACT_TYPES].join(', ')}).`,
@@ -2031,8 +2041,9 @@ async function runSpecCommand(
       return EXIT_CODES.usage;
     }
     // `specNew` itself throws `USR-003` for a real, registered `ArtifactTypeId` that is not one of
-    // `spec.ts`'s own eight `docs/forge/specs/**`-rooted types (`ADR`/`Risk`/etc., `isSpecArtifactType`
-    // false) — the cast here is safe (`type` just passed the real registry-membership check above), and
+    // `spec.ts`'s own eight `docs/forge/specs/**`-rooted types (`ADR`/`Risk`/etc., not in
+    // `SPEC_ARTIFACT_TYPES`) — the cast here is safe (`type` just passed the real registry-membership
+    // check above), and
     // that further, narrower refusal is genuine, disclosed spec.ts behaviour, not something this
     // dispatcher invents.
     const doc = await specNew(ctx, type as ArtifactTypeId, title);
@@ -2724,10 +2735,16 @@ async function runDebugCommand(
 
   const deps: DebugDeps = await buildLoopDepsForProject(paths, projectRoot);
   const options = budgetUsd === undefined ? {} : { costBudgetUsd: budgetUsd };
-  const result: DebugResult =
+  const result: DebugResult = sanitizeDeep(
     fromFailure !== undefined
       ? await debugFromFailure(deps, fromFailure, options)
-      : await debugSymptom(deps, symptom ?? '', options);
+      : await debugSymptom(deps, symptom ?? '', options),
+  );
+  // A fresh critic round found round 1's own sanitization fix stopped at `kb`/`spec`/`adr`/`diagram`/
+  // `session show`/`session list`, missing this identical live-agent-output surface — `DebugResult`'s
+  // own `reason`/`evidence` fields are real, model-derived free text carrying the exact "prompt-injected
+  // or buggy model response smuggling a raw escape sequence" risk `session show`'s own body was
+  // sanitized for.
   console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
   return result.outcome === 'recorded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
@@ -2746,7 +2763,10 @@ async function runReviewCommand(
   }
   const deps: ReviewDeps = await buildLoopDepsForProject(paths, projectRoot);
   const diff = values.get('--diff');
-  const outcome = await reviewChange(deps, diff === undefined ? {} : { diff });
+  // `outcome` carries real, live-agent-produced review text (`InteractionOutcome.reviewReport` etc.)
+  // — the identical untrusted-content class `session show`'s own body was sanitized for; a fresh
+  // critic round found this sibling command missing the same fix.
+  const outcome = sanitizeDeep(await reviewChange(deps, diff === undefined ? {} : { diff }));
   console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
   return outcome.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
@@ -2780,7 +2800,8 @@ async function runPanelCommand(
     return EXIT_CODES.usage;
   }
   const deps: PanelDeps = await buildLoopDepsForProject(paths, projectRoot);
-  const outcome = await panelQuestion(deps, question, roles);
+  // The identical live-agent-output sanitization `review`/`debug`/`session` now all apply.
+  const outcome = sanitizeDeep(await panelQuestion(deps, question, roles));
   console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
   return outcome.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
@@ -2863,7 +2884,7 @@ async function runSessionCommand(
       return EXIT_CODES.success;
     }
     if (sub === 'resume') {
-      const result = await sessionResume(deps, id);
+      const result = sanitizeDeep(await sessionResume(deps, id));
       console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
       return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
     }
@@ -2913,7 +2934,7 @@ async function runSessionCommand(
       ? { roles: splitCommaList(values.get('--roles')) }
       : {}),
   };
-  const result = await startSession(deps, type, options);
+  const result = sanitizeDeep(await startSession(deps, type, options));
   console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
   return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }

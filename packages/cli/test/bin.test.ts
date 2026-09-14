@@ -1735,14 +1735,19 @@ async function clearPlatformPrimary(dir: string): Promise<void> {
  * for its unit-level tests, reused here so `forge session export` (a fully-implemented, non-live,
  * easily-testable code path — it only reads a file and writes a rendered copy, no adapter, no model
  * call) has real, on-disk coverage a fresh critic round found entirely missing. */
-async function writeSessionRecordFixture(dir: string, id = 'SESSION-042'): Promise<void> {
+async function writeSessionRecordFixture(
+  dir: string,
+  id = 'SESSION-042',
+  title = 'Fixture truncated session',
+  bodyExtra = '',
+): Promise<void> {
   const sessionsDir = path.join(dir, 'docs/forge/sessions');
   await mkdir(sessionsDir, { recursive: true });
   const text = `---
 id: ${id}
 type: SessionRecord
 schemaVersion: 1
-title: Fixture truncated session
+title: "${title}"
 status: truncated
 created: 2026-01-01
 updated: 2026-01-01
@@ -1761,7 +1766,7 @@ truncated_bound: wall-clock
 ---
 
 ## Frame
-A fixture question
+A fixture question${bodyExtra}
 
 ## Diverge
 (no ideas)
@@ -1952,6 +1957,24 @@ describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
     expect(run(['spec', 'matrix', 'unexpected', '-C', dir]).status).toBe(2);
     expect(run(['spec', 'orphans', 'unexpected', '-C', dir]).status).toBe(2);
   });
+
+  it("strips a real, hostile control-character sequence out of a spec document's own front matter before printing it, in both plain and --json modes", async () => {
+    // A round-2 critic round found this exact surface — the one `spec show`'s own sanitization was
+    // supposedly proving — had no real test of its own at all, unlike `kb show`/`diagram show`.
+    const dir = await realProject();
+    const hostileTitle = 'Fixture \x1b[31mHostile\x1b[0m Vision';
+    const created = run(['spec', 'new', 'Vision', hostileTitle, '--json', '-C', dir]);
+    expect(created.status).toBe(0);
+    const { id } = JSON.parse(created.stdout) as { readonly id: string };
+
+    const plain = run(['spec', 'show', id, '-C', dir]);
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain('\x1b');
+
+    const json = run(['spec', 'show', id, '--json', '-C', dir]);
+    expect(json.status).toBe(0);
+    expect(json.stdout).not.toContain('\x1b');
+  });
 });
 
 describe('forge adr (real subprocess dispatch, PLAN-M12.md P4)', () => {
@@ -2011,6 +2034,22 @@ describe('forge adr (real subprocess dispatch, PLAN-M12.md P4)', () => {
     const dir = await realProject();
     const result = run(['adr', 'list', 'unexpected', '-C', dir]);
     expect(result.status).toBe(2);
+  });
+
+  it("strips a real, hostile control-character sequence out of an ADR's own front matter before printing it, in both plain and --json modes", async () => {
+    const dir = await realProject();
+    const hostileTitle = 'Fixture \x1b[31mHostile\x1b[0m Decision';
+    const created = run(['adr', 'new', hostileTitle, '--json', '-C', dir]);
+    expect(created.status).toBe(0);
+    const { id } = JSON.parse(created.stdout) as { readonly id: string };
+
+    const plain = run(['adr', 'show', id, '-C', dir]);
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain('\x1b');
+
+    const json = run(['adr', 'show', id, '--json', '-C', dir]);
+    expect(json.status).toBe(0);
+    expect(json.stdout).not.toContain('\x1b');
   });
 });
 
@@ -2427,13 +2466,42 @@ describe('forge debug / forge review / forge panel / forge ask / forge session (
     expect(result.status).toBe(2);
   });
 
+  it("strips a real, hostile control-character sequence out of a session record's own title and body before printing it, in both plain and --json modes", async () => {
+    // A round-2 critic round found this exact surface — this file's own doc comment on `session
+    // show`'s sanitization calls it "the single most plausible vector in this whole piece" — had no
+    // real test proving it, unlike `kb show`/`diagram show`.
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    await writeSessionRecordFixture(
+      dir,
+      'SESSION-043',
+      'Fixture \x1b[31mHostile\x1b[0m session',
+      '\n\x1b[31mHostile body line\x1b[0m',
+    );
+
+    const plain = run(['session', 'show', 'SESSION-043', '-C', dir]);
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain('\x1b');
+
+    const json = run(['session', 'show', 'SESSION-043', '--json', '-C', dir]);
+    expect(json.status).toBe(0);
+    expect(json.stdout).not.toContain('\x1b');
+  });
+
   it('exits 2 for a real, unrecognised `forge session <type>`, even against a real project whose own platform.primary this dispatcher cannot resolve', async () => {
     const dir = await realProject();
     const result = run(['session', 'not-a-real-type', '-C', dir]);
     expect(result.status).toBe(2);
   });
 
-  it('runs `forge session export <id>` for real end to end, writing a real, canonical, sanitized copy — a fresh critic round found this fully-implemented, non-live path had zero test coverage', async () => {
+  it('runs `forge session export <id>` for real end to end, writing a real, canonical copy — a fresh critic round found this fully-implemented, non-live path had zero test coverage', async () => {
+    // A round-2 critic found the original version of this test's own title claimed a "sanitized"
+    // copy that `sessionExport` (`commands/loop/session.ts`) never actually produces — that function
+    // writes `record`/`body` straight to disk with no `stripControlChars`/`sanitizeDeep` call
+    // anywhere in its own real write path, real, pre-existing business logic outside this piece's own
+    // dispatcher-wiring mandate to change. Disclosed, not silently claimed fixed — see
+    // `SPEC-QUESTIONS.md`. This test proves only what this piece's own dispatcher wiring is
+    // responsible for: the real command is reachable, and reports the real, written path back.
     const dir = await realProject();
     await clearPlatformPrimary(dir);
     await writeSessionRecordFixture(dir);

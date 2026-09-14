@@ -165,7 +165,7 @@ export const SPEC_ARTIFACT_TYPES: ReadonlySet<ArtifactTypeId> = new Set<SpecArti
   'DataModel',
 ]);
 
-export function isSpecArtifactType(type: ArtifactTypeId): type is SpecArtifactType {
+function isSpecArtifactType(type: ArtifactTypeId): type is SpecArtifactType {
   return SPEC_ARTIFACT_TYPES.has(type);
 }
 
