@@ -138,6 +138,7 @@ import {
   sessionShow,
   startSession,
   type SessionCommandDeps,
+  type SessionType,
   type StartSessionOptions,
 } from './commands/loop/session.ts';
 import { mcpList, mcpValidate, type McpCommandContext } from './commands/mcp.ts';
@@ -164,6 +165,7 @@ import {
   specNew,
   specOrphans,
   specShow,
+  SPEC_ARTIFACT_TYPES,
   specTrace,
   specValidate,
   type SpecCommandContext,
@@ -1210,6 +1212,35 @@ function stripControlChars(text: string): string {
   return text.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
 }
 
+/**
+ * The general-purpose form of `stripControlChars` — recursively strips control characters out of
+ * every string value found anywhere inside `value` (arrays and plain objects walked, everything else
+ * returned unchanged), applied once to a real data structure before either `--json` or human-readable
+ * rendering. `PLAN-M12.md` P4's own fresh critic round found this dispatcher's newly-wired `kb`/
+ * `spec`/`adr`/`diagram`/`session` commands printing real, project-authored free text — KB entry
+ * titles, diagram `source` text, spec/ADR front matter, a session's own recorded body — with none of
+ * the sanitization `sanitizeInstallChangeReportForDisplay` already established as this file's own
+ * precedent for exactly this bug class (a hostile or merely careless committer fully controls every
+ * one of those fields; `docs/forge/**` content is no more trustworthy than a fetched module's
+ * `module.yaml` free text once it reaches a real terminal). Applied to the real object before either
+ * renderer sees it, for the identical reason `stripControlChars`'s own doc comment gives: `JSON.stringify`
+ * never escapes `DEL`/the C1 range, so `--json` output is exactly as exposed as plain text without this.
+ */
+function sanitizeDeep<T>(value: T): T {
+  if (typeof value === 'string') return stripControlChars(value) as unknown as T;
+  if (Array.isArray(value)) {
+    const items = value as readonly unknown[];
+    return items.map((item) => sanitizeDeep(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries: readonly (readonly [string, unknown])[] = Object.entries(
+      value as Readonly<Record<string, unknown>>,
+    ).map(([key, entryValue]) => [key, sanitizeDeep(entryValue)] as const);
+    return Object.fromEntries(entries) as unknown as T;
+  }
+  return value;
+}
+
 /** Applies `stripControlChars` to every real, untrusted free-text field an `InstallChangeReport`
  * carries — `id`/`version`/`resolvedSetDelta` are all schema- or pattern-validated upstream
  * (`OVERLAY_ID_PATTERN`, a real semver, a real id already present in the trusted manifest) and need no
@@ -1742,8 +1773,11 @@ async function runKbCommand(
   const ctx = await buildKbContext(paths);
 
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
-    const entries = await kbList(ctx);
+    assertNoArgs(rest);
+    // Every field printed below (`title` especially) is real, project-authored KB free text a
+    // hostile or careless committer fully controls — sanitized once, here, before either renderer
+    // sees it (`sanitizeDeep`'s own doc comment has the fuller reasoning, a fresh critic-round finding).
+    const entries = sanitizeDeep(await kbList(ctx));
     console.log(
       json
         ? JSON.stringify({ v: 1, entries })
@@ -1758,7 +1792,7 @@ async function runKbCommand(
       console.error('forge: "kb show" needs a real <id>.');
       return EXIT_CODES.usage;
     }
-    const entry = await kbShow(ctx, id);
+    const entry = sanitizeDeep(await kbShow(ctx, id));
     console.log(
       json
         ? JSON.stringify({ v: 1, entry })
@@ -1773,7 +1807,7 @@ async function runKbCommand(
       console.error('forge: "kb search" needs a real <query>.');
       return EXIT_CODES.usage;
     }
-    const hits = await kbSearch(ctx, query);
+    const hits = sanitizeDeep(await kbSearch(ctx, query));
     console.log(
       json
         ? JSON.stringify({ v: 1, hits })
@@ -1783,8 +1817,8 @@ async function runKbCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'lint') {
-    parseCommandFlags(rest, {});
-    const findings = await kbLint(ctx);
+    assertNoArgs(rest);
+    const findings = sanitizeDeep(await kbLint(ctx));
     console.log(
       json
         ? JSON.stringify({ v: 1, findings })
@@ -1798,11 +1832,11 @@ async function runKbCommand(
     return findings.some((f) => f.severity === 'error') ? EXIT_CODES.failure : EXIT_CODES.success;
   }
   if (sub === 'diff') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     return kbDiff();
   }
   if (sub === 'sync') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     const result = await kbSync(ctx);
     console.log(
       json
@@ -1844,8 +1878,11 @@ async function runKbCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'verify') {
-    parseCommandFlags(rest, {});
-    const findings = await kbVerify(ctx);
+    assertNoArgs(rest);
+    // `detail` carries a real, stored command's own real stdout/stderr (`runStoredVerificationCommand`)
+    // — real, untrusted process output, sanitized for the identical reason every other free-text field
+    // in this command is.
+    const findings = sanitizeDeep(await kbVerify(ctx));
     const failing = findings.filter(
       (f) => f.outcome === 'fail' || f.outcome === 'timeout' || f.outcome === 'error',
     );
@@ -1879,7 +1916,7 @@ async function runSpecValidateCommand(
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
-  parseCommandFlags(rest, {});
+  assertNoArgs(rest);
   const ctx = buildSpecContext(paths);
   const result = await specValidate(ctx);
   const hasProblems =
@@ -1909,8 +1946,8 @@ async function runSpecCommand(
   const ctx = buildSpecContext(paths);
 
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
-    const specs = await specList(ctx);
+    assertNoArgs(rest);
+    const specs = sanitizeDeep(await specList(ctx));
     console.log(
       json
         ? JSON.stringify({ v: 1, specs })
@@ -1926,10 +1963,14 @@ async function runSpecCommand(
       return EXIT_CODES.usage;
     }
     const doc = await specShow(ctx, id);
+    // `frontMatter` carries real, project-authored free text (titles, descriptions) — sanitized
+    // before either renderer sees it, the identical discipline every other command in this piece now
+    // applies.
+    const frontMatter = sanitizeDeep(doc.frontMatter);
     console.log(
       json
-        ? JSON.stringify({ v: 1, path: doc.path, frontMatter: doc.frontMatter })
-        : `${doc.path}\n${JSON.stringify(doc.frontMatter, null, 2)}`,
+        ? JSON.stringify({ v: 1, path: doc.path, frontMatter })
+        : `${doc.path}\n${JSON.stringify(frontMatter, null, 2)}`,
     );
     return EXIT_CODES.success;
   }
@@ -1950,13 +1991,13 @@ async function runSpecCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'matrix') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     const matrix = await specMatrix(ctx);
     console.log(json ? JSON.stringify({ v: 1, ...matrix }) : JSON.stringify(matrix, null, 2));
     return EXIT_CODES.success;
   }
   if (sub === 'orphans') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     const orphans = await specOrphans(ctx);
     console.log(
       json
@@ -1975,16 +2016,25 @@ async function runSpecCommand(
       );
       return EXIT_CODES.usage;
     }
+    // A fresh critic round found this message previously listed the full, 21-entry `ArtifactTypeId`
+    // registry (`ADR`/`Diagram`/`SessionRecord`/... included) as if each were a valid `spec new`
+    // answer — every one of those still fails `specNew`'s own real, narrower domain check below. The
+    // *validity* check here still needs the full registry (to tell "not a real type at all" apart from
+    // "a real type, just not one `spec new` accepts" — the latter is `specNew`'s own real, distinct
+    // `USR-003`, not this dispatcher's `USR-002`), but the message now names only the eight real
+    // `spec new` accepts (`isSpecArtifactType`'s own real domain, exported by `spec.ts` for exactly
+    // this).
     if (!ARTIFACT_TYPES.some((candidate) => candidate.id === type)) {
       console.error(
-        `forge: "spec new" needs a real <type> (one of: ${ARTIFACT_TYPES.map((candidate) => candidate.id).join(', ')}).`,
+        `forge: "spec new" needs a real <type> (one of: ${[...SPEC_ARTIFACT_TYPES].join(', ')}).`,
       );
       return EXIT_CODES.usage;
     }
     // `specNew` itself throws `USR-003` for a real, registered `ArtifactTypeId` that is not one of
-    // `spec.ts`'s own eight `docs/forge/specs/**`-rooted types (`ADR`/`Risk`/etc.) — the cast here is
-    // safe (`type` just passed the real registry-membership check above), and that further, narrower
-    // refusal is genuine, disclosed spec.ts behaviour, not something this dispatcher invents.
+    // `spec.ts`'s own eight `docs/forge/specs/**`-rooted types (`ADR`/`Risk`/etc., `isSpecArtifactType`
+    // false) — the cast here is safe (`type` just passed the real registry-membership check above), and
+    // that further, narrower refusal is genuine, disclosed spec.ts behaviour, not something this
+    // dispatcher invents.
     const doc = await specNew(ctx, type as ArtifactTypeId, title);
     console.log(
       json
@@ -2032,8 +2082,8 @@ async function runAdrCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
-    const entries = await adrList(ctx);
+    assertNoArgs(rest);
+    const entries = sanitizeDeep(await adrList(ctx));
     console.log(
       json
         ? JSON.stringify({ v: 1, entries })
@@ -2049,10 +2099,11 @@ async function runAdrCommand(
       return EXIT_CODES.usage;
     }
     const doc = await adrShow(ctx, id);
+    const frontMatter = sanitizeDeep(doc.frontMatter);
     console.log(
       json
-        ? JSON.stringify({ v: 1, path: doc.path, frontMatter: doc.frontMatter })
-        : `${doc.path}\n${JSON.stringify(doc.frontMatter, null, 2)}`,
+        ? JSON.stringify({ v: 1, path: doc.path, frontMatter })
+        : `${doc.path}\n${JSON.stringify(frontMatter, null, 2)}`,
     );
     return EXIT_CODES.success;
   }
@@ -2126,8 +2177,8 @@ async function runDiagramCommand(
   const ctx = buildDiagramContext(paths);
 
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
-    const entries = await diagramList(ctx);
+    assertNoArgs(rest);
+    const entries = sanitizeDeep(await diagramList(ctx));
     console.log(
       json
         ? JSON.stringify({ v: 1, entries })
@@ -2142,7 +2193,10 @@ async function runDiagramCommand(
       console.error('forge: "diagram show" needs a real <id>.');
       return EXIT_CODES.usage;
     }
-    const diagram = await diagramShow(ctx, id);
+    // `source` (a real, project-authored mermaid/text blob) and every other free-text field on a real
+    // diagram sidecar is exactly as untrusted as a KB entry's own title — sanitized here for the
+    // identical reason (a fresh critic-round finding).
+    const diagram = sanitizeDeep(await diagramShow(ctx, id));
     console.log(json ? JSON.stringify({ v: 1, diagram }) : diagram.source);
     return EXIT_CODES.success;
   }
@@ -2153,7 +2207,7 @@ async function runDiagramCommand(
       console.error('forge: "diagram validate" needs a real <id>.');
       return EXIT_CODES.usage;
     }
-    const findings = await diagramValidate(ctx, id);
+    const findings = sanitizeDeep(await diagramValidate(ctx, id));
     console.log(
       json
         ? JSON.stringify({ v: 1, findings })
@@ -2174,7 +2228,7 @@ async function runDiagramCommand(
         feature: 'forge diagram render --open (no real browser-launch mechanism exists yet)',
       });
     }
-    const html = await diagramRender(ctx, id);
+    const html = stripControlChars(await diagramRender(ctx, id));
     console.log(json ? JSON.stringify({ v: 1, id, html }) : html);
     return EXIT_CODES.success;
   }
@@ -2187,7 +2241,7 @@ async function runDiagramCommand(
     }
     const inputRaw = values.get('--input');
     const input = inputRaw === undefined ? undefined : parseJsonFlag('--input', inputRaw);
-    const generated = diagramGenerate(generatorName, input);
+    const generated = sanitizeDeep(diagramGenerate(generatorName, input));
     console.log(json ? JSON.stringify({ v: 1, generated }) : generated.source);
     return EXIT_CODES.success;
   }
@@ -2205,7 +2259,7 @@ async function runDiagramCommand(
       );
       return EXIT_CODES.usage;
     }
-    const result = await diagramDiff(ctx, id, parseJsonFlag('--input', inputRaw));
+    const result = sanitizeDeep(await diagramDiff(ctx, id, parseJsonFlag('--input', inputRaw)));
     console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
     return result.hasDrift ? EXIT_CODES.failure : EXIT_CODES.success;
   }
@@ -2229,7 +2283,7 @@ async function runDiagramCommand(
     const generatorInputs = new Map(
       Object.entries(parsedInput as Readonly<Record<string, unknown>>),
     );
-    const results = await diagramSync(ctx, generatorInputs);
+    const results = sanitizeDeep(await diagramSync(ctx, generatorInputs));
     console.log(
       json
         ? JSON.stringify({ v: 1, results })
@@ -2246,7 +2300,7 @@ async function runDiagramCommand(
       : EXIT_CODES.success;
   }
   if (sub === 'legend') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     return diagramLegend();
   }
 
@@ -2259,7 +2313,7 @@ async function runDiagramCommand(
 // --- `forge customize`/`forge compile [--check]` (`03` §3.2.8) -----------------------------------
 
 function runCustomizeCommand(args: readonly string[]): number {
-  parseCommandFlags(args, {});
+  assertNoArgs(args);
   return customize();
 }
 
@@ -2317,7 +2371,7 @@ async function runPresetCommand(
   json: boolean,
 ): Promise<number> {
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     const presets = presetList();
     console.log(
       json
@@ -2385,7 +2439,7 @@ async function runSkillCommand(
   const ctx: SkillCommandContext = { paths };
 
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     const ids = await skillList(ctx);
     console.log(json ? JSON.stringify({ v: 1, ids }) : ids.join('\n'));
     return EXIT_CODES.success;
@@ -2437,7 +2491,7 @@ async function runMcpCommand(
     return outcome.valid ? EXIT_CODES.success : EXIT_CODES.failure;
   }
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
+    assertNoArgs(rest);
     return mcpList();
   }
 
@@ -2651,23 +2705,29 @@ async function runDebugCommand(
 ): Promise<number> {
   const { values, positionals } = parseCommandFlags(args, DEBUG_FLAGS);
   const fromFailure = values.get('--from-failure');
-  const deps: DebugDeps = await buildLoopDepsForProject(paths, projectRoot);
-  const options = budgetUsd === undefined ? {} : { costBudgetUsd: budgetUsd };
-
-  let result: DebugResult;
-  if (fromFailure !== undefined) {
-    if (positionals.length > 0) {
-      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
-    }
-    result = await debugFromFailure(deps, fromFailure, options);
-  } else {
-    const [symptom] = positionals;
+  // A fresh critic round found this dispatcher building a real `PlatformAdapter` (`buildLoopDepsForProject`,
+  // which can throw a real, hard `ENV-004` for an unresolvable `platform.primary`) *before* checking
+  // whether the caller even gave a real `<symptom>`/`--from-failure` at all — a real, unrelated
+  // environment crash at exit 5 for the cheap, ordinary usage mistake `forge debug` (bare) should report
+  // at exit 2 instead. Every sibling command in this same piece (`review`/`panel`/`implement`/
+  // `refactor`/`deploy`/`plan`) already validates its own required arguments before building any real
+  // dependency; this reorders `debug` to match.
+  const [symptom] = positionals;
+  if (fromFailure === undefined) {
     if (symptom === undefined || positionals.length > 1) {
       console.error('forge: "debug" needs a real <symptom>, or --from-failure <runId>.');
       return EXIT_CODES.usage;
     }
-    result = await debugSymptom(deps, symptom, options);
+  } else if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
   }
+
+  const deps: DebugDeps = await buildLoopDepsForProject(paths, projectRoot);
+  const options = budgetUsd === undefined ? {} : { costBudgetUsd: budgetUsd };
+  const result: DebugResult =
+    fromFailure !== undefined
+      ? await debugFromFailure(deps, fromFailure, options)
+      : await debugSymptom(deps, symptom ?? '', options);
   console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
   return result.outcome === 'recorded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
@@ -2725,8 +2785,16 @@ async function runPanelCommand(
   return outcome.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
+/** `forge ask <question>` always refuses (`ask()` is a real, unconditional `USR-003` — see this
+ * command's own doc comment) — but it still takes exactly one real positional (`03` §3.2.6's own
+ * `<question>`), unlike every zero-positional command `assertNoArgs` exists for elsewhere in this
+ * file: a second, unexpected positional is still this dispatcher's own real `USR-002`, not silently
+ * accepted just because the one real positional it does allow is never actually read. */
 function runAskCommand(args: readonly string[]): number {
-  parseCommandFlags(args, {});
+  const { positionals } = parseCommandFlags(args, {});
+  if (positionals.length > 1) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[1] ?? '' });
+  }
   return ask();
 }
 
@@ -2749,11 +2817,17 @@ async function runSessionCommand(
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
-  const deps: SessionCommandDeps = await buildLoopDepsForProject(paths, projectRoot);
-
+  // A fresh critic round found the original version built a real `PlatformAdapter`
+  // (`buildLoopDepsForProject`, which can throw a real, hard `ENV-004` for an unresolvable
+  // `platform.primary`) unconditionally, before even checking whether `sub` names anything real at
+  // all — so a bare `forge session` or a typo'd `forge session bogus-type` risked a real, unrelated
+  // environment crash at exit 5 instead of the cheap usage message below, at exit 2. Every subcommand's
+  // own required positionals are now validated first; the one real dependency this command needs is
+  // built only once a real, dispatchable subcommand/type is confirmed.
   if (sub === 'list') {
-    parseCommandFlags(rest, {});
-    const sessions = await sessionList(deps);
+    assertNoArgs(rest);
+    const deps = await buildLoopDepsForProject(paths, projectRoot);
+    const sessions = sanitizeDeep(await sessionList(deps));
     console.log(
       json
         ? JSON.stringify({ v: 1, sessions })
@@ -2766,39 +2840,34 @@ async function runSessionCommand(
     );
     return EXIT_CODES.success;
   }
-  if (sub === 'show') {
+  if (sub === 'show' || sub === 'resume' || sub === 'export') {
     const { positionals } = parseCommandFlags(rest, {});
     const [id] = positionals;
     if (id === undefined || positionals.length > 1) {
-      console.error('forge: "session show" needs a real <id>.');
+      console.error(`forge: "session ${sub}" needs a real <id>.`);
       return EXIT_CODES.usage;
     }
-    const doc = await sessionShow(deps, id);
-    console.log(
-      json
-        ? JSON.stringify({ v: 1, record: doc.record, body: doc.body, path: doc.path })
-        : `${doc.path}\n\n${doc.body}`,
-    );
-    return EXIT_CODES.success;
-  }
-  if (sub === 'resume') {
-    const { positionals } = parseCommandFlags(rest, {});
-    const [id] = positionals;
-    if (id === undefined || positionals.length > 1) {
-      console.error('forge: "session resume" needs a real <id>.');
-      return EXIT_CODES.usage;
+    const deps = await buildLoopDepsForProject(paths, projectRoot);
+    if (sub === 'show') {
+      const doc = await sessionShow(deps, id);
+      // `body` is real, rendered agent-conversation output — confirmed by a fresh critic round as
+      // the single most plausible vector in this whole piece for a prompt-injected or buggy model
+      // response to smuggle a raw ANSI/C1 escape sequence straight into a caller's terminal.
+      // Sanitized, along with `record`'s own free-text fields (`title` etc.), before either
+      // renderer sees it.
+      const record = sanitizeDeep(doc.record);
+      const body = stripControlChars(doc.body);
+      console.log(
+        json ? JSON.stringify({ v: 1, record, body, path: doc.path }) : `${doc.path}\n\n${body}`,
+      );
+      return EXIT_CODES.success;
     }
-    const result = await sessionResume(deps, id);
-    console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
-    return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
-  }
-  if (sub === 'export') {
-    const { positionals } = parseCommandFlags(rest, {});
-    const [id] = positionals;
-    if (id === undefined || positionals.length > 1) {
-      console.error('forge: "session export" needs a real <id>.');
-      return EXIT_CODES.usage;
+    if (sub === 'resume') {
+      const result = await sessionResume(deps, id);
+      console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+      return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
     }
+    // `sub === 'export'`: the only remaining case this branch's own guard admits.
     const result = await sessionExport(deps, id);
     console.log(
       json
@@ -2808,12 +2877,20 @@ async function runSessionCommand(
     return EXIT_CODES.success;
   }
 
+  // A fresh critic round found this dispatcher previously built a real `PlatformAdapter`
+  // (`buildLoopDepsForProject`, which can throw a real, hard `ENV-004` for an unresolvable
+  // `platform.primary`) *before* checking whether `sub` names anything real at all — so a bare `forge
+  // session` or a typo'd `forge session bogus-type` risked a real, unrelated environment crash at exit
+  // 5 instead of this cheap usage message at exit 2. This check (and every branch above) now runs
+  // before any real dependency is built.
   if (sub === undefined || !isSessionType(sub)) {
     console.error(
       `forge: "session ${sub ?? ''}" needs a real session <type>, or one of (${SESSION_KEYWORDS.join('|')}).`,
     );
     return EXIT_CODES.usage;
   }
+  const type: SessionType = sub;
+  const deps = await buildLoopDepsForProject(paths, projectRoot);
   const { values } = parseCommandFlags(rest, SESSION_START_FLAGS);
   const question = values.get('--question');
   const target = values.get('--target');
@@ -2836,7 +2913,7 @@ async function runSessionCommand(
       ? { roles: splitCommaList(values.get('--roles')) }
       : {}),
   };
-  const result = await startSession(deps, sub, options);
+  const result = await startSession(deps, type, options);
   console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
   return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }

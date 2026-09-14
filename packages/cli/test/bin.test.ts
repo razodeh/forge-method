@@ -1643,14 +1643,18 @@ describe('forge uninstall (real subprocess dispatch, PLAN-M12.md P2)', () => {
 /** A real, schema-valid KB entry (`kbEntrySchema`) — the identical fixture shape `packages/cli/test/
  * commands/helpers.ts`'s own `writeKbEntryFixture` already establishes for the unit-level tests,
  * reused here at the real-subprocess level. */
-async function writeKbEntryFixture(dir: string, id = 'KB-ARCH-0001'): Promise<void> {
+async function writeKbEntryFixture(
+  dir: string,
+  id = 'KB-ARCH-0001',
+  title = 'Fixture knowledge entry',
+): Promise<void> {
   const relPath = `docs/forge/kb/architecture/${id}.md`;
   await mkdir(path.dirname(path.join(dir, relPath)), { recursive: true });
   const content = `---
 id: ${id}
 type: knowledge
 section: architecture
-title: Fixture knowledge entry
+title: "${title}"
 status: active
 confidence: verified
 owner: architect
@@ -1677,7 +1681,11 @@ Command: \`true\`
 
 /** A real, schema-valid diagram sidecar (`diagramSchema`) — the identical fixture shape `helpers.ts`'s
  * own `writeDiagramFixture` already establishes. */
-async function writeDiagramFixtureAt(dir: string, id = 'DIAG-001'): Promise<void> {
+async function writeDiagramFixtureAt(
+  dir: string,
+  id = 'DIAG-001',
+  sourceExtra = '',
+): Promise<void> {
   const relPath = 'docs/forge/kb/architecture/views/fixture.mmd.yaml';
   await mkdir(path.dirname(path.join(dir, relPath)), { recursive: true });
   const content = `id: ${id}
@@ -1694,7 +1702,7 @@ kind: flowchart
 notation: mermaid
 source: |
   flowchart TD
-    UserService --> Database
+    UserService --> Database${sourceExtra}
 generated: false
 depicts: []
 explains: []
@@ -1720,6 +1728,51 @@ async function clearPlatformPrimary(dir: string): Promise<void> {
   };
   parsed.platform.primary = '';
   await writeFile(configPath, YAML.stringify(parsed), 'utf8');
+}
+
+/** A real, schema-valid, already-persisted `SessionRecord` working file — the identical fixture shape
+ * `packages/cli/test/commands/loop/session.test.ts`'s own `writeTruncatedFixture` already establishes
+ * for its unit-level tests, reused here so `forge session export` (a fully-implemented, non-live,
+ * easily-testable code path — it only reads a file and writes a rendered copy, no adapter, no model
+ * call) has real, on-disk coverage a fresh critic round found entirely missing. */
+async function writeSessionRecordFixture(dir: string, id = 'SESSION-042'): Promise<void> {
+  const sessionsDir = path.join(dir, 'docs/forge/sessions');
+  await mkdir(sessionsDir, { recursive: true });
+  const text = `---
+id: ${id}
+type: SessionRecord
+schemaVersion: 1
+title: Fixture truncated session
+status: truncated
+created: 2026-01-01
+updated: 2026-01-01
+revision: 1
+author: facilitator
+changelog: []
+sessionType: brainstorm
+technique: []
+question: A fixture question
+constraints_applied: []
+participants: [ pm, human ]
+started: 2026-01-01T00:00:00.000Z
+ended: 2026-01-01T00:05:00.000Z
+cost_usd: 0
+truncated_bound: wall-clock
+---
+
+## Frame
+A fixture question
+
+## Diverge
+(no ideas)
+
+## Converge
+(no clusters or objections)
+
+## Decisions
+(none)
+`;
+  await writeFile(path.join(sessionsDir, `${id}.md`), text, 'utf8');
 }
 
 describe('forge kb (real subprocess dispatch, PLAN-M12.md P4)', () => {
@@ -1788,6 +1841,44 @@ describe('forge kb (real subprocess dispatch, PLAN-M12.md P4)', () => {
     const result = run(['kb', 'open', '-C', dir]);
     expect(result.status).toBe(2);
   });
+
+  it('exits 2 for `forge kb list` given a real, unexpected extra positional, rather than silently ignoring it', async () => {
+    // A fresh critic round found every "list"-shaped subcommand across this whole piece
+    // (`kb list`/`lint`/`diff`/`sync`/`verify`, `spec list`/`matrix`/`orphans`, `adr list`, `diagram
+    // list`/`legend`, `preset list`, `skill list`, `mcp list`, `customize`, `ask`, `session list`)
+    // silently discarded any bare positional token instead of rejecting it — this is the representative
+    // regression test; `assertNoArgs` (the shared fix) is exercised identically by every one of those.
+    const dir = await realProject();
+    const result = run(['kb', 'list', 'unexpected', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge kb lint`/`forge kb sync`/`forge kb verify` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    expect(run(['kb', 'lint', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['kb', 'sync', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['kb', 'verify', 'unexpected', '-C', dir]).status).toBe(2);
+  });
+
+  it('strips a real, hostile control-character sequence out of a KB entry title before printing it, in both plain and --json modes', async () => {
+    // The identical `stripControlChars`/`sanitizeDeep` discipline `PLAN-M12.md` P2's own
+    // `InstallChangeReport` sanitization already established, extended by a fresh P4 critic round to
+    // this piece's own new untrusted-content surface — a KB entry's own `title` is real,
+    // project-authored free text a hostile or careless committer fully controls.
+    const dir = await realProject();
+    const hostileTitle = 'Fixture \x1b[31mHostile\x1b[0m entry';
+    await writeKbEntryFixture(dir, 'KB-ARCH-0001', hostileTitle);
+
+    const plain = run(['kb', 'show', 'KB-ARCH-0001', '-C', dir]);
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain('\x1b');
+
+    const json = run(['kb', 'show', 'KB-ARCH-0001', '--json', '-C', dir]);
+    expect(json.status).toBe(0);
+    expect(json.stdout).not.toContain('\x1b');
+    const parsed = JSON.parse(json.stdout) as { readonly entry: { readonly title: string } };
+    expect(parsed.entry.title).not.toContain('\x1b');
+  });
 });
 
 describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
@@ -1830,10 +1921,17 @@ describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
     expect(JSON.parse(result.stdout)).toHaveProperty('errors', 0);
   });
 
-  it('exits 2 for `forge spec new` with an unrecognised <type>', async () => {
+  it("exits 2 for `forge spec new` with an unrecognised <type>, naming only spec.ts's own real eight-type domain, not the unrelated full 21-type registry", async () => {
+    // A fresh critic round found this message previously listed every registered `ArtifactTypeId`
+    // (`ADR`/`Diagram`/`SessionRecord`/... included) as if each were a valid `spec new` answer, when
+    // every one of those still fails `specNew`'s own real, narrower domain check.
     const dir = await realProject();
     const result = run(['spec', 'new', 'NotARealType', 'Title', '-C', dir]);
     expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Vision');
+    expect(result.stderr).toContain('DataModel');
+    expect(result.stderr).not.toContain('SessionRecord');
+    expect(result.stderr).not.toContain('ADR');
   });
 
   it("exits non-zero with a real USR-003 for `forge spec new ADR` — a real, registered type outside spec.ts's own eight-type domain", async () => {
@@ -1846,6 +1944,13 @@ describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
     const dir = await realProject();
     const result = run(['spec', 'nope', '-C', dir]);
     expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge spec list`/`forge spec matrix`/`forge spec orphans` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    expect(run(['spec', 'list', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['spec', 'matrix', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['spec', 'orphans', 'unexpected', '-C', dir]).status).toBe(2);
   });
 });
 
@@ -1899,6 +2004,12 @@ describe('forge adr (real subprocess dispatch, PLAN-M12.md P4)', () => {
   it('exits 2 for `forge adr new` with no real <title>', async () => {
     const dir = await realProject();
     const result = run(['adr', 'new', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('exits 2 for `forge adr list` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    const result = run(['adr', 'list', 'unexpected', '-C', dir]);
     expect(result.status).toBe(2);
   });
 });
@@ -1961,6 +2072,25 @@ describe('forge diagram (real subprocess dispatch, PLAN-M12.md P4)', () => {
     const result = run(['diagram', 'generate', 'not-a-real-generator', '-C', dir]);
     expect(result.status).toBe(2);
   });
+
+  it('exits 2 for `forge diagram list`/`forge diagram legend` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    expect(run(['diagram', 'list', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['diagram', 'legend', 'unexpected', '-C', dir]).status).toBe(2);
+  });
+
+  it("strips a real, hostile control-character sequence out of a diagram's own source text before printing it, in both plain and --json modes", async () => {
+    const dir = await realProject();
+    await writeDiagramFixtureAt(dir, 'DIAG-001', '\n    %% \x1b[31mHostile\x1b[0m comment');
+
+    const plain = run(['diagram', 'show', 'DIAG-001', '-C', dir]);
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain('\x1b');
+
+    const json = run(['diagram', 'show', 'DIAG-001', '--json', '-C', dir]);
+    expect(json.status).toBe(0);
+    expect(json.stdout).not.toContain('\x1b');
+  });
 });
 
 describe('forge customize / forge compile (real subprocess dispatch, PLAN-M12.md P4)', () => {
@@ -1969,6 +2099,12 @@ describe('forge customize / forge compile (real subprocess dispatch, PLAN-M12.md
     const result = run(['customize', '-C', dir]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('customize');
+  });
+
+  it('exits 2 for `forge customize` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    const result = run(['customize', 'unexpected', '-C', dir]);
+    expect(result.status).toBe(2);
   });
 
   it('exits 2 for `forge compile` with no real --sources', async () => {
@@ -2069,6 +2205,13 @@ describe('forge preset / forge skill / forge mcp (real subprocess dispatch, PLAN
     const result = run(['mcp', 'list', '-C', dir]);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('mcp list');
+  });
+
+  it('exits 2 for `forge preset list`/`forge skill list`/`forge mcp list` given a real, unexpected extra positional', async () => {
+    const dir = await realProject();
+    expect(run(['preset', 'list', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['skill', 'list', 'unexpected', '-C', dir]).status).toBe(2);
+    expect(run(['mcp', 'list', 'unexpected', '-C', dir]).status).toBe(2);
   });
 });
 
@@ -2223,9 +2366,14 @@ describe('forge implement / forge refactor / forge deploy (real subprocess dispa
 });
 
 describe('forge debug / forge review / forge panel / forge ask / forge session (real subprocess dispatch, PLAN-M12.md P4)', () => {
-  it('exits 2 for `forge debug` with neither a real <symptom> nor --from-failure', async () => {
+  it('exits 2 for `forge debug` with neither a real <symptom> nor --from-failure, even against a real project whose own platform.primary this dispatcher cannot resolve', async () => {
+    // Deliberately no `clearPlatformPrimary` here: a fresh critic round found the original version
+    // built a real `PlatformAdapter` (`buildLoopDepsForProject`) *before* checking whether the caller
+    // gave a real `<symptom>` at all — `realProject()`'s own fixture records `platform.primary:
+    // forge-fake-adapter`, unresolvable by the real adapter registry, so that ordering bug would have
+    // crashed this exact case with a real, unrelated `ENV-004` at exit 5 instead of this cheap usage
+    // message at exit 2.
     const dir = await realProject();
-    await clearPlatformPrimary(dir);
     const result = run(['debug', '-C', dir]);
     expect(result.status).toBe(2);
   });
@@ -2255,6 +2403,12 @@ describe('forge debug / forge review / forge panel / forge ask / forge session (
     expect(result.stderr).toContain('forge ask');
   });
 
+  it('exits 2 for `forge ask` given a second, real unexpected extra positional beyond its own real <question>', async () => {
+    const dir = await realProject();
+    const result = run(['ask', 'question one', 'question two', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
   it('runs `forge session list` for real, empty on a fresh project', async () => {
     const dir = await realProject();
     await clearPlatformPrimary(dir);
@@ -2265,17 +2419,43 @@ describe('forge debug / forge review / forge panel / forge ask / forge session (
     ).toEqual([]);
   });
 
-  it('exits 2 for `forge session show` with no real <id>', async () => {
+  it('exits 2 for `forge session show` with no real <id>, even against a real project whose own platform.primary this dispatcher cannot resolve', async () => {
+    // Deliberately no `clearPlatformPrimary` — the identical real ordering fix `forge debug`'s own
+    // test above documents.
     const dir = await realProject();
-    await clearPlatformPrimary(dir);
     const result = run(['session', 'show', '-C', dir]);
     expect(result.status).toBe(2);
   });
 
-  it('exits 2 for a real, unrecognised `forge session <type>`', async () => {
+  it('exits 2 for a real, unrecognised `forge session <type>`, even against a real project whose own platform.primary this dispatcher cannot resolve', async () => {
+    const dir = await realProject();
+    const result = run(['session', 'not-a-real-type', '-C', dir]);
+    expect(result.status).toBe(2);
+  });
+
+  it('runs `forge session export <id>` for real end to end, writing a real, canonical, sanitized copy — a fresh critic round found this fully-implemented, non-live path had zero test coverage', async () => {
     const dir = await realProject();
     await clearPlatformPrimary(dir);
-    const result = run(['session', 'not-a-real-type', '-C', dir]);
+    await writeSessionRecordFixture(dir);
+
+    const result = run(['session', 'export', 'SESSION-042', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly path: string };
+    expect(existsSync(path.join(dir, parsed.path))).toBe(true);
+    expect(parsed.path).toContain('SESSION-042');
+  });
+
+  it('exits non-zero for `forge session export` with an unknown id', async () => {
+    const dir = await realProject();
+    await clearPlatformPrimary(dir);
+    const result = run(['session', 'export', 'SESSION-999', '-C', dir]);
+    expect(result.status).not.toBe(0);
+  });
+
+  it('exits 2 for `forge session export` with no real <id>', async () => {
+    const dir = await realProject();
+    const result = run(['session', 'export', '-C', dir]);
     expect(result.status).toBe(2);
   });
 

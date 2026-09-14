@@ -149,7 +149,12 @@ export async function specOrphans(ctx: SpecCommandContext): Promise<readonly Orp
 export type SpecArtifactType =
   'Vision' | 'Capability' | 'NFR' | 'Epic' | 'Story' | 'Task' | 'InterfaceContract' | 'DataModel';
 
-const SPEC_ARTIFACT_TYPES: ReadonlySet<ArtifactTypeId> = new Set<SpecArtifactType>([
+/** Exported (`PLAN-M12.md` P4) so the real CLI dispatcher's own "unrecognised `<type>`" usage error can
+ * name exactly these eight real types — a fresh critic round found an earlier draft of that message
+ * listing the full, unrelated 21-entry `ArtifactTypeId` registry instead, which named several types
+ * (`ADR`, `Diagram`, `SessionRecord`, ...) that read as valid answers but still fail this function's
+ * own domain check immediately below. */
+export const SPEC_ARTIFACT_TYPES: ReadonlySet<ArtifactTypeId> = new Set<SpecArtifactType>([
   'Vision',
   'Capability',
   'NFR',
@@ -160,7 +165,7 @@ const SPEC_ARTIFACT_TYPES: ReadonlySet<ArtifactTypeId> = new Set<SpecArtifactTyp
   'DataModel',
 ]);
 
-function isSpecArtifactType(type: ArtifactTypeId): type is SpecArtifactType {
+export function isSpecArtifactType(type: ArtifactTypeId): type is SpecArtifactType {
   return SPEC_ARTIFACT_TYPES.has(type);
 }
 
