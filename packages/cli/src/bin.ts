@@ -214,7 +214,11 @@ import {
   type ConflictResolutionMode,
 } from './generated-header.ts';
 import { parseInitFlags } from './init/parse-init-flags.ts';
-import { readPackageVersion, resolvePackageRoot } from './init/package-root.ts';
+import {
+  readOwnPackageVersion,
+  readPackageVersion,
+  resolveOwnPackageRoot,
+} from './init/package-root.ts';
 import { runInit } from './init/run-init.ts';
 import {
   specValidateRule,
@@ -323,12 +327,12 @@ function realEnvSnapshot(): Readonly<Record<string, string>> {
 
 /** The real `modules/` roster directory (`RunInitDeps.modulesDir`'s own doc comment) resolved from
  * this package's own real install location — this only ever finds the *workspace* `modules/`
- * directory (two levels above `@forge/cli`'s own package root), since no publishing/distribution
+ * directory (two levels above `forge-method`'s own package root), since no publishing/distribution
  * mechanism for `modules/` exists yet (the identical, already-disclosed gap `RunInitDeps.modulesDir`'s
  * own doc comment names, `SPEC-QUESTIONS.md` Q103) — real for every real use of this dispatcher today
  * (a workspace checkout), not yet real for a published, installed `forge-method` package. */
 function resolveModulesDir(): string {
-  return path.join(resolvePackageRoot('@forge/cli'), '..', '..', 'modules');
+  return path.join(resolveOwnPackageRoot(import.meta.url), '..', '..', 'modules');
 }
 
 /** Real wall-clock time via `@forge/core`'s own injected-clock seam (R10) — never `Date.now()`
@@ -2943,9 +2947,32 @@ async function runSessionCommand(
   return result.outcome.status === 'succeeded' ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
+/** `forge --version`/`-V` — `03` §3.2's own global-flags table names this row; nothing wired it until
+ * now. Deliberately checked before `ProjectPaths` is ever constructed below: `--version` is a query
+ * about the installed CLI itself, not about any project, and must answer even from a directory that
+ * is not (or not yet) a real FORGE project — the identical reasoning `21` §21.5's own "cold start"
+ * benchmark (`PLAN-M12.md` P5) depends on, since a warm-cache `npx forge-method --version` timing is
+ * only real if the command it measures does not first require a valid project root to exist. Reads
+ * `forge-method`'s own `package.json` `version` field via the same `readPackageVersion` helper `init`/
+ * `upgrade` already use for every other package's version, rather than a second, hand-rolled reader. */
+function printVersion(): void {
+  console.log(readOwnPackageVersion(import.meta.url));
+}
+
 async function main(): Promise<number> {
   const flags = parseGlobalFlags(process.argv.slice(2));
   const [command, sub, ...rest] = flags.positionals;
+
+  if (command === '--version' || command === '-V') {
+    // A round-1 critic finding for `PLAN-M12.md` P5: every other zero-positional command in this
+    // dispatcher rejects a stray extra positional (`assertNoArgs`, the shared helper commit `0f1f4ac`
+    // introduced) rather than silently ignoring it — `forge --version foo` reaching here unchecked
+    // would be the one inconsistent exception.
+    assertNoArgs([sub, ...rest].filter((token): token is string => token !== undefined));
+    printVersion();
+    return EXIT_CODES.success;
+  }
+
   const projectRoot = flags.project ?? process.cwd();
   const paths = new ProjectPaths(projectRoot);
 

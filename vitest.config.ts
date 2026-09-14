@@ -105,6 +105,13 @@ export default defineConfig({
         'scripts/check-boundaries.mjs',
         'scripts/emit-schemas.mjs',
         'scripts/assert-schema-drift.mjs',
+        // Same shape again for the `21` §21.5 performance-benchmark suite: `scripts/bench.mjs`'s own
+        // decision logic (`evaluateBenchRatchet`) and fixture builders live in `scripts/lib/bench-
+        // ratchet.mjs`/`scripts/lib/bench-fixtures.mjs`, both fully covered by scripts/bench-ratchet.
+        // test.ts / scripts/bench-fixtures.test.ts; `bench.mjs` itself is real-wall-clock timing and
+        // subprocess spawning that v8 coverage cannot meaningfully instrument deterministically, proven
+        // instead by scripts/bench.test.ts's own real, subprocess, end-to-end run.
+        'scripts/bench.mjs',
         // Never imported in-process at all — always run as a spawned `--experimental-strip-types`
         // child (see scripts/lib/schema-drift.mjs's doc comment), so v8 coverage in the parent
         // process cannot see it execute regardless of how much of it a test exercises. Its own

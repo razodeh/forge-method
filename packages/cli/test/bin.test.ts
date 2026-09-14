@@ -317,6 +317,24 @@ describe('forge (real subprocess dispatch)', () => {
     expect(result.status).not.toBe(0);
   });
 
+  it("runs `forge --version`/`-V` for real, printing this package's own real version and exiting 0 — no project needed (PLAN-M12.md P5)", () => {
+    // Deliberately no `-C <dir>`/cwd inside a real project at all: `--version` answers a question
+    // about the installed CLI itself, not about any project, and `21` §21.5's own cold-start
+    // benchmark depends on this not requiring a valid ProjectPaths root first.
+    const long = run(['--version']);
+    expect(long.status).toBe(0);
+    expect(long.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+
+    const short = run(['-V']);
+    expect(short.status).toBe(0);
+    expect(short.stdout).toBe(long.stdout);
+  });
+
+  it('rejects a stray extra positional after `forge --version`, like every other zero-positional command', () => {
+    const result = run(['--version', 'foo']);
+    expect(result.status).toBe(2);
+  });
+
   it('exits 2 and names the command for a real, not-yet-wired subcommand', async () => {
     // `kb list` used to be the example here — `PLAN-M12.md` P4 wired the whole `kb` surface, so this
     // now uses `agent list` instead: `agent validate --all` is the only real, wired `agent` subcommand

@@ -188,6 +188,26 @@ const BIN_TS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
 );
 
 /**
+ * `scripts/bench.mjs`'s own narrowed R10 carve-out (`PLAN-M12.md` P5), the identical "filter by
+ * message text so every other real selector — including any added later — still applies" shape
+ * `BIN_TS_DETERMINISM_SYNTAX_RULES` above already establishes. `21` §21.5's whole mandate is measuring
+ * the real, ambient wall clock a benchmark actually runs against, so `performance.now()` is this one
+ * file's genuine job, not a bug the way it would be in product code with a real `Clock` to inject
+ * instead — there is nothing to inject here, the real clock *is* what is under test. `process.env` is
+ * relaxed for the identical "a real composition-root entry point" reason `bin.ts` gets it relaxed:
+ * `scripts/bench.test.ts`'s own real subprocess run overrides sample counts and the marks-file path
+ * through real env vars rather than a parallel, untested config-file mechanism this one script would
+ * be the sole consumer of. Host facts (`node:os tmpdir()`) stay relaxed too, for the same "this is the
+ * real entry point, not the decision logic" reason — `scripts/lib/bench-fixtures.mjs` takes an
+ * already-created scratch directory as a parameter instead of allocating one itself, keeping that file
+ * under the ordinary, un-relaxed rule.
+ */
+const BENCH_MJS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
+  (rule) =>
+    !rule.message.includes('process.env directly') && !rule.message.includes('performance.now()'),
+);
+
+/**
  * QUALITY-BAR.md R11: cross-platform correctness — disk paths are composed with `node:path`, never
  * by concatenating a literal `/` separator, which is wrong on Windows. Not folded into
  * `DETERMINISM_SYNTAX_RULES` above: that array applies everywhere, and a global ban on `'/'` in a
@@ -515,6 +535,66 @@ export default tseslint.config(
     rules: {
       'no-console': 'off',
       'no-restricted-syntax': ['error', ...BIN_TS_DETERMINISM_SYNTAX_RULES],
+    },
+  },
+  {
+    // `scripts/bench.mjs` — the `21` §21.5 performance-benchmark suite's own real composition root
+    // (`PLAN-M12.md` P5), narrowed to this exact file by name for the identical reason `bin.ts` above
+    // is named rather than globbed: relaxing a whole directory would silently also relax every other
+    // real selector for every other file under it. See `BENCH_MJS_DETERMINISM_SYNTAX_RULES`'s own doc
+    // comment for why `performance.now()`/`process.env`/`node:os tmpdir()` are the three, and only
+    // three, things this file genuinely needs relaxed.
+    files: ['scripts/bench.mjs'],
+    languageOptions: {
+      // `performance` is otherwise absent from the `**/*.mjs` globals list above — every other
+      // script has no real reason to read the ambient clock, this one's entire job is measuring it.
+      globals: { performance: 'readonly' },
+    },
+    rules: {
+      'no-restricted-syntax': ['error', ...BENCH_MJS_DETERMINISM_SYNTAX_RULES],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:test',
+              message: 'specs/02 §2.1: node:test is not used; tests are written with vitest.',
+            },
+            {
+              name: 'node:crypto',
+              importNames: RANDOM_NAMES,
+              message: 'R10: use a seeded RNG, not crypto randomness.',
+            },
+            {
+              name: 'node:perf_hooks',
+              importNames: ['performance'],
+              message: 'R10: take the time from an injected clock, not perf_hooks.',
+            },
+            {
+              name: 'node:fs/promises',
+              importNames: LISTING_NAMES,
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:fs',
+              importNames: ['readdir', 'readdirSync', 'opendir', 'opendirSync', 'glob', 'globSync'],
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:process',
+              message: 'R10: read configuration through the config layer, not node:process.',
+            },
+          ],
+          patterns: [
+            {
+              regex: `^(${BARE_BUILTINS.join('|')})(/.*)?$`,
+              message: 'Import Node builtins with the node: protocol (specs/02 §2.1).',
+            },
+          ],
+        },
+      ],
     },
   },
   {

@@ -1,0 +1,22 @@
+{
+  "cold-start": {
+    "ms": 564.6916250000002,
+    "fixtureSize": 1
+  },
+  "first-frame": {
+    "ms": 565.7015419999998,
+    "fixtureSize": 100
+  },
+  "compile": {
+    "ms": 8.81329199999982,
+    "fixtureSize": 600
+  },
+  "kb-pack": {
+    "ms": 4.822624999999789,
+    "fixtureSize": 512
+  },
+  "index-rebuild": {
+    "ms": 55.13829199999964,
+    "fixtureSize": 1012
+  }
+}

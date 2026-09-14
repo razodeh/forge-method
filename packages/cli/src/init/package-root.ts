@@ -48,3 +48,28 @@ export function readPackageVersion(name: string): string {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { readonly version?: unknown };
   return typeof manifest.version === 'string' ? manifest.version : '0.0.0';
 }
+
+/**
+ * `forge-method`'s own root/version, resolved from the currently-executing module's own
+ * `import.meta.url` rather than through `resolvePackageRoot`/`import.meta.resolve('forge-method')`.
+ *
+ * Not the same mechanism as `resolvePackageRoot`, deliberately: that path relies on Node's
+ * self-reference resolution walking through this package's own `exports` map, which points `"."` at
+ * `./dist/forge.mjs` — the real, published entry point (`02` §2.7's own bundled-CLI shape) — and the
+ * published tarball's own `"files": ["dist"]` never ships `src/`. Running this package's *unbuilt*
+ * source directly (`bin/forge.mjs`'s own dev spawn wrapper, and every test in this suite) has no
+ * `dist/forge.mjs` to resolve to, so self-reference would fail before `dist` is ever built — exactly
+ * the case this function exists to keep working. Walking up from the calling module's own real file
+ * location instead works identically whether that module is `src/bin.ts` (dev, unbuilt) or the
+ * bundled `dist/forge.mjs` (published, built): both live somewhere under this package's own root,
+ * which is the first ancestor directory whose `package.json` really is `forge-method`'s.
+ */
+export function resolveOwnPackageRoot(currentModuleUrl: string): string {
+  return walkUpForPackageJson(path.dirname(fileURLToPath(currentModuleUrl)), 'forge-method');
+}
+
+export function readOwnPackageVersion(currentModuleUrl: string): string {
+  const manifestPath = path.join(resolveOwnPackageRoot(currentModuleUrl), 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { readonly version?: unknown };
+  return typeof manifest.version === 'string' ? manifest.version : '0.0.0';
+}
