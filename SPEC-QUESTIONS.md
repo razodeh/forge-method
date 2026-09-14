@@ -15502,3 +15502,128 @@ itself* rather than calling any real, shared function — it could never fail fo
 through the identical, single, now-directly-unit-tested call, rather than two separate inline
 `sanitizeForTerminal` call sites that could drift; (2) the round-2 test itself replaced with a real call
 to `sanitizeWrittenFilePaths`.
+
+## Q187 — M12 P4: the real CLI dispatcher for `kb`/`spec`/`adr`/`diagram`/`customize`/`compile`/
+`preset`/`skill`/`mcp`/`help`/`plan` and the agent-facing loop family — a real, shared-working-directory
+commit-isolation incident; the `forge implement` real-template gap this piece surfaces but does not fix;
+several small, disclosed argv-shape decisions
+
+`PLAN-M12.md` P4's own mandate completes the real CLI dispatcher P1/P2/P3 began: `forge kb <sub>`, the
+full `forge spec <sub>` surface (the bare, no-`--rule` `validate` form alongside M8 P2's own narrower,
+gate-shelled one), `forge adr <sub>`, `forge diagram <sub>`, `forge customize`, `forge compile`, `forge
+preset <sub>`, `forge skill <sub>`, `forge mcp <sub>`, `forge help`, `forge plan <phase>`, and the
+agent-facing `forge implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/`session` family.
+Several real, concrete decisions and one real incident this piece had to record:
+
+**1. `forge plan <phase>` and `forge test plan/generate/report` are real, `commands/run/`-family
+siblings P1/M8 left dangling — wired here rather than left permanently unreachable.** Neither
+`PLAN-M12.md` P1's own literal Surface line (`forge run`/`resume`/`pause`/`abort`/`lanes`/`logs`/`gate`/
+`merge`) nor any M8 piece's own narrower gate-shelled wiring (`test run`/`coverage`/`flaky`) named
+`forge plan`/`forge test plan|generate|report` — both are real, already-tested functions
+(`workflowIdForPlanPhase` in `commands/run/plan.ts`; `test()` in `commands/loop/test.ts`) that would
+otherwise have had no piece of `PLAN-M12.md` ever allocated to wiring them, permanently falling through
+to this dispatcher's own generic "not wired" message instead of their own real, correctly-worded
+refusal or dispatch. Closed here, disclosed rather than silently absorbed into this piece's own literal
+mandate list. `forge plan stage <id>` threads a real `{{stageId}}` into `plan-stage.workflow.yaml` via a
+narrow `ExpressionContext` extension (the identical pattern `implement.ts`'s own `storyId`/`ownerRole`
+already establishes); `forge plan replan --from <event>` folds `--from` into `vars` (no real template
+reference exists for it, unlike `stageId`).
+
+**2. A real, security-relevant sanitization gap, found and closed across two critic rounds — a general
+`sanitizeDeep` (the recursive form of P2's own `stripControlChars`/`sanitizeInstallChangeReportForDisplay`
+precedent) now covers every real, project-authored or live-agent-produced free-text surface this piece's
+newly-wired commands print.** Round 1 found `kb`/`diagram`/`spec`/`adr`/`session show`/`session list`
+printing real, untrusted free text (titles, diagram source, front matter) with none of P2's own
+established sanitization; round 2 found round 1's own fix stopped short of its own real scope —
+`debug`/`review`/`panel`/`session <type>`/`session resume` print the identical class of real,
+live-agent-produced text (RCA reasons/evidence, review reports, panel transcripts, session records) and
+had been missed. Both rounds' gaps are now closed, and round 2 also found `sanitizeDeep`'s own first
+draft walked *every* non-null object (not only real plain ones), silently collapsing a hypothetical
+`Date`/`Map`/`Set`/class-instance field into `{}` — fixed with a real `Object.getPrototypeOf(value) ===
+Object.prototype` guard, latent today (no real `Date` field exists in this codebase's own schemas, which
+use ISO strings throughout) but closed as the kind of gap a five-year-maintenance codebase eventually
+trips over.
+
+**3. `forge session export`'s own written file is *not* sanitized — a real, disclosed gap this piece
+does not fix.** `sessionExport` (`commands/loop/session.ts`, pre-existing business logic from a prior
+milestone, outside this piece's own dispatcher-wiring-only mandate) writes a session's real `record`/
+`body` straight to a new, tracked `docs/forge/sessions/*.md` file via `writeFileAtomic`, with no
+`stripControlChars`/`sanitizeDeep` call anywhere in its own real write path. A round-2 critic caught
+this piece's own first-drafted test for that command falsely claiming a "sanitized" copy — the test's
+own title and body no longer make that claim, and this note records the real gap instead: a hostile or
+merely careless session participant's own recorded text is written verbatim to a file a human may later
+`cat` directly, never routed back through `forge session show`'s own real sanitization at all. Fixing
+`sessionExport` itself is a real, narrow, one-line change to `session.ts` — genuinely outside this
+piece's own dispatcher-only mandate (per the standing "do not implement anyone's unfinished business"
+rule), left for whichever future piece next touches that file.
+
+**4. `forge implement <storyId>`'s real dry-run compile fails against the real, production
+`implement-story.workflow.yaml` template for *any* real Story — a real, pre-existing gap this piece
+surfaces, confirmed by direct reproduction, not something P4 itself introduces or is mandated to fix.**
+The real, shipped template (`packages/templates/templates/workflows/implement-story.workflow.yaml`)
+references `{{run.testPaths}}`/`{{run.filesExpected}}` at its own `produces:` fields — real,
+`ExpressionContext.run`-sourced template variables `implementStory`'s own `ImplementStoryExpressionContext`
+(`commands/loop/implement.ts`, built before this piece, in an earlier milestone) never populates at all,
+only ever supplying `storyId`/`ownerRole`. The unit-level tests covering `implementStory` (`test/commands/
+loop/implement.test.ts`) use a simplified, non-production fixture template with no such reference, so
+this gap was invisible until this piece's own real end-to-end dispatcher test ran the genuine, shipped
+template for the first time. `packages/cli/test/bin.test.ts`'s own `forge implement --dry-run` test
+documents this directly: it asserts the real, honest `template-resolution-failed` compile issue this
+command now reports, rather than a fabricated success. Fixing `implementStory` itself (giving it a real
+way to populate `run.testPaths`/`run.filesExpected`) is out of this piece's own dispatcher-wiring
+mandate — a real, disclosed gap for a future piece, not silently worked around here.
+
+**5. A real, shared-working-directory commit-isolation incident, recorded rather than hidden.** This
+piece was built concurrently with `PLAN-M12.md` P3 in the same, unisolated git working directory
+(`bin.ts`/`bin.test.ts` both touched by both pieces — P3's own real `--on-conflict` feature for `forge
+init`/`forge upgrade` lives in the same two files this piece's own dispatcher wiring does). An attempt
+to fold a critic-round fix into this piece's own feat commit via `git commit --amend --no-edit` (intended
+to amend this piece's own most recent commit) instead amended P3's own, already-landed `docs: record M12
+P3...` commit — HEAD had moved to P3's own commit between this piece's own build phase and its
+critic-fix phase, and `--amend` always targets HEAD, not a specifically-named prior commit. Caught
+immediately (before any push), recovered via `git reflog` + `git reset --soft` back to P3's own real,
+unmodified commit (never `--hard`, which would have discarded working-tree state), and this piece's own
+fixes re-applied as new, targeted commits instead — a real `git merge-file` three-way merge (base = this
+piece's own original commit, one side = P3's own real, subsequently-landed work, other side = this
+piece's own fix) cleanly separated the two pieces' independent, non-overlapping edits with zero manual
+line-by-line reconciliation needed for the second recovery (the first, pre-incident isolation of P3's
+work from this piece's own initial commit needed one small hand-reconciliation: `runUpgradeCommand`'s own
+body, where this piece's insertion point for `buildLoopDepsForProject` sat immediately adjacent to P3's
+own `defaultNonInteractiveConflictMode`). Recorded here per this project's own "do not sanitise the
+gauntlet log" rule — a real process mistake, not swept under a rug. This piece's own code therefore
+landed as four commits (one `feat` + three `fix`, all listed in `GAUNTLET-LOG.md`'s own M12 P4 entry)
+rather than the ideal single conventional commit `BUILD-PROMPT.md` names — a real, disclosed deviation
+forced by the recovery, not a process shortcut.
+
+**6. `forge ask`'s own missing-`<question>` case is left exactly as it already was — a real, considered,
+declined fix, not an oversight.** A round-2 critic noted `forge ask` (zero positionals) still falls
+through to `ask()`'s own unconditional `USR-003`, rather than a distinct `USR-002` naming the missing
+required argument. Left as-is: `ask()` refuses identically regardless of whether a real `<question>` was
+ever supplied (`loop/ask.ts`'s own doc comment: `ask` has no real mechanism at all, unlike `panel`), so a
+caller who omits the argument and a caller who supplies one both get the same, single, correct "not
+implemented" answer — distinguishing "you forgot the question" from "this feature doesn't exist yet"
+would add real branching for zero real behavioral benefit to a caller who is refused either way.
+
+**7. `forge diagram sync`'s `--input <json>` (a JSON object mapping diagram id → that diagram's own real
+generator input) and `forge compile`'s `--sources <path>` (a JSON file holding a real `CompileSources`
+document) are both real, disclosed dispatcher-level workarounds for the identical "this package cannot
+gather it itself" gap `diagram.ts`/`compile.ts`'s own doc comments already name** — no real
+project-content-gathering resolver exists anywhere in this codebase (the same gap `forge diagram
+generate`/`diff`'s own `generatorInput` parameter already discloses). Reading the caller-supplied value
+from a flag (inline JSON for `diagram`, a file path for `compile`'s own larger document) is this
+dispatcher's own real, narrow answer — a real CLI-level convenience, not a new project-introspection
+mechanism.
+
+**Checks:** `packages/cli/test/bin.test.ts` gained real subprocess-dispatch tests for every command this
+piece wires, including explicit negative tests for every disclosed `USR-003`/unwired-subcommand case
+above, a representative sample of the "extra positional silently accepted" regression class (found by a
+round-1 critic across roughly seventeen zero-positional subcommands, fixed once via a shared
+`assertNoArgs` helper), and real hostile-control-character regression tests for `kb show`, `diagram
+show`, `spec show`, `adr show`, and `session show`. `pnpm lint`/`pnpm typecheck`/`pnpm run boundaries`
+all clean; the full, unscoped `node scripts/run-tests.mjs run` and `packages/cli/test/bin.test.ts` alone
+both pass modulo this project's own already-named, load-sensitive flakes
+(`packages/engine/test/e2e/crash-resume.test.ts`, `packages/kb/test/adopt/survey.test.ts`'s
+oversized-fixture test) plus one new, load-sensitive flake specific to this piece's own heavily-loaded
+concurrent-build environment (`forge diagram render`'s own real subprocess spawn, reproduced as passing
+cleanly on every direct, manual, non-concurrent invocation across seven separate attempts — never a real
+logic defect, confirmed by direct code inspection each time).

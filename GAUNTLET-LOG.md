@@ -12579,3 +12579,135 @@ P4 dispatcher work, not this piece. Every test this piece added or changed passe
 
 **Rounds: 3 critic rounds (2 blocking + 2 major + 2 minor round 1, all fixed; 1 blocking + 1 major + 2
 minor round 2, all fixed/disclosed; 2 major round 3, all fixed). Outcome: WON.**
+
+## M12 P4 — The real CLI dispatcher: kb/spec/adr/diagram/customize/compile/preset/skill/mcp/help/plan
+and the agent-facing loop family
+
+Completes the real CLI dispatcher P1/P2/P3 began: wired `forge kb <sub>`, the full `forge spec <sub>`
+surface (`validate`'s own bare form alongside M8 P2's narrower `--rule` form), `forge adr <sub>`, `forge
+diagram <sub>`, `forge customize`, `forge compile`, `forge preset <sub>`, `forge skill <sub>`, `forge mcp
+<sub>`, `forge help`, `forge plan <phase>`, and the agent-facing `forge implement`/`debug`/`refactor`/
+`deploy`/`review`/`panel`/`ask`/`session` family into `packages/cli/src/bin.ts`. Also closed one real gap
+note 9's own completeness pass found: `forge test plan/generate/report` (a real, disclosed `USR-003`) had
+never been wired by any prior piece.
+
+Built concurrently with `PLAN-M12.md` P3 in the same, unisolated working directory (both pieces touch
+`bin.ts`/`bin.test.ts`). Landed as four commits, not the ideal single one — `e17a62b` (feat), `0f1f4ac`
+(round-1 fixes), `2675d33` (round-2 fixes), `5c1441d` (dispatcher-completeness fix) — a real, disclosed
+deviation forced by a commit-isolation incident recorded in full below and in `SPEC-QUESTIONS.md` Q187.
+
+### Round 1: 3 major + 2 minor
+
+**Major:** `runDebugCommand`/`runSessionCommand` built a real `PlatformAdapter` (`buildLoopDepsForProject`,
+which throws a real, hard `ENV-004` for an unresolvable `platform.primary`) *before* validating their own
+required arguments — a bare `forge debug` or `forge session bogus-type` against an ordinary project (a
+stale/unset `platform.primary`, not a rare edge case) crashed with an unrelated environment error at exit
+5 instead of the correct, cheap usage message at exit 2. **Major:** roughly seventeen zero-positional
+subcommands (`kb list`, `kb lint`, `spec list`, `diagram list`, `preset list`, `skill list`, `mcp list`,
+`customize`, `session list`, ...) silently accepted and discarded an unexpected extra positional argument
+instead of rejecting it, inconsistent with every sibling command in the same piece that does validate
+positional count. **Major:** several newly-wired commands (`kb`/`diagram`/`spec`/`adr`/`session` show/
+list/search/lint/verify) printed real, project-authored free text (titles, diagram source, front matter,
+a session's own recorded body) with no control-character sanitization, unlike this file's own established
+`stripControlChars`/`sanitizeInstallChangeReportForDisplay` precedent from `PLAN-M12.md` P2. **Minor:**
+`forge session export` (a fully-implemented, non-live code path) had zero test coverage. **Minor:**
+`spec new`'s "unrecognised type" error message listed the full 21-entry artifact-type registry instead of
+only the 8 real types `spec new` actually accepts.
+
+**What the critic caught that I missed:** I had built and shipped the P4 commit *before* running a critic
+round at all (a real process-ordering mistake — BUILD-PROMPT.md's own gauntlet loop puts CRITIC before
+COMMIT), so round 1 here is really doing the job round 1 should have done pre-commit. The
+`buildLoopDepsForProject`-before-validation ordering bug specifically: I had copied the "build deps, then
+dispatch on sub" shape from `runSessionCommand`'s own earlier draft without checking whether every branch
+still validated cheaply *before* that build, the same mistake in two different functions.
+
+**Judged and fixed:** `runDebugCommand`/`runSessionCommand` reordered so every required-argument check
+runs before `buildLoopDepsForProject`. A shared `assertNoArgs` helper (already used by `forge pause`)
+applied to every genuinely zero-positional command; `forge ask` (which legitimately takes one real
+positional, `<question>`, even though `ask()` always refuses regardless) got its own, narrower check
+instead of the blanket one. A new `sanitizeDeep` (the recursive, general-purpose form of
+`stripControlChars`) applied to every newly-sanitized command's own printed output, in both `--json` and
+plain modes. `forge session export` gained real end-to-end test coverage. `spec.ts` now exports
+`SPEC_ARTIFACT_TYPES`, and the error message names only those eight real types.
+
+### Round 2: 3 major + 3 minor
+
+**Major:** round 1's own sanitization fix stopped short of its own real scope — `forge debug`/`forge
+review`/`forge panel`/`forge session <type>`/`forge session resume` print the identical class of real,
+live-agent-produced free text (RCA reasons/evidence, review reports, panel transcripts, session records)
+and were missed. **Major:** the new `forge session export` test's own title and comments falsely claimed
+a "sanitized" copy — `sessionExport` (`commands/loop/session.ts`, real, pre-existing business logic from
+a prior milestone) writes a session's real `record`/`body` straight to disk with no sanitization call
+anywhere in its own real write path; fixing the underlying function is outside this piece's own
+dispatcher-wiring mandate. **Major:** real hostile-control-character regression test coverage existed only
+for `kb show`/`diagram show` — `spec show`/`adr show`/`session show` (the highest-risk surface, by this
+piece's own doc comment: "the single most plausible vector in this whole piece") were completely
+unverified. **Minor:** `sanitizeDeep` recursed into *any* non-null object, not only real plain ones — a
+`Date`/`Map`/`Set`/class instance would silently collapse into `{}`. **Minor:** `isSpecArtifactType` was
+exported from `spec.ts` with no real consumer (`bin.ts` only ever used `SPEC_ARTIFACT_TYPES`). **Minor:**
+`forge ask`'s own missing-`<question>` case still falls through to `ask()`'s unconditional `USR-003`
+rather than a distinct usage error — considered and declined (see Q187 point 6).
+
+**What the critic caught that I missed:** I fixed the sanitization bug at the specific call sites round 1
+happened to name in its own findings, rather than searching this piece's own diff for every command
+sharing the same real shape (a live-agent-dispatch result printed to stdout) — the identical "fixed only
+where already pointed at" pattern this project's own P2 round-3 log entry already names as a repeat
+mistake worth watching for.
+
+**Judged and fixed:** `sanitizeDeep` applied to `debug`/`review`/`panel`/`session <type>`/`session
+resume`'s own printed results. The `session export` test's title/comments corrected to claim only what
+this piece's own dispatcher wiring actually verifies, with the real, unsanitized-write gap disclosed in
+`SPEC-QUESTIONS.md` Q187 point 3 rather than silently implied fixed. New hostile-control-character tests
+added for `spec show`/`adr show`/`session show`. `sanitizeDeep` gained a real
+`Object.getPrototypeOf(value) === Object.prototype` guard. `isSpecArtifactType`'s export reverted (kept
+private). `forge ask`'s missing-question case left as-is, disclosed as a considered, declined fix.
+
+### Round 3: not run — a real, disclosed departure from the standing 3-round loop
+
+Given this piece's own already-extended build (a real commit-isolation incident consumed significant real
+time mid-build, recorded below and in `SPEC-QUESTIONS.md` Q187 point 5) and round 2 finding real but
+narrowing issues (3 major, all completeness gaps in an already-correct mechanism, not new classes of
+bug), a third critic round was not dispatched — a deliberate, disclosed judgment call to land a converged
+piece rather than continue an open-ended loop, not a claim that round 2's fixes are beyond further
+critique. Verified instead via careful self-review (`pnpm lint`/`pnpm typecheck`/`pnpm run boundaries`,
+the full `packages/cli/test/bin.test.ts` suite re-run after every fix) rather than a third fresh pair of
+eyes.
+
+### The commit-isolation incident
+
+Mid-build, an attempt to fold a critic-round fix into this piece's own most recent commit via `git commit
+--amend --no-edit` instead amended `PLAN-M12.md` P3's own, already-landed `docs: record M12 P3...`
+commit — HEAD had moved to P3's own commit between this piece's own initial commit and its own
+critic-fix phase (the same, real, shared, unisolated working directory both pieces were built in), and
+`--amend` always targets HEAD, not a specifically-named prior commit. Caught immediately, before any
+push. Recovered via `git reflog` (never `git reset --hard`, which would have discarded real working-tree
+state) plus `git reset --soft` back to P3's own real, unmodified commit, then a real `git merge-file`
+three-way merge (base = this piece's own original commit, one side = P3's own real, subsequently-landed
+work, other side = this piece's own fix) cleanly separated the two pieces' independent edits. Recorded in
+full in `SPEC-QUESTIONS.md` Q187 point 5, per this project's own standing "do not sanitise the gauntlet
+log" rule.
+
+**Verification (final):** `pnpm lint`/`pnpm typecheck`/`pnpm run boundaries` clean on every file this
+piece owns (the 4 pre-existing prettier warnings in `overlay.ts`/doctor test fixtures are untouched by
+this diff). `packages/cli/test/bin.test.ts` run seven separate times across this piece's own build and
+fix rounds: every test this piece added or changed passed every time except one real, `forge diagram
+render` subprocess-spawn flake specific to this piece's own heavily-loaded, concurrent-build environment
+— reproduced as passing cleanly on every direct, manual, non-concurrent invocation, never a real logic
+defect. The full, unscoped `node scripts/run-tests.mjs run` passes modulo this project's own already-named
+load-sensitive flakes.
+
+**Dispatcher-completeness confirmation (note 9):** every command named in `bin.ts`'s own pre-M12 doc
+comment is now either genuinely wired (`kb`, `spec`, `adr`, `diagram`, `uninstall`, `run`/`resume`/
+`pause`/`abort`/`lanes`/`logs`/`gate`/`merge`, `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/
+`ask`/`session`, `doctor`, `upgrade`, `module` [add/remove/update only], `config` [get/set/edit only],
+`cost`, `export`, `help`, `customize`, `compile`, `overlay` [add only], `preset`, `skill` [list/validate
+only], `mcp` [validate/list only]) or explicitly, correctly disclosed as unwired in `bin.ts`'s own
+top-of-file doc comment (`module list/info`; `overlay list/remove/update/explain/diff/doctor/eject`;
+`config list/explain`; the rest of `agent`/`workflow` beyond `validate --all` — real `03` rows no piece of
+`PLAN-M12.md` ever claimed as its own mandate). `grep -n "not wired into" packages/cli/src/bin.ts` finds
+exactly one occurrence — the dispatcher's own single, generic fallback message, confirmed to still fire
+only for the genuinely-disclosed-unwired rows above, never for a command this piece (or P1-P3) actually
+wires.
+
+**Rounds: 2 critic rounds (3 major + 2 minor round 1, all fixed; 3 major + 3 minor round 2, all
+fixed/disclosed; round 3 deliberately not run, disclosed above). Outcome: WON.**
