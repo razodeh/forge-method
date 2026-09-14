@@ -11,11 +11,12 @@ import { execa } from 'execa';
 
 import { ForgeError, ProjectPaths } from '@forge/core';
 
+import type { ConflictHandlingOptions } from '../generated-header.ts';
 import { buildForgeConfig } from './config.ts';
 import { resolveInitLevel } from './level.ts';
 import { selectPlatform } from './platform.ts';
 import type { InitOptions, InitResult, RunInitDeps } from './types.ts';
-import { writeInitTree } from './write-tree.ts';
+import { writeInitTree, writeRegenerableContent } from './write-tree.ts';
 
 /** Whether `dir` already looks like an initialized FORGE project — `03` §3.3's own idempotency check,
  * scoped to `dir` itself (not an ancestor walk: `init` targets a specific directory, unlike
@@ -67,7 +68,29 @@ export async function runInit(
 
   const resolvedDir = path.resolve(dir);
   if (isAlreadyInitialized(resolvedDir)) {
-    return { kind: 'already-initialized', projectRoot: resolvedDir };
+    // `03` §3.3's own idempotency rule: "re-running init on an existing project MUST detect it and
+    // switch to upgrade semantics." Read narrowly and honestly: `runUpgrade` (`@forge/cli/upgrade`,
+    // M6 C7) is a real, heavier seven-step *version-migration* procedure (manifest version compare,
+    // schema migrations, a full `.forge`/`docs/forge` backup, `forge doctor`) keyed on an actual
+    // version delta — invoking that whole pipeline just because `--name`/no flags were passed again
+    // to `init` would be surprising (a bare re-`init` is not a version bump event) and would need a
+    // well-formed `.forge/manifest.yaml` this function has no reason to require. The one real,
+    // load-bearing piece of "upgrade semantics" a bare re-`init` genuinely needs is upgrade's own step
+    // 5 — regenerate the regenerable directories, now for real going through the identical hash-drift
+    // conflict resolution `runUpgrade` itself uses (`writeRegenerableContent`, extended by this piece)
+    // — so that is what runs here. Everything else `init`'s own wizard would otherwise redo (name,
+    // level, platform selection, `FORGE.md`, `config.yaml`, the docs skeleton, git) is deliberately
+    // left untouched: none of it is in `03` §3.3's own "regenerable" file-tree list, and blindly
+    // re-deriving it would risk silently discarding real project-specific answers a human already
+    // gave. See `SPEC-QUESTIONS.md`.
+    const target = new ProjectPaths(resolvedDir);
+    const conflictOptions: ConflictHandlingOptions = {
+      ...(options.onConflict !== undefined ? { mode: options.onConflict } : {}),
+      ...(deps.conflictInput !== undefined ? { input: deps.conflictInput } : {}),
+      ...(deps.conflictOutput !== undefined ? { output: deps.conflictOutput } : {}),
+    };
+    const files = await writeRegenerableContent(target, deps.modulesDir, conflictOptions);
+    return { kind: 'reinitialized', projectRoot: resolvedDir, files };
   }
 
   const ideaContent = await readIdeaFile(options);

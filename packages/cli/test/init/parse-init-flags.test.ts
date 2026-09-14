@@ -100,4 +100,27 @@ describe('parseInitFlags', () => {
     const { options } = parseInitFlags(['--name', 'X', '--modules', ' fm-web, fm-data ,'], true);
     expect(options.modules).toEqual(['fm-web', 'fm-data']);
   });
+
+  it('parses a real --on-conflict <mode> (`03` §3.3, PLAN-M12.md P3)', () => {
+    const { options } = parseInitFlags(['--name', 'X', '--on-conflict', 'take-theirs'], true);
+    expect(options.onConflict).toBe('take-theirs');
+  });
+
+  it('rejects an unrecognized --on-conflict value with a real USR-002', () => {
+    expect(() => parseInitFlags(['--name', 'X', '--on-conflict', 'not-a-real-mode'], true)).toThrow(
+      ForgeError,
+    );
+    try {
+      parseInitFlags(['--name', 'X', '--on-conflict', 'not-a-real-mode'], true);
+      throw new Error('expected parseInitFlags to throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ForgeError);
+      expect((error as ForgeError).code).toBe('USR-002');
+    }
+  });
+
+  it('leaves onConflict unset when --on-conflict is not given', () => {
+    const { options } = parseInitFlags(['--name', 'X'], true);
+    expect(options.onConflict).toBeUndefined();
+  });
 });

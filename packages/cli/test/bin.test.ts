@@ -509,11 +509,16 @@ describe('forge init (real subprocess dispatch, PLAN-M12.md P1)', () => {
     },
   );
 
-  it('reports "already-initialized" honestly, exiting non-zero, for a project that already has a real .forge/config.yaml — no real preflight() ever runs for this path', async () => {
+  it('detects an existing project and switches to real regeneration semantics, exit 0 — no real preflight() ever runs for this path', async () => {
     // `buildCandidateAdapters` still constructs the real adapter object before `runInit` reaches its
     // own `isAlreadyInitialized` check (construction is real but does no I/O or credential probing) —
     // it is `selectPlatform`'s own real `preflight()` call that never runs here, which is the one real
     // thing that would need a live platform CLI on `PATH`.
+    //
+    // `03` §3.3's own idempotency rule ("MUST detect it and switch to upgrade semantics") — real as of
+    // `PLAN-M12.md` P3: a real re-`init` regenerates the regenerable directories (none exist yet here,
+    // a hand-built `.forge/config.yaml` with nothing else), so real files are written and the command
+    // exits 0, not the earlier P1-era "nothing happened" `exit 1` placeholder.
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-init-existing-'));
     dirs.push(dir);
     await mkdir(path.join(dir, '.forge'), { recursive: true });
@@ -521,8 +526,104 @@ describe('forge init (real subprocess dispatch, PLAN-M12.md P1)', () => {
 
     const result = run(['init', dir, '--name', 'Already There', '--yes']);
 
-    expect(result.status).not.toBe(0);
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain('already initialized');
+    expect(existsSync(path.join(dir, '.forge/workflows'))).toBe(true);
+  });
+
+  it('a hand-edited regenerable file survives a real re-`init` under the real, disclosed --yes default (keep-mine)', async () => {
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    const edited = `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`;
+    await writeFile(workflowPath, edited, 'utf8');
+
+    // No real platform CLI needed here either: `init`'s own real `--yes` requirement means
+    // `defaultNonInteractiveConflictMode` already picks `keep-mine` before `selectPlatform` even runs
+    // — but this project already has `platform.primary` resolved from its own first real `runInit`
+    // (`realProject`), so `selectPlatform` is never reached again on this path regardless.
+    const result = run(['init', dir, '--name', 'Bin Check', '--yes', '--json']);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly result: {
+        readonly files: readonly { readonly path: string; readonly conflict?: string }[];
+      };
+    };
+    const workflow = parsed.result.files.find(
+      (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+    );
+    expect(workflow?.conflict).toBe('keep-mine');
+    expect(await readFile(workflowPath, 'utf8')).toBe(edited);
+  });
+
+  it('a real --on-conflict take-theirs overwrites a hand-edited regenerable file on re-`init`', async () => {
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    await writeFile(
+      workflowPath,
+      `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`,
+      'utf8',
+    );
+
+    const result = run([
+      'init',
+      dir,
+      '--name',
+      'Bin Check',
+      '--yes',
+      '--on-conflict',
+      'take-theirs',
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(await readFile(workflowPath, 'utf8')).not.toContain('# hand-edited');
+    // `03` §3.3's own "FORGE reports them" — the real, non-JSON output names the conflicted file and
+    // the mode applied, not only a tally.
+    expect(result.stdout).toContain('.forge/workflows/intake.workflow.yaml: take-theirs');
+  });
+
+  it('a re-`init` with --json --on-conflict show-diff keeps stdout as exactly one real JSON line (`03` §3.5)', async () => {
+    // The identical real bug/fix as `forge upgrade`'s own equivalent test below (a round-3 critic
+    // finding): `show-diff`'s diff text must land on stderr, not stdout, whenever `--json` is set, or
+    // `JSON.parse(result.stdout)` throws.
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    await writeFile(
+      workflowPath,
+      `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`,
+      'utf8',
+    );
+
+    const result = run([
+      'init',
+      dir,
+      '--name',
+      'Bin Check',
+      '--yes',
+      '--json',
+      '--on-conflict',
+      'show-diff',
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(() => {
+      JSON.parse(result.stdout);
+    }).not.toThrow();
+    const parsed = JSON.parse(result.stdout) as {
+      readonly result: {
+        readonly files: readonly { readonly path: string; readonly conflict?: string }[];
+      };
+    };
+    const workflow = parsed.result.files.find(
+      (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+    );
+    expect(workflow?.conflict).toBe('keep-mine');
+    // The real diff text lands on stderr, not stdout (manually verified against the real CLI directly)
+    // — `run()`'s own harness discards stderr on a *successful* exit (only `execFileSync`'s stdout
+    // return value is captured there; stderr is only populated on the thrown-error path), so the
+    // strongest assertion this harness can make on the success path is the one that actually matters
+    // for the real bug this test guards: the diff text never lands in stdout alongside the JSON line.
+    expect(result.stdout).not.toContain('hand-edited');
   });
 
   it('exits non-zero for `forge init` with no real --yes', async () => {
@@ -1096,6 +1197,120 @@ describe('forge upgrade (real subprocess dispatch, PLAN-M12.md P2)', () => {
 
     expect(result.status).not.toBe(0);
     expect(existsSync(path.join(dir, '.forge/backups'))).toBe(false);
+  });
+
+  it('a real --on-conflict take-theirs (`03` §3.3/§3.4, PLAN-M12.md P3) overwrites a hand-edited regenerable file', async () => {
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    await writeFile(
+      workflowPath,
+      `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`,
+      'utf8',
+    );
+
+    const result = run(['upgrade', '--on-conflict', 'take-theirs', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: {
+        readonly regeneratedFiles?: readonly {
+          readonly path: string;
+          readonly conflict?: string;
+        }[];
+      };
+    };
+    const workflow = parsed.report.regeneratedFiles?.find(
+      (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+    );
+    expect(workflow?.conflict).toBe('take-theirs');
+    expect(await readFile(workflowPath, 'utf8')).not.toContain('# hand-edited');
+  });
+
+  it('a real --on-conflict take-theirs, non-JSON output, names the conflicted file and mode (`03` §3.3 "FORGE reports them")', async () => {
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    await writeFile(
+      workflowPath,
+      `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`,
+      'utf8',
+    );
+
+    const result = run(['upgrade', '--on-conflict', 'take-theirs', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('.forge/workflows/intake.workflow.yaml: take-theirs');
+  });
+
+  it('a bare, non-interactive `forge upgrade` against a real, closed (EOF) stdin falls back to keep-mine rather than hanging', async () => {
+    // `run()`'s own real subprocess spawns with `stdio: ['ignore', ...]` — a real, immediate EOF on
+    // stdin, exactly the "no real interactive channel" shape `resolveGeneratedConflict`'s own doc
+    // comment names as resolving to `keep-mine`. This proves the real dispatcher never blocks forever
+    // against a *closed* stdin specifically — it does NOT prove anything about a real, open-but-silent
+    // stdin (a detached process, a CI runner piping a long-lived stream it never closes or writes to),
+    // which genuinely can still block on the real interactive prompt: `runUpgradeCommand`'s own doc
+    // comment discloses this as a real, accepted limitation shared with this codebase's one other real
+    // terminal prompt (`promptForConsent`), not something this test claims to cover (a round-2 critic
+    // finding: an earlier version of this test's own name overclaimed "rather than hanging" as if this
+    // covered every non-interactive shape, when it only ever exercised the trivially-safe EOF case).
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    const edited = `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`;
+    await writeFile(workflowPath, edited, 'utf8');
+
+    const result = run(['upgrade', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(await readFile(workflowPath, 'utf8')).toBe(edited);
+  });
+
+  it('rejects an unrecognized --on-conflict value with a real, non-zero usage error', async () => {
+    const dir = await realProject();
+    const result = run(['upgrade', '--on-conflict', 'not-a-real-mode', '-C', dir]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain('--on-conflict');
+  });
+
+  it('--json --on-conflict show-diff keeps stdout as exactly one real JSON line (`03` §3.5)', async () => {
+    // A round-3 critic finding, reproduced live before this fix: `show-diff`'s own human-readable diff
+    // used to write straight to `process.stdout` regardless of `--json`, landing ahead of this
+    // function's own single JSON line and making `JSON.parse(result.stdout)` throw — `03` §3.5's own
+    // output-mode table ("`--json`: NDJSON events on stdout... human logs to stderr") is why the fix
+    // routes the diff to `stderr` instead whenever `--json` is set.
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    await writeFile(
+      workflowPath,
+      `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`,
+      'utf8',
+    );
+
+    const result = run(['upgrade', '--json', '--on-conflict', 'show-diff', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(() => {
+      JSON.parse(result.stdout);
+    }).not.toThrow();
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: {
+        readonly regeneratedFiles?: readonly {
+          readonly path: string;
+          readonly conflict?: string;
+        }[];
+      };
+    };
+    const workflow = parsed.report.regeneratedFiles?.find(
+      (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+    );
+    // `show-diff` with no further interactive channel falls back to `keep-mine` (`resolveGeneratedConflict`'s
+    // own documented, safe default) after printing the diff.
+    expect(workflow?.conflict).toBe('keep-mine');
+    // The real diff text lands on stderr, not stdout (manually verified against the real CLI
+    // directly) — `run()`'s own harness discards stderr on a *successful* exit (only `execFileSync`'s
+    // stdout return value is captured there; stderr is only ever populated on the thrown-error path),
+    // so the strongest assertion this harness can make on the success path is the one that actually
+    // matters for the real bug this test guards: the diff text never lands in stdout alongside the
+    // JSON line.
+    expect(result.stdout).not.toContain('hand-edited');
   });
 });
 

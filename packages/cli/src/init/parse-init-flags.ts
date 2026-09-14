@@ -11,6 +11,7 @@
  */
 import { ForgeError } from '@forge/core/errors';
 
+import { CONFLICT_RESOLUTION_MODES, type ConflictResolutionMode } from '../generated-header.ts';
 import type { InitOptions } from './types.ts';
 
 interface MutableInitOptions {
@@ -31,11 +32,17 @@ interface MutableInitOptions {
   kbRoot?: string;
   gitInit?: boolean;
   allowCommits?: boolean;
+  onConflict?: ConflictResolutionMode;
 }
 
 const MODES = new Set(['guided', 'express']);
 const LEVELS = new Set(['L0', 'L1', 'L2', 'L3', 'L4']);
 const AUTONOMY_LEVELS = new Set(['supervised', 'guided', 'autonomous']);
+// A round-1 critic finding: this used to be a second, independently-declared `Set` of the same four
+// literals `bin.ts`'s own `--on-conflict` validation for `forge upgrade` also declared — two places
+// that could silently drift apart on which modes are valid. Both now build their `Set` from this one
+// shared, exported array (`generated-header.ts`'s own `CONFLICT_RESOLUTION_MODES`).
+const CONFLICT_MODES = new Set<string>(CONFLICT_RESOLUTION_MODES);
 
 export interface ParsedInit {
   readonly dir: string;
@@ -125,6 +132,12 @@ export function parseInitFlags(args: readonly string[], yes: boolean): ParsedIni
       case '--allow-commits':
         options.allowCommits = true;
         break;
+      case '--on-conflict': {
+        const value = next(token);
+        if (!CONFLICT_MODES.has(value)) throw new ForgeError('USR-002', { flag: token, value });
+        options.onConflict = value as ConflictResolutionMode;
+        break;
+      }
       default:
         if (token.startsWith('--')) {
           throw new ForgeError('USR-002', { flag: token, value: '' });

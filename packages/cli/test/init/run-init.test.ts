@@ -4,7 +4,7 @@
  *
  * @see specs/03 §3.3
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,6 +19,7 @@ import { FakePlatformAdapter } from '@forge/testkit';
 
 import { ForgeError } from '@forge/core/errors';
 
+import { readPackageVersion } from '../../src/init/package-root.ts';
 import { runInit } from '../../src/init/run-init.ts';
 import type { InitOptions, RunInitDeps } from '../../src/init/types.ts';
 
@@ -85,6 +86,10 @@ describe('runInit', () => {
     const oneFile = readFileSync(path.join(workflowsDir, 'intake.workflow.yaml'), 'utf8');
     expect(oneFile.startsWith('# forge:generated v=')).toBe(true);
     expect(oneFile).toContain('hash=');
+    // The header's own `v=` is the real, currently-running `@forge/agents` package version — not a
+    // hardcoded schema constant (a round-1 critic finding: this was previously unverified, so a
+    // regression back to the old hardcoded `v=1` literal would not have failed any test).
+    expect(oneFile).toContain(`# forge:generated v=${readPackageVersion('@forge/agents')} hash=`);
   });
 
   it('writes the fixture module’s one resolved agent into .forge/agents', async () => {
@@ -121,15 +126,118 @@ describe('runInit', () => {
     }
   });
 
-  it('detects an existing project and switches to already-initialized rather than re-writing it', async () => {
-    const dir = await tempDir();
-    await runInit(dir, BASE, deps());
-    const configPath = path.join(dir, '.forge/config.yaml');
-    const before = readFileSync(configPath, 'utf8');
+  describe("`03` §3.3's own idempotency rule: re-running init on an existing project (PLAN-M12.md P3)", () => {
+    it('detects an existing project, leaves config.yaml/FORGE.md/git untouched, and switches to real regeneration semantics', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const configPath = path.join(dir, '.forge/config.yaml');
+      const forgeMdPath = path.join(dir, 'FORGE.md');
+      const beforeConfig = readFileSync(configPath, 'utf8');
+      const beforeForgeMd = readFileSync(forgeMdPath, 'utf8');
 
-    const result = await runInit(dir, { ...BASE, name: 'A Different Name' }, deps());
-    expect(result).toEqual({ kind: 'already-initialized', projectRoot: path.resolve(dir) });
-    expect(readFileSync(configPath, 'utf8')).toBe(before);
+      const result = await runInit(dir, { ...BASE, name: 'A Different Name' }, deps());
+
+      expect(result.kind).toBe('reinitialized');
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+      expect(result.projectRoot).toBe(path.resolve(dir));
+      expect(result.files.length).toBeGreaterThan(0);
+      // The wizard steps (`name`, `FORGE.md`, `config.yaml`, git) are deliberately not re-derived on a
+      // bare re-init — see `run-init.ts`'s own doc comment for why.
+      expect(readFileSync(configPath, 'utf8')).toBe(beforeConfig);
+      expect(readFileSync(forgeMdPath, 'utf8')).toBe(beforeForgeMd);
+    });
+
+    it('regenerates an unedited regenerable file silently — identical content, no conflict reported', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+      const before = readFileSync(workflowPath, 'utf8');
+
+      const result = await runInit(dir, BASE, deps());
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+
+      const workflow = result.files.find(
+        (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+      );
+      expect(workflow?.conflict).toBeUndefined();
+      expect(readFileSync(workflowPath, 'utf8')).toBe(before);
+    });
+
+    it('a hand-edited regenerable file triggers real conflict resolution — keep-mine leaves it untouched', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+      const edited = `${readFileSync(workflowPath, 'utf8')}\n# hand-edited\n`;
+      writeFileSync(workflowPath, edited);
+
+      const result = await runInit(dir, { ...BASE, onConflict: 'keep-mine' }, deps());
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+
+      const workflow = result.files.find(
+        (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+      );
+      expect(workflow?.conflict).toBe('keep-mine');
+      expect(readFileSync(workflowPath, 'utf8')).toBe(edited);
+    });
+
+    it('a hand-edited regenerable file — take-theirs overwrites with the freshly generated content', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+      writeFileSync(workflowPath, `${readFileSync(workflowPath, 'utf8')}\n# hand-edited\n`);
+
+      const result = await runInit(dir, { ...BASE, onConflict: 'take-theirs' }, deps());
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+
+      const workflow = result.files.find(
+        (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+      );
+      expect(workflow?.conflict).toBe('take-theirs');
+      expect(readFileSync(workflowPath, 'utf8')).not.toContain('# hand-edited');
+    });
+
+    it('a hand-edited regenerable file — merge writes a real sidecar, leaving the real file alone', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+      const edited = `${readFileSync(workflowPath, 'utf8')}\n# hand-edited\n`;
+      writeFileSync(workflowPath, edited);
+
+      const result = await runInit(dir, { ...BASE, onConflict: 'merge' }, deps());
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+
+      const workflow = result.files.find(
+        (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+      );
+      expect(workflow?.conflict).toBe('merge');
+      expect(readFileSync(workflowPath, 'utf8')).toBe(edited);
+      expect(existsSync(`${workflowPath}.forge-incoming`)).toBe(true);
+    });
+
+    it('a real interactive prompt (no --on-conflict) resolves from injected stdin/stdout', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+      const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+      writeFileSync(workflowPath, `${readFileSync(workflowPath, 'utf8')}\n# hand-edited\n`);
+
+      const { PassThrough } = await import('node:stream');
+      const input = new PassThrough();
+      const output = new PassThrough();
+      output.resume();
+      const resultPromise = runInit(dir, BASE, {
+        ...deps(),
+        conflictInput: input,
+        conflictOutput: output,
+      });
+      input.write('t\n');
+      const result = await resultPromise;
+      if (result.kind !== 'reinitialized') throw new Error('expected reinitialized');
+
+      const workflow = result.files.find(
+        (file) => file.path === '.forge/workflows/intake.workflow.yaml',
+      );
+      expect(workflow?.conflict).toBe('take-theirs');
+    });
   });
 
   it('returns the resolved level and its reasoning', async () => {

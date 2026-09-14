@@ -11,6 +11,7 @@ import type { Migration, MigratableDocument } from '@forge/schemas/migrations';
 import * as YAML from 'yaml';
 
 import { specNew } from '../../../src/commands/spec.ts';
+import { readPackageVersion } from '../../../src/init/package-root.ts';
 import { runUpgrade } from '../../../src/commands/upgrade/run-upgrade.ts';
 import type { UpgradeDeps } from '../../../src/commands/upgrade/types.ts';
 import { cleanupAll, createTestProject } from './helpers.ts';
@@ -234,5 +235,132 @@ describe('runUpgrade', () => {
 
     expect(report.regenerated).toBe(true);
     expect(report.migratedDocuments.some((doc) => doc.stepCount > 0)).toBe(true);
+  });
+
+  describe('`03` §3.3/§3.4 conflict resolution on a hash-drifted regenerable file (PLAN-M12.md P3)', () => {
+    const WORKFLOW_REL_PATH = '.forge/workflows/intake.workflow.yaml';
+
+    it('regenerates an unedited regenerable file silently, no conflict reported', async () => {
+      const project = await createTestProject();
+      const report = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow).toMatchObject({ generated: true });
+      expect(workflow?.conflict).toBeUndefined();
+    });
+
+    it('stamps the real, currently-running @forge/agents version, not a hardcoded schema constant', async () => {
+      // A round-1 critic finding: the pre-existing `v=` assertion elsewhere only checked the header's
+      // shape ("starts with v="), which passes identically for the old, hardcoded `v=1` literal this
+      // piece fixed — a regression back to that literal would not have failed any test.
+      const project = await createTestProject();
+      await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      const content = await readFile(path.join(project.dir, WORKFLOW_REL_PATH), 'utf8');
+      expect(content).toContain(`# forge:generated v=${readPackageVersion('@forge/agents')} hash=`);
+    });
+
+    it('take-theirs overwrites the hand-edited file with the newly generated content', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      await writeFile(filePath, `${await readFile(filePath, 'utf8')}\n# hand-edited\n`);
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { onConflict: 'take-theirs' },
+        baseDeps(project),
+      );
+
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow?.conflict).toBe('take-theirs');
+      expect(await readFile(filePath, 'utf8')).not.toContain('# hand-edited');
+    });
+
+    it('keep-mine leaves the hand-edited file on disk completely untouched', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      const edited = `${await readFile(filePath, 'utf8')}\n# hand-edited\n`;
+      await writeFile(filePath, edited);
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { onConflict: 'keep-mine' },
+        baseDeps(project),
+      );
+
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow?.conflict).toBe('keep-mine');
+      expect(await readFile(filePath, 'utf8')).toBe(edited);
+    });
+
+    it('merge writes a real sidecar with the new content, leaving the real path exactly as the human left it', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      const edited = `${await readFile(filePath, 'utf8')}\n# hand-edited\n`;
+      await writeFile(filePath, edited);
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { onConflict: 'merge' },
+        baseDeps(project),
+      );
+
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow?.conflict).toBe('merge');
+      expect(await readFile(filePath, 'utf8')).toBe(edited);
+      const sidecar = await readFile(`${filePath}.forge-incoming`, 'utf8');
+      expect(sidecar).toContain('forge:generated');
+      expect(sidecar).not.toContain('# hand-edited');
+    });
+
+    it('a real interactive prompt (no --on-conflict) resolves a real conflict from injected stdin', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      const edited = `${await readFile(filePath, 'utf8')}\n# hand-edited\n`;
+      await writeFile(filePath, edited);
+
+      const { PassThrough } = await import('node:stream');
+      const input = new PassThrough();
+      const output = new PassThrough();
+      output.resume();
+      const reportPromise = runUpgrade(
+        project.paths,
+        project.dir,
+        {},
+        { ...baseDeps(project), conflictInput: input, conflictOutput: output },
+      );
+      input.write('t\n');
+      const report = await reportPromise;
+
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow?.conflict).toBe('take-theirs');
+    });
+
+    it('show-diff prints a real, sanitized diff before falling back to keep-mine for a non-interactive run', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      const edited = `${await readFile(filePath, 'utf8')}\n# hand-edited\n`;
+      await writeFile(filePath, edited);
+
+      const { PassThrough } = await import('node:stream');
+      const output = new PassThrough();
+      let printed = '';
+      output.on('data', (chunk: Buffer) => {
+        printed += chunk.toString('utf8');
+      });
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { onConflict: 'show-diff' },
+        { ...baseDeps(project), conflictOutput: output },
+      );
+
+      const workflow = report.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(workflow?.conflict).toBe('keep-mine');
+      expect(printed).toContain('hand-edited');
+      expect(await readFile(filePath, 'utf8')).toBe(edited);
+    });
   });
 });

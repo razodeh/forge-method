@@ -7,6 +7,7 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import type { ProjectLevel } from '@forge/methods/level';
 
 import type { AutonomyLevel } from '../entry/types.ts';
+import type { ConflictResolutionMode } from '../generated-header.ts';
 
 /** `03` §3.3's own worked flag example, typed. Every field is optional except `name`: the rest of
  * the wizard's steps all have a documented default (`DEFAULT_CONFIG`, a preset, `proposeLevel`'s own
@@ -41,6 +42,12 @@ export interface InitOptions {
    * `--git-init`. */
   readonly gitInit?: boolean;
   readonly allowCommits?: boolean;
+  /** `--on-conflict <mode>`: how a re-`init` on an existing project resolves a regenerable file whose
+   * real, recorded hash no longer matches its current content (`03` §3.3's own "modified hash" rule)
+   * — `keep-mine`/`take-theirs`/`merge`/`show-diff`. Omitted, `writeRegenerableContent` prompts
+   * interactively (see `@forge/cli/generated-header`'s `resolveGeneratedConflict`). Ignored entirely
+   * on a genuine first-time `init` (there is nothing to conflict with yet). */
+  readonly onConflict?: ConflictResolutionMode;
   /** `--yes`: accept all defaults. `runInit` itself is always non-interactive (`03` §3.3's own "no
    * TUI interaction" mandate for this piece) — this flag exists on `InitOptions` only so
    * `parseInitFlags` can reject a missing `--yes` the same way an interactive-shaped command's
@@ -68,6 +75,12 @@ export interface RunInitDeps {
    * installer piece has to solve, not one this piece can paper over with a guessed default. See
    * `SPEC-QUESTIONS.md` Q103. */
   readonly modulesDir: string;
+  /** Overrides the real terminal streams `resolveGeneratedConflict`'s own interactive prompt reads
+   * from/writes to (default `process.stdin`/`process.stdout`) — the same "inject the real I/O, don't
+   * read it ambiently" discipline this interface already follows for `env`, extended here so a test
+   * can drive/observe a real re-`init` conflict prompt without a real TTY. */
+  readonly conflictInput?: NodeJS.ReadableStream;
+  readonly conflictOutput?: NodeJS.WritableStream;
 }
 
 export interface WrittenFile {
@@ -76,6 +89,10 @@ export interface WrittenFile {
    * `false` for hand-owned files (`overrides/**`, `FORGE.md`, `config.local.yaml`) that are never
    * regenerated. */
   readonly generated: boolean;
+  /** Present only when this file went through real conflict resolution during a re-`init`/`upgrade`
+   * (its recorded hash no longer matched its on-disk content) — the mode that was actually applied.
+   * Absent for every ordinary write (nothing existed yet, or the existing file had not drifted). */
+  readonly conflict?: ConflictResolutionMode;
 }
 
 export type InitResult =
@@ -88,8 +105,14 @@ export type InitResult =
       readonly files: readonly WrittenFile[];
     }
   /** `03` §3.3's own idempotency rule: re-running `init` on an existing project "MUST detect it and
-   * switch to `upgrade` semantics" — real `upgrade` semantics are `@forge/cli` C7's own surface
-   * (`runUpgrade`), not yet built (`PLAN-M6.md` orders C7 well after C2). `runInit` detects the
-   * existing project and stops here rather than either silently re-writing over it or fabricating an
-   * upgrade this piece has no real implementation for — see `SPEC-QUESTIONS.md` Q103. */
-  | { readonly kind: 'already-initialized'; readonly projectRoot: string };
+   * switch to `upgrade` semantics" — real, as of `PLAN-M12.md` P3: the regenerable directories
+   * (`.forge/{workflows,frameworks,checks,templates,skills,agents}`) are regenerated for real, each
+   * file going through `writeGenerated`'s own real hash-drift conflict resolution (`files[n].conflict`
+   * names the mode actually applied wherever one triggered). See `run-init.ts`'s own doc comment for
+   * exactly why this is scoped to the regenerable directories alone, not the full `runUpgrade`
+   * pipeline. */
+  | {
+      readonly kind: 'reinitialized';
+      readonly projectRoot: string;
+      readonly files: readonly WrittenFile[];
+    };

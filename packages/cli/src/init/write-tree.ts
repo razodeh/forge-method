@@ -12,6 +12,11 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import * as YAML from 'yaml';
 
 import {
+  type ConflictHandlingOptions,
+  hasGeneratedFileDrifted,
+  resolveGeneratedConflict,
+} from '../generated-header.ts';
+import {
   readArtifactTemplateFiles,
   readCheckFiles,
   readFrameworkFiles,
@@ -23,9 +28,8 @@ import {
 import { withGeneratedHeader } from './generated-header.ts';
 import { sha256 } from './hash.ts';
 import { buildManifest } from './manifest.ts';
+import { readPackageVersion } from './package-root.ts';
 import type { InitOptions, WrittenFile } from './types.ts';
-
-const MANIFEST_VERSION = '1';
 
 export interface WriteTreeInput {
   readonly target: ProjectPaths;
@@ -38,14 +42,49 @@ export interface WriteTreeInput {
   readonly ideaContent: string | undefined;
 }
 
+/**
+ * Writes one regenerable file, real header/hash stamped, honoring `03` §3.3's own "a modified hash is
+ * never silently overwritten" rule when a real, drifted file already exists at `destRelPath` — the
+ * one real place both `runInit`'s re-init path and `runUpgrade`'s regeneration step actually go
+ * through, so neither can silently clobber a human's local edit to a generated file.
+ *
+ * A file that does not exist yet (ordinary first-time `init`) or exists but has not drifted (its
+ * recorded hash still matches its real current body) is written/overwritten unconditionally, exactly
+ * as before this piece — the conflict-resolution path only ever runs for a real, detected drift.
+ */
 async function writeGenerated(
   target: ProjectPaths,
   destRelPath: string,
   file: ContentFile,
+  version: string,
+  conflictOptions: ConflictHandlingOptions | undefined,
 ): Promise<WrittenFile> {
   const hash = sha256(file.content);
-  const withHeader = withGeneratedHeader(file.content, destRelPath, MANIFEST_VERSION, hash);
-  await writeFileAtomic(target.resolveWithin(destRelPath), withHeader);
+  const newContent = withGeneratedHeader(file.content, destRelPath, version, hash);
+  const resolvedPath = target.resolveWithin(destRelPath);
+
+  if (await pathExists(resolvedPath)) {
+    const diskContent = await readTextFile(resolvedPath);
+    if (hasGeneratedFileDrifted(diskContent)) {
+      const resolution = await resolveGeneratedConflict(
+        { path: destRelPath, diskContent, newContent },
+        conflictOptions ?? {},
+      );
+      if (resolution.mode === 'keep-mine') {
+        return { path: destRelPath, generated: true, conflict: resolution.mode };
+      }
+      // `resolution.writePath` is `destRelPath` itself for `take-theirs`, or a real
+      // `${destRelPath}${MERGE_SIDECAR_SUFFIX}` sidecar for `merge` — see `resolveGeneratedConflict`'s
+      // own doc comment for why a true three-way merge is not feasible here.
+      await writeFileAtomic(
+        target.resolveWithin(resolution.writePath ?? destRelPath),
+        resolution.content ?? newContent,
+      );
+      return { path: destRelPath, generated: true, conflict: resolution.mode };
+    }
+  }
+
+  await writeFileAtomic(resolvedPath, newContent);
   return { path: destRelPath, generated: true };
 }
 
@@ -53,10 +92,20 @@ async function writeGeneratedDir(
   target: ProjectPaths,
   destDir: string,
   files: readonly ContentFile[],
+  version: string,
+  conflictOptions: ConflictHandlingOptions | undefined,
 ): Promise<readonly WrittenFile[]> {
   const written: WrittenFile[] = [];
   for (const file of files) {
-    written.push(await writeGenerated(target, path.posix.join(destDir, file.relPath), file));
+    written.push(
+      await writeGenerated(
+        target,
+        path.posix.join(destDir, file.relPath),
+        file,
+        version,
+        conflictOptions,
+      ),
+    );
   }
   return written;
 }
@@ -85,13 +134,27 @@ async function writeConfigYaml(target: ProjectPaths, config: ForgeConfig): Promi
   return { path: '.forge/config.yaml', generated: false };
 }
 
-/** Exported for `@forge/cli/upgrade` (C7, `03` §3.4 step 5: "regenerate the regenerable directories,
+/**
+ * Exported for `@forge/cli/upgrade` (C7, `03` §3.4 step 5: "regenerate the regenerable directories,
  * reusing C2's own file-writing logic, not a duplicate") — idempotent, safe to call again on an
- * existing project (every file it writes goes through `writeGenerated`'s unconditional overwrite; see
- * `writeInitTree`'s own doc comment for why `.forge/config.yaml` alone is excluded from this set). */
+ * existing project (see `writeInitTree`'s own doc comment for why `.forge/config.yaml` alone is
+ * excluded from this set). Every file this writes goes through `writeGenerated`'s own real
+ * hash-drift check: unchanged since it was last generated, it is overwritten unconditionally exactly
+ * as before; a real, detected local edit runs `03` §3.3's own `keep-mine`/`take-theirs`/`merge`/
+ * `show-diff` conflict resolution instead of a silent overwrite (`conflictOptions`, defaulting to a
+ * real interactive prompt when omitted — see `resolveGeneratedConflict`'s own doc comment).
+ *
+ * The header's own `v=<ver>` is this installation's real, currently-running `@forge/agents` package
+ * version (`readPackageVersion`) — not a hardcoded schema constant. A critic-round-worthy bug in the
+ * version this function shipped before this piece: every file was stamped `v=1` literally, forever,
+ * regardless of which real FORGE version actually wrote it — useless for a human deciding "was this
+ * generated by an old version" from the header alone, the one thing `03` §3.3's own header format
+ * exists to let them do without reading `.forge/manifest.yaml` separately.
+ */
 export async function writeRegenerableContent(
   target: ProjectPaths,
   modulesDir: string,
+  conflictOptions?: ConflictHandlingOptions,
 ): Promise<readonly WrittenFile[]> {
   const [workflows, frameworks, checks, artifacts, skills, agents] = await Promise.all([
     readWorkflowFiles(),
@@ -101,18 +164,31 @@ export async function writeRegenerableContent(
     readSkillFiles(),
     readResolvedAgents(modulesDir),
   ]);
+  const version = readPackageVersion('@forge/agents');
 
   const written: WrittenFile[] = [];
-  written.push(...(await writeGeneratedDir(target, '.forge/workflows', workflows)));
-  written.push(...(await writeGeneratedDir(target, '.forge/frameworks', frameworks)));
-  written.push(...(await writeGeneratedDir(target, '.forge/checks', checks)));
-  written.push(...(await writeGeneratedDir(target, '.forge/templates', artifacts)));
-  written.push(...(await writeGeneratedDir(target, '.forge/skills', skills)));
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/workflows', workflows, version, conflictOptions)),
+  );
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/frameworks', frameworks, version, conflictOptions)),
+  );
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/checks', checks, version, conflictOptions)),
+  );
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/templates', artifacts, version, conflictOptions)),
+  );
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/skills', skills, version, conflictOptions)),
+  );
   written.push(
     ...(await writeGeneratedDir(
       target,
       '.forge/agents',
       agents.map((agent) => ({ relPath: `${agent.id}.yaml`, content: agent.yaml })),
+      version,
+      conflictOptions,
     )),
   );
   return written;

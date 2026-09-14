@@ -10,6 +10,8 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import type { ArtifactTypeId } from '@forge/schemas';
 import type { Migration } from '@forge/schemas/migrations';
 
+import type { ConflictResolutionMode } from '../../generated-header.ts';
+import type { WrittenFile } from '../../init/index.ts';
 import type { DoctorReport } from '../doctor/index.ts';
 
 export interface UpgradeOptions {
@@ -21,6 +23,12 @@ export interface UpgradeOptions {
    * so an upgrade with no `--to` moves a project to exactly what a fresh `forge init` would write
    * today). A version older than the manifest's own installed version is refused (`CFG-018`). */
   readonly to?: string;
+  /** `--on-conflict <mode>`: how step 5's regeneration resolves a regenerable file whose real,
+   * recorded hash no longer matches its current content (`03` §3.3's own "modified hash" rule, which
+   * `03` §3.4 step 5 inherits verbatim: it reuses the identical `writeRegenerableContent` call `init`
+   * does). Omitted, prompts interactively — see `@forge/cli/generated-header`'s
+   * `resolveGeneratedConflict`. Ignored on a `dryRun` (nothing is written either way). */
+  readonly onConflict?: ConflictResolutionMode;
 }
 
 /** `runUpgrade`'s own required collaborators, injected rather than read ambiently — the identical
@@ -38,6 +46,11 @@ export interface UpgradeDeps {
   readonly adapter?: PlatformAdapter;
   readonly clock?: Clock;
   readonly migrations?: readonly Migration[];
+  /** Overrides the real terminal streams a real conflict prompt reads from/writes to (default
+   * `process.stdin`/`process.stdout`) — the same injected-I/O discipline `env` already follows here,
+   * extended so a test can drive/observe a real upgrade conflict prompt without a real TTY. */
+  readonly conflictInput?: NodeJS.ReadableStream;
+  readonly conflictOutput?: NodeJS.WritableStream;
 }
 
 /** One real artifact document's own migration plan — always present in `UpgradeReport.
@@ -62,6 +75,11 @@ export interface UpgradeReport {
   /** Whether the regenerable directories were (real run) or would be (dry run, when any document or
    * the module/template version itself has drifted) rewritten. */
   readonly regenerated: boolean;
+  /** Every regenerable file step 5 actually touched, `WrittenFile.conflict` naming the real
+   * resolution mode wherever a hash drift was found. Present only for a real (non-dry-run) upgrade —
+   * a dry run computes `regenerated` without ever reading, let alone resolving, a single file's real
+   * conflict state. */
+  readonly regeneratedFiles?: readonly WrittenFile[];
   /** `03` §3.4 step 6: "re-run `forge doctor`." Present only for a real (non-dry-run) upgrade. */
   readonly doctor?: DoctorReport;
 }

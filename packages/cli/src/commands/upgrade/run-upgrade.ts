@@ -110,7 +110,11 @@ export async function runUpgrade(
 
   await applyArtifactMigrations(paths, planned);
 
-  await writeRegenerableContent(paths, deps.modulesDir);
+  const regeneratedFiles = await writeRegenerableContent(paths, deps.modulesDir, {
+    ...(options.onConflict !== undefined ? { mode: options.onConflict } : {}),
+    ...(deps.conflictInput !== undefined ? { input: deps.conflictInput } : {}),
+    ...(deps.conflictOutput !== undefined ? { output: deps.conflictOutput } : {}),
+  });
   const requestedModules = manifest.modules
     .filter((module) => module.id !== '@forge/templates')
     .map((module) => module.id);
@@ -134,6 +138,7 @@ export async function runUpgrade(
     backupPath,
     migratedDocuments,
     regenerated: true,
+    regeneratedFiles,
     doctor,
   };
 }
