@@ -12711,3 +12711,87 @@ wires.
 
 **Rounds: 2 critic rounds (3 major + 2 minor round 1, all fixed; 3 major + 3 minor round 2, all
 fixed/disclosed; round 3 deliberately not run, disclosed above). Outcome: WON.**
+
+## M12 P5 — Performance benchmark suite with ratchets
+
+**Piece:** `scripts/bench.mjs` / `scripts/lib/bench-ratchet.mjs` / `scripts/lib/bench-fixtures.mjs`,
+implementing `21` §21.5's five numeric non-functional targets as real, deterministic-fixture
+benchmarks ratcheted against both the spec's own literal budget and a committed `bench-marks.json`
+mark — zero prior infrastructure beyond the structurally unrelated coverage ratchet. Also wires
+`forge --version`/`-V` into `bin.ts` (named literally by `21` §21.5 as the cold-start benchmark's own
+command, and genuinely unwired until this piece).
+
+**Rounds:** 1 critic round, run against the initial diff (`scripts/bench.mjs`,
+`scripts/lib/bench-ratchet.mjs`, `scripts/lib/bench-fixtures.mjs`, their three test files, the
+`bin.ts`/`init/package-root.ts` `--version` wiring, and the `eslint.config.js`/`vitest.config.ts`
+changes). Findings: 1 blocking, 4 major, 3 minor.
+
+**Round 1 blocking finding, fixed:** a `bench-marks.json` mark with a missing or non-numeric `ms`
+(a realistic outcome of a bad merge on this committed, hand-editable file) made
+`mark.ms * MARK_TOLERANCE` evaluate to `NaN` in `evaluateBenchRatchet`, and `Math.min(budget, NaN)` is
+`NaN` — every subsequent `result.ms > NaN` comparison silently evaluated `false`, defeating `--check`'s
+entire purpose no matter how far over budget the real measurement was. Fixed: a mark with a non-finite
+`ms` is now treated as no mark at all, with two new regression tests.
+
+**Round 1 major findings:** (1, fixed) `buildEventLogFixture`'s timestamp used the multi-argument
+`new Date(2026, 0, 1, ...)` form, which is interpreted as *local* time before `.toISOString()` converts
+to UTC — a real `TZ`-dependence bug directly contradicting this file's own determinism claim, fixed via
+`Date.UTC(...)` + `new Date(<number>)`, with a test diffing output under two extreme `TZ` values.
+(2, fixed) a stale/broken `packages/cli/dist/forge.mjs` (e.g. one built before this piece's own
+`--version` wiring) made `benchColdStart` throw an opaque, unhandled Node stack trace — `bench.mjs` now
+runs a real preflight `assertCliCommandWorks()` and fails with a clear, actionable message, proven by a
+test that points the script at a deliberately broken CLI entry via a new `FORGE_BENCH_CLI_ENTRY`
+test-only override. (3, judged/disclosed not fixed) "the committed `bench-marks.json` ships an
+already-over-budget mark, undisclosed" — real as far as the critic could see (it was given the
+tracked-file diff and new-file contents, not `SPEC-QUESTIONS.md`'s own diff, so it could not have seen
+Q188's own disclosure of this exact fact); the disclosure already existed, strengthened with an inline
+code comment at the `pnpm bench` exit-1 branch pointing back to it. (4, judged/disclosed not fixed) no
+locking around the shared `bench-marks.json` write — real, but matches
+`scripts/check-coverage-ratchet.mjs`'s own identical, pre-existing unguarded `writeFileSync`; not a new
+gap this piece introduces, and adding locking here alone (while its own precedent has none) would be
+inconsistent scope creep.
+
+**Round 1 minor findings:** (1, declined) `printVersion()` has no `ForgeError`-shaped wrapper for a
+corrupted `package.json`, falling through to `bin.ts`'s own generic top-level handler — the identical,
+pre-existing behaviour every other command in this dispatcher already has for an unanticipated
+non-`ForgeError` throw; auditing that broadly is real work outside this piece's own mandate. (2, fixed)
+`forge --version foo` silently ignored a stray extra positional instead of rejecting it, the one
+inconsistent exception to this dispatcher's own `assertNoArgs` discipline — fixed, with a test.
+(3, declined) `buildCompileSources`'s double-cast through `unknown` is defensible (`LayerContribution.
+document` is typed `unknown`) and already covered by an existing kind-list assertion.
+
+**What the critic caught that I missed:** the `NaN`-tolerance bug is the standout — I had verified the
+ratchet's tolerance arithmetic by hand against well-formed input and never considered a malformed
+committed mark as a real input shape, despite this exact file being the one most likely to carry a bad
+merge. The `TZ`-dependence bug is the second: I wrote `buildEventLogFixture`'s doc comment claiming full
+determinism without actually testing under a non-UTC `TZ`, the identical gap `QUALITY-BAR.md` R10's own
+"under `TZ` set to a non-UTC zone" check exists to catch.
+
+**A real, disclosed process incident mid-loop:** after round 1's fixes were applied and verified, this
+piece's three new test files (`scripts/bench.test.ts`, `scripts/bench-ratchet.test.ts`,
+`scripts/bench-fixtures.test.ts`) were found deleted from the working tree by an unidentified concurrent
+process in this build's own shared, unisolated working directory — the same real hazard `Q187` point 5
+already names for a different piece. Recovered by reconstructing all three files from this session's own
+record of their content (including every round-1 fix), re-verified passing (24/24 tests) before
+proceeding. No piece of this incident touched any file this piece does not own.
+
+**A second full round was not dispatched.** Given the scale of verification already run (three full,
+fresh, unscoped `node scripts/run-tests.mjs run` passes across this piece's own build — one killed by a
+background-task timeout in this heavily-contended sandbox, one contaminated by the file-deletion
+incident above, one clean) and explicit direction to close out this piece once round 1's real findings
+were fixed and verified, this piece stops at one critic round rather than looping to convergence — a
+deliberate, disclosed departure from the standing 3-round loop, not a claim that round 1's fixes are
+beyond further critique, the identical disclosed-departure shape `Q187`'s own "round 3 not run" already
+established for a different piece.
+
+**Verification (final):** `pnpm lint`/`pnpm typecheck`/`pnpm run boundaries` all clean (the same 4
+pre-existing, untouched prettier warnings in `overlay.ts`/doctor test fixtures every other M12 piece's
+log already names). The full, unscoped `node scripts/run-tests.mjs run`: 487/490 files passed, 8526/8538
+tests passed; the 3 failures are `packages/cli/test/bin.test.ts`'s own `forge diagram render` subprocess
+flake (already named in `Q187`'s own log entry for this exact test), `packages/engine/test/interaction/
+session.test.ts`, and `packages/kb/test/adopt/survey.test.ts`'s oversized-fixture test — all three on
+this build's own standing list of accepted, load-sensitive flakes, none touching any file this piece
+owns. `bench-marks.json` committed with this piece's own first real measurement — including a real,
+disclosed first-frame budget miss (`Q188` point 3) this piece's own scope does not fix.
+
+**Outcome: WON**, with the above real, disclosed exceptions to a full 3-round convergence loop.
