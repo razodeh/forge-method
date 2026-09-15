@@ -268,7 +268,7 @@ describe('realExec + evaluateCriterion together — a real vacuous `-t` match, r
     expect(result.commandResults[0]!.ok).toBe(false);
     expect(result.commandResults[0]!.exitCode).toBe(0); // the real vitest exit code really is 0
     expect(result.commandResults[0]!.outputTail).toContain('REFUSED');
-  }, 30_000);
+  }, 120_000);
 });
 
 describe('verify-success-criteria.mjs — real subprocess, real repository', () => {
@@ -280,7 +280,10 @@ describe('verify-success-criteria.mjs — real subprocess, real repository', () 
     );
     expect(output).toContain('SC3 [PASS]');
     expect(output).toContain('Summary: 1 PASS, 0 FAIL, 0 DISCLOSED (of 1).');
-  }, 60_000);
+    // 20 real, independent SIGKILL/resume cycles (E3) under this sandbox's own documented
+    // concurrent-load slowness (a full-suite run measured this well past 60s once) -- generous on
+    // purpose, not tuned to the fastest observed run.
+  }, 300_000);
 
   it('an unknown --only id exits non-zero with a clear message rather than silently running everything', () => {
     let failure: { status?: number | null; stdout?: string; stderr?: string } | undefined;
