@@ -15788,6 +15788,20 @@ code reference to the string `@forge/cli` across the codebase (`packages/core/sr
 `packages/engine/src/interaction/session.ts`, several doc comments) is prose inside a comment, never a
 module specifier — confirmed via `grep -rn "@forge/cli/"` finding zero real `import`/`from` statements.
 
+**Two further, real side effects of the rename, found by a round-1 critic rather than by this piece's
+own first pass — both judged, not silently accepted.** (a) `.changeset/config.json`'s
+`fixed: [["@forge/*"]]` group stops matching the CLI the moment its name drops the `@forge/` prefix —
+before this piece, `@forge/cli` versioned in lockstep with all 17 internal packages; `forge-method` now
+versions independently. Judged correct on reflection (the one package real users actually install should
+carry its own real semver, not be forced to bump every time an internal-only package does), but it was
+an unexamined consequence of the rename until the critic round asked whether renaming out of a `fixed`
+glob was itself a decision — it is, and is recorded as one now rather than left implicit in a config
+file nobody's diff touched. (b) `packages/cli/package.json`'s `exports` map shrank from six real
+subpaths (`./entry`, `./output`, `./init`, `./commands`, `./doctor`, `./upgrade`, each a real `src/`
+TypeScript entry) to one (`"."` → `./dist/forge.mjs`) — a real removal of previously-declared internal
+API surface, harmless today only because a full-repo grep confirms nothing anywhere ever imports any of
+those six subpaths (only prose mentions them), verified independently by the critic round too.
+
 **4. `@forge/cli` needs a real build step — not a style preference, a structural necessity found by
 actually trying the alternative first.** Every `@forge/*` package `@forge/cli` depends on
 (`@forge/core`, `@forge/engine`, …) is `workspace:*` and stays private — an external `npm install
@@ -15869,7 +15883,16 @@ owns that file. `RunInitDeps.modulesDir`'s own already-disclosed gap (`Q103`: `m
 publish/distribution mechanism) is now more consequential than when it was first written, since
 `forge-method` is genuinely publishable today — `resolveModulesDir`'s own doc comment already says so
 honestly; not re-litigated or fixed here, since building real `modules/` distribution is unrelated,
-separate work this piece's own mandate never named.
+separate work this piece's own mandate never named. **A round-1 critic found this gap, and a sibling one
+this note originally missed, deserved to be stated in `specs/23`'s own canonical decision text, not only
+here** — `02` §2.7 requires `forge-method` to ship `templates/`/`modules/`/`catalog/` as real package
+files, and it does not (`files: ["dist"]` only); traced concretely, `forge init` would fail against a
+real `npm install`d `forge-method` today, since `@forge/templates` is never on the registry and
+`modules/` has no publish mechanism either. `specs/23` open decision #1 now states this directly (its
+own new "a real, load-bearing gap this decision does not close" paragraph), rather than leaving a reader
+of that file alone to believe the package is publish-ready. Fixing it for real (packaging template/
+module/catalog data into the published tarball) is separate, sizable work no `PLAN-M12.md` piece sized —
+disclosed as a real follow-on, not fixed by this piece.
 
 **11. A real, disclosed incident: this piece's own build destroyed another concurrent piece's
 uncommitted work while cleaning up unrelated test debris, in this build's shared, unisolated working
@@ -15891,12 +15914,43 @@ list, which never named them). These three files, per `Q188`'s own text, represe
 already-critic-reviewed test coverage (`bench-ratchet.test.ts`: 10 tests; `bench-fixtures.test.ts`: 6
 tests; `bench.test.ts`: 4 tests) that had not yet been committed anywhere, so `git` has no copy to
 restore from — checked directly (`lsof` for any process still holding an open handle to the deleted
-paths; nothing found) before concluding the content is genuinely unrecoverable from this piece's own
-side. **Not silently absorbed or hidden**: recorded here, in the real `GAUNTLET-LOG.md` M12 P8 entry, and
-surfaced explicitly in this piece's own final report to the coordinator, so `PLAN-M12.md` P5's own
-session can be told directly and can re-author those three files from its own context — the actual
-content was never seen or known by this piece, so it could not be reconstructed here without fabricating
-someone else's work.
+paths; nothing found) before concluding the content was not recoverable from this piece's own side.
+**Not silently absorbed or hidden, and since resolved**: `PLAN-M12.md` P5's own `GAUNTLET-LOG.md` entry
+(the "A real, disclosed process incident mid-loop" paragraph) confirms its own session found the three
+files deleted by "an unidentified concurrent process" — this piece — and reconstructed all three from
+its own record of their content (including every round-1 critic fix already applied), re-verified
+passing (24/24 tests) before that piece proceeded. No data was permanently lost; recorded here anyway,
+in full, because a mistake this piece made is not less real for having been survivable, and the next
+piece to work in this build's shared, unisolated working directory should read this as a real hazard —
+never invoke a full-suite test run without an explicit, generous timeout, and never `rm` cleanup debris
+by pattern-matching filenames without checking each one against the actual, narrow list of files a test
+is known to plant.
+
+**12. A real, round-2 critic finding, fixed: `02` §2.7's own Node-engine preflight requirement was
+missed entirely by round 1.** §2.7's literal text: "Node engine check with a friendly message before any
+import that requires modern syntax (use a tiny CJS preflight shim)." Round 1's own diff bundled
+`src/bin.ts` into `dist/forge.mjs` and pointed `bin` straight at it — real, but it skipped this one
+further, separate §2.7 requirement: a user on an unsupported Node gets a raw syntax-error stack trace
+from the bundle itself, not a friendly message, since nothing checks the Node version before the modern-
+syntax bundle is ever touched. Fixed: `packages/cli/bin/preflight.cjs` (new) is now the real `bin`
+target — deliberately plain, ES5-only CommonJS (no `var` replaced with `const`, no arrow functions, no
+template literals) so the check itself parses on the exact old runtimes it exists to catch, matching
+`02` §2.7's own literal "tiny CJS preflight shim" phrase, not just its intent. On an unsupported Node it
+prints a real, actionable message (states the required floor, the actual running version, and the
+remedy) and exits 1 before ever reaching a dynamic `import()` of the real bundle; on a supported Node it
+dynamically `import()`s `dist/forge.mjs` (valid inside CommonJS, unlike a static `import`) and lets that
+module's own `process.exitCode` (never a raw `process.exit`) carry through Node's normal event-loop-drain
+exit. `parseNodeVersion`/`isTooOld`/`friendlyMessage` are exported via plain `module.exports` and the
+real entry-point side effects are guarded behind `require.main === module`, so `test/preflight.test.ts`
+(new, 9 tests) can exercise the real decision logic directly, in-process, without ever risking a real
+`process.exit(1)` inside a test worker — plus one real subprocess test proving the `require.main` guard
+and the dynamic `import()` wiring genuinely work end to end on the success path. **A real, disclosed
+test gap, not silently papered over:** the "too old" branch's own real subprocess behavior has no
+automated end-to-end test, since simulating an actually-pre-20.19 Node runtime is not available in this
+environment (no such binary installed, and `process.version` cannot be forged from outside an
+already-started process) — verified instead by direct manual execution during this build (documented in
+`test/preflight.test.ts`'s own top comment) rather than fabricated as a passing automated test for a
+scenario this environment cannot really produce.
 
 **Checks:** `pnpm typecheck` (root `tsc` currently fails only on `PLAN-M12.md` P5's own
 still-in-progress `scripts/bench*.mjs` files, unrelated to this piece; `turbo run typecheck` — the real
