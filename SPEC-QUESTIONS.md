@@ -16193,3 +16193,71 @@ Files touched: `packages/engine/src/dispatch/facades.ts`, `packages/engine/test/
 `packages/extensions/src/install/consent.ts`, `packages/extensions/test/install/consent.test.ts`,
 `packages/cli/src/init/parse-init-flags.ts`, `packages/cli/test/init/parse-init-flags.test.ts`,
 `packages/tui/src/components/stream-view.tsx`, `packages/tui/test/components/stream-view.test.tsx`.
+
+## Q194 — Post-M12 polish pass, continued: the `forge workflow validate --all` inconsistency (Q192)
+genuinely resolved, not just disclosed — `ReviewReport` registered as a real type, `StagePlan`/
+`TestPlan` corrected to what the system actually produces
+
+**Context:** Q192 disclosed `forge workflow validate --all`'s 3 `unknown-artifact-type` findings on
+every fresh `forge init` as a real cross-spec-file inconsistency requiring a genuine design decision,
+left unresolved pending that decision. Investigated further and resolved.
+
+**The decision, with real evidence for both halves:**
+
+1. **`ReviewReport` is real and load-bearing — registered.** `10` §10.6's own canonical `implement-
+   story` inner loop and `build-stage.workflow.yaml`'s own per-story `review` fanout both dispatch a
+   real `review` step (`mode: swarm-review`, `perspectives: [design, security, testing, performance]`,
+   `retry`/`onFailure: escalate` on the `implement-story` side) whose declared output is `ReviewReport`
+   — a real, functioning, gated step in the actual shipped inner loop, not a stale or vestigial
+   reference. `05` §5.2's `reviewer` agent persona already fully specifies its own real path
+   (`docs/forge/sessions/reviews/{id}.md`) and cardinality (`many`). Registered as a real `18` §18.7
+   type (`idPrefix: REVIEW`, `pathTemplate: sessions/reviews/{id}.md`, default `idWidth: 3`), with a
+   real zod schema (`packages/schemas/src/artifacts/review-report.ts`) carrying no type-specific fields
+   beyond base front matter — the identical "no field-level spec exists for the document itself"
+   situation `gate-report.ts`'s own doc comment already establishes for `GateReport` (`SPEC-QUESTIONS.md`
+   Q23) — plus a real template (`packages/templates/templates/artifacts/ReviewReport.md`). `18` §18.7's
+   own spec table and `10` §10.1's own worked example were both updated to match (`specs/18-
+   persistence-config-and-schemas.md`, `specs/10-workflow-engine-and-lifecycle.md`), per this project's
+   own "implement the spec, record the disagreement" rule (`22` §22.1 rule 8) applied in the direction
+   of fixing the spec's own omission, not silently drifting code from it.
+
+2. **`StagePlan`/`TestPlan` are genuinely stale — corrected to real references.** `G-Ready.gate.yaml`'s
+   own real, already-shipped `evidence:` block names exactly `Epic(*)`/`Story(*)` — never `StagePlan`
+   — as what a ready stage's own planning artifacts are. `plan-stage.workflow.yaml`, the real workflow
+   `forge plan stage <id>` actually dispatches, produces `Epic`+`Story`+`HandoffRecord(subtype:
+   test-plan)` — never a `StagePlan` or `TestPlan` artifact. Both names trace to `10` §10.1's own
+   illustrative worked example, written before `plan-stage.workflow.yaml`'s own real output shape was
+   decided, and never updated to match once it was. `build-stage.workflow.yaml`'s `requires.artifacts:
+   [StagePlan]` → `[Epic, Story]`; `freeze-contracts`'s `inputs: ['artifact:StagePlan', ...]` →
+   `['artifact:Epic(*)', 'artifact:Story(*)', ...]`; `generate-tests`'s `inputs: [..., 'artifact:
+   TestPlan']` → `[..., 'artifact:HandoffRecord']` (the identical bare-collection-reference convention
+   `implement-story.workflow.yaml`'s own `plan` step already uses for `HandoffRecord`). `TestPlan` was
+   a genuinely adjacent, previously-undiscovered instance of the identical defect class — invisible to
+   today's validator since `workflow/validate.ts`'s own `unknown-artifact-type` check deliberately does
+   not parse `step.inputs`' free-form `artifact:X`/`kb:Y`/`diff:Z` mini-syntax (a real, disclosed,
+   unrelated M5 P8 scope decision, not expanded here) — fixed anyway since it is the same real defect
+   whether or not today's validator happens to catch it. `10` §10.1's own worked example corrected to
+   match, with an inline note explaining the correction for a future reader.
+
+**Downstream updates required** (a new registered type ripples through every place `Record<ArtifactTypeId,
+...>`'s own exhaustiveness check — and the independently-declared `@forge/templates` 22-member union —
+forces one): `packages/schemas/src/{registry/artifact-types.ts,artifacts/{index.ts,review-report.ts},
+json-schema/emit.ts}`, `packages/core/src/artifacts/validate.ts`, `packages/templates/src/index.ts`,
+`packages/templates/templates/artifacts/ReviewReport.md`, a regenerated `packages/schemas/json/
+review-report.schema.json` (via `pnpm emit-schemas`, confirmed zero drift via `pnpm schema-drift`),
+`modules/fm-core/module.yaml`'s own `provides.artifactTypes` (fm-core is the one module that lists the
+full base registry). Every test asserting an exact "21"/"15" count against the registry updated to
+"22"/"16" (`packages/schemas/test/registry/artifact-types.test.ts`, `packages/core/test/artifacts/
+{document,validate}.test.ts`, `test/{templates,frameworks,fm-core-module}.test.ts`,
+`scripts/schema-drift.test.ts`), plus `packages/engine/test/workflow/parse.test.ts` and `test/
+workflows.test.ts`'s own transcriptions of `10` §10.1's worked example.
+
+**The real, end-to-end proof:** `packages/cli/test/e2e/init.test.ts` (E1 init) — a real `runInit`
+against the real, complete `modules/` roster, followed by real `workflowValidateAll` — now asserts
+`allWorkflowIssues` is genuinely `[]`, not the old whitelist of 3 known findings the test previously
+encoded as expected. A real `forge init` on a fresh project now produces a genuinely clean `forge
+workflow validate --all`, closing the gap Q192 disclosed rather than fixed.
+
+**Verification:** whole-workspace `pnpm typecheck`/`pnpm run boundaries`/`pnpm lint` all clean (only 4
+pre-existing, unrelated prettier warnings). Full unscoped `node scripts/run-tests.mjs run` clean modulo
+the pre-existing, accepted load-sensitive flakes (`crash-resume.test.ts` and its own two dependents).

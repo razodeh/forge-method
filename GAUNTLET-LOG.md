@@ -13160,3 +13160,30 @@ pre-fix code and pass against the fix. Whole-workspace `pnpm typecheck`/`pnpm ru
 lint` all clean (only 4 pre-existing, unrelated prettier warnings, confirmed untouched by this pass).
 Full unscoped `node scripts/run-tests.mjs run` clean modulo the pre-existing, accepted load-sensitive
 flakes.
+
+## Post-M12 P3 — The disclosed `forge workflow validate --all` issue, genuinely resolved
+
+Following the user's explicit request to fix the issue Post-M12 P1/Q192 had disclosed but left
+unresolved (a real design decision, not a mechanical fix). Investigated to a decisive conclusion:
+
+- **`ReviewReport` registered as a real `18` §18.7 artifact type** — proven genuinely load-bearing
+  (`10` §10.6's canonical inner loop and `build-stage.workflow.yaml`'s own per-story review fanout both
+  dispatch a real, gated `swarm-review` step whose output is `ReviewReport`), not stale. New zod
+  schema, committed JSON schema, template, and spec-table entry (`18` §18.7 and `10` §10.1's own worked
+  example both updated to match).
+- **`StagePlan`/`TestPlan` corrected**, proven genuinely stale (`G-Ready.gate.yaml`'s own real
+  `evidence:` block already names `Epic(*)`/`Story(*)`; `plan-stage.workflow.yaml`'s own real output is
+  `Epic`+`Story`+`HandoffRecord(subtype: test-plan)` — neither phantom type was ever produced anywhere)
+  — `build-stage.workflow.yaml`'s `requires.artifacts`/`freeze-contracts.inputs`/`generate-tests.inputs`
+  all corrected to reference what the system actually produces, matching the identical
+  `artifact:HandoffRecord` bare-reference convention `implement-story.workflow.yaml` already uses.
+
+Every downstream `Record<ArtifactTypeId, ...>` exhaustiveness point, the independent `@forge/templates`
+union, `fm-core/module.yaml`'s own `provides.artifactTypes`, and every hardcoded "21"/"15" registry-size
+assertion across the test suite updated. `packages/cli/test/e2e/init.test.ts` (E1 init) — a real
+`runInit` + real `workflowValidateAll` — now asserts genuinely zero issues, replacing its own prior
+3-finding whitelist. A real `forge init` on a fresh project now produces a genuinely clean `forge
+workflow validate --all`.
+
+**Verification:** `pnpm typecheck`/`pnpm run boundaries`/`pnpm lint` clean; `pnpm schema-drift` clean
+after `pnpm emit-schemas`; full unscoped test suite clean modulo the pre-existing accepted flakes.
