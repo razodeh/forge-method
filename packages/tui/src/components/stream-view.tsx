@@ -45,6 +45,26 @@ import { useEffect, useRef, useState } from 'react';
 
 const DEFAULT_MAX_LINES = 2000;
 
+/** Strips C0 control characters, `DEL`, and the whole C1 range (`\x00`-`\x1f`, `\x7f`-`\x9f`) from a
+ * line before it ever reaches Ink's own render tree — the identical bug class and identical
+ * character range `packages/cli/src/bin.ts`'s own `stripControlChars` fixes for CLI output, applied
+ * here since it was never applied to this component at all. `source` is genuinely untrusted at both
+ * of this component's own real call sites: `sessions.tsx` feeds it a live-facilitated-discussion
+ * transcript (model-generated turn text, no charset restriction anywhere upstream), and
+ * `run-board.tsx` feeds it a live lane's own transcript (real agent/adapter output, equally
+ * uninspected). Ink manages only its own SGR styling — it does not strip arbitrary control bytes out
+ * of string content handed to it — so a crafted or buggy model response containing a raw ANSI/C1
+ * escape sequence would otherwise reach the terminal exactly as `bin.ts`'s own doc comment describes
+ * for its own, already-fixed call sites: able to overwrite or hide prior lines, undetected by anyone
+ * reading the screen. Found by a fresh adversarial review of this package, not by this component's
+ * own original build; no existing TUI-side sanitization utility exists anywhere in this package to
+ * reuse (confirmed by grep), so this is a small, local duplication of `bin.ts`'s own fix rather than a
+ * new cross-package dependency for one four-line function. */
+function sanitizeStreamLine(line: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them.
+  return line.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+}
+
 export type StreamSource = AsyncIterable<string> | readonly string[];
 
 export interface StreamViewProps {
@@ -155,7 +175,7 @@ export function StreamView({
   return (
     <Box flexDirection="column">
       {visibleLines.map((line, index) => (
-        <Text key={windowStart + index}>{line}</Text>
+        <Text key={windowStart + index}>{sanitizeStreamLine(line)}</Text>
       ))}
     </Box>
   );

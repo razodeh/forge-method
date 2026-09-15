@@ -385,4 +385,61 @@ describe('runMergeStep', () => {
     expect(ctx.laneRegistry.has('wf:produce-a')).toBe(false);
     expect(ctx.laneRegistry.has('wf:produce-b')).toBe(true);
   });
+
+  it("two independent merge-kind steps against two unrelated lanes, dispatched concurrently (Promise.all, matching driveToCompletion's own real batch-admission shape), both complete cleanly with no lost or corrupted commit -- a fresh adversarial review found nothing serialized `MergeQueueFacade.process` calls against the shared integration path before this fix", async () => {
+    const projectRoot = await createTempRepo('merge-concurrent');
+    const ctx = createTestContext({ projectRoot, runId: 'run-merge-concurrent' });
+    await executeStep(
+      node({ id: 'wf:produce-a', kind: 'command', run: 'echo a > a.txt', produces: ['a.txt'] }),
+      ctx,
+    );
+    await executeStep(
+      node({ id: 'wf:produce-b', kind: 'command', run: 'echo b > b.txt', produces: ['b.txt'] }),
+      ctx,
+    );
+
+    // Two real merge steps, each depending on its own, unrelated producer lane -- no dependsOn edge
+    // between the two merge steps themselves, the exact shape the scheduler admits together in one
+    // batch in production since neither's `produces` (empty, for a merge-kind step) overlaps the
+    // other's. Dispatched with Promise.all here for the identical reason `driveToCompletion` does.
+    const [outcomeA, outcomeB] = await Promise.all([
+      executeStep(
+        node({
+          id: 'wf:merge-a',
+          kind: 'merge',
+          dependsOn: ['wf:produce-a'],
+          mergePolicy: { conflict: 'abort' },
+        }),
+        ctx,
+      ),
+      executeStep(
+        node({
+          id: 'wf:merge-b',
+          kind: 'merge',
+          dependsOn: ['wf:produce-b'],
+          mergePolicy: { conflict: 'abort' },
+        }),
+        ctx,
+      ),
+    ]);
+
+    expect(outcomeA.status).toBe('succeeded');
+    expect(outcomeB.status).toBe('succeeded');
+    // Both real files landed in the shared integration path -- neither merge silently lost the
+    // other's own commit, which is exactly what a raced `git merge --no-ff`/`git commit` pair could
+    // otherwise do (an interleaved commit, a stale MERGE_HEAD, or one process's abort racing the
+    // other's own in-flight merge).
+    await expect(readFileInRepo(projectRoot, 'a.txt')).resolves.toContain('a');
+    await expect(readFileInRepo(projectRoot, 'b.txt')).resolves.toContain('b');
+    // Both lanes were genuinely merged and removed -- neither stranded by a raced abort.
+    expect(ctx.laneRegistry.has('wf:produce-a')).toBe(false);
+    expect(ctx.laneRegistry.has('wf:produce-b')).toBe(false);
+    // The integration branch's own history has two real, distinct merge commits, never one process's
+    // commit silently swallowed by the other's concurrent write to the same working directory.
+    const log = await execa('git', ['log', '--oneline', 'main'], { cwd: projectRoot });
+    const commitCount = log.stdout.split('\n').filter((line) => line.length > 0).length;
+    // init + produce-a + produce-b + merge-a + merge-b == 5, at minimum (a merge commit may add one
+    // more depending on fast-forward-ability, so this asserts a floor, not an exact count).
+    expect(commitCount).toBeGreaterThanOrEqual(5);
+  });
 });

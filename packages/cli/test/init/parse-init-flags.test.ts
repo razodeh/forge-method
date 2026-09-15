@@ -101,6 +101,11 @@ describe('parseInitFlags', () => {
     expect(options.modules).toEqual(['fm-web', 'fm-data']);
   });
 
+  it('accepts a legitimate flag value that merely starts with "--", matching parseCommandFlags\' own established fix', () => {
+    const { options } = parseInitFlags(['--name', 'X', '--description', '--rush this one'], true);
+    expect(options.description).toBe('--rush this one');
+  });
+
   it('parses a real --on-conflict <mode> (`03` §3.3, PLAN-M12.md P3)', () => {
     const { options } = parseInitFlags(['--name', 'X', '--on-conflict', 'take-theirs'], true);
     expect(options.onConflict).toBe('take-theirs');

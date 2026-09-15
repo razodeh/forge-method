@@ -55,9 +55,18 @@ export function parseInitFlags(args: readonly string[], yes: boolean): ParsedIni
   let dirSeen = false;
 
   const remaining = [...args];
+  // A declared value-flag's very next token is always consumed as its value, whatever it looks
+  // like — `bin.ts`'s own `parseCommandFlags` doc comment names exactly this fix (a legitimate
+  // value that merely starts with `--`, e.g. `--description "--rush this one"`, was rejected by an
+  // earlier heuristic that treated any `--`-prefixed value as a missing one). This function's own
+  // `next()` never received that fix even after `bin.ts`'s own doc comment started citing it as
+  // having already applied everywhere else in this package — a real, previously-undiscovered
+  // inconsistency found by a fresh adversarial review, not merely a doc-comment typo: any of
+  // `--slug`/`--repo-url`/`--platform`/`--fallback-platform`/`--kb-root`/`--overlay`/`--preset`
+  // given a value starting with `--` failed every time with a misleading "missing value" USR-002.
   const next = (flag: string): string => {
     const value = remaining.shift();
-    if (value === undefined || value.startsWith('--')) {
+    if (value === undefined) {
       throw new ForgeError('USR-002', { flag, value: '' });
     }
     return value;

@@ -191,18 +191,65 @@ function asVcsMergeCandidate(candidate: MergeCandidateLike): MergeCandidate {
   return candidate as unknown as MergeCandidate;
 }
 
+/**
+ * `@forge/vcs`'s own `processMergeCandidate` doc comment states plainly: "Serial by construction:
+ * one call at a time, on one candidate; the caller owns queueing order across candidates (`06` §6.5:
+ * 'Serial, one merge at a time') -- this piece does not itself lock or serialise anything." Nothing
+ * downstream of this facade ever enforced that. A fresh adversarial review found two real,
+ * independent call sites into `MergeQueueFacade.process` (`dispatch/steps.ts`'s `runMergeStep` and
+ * `interaction/session.ts`'s `mergeDecideLane`), neither aware of the other, and no dependency edge
+ * (`plan/compile.ts`'s `buildLeafNode` gives a `merge`-kind step an empty `produces: []`, so the
+ * scheduler's own overlap-based admission control never excludes two ready merge steps from the same
+ * batch) — a completely ordinary workflow shape (two independent lanes, each ending in its own
+ * `merge` step, with no `dependsOn` edge between the two merges since their own predecessors are
+ * unrelated) reaches a scheduling tick where both are admitted together and run concurrently via
+ * `driveToCompletion`'s own `Promise.all`. Two concurrent `processMergeCandidate` calls against the
+ * identical `integrationPath` then race real `git rebase`/`git merge --no-ff`/`git commit` against
+ * the same working directory — exactly the corruption class (`MERGE_HEAD`/`index.lock` collisions,
+ * two aborts racing each other, an interleaved commit) `@forge/vcs`'s own doc comment already warns
+ * about, but as an ordinary reachable outcome, not a rare crash-recovery edge case.
+ *
+ * Fixed here, the one real place both call sites' calls converge (both go through the identical
+ * `MergeQueueFacade` instance `context.ts` constructs once per run): a module-level `Map<string,
+ * Promise<unknown>>` keyed by `integrationPath`, the exact same "serialise real writes against
+ * project-shared state" pattern `interaction/session.ts`'s own `sessionRecordQueues`/
+ * `enqueueForProject` already establishes for the identical shape of problem (independent lanes
+ * racing shared, on-disk state with no natural dependency edge between them). Keyed by path, not
+ * held as private facade state, so two separately-constructed facades pointed at the same real
+ * `integrationPath` (as `run/context.ts` and `run/merge.ts` each independently do) still serialise
+ * against each other rather than each guarding only its own, useless private queue. */
+const mergeQueues = new Map<string, Promise<unknown>>();
+
+function enqueueForIntegrationPath<T>(
+  integrationPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = mergeQueues.get(integrationPath) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  mergeQueues.set(
+    integrationPath,
+    result.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return result;
+}
+
 export function createMergeQueueFacade(
   integrationPath: string,
   conflictResolver: MergeConflictResolver | undefined,
 ): MergeQueueFacade {
   return {
     async process(candidate, checks) {
-      return processMergeCandidate(asVcsMergeCandidate(candidate), {
-        ...omitUndefinedValues({ conflictResolver }),
-        integrationPath,
-        preChecks: toPreMergeCheck(checks.preCheck),
-        postChecks: toPostMergeCheck(checks.postCheck),
-      });
+      return enqueueForIntegrationPath(integrationPath, () =>
+        processMergeCandidate(asVcsMergeCandidate(candidate), {
+          ...omitUndefinedValues({ conflictResolver }),
+          integrationPath,
+          preChecks: toPreMergeCheck(checks.preCheck),
+          postChecks: toPostMergeCheck(checks.postCheck),
+        }),
+      );
     },
   };
 }

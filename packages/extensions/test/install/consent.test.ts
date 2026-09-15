@@ -153,6 +153,27 @@ describe('describeRequestedCapabilities', () => {
     ]);
   });
 
+  it('strips control characters (a crafted ESC/CSI sequence) from a hostile manifest before rendering, in id/name and every entry text', () => {
+    const hostile = {
+      id: 'acme\x1b[2Kengineering',
+      name: 'ACME\x1b[1AStandards',
+      requestsCapabilities: [{ exec: ['./run\x1b[2K *'] }],
+    };
+    const description = describeRequestedCapabilities({ kind: 'overlay', document: hostile });
+    // The ESC byte itself is stripped; the printable text that followed it (harmless once the
+    // control byte introducing the escape sequence is gone) is left exactly as it was — matching
+    // `bin.ts`'s own identical `stripControlChars`, which strips only the control byte, not any
+    // printable characters that happen to follow it.
+    expect(description.id).toBe('acme[2Kengineering');
+    expect(description.name).toBe('ACME[1AStandards');
+    expect(description.entries[0]?.text).toBe('Run shell commands matching "./run[2K *"');
+    // `description.text`'s own `\n` separators (added by `renderDescriptionText`, after
+    // sanitization) are a legitimate, intentional structural character in the same `\x00-\x1f`
+    // range `stripControlChars` strips — asserting the specific injected byte (ESC) is gone, not a
+    // blanket "no control characters at all," which would also (wrongly) flag those newlines.
+    expect(description.text.includes('\x1b')).toBe(false);
+  });
+
   it('refuses a malformed overlay document with a named CFG-036 error, fabricating nothing', () => {
     try {
       describeRequestedCapabilities({

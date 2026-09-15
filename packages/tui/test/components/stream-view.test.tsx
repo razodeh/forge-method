@@ -58,6 +58,19 @@ describe('StreamView', () => {
     expect(frame).not.toContain('line-999');
   });
 
+  it('strips control characters (a crafted ESC/CSI sequence) from a line before it reaches the render tree -- a fresh adversarial review found untrusted transcript/lane-output content reached Ink completely unsanitized, the same bug class bin.ts fixes for CLI output', async () => {
+    const { lastFrame } = await renderStream({
+      source: ['before\x1b[2Kafter'],
+      height: 5,
+      focused: false,
+    });
+    const frame = lastFrame() ?? '';
+    // The ESC byte itself is stripped; the printable text that followed it (harmless once the
+    // control byte introducing the escape sequence is gone) is left exactly as it was.
+    expect(frame).toContain('before[2Kafter');
+    expect(frame.includes('\x1b')).toBe(false);
+  });
+
   it('a custom maxLines bound is honoured', async () => {
     const { lastFrame } = await renderStream({
       source: lines(100),

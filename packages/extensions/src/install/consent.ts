@@ -217,6 +217,31 @@ function moduleEntries(module: ModuleDefinition): CapabilityDescriptionEntry[] {
   return entries;
 }
 
+/** Strips C0 control characters, `DEL`, and the whole C1 range (`\x00`-`\x1f`, `\x7f`-`\x9f`) from
+ * untrusted text before it reaches either a real terminal or a `--json` consumer — the identical
+ * bug class and identical character range `packages/cli/src/bin.ts`'s own `stripControlChars` fixes
+ * for the post-install "newly-widened grants" diff report, applied here to the *earlier*, more
+ * consequential call site: `id`/`name`/every entry `text` below all originate from an untrusted
+ * fetched module's/overlay's own manifest (`moduleEntries`/`overlayEntries` above read `ceilings.
+ * <role>.exec`/`.allowlistHosts`/`requestsCapabilities` patterns straight off a manifest whose schema
+ * enforces no charset restriction at all, per this file's own doc comment on why that manifest is
+ * partial). A crafted `ESC`/CSI sequence in an exec pattern or host string could otherwise overwrite
+ * or hide the very consent-relevant lines `19` §19.5 step 3's own human checkpoint exists to have a
+ * person actually read before typing `y` — found by a fresh adversarial review of this file after the
+ * fact, not by this file's own original critic rounds, which caught the identical class of bug at the
+ * `bin.ts` call site but not here. `@forge/extensions` has no legal graph edge to `@forge/adapter-kit`
+ * (where `control-tokens/strip.ts` lives, and which strips a different thing — model-directed control
+ * tokens, not terminal escape sequences) and no shared "safe for a terminal" utility exists at this
+ * package's own level, so this is a small, deliberate, local duplication of `bin.ts`'s own fix rather
+ * than a new cross-package dependency for one four-line function. Applied once, here, before either
+ * `promptForConsent`'s plain-text render or a `--json` consumer sees the result — `JSON.stringify`
+ * never escapes `DEL`/the C1 range (only `U+0000`-`U+001F` plus `"`/`\`, per ECMA-262), so both output
+ * modes need the identical fix, not just the human-readable one. */
+function stripControlChars(text: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them.
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+}
+
 function renderDescriptionText(
   id: string,
   name: string,
@@ -261,7 +286,18 @@ export function describeRequestedCapabilities(
     entries = overlayEntries(result.data);
   }
 
-  return { id, name, entries, text: renderDescriptionText(id, name, entries) };
+  // `id`/`name`/every `entries[].text` originate from the untrusted manifest above (`moduleEntries`/
+  // `overlayEntries`) -- sanitized once, here, before either `promptForConsent`'s plain-text render or
+  // a `--json` consumer ever sees them. See `stripControlChars`'s own doc comment for why.
+  const safeId = stripControlChars(id);
+  const safeName = stripControlChars(name);
+  const safeEntries = entries.map((entry) => ({ ...entry, text: stripControlChars(entry.text) }));
+  return {
+    id: safeId,
+    name: safeName,
+    entries: safeEntries,
+    text: renderDescriptionText(safeId, safeName, safeEntries),
+  };
 }
 
 export interface ConsentPromptOptions {
