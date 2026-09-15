@@ -473,10 +473,13 @@ export default tseslint.config(
     },
   },
   {
-    // Plain ESM is typechecked by `pnpm typecheck` through JSDoc + checkJs, which eslint cannot
-    // read — so the type-aware rules are off and tsc is the authority. R10 and R7 stay ON here:
-    // `scripts/` is where `PLAN-M1.md` P2, P3 and P9 put production code.
-    files: ['**/*.mjs'],
+    // Plain ESM (and the one plain-CJS file this repo has, `packages/cli/bin/preflight.cjs` —
+    // `02` §2.7's own required Node-engine preflight shim, deliberately plain CommonJS so it parses
+    // on a Node runtime too old to run this package's real, modern-syntax bundle) is typechecked by
+    // `pnpm typecheck` through JSDoc + checkJs, which eslint cannot read — so the type-aware rules are
+    // off and tsc is the authority. R10 and R7 stay ON here: `scripts/` is where `PLAN-M1.md` P2, P3
+    // and P9 put production code.
+    files: ['**/*.mjs', '**/*.cjs'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: {
@@ -512,6 +515,29 @@ export default tseslint.config(
     files: ['scripts/*.mjs'],
     rules: {
       'no-console': 'off',
+    },
+  },
+  {
+    // `packages/cli/bin/preflight.cjs` — `02` §2.7's own required Node-engine preflight shim
+    // (`PLAN-M12.md` P8), this package's real, published `bin` entry point. It is deliberately plain
+    // CommonJS (never bundled, never transpiled): `require`/`__dirname` are real Node CJS globals this
+    // file needs, and `require('node:path')` plus a dynamic `import()` are the real, correct way for a
+    // CJS entry point to load this package's own ESM bundle — not a pattern to flag. `no-console` gets
+    // the identical "command entry points print to the console" carve-out every other real launcher in
+    // this repo already has.
+    files: ['packages/cli/bin/preflight.cjs'],
+    languageOptions: {
+      globals: {
+        require: 'readonly',
+        module: 'readonly',
+        exports: 'writable',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
   {

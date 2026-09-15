@@ -9,17 +9,113 @@ causing rework.
 
 ---
 
-## 1. Naming and npm availability
+## 1. Naming and npm availability — resolved: `forge-method` (unscoped), `@forge` scope dropped
 
-**Question:** Are `forge-method` and the `@forge` scope available? `forge` is already a well-known
-tool (Foundry), which could cause confusion even if the binary name is free.
+**Question (as originally raised):** Are `forge-method` and the `@forge` scope available? `forge` is
+already a well-known tool (Foundry), which could cause confusion even if the binary name is free.
 
-**Recommendation:** Verify availability before M1 ends. If taken, fall back to `forgekit-method` /
-`@forgekit/*` with binary `forge` retained if possible. Keep every name reference in
-`packages/*/package.json`, the `bin` map, and a single `constants.ts` so a rename is a one-file
-change.
+**What M1 actually did:** nothing — this decision was never revisited before M1 ended, and every
+`@forge/*` package name (`@forge/core`, `@forge/cli`, …) was built and shipped throughout M1-M11
+without the availability check this section always called for. PLAN-M12.md P8 (the changesets
+release pipeline) is the first point in the build where "can this actually be published" stopped
+being deferrable, since it is the piece that has to make a real publish decision.
 
-**Decide by:** M1. **Risk of deferring:** low technically, high for published-artifact churn.
+**What P8 found, checked directly against the live npm registry from the build sandbox (a real HTTP
+GET to `registry.npmjs.org`, not a guess — confirmed reachable, see below):**
+
+- **The `@forge` npm scope is not available and never was.** It is actively owned and maintained by
+  Atlassian for their own, unrelated "Forge" platform (Atlassian's own app-development product,
+  confusingly also named Forge) — `@forge/storage` is a real, currently-maintained package under it
+  (`latest: 2.0.3`, published/maintained by `atlassian-cicd`/`eng-development-tooling-artifacts@
+  atlassian.com`, confirmed via `GET https://registry.npmjs.org/@forge/storage`). npm scopes are
+  registered once, globally, by whoever claims them first; there is no path to ever publishing
+  anything under `@forge/*` on the public registry. This is a harder, more permanent blocker than
+  this section's original "could cause confusion" framing suggested — it is not a branding risk, it is
+  a registry-level impossibility.
+- **`forge-method` (unscoped)** returned `404 Not Found` on a live registry check performed
+  2026-09-14, which is the normal signal an unscoped name is unclaimed (npm has no separate
+  "reservation" list — `404` on `GET /<name>` is the actual, standard way to check). This is real
+  evidence, not a fabricated "confirmed available" claim, but it is also not a permanent guarantee:
+  npm names are claimed at publish time on a first-come basis, not reserved in advance, so this must
+  be re-checked (the same one-line `curl`) immediately before the real, first `npm publish` — not
+  assumed to still hold whenever that day comes.
+- The originally-proposed fallback (`forgekit-method` / `@forgekit/*`) was also checked and is
+  likewise unclaimed as of the same date, kept on record as the real fallback if `forge-method` is
+  claimed by the time a human with real npm publish rights attempts the first live publish.
+
+**Decision:** `packages/cli`'s own `package.json` `name` is `forge-method` (unscoped), `private:
+false` — the only package in this workspace that publishes. Every internal `@forge/*` package
+(`@forge/core`, `@forge/engine`, …) **stays exactly as named and stays `"private": true`.** This is a
+narrower publish surface than `02` §2.7's own text ("internal `@forge/*` packages are published too,
+for module authors and `@forge/adapter-kit` consumers") describes, and that gap is real, not silently
+dropped: the `@forge` scope collision means those packages could never be published under their
+current names regardless — publishing them would first require renaming the entire internal scope
+(e.g. to `@forgekit/*`), which is a real, separate, repo-wide piece of work `specs/22`'s own M12 P8
+mandate did not size or schedule. Disclosed here as a genuine follow-on decision for whenever module-
+author/adapter-kit external consumption is actually prioritized, not assumed resolved by this entry.
+
+**A real, load-bearing gap this decision does not close: the published package is not yet functional
+for a real end user, even once the naming/scope question above is settled.** `02` §2.7's own text
+requires `forge-method` to publish "a single bundled CLI **plus data directories (`templates/`,
+`modules/`, `catalog/`) as package files**" — `packages/cli/package.json`'s own `files` field is
+`["dist"]` only; nothing ships those directories. This matters concretely, not just textually:
+`resolvePackageRoot('@forge/templates')` (`packages/cli/src/init/content.ts`, `commands/template.ts`,
+`commands/decide.ts`, `commands/shared.ts`) reads real template files from `@forge/templates`'s own
+installed location at runtime, and `resolveModulesDir()` (`bin.ts`) walks two directories above this
+package's own root to find a real `modules/` directory — both real, working today only because every
+real invocation of this CLI happens inside this monorepo checkout, where `@forge/templates` and
+`modules/` genuinely sit on disk beside it. Neither exists in the published `forge-method` tarball this
+piece produces: `@forge/templates` stays `"private": true` and is never on the registry at all (nothing
+this piece could fix without also resolving the internal-packages-stay-private question above), and
+`modules/` is a repo-root directory with no publish/distribution mechanism (`SPEC-QUESTIONS.md` Q103,
+pre-existing). **Concretely: `npm install -g forge-method && forge init` would fail today** — not tested
+against a real registry install (no real publish happened), but traced directly through the real code
+path above, which is the honest way to state it. This piece's own real scope (the changesets pipeline
+and the publish *decision*, not a second data-packaging piece) did not extend to fixing this — building
+a real template/module/catalog packaging step is separate, sizable work no `PLAN-M12.md` piece named.
+Recorded here, in the canonical decision record, rather than left to a `SPEC-QUESTIONS.md` entry alone:
+this is exactly the kind of fact a reader trusting only this file would otherwise miss, since nothing
+else in this decision's own text names it.
+
+**Two further, real, undisclosed-until-now side effects of the rename, found by this piece's own critic
+round:** (1) `.changeset/config.json`'s `fixed: [["@forge/*"]]` group no longer matches `forge-method`
+(it matched `@forge/cli`) — the CLI now versions independently of the 17 internal `@forge/*` packages
+rather than in lockstep with them. Judged, not merely noticed: this is the *correct* outcome (the one
+package real users install should carry its own real semver, not be forced to bump in lockstep with
+internal packages no external consumer ever sees), but it was an unexamined side effect of the rename
+until this critic round asked, not a decision this entry stated outright until now. (2)
+`packages/cli/package.json`'s `exports` map shrank from six real subpaths (`./entry`, `./output`,
+`./init`, `./commands`, `./doctor`, `./upgrade`, each pointing at real `src/` TypeScript) to one (`.` →
+`./dist/forge.mjs`) — verified via a full-repo grep that nothing anywhere ever imports any of those
+subpaths (only prose references in comments), so this is not a real break today, but it is a real
+removal of previously-public internal API surface, worth stating plainly rather than leaving implicit in
+a package.json diff.
+
+**A third round-2 critic finding, since fixed:** §2.7's own further, separate requirement — "Node engine
+check with a friendly message before any import that requires modern syntax (use a tiny CJS preflight
+shim)" — was missed by the first pass entirely. `packages/cli`'s real `bin` target is now
+`bin/preflight.cjs` (plain, ES5-only CommonJS, so it parses on the old runtimes it exists to catch): it
+checks `process.version` against the real `>=20.19` floor before ever touching the modern-syntax bundle,
+printing a real, actionable message and exiting 1 on an unsupported Node, or dynamically `import()`ing
+`dist/forge.mjs` otherwise. See `SPEC-QUESTIONS.md` Q189 point 12 for the full account, including the one
+real, disclosed test gap (the "too old" branch's own subprocess behavior has no automated end-to-end
+test, since no pre-20.19 Node binary exists in this environment to actually exercise it against).
+
+**How this was verified, and what still needs a human:** the check above was a real, live HTTP request
+made from inside this build's own sandboxed environment during P8 — confirmed reachable by testing
+directly (`curl`/`fetch` against `registry.npmjs.org`, cross-checked against a known-published package
+returning `200`, before trusting a `404` on anything else as meaning "unclaimed"), not assumed either
+way going in. That is real evidence for "unclaimed as of this specific date," not proof it will still be
+unclaimed at actual publish time — npm names are claimed at publish time, not reserved — and it is not a
+substitute for a human with real npm publish credentials performing the same check (and the actual `npm
+publish`) themselves when v1.0 is really cut. It is also not a standing guarantee about every future
+sandboxed run of this codebase: this was one real, live check from one real session on 2026-09-14, not a
+claim that this environment always has outbound network access.
+
+**Decide by:** ~~M1~~ M12 P8 (actually decided here, four milestones late). **Risk of deferring:** the
+risk this section originally warned about was realized — not "low technically," a real, structural
+scope collision that would have blocked every `@forge/*` publish attempt, caught only because P8
+finally investigated it directly instead of continuing to defer it.
 
 ---
 

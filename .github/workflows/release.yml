@@ -1,0 +1,72 @@
+# `02` §2.4/§2.7's own literal release pipeline: "changesets → version PR → tag → `npm publish
+# --provenance`". `.changeset/config.json` already fixes every `@forge/*` package together and sets
+# `access: public`; only `packages/cli` (published as `forge-method`, `private: false`) is ever
+# actually published — `changeset publish` skips every `"private": true` package on its own, so no
+# extra config is needed to keep the 17 internal workspace packages unpublished (PLAN-M12.md P8,
+# `specs/23` open decision #1).
+#
+# `changesets/action@v1` is the Changesets project's own action for exactly this job: on every push to
+# `main` it either opens/updates a "Version Packages" PR (running `changeset version`, which bumps
+# versions, writes the changelog, and removes consumed changeset files) or, when a Version Packages PR
+# has just been merged (so no unreleased changesets remain), runs the real publish command and tags the
+# release. Nothing here can complete this pipeline live from this sandbox: `NPM_TOKEN` must be a real
+# npm automation token configured as a repo secret by a human with real npm publish rights, and
+# provenance additionally requires the real GitHub Actions OIDC token this job's own `id-token: write`
+# permission grants at run time — neither is available outside real GitHub Actions.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+# Extends `ci.yml`'s own `permissions: contents: read` baseline rather than inventing a different
+# shape: `contents: write` is the minimum `changesets/action` needs to open/update the version PR and
+# push the release tag/commit; `pull-requests: write` is the minimum it needs to create that PR;
+# `id-token: write` is the real, minimum permission `npm publish --provenance`'s OIDC exchange needs
+# (per npm's own provenance documentation) — broadened no further than each real step requires.
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+      - run: pnpm install --frozen-lockfile
+      # `forge-method`'s own real build step (PLAN-M12.md P8): `changeset publish` runs `npm publish`
+      # straight from `packages/cli`, whose own `files` field ships only `dist/`, so `dist/forge.mjs`
+      # must exist before the publish step runs, not be produced by it.
+      - run: pnpm --filter forge-method build
+      - name: Create release PR or publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm changeset publish
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # The real, minimum npm-recommended way to request provenance through a tool (`changeset
+          # publish`) that shells out to `npm publish` itself, rather than a hand-rolled `--provenance`
+          # flag this workflow would have to thread through `@changesets/cli`'s own publish command —
+          # npm reads this the same as the CLI flag for every `npm publish` it runs in this job.
+          NPM_CONFIG_PROVENANCE: true

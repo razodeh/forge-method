@@ -1,27 +1,48 @@
 {
-  "name": "@forge/cli",
+  "name": "forge-method",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
+  "description": "FORGE — a spec-driven, agent-orchestrating development method and CLI.",
+  "license": "MIT",
   "bin": {
-    "forge": "./bin/forge.mjs"
+    "forge": "bin/preflight.cjs"
   },
+  "files": [
+    "dist",
+    "bin/preflight.cjs"
+  ],
   "exports": {
-    ".": "./src/index.ts",
-    "./entry": "./src/entry/index.ts",
-    "./output": "./src/output/index.ts",
-    "./init": "./src/init/index.ts",
-    "./commands": "./src/commands/index.ts",
-    "./doctor": "./src/commands/doctor/index.ts",
-    "./upgrade": "./src/commands/upgrade/index.ts"
+    ".": "./dist/forge.mjs"
   },
   "engines": {
-    "node": ">=20.10"
+    "node": ">=20.19"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsup"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.266",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "execa": "9.6.1",
+    "fast-xml-parser": "5.11.1",
+    "jsdom": "29.1.1",
+    "mermaid": "11.17.2",
+    "minimatch": "10.2.6",
+    "simple-git": "3.36.0",
+    "string-width": "7.2.0",
+    "yaml": "2.9.0",
+    "zod": "3.25.76",
+    "zod-to-json-schema": "3.25.2"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
     "@forge/adapter-claude-code": "workspace:*",
     "@forge/adapter-kit": "workspace:*",
     "@forge/agents": "workspace:*",
@@ -34,12 +55,8 @@
     "@forge/schemas": "workspace:*",
     "@forge/telemetry": "workspace:*",
     "@forge/templates": "workspace:*",
+    "@forge/testkit": "workspace:*",
     "@forge/vcs": "workspace:*",
-    "execa": "9.6.1",
-    "fast-xml-parser": "5.11.1",
-    "yaml": "2.9.0"
-  },
-  "devDependencies": {
-    "@forge/testkit": "workspace:*"
+    "tsup": "8.5.1"
   }
 }

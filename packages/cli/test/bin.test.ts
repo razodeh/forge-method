@@ -269,6 +269,16 @@ function run(
     const stdout = execFileSync(process.execPath, [LAUNCHER, ...args], {
       encoding: 'utf8',
       timeout: 30_000,
+      // Node's own `execFileSync` default `maxBuffer` is 1MB — smaller than a real `forge diagram
+      // render`'s own real stdout (the bundled mermaid renderer inlined into the generated HTML is
+      // ~3.4MB on its own), which silently kills the child with `ENOBUFS`/`SIGTERM` rather than
+      // failing loudly, surfacing as a bare non-zero `status` with empty `stdout`/`stderr` and no
+      // indication the real cause was this harness's own buffer, not the command under test. Found by
+      // PLAN-M12.md P8 verifying the full suite (not a P4 regression: `diagram render`'s own real
+      // output size was always this large; P4's own commit simply never wrote a payload big enough to
+      // cross the default limit in its own manual checks) — raised generously past any real command
+      // this suite exercises, rather than tuned to the one known-largest case.
+      maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ...envOverlay },
     });
