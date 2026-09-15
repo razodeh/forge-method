@@ -16012,3 +16012,55 @@ failures against the live CLI rather than trusting the first draft's prose — r
 fresh critic) confirmed both fixes accurate and found nothing new after a further, independent spot-check
 across all five files (overlay/preset/config/skill commands, a real shipped agent-overlay schema
 cross-check, gate/workflow/conformance-suite counts, and every cross-link).
+
+## Q191 — M12 P9: `verify-success-criteria.mjs` — four SCs cannot honestly be `PASS`; disclosed rather
+than fabricated, matching this milestone's own established precedent
+
+**Context:** `PLAN-M12.md` P9 asks for a script that runs the real command(s) constituting each of
+SC1-SC11's (`01` §1.8) own literal proof, and reports real, evidence-backed verdicts rather than trusting
+"the suite is green." Investigating each SC concretely (not paraphrased) against the real, current test
+suite found that four of the eleven genuinely cannot be reported `PASS` without fabrication:
+
+1. **SC2** (`forge run build --stage mvp` across >=3 parallel lanes, clean-clone buildable): the engine's
+   own orchestration mechanics ARE proven for real (concurrent multi-lane admission, seed-determinism,
+   crash-resume), but no test anywhere in the repository exercises 3 or more genuinely concurrent lanes
+   at once — the highest count anywhere is 2 — and the SC's own full literal claim (a real platform
+   adapter writing real, compiling source across >=3 lanes, built clean on a second machine) requires a
+   live, billed adapter session this sandboxed environment cannot supply at all.
+2. **SC4** (`forge adopt` on a real >=50k-LOC repo, judged accurate by the repo's own maintainer): a real
+   human judgment call against a real external repository FORGE does not own — structurally outside what
+   any script, in any CI job, can supply or fabricate a substitute for. The full seven-phase pipeline runs
+   real, for real, against a smaller fixture; that is real but partial evidence, not the SC itself.
+3. **SC5** (both adapters pass conformance; swapping platforms changes nothing): the conformance-suite
+   clause IS proven for real (shared adapter-kit suite, generic adapter against a real scripted binary).
+   The "swapping platforms changes no workflow/agent/artifact" clause has no corresponding test anywhere
+   in the repository at all — confirmed by a repo-wide search, not assumed absent.
+4. **SC9** (an overlay bundle applies to a second project in one command AND survives a minor-version
+   upgrade, reporting anything that no longer applies): applying a bundle in one command IS proven for
+   real (`overlayAdd`, run against independently-created temp projects). No test chains that install
+   through a subsequent `forge upgrade` across a real minor-version bump and asserts survival plus
+   staleness-reporting — `run-upgrade.test.ts` covers regenerable-file conflict resolution, not this.
+
+**Decision:** report all four as `DISCLOSED`, each with a concrete, independently-verified account
+(commands that DO run and pass, stated separately from what remains unproven) rather than either (a)
+fabricating a smaller in-repo proxy and calling it proof, or (b) silently reporting `PASS` on partial
+evidence. This is the identical "disclose real limitations rather than fabricate" discipline this exact
+milestone already established twice — P5's benchmark-budget disclosure and P8's npm-availability
+disclosure — applied here to the milestone's own final, capstone check. **Not fixed here**: SC2/SC4's
+full literal proof requires a live adapter session and/or a real external repository with a willing
+maintainer, genuinely outside any script's reach; SC5's and SC9's missing clauses are real, scoped test-
+writing work for whichever future piece owns adapter-parity or overlay-upgrade testing — recorded here,
+not silently assumed covered by a green `pnpm test`.
+
+**A related, narrower finding surfaced along the way:** `15` §15.10's own invariant table gives I7/I8/I9
+the codes `SEC-501`/`SEC-502`/`SEC-503`, but the real, currently-tested codes are `CFG-507`/`CFG-508`/
+`CFG-509` — a pre-existing drift this piece did not introduce, already recorded at Q40, re-confirmed here
+because SC11's own evidence file would otherwise have stated a code that appears nowhere in the real
+test assertions.
+
+**Found by:** three fresh, context-free critic subagent rounds. Round 1 (5 findings) caught a live,
+reproducible vacuous-`-t`-match gap (vitest exits 0 for a `-t` pattern matching zero tests) plus SC1/
+SC10's own untested literal clauses and an overclaiming SC2 disclosure. Round 2 (4 findings) caught a
+missing coverage-exclusion that would have failed `pnpm test`'s own coverage gate, SC7's cited command
+not actually proving its own claim, and the SEC-*/CFG-* code mismatch above. Round 3 independently
+re-derived every fix against real source and found nothing new.

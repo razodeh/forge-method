@@ -12986,3 +12986,114 @@ a real dispatcher-refusal path.
 
 **Rounds: 3 critic rounds (2 major + 2 minor round 1, all fixed; 1 new major round 2, fixed; round 3
 clean, no new findings). Outcome: WON.**
+
+---
+
+## M12 P9 — `scripts/verify-success-criteria.mjs` and the real SC1-SC11 evidence pass
+
+**Mandate:** the capstone piece of the whole v1.0 build — for each of SC1-SC11 (`01` §1.8, verbatim),
+run the real command(s) that constitute that criterion's own literal proof and report a real, evidence-
+backed PASS/FAIL/DISCLOSED verdict, never "the suite is green" as a stand-in. Two files:
+`scripts/lib/success-criteria.mjs` (definitions + pure evaluator, unit-tested with an injected fake
+`exec`) and `scripts/verify-success-criteria.mjs` (thin real-subprocess CLI wrapper), the identical
+split every other check script in `scripts/` uses.
+
+### Round 1: 5 issues, all real, all fixed
+
+A fresh critic round found: (1) **blocking** — every `-t`-pattern command silently reports a vacuous
+PASS if the referenced test title is ever renamed, since vitest exits 0 for a `-t` matching zero tests
+("filtered out," not an error) — confirmed live, not assumed. (2) **blocking** — SC5 was marked fully
+`automated` even though no test anywhere in the repo proves its own second clause ("swapping platforms
+via config changes no workflow, agent, or artifact"). (3) **major** — SC1's cited commands never once
+tested its own literal "valid traceability matrix" clause. (4) **major** — SC10's cited commands never
+tested its own literal "an architecture change that skips the diagram fails the gate" clause. (5)
+**major** — SC2's disclosure text overclaimed that existing tests "exercise concurrent multi-lane
+fan-out" and "generalize past 2 lanes," when the highest lane-count anywhere in the engine test suite is
+2 and `s9-budget-enforcement.test.ts`'s own doc comment says its scenario is deliberately sequential.
+
+**What the critic caught that I missed:** I had not actually run a `-t` pattern against nothing to see
+what vitest does with it (finding 1) — I assumed a filtered-to-zero match would fail loudly; it doesn't.
+I also hadn't independently re-derived every disclosure claim against the actual fixture/test source
+(finding 5) — I'd inferred "the mechanism generalizes" from reading the scheduler's own lack of a
+2-lane special case, and stated it as if it were a directly-run proof.
+
+**Judged and fixed:** a new `hasRealPassedTests` guard (regex on vitest's own `Tests N passed` summary
+line) wired into `evaluateCriterion`, so any vitest-sourced command that exits 0 but never actually
+passed a real test is now reported FAIL, with the real output attached — pinned by both a pure-logic
+test and a real-subprocess test against a real, deliberately-impossible `-t` pattern. SC5 moved to
+`mode: 'disclosed'`; this ALSO surfaced a new, real fact live: the Claude Code adapter's own
+`cli.conformance.test.ts`/`sdk.conformance.test.ts` contain nothing but their own FORGE_LIVE-gated test,
+so a non-live run of them now correctly shows 0 real passes (a real, named FAIL inside the DISCLOSED
+report body, not masked). SC1 gained two new commands (`spec-graph.test.ts`'s real `SpecGraph.build`
+chain, and `checkSpecGraph`'s own gate check). SC10 gained the real `diagram:required` taxonomy-coverage
+lint rule test. SC2's disclosure rewritten to state plainly that no test exercises >=3 concurrent lanes
+and that the claim is inference from source, not a directly-run proof.
+
+### Round 2: 4 more issues, all real, all fixed
+
+A second fresh critic round found: (1) **blocking** — `scripts/verify-success-criteria.mjs` was missing
+from `vitest.config.ts`'s coverage-exclude list, unlike every structurally identical sibling thin
+wrapper (`bench.mjs`, `check-boundaries.mjs`, etc.) — confirmed live: `pnpm test`'s coverage gate would
+fail on it (25%/11%/22%/29% against an 85/80/85/85 threshold), since its own tests exercise `realExec`
+directly and two subprocess invocations, neither of which v8 coverage in the parent process can see.
+(2) **major** — SC7's cited `gate-commands.test.ts` command doesn't prove SC7's own literal "an attempt
+to advance a stage with a failing gate is refused" claim: `gateApprove` is an unconditional event-append
+that checks nothing, and `gateCheck` is read-only. The real, run-blocking refusal mechanism is
+`runGateStep` in the engine (`GateRejected` + a failed StepOutcome), never cited. (3) **major/
+documentation-accuracy** — SC11's `security.test.ts` description cited `15` §15.10's literal
+`SEC-501`/`SEC-502`/`SEC-503` codes for I7-I9, but the real, tested codes are `CFG-507`/`CFG-508`/
+`CFG-509` (a pre-existing, already-recorded spec/implementation drift, `SPEC-QUESTIONS.md` Q40) — the
+evidence file stated a code that does not actually appear anywhere in the real test assertions.
+(4) **minor** — no `package.json` script entry, unlike every sibling check.
+
+**What the critic caught that I missed:** I had verified my own script ran correctly against the real
+repo, but never checked whether IT was itself subject to the repo's own coverage gate the way every
+sibling script explicitly is (finding 1) — an omission invisible unless you actually run `pnpm test`
+end to end rather than just the new test file in isolation. I had also taken `gate-commands.test.ts`'s
+own file name and superficial "gate" relevance as sufficient evidence for SC7 without opening
+`gateApprove`'s own source to see it never actually checks anything (finding 2), and had copied SC11's
+codes straight from the spec table without cross-checking them against the real, currently-tested
+codes (finding 3) — exactly the "trust the label, not the artifact" failure mode this whole file exists
+to prevent in every OTHER piece.
+
+**Judged and fixed:** `scripts/verify-success-criteria.mjs` added to `vitest.config.ts`'s exclude list
+with a comment matching its siblings' own rationale. SC7's primary command changed to
+`packages/engine/test/dispatch/gate.test.ts`'s real `GateRejected` test; `gate-commands.test.ts`'s own
+command narrowed and its description corrected to describe what it actually proves (a read-only
+evaluation, not a refusal). SC11's description corrected to the real `CFG-507`/`CFG-508`/`CFG-509`
+codes with a note on the Q40 drift. `pnpm verify-success-criteria` script entry added.
+
+### Round 3: clean
+
+A third fresh critic round independently re-derived every round-1 and round-2 fix against the real
+source rather than trusting prior rounds' say-so (re-grepped `security.ts`'s real codes, re-read
+`gate.test.ts`'s real assertions, re-ran the scoped coverage check and confirmed
+`verify-success-criteria.mjs` no longer appears in any coverage-threshold error, diffed
+`vitest.config.ts`/`package.json` for any stray syntax or accidental broadening), spot-checked SC7/SC8/
+SC9's citations independently, and ran the full script for real end to end. Found nothing new. Genuinely
+clean after two real rounds of fixes.
+
+**A real, load-triggered flake in this piece's own new test, found post-commit:** a full, unscoped
+`node scripts/run-tests.mjs run` (8569 tests under heavy concurrent load) timed out the `--only SC3`
+real-subprocess test past its original 60s limit — E3's own 20 real SIGKILL/resume cycles genuinely
+took longer than 60s under this sandbox's documented concurrent-load slowness, despite completing in
+~20s in isolation. Fixed with a separate, immediate follow-up commit widening both real-subprocess
+tests' timeouts (120s, 300s) rather than tuning to the fastest observed run — not a design defect, a
+timeout tuned too tight for this sandbox's own load characteristics.
+
+**Verification (final):** `pnpm lint` clean (the same 4 pre-existing, untouched prettier warnings every
+other M12 piece's log already names: `packages/cli/src/commands/overlay.ts` and three of its own test
+files, all pre-dating this piece, confirmed via `git diff HEAD` showing no changes to any of them).
+`pnpm typecheck` clean — both the root `tsc` sweep and `turbo run typecheck` across all 21 packages.
+`node scripts/check-boundaries.mjs` clean. The full, unscoped `node scripts/run-tests.mjs run`: 491/492
+test files passed, 8559/8569 tests passed, 9 skipped; the sole failure
+(`packages/engine/test/e2e/crash-resume.test.ts`, its own internal 120s timeout under heavy concurrent
+load) is on this build's own standing list of accepted, load-sensitive flakes — not a file this piece
+owns, and independently confirmed passing in isolation earlier in this piece's own build. Running
+`node scripts/verify-success-criteria.mjs` itself against real `main`: SC1/SC3/SC6/SC7/SC8/SC10/SC11
+report PASS with real command evidence; SC2/SC4/SC5/SC9 report DISCLOSED, each with a concrete,
+independently-verified account of exactly what is and isn't proven here; exit code 0.
+
+**Rounds: 3 critic rounds (5 issues round 1, all fixed; 4 issues round 2, all fixed; round 3 clean, no
+new findings, plus one real post-commit load-triggered flake found and fixed separately). Outcome:
+WON.**
