@@ -105,6 +105,15 @@ export default defineConfig({
         'scripts/check-boundaries.mjs',
         'scripts/emit-schemas.mjs',
         'scripts/assert-schema-drift.mjs',
+        // Same shape again: `scripts/verify-success-criteria.mjs`'s own decision logic
+        // (`evaluateCriterion`/`evaluateAll`/`hasRealPassedTests`/`formatReport`) lives in
+        // `scripts/lib/success-criteria.mjs`, fully covered by `scripts/verify-success-criteria.
+        // test.ts`'s injected-fake-exec tests; the wrapper's own real-subprocess mapping (`realExec`)
+        // is proven directly (also in that file) against real `node` subprocesses, and the CLI's
+        // arg-parsing/exit-code plumbing is proven by two further real subprocess invocations
+        // (`--only SC3`, `--only SC99`) -- v8 coverage in the parent process cannot see into either
+        // kind of child process, the identical gap `bench.mjs` documents above.
+        'scripts/verify-success-criteria.mjs',
         // Same shape again for the `21` §21.5 performance-benchmark suite: `scripts/bench.mjs`'s own
         // decision logic (`evaluateBenchRatchet`) and fixture builders live in `scripts/lib/bench-
         // ratchet.mjs`/`scripts/lib/bench-fixtures.mjs`, both fully covered by scripts/bench-ratchet.
