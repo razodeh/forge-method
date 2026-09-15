@@ -169,8 +169,30 @@ function isSpecArtifactType(type: ArtifactTypeId): type is SpecArtifactType {
   return SPEC_ARTIFACT_TYPES.has(type);
 }
 
+/** `adrNew`'s own real slug derivation (`adr.ts`), duplicated rather than imported: both are small,
+ * package-local helpers with no shared home, and `@forge/schemas/registry`'s own path templates are
+ * the only real contract between them -- see this function's own call site below for why `spec new`
+ * needs it too. */
+function slugify(title: string): string {
+  return (
+    title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'spec'
+  );
+}
+
 /** `new <type>`: the identical real-id-allocation + real-template scaffolding `adrNew` uses, for any
- * of the eight `docs/forge/specs/**`-rooted types a spec document can be. */
+ * of the eight `docs/forge/specs/**`-rooted types a spec document can be.
+ *
+ * `Story`/`DataModel`'s own `pathTemplate`s (`@forge/schemas/registry`) need a `{slug}` placeholder
+ * and `InterfaceContract`'s needs `{name}` -- neither was ever supplied here, so all three failed
+ * every real call with a misleading `CFG-001` ("Invalid configuration ... at line 0"), a real,
+ * previously-undiscovered defect confirmed via `docs/getting-started.md` P7's own live CLI
+ * verification pass (`SPEC-QUESTIONS.md` Q190) and fixed here by deriving both placeholders from
+ * `title` the same way `adrNew` already derives ADR's own `{slug}` -- `vars` still wins when a caller
+ * supplies its own `slug`/`name` explicitly, never silently overridden. */
 export async function specNew(
   ctx: SpecCommandContext,
   type: ArtifactTypeId,
@@ -184,8 +206,9 @@ export async function specNew(
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   const allocator = getSharedIdAllocator(ctx.paths, clock);
   const id = await allocator.allocate(type);
+  const slug = slugify(title);
 
-  const pathResult = renderArtifactPath(type, { id, ...vars });
+  const pathResult = renderArtifactPath(type, { id, slug, name: slug, ...vars });
   if (!pathResult.success) {
     throw new ForgeError('CFG-001', { path: type, line: 0 });
   }

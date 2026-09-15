@@ -1948,6 +1948,25 @@ describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
     expect(orphans.status).toBe(0);
   });
 
+  it('runs `forge spec new` for real, through the actual subprocess, against every one of the eight real types it accepts -- the exact end-to-end path that hid a real CFG-001 defect (Story/InterfaceContract/DataModel all crashed) until docs/getting-started.md P7 exercised it live; this test exists so no future regression can hide the same way', async () => {
+    const dir = await realProject();
+    for (const type of [
+      'Vision',
+      'Capability',
+      'NFR',
+      'Epic',
+      'Story',
+      'Task',
+      'InterfaceContract',
+      'DataModel',
+    ]) {
+      const result = run(['spec', 'new', type, `Fixture ${type}`, '--json', '-C', dir]);
+      expect(result.status, `forge spec new ${type} failed: ${result.stderr}`).toBe(0);
+      const parsed = JSON.parse(result.stdout) as { readonly path: string };
+      expect(parsed.path.length, `forge spec new ${type} wrote no real path`).toBeGreaterThan(0);
+    }
+  });
+
   it('runs `forge spec validate` (the bare, no-rule form) for real, exiting 0 against a clean project', async () => {
     const dir = await realProject();
     const result = run(['spec', 'validate', '--json', '-C', dir]);

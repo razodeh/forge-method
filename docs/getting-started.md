@@ -113,12 +113,9 @@ forge spec new Vision "My Project Vision"
 
 prints `forge spec new Vision: wrote docs/forge/specs/vision.md.` `spec new` recognises eight type
 names (`Vision`, `Capability`, `NFR`, `Epic`, `Story`, `Task`, `InterfaceContract`, `DataModel` —
-case-sensitive), but only five of them actually work through this CLI today: `Vision`, `Capability`,
-`NFR`, `Epic` and `Task`. `Story`, `InterfaceContract` and `DataModel` fail every time with a
-misleading `Invalid configuration in <Type> at line 0` error — their artifact-path template needs a
-slug/name value that `spec new`'s two-positional (`<type> <title>`) CLI form has no way to supply.
-This is a genuine, disclosed gap, not a typo in this guide; use
-`Vision`/`Capability`/`NFR`/`Epic`/`Task` for now. Then:
+case-sensitive), and all eight now work through this CLI (`Story`/`InterfaceContract`/`DataModel`
+derive their own path-template `slug`/`name` placeholder from `<title>` automatically; a fix, not a
+new feature — an earlier revision of this guide disclosed those three as broken). Then:
 
 ```bash
 forge spec list       # VIS-001 Vision My Project Vision

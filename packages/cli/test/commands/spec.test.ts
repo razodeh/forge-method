@@ -44,19 +44,30 @@ describe('specNew', () => {
     await expect(specNew(ctx(project), 'ADR', 'x')).rejects.toMatchObject({ code: 'USR-003' });
   });
 
-  it('throws CFG-001 when a required path variable is missing (InterfaceContract needs {name})', async () => {
+  it("derives InterfaceContract's own real {name} path variable from the title, no vars needed", async () => {
     const project = await createTestProject();
-    await expect(
-      specNew(ctx(project), 'InterfaceContract', 'A real interface'),
-    ).rejects.toMatchObject({ code: 'CFG-001' });
+    const doc = await specNew(ctx(project), 'InterfaceContract', 'A real interface');
+    expect(doc.path).toContain('a-real-interface');
   });
 
-  it('writes an InterfaceContract once its own real path variable is supplied', async () => {
+  it('an explicit vars.name still wins over the title-derived slug for InterfaceContract', async () => {
     const project = await createTestProject();
     const doc = await specNew(ctx(project), 'InterfaceContract', 'A real interface', {
       name: 'billing-api',
     });
     expect(doc.path).toContain('billing-api');
+  });
+
+  it("derives Story's own real {slug} path variable from the title, no vars needed", async () => {
+    const project = await createTestProject();
+    const doc = await specNew(ctx(project), 'Story', 'A real story');
+    expect(doc.path).toContain('a-real-story');
+  });
+
+  it("derives DataModel's own real {slug} path variable from the title, no vars needed", async () => {
+    const project = await createTestProject();
+    const doc = await specNew(ctx(project), 'DataModel', 'A real data model');
+    expect(doc.path).toContain('a-real-data-model');
   });
 });
 
