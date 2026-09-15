@@ -16064,3 +16064,132 @@ SC10's own untested literal clauses and an overclaiming SC2 disclosure. Round 2 
 missing coverage-exclusion that would have failed `pnpm test`'s own coverage gate, SC7's cited command
 not actually proving its own claim, and the SEC-*/CFG-* code mismatch above. Round 3 independently
 re-derived every fix against real source and found nothing new.
+
+## Q192 — Post-M12 polish pass: `forge spec new` fixed for real (Story/InterfaceContract/DataModel);
+`forge workflow validate --all`'s three `unknown-artifact-type` findings investigated further, left
+disclosed rather than guess-fixed
+
+**Context:** a genuine polish/bug-hunt pass over the completed v1.0 build, starting from the two real,
+pre-existing defects `PLAN-M12.md` P7's own documentation-verification pass disclosed (Q190) rather
+than fixed (out of that piece's own pure-documentation mandate).
+
+**1. `forge spec new` fixed.** Root cause per Q190 was correctly diagnosed (`Story`/`InterfaceContract`/
+`DataModel`'s own `pathTemplate`s need a `{slug}`/`{name}` variable `specNew` never supplied), but Q190's
+own proposed fix direction — adding a third CLI positional — is not what was built. Instead, `specNew`
+(`packages/cli/src/commands/spec.ts`) now derives `slug`/`name` from `title` itself, the identical
+pattern `adrNew` (`adr.ts`) already establishes for `ADR`'s own `{slug}`: no CLI surface change needed,
+and an explicit `vars.slug`/`vars.name` still wins when a caller supplies one. All eight `spec new` types
+now work through the real CLI, verified by a new subprocess-level test (`bin.test.ts`) that runs `spec
+new` against every one of the eight and would have caught this defect before it ever reached a
+documentation-verification pass. `docs/getting-started.md` updated to remove the now-stale disclosure.
+
+**2. `forge workflow validate --all`'s three findings — investigated further, a real design question
+found, left disclosed rather than guessed at.** Confirmed exactly which three: `build-stage.workflow.
+yaml`'s own `requires.artifacts: [StagePlan]` (1) and its `freeze-contracts` step's `inputs:
+[artifact:StagePlan, ...]` (this one doesn't itself trigger a finding — `workflow/validate.ts`'s own
+`unknown-artifact-type` check reads `requires.artifacts` and `step.outputs[].type` only, never `step.
+inputs` — a further, real gap in the validator itself, not chased here), `build-stage.workflow.yaml`'s
+own `outputs: [{ type: ReviewReport }]` (2), and `implement-story.workflow.yaml`'s own `outputs: [{
+type: ReviewReport }]` (3). Both `StagePlan` and `ReviewReport` are real spec-referenced names (`10`
+§10.1's own "canonical" worked-example YAML uses both, plus a third, `TestPlan`, which `inputs`-only
+placement keeps invisible to today's validator) that were simply never added to `18` §18.7's own
+21-type registry (`packages/schemas/src/registry/artifact-types.ts`) — a real, cross-spec-file
+inconsistency (`10`'s worked example vs. `18`'s own registry table) that leaked verbatim into the real
+shipped `packages/templates/templates/workflows/{build-stage,implement-story}.workflow.yaml`.
+
+**Why this was not simply fixed by registering the two types**, unlike `spec new` above: `reviewer.
+agent.yaml`'s own `outputs` block for `ReviewReport` names a real path/cardinality but a `schema:
+review-report.schema.json` that does not exist anywhere in this repository — writing one from nothing
+would be inventing a field shape with no spec basis to check it against (`18`'s own per-type field
+tables, which every other schema in this repo transcribes, has no `ReviewReport` entry to transcribe).
+`StagePlan` is worse: the real, already-shipped `plan-stage.workflow.yaml` (the actual workflow `forge
+plan stage <id>` dispatches) produces `Epic`+`Story`+`HandoffRecord(subtype: test-plan)` — no `StagePlan`
+artifact at all — strongly suggesting `build-stage.workflow.yaml`'s own `requires.artifacts`/
+`freeze-contracts.inputs` references are the stale side of this inconsistency (transcribed from `10`
+§10.1's illustrative worked example and never updated once `plan-stage.workflow.yaml`'s own real output
+shape was later decided differently), not a type genuinely missing from the registry. Deciding which
+side is authoritative — retrofit two-to-three new registered types with real schemas, or correct the two
+workflow YAML files' own `requires`/`outputs`/`inputs` blocks to reference `Epic`/`Story`/`HandoffRecord`
+instead — is a real design decision this pass is not positioned to make correctly by guessing, matching
+this project's own "disclose a real limitation rather than fabricate a fix" discipline (`SEND-FEEDBACK`-
+adjacent precedent: `PLAN-M12.md` P5's benchmark-budget disclosure, P8's npm-availability disclosure).
+**Not fixed. Recorded here so a future piece has the full investigation rather than starting over.**
+
+Files touched: `packages/cli/src/commands/spec.ts`, `packages/cli/test/commands/spec.test.ts`,
+`packages/cli/test/bin.test.ts`, `docs/getting-started.md`.
+
+## Q193 — Post-M12 polish pass, continued: four real bugs found by adversarial fresh-eyes review
+(three fixed, tracked with real regression tests; the fourth already covered by Q192)
+
+**Context:** continuing the genuine bug-hunt pass Q192 started, three parallel fresh-context adversarial
+review agents were dispatched over `packages/engine/src`+`packages/vcs/src`, `packages/adapter-kit/src/
+grants`+`packages/extensions/src/install`+`packages/engine/src/security`, and `packages/cli/src/bin.ts`+
+`packages/tui/src` respectively — each instructed to trace concrete failure/attack scenarios through the
+real code, not report speculative nitpicks. Four real, previously-undiscovered bugs surfaced (a fifth,
+lower-confidence/currently-unreachable finding — `taint-guard.ts`'s case-sensitive `PRODUCTION_
+ENVIRONMENTS` match, latent since the function has zero production callers today — was noted but not
+fixed, left for whoever wires a real call site to it, since fixing dead code carries its own small risk
+of introducing an untested change to a function nothing yet exercises for real).
+
+**1. Fixed — concurrent `merge`-kind steps could corrupt the shared integration worktree.**
+`@forge/vcs`'s own `processMergeCandidate` doc comment states plainly it does not itself serialise
+anything, trusting its caller to. Nothing did: `packages/engine/src/dispatch/facades.ts`'s
+`createMergeQueueFacade` wrapped it with no lock, and `plan/compile.ts`'s `buildLeafNode` gives every
+`merge`-kind step an empty `produces: []`, so the scheduler's own overlap-based admission control never
+excludes two independent, unrelated merge steps (two parallel lanes, each ending in its own merge, no
+`dependsOn` edge between the two merges themselves — an entirely ordinary workflow shape) from being
+admitted in the same batch and run concurrently via `driveToCompletion`'s own `Promise.all`. Two
+concurrent calls into the same `integrationPath` then raced real `git rebase`/`git merge --no-ff`/`git
+commit` against the same working directory. **Fixed** by adding a module-level `Map<string,
+Promise<unknown>>` keyed by `integrationPath` inside `facades.ts` (the one place both real call sites —
+`dispatch/steps.ts`'s `runMergeStep` and `interaction/session.ts`'s `mergeDecideLane` — converge, since
+both go through the identical `ctx.mergeQueue` instance `run/context.ts` constructs once per run), the
+same `sessionRecordQueues`/`enqueueForProject` pattern `interaction/session.ts` already establishes for
+the identical shape of problem. A new test in `packages/engine/test/dispatch/merge.test.ts` dispatches
+two independent merge steps via `Promise.all` (matching `driveToCompletion`'s own real batch shape) and
+was verified to genuinely fail against the pre-fix code (one merge's commit silently lost) before
+passing against the fix.
+
+**2. Fixed — a hostile module/overlay's manifest text could inject ANSI/control sequences into the
+consent screen.** `packages/extensions/src/install/consent.ts`'s `describeRequestedCapabilities` builds
+the pre-install consent prompt text directly from untrusted manifest fields (`id`/`name`/MCP server
+ids/exec patterns/host strings/role names) whose schemas (`overlayCapability*Schema` here, `moduleSchema`
+in `module/schema.ts`) enforce no charset restriction. `bin.ts` already fixed the identical bug class at
+a *later* call site (the post-install "newly-widened grants" diff report) after a fresh critic round
+found it during M12 P2 — but that fix was never applied to this file, the *earlier*, more consequential
+call site: the one actual human consent checkpoint `19` §19.5 step 3 exists to protect. A crafted ESC/CSI
+sequence in an exec pattern or host string could overwrite or hide the very capability lines a human is
+meant to read before typing `y`. **Fixed** by adding a local `stripControlChars` (the identical character
+range `bin.ts`'s own function strips — `@forge/extensions` has no legal graph edge to `@forge/
+adapter-kit`, where a same-named-but-different-purpose primitive already lives, so this is a small,
+deliberate, local duplication rather than a new cross-package dependency) applied to `id`/`name`/every
+entry's `text` before `describeRequestedCapabilities` returns. A new test in `packages/extensions/test/
+install/consent.test.ts` proves a hostile manifest's ESC byte is stripped from `id`/`name`/entry text/the
+full rendered `text`.
+
+**3. Fixed — `forge init`'s own flag parser had the exact "value starting with `--` is misread as a
+missing value" bug `bin.ts`'s own `parseCommandFlags` doc comment names as already fixed everywhere in
+this package.** `packages/cli/src/init/parse-init-flags.ts`'s local `next()` helper predates that fix and
+never received it: `forge init --description "--rush this one"` (or any `--slug`/`--repo-url`/
+`--platform`/`--fallback-platform`/`--kb-root`/`--overlay`/`--preset` value starting with `--`) failed
+every time with a misleading "missing value" `USR-002`, even though `bin.ts`'s own doc comment already
+(incorrectly) cited `parseInitFlags` as one of the places following the fixed convention. **Fixed** by
+removing the `startsWith('--')` rejection, matching `parseCommandFlags`'s own "a declared value-flag's
+very next token is always consumed as its value, whatever it looks like" rule exactly. A new test in
+`packages/cli/test/init/parse-init-flags.test.ts` proves a `--`-prefixed value now parses correctly.
+
+**4. Fixed — the TUI's transcript/lane-log view had none of the terminal-injection sanitization `bin.ts`
+established as its own convention for the identical untrusted-content class.** `packages/tui/src/
+components/stream-view.tsx` (`<StreamView>`, consumed by both `sessions.tsx`'s live-facilitated-discussion
+transcript and `run-board.tsx`'s live lane transcript — both genuinely untrusted, model-/adapter-derived
+free text) rendered every line straight into Ink's own render tree with zero sanitization anywhere in the
+package (confirmed by grep). **Fixed** by adding the identical `stripControlChars` (same character range,
+same reasoning) applied once at `<StreamView>`'s own single render point — the shared choke point every
+current and future caller passes through, rather than requiring each individual screen to remember to
+sanitize its own strings. A new test in `packages/tui/test/components/stream-view.test.tsx` proves a
+crafted ESC/CSI sequence in a source line is stripped from the rendered frame.
+
+Files touched: `packages/engine/src/dispatch/facades.ts`, `packages/engine/test/dispatch/merge.test.ts`,
+`packages/extensions/src/install/consent.ts`, `packages/extensions/test/install/consent.test.ts`,
+`packages/cli/src/init/parse-init-flags.ts`, `packages/cli/test/init/parse-init-flags.test.ts`,
+`packages/tui/src/components/stream-view.tsx`, `packages/tui/test/components/stream-view.test.tsx`.

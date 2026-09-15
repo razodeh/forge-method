@@ -13097,3 +13097,66 @@ independently-verified account of exactly what is and isn't proven here; exit co
 **Rounds: 3 critic rounds (5 issues round 1, all fixed; 4 issues round 2, all fixed; round 3 clean, no
 new findings, plus one real post-commit load-triggered flake found and fixed separately). Outcome:
 WON.**
+
+## Post-M12 P1 — Genuine polish/bug-hunt pass: `forge spec new` fixed for real; `forge workflow
+validate --all` investigated further
+
+Following the completed v1.0 build, a real bug-hunt pass on the user's own request. Started from the
+two disclosed-not-fixed defects `PLAN-M12.md` P7 found (Q190).
+
+**Fixed:** `forge spec new Story/InterfaceContract/DataModel` — all three crashed with a misleading
+`CFG-001 ("Invalid configuration ... at line 0")` on every real call, because their own path templates
+need a `{slug}`/`{name}` placeholder `specNew` never supplied. Fixed by deriving it from `title`
+directly inside `specNew` (`packages/cli/src/commands/spec.ts`), the identical pattern `adrNew` already
+uses for `ADR`'s own `{slug}` — no CLI flag change needed. A new subprocess-level test in `bin.test.ts`
+now runs `forge spec new` against all eight real types through the actual CLI, closing the exact gap
+that let this hide until a documentation-verification pass happened to exercise it manually.
+
+**Investigated further, left disclosed (Q192):** `forge workflow validate --all`'s three
+`unknown-artifact-type` findings trace to `StagePlan`/`ReviewReport` — real names from `10` §10.1's own
+"canonical" worked-example YAML, never added to `18` §18.7's own registry, that leaked verbatim into the
+real shipped `build-stage`/`implement-story` workflow YAML. Fixing this correctly requires a real design
+decision (retrofit new registered types with schemas that have no spec-table basis to write from, or
+correct the two workflow files to reference the types `plan-stage.workflow.yaml` already really
+produces instead) — guessed at, not built, per this project's own disclose-don't-fabricate discipline.
+Full investigation recorded in `SPEC-QUESTIONS.md` Q192 for whoever picks this up next.
+
+**Verification:** scoped `spec.test.ts`/`bin.test.ts` runs pass; full-workspace verification pending
+before commit.
+
+## Post-M12 P2 — Genuine polish/bug-hunt pass, continued: three parallel adversarial reviews find and
+fix four real bugs
+
+Following Post-M12 P1's own manual investigation, three fresh-context subagents were dispatched in
+parallel to hunt for real bugs across `packages/engine`+`packages/vcs`, the security/extensions
+subsystems, and the CLI dispatcher/TUI, each instructed to trace concrete failure/attack scenarios
+through real code rather than report speculative nitpicks.
+
+**Fixed, each with a real regression test that was verified to fail against the pre-fix code:**
+1. **Concurrent `merge`-kind steps could corrupt the shared integration worktree** — a real,
+   ordinarily-reachable race (two independent lanes each ending in their own merge step, with no
+   `produces`/`dependsOn` overlap to stop the scheduler admitting both together), not a contrived edge
+   case. Fixed by serializing `MergeQueueFacade.process` calls per `integrationPath`
+   (`packages/engine/src/dispatch/facades.ts`), the same pattern `interaction/session.ts`'s own
+   `sessionRecordQueues` already establishes.
+2. **A hostile module/overlay's manifest text could inject ANSI/control sequences into the capability
+   consent screen** (`packages/extensions/src/install/consent.ts`) — the one real human checkpoint `19`
+   §19.5 step 3 exists to protect, previously unsanitized despite `bin.ts` already fixing the identical
+   bug class at a *later*, less consequential call site.
+3. **`forge init`'s own flag parser** (`packages/cli/src/init/parse-init-flags.ts`) still had the exact
+   "a legitimate value starting with `--` is misread as missing" bug `bin.ts`'s own `parseCommandFlags`
+   doc comment claims (incorrectly) is already fixed everywhere in this package.
+4. **The TUI's `<StreamView>`** (`packages/tui/src/components/stream-view.tsx`) rendered live,
+   model-/adapter-derived transcript and lane-log text with zero terminal-injection sanitization
+   anywhere in the whole package — the identical bug class `bin.ts` already established a fix
+   convention for, never applied here.
+
+**Noted, not fixed:** `packages/engine/src/security/taint-guard.ts`'s case-sensitive
+`PRODUCTION_ENVIRONMENTS` match — a real gap, but currently unreachable (the function has zero
+production callers today per its own doc comment); left disclosed for whoever wires a real call site.
+
+**Verification:** every fix has its own new regression test, empirically confirmed to fail against the
+pre-fix code and pass against the fix. Whole-workspace `pnpm typecheck`/`pnpm run boundaries`/`pnpm
+lint` all clean (only 4 pre-existing, unrelated prettier warnings, confirmed untouched by this pass).
+Full unscoped `node scripts/run-tests.mjs run` clean modulo the pre-existing, accepted load-sensitive
+flakes.
