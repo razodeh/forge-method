@@ -117,9 +117,18 @@ const RAW_ARTIFACT_TYPES = [
     idWidth: 4,
     collection: true,
   },
+  // Added post-v1.0, not part of the original 21: `10` §10.6's own canonical `implement-story` inner
+  // loop and `05` §5.2's `reviewer` agent persona both already named `ReviewReport` as the real
+  // output of the `review` step's `swarm-review` mode (`packages/templates/templates/workflows/
+  // implement-story.workflow.yaml`'s own `outputs: [{ type: ReviewReport }]`, a real, load-bearing
+  // step with `retry`/`onFailure: escalate`, not a stale or vestigial reference), but it was never
+  // actually registered here -- `forge workflow validate --all` reported it as an unknown artifact
+  // type on every fresh `forge init` until this fix. See `SPEC-QUESTIONS.md` for the full record.
+  { id: 'ReviewReport', idPrefix: 'REVIEW', pathTemplate: 'sessions/reviews/{id}.md', idWidth: 3 },
 ] as const;
 
-/** The 21 artifact type names `specs/18` §18.7 registers. */
+/** The 22 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`, added
+ * post-v1.0 -- see this array's own trailing entry for the full record). */
 export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
 
 /**

@@ -21,7 +21,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const templatesDir = path.join(repoRoot, 'packages', 'templates', 'templates', 'artifacts');
 
 /**
- * The 15 `@forge/templates` stubs that extend `baseFrontMatterShape` (carry their own `type` field) —
+ * The 16 `@forge/templates` stubs that extend `baseFrontMatterShape` (carry their own `type` field) —
  * `validateArtifact` selects a schema by reading `frontMatter.type`, which the 6 flat
  * "collection-entry" types (Risk, Assumption, OpenQuestion, Waiver, Environment, HandoffRecord) do
  * not have at all: those are one register entry, not a whole document, per `SPEC-QUESTIONS.md` Q28 —
@@ -38,6 +38,7 @@ const DOCUMENT_TYPE_FILES = [
   'InterfaceContract.md',
   'NFR.md',
   'RCA.md',
+  'ReviewReport.md',
   'Runbook.md',
   'SessionRecord.md',
   'Story.md',
@@ -46,11 +47,11 @@ const DOCUMENT_TYPE_FILES = [
 ];
 
 describe('validateArtifact — every @forge/templates document-shaped stub', () => {
-  it('found all 15 document-shaped stubs this describe block expects', () => {
+  it('found all 16 document-shaped stubs this describe block expects', () => {
     const allFiles = readdirSync(templatesDir).filter((name) => name.endsWith('.md'));
     const collectionFiles = allFiles.filter((name) => !DOCUMENT_TYPE_FILES.includes(name));
     expect(collectionFiles).toHaveLength(6);
-    expect(DOCUMENT_TYPE_FILES).toHaveLength(15);
+    expect(DOCUMENT_TYPE_FILES).toHaveLength(16);
   });
 
   it.each(DOCUMENT_TYPE_FILES)('%s validates as-is', (fileName) => {

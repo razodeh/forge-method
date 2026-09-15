@@ -3,7 +3,7 @@
  * allocated centrally and monotonically; never reused," this package's own cache for that.
  *
  * A separate file from `@forge/core/ids`'s own `.forge/state/ids.json`: that cache is keyed by
- * `ArtifactTypeId` (the 21-type registry), this one by `KbSection` — a genuinely different key space,
+ * `ArtifactTypeId` (the 22-type registry), this one by `KbSection` — a genuinely different key space,
  * per `SPEC-QUESTIONS.md` Q18's own note that `08` §8.3's id scheme sits outside that registry.
  * Otherwise the identical shape and the identical "provenance, not a skip-the-scan signal" contract
  * `@forge/core/ids/cache.ts` already established (`SPEC-QUESTIONS.md` Q29's own implementation note).

@@ -172,7 +172,7 @@ description: Takes a planned stage to a verified, deployable state.
 levels: [ L1, L2, L3, L4 ]           # which scale levels this applies to
 requires:
   gates_passed: [ G-Ready ]
-  artifacts: [ StagePlan ]
+  artifacts: [ Epic, Story ]
 inputs:
   - name: stageId
     type: string
@@ -191,7 +191,7 @@ steps:
     kind: agent
     agent: architect
     brief: briefs/freeze-contracts.md
-    inputs: [ artifact:StagePlan, kb:architecture/**, kb:data/** ]
+    inputs: [ artifact:Epic(*), artifact:Story(*), kb:architecture/**, kb:data/** ]
     outputs:
       - type: InterfaceContract
         cardinality: many
@@ -218,7 +218,7 @@ steps:
       kind: agent
       agent: sdet
       brief: briefs/write-failing-tests.md
-      inputs: [ "artifact:Story({{item.id}})", artifact:TestPlan ]
+      inputs: [ "artifact:Story({{item.id}})", artifact:HandoffRecord ]
       produces: [ "{{item.test_paths}}" ]
       limits: { maxTurns: 25, maxCostUsd: 1.5 }
 

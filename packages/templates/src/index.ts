@@ -3,7 +3,7 @@
  * type, per `PLAN-M1.md` P11.
  *
  * This package cannot import `@forge/schemas` (`02` §2.2: `templates: []`, zero `@forge/*`
- * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 21-member union
+ * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 22-member union
  * rather than `@forge/schemas`'s `ArtifactTypeId` — the two are kept in sync by a test at the
  * repository root (`test/templates.test.ts`), the one place allowed to depend on both packages.
  * See `SPEC-QUESTIONS.md` Q28.
@@ -13,7 +13,8 @@
  * @see SPEC-QUESTIONS.md Q28
  */
 
-/** The 21 artifact type names `specs/18` §18.7 registers, transcribed independently — see above. */
+/** The 22 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`, added
+ * post-v1.0), transcribed independently — see above. */
 export type TemplateArtifactTypeId =
   | 'Vision'
   | 'Capability'
@@ -35,7 +36,8 @@ export type TemplateArtifactTypeId =
   | 'Environment'
   | 'Runbook'
   | 'GateReport'
-  | 'HandoffRecord';
+  | 'HandoffRecord'
+  | 'ReviewReport';
 
 /**
  * Resolves a type to its template file, as a path relative to this package's own root
@@ -262,6 +264,7 @@ export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = 
   Runbook: 'templates/artifacts/Runbook.md',
   GateReport: 'templates/artifacts/GateReport.md',
   HandoffRecord: 'templates/artifacts/HandoffRecord.md',
+  ReviewReport: 'templates/artifacts/ReviewReport.md',
 };
 
 /** `15` §15.4.4's own six-group built-in skill library table, one real skill per named example

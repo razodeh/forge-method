@@ -284,10 +284,19 @@ types:
   - { id: Runbook,  idPrefix: RUN,   path: "kb/ops/runbooks/{id}-{slug}.md" }
   - { id: GateReport, idPrefix: GATE, path: "reports/gates/{gate}-{ts}.md" }
   - { id: HandoffRecord, idPrefix: HO, path: "reports/handoffs.md",                 collection: true }
+  - { id: ReviewReport, idPrefix: REVIEW, path: "sessions/reviews/{id}.md" }
 ```
 
 Adding a type requires: registry entry, JSON Schema, template, graph edge declarations, and a
 migration if it changes an existing type. Modules may add types (`18` §19 covers packaging).
+
+`ReviewReport` was added post-v1.0 (a real, previously-shipped gap, not part of the original 21):
+`10` §10.6's own canonical `implement-story` inner loop and `05` §5.2's `reviewer` agent persona both
+already named it as the real output of the `review` step's `swarm-review` mode, but it was never
+actually added to this table — `forge workflow validate --all` reported it as an unknown artifact
+type on every fresh `forge init` until this fix. No field-level shape is specified for it here (the
+identical situation `GateReport` is already in — see `SPEC-QUESTIONS.md` Q23), so its own schema
+carries no type-specific fields beyond the base front matter every artifact type shares.
 
 ## 18.8 ID allocation
 

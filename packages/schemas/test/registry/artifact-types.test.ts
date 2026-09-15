@@ -106,12 +106,14 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     idWidth: 4,
     collection: true,
   },
+  // Added post-v1.0, not part of the original 21 -- see `artifact-types.ts`'s own trailing entry.
+  { id: 'ReviewReport', idPrefix: 'REVIEW', pathTemplate: 'sessions/reviews/{id}.md', idWidth: 3 },
 ];
 
 describe('specs/18 §18.7 — the registry table', () => {
-  it('has exactly 21 types', () => {
-    expect(SPEC_TABLE).toHaveLength(21);
-    expect(ARTIFACT_TYPES).toHaveLength(21);
+  it('has exactly 22 types (21 original + ReviewReport, added post-v1.0)', () => {
+    expect(SPEC_TABLE).toHaveLength(22);
+    expect(ARTIFACT_TYPES).toHaveLength(22);
   });
 
   it('matches the spec table row-for-row, in order', () => {

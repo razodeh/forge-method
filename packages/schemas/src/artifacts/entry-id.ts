@@ -6,7 +6,7 @@
  * do not apply to it. But its `id` still has to match the registry's `idPrefix`/`idWidth` for its
  * type, exactly as a document's would; this derives that regex from the same `ARTIFACT_TYPES` data
  * `checkIdMatchesRegisteredType` uses, at module-load time, since a collection entry schema always
- * knows which type it is for (unlike the base check, which has to work for any of the 21 at once).
+ * knows which type it is for (unlike the base check, which has to work for any of the 22 at once).
  */
 import { z } from 'zod';
 

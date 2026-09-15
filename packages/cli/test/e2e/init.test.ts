@@ -7,13 +7,17 @@
  * `forge template validate --all`, `forge doctor` (`config-validity`/`manifest-structure`/`kb-lint`/
  * `spec-graph`), and `forge workflow validate --all`.
  *
- * `forge workflow validate --all` is asserted against its own real, already-diagnosed result, not a
- * blanket "zero issues": `10 §10.5`'s own real worked examples for `build-stage`/`implement-story`
- * use `StagePlan`/`ReviewReport` as real artifact types, but `18 §18.7`'s own real, canonical registry
- * table — confirmed directly against both spec files — never registers either one. This is a genuine,
- * pre-existing inconsistency between two spec documents, not a defect in this milestone's own code or
- * content; asserting it away here would hide a real, correctly-surfaced finding rather than prove the
- * validator works. See `SPEC-QUESTIONS.md` for the full record.
+ * `forge workflow validate --all` is asserted clean (zero issues) — it once genuinely was not: `10
+ * §10.5`'s own real worked examples for `build-stage`/`implement-story` used `StagePlan`/`ReviewReport`
+ * as real artifact types, but `18 §18.7`'s own real, canonical registry table never registered either
+ * one, so a fresh `forge init` reported 3 real `unknown-artifact-type` findings on `build-stage`
+ * (`requires.artifacts: [StagePlan]`, its own `outputs: [{ type: ReviewReport }]`) and 1 on
+ * `implement-story` (`outputs: [{ type: ReviewReport }]`). Fixed post-v1.0: `ReviewReport` is now a
+ * real, registered type (it was genuinely load-bearing — `10 §10.6`'s own canonical inner loop and
+ * `05 §5.2`'s `reviewer` persona both already depended on it); `StagePlan` was found to be the stale
+ * side of the inconsistency (`G-Ready.gate.yaml`'s own real `evidence:` block already names
+ * `Epic(*)`/`Story(*)`, matching what `plan-stage.workflow.yaml` actually produces) and its references
+ * were corrected to match. See `SPEC-QUESTIONS.md` for the full record.
  *
  * @see specs/22 M6
  * @see PLAN-M6.md C9
@@ -97,9 +101,8 @@ describe('E1 init', () => {
     const templateResults = await templateValidateAll();
     expect(templateResults.every((result) => result.valid)).toBe(true);
 
-    // Part 2: `forge workflow validate --all` — real, honest, non-empty output for exactly the two
-    // real, pre-existing spec-10-vs-spec-18 inconsistencies (`StagePlan`, `ReviewReport`), and nothing
-    // else. Every other real, shipped workflow is clean.
+    // Part 2: `forge workflow validate --all` — genuinely clean now that `StagePlan`/`ReviewReport`
+    // are resolved (see this file's own top-of-file doc comment for the full history).
     const workflowResults = await workflowValidateAll({
       paths,
       workflowsRoot: '.forge/workflows',
@@ -109,11 +112,6 @@ describe('E1 init', () => {
     const allWorkflowIssues = [...workflowResults.entries()].flatMap(([id, issues]) =>
       issues.map((issue) => ({ id, ...issue })),
     );
-    const unexpectedIssues = allWorkflowIssues.filter(
-      (issue) =>
-        !(issue.code === 'unknown-artifact-type' && /StagePlan|ReviewReport/.test(issue.message)),
-    );
-    expect(unexpectedIssues).toEqual([]);
-    expect(allWorkflowIssues.length).toBe(3);
+    expect(allWorkflowIssues).toEqual([]);
   });
 });

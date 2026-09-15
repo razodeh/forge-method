@@ -36,7 +36,7 @@ export type RenderArtifactPathResult =
  * `vars[name]` would resolve through the prototype chain for a name like `"constructor"` or
  * `"toString"` and return a function instead of `undefined`, silently defeating the missing-variable
  * check for a template that ever used such a name as a placeholder — `Object.entries` only ever
- * enumerates `vars`'s own properties, so the `Map` cannot contain an inherited one. None of the 21
+ * enumerates `vars`'s own properties, so the `Map` cannot contain an inherited one. None of the 22
  * registered templates use such a name today, so this specific defense is not exercised by a test
  * against real registry data — recorded as residual risk rather than tested against a synthetic
  * template the public API has no way to register.

@@ -4,6 +4,19 @@
 
 `# canonical` — `modules/<m>/workflows/<id>.workflow.yaml`
 
+_Corrected post-v1.0: this worked example originally used `StagePlan`/`TestPlan` as artifact-type
+references that `18` §18.7's own registry table never actually registered — a real, previously-shipped
+inconsistency (`forge workflow validate --all` reported 3 real `unknown-artifact-type` findings on
+every fresh `forge init` as a direct result). `TestPlan` and `StagePlan` were never produced by any
+real agent/workflow anywhere in this codebase; `plan-stage.workflow.yaml`'s own real output
+(`Epic`+`Story`+`HandoffRecord(subtype: test-plan)`) and `G-Ready.gate.yaml`'s own real `evidence:`
+block (`Epic(*)`/`Story(*)`) already establish what a ready stage's own planning artifacts actually
+are, so this worked example now matches that already-real, already-shipped shape instead of a phantom
+type nothing ever produced. `ReviewReport` (used further below, in the `review` step) was the opposite
+situation -- genuinely load-bearing, real content `10` §10.6 and `05` §5.2 both already depended on
+that `18` §18.7 simply never registered -- and is now a real, registered type instead (see `18` §18.7's
+own trailing entry). See `SPEC-QUESTIONS.md` for the full record of this decision._
+
 ```yaml
 id: build-stage
 name: Implement a stage
@@ -12,7 +25,7 @@ description: Takes a planned stage to a verified, deployable state.
 levels: [ L1, L2, L3, L4 ]           # which scale levels this applies to
 requires:
   gates_passed: [ G-Ready ]
-  artifacts: [ StagePlan ]
+  artifacts: [ Epic, Story ]
 inputs:
   - name: stageId
     type: string
@@ -31,7 +44,7 @@ steps:
     kind: agent
     agent: architect
     brief: briefs/freeze-contracts.md
-    inputs: [ artifact:StagePlan, kb:architecture/**, kb:data/** ]
+    inputs: [ artifact:Epic(*), artifact:Story(*), kb:architecture/**, kb:data/** ]
     outputs:
       - type: InterfaceContract
         cardinality: many
@@ -51,7 +64,7 @@ steps:
       kind: agent
       agent: sdet
       brief: briefs/write-failing-tests.md
-      inputs: [ artifact:Story({{item.id}}), artifact:TestPlan ]
+      inputs: [ artifact:Story({{item.id}}), artifact:HandoffRecord ]
       produces: [ "{{item.test_paths}}" ]
       limits: { maxTurns: 25, maxCostUsd: 1.5 }
 

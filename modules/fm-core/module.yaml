@@ -335,6 +335,7 @@ provides:
       Runbook,
       GateReport,
       HandoffRecord,
+      ReviewReport,
     ]
 
   # See the header comment above: real, already-built content this module does not itself own or

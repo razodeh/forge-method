@@ -1,14 +1,14 @@
 /**
  * `kbEntrySchema` — `08` §8.3's generic KB entry format: the one schema that does not already exist
- * anywhere in `@forge/schemas`'s 21-type registry (`SPEC-QUESTIONS.md` Q18 — a KB entry uses its own
+ * anywhere in `@forge/schemas`'s 22-type registry (`SPEC-QUESTIONS.md` Q18 — a KB entry uses its own
  * `KB-{SECTION}-####` id shape, not the registry's `^[A-Z]+-\d{3,4}(-\d+)?$` pattern, and is not one
- * of the 21 registered types).
+ * of the 22 registered types).
  *
  * Unlike every sibling schema in `@forge/schemas/artifacts` (which validate front matter alone),
  * this schema's input also carries `body` (`PLAN-M3.md` P6's own Surface: "a `superRefine` requiring
  * Verification body content whenever `confidence: 'verified'`") — a KB entry's body structure is
  * itself part of what `08` §8.3 normatively requires, not a separate later-phase check the way `18`
- * §18.6's `requiredSections` mechanism treats the 21 registry types.
+ * §18.6's `requiredSections` mechanism treats the 22 registry types.
  *
  * @see specs/08 §8.3
  * @see SPEC-QUESTIONS.md Q18

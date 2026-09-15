@@ -276,7 +276,7 @@ follow_on:
 
   it('WORKFLOW_INDEX and TEMPLATE_INDEX are unaffected by this piece (sanity check on the shared index module)', () => {
     expect(Object.keys(WORKFLOW_INDEX)).toHaveLength(20);
-    expect(Object.keys(TEMPLATE_INDEX)).toHaveLength(21);
+    expect(Object.keys(TEMPLATE_INDEX)).toHaveLength(22);
   });
 
   // T4's own Checks text: "confirmation that F-TECH-1's own framework definition is real and

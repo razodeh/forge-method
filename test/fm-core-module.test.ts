@@ -227,7 +227,7 @@ describe('every id fm-core/module.yaml provides resolves to something real on di
     },
   );
 
-  it('provides.artifactTypes names exactly all 21 real TEMPLATE_INDEX ids -- the full base template registry', () => {
+  it('provides.artifactTypes names exactly all 22 real TEMPLATE_INDEX ids -- the full base template registry', () => {
     expect([...mod.provides.artifactTypes].sort()).toEqual(Object.keys(TEMPLATE_INDEX).sort());
   });
 
