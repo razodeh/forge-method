@@ -27,12 +27,13 @@ software products only. See `specs/01` §1.5 for the full non-goals list.
 
 ## Status
 
-FORGE is pre-release, built milestone by milestone against the spec pack in [`specs/`](specs/). The
-`forge` CLI is real and runs from a checkout of this repository today; it is not yet published to
-npm, so `npx forge-method` is aspirational until the release pipeline (`specs/22` M12) ships.
-Everything documented here has been run against the actual, current `forge` CLI, including the two
-genuine, pre-existing defects the walkthrough surfaces and discloses rather than hides — see
-[`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough.
+FORGE is pre-release, built milestone by milestone against the spec pack in [`specs/`](specs/). All
+12 milestones are complete: the `forge` CLI is real and runs from a checkout of this repository
+today, and the changesets release pipeline (`specs/22` M12) is built and ready. FORGE has not yet
+had its first real `npm publish`, so `npx forge-method` is not runnable yet — that is a real,
+separate action, not a missing feature. Everything documented here has been run against the actual,
+current `forge` CLI — see [`docs/getting-started.md`](docs/getting-started.md) for the full
+walkthrough.
 
 ## Quickstart
 
@@ -66,11 +67,23 @@ packages/     the FORGE monorepo — cli, engine, core, adapters, kb, methods, s
 specs/        the normative specification pack (01–23)
 modules/      shipped method modules (fm-core, fm-web, fm-service, …)
 docs/         this documentation set
+process/      the build history — the gauntlet loop process, milestone plans, and every real
+              spec-vs-implementation decision made while building this codebase
 ```
 
-## Contributing / building FORGE itself
+## Contributing
 
-This codebase is built using its own "gauntlet loop" discipline — see
-[`BUILD-PROMPT.md`](BUILD-PROMPT.md), [`GAUNTLET-LOG.md`](GAUNTLET-LOG.md) and
-[`SPEC-QUESTIONS.md`](SPEC-QUESTIONS.md) for how each piece is built, reviewed and recorded, and
-[`PLAN-M12.md`](PLAN-M12.md) (and its predecessors) for the current milestone's cut of work.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to build, test, and submit changes — including the
+"gauntlet loop" discipline this entire codebase is built with: every piece is implemented against
+the spec, attacked by a separate, fresh-context critic, and only merged once it survives review with
+nothing left to fix. [`process/`](process/) is the full build history — the process itself
+(`BUILD-PROMPT.md`, `QUALITY-BAR.md`), the running record of how each piece was built and every real
+spec-vs-implementation decision made along the way (`GAUNTLET-LOG.md`, `SPEC-QUESTIONS.md`), and the
+milestone-by-milestone cuts of work (`plans/PLAN-M1.md` through `PLAN-M12.md`).
+
+Please also read our [Code of Conduct](CODE_OF_CONDUCT.md). Security issues should be reported per
+[`SECURITY.md`](SECURITY.md), not as a public issue.
+
+## License
+
+[MIT](LICENSE) © Radwan Abu-Odeh.

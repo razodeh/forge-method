@@ -1,11 +1,11 @@
 # Getting started with FORGE
 
 This is a real, step-by-step walkthrough. Every command below was run against the actual, current
-`forge` CLI while writing this document — none of it is aspirational. Where a natural next step
-would need a command that isn't wired into the CLI yet, or a shipped command has a genuine,
-pre-existing defect (there are two, disclosed inline below — a `workflow validate --all` finding and
-a `spec new` type-coverage gap), this guide says so explicitly instead of silently showing you a
-clean run that doesn't match reality.
+`forge` CLI while writing this document — none of it is aspirational. Two genuine defects this guide
+originally disclosed (a `workflow validate --all` finding and a `spec new` type-coverage gap) have
+since been fixed; where a natural next step would still need a command that isn't wired into the CLI
+yet, this guide says so explicitly rather than silently showing you a clean run that doesn't match
+reality.
 
 ## 0. What you need
 
@@ -18,9 +18,10 @@ clean run that doesn't match reality.
   environment, not just an interactive `claude auth login`. `forge doctor` (step 3 below) tells you
   exactly what's missing if anything is.
 
-A FORGE checkout is not yet published to npm (the changesets release pipeline is still landing — see
-`specs/22` M12), so every command below is run from a checkout of this repository, either via the
-`pnpm forge` script alias or directly:
+FORGE has not yet had its first real npm publish (the changesets release pipeline — `specs/22` M12 —
+is built and ready, but running it is a real, separate action nobody has taken yet), so every
+command below is run from a checkout of this repository, either via the `pnpm forge` script alias or
+directly:
 
 ```bash
 pnpm install
@@ -97,13 +98,14 @@ forge skill list    # the built-in skill library materialized into your project
 forge agent validate --all      # "forge agent validate --all: no real findings."
 ```
 
-`forge workflow validate --all` is also real and wired, but — unlike `agent validate --all` — it
-does **not** come back clean on a stock, freshly initialized project: it reports three real
-`unknown-artifact-type` findings against the shipped `build-stage`/`implement-story` workflows
-(`StagePlan`/`ReviewReport` referenced but not yet registered artifact types) and exits non-zero.
-This is a genuine, pre-existing defect in the shipped workflow definitions, not something this
-project caused or something this guide can talk you out of — reproducible on any fresh `forge init`.
-Run it, expect that output, and don't mistake it for something you broke.
+```bash
+forge workflow validate --all   # "forge workflow validate --all: no real issues."
+```
+
+comes back clean too — an earlier revision of this guide disclosed three real
+`unknown-artifact-type` findings here (`StagePlan`/`ReviewReport` referenced but not yet
+registered); both were fixed post-M12 (`ReviewReport` registered as a real type, `StagePlan`
+corrected to the real `Epic`/`Story` artifacts the shipped workflows actually depend on).
 
 ## 4. Author your first spec artifact
 
