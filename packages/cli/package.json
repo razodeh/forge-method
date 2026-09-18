@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": false,
   "type": "module",
-  "description": "FORGE — a spec-driven, agent-orchestrating development method and CLI.",
+  "description": "FORGE (Framework for Orchestrated, Rigorous, Governed Engineering) — a spec-driven, agent-orchestrating development method and CLI.",
   "license": "MIT",
   "bin": {
     "forge": "bin/preflight.cjs"

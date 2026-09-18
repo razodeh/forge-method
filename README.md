@@ -1,5 +1,7 @@
 # FORGE
 
+**F**ramework for **O**rchestrated, **R**igorous, **G**overned **E**ngineering.
+
 FORGE turns a software product idea into a system that a top-tier engineering organisation would
 recognise as properly built — by running an explicit, opinionated, spec-driven software engineering
 process across a team of specialised AI agents, with a durable project knowledge body and
