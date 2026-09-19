@@ -317,6 +317,58 @@ scripts/verify-success-criteria.mjs         # asserts SC1–SC11 with evidence
 
 ---
 
+## M13 — Live-run readiness
+
+Post-v1.0. Not part of the original 12-milestone build plan `specs/22` §22.2 describes — added once a
+real, previously-undiscovered gap was found by direct inspection after M12: `@forge/agents`' own
+prompt compiler (`05` §5.3's nine blocks), operating contract (`05` §5.5) and context-packing pipeline
+(`05` §5.4, `@forge/kb/pack`) are all real and tested, but `@forge/engine`'s own dispatch never calls
+any of them. A real agent step is sent `node.brief` — a raw `briefs/<name>.md` path from workflow
+YAML — as its entire prompt, verbatim; no `briefs/` or `prompts/` content ships anywhere in this
+codebase for any of the 62 distinct brief references or 62 distinct agent prompt references the
+shipped modules make. `packages/cli/src/commands/workflow.ts`'s own validation oracle has masked this
+(`briefExists: () => true`), and no test has caught it because every test runs against
+`FakePlatformAdapter`, which never reads a session's own `prompt` field. No live run — `FORGE_LIVE=1`
+— has ever been performed against this codebase. See `process/plans/PLAN-M13.md` for the full
+investigation and piece breakdown.
+
+**Build:** real brief and agent-prompt content for every workflow/gate/agent reference the shipped
+modules make; a real per-step tool grant and model resolution (replacing one hardcoded grant and
+"whichever model the adapter lists first"); wiring `compilePrompt`/`packForStep` into both real
+dispatch paths (`@forge/engine/dispatch`'s `buildSessionRequest`,
+`@forge/engine/interaction`'s agent-step dispatch); an output-contract check after an agent step
+completes; a strict test-adapter mode that fails a session outright on an empty or bare-path-shaped
+prompt, so this class of gap cannot silently recur; the `05` §5.4 point 4 context-expansion protocol,
+if not already reachable.
+
+**Do not build:** a tier→model mapping UI or a new model-selection command — `05` §5.8's own static
+config table (`models.tiers.*`) is the mechanism; this milestone wires config resolution into a real
+per-step call, it does not design a new one.
+
+**Acceptance**
+- Every workflow/gate `brief:` reference and every agent's `prompt.system`/`prompt.briefs.*`
+  reference resolves to real, non-empty content; `forge workflow validate --all` and
+  `forge agent validate --all` both fail with a named `unknown-brief`/`unknown-prompt` finding for a
+  reference with no real backing file, never a silent pass.
+- A dispatched agent step's real `SessionRequest` contains `05` §5.3's nine compiled blocks, the
+  agent's own resolved tool grant (narrowed by ceiling, never one flat global default), and a model
+  resolved from `05` §5.8's tier mapping.
+- `.forge/state/runs/<runId>/steps/<stepId>/prompt.md` exists for every real agent step, matching
+  what was actually sent (`05` §5.3's own "compiled prompts are always written... mandatory" line).
+- A step whose declared `outputs` do not exist or do not validate against their registry schema
+  fails as a real, typed step failure, not a silently-accepted success.
+- A real, human-run live session (`FORGE_LIVE=1`, a real adapter credential) completes at least one
+  full agent step end to end.
+
+**Exit tests**
+```
+pnpm test                                   # everything, all suites, including the new prompt-assembly suite
+pnpm test -- --grep "M13"
+FORGE_LIVE=1 pnpm test -- --grep "live"     # requires a real adapter credential; run by the project owner
+```
+
+---
+
 ## 22.1 Cross-cutting rules for the whole build
 
 1. **No milestone is complete with a failing exit test, a skipped test, or a `TODO` in production
@@ -341,11 +393,12 @@ With more than one implementer or lane, the dependency graph permits:
 
 ```
 M1 ──┬── M2 ──┬── M3 ──┐
-     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12
+     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12 ── M13
      └── M4 ──┘        ┘                          └── M9 ──────────┘
 ```
 
 M3 and M4 are independent of each other. M9 (TUI) can begin once M6 stabilises the engine's read
 model. Everything else is serial, and M5 is the bottleneck — resist the temptation to start M6's
 content authoring before the engine's resume guarantee is proven, because content written against an
-unstable engine gets rewritten.
+unstable engine gets rewritten. M13 is drawn serial after M12 because it was discovered after M12
+shipped, not because anything in M1–M12 structurally requires it first.

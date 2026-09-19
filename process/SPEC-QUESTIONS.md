@@ -16261,3 +16261,40 @@ workflow validate --all`, closing the gap Q192 disclosed rather than fixed.
 **Verification:** whole-workspace `pnpm typecheck`/`pnpm run boundaries`/`pnpm lint` all clean (only 4
 pre-existing, unrelated prettier warnings). Full unscoped `node scripts/run-tests.mjs run` clean modulo
 the pre-existing, accepted load-sensitive flakes (`crash-resume.test.ts` and its own two dependents).
+
+## Q195 — M13 added post-v1.0: `specs/22` never had a milestone for wiring `@forge/agents`' own
+prompt compiler into real dispatch, because M5's own Q62 part 2 deferral to M6 was never fully closed
+
+**Context:** Q62 part 2 (M5) deliberately deferred real prompt compilation and role-aware dispatch
+"wholesale to M6, not partially built now." M6 built the real mechanism — `@forge/agents/prompt`'s
+`compilePrompt` (`05` §5.3's nine blocks), `OPERATING_CONTRACT` (`05` §5.5), and
+`@forge/agents/context`'s `packForStep`/`resolveContextRequest` (`05` §5.4) — all real, all tested.
+What M6 never did, and no milestone after it ever caught, is call any of it from
+`@forge/engine/dispatch`. `buildSessionRequest` (`packages/engine/src/dispatch/steps.ts`) still does
+exactly what Q62 part 2 described as M5's own deliberately-minimal placeholder: `node.brief` (an
+opaque string) passed straight through as `SessionRequest.prompt`, no role-aware compilation at all.
+The M5-era placeholder was never replaced — M13 replaces it now, seven milestones later.
+
+Two more real, related gaps confirmed by direct inspection while investigating this: (1) the model
+resolution this same Q62 entry's own text already named as a real gap ("M5 has no tier/role system at
+all... supplied by whoever constructs `ctx`") was never closed either — `resolveModel`
+(`packages/cli/src/commands/run/context.ts:54`) still takes whichever model the adapter's own
+`listModels()` lists first, never `05` §5.8's real tier mapping; (2) every step is dispatched with one
+hardcoded `DEFAULT_TOOLS` grant (`context.ts:45,284`) regardless of the dispatched agent's own
+declared `tools` block — a real security-relevant gap (`reviewer`, declared `write: false`, actually
+runs with write access; `sdet`/`developer`, which must run tests, actually run with `exec: false`).
+
+**Decision:** add M13 to `specs/22` (this milestone was never going to fit inside a "post-M12 polish
+pass" — it's real, substantial, multi-package work: 124 content files, a security-relevant grant
+resolver, and a live-adapter smoke test) rather than silently building it as an unnumbered addendum.
+Full investigation and piece breakdown: `process/plans/PLAN-M13.md`.
+
+**Why this was never caught by any exit test through M12.** Every test in this codebase — including
+M12 P9's own `scripts/verify-success-criteria.mjs`, which explicitly re-verified SC1-SC11 with real
+evidence — runs against `@forge/testkit`'s `FakePlatformAdapter`, which accepts and ignores whatever
+`SessionRequest.prompt` it's given; nothing anywhere asserts the prompt's own content is well-formed
+or non-trivial. `FORGE_LIVE=1`, the one real end-to-end path that would have caught this, has never
+been run against this codebase (a real, standing gap `01` §1.8 SC4/SC6 and `verify-success-criteria.
+mjs` Q191 already disclosed for unrelated reasons). M13 P6 builds a strict test-adapter mode
+specifically so this class of gap — real, tested infrastructure with zero real callers — cannot recur
+silently a second time.
