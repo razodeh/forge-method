@@ -1,0 +1,213 @@
+# PLAN-M13 — Live-run readiness: real agent prompts, grants and models
+
+**Status: draft, awaiting approval. Nothing here is built.**
+
+Post-v1.0. `specs/22` defines M1–M12 only, so this milestone has no spec entry yet — P0 below adds
+one before any code, per this project's own spec-first rule.
+
+## Why this milestone exists
+
+Found on 2026-09-19 while checking how FORGE affects token usage: **a real agent step today receives
+no usable prompt.** Every test passes because every test runs against `FakePlatformAdapter`, which
+never reads the prompt. No live run has ever been done.
+
+Confirmed by direct inspection:
+
+- **Dispatch sends a file path as the prompt.** `buildSessionRequest`
+  (`packages/engine/src/dispatch/steps.ts:260-261`) sets `prompt: node.brief ?? ''` and
+  `systemPrompt: { mode: 'append', text: '' }`. `node.brief` is the raw workflow YAML value, e.g.
+  `briefs/freeze-contracts.md`. The session-step path
+  (`packages/engine/src/interaction/dispatch-agent-step.ts:61`) does the same.
+- **The brief files do not exist.** Shipped workflows and gates reference 62 distinct
+  `briefs/*.md` files; the 34 shipped agents reference 62 distinct `prompts/*.md` files
+  (`prompt.system` plus `prompt.briefs.*`). No `briefs/` or `prompts/` directory exists anywhere in
+  the repo. The CLI's validation oracle hides this: `briefExists: () => true`
+  (`packages/cli/src/commands/workflow.ts:110`).
+- **The prompt compiler is built, tested, and never called.** `@forge/agents/prompt` has
+  `compilePrompt` (`05` §5.3's nine blocks), the verbatim `OPERATING_CONTRACT` (`05` §5.5) and
+  `writePromptRecord`. `@forge/agents/context` has `packForStep`, `resolveContextRequest` and
+  `markExternalContent`. None has a caller outside `packages/agents/`.
+- **Every agent runs with the same tool grant.** `packages/cli/src/commands/run/context.ts:45,284`
+  passes one `DEFAULT_TOOLS = { read, write: true, exec: false, network: 'none' }` for every step.
+  The agent's own `tools` block is ignored, so `reviewer` (declared `write: false`) gets write
+  access, and `developer`/`sdet` (which must run tests) get no exec.
+- **No tier-to-model mapping.** `resolveModel` (`context.ts:54`) picks the first model the adapter
+  lists; `05` §5.8's tier mapping is unbuilt (`SPEC-QUESTIONS.md` Q62 part 2 disclosed this).
+- **Declared step `outputs` are never checked.** Nothing under `packages/engine/src/dispatch/` reads
+  `node.outputs`, although block [1] of every prompt will promise "output that fails validation is
+  rejected".
+
+To confirm during the build, not yet verified: whether the `FORGE_REQUEST_CONTEXT` expansion loop
+(`05` §5.4 point 4) is wired anywhere, and whether `renderRoleBlock` reads `prompt.system` at all.
+
+## Surface decisions this plan commits to
+
+- **Wiring, not rewriting.** The compiler, context pack and operating contract already exist and are
+  tested. This milestone calls them from dispatch; it does not redesign them.
+- **Brief and prompt content ships in `@forge/templates`**, indexed like workflows and gates
+  (`BRIEF_INDEX`, `PROMPT_INDEX`) and copied into `.forge/` by `forge init` — the same mechanism
+  `fm-core/module.yaml`'s own header comment describes for every other kind of fm-core content.
+- **`engine → agents` and `engine → kb` are already legal edges**, so no graph change is needed for
+  the wiring itself.
+- **The system prompt carries blocks [1]–[3] and [5]–[9]; the user prompt carries block [4] (the
+  brief).** To be confirmed against `07` §7.2's `SessionRequest` contract in P5; recorded in
+  `SPEC-QUESTIONS.md` either way.
+
+---
+
+## P0 — Spec entry for M13
+
+**Surface:** `specs/22-build-plan-and-milestones.md` (new M13 section: Build, Acceptance, Exit
+tests), plus a resolution note on `SPEC-QUESTIONS.md` Q62 part 2.
+
+**Checks:** acceptance is stated as observable behaviour — "a dispatched agent step's session
+request contains all nine compiled blocks; its tools equal the agent's resolved grant; a compiled
+`prompt.md` exists for every agent step".
+
+**Depends on:** nothing.
+
+## P1 — Brief and prompt content resolution
+
+**Mandate:** make a brief reference resolve to real text, and make a missing one a real error.
+
+**Surface:** `packages/templates/src/index.ts` (`BRIEF_INDEX`, `PROMPT_INDEX`),
+`packages/cli/src/init/content.ts` (copy into `.forge/briefs/`, `.forge/prompts/`), a loader in
+`@forge/agents` or `@forge/engine` (decided by the piece), and
+`packages/cli/src/commands/workflow.ts` — replace `briefExists: () => true` with a real check.
+
+**Checks:** a workflow naming a brief that does not exist fails `forge workflow validate --all` with
+`unknown-brief`; a brief's text, not its path, reaches the compiler; override layering
+(`.forge/overrides/`) works for briefs the way it does for other content.
+
+**Depends on:** P0. Note: turning on the real `briefExists` check makes validation fail until P2
+lands, so P1 and P2's first batch merge together.
+
+## P2 — Author the 62 workflow and gate briefs
+
+**Mandate:** the content itself. Each brief states the task, its acceptance criteria and the inputs
+it expects — block [4] of `05` §5.3.
+
+**Surface:** `packages/templates/templates/briefs/*.md`. Cut into three judgeable batches:
+
+- **P2a** — planning path (`intake` → `plan-stage`), the briefs SC1 depends on.
+- **P2b** — build/verify/deliver path (`build-stage`, `implement-story`, `verify-stage`, …), SC2/SC6.
+- **P2c** — gate advisory critiques and the remaining workflows.
+
+**Checks:** every brief referenced anywhere exists and every brief file is referenced (both
+directions, the `TEMPLATE_INDEX` test pattern); no `TODO`/`FIXME`; a brief names only inputs its
+step actually declares; Handlebars expressions use only declared helpers.
+
+**Depends on:** P1.
+
+## P3 — Agent system prompts and agent-level briefs
+
+**Mandate:** the 62 `prompts/*.md` files the 34 agents reference.
+
+**Open question the piece must settle first:** an agent's `prompt.briefs.*` and a workflow step's
+`brief:` look like two sources for the same block. `05` §5.3 does not say which wins. Record the
+answer in `SPEC-QUESTIONS.md` before writing content — it may turn out that the role block is
+rendered entirely from the agent's structured fields and `prompt.system` is supplementary.
+
+**Checks:** as P2, plus `forge agent validate --all` fails on a missing prompt file.
+
+**Depends on:** P1. Independent of P2.
+
+## P4 — Per-step tool grant and model resolution
+
+**Mandate:** replace the one global grant and the first-listed model with the agent's own.
+
+**Surface:** a resolver (in `@forge/agents` or `@forge/engine`) producing, per step: the agent's
+`tools` narrowed by its ceiling and any overlay (`@forge/extensions`' existing `checkToolCeiling`/
+`mergeGrants`), and a model from `05` §5.8's tier mapping via config. `context.ts` stops supplying
+`DEFAULT_TOOLS`/`resolveModel` as the answer for every step.
+
+**Checks:** `reviewer` is dispatched with `write: false`; `sdet` with its declared exec patterns; a
+grant above the ceiling is refused; an unmapped tier is a named error, not a silent default; the
+hard denylist (S2) still applies on top.
+
+**Depends on:** P0. Independent of P1–P3. Security-relevant — expect a hostile critic round.
+
+## P5 — Wire prompt assembly into dispatch
+
+**Mandate:** the actual fix. Both dispatch paths build a real session request.
+
+**Surface:** `packages/engine/src/dispatch/steps.ts` (`buildSessionRequest`),
+`packages/engine/src/interaction/dispatch-agent-step.ts`, `ExecuteStepContext` (agent registry, KB
+backend/tree, config budgets, autonomy), `packages/cli/src/commands/run/context.ts` (construct
+them).
+
+- Load the step's `AgentDefinition`; `packForStep`; `compilePrompt` with constraints from P4,
+  budget and autonomy from config, and definition-of-done from the step's gate checks.
+- Write `.forge/state/runs/<runId>/steps/<stepId>/prompt.md` via `writePromptRecord` — `05` §5.3
+  calls this mandatory. Record the context pack's composition in the step record.
+- Resume must recompile an identical prompt for an identical step (determinism).
+
+**Checks:** a dispatched step's request contains all nine blocks; blocks [1] and [6] are unchanged
+by a hostile KB entry or skill body; the prompt record exists and matches what was sent; packed
+content from untrusted sources is wrapped and taints the step; crash-resume still converges.
+
+**Depends on:** P1, P4. Needs at least P2a for an end-to-end test on a real workflow.
+
+## P6 — A test adapter that reads the prompt
+
+**Mandate:** make this class of gap impossible to miss again.
+
+**Surface:** `@forge/testkit` — a strict mode where the fake adapter fails a session whose prompt
+is empty, is a bare file path, or lacks the operating contract. A repository-level test compiles
+every shipped workflow and asserts every agent step resolves to a real agent, a real brief and a
+non-empty compiled prompt.
+
+**Checks:** reverting P5 makes this suite fail.
+
+**Depends on:** P5.
+
+## P7 — Output contract check after an agent step
+
+**Mandate:** what block [1] promises. After an agent step, each declared `outputs` entry exists at
+its registry path and validates against its schema; failure is a `validation`-class step failure.
+
+**Known dependency:** the retry loop has no production callers (disclosed at M11 P11), so a
+validation failure fails the step rather than retrying. Wiring retry is out of scope here; recorded,
+not hidden.
+
+**Depends on:** P5.
+
+## P8 — Context expansion protocol
+
+**Mandate:** `05` §5.4 point 4 — resolve `FORGE_REQUEST_CONTEXT:` mid-session via the existing
+`resolveContextRequest`. First confirm whether any of this is already wired.
+
+**Depends on:** P5. Lowest priority; can slip to a later milestone without blocking a live run.
+
+## P9 — First live smoke run (human-run)
+
+**Mandate:** one cheap real step end to end with `FORGE_LIVE=1` and a real `ANTHROPIC_API_KEY`.
+Needs the owner's key and spends real money, so it is run by the owner, not by an agent. Findings
+go to `SPEC-QUESTIONS.md`; expect some.
+
+**Depends on:** P5, P2a.
+
+---
+
+## Sequencing
+
+```
+P0 ─┬─ P1 ─┬─ P2a ─ P2b ─ P2c
+    │      └─ P3
+    └─ P4 ─────────┐
+           P1 ─────┴─ P5 ─┬─ P6
+                          ├─ P7
+                          ├─ P8
+                          └─ P9 (needs P2a)
+```
+
+P2/P3 are content and can run alongside P4. P5 is the join point. Same gauntlet discipline as
+M1–M12; before declaring M13 complete, verify every `## M13 P<n>` log entry exists and that P6's
+suite fails when P5 is reverted.
+
+## Decisions needed from the owner
+
+1. **Approve adding M13 to `specs/22`** (P0), or name it something else.
+2. **Content volume.** 124 content files (62 briefs + 62 agent prompts). Recommended: author all of
+   them, but in the order P2a → P2b → P3 → P2c so a live run is possible after P2a + P5.
+3. **P9** needs your API key and a small spend. Say when you want it run.
