@@ -45,8 +45,15 @@ import type { ToolGrant } from '../types/tool-grant.ts';
  * risk from command-chaining, letting a step with only `exec: ['pnpm test*']` overwrite an arbitrary
  * path the process can write to). Both are shell metacharacters exactly as much as `;`/`&`/`|` are,
  * so both are now covered: `\n`, `\r`, `<`, `>`.
+ *
+ * Exported: a consumer that reasons about whether granting one pattern could exceed another (`@forge/agents/resolve`'s `patternCoversPattern`, `PLAN-M13.md` P4) needs the identical
+ * shell-metacharacter definition to correctly reason about whether granting an *exact*-match pattern
+ * (which — deliberately, see `matchesExecPattern` below — never itself gets this check at enforcement
+ * time) could let through something a wildcard ceiling entry's own enforcement-time check would have
+ * refused. A second, independently-written copy of this regex is exactly the kind of drift this module
+ * exists to prevent elsewhere (`isHostAllowed`'s own shared case-folding is the sibling precedent).
  */
-const SHELL_OPERATOR_PATTERN = /[;&|`<>\r\n]|\$\(/;
+export const SHELL_OPERATOR_PATTERN = /[;&|`<>\r\n]|\$\(/;
 
 function matchesExecPattern(pattern: string, command: string): boolean {
   if (pattern.endsWith('*')) {

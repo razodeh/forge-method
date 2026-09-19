@@ -6,5 +6,5 @@
  */
 export { describeGrant } from './describe.ts';
 export { isHardDenylisted } from './denylist.ts';
-export { isExecAllowed } from './exec.ts';
+export { isExecAllowed, SHELL_OPERATOR_PATTERN } from './exec.ts';
 export { isHostAllowed } from './network.ts';

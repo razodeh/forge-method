@@ -977,6 +977,35 @@ export const ERROR_CODES = {
     remedy:
       "Check the underlying telemetry error's own remedy (chained as this error's cause) for the specific next action.",
   },
+  'RUN-077': {
+    // `@forge/agents/resolve`'s own `resolveStepToolGrant` (`PLAN-M13.md` P4): a project overlay's
+    // requested tool grant for a step's agent exceeds that agent's own declared ceiling, with no
+    // covering, unexpired `security.toolCeilingEscalations` entry -- distinct from `CFG-507` (I7's
+    // own whole-resolved-set re-assertion of the identical underlying `checkToolCeiling`, at module
+    // install/compile time): this fires per real dispatched step, at run time, not at install time, so
+    // it carries its own code rather than reusing one whose own `usage` exit code and message read as
+    // a `forge extensions compile`-time finding.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { agentId: string; detail: string }) =>
+      `Agent ${show(d.agentId)}'s resolved tool grant exceeds its ceiling: ${show(d.detail)}.`,
+    remedy:
+      'Reduce the requested grant to within the ceiling, or add a matching, unexpired escalation.',
+  },
+  'RUN-078': {
+    // `@forge/agents/resolve`'s own `resolveStepModel` (`PLAN-M13.md` P4, `05` §5.8): an agent's
+    // effective model tier (its own declared `model.tier`, or a project's `models.overrides` entry for
+    // its id) has no resolvable model for the adapter dispatching it -- either the effective tier
+    // itself is not a real tier (a bad `models.overrides` value; `05` §5.8's own worked example is
+    // role id -> tier name, but nothing schema-validates it against the real three-tier set), or
+    // `models.tiers.<tier>` simply has no entry (or only a blank one) for this adapter.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { agentId: string; detail: string }) =>
+      `Agent ${show(d.agentId)} has no resolvable model: ${show(d.detail)}.`,
+    remedy:
+      'Fix models.overrides to name frugal, balanced or max, and add a models.tiers entry for that tier and adapter in .forge/config.yaml.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

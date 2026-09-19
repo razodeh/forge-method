@@ -10,7 +10,8 @@
     "./context": "./src/context/index.ts",
     "./prompt": "./src/prompt/index.ts",
     "./interaction": "./src/interaction/index.ts",
-    "./handoff": "./src/handoff/index.ts"
+    "./handoff": "./src/handoff/index.ts",
+    "./resolve": "./src/resolve/index.ts"
   },
   "engines": {
     "node": ">=20.10"

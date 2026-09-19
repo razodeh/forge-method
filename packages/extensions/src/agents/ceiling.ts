@@ -96,8 +96,13 @@ export function isEscalationRefused(
  * an escalation's `grant` as only the fields it widens (`{ deploy: true, network: full }`, nothing
  * about `write`/`exec`), so checking a request against `escalation.grant` alone would treat every
  * field the escalation is silent on as denied, refusing a request the *ceiling* already permits.
+ *
+ * Exported: this is a generic "base grant, then an override's own defined fields win" merge, not
+ * inherently escalation-specific — `PLAN-M13.md` P4 reuses it unchanged for the identical operation
+ * applying a project overlay's own requested `tools:` on top of an agent's base declared grant, rather
+ * than a second, drifting copy of this same field-by-field merge.
  */
-function mergeGrants(ceiling: ToolGrant, escalation: ToolGrant): ToolGrant {
+export function mergeGrants(ceiling: ToolGrant, escalation: ToolGrant): ToolGrant {
   // Spreading `escalation` directly could set a key to a literal `undefined` (`exactOptionalPropertyTypes`
   // treats "key absent" and "key present with value undefined" as different things) if `escalation`
   // itself ever carried one — filtering first means only escalation's genuinely-defined fields

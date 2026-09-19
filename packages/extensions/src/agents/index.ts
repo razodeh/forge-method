@@ -7,6 +7,7 @@
 export {
   checkToolCeiling,
   isEscalationRefused,
+  mergeGrants,
   type CeilingResult,
   type CeilingViolation,
 } from './ceiling.ts';
