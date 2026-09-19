@@ -13431,3 +13431,56 @@ and the 20 missing ones written. Verification scoped by coordinator instruction 
 tests; `pnpm typecheck` clean (21/21; an earlier run showed three `assembly`-missing errors in
 `test/fm-*-workflow.test.ts`/`live-smoke.test.ts`, P5's in-flight change, since resolved); `pnpm run boundaries` clean;
 `pnpm lint` reports only prettier warnings in files this piece does not own.
+
+## M13 P2b — Build/verify/deliver-path briefs (22 files, `@forge/templates` `BUILD_BRIEFS`)
+
+**Mandate:** author the real block [4] content for the 22 briefs the `build-stage`, `implement-story`, `quick-fix`,
+`debug`, `harden`, `refactor`, `verify-stage`, `deliver-stage` workflows and the fm-service (`contract-test-cycle`) and
+fm-mobile (`store-release`) module workflows reference, each specific to its step's declared inputs, outputs, agent grant
+and downstream gate, without restating the operating contract or role blocks. Registered in `BUILD_BRIEFS`;
+`packages/agents/test/prompt/briefs-build-content.test.ts` (91 tests) asserts a substantive titled markdown brief, no
+front matter or template syntax, no unfinished-work markers, no two identical briefs or shared opening, and that each brief
+names every output artifact type and subtype its step declares, with step-to-brief mapping and outputs derived from the real
+shipped workflows. This batch's 23 matching `unknown-brief` findings left the E1 init expectation. Judgement calls and the
+cross-cutting gaps briefs cannot fix: Q200.
+
+### Round 1: 9 major, ~10 minor
+
+Wrong gate order in the contract-test cycle (G-Integration runs before the tests exist); quick-fix `write-failing-test`
+declares no inputs or paths yet the brief spoke of "the paths this step is given"; ADR briefs listed the framework's
+sections, not the ADR schema's required headings (an agent following them fails artifact validation); `fix-defect` on the
+harden path has no reproduce/RCA step so "stop if no reproduction" fired on every finding; four briefs demanded execution
+that the roles' exec grants forbid, with no fallback; an invented must/should NFR severity rule; undeclared inputs named as if
+declared (store-submission); `freeze-contracts` ignored contracts frozen in earlier stages and ADR text not being packed; the
+plan-story -> write-failing-tests test-path chain never produced a path. All fixed.
+**What the critic caught that the builder missed:** all of it. The builder had checked briefs against the workflow YAML and
+the specs but not against the agents' `exec` lists, `validate-rules.ts` or `artifact-types.ts`' required sections.
+
+### Round 2: 6 major, ~12 minor
+
+The fixes introduced or exposed: an inconsistent "claim" (implement-story called `files_expected` its claim while saying
+tests were outside it, though `09` §9.3's own example puts test globs in `files_expected`); the build-stage test-path chain
+still broken (no plan-story step there; the stage test plan has no path column); the reproduction hard gate not enforced across
+steps; a silent gate bypass (an unmeasured NFR reported only in a final message no gate reads); `document-story` editing
+frozen contracts; run inputs (`interfaceName`, `buildTarget`, `goal`) that never reach a verbatim brief. Fixed: claim defined
+as production paths, fallbacks by `step` and `files_expected`, `OpenQuestion` for unmeasured/unexamined items, `FORGE_ASK:`
+for run inputs, `step: state-invariants` written literally, `status: open` semantics.
+
+### Round 3: 1 blocking, 4 major, 7 minor -- cap reached, remainder recorded
+
+Blocking: the defect chain dead-ends by construction because "cannot run" (grant) and "ran and failed to reproduce" were
+conflated. Fixed by separating "written, not run" (downstream proceeds, verification confirms) from NEEDS-MORE-EVIDENCE (stop).
+Major and outside the briefs' reach, recorded in Q200 rather than papered over: seven steps order file output from
+`write: false` agents (P5's block [6] lists writes as forbidden for them); many agent steps declare no `produces`; nothing in
+`harden`/`debug` closes a Defect or guarantees an RCA with a prevention action, so `G-Stable` needs a human; no exec grant
+covers a test runner. Fixed in the briefs: `status: open`, input locations, latest-handoff rule, multiple-Defect rule,
+carve-outs for nfr-kind criteria and stage test-plan rows, contract file layout, several fallbacks.
+
+**Verification (scoped by instruction, owner-approved cost cut):** `briefs-build-content.test.ts`, `content-index.test.ts` and
+the whole `agents` + `templates` suites (31 files, 1035 tests) green with every batch's briefs and prompts present;
+`cli/test/e2e/init.test.ts` (E1: `agent validate --all` and `workflow validate --all` now both empty on a fresh init),
+`commands/workflow.test.ts`, `commands/agent.test.ts` and `test/workspace-floor.test.ts` green; `pnpm typecheck` 21/21;
+`pnpm run boundaries` clean; `pnpm lint`: eslint clean, prettier reports only the 4 pre-existing files plus the shared init.test
+array (other batches' empty-array residue, left for the final `[]` tightening) and two other batches' briefs. `cli/test/bin.test.ts`
+does not finish under the current machine load (spawns subprocesses; it does not enumerate briefs) and was not run to
+completion; the orchestrator's single full-suite run covers it.

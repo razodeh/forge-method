@@ -16567,3 +16567,85 @@ Files: `packages/templates/templates/prompts/{integration-architect,ml-engineer,
 reviewer,sdet,security,sre,techwriter,test-architect,ux}.*.md`, `packages/templates/src/content/prompts-b.ts`,
 `packages/agents/test/prompt/prompts-b-content.test.ts`, `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts`
 (31 entries removed, leaving the fixture empty).
+
+## Q200 — M13 P2b: the 22 build/verify/deliver-path briefs — judgement calls, and cross-cutting gaps the briefs
+could not close (found by three critic rounds; recorded for P5/P4 and the owner, not papered over in prose)
+
+**Context:** `packages/templates/templates/briefs/` now holds real content for `freeze-contracts`,
+`write-failing-tests`, `implement-story`, `rca`, `stage-retro`, `plan-story`, `refactor-story`,
+`document-story`, `reproduce-defect`, `fix-defect`, `verify-nfrs`, `design-cicd-pipeline`,
+`design-deployment-strategy`, `run-rca-framework`, `state-refactor-invariants`, `refactor`,
+`security-hardening-pass`, `performance-hardening-pass`, `prepare-release-build`,
+`prepare-store-submission`, `draft-contract`, `write-contract-tests` (registered in
+`content/briefs-build.ts`). Each was written from the workflow step that references it (agent, declared
+`inputs`/`outputs`, DAG position, gate), the agent's own mandate and grant, the artifact schemas and the
+gate checks. Content test: `packages/agents/test/prompt/briefs-build-content.test.ts` derives each
+brief's step and declared outputs from the shipped workflows (templates + `modules/*/workflows`) and
+requires the brief to name every output type and subtype.
+
+**Judgement calls made where the specs are silent (conservative choice each time):**
+
+1. **Verbatim text, no Handlebars, no front matter.** `compilePrompt` forwards `step.brief` as block [4]
+   unrendered (Q197 item 10), so briefs contain no `{{ }}` and start with a `#` heading; the test enforces it.
+2. **One brief, several steps.** `write-failing-tests` (build-stage fanout, implement-story `red`,
+   quick-fix), `implement-story` (build-stage, implement-story `green`) and `fix-defect` (debug, harden,
+   quick-fix) each serve steps with different inputs; the brief says how to find the input in each case
+   (defect branch, stage test-plan versus single-story plan, hardening findings versus one defect).
+3. **Undeclared inputs.** Several steps declare no `inputs`/`produces` (`reproduce`, `write-failing-test`
+   and `fix` in quick-fix, `stage-retro`, `verify-nfrs`, `rca`, both hardening passes, `refactor-code`,
+   `draft-contract`, `prepare-release-build`). The briefs name where the agent should look
+   (`docs/forge/reports/handoffs.md`, `.../defects/`, `.../specs/interfaces/`) and say the input is not
+   declared, rather than pretending it is in the pack. Run inputs (`goal`, `interfaceName`, `buildTarget`) are
+   never rendered into a verbatim brief; the briefs fall back to `FORGE_ASK:`. **P5 should make run inputs
+   visible to block [4] or declare them on the steps.**
+4. **`HandoffRecord` has no `subtype` field** (strict schema). The briefs identify the record by its `step`
+   field (`state-invariants` is written literally because `refactor` must find it) and use the workflow's
+   subtype label only as vocabulary. Likewise `SessionRecord` subtype `retrospective` is `sessionType: retro`.
+5. **Test files versus the implementer's claim.** `09` §9.3's Story example puts `tests/**` inside
+   `files_expected`, while `10` §10.6 says test files are outside the implementer's claim. The briefs
+   resolve it as: the implementer's claim is the production paths in `files_expected`; the tests written in
+   red are never editable by `implement-story`/`refactor-story`. `plan-story` lists planned test paths
+   separately (`test:` entries in `delivered`).
+6. **"Cannot run" is not "did not reproduce".** Most executing roles (`diagnostician`, `sdet`, `backend`,
+   `sre`, owner roles) carry `exec: git*/ls*/rg*/cat*/tree*` only. The briefs give a fallback (write the
+   command and expected output, mark it "not run", never report it as observed) and distinguish it from a
+   reproduction that was run and failed (NEEDS-MORE-EVIDENCE, downstream stops).
+7. **Severity.** No spec defines Sev1-4. `security`/`performance` briefs present a heuristic, defer to any
+   severity policy in `constraints/**`, and require `status: open` (`validate-rules.ts` treats only the
+   literal `open` as open). Unmeasured NFRs and unexamined threat classes are recorded as an `OpenQuestion`
+   so `G-Stable`'s `openQuestionsPolicy: block` holds; that is a brief-level choice, not a spec statement.
+8. **ADR briefs** (`design-cicd-pipeline`, `design-deployment-strategy`) require the ADR schema's own
+   headings (`Context`, `Options considered`, `Decision`, `Diagram`, `Consequences`, `Reversal plan`) plus the
+   framework template's `Score table` and `Killer risk`; the framework `.hbs` templates lack the required
+   `Options considered`/`Diagram`/`Reversal plan` headings (pre-existing, not touched here). Diagrams go under
+   `docs/forge/kb/delivery/pipeline/`, the `sre` agent's own ownership glob.
+9. **Contract layout.** `18` §18.7 says `specs/interfaces/{name}.yaml`; the artifact template is a
+   front-matter document referencing the machine-readable contract. The briefs say: YAML notation carries the
+   front-matter keys at top level; non-YAML notation (protobuf, SDL, TS) sits beside it with the YAML record
+   referencing it.
+10. **`prepare-release-build`** also creates `test/device-matrix/<buildTarget>.test.ts` if absent (the very
+    next command step runs it and no step produces it) and forbids pre-filling `device-matrix.md` rows; nothing
+    in `store-release` writes those rows, so a person must.
+
+**Cross-cutting gaps the briefs cannot fix (need P4/P5 or a workflow/agent change):**
+
+- **Steps that must write files run as `write: false` agents:** `architect` (`freeze-contracts`,
+  `state-invariants`), `integration-architect` (`draft-contract`), `test-architect` (`verify-nfrs`), `em`
+  (`stage-retro`), `security` (security pass), `release` (`prepare-store-submission`). P5's assembled block
+  [6] lists file writes as a forbidden action for such agents, contradicting the brief. Either their grants or
+  these steps' agent assignment must change.
+- **Many agent steps declare no `produces`**, so under strict claim enforcement their writes match no glob.
+- **The `harden` and `debug` paths never close a Defect** and nothing guarantees an `RCA` with a non-empty
+  `prevention` exists for a Sev1/Sev2 defect, so `G-Stable` cannot pass without a human edit (the briefs say
+  who is responsible but no step does it).
+- **No exec grant covers a test runner** for `diagnostician`/`sdet`/`backend`/`sre`; the quick-fix and debug
+  chains are therefore "written, not run" until the grant (P4) or the step (a command step) provides it.
+- **`sre` outputs ADRs whose path sits in `architect`'s exclusive `decisions/**` claim.**
+
+**Verification was scoped by instruction** (owner-approved cost cut): new content test, `content-index`,
+the whole `agents`/`templates` suites, the `init`/`workflow`/`agent` CLI tests touched, `pnpm typecheck`,
+`pnpm run boundaries`, `pnpm lint`; the orchestrator runs the one full-suite check after every piece lands.
+
+Files: `packages/templates/templates/briefs/*.md` (22), `packages/templates/src/content/briefs-build.ts`,
+`packages/agents/test/prompt/briefs-build-content.test.ts`, `packages/cli/test/e2e/init.test.ts` (this batch's
+22 expected `unknown-brief` entries removed).
