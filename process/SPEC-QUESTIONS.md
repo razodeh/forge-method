@@ -16649,3 +16649,92 @@ the whole `agents`/`templates` suites, the `init`/`workflow`/`agent` CLI tests t
 Files: `packages/templates/templates/briefs/*.md` (22), `packages/templates/src/content/briefs-build.ts`,
 `packages/agents/test/prompt/briefs-build-content.test.ts`, `packages/cli/test/e2e/init.test.ts` (this batch's
 22 expected `unknown-brief` entries removed).
+
+## Q201 — M13 P2a: the 19 planning-path briefs — judgement calls, and hand-off gaps the briefs could not close
+(found by three critic rounds; recorded for the owner, P5 and the P2b/module authors, not papered over in prose)
+
+**Context:** `packages/templates/templates/briefs/` now holds real content for `propose-level`,
+`seed-glossary`, `frame-problem`, `define-success-metrics`, `write-vision`, `write-prd`, `write-ux-spec`,
+`select-architecture-style`, `model-data`, `select-tech-stack`, `threat-model`, `decide-repo-strategy`,
+`scaffold-project`, `scaffold-ci`, `decompose-stages`, `review-stage-plan`, `write-epics`, `write-stories` and
+`write-test-plan` (registered in `content/briefs-planning.ts`, `PLANNING_BRIEFS`). Each was written from the
+workflow step that references it (agent, declared `inputs`/`outputs`, DAG position, gate), the artifact schemas
+(strict zod), the KB tree parser and lint rules, `validate-rules.ts`, the DoD loader and the framework YAMLs.
+`packages/agents/test/prompt/briefs-planning-content.test.ts` derives each brief's step, declared outputs and
+declared inputs from the shipped workflows and also checks field names against the real schemas, KB paths
+against `KB_SECTIONS`, and test-layer commands against `scaffold-project`.
+
+**Judgement calls (conservative choice each time):**
+
+1. **Verbatim text, no Handlebars, no front matter, no top-level heading.** `compilePrompt` copies `step.brief`
+   into `## [4] Step brief` unrendered (Q197 item 10), so briefs use only `###` headings and no `{{ }}`. P2b's
+   briefs start with a `#` heading; the two batches differ and one convention should be picked.
+2. **`HandoffRecord` "subtype".** `handoffRecordSchema` is strict and has no `subtype` key, and a level
+   proposal, UX spec, threat model, stage plan and test plan are all declared as `HandoffRecord` outputs. The
+   briefs write the substantive document at its natural home and register it with one `HandoffRecord` entry,
+   identified by its `step` value (`propose-level → confirm-level`, ...). The `step` strings name the next
+   workflow node, not the consuming step, so `05` §5.6's trailing-segment match would not deliver them; latent
+   until `inboundHandoffFor` is wired.
+3. **KB locations.** `parseKbTree` routes every non-special `.md` under the KB to `kbEntrySchema`, and
+   `KB_SECTIONS` has no `design` or `security`. So the UX spec is `product/ux-spec.md`, the threat model is
+   `architecture/threat-model.md` (both `type: knowledge` entries), and the `DataModel` artifact is
+   `docs/forge/specs/data/DM-001-<slug>.md` (the registry path) with a KB summary `data/data-model.md`. The
+   content test rejects a KB path under any other section.
+4. **`components.md` is strict.** Only `id` (`component:<slug>`), `label`, `responsibility`, `owner`,
+   `dependsOn`, `failureModes`; owned data, interface, scaling axis, deployable unit and (later) runtime live in
+   the architecture spec. Component coverage rests on exactly one active KB entry per component citing the
+   style/decomposition ADR as `kind: decision`; more would trip the ADR-scope contradiction rule.
+5. **Discovery metrics.** `define-success-metrics` declares `NFR` output, but outcome metrics are `MET-###`
+   entries in `product/metrics.md` that `write-vision` copies. The brief keeps outcome metrics out of NFRs;
+   `NFR.target` must start with a number (schema regex), categorical standards are encoded as a count, and
+   `verification.ref` is a descriptive reference (no `TEST-###` id exists at that point). A proposed number is an
+   `Assumption` plus `status: draft`; no step promotes draft NFRs, so the human confirms them at `G-Product`.
+6. **Open questions.** Any `OpenQuestion` with `status: open` blocks the phase gate (`openQuestionsPolicy:
+   block`) and, project-wide, every story's readiness (`anyOpenBlockingQuestion`; the schema has no `blocking`
+   field). The briefs therefore route non-blocking gaps to `Assumption` entries or the handoff's
+   `open_questions` list, and tell `write-stories` to keep a story `draft` rather than add an `OpenQuestion`.
+7. **Storage and stack split.** `model-data` decides the storage category and the migration strategy;
+   `select-tech-stack` decides the product, the migration tool, authentication and third-party services and adds
+   a "Deployable units and runtimes" table to the architecture spec that `decide-repo-strategy` reads. The CI
+   platform is decided in `scaffold-ci` (ADR if unmandated).
+8. **Stories.** Created `draft`, promoted to `ready` only when the four Definition-of-Ready items hold;
+   `files_expected` holds production globs only (implementer's claim, `10` §10.6; the `09` §9.3 example includes
+   tests, a spec inconsistency); each AC has at least one test name beginning with exactly one AC id (the graph
+   binds a test to one AC); the walking skeleton has no tag field (`Story` is strict), so the brief asks for the
+   first real slice to be stated in the body. `scaffold-project` seeds `engineering/dod-profiles.yaml` (plain
+   YAML, `{ check: id }` entries; a raw command string makes the whole file unparseable and fails readiness for
+   every story), because nothing else in the codebase creates it.
+9. **Walking skeleton vs smoke path.** The scaffold builds a trivial smoke path; the first stage adds the first
+   real thin vertical slice on top of it (`10` §10.4's walking skeleton). `critique-project-foundation` FD1 (P2c)
+   and `11` F-INIT-7 use "walking skeleton" for the scaffold path.
+10. **Spec vs gate on deployment.** `11` F-INIT-7 and `14` §14.9 say `G-Foundation` verifies a deployed skeleton;
+    `G-Foundation.gate.yaml`'s deterministic checks do not. `scaffold-ci` follows the spec: a trunk stage deploys the
+    smoke path to the development environment the scaffold recorded, left as a documented, disabled job (never an
+    invented target) when none exists.
+
+**Gaps the briefs could not close (owner / next piece):**
+
+- **Agent definitions vs steps (module files, not this batch).** `write-prd` (po), `write-vision` and
+  `decompose-stages` (pm), `write-ux-spec` (ux), `threat-model` (security), `write-epics` (po), `propose-level`
+  (analyst) and `write-test-plan` (test-architect) declare output types the agent's own `outputs` list lacks, so
+  block [5] shows a different contract from the brief; several briefs name KB paths outside the agent's
+  `kb_write` (`glossary.md`, `product/*.md`, `kb/risks.md`, `delivery/pipeline.md` vs `delivery/pipeline/**`);
+  analyst and architect declare `write: false`. `kb_write` is only overlap-checked today, not enforced.
+- **Run inputs.** `stageId` (plan-stage) is not injected into any prompt block; the three plan-stage briefs tell
+  the agent to ask the human. P5 (or a declared step `inputs`) should make run inputs visible. Steps that declare
+  no `inputs` (most of this batch) rely on retrieval to find what the brief names.
+- **Adjacent P2b briefs.** `freeze-contracts` does not read the `Needs interface:` body line `write-stories` writes
+  and cannot back-fill `Story.interfaces`; `write-failing-tests` asks for allocated `TEST-###` ids that no step
+  allocates (the test name is the id).
+- **FORGE's own test plumbing.** `execution.testCommands` (`.forge/config.yaml`, single vitest/pytest invocation
+  per layer) is not set by any step; `scaffold-project` ends by requesting it. `scaffold-ci` writes test results to
+  `docs/forge/reports/test-results.json`, the file FORGE's reporter owns.
+- **Constraints capture.** Every brief reads `constraints/**`, but `intake` has no step that creates them.
+- **Gate rules with no implementation.** `metrics-defined`, `user-identified`, `scope-contradicts-constraints`,
+  `capability-acceptance`, `nfr-numeric`, `blocking-open-questions` (`forge spec validate --rule`) and every
+  `forge doctor --rule` check named by G-Problem/G-Product/G-Foundation; the briefs prepare for their stated
+  intent. `G-Problem` also lists `Vision` as evidence although `write-vision` runs after it.
+- **Levels.** `propose-level` says the level is recorded after confirmation; no step records it.
+
+**Verification was scoped by instruction** (no full unscoped test run for this piece; the orchestrator runs the
+single full-suite check after all pieces land).

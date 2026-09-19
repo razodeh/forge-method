@@ -13484,3 +13484,63 @@ the whole `agents` + `templates` suites (31 files, 1035 tests) green with every 
 array (other batches' empty-array residue, left for the final `[]` tightening) and two other batches' briefs. `cli/test/bin.test.ts`
 does not finish under the current machine load (spawns subprocesses; it does not enumerate briefs) and was not run to
 completion; the orchestrator's single full-suite run covers it.
+
+## M13 P2a — Planning-path briefs (19 files, `@forge/templates` `PLANNING_BRIEFS`)
+
+**Mandate:** author the real block [4] content for the 19 briefs the `intake`, `discover`, `define-product`,
+`shape-solution`, `initialize-project`, `plan-stages` and `plan-stage` workflows reference, each specific to its step's
+declared inputs, outputs, agent and downstream gate, without restating the operating contract or role blocks. Registered in
+`PLANNING_BRIEFS`; `packages/agents/test/prompt/briefs-planning-content.test.ts` (185 tests) derives each brief's step,
+declared outputs and declared inputs from the shipped workflows and asserts: substantive, no unfinished-work markers, no front
+matter, no template syntax, no level 1-2 headings, an acceptance-criteria and a do-not section, no duplicate briefs or shared
+opening, every declared output type and subtype and input named, every type-specific front-matter field of the artifact an
+authoring step writes named in backticks (Vision, Capability, NFR, Epic, Story), the component schema's fields present, every
+bullet lead-in a real schema field, every KB path under a real KB section, every `test:*` command defined by `scaffold-project`,
+and `stageId` handling in the plan-stage briefs. This batch's 19 `unknown-brief` findings left the E1 init expectation
+(`EXPECTED_WORKFLOW_ISSUES`; the final tightening to `[]` is the orchestrator's). Judgement calls and the hand-off gaps briefs
+cannot close: Q201.
+
+### Round 1: 4 blocking, ~25 major
+
+A "blocking open question" mechanism that does not exist (the schema has no such field; any open `OQ` blocks every story's
+readiness, so `write-stories` told the agent to break `G-Ready`); the DoD profiles `G-Ready` reads were never created by any
+step and `write-stories` named the wrong file; `select-architecture-style` prescribed component fields the strict schema rejects;
+four steps assigned to agents that cannot legally produce the declared output (module problem, recorded, not fixed). Majors:
+KB paths outside every agent's write scope, no PRD, persona ids demanded but never created, ambiguous `DM-###` layout, missing
+consistency/lifecycle work, no owner for the auth decision, frameworks "in your context" that are not attached, coverage KB
+entries only in acceptance criteria, a wrong DoR list, `nfr: none` used backwards, an untrue `G-Ready` test-plan claim, `wont`
+capabilities with no legal `stage`. All fixed or recorded.
+**What the critic caught that the builder missed:** all of it. The builder had checked field names against schemas but not the
+strict KB schemas, the KB lint mechanics, the agents' `kb_write`/`exec` grants or `validate-rules.ts`.
+
+### Round 2: 2 blocking, 12 major
+
+`scaffold-project` told the agent to write raw commands into `dod-profiles.yaml`, which makes the file unparseable and fails
+readiness for every story (exact shape now given); the plan-stage briefs could not learn `stageId` (now: ask the human). Majors:
+UX spec, threat model and data model written to KB locations the KB tree parser rejects (now real sections / registry path),
+several ADRs citing one component trip the ADR-scope contradiction rule, no clean source for per-deployable runtime, UX handoff
+constraints unread by the architecture step, threat-model mitigations and NFR mechanisms never consumed by planning, missing
+`test:contract`/`test:nfr` commands, accessibility NFR a dead end, an unread review verdict, open-question wording that confused the
+handoff list with blocking KB entries. Fixed.
+**Process incident:** while unwrapping the prettier-wrapped files to edit them, a helper script opened each file for writing before
+reading it and emptied all 19. The briefs were rewritten in full from the round-2 fix list (nothing lost, since the rewrite was
+already needed), and the content test caught no regression. Files are untracked until commit, so the lesson is to edit in place.
+
+### Round 3: 0 blocking, 12 major (hand-offs), many minor
+
+No brief, followed literally, produces a schema-invalid artifact or a hard deterministic gate failure. Fixed in this batch:
+migration strategy had no owner (`data/migrations.md`, migration tool in the stack step), interaction matrix and failure-path
+sequence diagrams missing, `scaffold-project`/`scaffold-ci` command contract (`format`, `typecheck`, `scan`), FORGE's own
+`execution.testCommands` and `test-results.json`, missing ADRs for VCS conventions and the dev environment, deployment of the smoke
+path (spec over gate YAML), reverse metric coverage / priority spread / NFR category sweep in `write-prd`, contradictory
+`applies_to` semantics, the missing-profiles dead end, the project-wide file-claim scope, non-AC test ownership, the `TEST-###`
+mismatch, `subtype` wording. Recorded in Q201, not fixable here: `freeze-contracts` / `write-failing-tests` (P2b files), agent
+definitions, run-input injection. No fourth round: the three-round cap is reached with nothing blocking left, and what remains
+crosses batches or the engine.
+
+**Verification (scoped by instruction; no full unscoped run):** `packages/agents/test/prompt` (content-index, both content tests,
+resolve-reference, compile-prompt), `test/workspace-floor.test.ts`, `test/templates.test.ts`,
+`packages/cli/test/commands/{workflow,agent}.test.ts` and `packages/cli/test/e2e/init.test.ts`: 16 files, 970 tests pass. A fresh
+`forge init` + `workflow validate --all` reports none of this batch's briefs. `pnpm typecheck` 21/21, `pnpm run boundaries` clean,
+`pnpm lint`: eslint clean, prettier reports the 4 pre-existing files plus the shared init.test empty-array residue and another
+batch's brief, none of mine.
