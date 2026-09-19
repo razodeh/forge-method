@@ -51,10 +51,58 @@ describe('workflowValidate', () => {
     const { writeFileAtomic } = await import('@forge/core/fs');
     await writeFileAtomic(
       project.paths.resolveWithin(relPath),
-      'id: clean\nname: clean\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: only\n    kind: agent\n    agent: tester\n    brief: fixture\n',
+      'id: clean\nname: clean\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: only\n    kind: agent\n    agent: tester\n    brief: briefs/fixture.md\n',
+    );
+    // `briefExists` (`PLAN-M13.md` P1) is now a real check against `.forge/briefs/` -- a real backing
+    // file is written here so this test's own stated "every reference resolves" happy path stays
+    // genuine, matching the real, project-relative `briefs/<name>.md` convention every real, shipped
+    // workflow uses (not the bare, non-path-shaped placeholder this fixture used before that check
+    // existed to catch it). See `SPEC-QUESTIONS.md` Q197.
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/briefs/fixture.md'),
+      'Do the fixture thing.\n',
     );
     const issues = await workflowValidate(ctxFor(project), 'clean');
     expect(issues).toEqual([]);
+  });
+
+  it('reports a real unknown-brief finding for a brief that resolves to nothing, and clears it once a real file exists', async () => {
+    const project = await createTestProject();
+    const { writeFileAtomic } = await import('@forge/core/fs');
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/workflows/needs-brief.workflow.yaml'),
+      'id: needs-brief\nname: needs-brief\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: only\n    kind: agent\n    agent: tester\n    brief: briefs/needs-brief.md\n',
+    );
+    const before = await workflowValidate(ctxFor(project), 'needs-brief');
+    expect(before).toEqual([
+      {
+        code: 'unknown-brief',
+        severity: 'error',
+        message: 'Step "only" references unknown brief "briefs/needs-brief.md".',
+        stepId: 'only',
+      },
+    ]);
+
+    // An empty file is not real content; a directory, a .txt and a wrong-named file do not count either.
+    await writeFileAtomic(project.paths.resolveWithin('.forge/briefs/needs-brief.md'), '');
+    await writeFileAtomic(project.paths.resolveWithin('.forge/briefs/needs-brief.txt'), 'text\n');
+    expect(await workflowValidate(ctxFor(project), 'needs-brief')).toHaveLength(1);
+
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/briefs/needs-brief.md'),
+      'Do the thing.\n',
+    );
+    expect(await workflowValidate(ctxFor(project), 'needs-brief')).toEqual([]);
+  });
+
+  it('treats a still-templated {{...}} brief as unverifiable, like its sibling oracle methods', async () => {
+    const project = await createTestProject();
+    const { writeFileAtomic } = await import('@forge/core/fs');
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/workflows/templated-brief.workflow.yaml'),
+      "id: templated-brief\nname: templated-brief\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: only\n    kind: agent\n    agent: tester\n    brief: 'briefs/{{item.id}}.md'\n",
+    );
+    expect(await workflowValidate(ctxFor(project), 'templated-brief')).toEqual([]);
   });
 
   it('reports a real unknown-gate finding for a fabricated gate reference', async () => {
@@ -158,6 +206,13 @@ describe('workflowNew', () => {
     expect(relPath).toBe('.forge/workflows/my-flow.workflow.yaml');
     const shown = await workflowShow(ctxFor(project), 'my-flow');
     expect(shown.id).toBe('my-flow');
+  });
+
+  it('scaffolds the brief it names, so a new workflow has no unknown-brief finding of its own', async () => {
+    const project = await createTestProject();
+    await workflowNew(ctxFor(project), 'my-flow');
+    const issues = await workflowValidate(ctxFor(project), 'my-flow');
+    expect(issues.some((issue) => issue.code === 'unknown-brief')).toBe(false);
   });
 
   it('refuses to overwrite a real, already-existing workflow file', async () => {

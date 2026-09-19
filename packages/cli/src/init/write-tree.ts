@@ -18,8 +18,10 @@ import {
 } from '../generated-header.ts';
 import {
   readArtifactTemplateFiles,
+  readBriefFiles,
   readCheckFiles,
   readFrameworkFiles,
+  readPromptFiles,
   readResolvedAgents,
   readSkillFiles,
   readWorkflowFiles,
@@ -156,14 +158,17 @@ export async function writeRegenerableContent(
   modulesDir: string,
   conflictOptions?: ConflictHandlingOptions,
 ): Promise<readonly WrittenFile[]> {
-  const [workflows, frameworks, checks, artifacts, skills, agents] = await Promise.all([
-    readWorkflowFiles(),
-    readFrameworkFiles(),
-    readCheckFiles(),
-    readArtifactTemplateFiles(),
-    readSkillFiles(),
-    readResolvedAgents(modulesDir),
-  ]);
+  const [workflows, frameworks, checks, artifacts, skills, agents, briefs, prompts] =
+    await Promise.all([
+      readWorkflowFiles(),
+      readFrameworkFiles(),
+      readCheckFiles(),
+      readArtifactTemplateFiles(),
+      readSkillFiles(),
+      readResolvedAgents(modulesDir),
+      readBriefFiles(),
+      readPromptFiles(),
+    ]);
   const version = readPackageVersion('@forge/agents');
 
   const written: WrittenFile[] = [];
@@ -190,6 +195,18 @@ export async function writeRegenerableContent(
       version,
       conflictOptions,
     )),
+  );
+  // `PLAN-M13.md` P1's own two new regenerable content kinds — real workflow/gate step brief text and
+  // real agent prompt text, indexed exactly like the five above (`BRIEF_INDEX`/`PROMPT_INDEX`,
+  // `@forge/templates`). Both write zero files today (`SPEC-QUESTIONS.md` Q197: the two indexes are
+  // still empty, pending `PLAN-M13.md` P2/P3's own content-authoring pieces), so this adds no new
+  // written files yet -- only the real, permanent mechanism every later brief/prompt file will flow
+  // through, `writeGeneratedDir`'s own hash-drift/conflict-resolution treatment included.
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/briefs', briefs, version, conflictOptions)),
+  );
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/prompts', prompts, version, conflictOptions)),
   );
   return written;
 }

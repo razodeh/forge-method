@@ -3,8 +3,9 @@
  *
  * `validate` builds a real `WorkflowExistenceOracle` (`@forge/engine/workflow`'s own already-built
  * `validateWorkflow`, C9's own literal exit-test line depends on this) from real project state —
- * `.forge/agents/`, `.forge/checks/`, `.forge/workflows/`, `@forge/schemas`' own real
- * `ARTIFACT_TYPES` registry — rather than a second, parallel existence-checking mechanism.
+ * `.forge/agents/`, `.forge/checks/`, `.forge/workflows/`, `.forge/briefs/` (`PLAN-M13.md` P1),
+ * `@forge/schemas`' own real `ARTIFACT_TYPES` registry — rather than a second, parallel
+ * existence-checking mechanism.
  *
  * @see specs/03 §3.2.8
  * @see specs/10 §10.1
@@ -17,6 +18,7 @@ import {
   writeFileAtomic,
   type ProjectPaths,
 } from '@forge/core';
+import { listResolvableContentReferences } from '@forge/agents/prompt';
 import { artifactTypeById } from '@forge/schemas';
 import {
   parseWorkflow,
@@ -70,12 +72,13 @@ export async function workflowShow(ctx: WorkflowCommandContext, id: string): Pro
 }
 
 async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExistenceOracle> {
-  const [agentEntries, gateRegistry, workflowIds] = await Promise.all([
+  const [agentEntries, gateRegistry, workflowIds, briefPaths] = await Promise.all([
     pathExists(ctx.paths.resolveWithin(ctx.agentsRoot)).then((exists) =>
       exists ? listDirEntriesSorted(ctx.paths.resolveWithin(ctx.agentsRoot)) : [],
     ),
     loadGateRegistry(ctx.paths, ctx.checksRoot),
     listWorkflowIds(ctx),
+    listResolvableContentReferences(ctx.paths, 'briefs'),
   ]);
   const agentIds = new Set(
     agentEntries
@@ -83,7 +86,6 @@ async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExisten
       .map((entry) => entry.name.replace(/\.yaml$/, '')),
   );
   const workflowIdSet = new Set(workflowIds);
-
   // `validateWorkflow` checks `step.agent`/`step.gate`/etc. as literal ids -- it has no template
   // awareness of its own (its own doc comment: "nothing in this piece parses that mini-syntax").
   // `10` §10.5's own real, shipped workflows genuinely use `{{ownerRole}}`/`{{item.owner_role}}` here,
@@ -96,18 +98,18 @@ async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExisten
 
   return {
     agentExists: (id) => isTemplateReference(id) || agentIds.has(id),
-    // Deliberately not a real existence check. `AgentStep.brief` is a real, project-relative file path
-    // in every real, shipped workflow (`briefs/write-vision.md`-shaped strings, confirmed directly
-    // against every real `packages/templates/templates/workflows/*.workflow.yaml`), but no real brief
-    // *content* has ever been written anywhere in this codebase yet -- `readWorkflowFiles`' own
-    // `WORKFLOW_INDEX` only ever copies the workflow documents themselves, never a `briefs/` directory,
-    // and no such directory exists in `@forge/templates` at all. A real path-existence check here would
-    // report every real, shipped workflow as invalid for a genuine, pre-existing gap this piece did not
-    // create and has no way to close (writing real brief content is a separate, future piece's own
-    // job) -- reporting `true` unconditionally is the honest "cannot verify yet, refuse to fabricate a
-    // failure for a gap outside this piece's own scope" stance, not a claim that briefs were checked.
-    // See `SPEC-QUESTIONS.md`.
-    briefExists: () => true,
+    // A real `step.brief` value is a project-relative *path* (`briefs/write-vision.md`), unlike this
+    // oracle's other methods' bare ids; `briefPaths` (`listResolvableContentReferences`,
+    // `@forge/agents/prompt`, shared with the loader and `forge agent validate`) holds exactly the
+    // `briefs/<name>.md` strings that genuinely resolve to non-empty text.
+    // `PLAN-M13.md` P1: a real existence check, against the project's own real, materialized
+    // `.forge/briefs/` directory -- the identical "check real project state, not a static catalogue"
+    // shape every sibling oracle method here already uses. Correctly reports every real, shipped
+    // workflow/gate's own brief reference as `unknown-brief` right now: no real brief *content* has
+    // been authored anywhere in this codebase yet (`BRIEF_INDEX` is still empty -- `PLAN-M13.md` P2,
+    // content authoring, is a separate, not-yet-built piece). This is the real, disclosed, temporary
+    // state `SPEC-QUESTIONS.md` Q197 records, not a bug in this check.
+    briefExists: (briefPath) => isTemplateReference(briefPath) || briefPaths.has(briefPath),
     gateExists: (id) => isTemplateReference(id) || gateRegistry.has(id),
     artifactTypeExists: (id) => artifactTypeById(id) !== undefined,
     workflowExists: (id) => isTemplateReference(id) || workflowIdSet.has(id),
@@ -172,7 +174,7 @@ steps:
   - id: only
     kind: agent
     agent: engineer
-    brief: Describe what this step should do.
+    brief: briefs/${id}.md
 `;
 
 /** `new <id>` — a real, minimal, schema-valid workflow document, written to a real
@@ -183,6 +185,18 @@ export async function workflowNew(ctx: WorkflowCommandContext, id: string): Prom
     throw new ForgeError('CFG-001', { path: relPath, line: 0 });
   }
   const content = WORKFLOW_TEMPLATE(id);
+  // `PLAN-M13.md` P1: `brief:` is a `briefs/<name>.md` reference `forge workflow validate` now
+  // genuinely resolves, so the scaffold writes the file it names (only if absent -- never clobbers a
+  // real, hand-authored brief), keeping the scaffold's own brief reference valid. Written *before* the
+  // workflow file so a failed write here does not leave a retry stuck on the "already exists" refusal.
+  // (The scaffold's `agent: engineer` is a pre-existing reference to no shipped agent; not this piece's.)
+  const briefRelPath = `.forge/briefs/${id}.md`;
+  if (!(await pathExists(ctx.paths.resolveWithin(briefRelPath)))) {
+    await writeFileAtomic(
+      ctx.paths.resolveWithin(briefRelPath),
+      'Describe what this step should do.\n',
+    );
+  }
   await writeFileAtomic(ctx.paths.resolveWithin(relPath), content);
   return relPath;
 }

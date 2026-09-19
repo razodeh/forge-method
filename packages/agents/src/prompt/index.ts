@@ -7,6 +7,12 @@
  */
 export { OPERATING_CONTRACT } from './operating-contract.ts';
 export { compilePrompt, type CompilePromptOptions } from './compile-prompt.ts';
+export {
+  isWellFormedContentReference,
+  listResolvableContentReferences,
+  resolveContentReference,
+  type ContentReferenceKind,
+} from './resolve-reference.ts';
 export { writePromptRecord } from './write-prompt-record.ts';
 export type {
   AutonomyLevel,

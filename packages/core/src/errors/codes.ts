@@ -1006,6 +1006,19 @@ export const ERROR_CODES = {
     remedy:
       'Fix models.overrides to name frugal, balanced or max, and add a models.tiers entry for that tier and adapter in .forge/config.yaml.',
   },
+  'RUN-079': {
+    // `@forge/agents/prompt`'s `resolveContentReference` (`PLAN-M13.md` P1): a well-formed brief/prompt
+    // reference whose file does not exist under `.forge/briefs/` or `.forge/prompts/`. Distinct from
+    // RUN-034's generic "the disk said no" (whose remedy points at permissions and disk space): the
+    // real fix here is to create or regenerate the file, and `forge run` does not force a
+    // `validate --all` first, so a dispatch could otherwise print a misleading remedy.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { reference: string }) =>
+      `No brief or prompt content exists for ${show(d.reference)} under .forge/.`,
+    remedy:
+      'Create that file with real text, or re-run `forge init` to regenerate the shipped content, then run `forge workflow validate --all` or `forge agent validate --all`.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type
@@ -1602,6 +1615,19 @@ export const ERROR_CODES = {
     message: (d: { location: string; size: number; limit: number }) =>
       `${show(d.location)} is ${show(d.size)} bytes, over module conformance's own ${show(d.limit)}-byte parse limit.`,
     remedy: 'Reduce the file to a reasonable size, or remove it from the module, and retry.',
+  },
+  'CFG-053': {
+    // `@forge/agents/prompt`'s `resolveContentReference` (`PLAN-M13.md` P1): a workflow step's `brief:` or
+    // an agent's `prompt.system`/`prompt.briefs.*` value that is not exactly `briefs/<name>.md` /
+    // `prompts/<name>.md`. Distinct from CFG-003 (a path escaping the project root): `config.local.yaml`
+    // or `briefs/x.txt` never leave the project, they simply are not a brief/prompt reference at all,
+    // and a message claiming an escape would misdirect the fix.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { reference: string }) =>
+      `${show(d.reference)} is not a brief or prompt reference: expected briefs/<name>.md or prompts/<name>.md.`,
+    remedy:
+      'Set the brief:/prompt: value to briefs/<name>.md or prompts/<name>.md, one directory deep, and run `forge workflow validate --all` or `forge agent validate --all` to confirm.',
   },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union

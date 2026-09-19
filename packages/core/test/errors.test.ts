@@ -29,6 +29,8 @@ import {
  * adding a code without adding its keys fails, which is the point.
  */
 const SAMPLE_DETAILS = {
+  // `CFG-053`/`RUN-079` (`PLAN-M13.md` P1): a brief/prompt reference.
+  reference: 'briefs/write-vision.md',
   path: '.forge/config.yaml',
   root: '/repo',
   operation: 'write',

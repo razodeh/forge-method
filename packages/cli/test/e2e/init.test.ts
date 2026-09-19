@@ -1,13 +1,13 @@
 /**
  * `E1 init` — `specs/22` M6's own literal exit-test line:
- * `pnpm test -- --grep "E1 init"   # full artifact set, all validators clean`.
+ * `pnpm test -- --grep "E1 init"   # full artifact set, all validators clean` -- as of `PLAN-M13.md` P1, `agent`/`workflow` validate report the itemized, disclosed findings below instead of zero.
  *
  * A real `forge init` against the real, complete `modules/` roster at the repo root (not a fixture
  * module), followed by every real validator this milestone ships: `forge agent validate --all`,
  * `forge template validate --all`, `forge doctor` (`config-validity`/`manifest-structure`/`kb-lint`/
  * `spec-graph`), and `forge workflow validate --all`.
  *
- * `forge workflow validate --all` is asserted clean (zero issues) — it once genuinely was not: `10
+ * `forge workflow validate --all` was, until `PLAN-M13.md` P1 (see below), asserted clean (zero issues) — it once genuinely was not: `10
  * §10.5`'s own real worked examples for `build-stage`/`implement-story` used `StagePlan`/`ReviewReport`
  * as real artifact types, but `18 §18.7`'s own real, canonical registry table never registered either
  * one, so a fresh `forge init` reported 3 real `unknown-artifact-type` findings on `build-stage`
@@ -19,8 +19,23 @@
  * `Epic(*)`/`Story(*)`, matching what `plan-stage.workflow.yaml` actually produces) and its references
  * were corrected to match. See `SPEC-QUESTIONS.md` for the full record.
  *
+ * **`PLAN-M13.md` P1 update — genuinely clean no longer, disclosed rather than hidden.** Both `forge
+ * agent validate --all` and `forge workflow validate --all` stayed clean from Q194 above until
+ * `PLAN-M13.md` P1 replaced each command's own permissive existence-check stub (`briefExists: () =>
+ * true`, and no agent-prompt check at all) with a real one. Both now correctly report every one of the
+ * 34 real, shipped agents' own `prompt.system`/`prompt.briefs.*` reference (62 real `unknown-prompt`
+ * findings) and every real, shipped workflow's own `brief:` reference (53 real `unknown-brief` issues)
+ * as unresolved — no real brief/prompt *content* has been authored anywhere in this codebase yet
+ * (`BRIEF_INDEX`/`PROMPT_INDEX` in `packages/templates/src/index.ts` are still empty). This is a real,
+ * disclosed, intentionally temporary regression: `PLAN-M13.md` P2/P3 (content authoring, not yet
+ * built) closes it, the same way Q194 above closed Q192's own disclosed `unknown-artifact-type` gap.
+ * See `SPEC-QUESTIONS.md` Q197. `EXPECTED_M13_P1_AGENT_FINDINGS`/`EXPECTED_WORKFLOW_ISSUES` below are
+ * the real, complete, itemized findings/issues — by real id, not merely a count — so this test still
+ * fails the moment either real list's shape changes for any reason other than real content landing.
+ *
  * @see specs/22 M6
  * @see PLAN-M6.md C9
+ * @see PLAN-M13.md P1
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +46,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { ProjectPaths, readTextFile } from '@forge/core/fs';
 import type { ForgeConfig } from '@forge/schemas/config';
+import type { ValidationIssue } from '@forge/engine/workflow';
 import * as YAML from 'yaml';
 
 import { runInit } from '../../src/init/run-init.ts';
@@ -43,8 +59,399 @@ import {
 } from '../../src/commands/doctor/project.ts';
 import { templateValidateAll } from '../../src/commands/template.ts';
 import { workflowValidateAll } from '../../src/commands/workflow.ts';
+import { EXPECTED_M13_P1_AGENT_FINDINGS } from '../fixtures/m13-p1-expected-agent-findings.ts';
 
 const REAL_MODULES_DIR = fileURLToPath(new URL('../../../../modules/', import.meta.url));
+
+/**
+ * The real, complete, itemized `unknown-brief` issues `forge workflow validate --all` reports against
+ * the real, complete `modules/` roster right now — see this file's own top-of-file doc comment and
+ * `SPEC-QUESTIONS.md` Q197. Captured directly from a real run of this exact test body (not hand-typed
+ * from a spec or guessed): every real, shipped workflow's own `brief:` reference currently resolves to
+ * nothing, since `BRIEF_INDEX` (`packages/templates/src/index.ts`) is still empty. Gate-embedded
+ * `brief:` references (`packages/templates/templates/checks/*.gate.yaml`) are a separate, real,
+ * pre-existing gap this list does not cover: no command validates a gate document's own step-level
+ * references at all today (confirmed: `run/gates.ts` has no `validate` of its own), the identical
+ * "genuinely never checked, not merely a stub returning `true`" situation `briefExists` itself was in
+ * before this piece — out of scope here, recorded in `SPEC-QUESTIONS.md` Q197, not silently expanded
+ * into or hidden by this list.
+ */
+const EXPECTED_WORKFLOW_ISSUES: readonly (ValidationIssue & { readonly id: string })[] = [
+  {
+    id: 'adopt',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "reverse-derive-specs" references unknown brief "briefs/reverse-derive-specs.md".',
+    stepId: 'reverse-derive-specs',
+  },
+  {
+    id: 'adopt',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "gap-analysis" references unknown brief "briefs/adoption-gap-analysis.md".',
+    stepId: 'gap-analysis',
+  },
+  {
+    id: 'build-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "freeze-contracts" references unknown brief "briefs/freeze-contracts.md".',
+    stepId: 'freeze-contracts',
+  },
+  {
+    id: 'build-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "(unidentified)" references unknown brief "briefs/write-failing-tests.md".',
+  },
+  {
+    id: 'build-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "(unidentified)" references unknown brief "briefs/implement-story.md".',
+  },
+  {
+    id: 'build-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "(unidentified)" references unknown brief "briefs/stage-retro.md".',
+  },
+  {
+    id: 'build-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "(unidentified)" references unknown brief "briefs/rca.md".',
+  },
+  {
+    id: 'debug',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "run-rca" references unknown brief "briefs/run-rca-framework.md".',
+    stepId: 'run-rca',
+  },
+  {
+    id: 'debug',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "fix" references unknown brief "briefs/fix-defect.md".',
+    stepId: 'fix',
+  },
+  {
+    id: 'define-product',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-vision" references unknown brief "briefs/write-vision.md".',
+    stepId: 'write-vision',
+  },
+  {
+    id: 'define-product',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-prd" references unknown brief "briefs/write-prd.md".',
+    stepId: 'write-prd',
+  },
+  {
+    id: 'define-product',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-ux-spec" references unknown brief "briefs/write-ux-spec.md".',
+    stepId: 'write-ux-spec',
+  },
+  {
+    id: 'deliver-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "design-pipeline" references unknown brief "briefs/design-cicd-pipeline.md".',
+    stepId: 'design-pipeline',
+  },
+  {
+    id: 'deliver-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "design-deployment" references unknown brief "briefs/design-deployment-strategy.md".',
+    stepId: 'design-deployment',
+  },
+  {
+    id: 'discover',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "frame-problem" references unknown brief "briefs/frame-problem.md".',
+    stepId: 'frame-problem',
+  },
+  {
+    id: 'discover',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "define-metrics" references unknown brief "briefs/define-success-metrics.md".',
+    stepId: 'define-metrics',
+  },
+  {
+    id: 'harden',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "security-pass" references unknown brief "briefs/security-hardening-pass.md".',
+    stepId: 'security-pass',
+  },
+  {
+    id: 'harden',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "performance-pass" references unknown brief "briefs/performance-hardening-pass.md".',
+    stepId: 'performance-pass',
+  },
+  {
+    id: 'harden',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "fix-findings" references unknown brief "briefs/fix-defect.md".',
+    stepId: 'fix-findings',
+  },
+  {
+    id: 'implement-story',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "plan" references unknown brief "briefs/plan-story.md".',
+    stepId: 'plan',
+  },
+  {
+    id: 'implement-story',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "red" references unknown brief "briefs/write-failing-tests.md".',
+    stepId: 'red',
+  },
+  {
+    id: 'implement-story',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "green" references unknown brief "briefs/implement-story.md".',
+    stepId: 'green',
+  },
+  {
+    id: 'implement-story',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "refactor" references unknown brief "briefs/refactor-story.md".',
+    stepId: 'refactor',
+  },
+  {
+    id: 'implement-story',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "document" references unknown brief "briefs/document-story.md".',
+    stepId: 'document',
+  },
+  {
+    id: 'initialize-project',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "decide-repo-strategy" references unknown brief "briefs/decide-repo-strategy.md".',
+    stepId: 'decide-repo-strategy',
+  },
+  {
+    id: 'initialize-project',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "scaffold-project" references unknown brief "briefs/scaffold-project.md".',
+    stepId: 'scaffold-project',
+  },
+  {
+    id: 'initialize-project',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "scaffold-ci" references unknown brief "briefs/scaffold-ci.md".',
+    stepId: 'scaffold-ci',
+  },
+  {
+    id: 'intake',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "propose-level" references unknown brief "briefs/propose-level.md".',
+    stepId: 'propose-level',
+  },
+  {
+    id: 'intake',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "seed-glossary" references unknown brief "briefs/seed-glossary.md".',
+    stepId: 'seed-glossary',
+  },
+  {
+    id: 'migrate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "plan-migration" references unknown brief "briefs/plan-migration.md".',
+    stepId: 'plan-migration',
+  },
+  {
+    id: 'migrate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "expand" references unknown brief "briefs/migration-expand.md".',
+    stepId: 'expand',
+  },
+  {
+    id: 'migrate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "contract" references unknown brief "briefs/migration-contract.md".',
+    stepId: 'contract',
+  },
+  {
+    id: 'operate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "instrument-observability" references unknown brief "briefs/instrument-observability.md".',
+    stepId: 'instrument-observability',
+  },
+  {
+    id: 'operate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "define-slos" references unknown brief "briefs/define-slos.md".',
+    stepId: 'define-slos',
+  },
+  {
+    id: 'operate',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-runbooks" references unknown brief "briefs/write-runbooks.md".',
+    stepId: 'write-runbooks',
+  },
+  {
+    id: 'plan-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-epics" references unknown brief "briefs/write-epics.md".',
+    stepId: 'write-epics',
+  },
+  {
+    id: 'plan-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-stories" references unknown brief "briefs/write-stories.md".',
+    stepId: 'write-stories',
+  },
+  {
+    id: 'plan-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-test-plan" references unknown brief "briefs/write-test-plan.md".',
+    stepId: 'write-test-plan',
+  },
+  {
+    id: 'plan-stages',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "decompose-stages" references unknown brief "briefs/decompose-stages.md".',
+    stepId: 'decompose-stages',
+  },
+  {
+    id: 'plan-stages',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "review-stages" references unknown brief "briefs/review-stage-plan.md".',
+    stepId: 'review-stages',
+  },
+  {
+    id: 'quick-fix',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "reproduce" references unknown brief "briefs/reproduce-defect.md".',
+    stepId: 'reproduce',
+  },
+  {
+    id: 'quick-fix',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "write-failing-test" references unknown brief "briefs/write-failing-tests.md".',
+    stepId: 'write-failing-test',
+  },
+  {
+    id: 'quick-fix',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "fix" references unknown brief "briefs/fix-defect.md".',
+    stepId: 'fix',
+  },
+  {
+    id: 'refactor',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "state-invariants" references unknown brief "briefs/state-refactor-invariants.md".',
+    stepId: 'state-invariants',
+  },
+  {
+    id: 'refactor',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "refactor-code" references unknown brief "briefs/refactor.md".',
+    stepId: 'refactor-code',
+  },
+  {
+    id: 'replan',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "propose-change" references unknown brief "briefs/propose-change.md".',
+    stepId: 'propose-change',
+  },
+  {
+    id: 'replan',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "impact-analysis" references unknown brief "briefs/change-impact-analysis.md".',
+    stepId: 'impact-analysis',
+  },
+  {
+    id: 'retro',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "run-retro" references unknown brief "briefs/run-retro.md".',
+    stepId: 'run-retro',
+  },
+  {
+    id: 'shape-solution',
+    code: 'unknown-brief',
+    severity: 'error',
+    message:
+      'Step "select-architecture" references unknown brief "briefs/select-architecture-style.md".',
+    stepId: 'select-architecture',
+  },
+  {
+    id: 'shape-solution',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "model-data" references unknown brief "briefs/model-data.md".',
+    stepId: 'model-data',
+  },
+  {
+    id: 'shape-solution',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "select-stack" references unknown brief "briefs/select-tech-stack.md".',
+    stepId: 'select-stack',
+  },
+  {
+    id: 'shape-solution',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "threat-model" references unknown brief "briefs/threat-model.md".',
+    stepId: 'threat-model',
+  },
+  {
+    id: 'verify-stage',
+    code: 'unknown-brief',
+    severity: 'error',
+    message: 'Step "verify-nfrs" references unknown brief "briefs/verify-nfrs.md".',
+    stepId: 'verify-nfrs',
+  },
+];
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -93,16 +500,20 @@ describe('E1 init', () => {
     });
     expect(specGraphCheck.ok).toBe(true);
 
-    // This milestone's own exit-test line, part 1: `forge agent validate --all`.
+    // This milestone's own exit-test line, part 1: `forge agent validate --all`. Not genuinely clean
+    // right now -- see this file's own top-of-file doc comment (`PLAN-M13.md` P1, `SPEC-QUESTIONS.md`
+    // Q197): every real `unknown-prompt` finding is asserted explicitly, by real agent id, below.
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
-    expect(agentFindings).toEqual([]);
+    expect(agentFindings).toEqual(EXPECTED_M13_P1_AGENT_FINDINGS);
 
     // Part 3: `forge template validate --all`.
     const templateResults = await templateValidateAll();
     expect(templateResults.every((result) => result.valid)).toBe(true);
 
-    // Part 2: `forge workflow validate --all` — genuinely clean now that `StagePlan`/`ReviewReport`
-    // are resolved (see this file's own top-of-file doc comment for the full history).
+    // Part 2: `forge workflow validate --all` — genuinely clean of the old `StagePlan`/`ReviewReport`
+    // findings (see this file's own top-of-file doc comment for that history), but not genuinely clean
+    // overall right now: every real `unknown-brief` issue is asserted explicitly, by real workflow and
+    // step id, below (`PLAN-M13.md` P1, `SPEC-QUESTIONS.md` Q197).
     const workflowResults = await workflowValidateAll({
       paths,
       workflowsRoot: '.forge/workflows',
@@ -112,6 +523,6 @@ describe('E1 init', () => {
     const allWorkflowIssues = [...workflowResults.entries()].flatMap(([id, issues]) =>
       issues.map((issue) => ({ id, ...issue })),
     );
-    expect(allWorkflowIssues).toEqual([]);
+    expect(allWorkflowIssues).toEqual(EXPECTED_WORKFLOW_ISSUES);
   });
 });

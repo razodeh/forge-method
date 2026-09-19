@@ -351,3 +351,49 @@ export const SKILL_INDEX: Readonly<Record<SkillId, string>> = {
   'changelog-writing': 'templates/skills/changelog-writing',
   'api-reference-writing': 'templates/skills/api-reference-writing',
 };
+
+/**
+ * Resolves a workflow/gate step's `brief:` reference (e.g. `briefs/write-vision.md`, keyed here by
+ * its basename minus extension, e.g. `write-vision`) to its real `.md` file, as a path relative to
+ * this package's own root — the identical "caller resolves against wherever `@forge/templates` is
+ * actually installed" contract every other index in this module documents.
+ *
+ * Deliberately typed `Readonly<Record<string, string>>`, not a closed literal-union id type like
+ * {@link WorkflowId}/{@link GateId}/{@link FrameworkId}/{@link SkillId}/{@link TemplateArtifactTypeId}
+ * above: every one of those five transcribes a spec-fixed, already-complete table (`10` §10.5/§10.3,
+ * `11`-`14`, `15` §15.4.4, `18` §18.7) that is not expected to grow ad hoc. No such fixed catalogue
+ * exists for briefs — `PLAN-M13.md` P1's own investigation found 62 distinct `briefs/*.md`
+ * references empirically (58 in this package's own workflows/gates; four more appear only in
+ * `modules/fm-service`/`modules/fm-mobile` workflows, which no index here materializes yet — see
+ * `SPEC-QUESTIONS.md` Q197), not from a spec table enumerating them by name. `PLAN-M13.md` P2 (content authoring, not yet built — see
+ * `SPEC-QUESTIONS.md` Q197) adds real entries here as each brief is written; a closed union would
+ * force every content-authoring change to also touch this file's own type declaration for no real
+ * benefit, since nothing here depends on the id set being closed the way the other five genuinely do.
+ *
+ * Empty today: no `packages/templates/templates/briefs/*.md` file exists in this codebase yet (P1's
+ * own real, disclosed, temporary state — every `brief:` reference in every real, shipped workflow/gate
+ * currently resolves to nothing at all, correctly reported by `forge workflow validate --all` as a
+ * real `unknown-brief` finding until P2 lands). See `SPEC-QUESTIONS.md` Q197.
+ *
+ * @see specs/22 M13
+ * @see PLAN-M13.md P1
+ */
+export const BRIEF_INDEX: Readonly<Record<string, string>> = {};
+
+/**
+ * Resolves an agent's `prompt.system`/`prompt.briefs.*` reference (e.g.
+ * `prompts/domain-modeler.system.md`, keyed here by its basename minus extension, e.g.
+ * `domain-modeler.system`) to its real `.md` file, as a path relative to this package's own root —
+ * the identical "caller resolves against wherever `@forge/templates` is actually installed" contract
+ * every other index in this module documents.
+ *
+ * Open `Readonly<Record<string, string>>`, empty today, for the identical reason {@link BRIEF_INDEX}
+ * above is: `PLAN-M13.md` P1's own investigation found "62 distinct `prompts/*.md`" references across
+ * the 34 shipped agents, empirically, not from a spec-fixed catalogue table. `PLAN-M13.md` P3 (agent
+ * prompt content authoring, not yet built — see `SPEC-QUESTIONS.md` Q197) adds real entries here as
+ * each prompt is written.
+ *
+ * @see specs/22 M13
+ * @see PLAN-M13.md P1
+ */
+export const PROMPT_INDEX: Readonly<Record<string, string>> = {};

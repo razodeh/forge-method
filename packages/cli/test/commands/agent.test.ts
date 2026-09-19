@@ -26,6 +26,7 @@ import {
   agentValidateOne,
 } from '../../src/commands/agent.ts';
 import { cleanupAll, createTestProject } from './upgrade/helpers.ts';
+import { EXPECTED_M13_P1_AGENT_FINDINGS } from '../fixtures/m13-p1-expected-agent-findings.ts';
 
 afterEach(cleanupAll);
 
@@ -61,6 +62,16 @@ describe('agentNew', () => {
     expect(shown.outputs.length).toBeGreaterThan(0);
   });
 
+  it('scaffolds the prompt it names, so a new agent has no unknown-prompt finding of its own', async () => {
+    const project = await createTestProject();
+    await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'custom-role', 'Custom Role');
+    const findings = await agentValidateOne(
+      { paths: project.paths, agentsRoot: AGENTS_ROOT },
+      'custom-role',
+    );
+    expect(findings.filter((finding) => finding.code === 'unknown-prompt')).toEqual([]);
+  });
+
   it('refuses to overwrite a real, already-existing agent file', async () => {
     const project = await createTestProject();
     await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'custom-role', 'Custom Role');
@@ -73,8 +84,50 @@ describe('agentNew', () => {
 describe('agentValidateAll — fixture roster', () => {
   it('passes cleanly for the real, unmodified fixture roster', async () => {
     const project = await createTestProject();
+    // The fixture roster's own real `tester` agent declares `prompt.system: prompts/tester.system.md`
+    // (`test/init/fixtures/modules/fixture-mod/agents/tester.agent.yaml`) -- genuinely unresolved by
+    // `forge init` alone (`PROMPT_INDEX` is still empty, `PLAN-M13.md` P1, `SPEC-QUESTIONS.md` Q197),
+    // so a real backing file is written here to keep this test's own stated "passes cleanly" happy path
+    // genuine rather than silently weakened to tolerate an unrelated, real `unknown-prompt` finding.
+    const { writeFileAtomic } = await import('@forge/core/fs');
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/prompts/tester.system.md'),
+      'You are the fixture Tester.\n',
+    );
     const findings = await agentValidateAll({ paths: project.paths, agentsRoot: AGENTS_ROOT });
     expect(findings).toEqual([]);
+  });
+
+  it('reports unknown-prompt per missing reference, and only that finding disappears once its file exists', async () => {
+    const project = await createTestProject();
+    const { readTextFile, writeFileAtomic } = await import('@forge/core/fs');
+    await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'prompted', 'Prompted');
+    const relPath = `${AGENTS_ROOT}/prompted.yaml`;
+    const text = await readTextFile(project.paths.resolveWithin(relPath));
+    await writeFileAtomic(
+      project.paths.resolveWithin(relPath),
+      `${text.replace(/prompt:[\s\S]*$/, '')}prompt:\n  system: prompts/prompted.system.md\n  briefs:\n    do-it: prompts/prompted.do-it.md\n`,
+    );
+    await writeFileAtomic(project.paths.resolveWithin('.forge/prompts/prompted.system.md'), '');
+
+    const ctx = { paths: project.paths, agentsRoot: AGENTS_ROOT };
+    const messages = async (): Promise<readonly string[]> =>
+      (await agentValidateOne(ctx, 'prompted'))
+        .filter((finding) => finding.code === 'unknown-prompt')
+        .map((finding) => finding.message);
+    // `system` resolves to an empty file (not real content), so it is reported too.
+    expect(await messages()).toEqual([
+      'prompt.system references unknown prompt "prompts/prompted.system.md".',
+      'prompt.briefs.do-it references unknown prompt "prompts/prompted.do-it.md".',
+    ]);
+
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/prompts/prompted.system.md'),
+      'You are prompted.\n',
+    );
+    expect(await messages()).toEqual([
+      'prompt.briefs.do-it references unknown prompt "prompts/prompted.do-it.md".',
+    ]);
   });
 
   it('reports a real kb_write overlap for two agents both claiming the same real namespace', async () => {
@@ -174,7 +227,13 @@ describe('agentValidateAll — fixture roster', () => {
 });
 
 describe('agentValidateAll — real, complete A2/A3 roster', () => {
-  it('passes with zero real findings against the real, complete, currently-shipped roster', async () => {
+  // Not genuinely zero real findings right now -- `PLAN-M13.md` P1 turned this check's own
+  // `unknown-prompt` existence check from nonexistent to real, and no real prompt content has been
+  // authored anywhere in this codebase yet (`PROMPT_INDEX` is still empty). The real, complete,
+  // itemized list of every current finding is asserted explicitly, by real agent id
+  // (`EXPECTED_M13_P1_AGENT_FINDINGS`, shared with `packages/cli/test/e2e/init.test.ts`'s own E1 init
+  // test, which asserts the identical real fact) -- see `SPEC-QUESTIONS.md` Q197.
+  it('reports exactly the real, disclosed M13 P1 unknown-prompt findings against the real, complete, currently-shipped roster', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-agent-real-'));
     try {
       const result = await runInit(
@@ -186,7 +245,7 @@ describe('agentValidateAll — real, complete A2/A3 roster', () => {
 
       const paths = new ProjectPaths(dir);
       const findings = await agentValidateAll({ paths, agentsRoot: AGENTS_ROOT });
-      expect(findings).toEqual([]);
+      expect(findings).toEqual(EXPECTED_M13_P1_AGENT_FINDINGS);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

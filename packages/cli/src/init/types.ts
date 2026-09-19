@@ -106,7 +106,7 @@ export type InitResult =
     }
   /** `03` §3.3's own idempotency rule: re-running `init` on an existing project "MUST detect it and
    * switch to `upgrade` semantics" — real, as of `PLAN-M12.md` P3: the regenerable directories
-   * (`.forge/{workflows,frameworks,checks,templates,skills,agents}`) are regenerated for real, each
+   * (`.forge/{workflows,frameworks,checks,templates,skills,agents,briefs,prompts}`) are regenerated for real, each
    * file going through `writeGenerated`'s own real hash-drift conflict resolution (`files[n].conflict`
    * names the mode actually applied wherever one triggered). See `run-init.ts`'s own doc comment for
    * exactly why this is scoped to the regenerable directories alone, not the full `runUpgrade`

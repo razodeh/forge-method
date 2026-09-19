@@ -28,6 +28,7 @@ import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import * as YAML from 'yaml';
 
 import { runInit } from '../src/init/run-init.ts';
+import { EXPECTED_M13_P1_AGENT_FINDINGS } from './fixtures/m13-p1-expected-agent-findings.ts';
 
 const REAL_ADAPTER_ENV = { ANTHROPIC_API_KEY: 'sk-ant-test-fixture-not-real' };
 
@@ -306,11 +307,25 @@ function lastJsonLine(stdout: string): unknown {
 }
 
 describe('forge (real subprocess dispatch)', () => {
-  it('runs `forge agent validate --all` for real, exiting 0 against a real, clean project', async () => {
+  // Not genuinely exit-0 right now -- `PLAN-M13.md` P1 turned `agentValidateAll`'s own `unknown-prompt`
+  // check from nonexistent to real, and no real prompt content has been authored anywhere in this
+  // codebase yet (`PROMPT_INDEX` is still empty). `runAgentValidate` (`bin.ts`) exits 1 and prints one
+  // real `error <agentId> <code>: <message>` stderr line per finding when any finding is `severity:
+  // 'error'` (every real finding here is) -- asserted against `EXPECTED_M13_P1_AGENT_FINDINGS`, the
+  // identical real, complete, itemized list `packages/cli/test/e2e/init.test.ts` and
+  // `packages/cli/test/commands/agent.test.ts` already assert the same real fact with, so this real
+  // stderr text is derived from shared real data rather than a third independently-hand-typed copy.
+  // See `SPEC-QUESTIONS.md` Q197.
+  it('runs `forge agent validate --all` for real, exiting 1 with the real, disclosed M13 P1 unknown-prompt findings on stderr', async () => {
     const dir = await realProject();
     const result = run(['agent', 'validate', '--all', '-C', dir]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('no real findings');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    const expectedStderr =
+      EXPECTED_M13_P1_AGENT_FINDINGS.map(
+        (finding) => `${finding.severity} ${finding.agentId} ${finding.code}: ${finding.message}`,
+      ).join('\n') + '\n';
+    expect(result.stderr).toBe(expectedStderr);
   });
 
   it('runs `forge template validate --all` for real, exiting 0', async () => {

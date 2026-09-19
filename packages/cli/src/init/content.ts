@@ -14,7 +14,14 @@
 import { listDirEntriesSorted, readTextFile, ProjectPaths, type AbsolutePath } from '@forge/core';
 import { type AgentRegistry, loadAgentRegistry, resolveExtends } from '@forge/agents/registry';
 import type { AgentDefinition } from '@forge/agents/schema';
-import { FRAMEWORK_INDEX, GATE_INDEX, TEMPLATE_INDEX, WORKFLOW_INDEX } from '@forge/templates';
+import {
+  BRIEF_INDEX,
+  FRAMEWORK_INDEX,
+  GATE_INDEX,
+  PROMPT_INDEX,
+  TEMPLATE_INDEX,
+  WORKFLOW_INDEX,
+} from '@forge/templates';
 import path from 'node:path';
 import * as YAML from 'yaml';
 
@@ -68,6 +75,23 @@ export async function readCheckFiles(): Promise<readonly ContentFile[]> {
 
 export async function readArtifactTemplateFiles(): Promise<readonly ContentFile[]> {
   return readIndexed(TEMPLATE_INDEX);
+}
+
+/** `PLAN-M13.md` P1's own real content category: workflow/gate step `brief:` content. `[]` today —
+ * `BRIEF_INDEX` is still empty (`SPEC-QUESTIONS.md` Q197) — not a special case here, since `readIndexed`
+ * already handles an empty index correctly (no directory read, nothing written).
+ *
+ * @see PLAN-M13.md P1 */
+export async function readBriefFiles(): Promise<readonly ContentFile[]> {
+  return readIndexed(BRIEF_INDEX);
+}
+
+/** `PLAN-M13.md` P1's own real content category: agent `prompt.system`/`prompt.briefs.*` content. `[]`
+ * today, for the identical reason {@link readBriefFiles} above is.
+ *
+ * @see PLAN-M13.md P1 */
+export async function readPromptFiles(): Promise<readonly ContentFile[]> {
+  return readIndexed(PROMPT_INDEX);
 }
 
 /** Recursively walks `templates/skills/<relPrefix>`, reading every file it contains. Skills live

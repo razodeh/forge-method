@@ -181,6 +181,14 @@ const IGNORED_PATHS = new Set([
   // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
   // heuristic" shape every other entry in this set already establishes.
   'packages/engine/test/e2e/crash-helpers.ts',
+  // `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts` (`PLAN-M13.md` P1): the shared,
+  // real, complete `EXPECTED_M13_P1_AGENT_FINDINGS` list -- `agentValidateAll`'s own real
+  // `unknown-prompt` findings against the real, complete roster, imported by both
+  // `packages/cli/test/e2e/init.test.ts` and `packages/cli/test/commands/agent.test.ts` so the two
+  // don't each hand-type their own copy of the identical real fact. The identical "genuinely
+  // test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming heuristic" shape every
+  // other entry in this set already establishes.
+  'packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts',
 ]);
 
 /**

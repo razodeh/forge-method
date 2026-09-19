@@ -4,7 +4,11 @@
  *
  * `validate --all` is `PLAN-M6.md`'s own literal M6 exit-test line
  * (`pnpm forge agent validate --all`) — it must be real and pass cleanly, zero findings, against the
- * real, complete A2/A3 roster, not merely exist.
+ * real, complete A2/A3 roster, not merely exist. As of `PLAN-M13.md` P1, this is real but not
+ * currently clean: every one of the 34 real, shipped agents' own `prompt.system`/`prompt.briefs.*`
+ * references a real `unknown-prompt` finding, correctly, since no real prompt content has been
+ * authored anywhere in this codebase yet (`PLAN-M13.md` P3, not yet built). See `SPEC-QUESTIONS.md`
+ * Q197.
  *
  * @see specs/03 §3.2.8
  * @see specs/05 §5.9
@@ -20,6 +24,7 @@ import {
   writeFileAtomic,
   type ProjectPaths,
 } from '@forge/core';
+import { listResolvableContentReferences } from '@forge/agents/prompt';
 import { loadAgentDefinition } from '@forge/agents/schema';
 import type { AgentDefinition, AgentIssue } from '@forge/agents/schema';
 import { globsOverlap } from '@forge/engine/plan';
@@ -82,7 +87,7 @@ const AGENT_TEMPLATE = (id: string, name: string): string =>
     limits: { max_turns: 20, wall_clock_ms: 600_000, max_cost_usd: 5 },
     parallel_safety: { file_ownership: [], exclusive: false },
     gates: { produces_evidence_for: [], may_approve: [] },
-    prompt: { system: `Describe ${name}'s real system prompt here.` },
+    prompt: { system: `prompts/${id}.system.md` },
   } satisfies AgentDefinition);
 
 /** `new <id>` — a real, minimal, schema-valid `AgentDefinition`, scaffolded and written to
@@ -99,6 +104,18 @@ export async function agentNew(
   const relPath = `${ctx.agentsRoot}/${id}.yaml`;
   if (await pathExists(ctx.paths.resolveWithin(relPath))) {
     throw new ForgeError('CFG-001', { path: relPath, line: 0 });
+  }
+  // `PLAN-M13.md` P1: `prompt.system` is a `prompts/<name>.md` *reference* that `forge agent validate`
+  // now genuinely resolves, so a scaffold that named a file it never wrote would fail validation the
+  // moment it was created. Written only if absent -- never clobbers a real, hand-authored prompt --
+  // and *before* the definition file: if this write fails, a retry does not hit the "already exists"
+  // refusal above.
+  const promptRelPath = `.forge/prompts/${id}.system.md`;
+  if (!(await pathExists(ctx.paths.resolveWithin(promptRelPath)))) {
+    await writeFileAtomic(
+      ctx.paths.resolveWithin(promptRelPath),
+      `Describe ${name}'s real system prompt here.\n`,
+    );
   }
   await writeFileAtomic(ctx.paths.resolveWithin(relPath), AGENT_TEMPLATE(id, name));
   return relPath;
@@ -178,8 +195,18 @@ function overlapFindings(agents: readonly AgentDefinition[]): readonly AgentVali
 /** `05` §5.9's own "declared frameworks exist"/"[skills] referenced exist" checks, against
  * `@forge/templates`' own real, shipped `FRAMEWORK_INDEX`/`SKILL_INDEX` — the same real registries
  * `writeRegenerableContent` itself already materializes into every real project's own `.forge/
- * frameworks/`/`.forge/skills/`. */
-function referenceFindings(agent: AgentDefinition): readonly AgentValidationFinding[] {
+ * frameworks/`/`.forge/skills/`; plus `PLAN-M13.md` P1's own new `unknown-prompt` check for
+ * `prompt.system`/`prompt.briefs.*`, against the real, materialized `.forge/prompts/` directory
+ * (`promptPaths`, precomputed once per `agentValidateAll` call rather than re-listed per agent) —
+ * matching `workflow.ts`'s own real-project-state `briefExists` check, not this function's own
+ * pre-existing static-catalogue framework/skill checks: unlike frameworks/skills (a closed, spec-fixed
+ * catalogue `@forge/templates` alone owns), a project-level edit to an already-generated
+ * `.forge/prompts/<file>.md` is real, intended override content (`03` §3.3's generated-content
+ * convention) this check must see, not just what `@forge/templates` shipped. */
+function referenceFindings(
+  agent: AgentDefinition,
+  promptPaths: ReadonlySet<string>,
+): readonly AgentValidationFinding[] {
   const findings: AgentValidationFinding[] = [];
   for (const framework of agent.frameworks ?? []) {
     if (!Object.hasOwn(FRAMEWORK_INDEX, framework)) {
@@ -198,6 +225,24 @@ function referenceFindings(agent: AgentDefinition): readonly AgentValidationFind
         severity: 'error',
         code: 'unknown-skill',
         message: `skills names unknown skill ${JSON.stringify(skill)}.`,
+      });
+    }
+  }
+  if (!promptPaths.has(agent.prompt.system)) {
+    findings.push({
+      agentId: agent.id,
+      severity: 'error',
+      code: 'unknown-prompt',
+      message: `prompt.system references unknown prompt ${JSON.stringify(agent.prompt.system)}.`,
+    });
+  }
+  for (const [briefKey, briefRef] of Object.entries(agent.prompt.briefs ?? {})) {
+    if (!promptPaths.has(briefRef)) {
+      findings.push({
+        agentId: agent.id,
+        severity: 'error',
+        code: 'unknown-prompt',
+        message: `prompt.briefs.${briefKey} references unknown prompt ${JSON.stringify(briefRef)}.`,
       });
     }
   }
@@ -289,11 +334,14 @@ async function loadRoster(ctx: AgentCommandContext): Promise<{
 export async function agentValidateAll(
   ctx: AgentCommandContext,
 ): Promise<readonly AgentValidationFinding[]> {
-  const { agents, findings } = await loadRoster(ctx);
+  const [{ agents, findings }, promptPaths] = await Promise.all([
+    loadRoster(ctx),
+    listResolvableContentReferences(ctx.paths, 'prompts'),
+  ]);
   return [
     ...findings,
     ...overlapFindings(agents),
-    ...agents.flatMap((agent) => referenceFindings(agent)),
+    ...agents.flatMap((agent) => referenceFindings(agent, promptPaths)),
     ...agents.flatMap((agent) => ceilingFindings(agent)),
   ];
 }

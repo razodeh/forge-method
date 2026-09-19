@@ -196,6 +196,13 @@ forge agent validate --all
 forge workflow validate --all
 ```
 
+Both currently report unresolved `brief:` / `prompt.*` references on a fresh project, because no
+brief or prompt content has been authored yet (`PLAN-M13.md` P2/P3; `SPEC-QUESTIONS.md` Q197).
+Compare the output before and after your edit rather than expecting a clean exit until that content
+lands. When you hand-author an agent or workflow, create the files it names: a
+`prompt.system: prompts/<id>.system.md` needs `.forge/prompts/<id>.system.md`, and a step's
+`brief: briefs/<name>.md` needs `.forge/briefs/<name>.md`, each with real (non-empty) text.
+
 `forge workflow new`, `forge workflow list/show/compile/graph`, and the rest of `forge agent` beyond
 `validate --all` are named in `specs/03` §3.2.7/§3.2.8 and have no CLI wiring yet — author these
 files by hand under `.forge/overrides/` and validate with the `--all` commands above.
@@ -241,7 +248,8 @@ As currently wired, only parts of this loop are reachable from the CLI:
   project's own content" resolver yet, so `forge compile --check` as a zero-argument CI command (as
   `specs/19` §19.3 describes it) does not work as-is. Treat `forge agent validate --all` +
   `forge workflow validate --all` + `forge template validate --all` as the practical CI gate for
-  customization changes today.
+  customization changes today — but the first two currently exit 1 on a fresh project until the
+  brief/prompt content lands (`SPEC-QUESTIONS.md` Q197), so gate on "no _new_ findings" for now.
 
 ## Modules
 
