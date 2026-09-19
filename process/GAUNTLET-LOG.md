@@ -13257,3 +13257,72 @@ implementation, and every later change is test-only or small hardening covered b
 and three `cli/test/commands/{overlay,doctor/*}.test.ts`). Full unscoped `node scripts/run-tests.mjs run`:
 8643 passed, 2 failed — `engine/test/e2e/crash-resume.test.ts` (known load-sensitive flake) and
 `scripts/verify-success-criteria.test.ts`'s SC3 wrapper, which spawns that same test.
+
+## M13 P1 — Brief and prompt content resolution (`@forge/agents/prompt`, `forge workflow|agent validate`)
+
+**Mandate:** make a workflow step's `brief:` and an agent's `prompt.system`/`prompt.briefs.*` reference
+resolve to real text, and make a missing one a real, reported error instead of `briefExists: () => true`
+(and no agent-prompt check at all). `BRIEF_INDEX`/`PROMPT_INDEX` (`@forge/templates`, empty open records)
+wired into `forge init` (`.forge/briefs`, `.forge/prompts`); `resolveContentReference`,
+`isWellFormedContentReference`, `listResolvableContentReferences` in `@forge/agents/prompt`, the one shared
+definition of a resolvable reference used by both validators and the loader; new codes `CFG-053`,
+`RUN-079`. Authoring the 124 content files is P2/P3, so a fresh `forge init` now reports **53
+`unknown-brief` and 62 `unknown-prompt` findings** — disclosed, not hidden: the E1 init test, the
+`agent.test.ts` real-roster test and `bin.test.ts` (real subprocess, exit 1 + exact stderr) assert the
+complete itemized lists by agent/workflow/step id (Q192/Q194 precedent; one shared fixture constant for the
+agent list), and both docs say so. Happy-path fixture tests write the real backing file instead of
+tolerating the finding. Judgement calls and limits: `SPEC-QUESTIONS.md` Q197.
+
+### Round 1: 7 major findings, all real or real-in-part
+
+(1) the loader returned the `forge:generated` header as prompt text (every file `forge init` writes
+carries it); (2) the loader accepted any `.forge/`-relative path — `../.env` and `config.local.yaml`
+resolved, and the `.forge/` prefix defeated `looksAbsolute`, so the doc comment's containment claim was
+false as implemented; (3) "override layering" neither built nor recorded; (4) gate-embedded and
+module-shipped briefs uncovered; (5) validators checked existence only (empty file, `.txt`, dangling
+symlink counted as present; `.forge/briefs` being a file crashed `validate --all`); (6) `agentNew`'s
+scaffold (`prompt.system` was prose) failed validation the moment it was created; (7) docs still promised
+"no real findings". Fixed (1),(2),(5),(6),(7): header stripped, loader restricted to `briefs|prompts/<name>.md`
+(refused before any read), one shared non-empty/`.md`/no-symlink-escape listing for loader and validators,
+scaffolds write what they name, docs rewritten. (3),(4) recorded in Q197 (the only override mechanism is
+`03` §3.3's drift-detected in-place edit; no command validates gate documents at all — pre-existing).
+**What the critic caught that the builder missed:** all of it. The builder had tested the loader only
+against header-less files and one traversal shape, had reasoned the header was "spec text" without asking
+what a model would receive, and had not run `agent new` through `agent validate`. The builder did catch by
+itself two real regressions the first full-suite run exposed (`test/workspace-floor.test.ts` — the shared
+fixture needs an `IGNORED_PATHS` entry; `bin.test.ts`'s `agent validate --all` exit-0 test), plus a
+`*/`-inside-a-JSDoc comment terminator that broke typecheck.
+
+### Round 2: 4 major, several minor — no exploitable bypass of the loader
+
+Verified round-1 fixes real (no bypass of the shape check found). Remaining: (M1) `workflowNew`'s scaffold
+still names nonexistent agent `engineer` and the new test asserted only the absence of `unknown-brief`, and
+a doc sentence said it "validates cleanly" (false; pre-existing agent reference, doc and test claim
+corrected, Q197); (M2) docs contradicted themselves — `agent new`/`workflow new` are library-only, not
+CLI-wired — and a "practical CI gate" line and E1's header comment still said clean (rewritten); (M3) the
+generated-file header says "use overrides/" while no consumer exists, and two new `.forge/` directories are
+absent from `03` §3.3/`18` §18.2 (recorded in Q197, spec not amended); (M4) wrong error codes — `CFG-003`
+"escapes the project root" for a malformed reference, `RUN-034`'s permissions remedy for a missing brief.
+Fixed with dedicated `CFG-053`/`RUN-079` whose remedies name the fix. Minor: BOM/CRLF header stripping
+(fixed and tested), scaffold write order (definition file written last so a retry is not stuck), dangling
+comment, `@see` tags, key-without-slash invariant in the index test.
+
+### Round 3: 1 blocking (mine, a floor miss), 6 minor
+
+The new codes failed `packages/core/test/errors.test.ts` (remedy verb `Change`; no `reference` key in
+`SAMPLE_DETAILS`) — already fixed by the time the critic read it (the builder's full-suite run had caught
+it), confirming the floor rather than the critic found it. Minor, fixed: loader accepted whitespace-only
+text that the validators exclude (now `RUN-079`, tested), stale regenerable-directory list in
+`init/types.ts`, unpinned templated-brief stance (test added). Recorded: front matter in a brief passes
+through to the model (P2/P5 decision), fixed `.forge/` roots. No fourth round: nothing blocking remained on
+the implementation and the last edits are small and covered by the new tests.
+
+**Process incident:** a macOS Desktop permission revocation interrupted the session mid-run for ~7
+minutes and killed the first round-1 critic; all work was intact on disk and re-verified. The first two
+full-suite runs were also killed by tool-session restarts; the final run is the complete one.
+
+**Verification:** whole-workspace `pnpm typecheck` (21/21), `pnpm run boundaries`, and `eslint` clean;
+`pnpm lint`'s prettier step reports only the same 4 pre-existing, untouched files. Full unscoped
+`node scripts/run-tests.mjs run` on the final tree: 8682 passed, 2 failed — `engine/test/e2e/crash-resume.test.ts`
+(known load-sensitive flake) and `scripts/verify-success-criteria.test.ts`'s SC3 wrapper, which spawns that
+same test.
