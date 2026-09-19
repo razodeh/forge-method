@@ -13326,3 +13326,53 @@ full-suite runs were also killed by tool-session restarts; the final run is the 
 `node scripts/run-tests.mjs run` on the final tree: 8682 passed, 2 failed — `engine/test/e2e/crash-resume.test.ts`
 (known load-sensitive flake) and `scripts/verify-success-criteria.test.ts`'s SC3 wrapper, which spawns that
 same test.
+
+## M13 P3a — Agent prompts for analyst..frontend (31 files, `@forge/templates` `PROMPTS_A`)
+
+**Mandate:** author the real content for the 31 `prompts/*.md` files 14 agents reference (`system` = role-level
+working instructions appended to block [2]; `briefs.<key>` = role-specific specialisation appended to block [4]),
+without restating the mandate/persona/operating contract, contradicting the agent definition, or exceeding a tool
+grant. Registered in `PROMPTS_A`; `prompts-a-content.test.ts` (204 tests) asserts substance, no placeholders/front
+matter/template syntax, no duplicate paragraph/lead-in/file across `PROMPT_INDEX`, no imitation of the constant blocks,
+no verbatim mandate/persona restatement, own-role vocabulary derived from each definition, no gate-bypass phrasing.
+The 31 matching `unknown-prompt` findings left the shared expected-findings fixture. Judgement calls: Q198.
+
+### Round 1: 2 critics (7 agents each): 2 blocking, 7 + 9 major
+
+Blocking: (a) five brief specialisations can never attach (keys match no shipped brief; structural, recorded in
+Q198, agent YAMLs are out of scope); (b) `diagnostician.run-rca-framework` told a diagnosis-only step to apply and
+prove a fix, contradicting the generic brief. Major: analyst text contradicted `frame-problem` (metrics, scope,
+"candidate responses"); implementers told to run tests they have no exec grant for; `critic.critique-architecture`
+diverged from the gate brief's fields and redid mechanical checks; `architect.review-change` invented an
+approve/reject verdict; "generate the diagram" for agents that cannot run generators; backend habits collided with
+the frozen contract and the green step's no-extra-behaviour rule; `base-engineer.implement-story` paraphrased the
+generic brief; data-engineer misstated the `data-quality:tests` filename rule (`basename.` prefix, top level only),
+the lineage-check rationale and the diagram generator; frontend contradicted its own claim/scope rules.
+**What the critic caught that the builder missed:** all of it; the builder had not read the generic briefs (other
+agents were writing them in parallel) and wrote several specialisations as if they were the whole brief.
+
+### Round 2: 1 blocking, ~10 + 8 major
+
+Blocking, mine: my paragraph-replacement helper replaced only a list's intro paragraph, leaving the old list, so
+`backend.system.md` and `analyst.system.md` carried two contradictory copies (and one numbered list was clobbered to
+one item, caught by the builder). Major: open questions that hold `G-Problem`; consistency/lifecycle deliverables
+deferred that `model-data` requires; weakened sequence-diagram/long-chain rules; review-change shrinking the affected
+set; engine (not agent) owns commits; "Satisfied" allowed on mere existence of evidence; Gap vs Unknown inconsistent;
+diagnostician prompt with no runner and a possible `git bisect run` bypass; RCA schema required-field collision on the
+no-reproduction path; fix-vs-prescribe contradiction; implementers authoring their own tests against the green
+contract; facilitator composing participants' contributions and inventing owners; frontend "test it yourself" with no
+browser and vacuous `dist/` checks; component-spec example not YAML-safe. All fixed; the builder added a
+duplicate-paragraph/lead-in test from the round-2 blocking finding.
+
+### Round 3: 1 blocking, 5 + 2 major (no fourth round: all fixed, the rest minor)
+
+Blocking: `frontend.component-spec` example began with a backtick and would not parse as YAML front matter (also
+tightened to forbid `: `, ` #`, leading quote/bracket/`*`/`@`/`&`/`!`/`%`). Major: architect and analyst `system`
+files scoped to one greenfield step contradicted the adopt steps; backend `system` story-scoped rules broke refactor
+and migration steps and contradicted itself on unrequested behaviour; compliance Gap/Unknown inconsistent; `em` file-claim
+overlap advice did not satisfy `G-Ready` (only splitting/narrowing does); RCA `time_to_diagnose_min` required number.
+Remaining minor findings (redundancy between system and brief, some persona overlap) were fixed where cheap, otherwise
+left. **Process incident:** an API spend-limit cut the session mid-batch; on resume the 23 files already on disk were
+verified whole and the missing 8 written. Verification scoped by instruction (see Q198): content/index/`agent.test.ts`/
+`workspace-floor`/`templates` tests 332 passed; `pnpm typecheck` clean; `pnpm run boundaries` clean; `pnpm lint` reports
+only prettier warnings in files this piece does not own.

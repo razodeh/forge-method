@@ -16456,3 +16456,52 @@ for Q192.
 Files: `packages/templates/src/index.ts`, `packages/cli/src/{init/content.ts,init/write-tree.ts,
 commands/workflow.ts,commands/agent.ts}`, `packages/agents/src/prompt/{resolve-reference.ts,index.ts}`,
 `packages/core/src/errors/codes.ts` (`CFG-053`, `RUN-079`) + `packages/core/test/errors.test.ts` (sample detail key), tests, `test/workspace-floor.test.ts` (`IGNORED_PATHS` entry for the shared fixture), `docs/getting-started.md`, `docs/authoring-guide.md`.
+
+## Q198 — M13 P3a: 31 agent prompts for analyst..frontend — the brief keys in the agent definitions mostly match no workflow brief, so most specialisations can never attach
+
+**Context:** `PLAN-M13.md` P3a authored the 31 `prompts/*.md` files that 14 agents reference (14 `prompt.system`
+plus 17 `prompt.briefs.*`), registered in `PROMPTS_A`. Dispatch attaches a specialisation by the **basename of
+the workflow step's brief** (`packages/engine/src/dispatch/assemble.ts` `briefKeyOf`), and appends a `system` file
+to every step the agent runs.
+
+**Finding (structural, not fixed here):** only 6 of the 17 brief keys equal a shipped brief's basename
+(`backend`/`base-engineer`/`frontend` `implement-story`, `critic` `critique-architecture`, `diagnostician`
+`run-rca-framework`, `em` `run-retro`). The other 11 (`analyst.discovery`, `architect.design-system`,
+`architect.review-change`, `compliance.map-compliance`, `data-architect.design-data-model`,
+`data-engineer.implement-pipeline`, `data-engineer.model-warehouse`, `domain-modeler.model-domain`,
+`facilitator.run-session`, `finops.model-cost`, `frontend.component-spec`) name no brief that any workflow, gate or
+module workflow references, because the keys were copied from `05` §5.3's illustrative names. They are authored
+and indexed as instructed (the agent YAMLs are outside this piece), but will never reach a compiled prompt until the
+YAML keys are renamed to real brief basenames (the nearest real steps: `frame-problem`, `select-architecture-style`,
+`change-impact-analysis`, `model-data`), an alias mechanism is added, or the workflows gain steps with those briefs.
+Those four files were written against the nearest real generic brief so they stay consistent if re-keyed. The
+same mismatch exists for a P3b agent's keys as far as this piece can tell; the orchestrator should audit it.
+
+**Judgement calls:**
+
+1. **`system` files are written for every step the agent runs**, not for the one step its brief key suggests
+   (the analyst also runs `adoption-gap-analysis`; the architect `reverse-derive-specs`, `plan-migration`; the
+   backend refactor and migration steps). Greenfield-only rules (technology-independence, "no AC means out of
+   scope", open questions holding a gate) are therefore scoped to the step type or given a brownfield exception.
+2. **Grants are not restated, but prompts never assume execution.** The engineers, diagnostician, data engineer and
+   frontend have `exec` limited to `git`/`ls`/`rg`/`cat`/`tree` (no test runner, no `forge`). Prompts say to trace by
+   reading, to label unrun commands as unrun, never to report an unseen pass, never to route a command through a git
+   subcommand, and to hand-author (never label as "generated") a diagram whose generator they cannot run.
+3. **Module-check facts are pinned to the check text**: `data-quality:tests` matches `^<basename>\.` directly under
+   `test/data-quality/`; `lineage:coverage` needs `## Lineage` with `Source:`/`Target:` on `docs/forge/kb/data/pipelines/*.md`;
+   `bundle:size` is raw bytes under `dist/` against 250,000 and, like `a11y:audit`, passes vacuously with no `dist/`;
+   component-spec list entries are bare YAML strings (no backticks, ": " or " #").
+4. **Contradictions with the agent YAML are recorded, not resolved:** `analyst` owns `discovery.success_metrics` yet the
+   shipped `discover` workflow gives `define-metrics` to `pm`; the `facilitator` mandate lists retros while `16` §16.2 gives
+   them to `em`; `05` §5.2 lists glossary entries as a `domain-modeler` output while its `kb_write` is `[]`;
+   `ComplianceMatrix` has no schema file under `packages/schemas/json`. Prompts follow the workflows/specs and stay
+   neutral where they conflict.
+5. **RCA needs-more-evidence path** must still satisfy `rca.schema.json`'s required fields; the prompt prescribes literal
+   "undetermined" values and `time_to_diagnose_min: 0` as a stated placeholder.
+6. **Verification was scoped by coordinator instruction** (owner-approved cost cut): content and index tests,
+   `agent.test.ts`, `workspace-floor`, `templates` tests, `pnpm typecheck`, `pnpm run boundaries`, `pnpm lint`; the
+   full unscoped suite is run once by the orchestrator after all pieces land.
+
+Files: `packages/templates/templates/prompts/{analyst,architect,backend,base-engineer,compliance,critic,data-architect,
+data-engineer,diagnostician,domain-modeler,em,facilitator,finops,frontend}.*.md`, `packages/templates/src/content/prompts-a.ts`,
+`packages/agents/test/prompt/prompts-a-content.test.ts`, `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts` (31 entries removed).
