@@ -13,6 +13,12 @@
  * @see SPEC-QUESTIONS.md Q28
  */
 
+import { BUILD_BRIEFS } from './content/briefs-build.ts';
+import { OPS_AND_GATE_BRIEFS } from './content/briefs-ops-gates.ts';
+import { PLANNING_BRIEFS } from './content/briefs-planning.ts';
+import { PROMPTS_A } from './content/prompts-a.ts';
+import { PROMPTS_B } from './content/prompts-b.ts';
+
 /** The 22 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`, added
  * post-v1.0), transcribed independently — see above. */
 export type TemplateArtifactTypeId =
@@ -378,7 +384,11 @@ export const SKILL_INDEX: Readonly<Record<SkillId, string>> = {
  * @see specs/22 M13
  * @see PLAN-M13.md P1
  */
-export const BRIEF_INDEX: Readonly<Record<string, string>> = {};
+export const BRIEF_INDEX: Readonly<Record<string, string>> = {
+  ...PLANNING_BRIEFS,
+  ...BUILD_BRIEFS,
+  ...OPS_AND_GATE_BRIEFS,
+};
 
 /**
  * Resolves an agent's `prompt.system`/`prompt.briefs.*` reference (e.g.
@@ -396,4 +406,7 @@ export const BRIEF_INDEX: Readonly<Record<string, string>> = {};
  * @see specs/22 M13
  * @see PLAN-M13.md P1
  */
-export const PROMPT_INDEX: Readonly<Record<string, string>> = {};
+export const PROMPT_INDEX: Readonly<Record<string, string>> = {
+  ...PROMPTS_A,
+  ...PROMPTS_B,
+};
