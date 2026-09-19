@@ -16505,3 +16505,65 @@ same mismatch exists for a P3b agent's keys as far as this piece can tell; the o
 Files: `packages/templates/templates/prompts/{analyst,architect,backend,base-engineer,compliance,critic,data-architect,
 data-engineer,diagnostician,domain-modeler,em,facilitator,finops,frontend}.*.md`, `packages/templates/src/content/prompts-a.ts`,
 `packages/agents/test/prompt/prompts-a-content.test.ts`, `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts` (31 entries removed).
+
+## Q199 — M13 P3b: 31 agent prompts for integration-architect..ux — only 5 of 16 specialisations can attach today, the engine's own swarm-review path attaches none, and several agent grants make "the agent ran it" claims unsatisfiable
+
+**Context:** `PLAN-M13.md` P3b authored the 31 `prompts/*.md` files that 15 agents reference (15 `prompt.system`
+plus 16 `prompt.briefs.*`), registered in `PROMPTS_B`. `system` files are role-level working instructions for
+every step the agent runs; `briefs.<key>` files specialise the workflow brief whose basename equals the key (the
+generic brief precedes them, so they are written to add to it, and the P2 briefs were read and not repeated).
+
+**Finding 1 (structural, not fixed here, same class as Q198):** `assemble.ts`'s `briefKeyOf` attaches a
+specialisation only when the step's `brief:` basename equals the agent's `prompt.briefs` key. Only 5 of 16 keys do:
+`mobile.implement-story`, `mobile.prepare-release-build`, `po.write-stories`, `sdet.write-failing-tests`,
+`security.threat-model`. The other 11 (`integration-architect.design-integration`, `ml-engineer.integrate-model`,
+`orchestrator.schedule-run`, `platform.initialize-project`, `pm.define-product`, `release.write-release-notes`,
+`reviewer.swarm-review`, `sre.design-delivery`, `techwriter.write-docs`, `test-architect.plan-testing`,
+`ux.design-flows`) are authored and indexed as instructed but will not reach a compiled prompt until the YAML keys are
+renamed to real brief basenames, an alias is added, or workflows gain steps with those briefs. Nearest real
+steps a re-key could target: `ux` -> `write-ux-spec`; `test-architect` -> `write-test-plan`/`verify-nfrs`;
+`platform` -> `decide-repo-strategy`/`scaffold-project`; `sre` -> `design-cicd-pipeline`/`design-deployment-strategy`;
+`integration-architect` -> `draft-contract`; `ml-engineer` -> `implement-story`; `pm` -> `write-vision`/
+`decompose-stages`; `release` -> `prepare-store-submission`. `orchestrator` and `techwriter` are dispatched by no
+shipped workflow at all. **Also:** swarm-review perspective sessions go through `assembleAgentSession({taskText})`,
+where `briefKey` is never set, and the `mode: swarm-review` steps carry no `brief:`, so `reviewer.swarm-review`
+cannot attach even under a correct key; P5 (or a follow-up) should pass the mode name as the key. The file is
+written for one perspective per session with the `{findings:[{summary,severity}], checked}` output the engine
+merges, so it is correct as soon as it can attach.
+
+**Finding 2 (outside this piece, real):** `plan-stage.workflow.yaml`'s `derive-run-plan` runs
+`forge plan run-plan {{stageId}} --json`, but `packages/cli/src/bin.ts`'s `PLAN_PHASES` has no `run-plan` phase and
+nothing under `packages/cli/src` handles it, so the command a stage's run plan is meant to come from appears not to
+exist. `orchestrator.schedule-run` is written to audit the engine-compiled plan and to mark its own plan provisional
+if none is present.
+
+**Judgement calls:**
+
+1. **Grants shaped the wording, not the roster.** The reviewer, security, orchestrator, PM, PO, UX, test-architect,
+   release, techwriter and integration-architect are `write: false`; sdet, mobile, ml-engineer and platform have no
+   test/build runner in `exec`. Prompts say "unless your constraints list a command that does" rather than hard-coding
+   the current grant (an overlay can widen it), label every unrun command and result as unrun, and never let a role
+   report evidence it could not observe. The sdet's red step marks a failure it could not run as "unverified", and a
+   missing-seam failure as not an observed red.
+2. **Read-only critics never fix.** `reviewer` and `security` are written so a finding names the property required and
+   never carries a patch; `orchestrator` audits and hands off and never authors the story, code or decision it routes.
+3. **Gates are never approved by the authoring role.** Where a definition lists a role under `may_approve`, the prompt
+   says the role supplies evidence and approval is recorded through the gate process (the shipped gate files require
+   a human), and never lets it state a gate has passed or recommend a waiver.
+4. **Where a generic brief and a role's intuition disagree, the brief wins:** device-matrix rows are never written by the
+   mobile agent (only the suite that produces them); contract-freezing is not a PO story type; a story's file claims may
+   never overlap (a shared file belongs to one story); an open question is never raised to record a readiness gap;
+   the `wont` priority with `stage: deferred` (not "deferred") is the schema's way to defer a capability.
+5. **Definition inconsistencies recorded, not resolved:** `ml-engineer` owns a model-integration decision but has no
+   ADR output and no `kb_write`; `integration-architect`/`sre`/`security` are told to draft decisions, diagrams and tables
+   as proposals to the architect because their definitions have no output slot for them (the SRE brief itself has the SRE
+   write pipeline diagrams under its own area, which the prompt follows); `pm.define-product` spans steps assigned to
+   two roles (`write-prd` runs as `po`), so its items are labelled by the step that asks for them.
+6. **Verification was scoped by coordinator instruction** (owner-approved cost cut): `prompts-b-content.test.ts`
+   (206 tests), `content-index`, `agent.test.ts`, `workspace-floor`, `templates` tests, `pnpm typecheck`,
+   `pnpm run boundaries`, `pnpm lint`; the full unscoped suite is run once by the orchestrator after all pieces land.
+
+Files: `packages/templates/templates/prompts/{integration-architect,ml-engineer,mobile,orchestrator,platform,pm,po,release,
+reviewer,sdet,security,sre,techwriter,test-architect,ux}.*.md`, `packages/templates/src/content/prompts-b.ts`,
+`packages/agents/test/prompt/prompts-b-content.test.ts`, `packages/cli/test/fixtures/m13-p1-expected-agent-findings.ts`
+(31 entries removed, leaving the fixture empty).

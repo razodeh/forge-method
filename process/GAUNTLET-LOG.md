@@ -13376,3 +13376,58 @@ left. **Process incident:** an API spend-limit cut the session mid-batch; on res
 verified whole and the missing 8 written. Verification scoped by instruction (see Q198): content/index/`agent.test.ts`/
 `workspace-floor`/`templates` tests 332 passed; `pnpm typecheck` clean; `pnpm run boundaries` clean; `pnpm lint` reports
 only prettier warnings in files this piece does not own.
+
+## M13 P3b — Agent prompts for integration-architect..ux (31 files, `@forge/templates` `PROMPTS_B`)
+
+**Mandate:** author the real content for the 31 `prompts/*.md` files 15 agents reference (`system` = role-level working
+instructions appended to block [2]; `briefs.<key>` = role-specific specialisation appended to block [4]), without
+restating the mandate/persona/operating contract, contradicting the agent definition or the generic brief, or exceeding
+a tool grant; read-only roles (reviewer, security, orchestrator) must never fix or do what they judge or route. Registered
+in `PROMPTS_B`; `prompts-b-content.test.ts` (206 tests) asserts substance, no placeholders/front matter/template syntax,
+no imitation of the constant blocks, own-role vocabulary derived from each definition, no verbatim mandate/persona
+restatement, no 14-word run shared between two roles' system files, no byte-identical file across `PROMPT_INDEX`, no
+gate-bypass phrasing, and no instruction an agent's own grant forbids. The 31 matching `unknown-prompt` findings left the
+shared expected-findings fixture (now empty). Judgement calls and structural findings: Q199.
+
+### Round 1: 1 blocking, ~11 major
+
+Blocking: 11 of 16 specialisations can never attach (keys match no workflow brief; structural, agent YAMLs are out of scope,
+Q199). Major: `reviewer.swarm-review` described one session merging perspectives when the engine runs one session per
+perspective and merges itself; PO overlap advice ("declare a dependency") would fail `G-Ready` (claims may never overlap);
+`sdet.system` said both "fix the code under test" and "never edit production code"; `mobile.prepare-release-build`
+told the agent to write device-matrix rows and misstated the check (both platforms required, Android detection);
+pm/sre implied the role approves gates (gate files require a human); techwriter and ml-engineer demanded runnable
+examples/evals their grants cannot execute; mobile told an implementer to build beyond the acceptance criteria;
+`orchestrator.schedule-run` re-derived the compiled run plan; `sre.design-delivery` misstated the delivery gate's checks
+(dry-run, smoke, drift); `security` disowned compliance mapping its mandate names.
+**What the critic caught that the builder missed:** all of it. The builder had written specialisations from the agent
+definition and specs without reading the generic briefs (being written in parallel) or the engine's swarm-review code,
+and had hard-coded claims about the device-matrix check from memory of the YAML comment.
+
+### Round 2: 0 blocking, 11 major, several minor
+
+Major: `sre.design-delivery` told the SRE to route its diagrams to the architect when the brief has the SRE write them
+under its own area; platform README ownership contradicted `scaffold-project`; a "waves" concept the engine does not
+have; integration-architect ADR/table wording contradicted its own definition (no ADR output); release notes
+contradicted `prepare-store-submission` (no ticket ids, copy build identifiers); ml-engineer/sdet told to write tests
+their role does not own or count seam failures as red; PO definition of ready omitted the gate's expected-files /
+context-ref / open-question conditions; PM specialisation contradicted `write-vision`/`write-prd`; mobile licensed
+unspecified behaviour; two duplicated paragraphs (**mine**: a replace helper that was not idempotent re-applied an edit
+after a failed run). Fixed; the critic also found eight persona-restating "when you disagree" sentences, removed, and
+the builder added a cross-role verbatim-run test that immediately caught a shared untrusted-text sentence.
+
+### Round 3: 0 blocking, 6 major, 17 minor (no fourth round: three rounds run, all majors fixed)
+
+Major: `pm.define-product` used a priority value the schema lacks (`deferred`; the schema uses `wont` with `stage: deferred`);
+integration-architect files let contract facts live outside the contract; `platform.initialize-project` ran all four
+stages regardless of step, contradicting `decide-repo-strategy` ("create nothing"); orchestrator system and specialisation
+conflicted on who produces the plan; ml-engineer asked for cost/latency figures it cannot observe; mobile release step
+told the agent to remove used permissions/SDKs (a behaviour change). Minor, fixed: readiness/liveness split, UX open-question
+handling, test-strategy drift per stage, PO contract-freeze stories, lane/commit lines for engineers, `asset` column,
+failure routing per `06` §6.8, timeout arithmetic (retries plus one). Not fixed (minor): some system/specialisation
+duplication. **Process incidents:** an API spend-limit cut the session; on resume the 11 files on disk were verified whole
+and the 20 missing ones written. Verification scoped by coordinator instruction (see Q199): content/index tests,
+`agent.test.ts`, `workspace-floor` (passes alone; two timeouts under multi-agent load in a combined run), `templates`
+tests; `pnpm typecheck` clean (21/21; an earlier run showed three `assembly`-missing errors in
+`test/fm-*-workflow.test.ts`/`live-smoke.test.ts`, P5's in-flight change, since resolved); `pnpm run boundaries` clean;
+`pnpm lint` reports only prettier warnings in files this piece does not own.
