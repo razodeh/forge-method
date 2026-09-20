@@ -20,7 +20,7 @@
 import { ForgeError, isForgeError } from '@forge/core';
 import type { ArtifactDocument } from '@forge/core/artifacts';
 import { SpecGraph } from '@forge/core/graph';
-import { globsOverlap } from '@forge/engine/plan';
+import { claimFixedPrefix } from '@forge/engine/plan';
 import { parseKbTree, type KbParsedEntry, type KbTree } from '@forge/kb/schema';
 import { evaluateDodProfile, readDodProfile, type DodParseResult } from '@forge/methods/dod';
 import {
@@ -34,6 +34,14 @@ import {
 
 import { listSpecArtifacts } from '../shared.ts';
 import { loadGraphDocs, type SpecCommandContext } from '../spec.ts';
+import {
+  validateBlockingOpenQuestions,
+  validateCapabilityAcceptance,
+  validateMetricsDefined,
+  validateNfrNumeric,
+  validateScopeContradictsConstraints,
+  validateUserIdentified,
+} from './gate-rules.ts';
 
 /** The one real, runtime-checkable list a caller (`bin.ts`) validates an arbitrary `--rule` string
  * against — `ValidateRuleId` is derived from it, not a hand-kept parallel union, so the two can never
@@ -45,10 +53,19 @@ export const VALIDATE_RULE_IDS = [
   'oversized-stories',
   'open-sev1-sev2-defects',
   'unresolved-rca',
+  // `PLAN-M13.md` P24: the six deterministic checks `G-Problem`, `G-Product` and `G-Design` name. Their
+  // implementations live in `./gate-rules.ts` (Q214).
+  'metrics-defined',
+  'user-identified',
+  'scope-contradicts-constraints',
+  'capability-acceptance',
+  'nfr-numeric',
+  'blocking-open-questions',
 ] as const;
 
-/** One of the six `story:*`/`defect:*`/`rca:*` checks `G-Ready.gate.yaml`/`G-Stable.gate.yaml`
- * already name as a real `forge spec validate --rule <name>` invocation. */
+/** One of the deterministic checks the shipped gates name as a real `forge spec validate --rule <name>`
+ * invocation: the six `story:*`/`defect:*`/`rca:*` ones (`G-Ready`, `G-Stable`) and the six document
+ * checks `G-Problem`/`G-Product`/`G-Design` name (`./gate-rules.ts`). */
 export type ValidateRuleId = (typeof VALIDATE_RULE_IDS)[number];
 
 /** One real problem `specValidateRule` found. `subject` is the id of the story/AC/defect the
@@ -180,23 +197,135 @@ async function validateOversizedStories(ctx: SpecCommandContext): Promise<RuleVa
 
 // --- file-claim-overlap --------------------------------------------------------------------------
 
-function validateFileClaimOverlap(stories: readonly Story[]): RuleValidationResult {
-  const ready = stories.filter(isReadyOrLater);
-  const errors: RuleViolation[] = [];
-  ready.forEach((storyA, index) => {
-    for (const storyB of ready.slice(index + 1)) {
-      for (const globA of storyA.files_expected) {
-        for (const globB of storyB.files_expected) {
-          if (globsOverlap(globA, globB)) {
-            errors.push({
-              subject: `${storyA.id}, ${storyB.id}`,
-              message: `${storyA.id}'s files_expected claim "${globA}" overlaps ${storyB.id}'s claim "${globB}".`,
-            });
-          }
-        }
+// Uses the conservative path-prefix rule of `claimsMayOverlap` (`@forge/engine/plan`; its prefix and nesting steps) the stage run plan
+// shares (`06` §6.2 rule 3), not `globsOverlap`: that one is literal-against-pattern and misses
+// `src/auth` against `src/auth/login.ts`, brace sets, `./` prefixes and globs over 512 characters, so
+// G-Ready let through pairs the plan serialised (`PLAN-M13.md` P24, Q206 decision 2). It may over-report
+// a disjoint pair (`src/*.ts` against `src/a/b.ts`); it never misses an overlap. One violation per
+// overlapping claim pair, as before, capped in the listing. Compared stories are the ones that can still write
+// (every status but `draft`, `done` and `verified`), read from raw front matter so a schema-invalid story's
+// claim is not invisible.
+
+/** `09` §9.3 status enum: a story past `done` no longer writes files, so its claim cannot collide with one still
+ * to be built (the run plan drops them too, Q206 decision 4). Every other non-`draft` status can still write. */
+const DELIVERED_STATUSES: ReadonlySet<string> = new Set(['done', 'verified']);
+
+/** More than this many overlapping claim pairs are counted, not listed: 500 stories each claiming `**` would
+ * otherwise print a quarter of a million lines. `errors` (the number the gate reads) stays a positive count. */
+const MAX_LISTED_OVERLAPS = 200;
+
+interface RawClaim {
+  readonly id: string;
+  readonly claims: readonly { readonly pattern: string; readonly prefix: readonly string[] }[];
+}
+
+interface InFlightClaims {
+  readonly stories: readonly RawClaim[];
+  /** Stories still able to write whose `files_expected` cannot be read as a list of path globs. */
+  readonly unreadable: readonly RuleViolation[];
+}
+
+/** Stories whose claim can still collide, read from raw front matter, not `storySchema`: a story that is
+ * schema-invalid (a size-L story at `ready`, say) still claims files, and a claim the rule cannot see is an overlap
+ * it would miss. A document is a story when its `type` is `Story` or its id is `STORY-...` (a typo'd type must not
+ * hide it). A `files_expected` that is not an array of non-blank strings (a scalar, a list of objects, an empty
+ * string that would claim every file) cannot be compared, so it is a violation naming the story rather than a
+ * silently empty claim; `definition-of-ready` skips a story that fails its schema, so nothing else in G-Ready would
+ * report it. A story with no readable `status` is treated as not `draft` (it may be building). */
+function inFlightClaims(docs: readonly ArtifactDocument[]): InFlightClaims {
+  const stories: RawClaim[] = [];
+  const unreadable: RuleViolation[] = [];
+  for (const doc of docs) {
+    const fm = doc.frontMatter as Readonly<Record<string, unknown>>;
+    const rawId = fm['id'];
+    const isStory =
+      fm['type'] === 'Story' || (typeof rawId === 'string' && rawId.startsWith('STORY-'));
+    if (!isStory) continue;
+    const status = fm['status'];
+    if (status === 'draft' || (typeof status === 'string' && DELIVERED_STATUSES.has(status))) {
+      continue;
+    }
+    const id = typeof rawId === 'string' ? rawId.slice(0, 80) : doc.path.slice(0, 120);
+    const files = fm['files_expected'];
+    if (
+      !Array.isArray(files) ||
+      !files.every((glob: unknown) => typeof glob === 'string' && glob.trim() !== '')
+    ) {
+      unreadable.push({
+        subject: id,
+        message: `${id}'s files_expected is not a list of path globs (a scalar, a non-string entry or a blank entry cannot be compared with the other stories' claims): make it a YAML list of non-empty strings.`,
+      });
+      continue;
+    }
+    stories.push({
+      id,
+      claims: (files as readonly string[]).map((pattern) => ({
+        pattern,
+        prefix: claimFixedPrefix(pattern),
+      })),
+    });
+  }
+  return { stories, unreadable };
+}
+
+interface SeenClaim {
+  readonly storyId: string;
+  readonly pattern: string;
+}
+
+function addTo(index: Map<string, SeenClaim[]>, key: string, seen: SeenClaim): void {
+  const bucket = index.get(key);
+  if (bucket === undefined) index.set(key, [seen]);
+  else bucket.push(seen);
+}
+
+/** The key of the first `depth` segments of a fixed prefix. Segments hold no `/`, so the join is unambiguous. */
+function prefixKey(prefix: readonly string[], depth: number): string {
+  return prefix.slice(0, depth).join('/');
+}
+
+/** Every pair of in-flight claims whose fixed prefixes nest (`claimsMayOverlap`'s test, split into its prefix step
+ * and a lookup so it does not compare every pair). Each claim is registered under every one of its ancestor
+ * prefixes; a new claim then finds the earlier claims above it (registered at one of its own ancestors) and the
+ * earlier claims at or below it (registered at its full prefix) directly, so the cost is the number of overlaps
+ * found, not the number of pairs, and it stops as soon as the listing cap is passed. */
+function validateFileClaimOverlap(docs: readonly ArtifactDocument[]): RuleValidationResult {
+  const { stories: ready, unreadable } = inFlightClaims(docs);
+  const errors: RuleViolation[] = [...unreadable];
+  const exactlyAt = new Map<string, SeenClaim[]>();
+  const atOrUnder = new Map<string, SeenClaim[]>();
+  let total = 0;
+  scan: for (const story of ready) {
+    for (const { pattern, prefix } of story.claims) {
+      const earlier: SeenClaim[] = [];
+      for (let depth = 0; depth < prefix.length; depth += 1) {
+        for (const seen of exactlyAt.get(prefixKey(prefix, depth)) ?? []) earlier.push(seen);
+      }
+      for (const seen of atOrUnder.get(prefixKey(prefix, prefix.length)) ?? []) earlier.push(seen);
+      for (const other of earlier) {
+        total += 1;
+        if (total > MAX_LISTED_OVERLAPS) break scan;
+        errors.push({
+          subject: `${other.storyId}, ${story.id}`,
+          message: `${other.storyId}'s files_expected claim "${other.pattern}" overlaps ${story.id}'s claim "${pattern}".`,
+        });
       }
     }
-  });
+    // Registered after the whole story is compared, so a story's own claims never collide with each other.
+    for (const { pattern, prefix } of story.claims) {
+      const seen = { storyId: story.id, pattern };
+      addTo(exactlyAt, prefixKey(prefix, prefix.length), seen);
+      for (let depth = 0; depth <= prefix.length; depth += 1) {
+        addTo(atOrUnder, prefixKey(prefix, depth), seen);
+      }
+    }
+  }
+  if (total > MAX_LISTED_OVERLAPS) {
+    errors.push({
+      subject: 'file-claim-overlap',
+      message: `more than ${String(MAX_LISTED_OVERLAPS)} overlapping claim pairs; only the first ${String(MAX_LISTED_OVERLAPS)} are listed. Re-cut the claims so ready stories own disjoint paths.`,
+    });
+  }
   return ruleResult('file-claim-overlap', errors);
 }
 
@@ -429,11 +558,15 @@ async function validateDefinitionOfReady(ctx: SpecCommandContext): Promise<RuleV
 
 // --- dispatch ---------------------------------------------------------------------------------
 
-/** Runs exactly one of the six real, named checks `G-Ready.gate.yaml`/`G-Stable.gate.yaml` already
- * ship as a `forge spec validate --rule <name>` invocation (this file's own header comment has the
- * full JSON-contract reasoning). Never throws for a project simply missing the documents a rule
- * needs — an empty project reports zero violations for every rule, the same "nothing to complain
- * about yet" reading `specValidate`'s own generic pass already gives an empty `docs/forge/specs/`. */
+/** Runs exactly one of the real, named checks the shipped gates name as a `forge spec validate --rule
+ * <name>` invocation (this file's own header comment has the full JSON-contract reasoning). Never
+ * throws for a project simply missing the documents a rule needs (a corrupt document still throws
+ * `CFG-006`/`CFG-007`, so a gate fails closed). An empty project reports zero violations for the
+ * per-item story/defect rules, the same "nothing to complain about yet" reading `specValidate`'s own
+ * generic pass gives an empty `docs/forge/specs/`; the five presence rules (`metrics-defined`,
+ * `user-identified`, `scope-contradicts-constraints`, `capability-acceptance`, `nfr-numeric`) fail an empty
+ * project on purpose
+ * (`./gate-rules.ts`, Q214). */
 export async function specValidateRule(
   ctx: SpecCommandContext,
   rule: ValidateRuleId,
@@ -442,7 +575,7 @@ export async function specValidateRule(
     case 'definition-of-ready':
       return validateDefinitionOfReady(ctx);
     case 'file-claim-overlap':
-      return validateFileClaimOverlap(await loadStories(ctx));
+      return validateFileClaimOverlap(await loadStoryDocs(ctx));
     case 'unbound-acceptance-criteria': {
       const [stories, graph] = await Promise.all([loadStories(ctx), buildProjectGraph(ctx)]);
       return validateUnboundAcceptanceCriteria(stories, graph);
@@ -455,6 +588,18 @@ export async function specValidateRule(
       const [defects, rcas] = await Promise.all([loadDefects(ctx), loadRcas(ctx)]);
       return validateUnresolvedRca(defects, rcas);
     }
+    case 'metrics-defined':
+      return validateMetricsDefined(ctx);
+    case 'user-identified':
+      return validateUserIdentified(ctx);
+    case 'scope-contradicts-constraints':
+      return validateScopeContradictsConstraints(ctx);
+    case 'capability-acceptance':
+      return validateCapabilityAcceptance(ctx);
+    case 'nfr-numeric':
+      return validateNfrNumeric(ctx);
+    case 'blocking-open-questions':
+      return validateBlockingOpenQuestions(ctx);
     default: {
       const unreachable: never = rule;
       throw new ForgeError('USR-003', { feature: `spec validate --rule ${String(unreachable)}` });

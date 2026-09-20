@@ -18,7 +18,14 @@ it.
    and its window or cohort, for example "at day 30 after signup"), `baseline` (a number, or
    `unknown` plus how the baseline will be established), `target` (numeric, with the comparison and
    unit), and `instrumentation` (the concrete event, log or query that yields it). The
-   `write-vision` step copies these into the Vision, so write them in final form.
+   `write-vision` step copies these into the Vision, so write them in final form. Lay each metric
+   out as a `### MET-###` heading followed by one `- **Statement:** ...`, `- **Baseline:** ...`,
+   `- **Target:** ...` and `- **Instrumentation:** ...` line (or as one table row per metric with
+   `id`, `statement`, `baseline`, `target` and `instrumentation` columns): `G-Problem`'s
+   `metrics-defined` check reads exactly that and fails a metric with a missing field, an
+   `instrumentation` of `unknown`, or one that is only a stand-in such as `pending`, or a target
+   that does not lead with its number. Start the target with the comparison and number
+   (`>= 60% of signups`, `<= 2 tickets per week`): the number must be one of its first three words.
 2. `NFR` artifacts for the system-quality constraints the metrics and the problem framing imply:
    performance, availability, cost ceilings, privacy, accessibility, compliance and so on. Outcome
    metrics such as activation or retention stay in the metrics entry and are not NFRs.

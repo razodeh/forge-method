@@ -33,10 +33,15 @@ unvalidated" label.
 These map to the `G-Problem` checks that run after the next step.
 
 - At least one user group is identified by persona id, name and role, with the job it is trying to
-  get done (`user-identified`).
+  get done (`user-identified`). Give each persona id, in lower case as `persona:<slug>`, in a
+  heading, list item or table row of `users.md` (for example `### persona:agency-owner`); the check
+  finds the id there and rejects an example slug such as `persona:slug`.
 - The problem statement can be read without knowing the solution, and names who has the problem.
 - Scope and non-goals do not contradict any constraint in `constraints/**`. State each relevant
-  constraint next to the scope item it limits (`scope-contradicts-constraints`).
+  constraint next to the scope item it limits (`scope-contradicts-constraints`). In `scope.md` list
+  items as bullets under headings named "In scope" and "Out of scope" (or "Non-goals"); the check
+  fails when one item appears on both lists, or is in scope while a constraint file lists it under a
+  "Forbidden" (or "Must not") heading.
 - Every factual claim is either cited to a session record or constraint file, or covered by an
   `Assumption` entry.
 - A question the sessions left open is either answered from the inputs, recorded as an `Assumption`

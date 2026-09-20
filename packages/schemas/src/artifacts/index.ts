@@ -31,7 +31,7 @@ export { epicSchema, type Epic } from './epic.ts';
 export { gateReportSchema, type GateReport } from './gate-report.ts';
 export { handoffRecordSchema, type HandoffRecord } from './handoff-record.ts';
 export { interfaceContractSchema, type InterfaceContract } from './interface-contract.ts';
-export { nfrSchema, type NFR } from './nfr.ts';
+export { NFR_TARGET_PATTERN, nfrSchema, type NFR } from './nfr.ts';
 export { openQuestionSchema, type OpenQuestion } from './open-question.ts';
 export { rcaSchema, type RCA } from './rca.ts';
 export { reviewReportSchema, type ReviewReport } from './review-report.ts';

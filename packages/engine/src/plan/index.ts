@@ -9,6 +9,7 @@
  * @see PLAN-M5.md P10, P11
  */
 export { compilePlan, compileStepId, expandFanout } from './compile.ts';
+export { claimFixedPrefix, claimsMayOverlap, prefixesNest } from './claim-overlap.ts';
 export { computeCriticalPath, safeCost } from './critical-path.ts';
 export { detectCycles, renderCycleAsMermaid } from './cycles.ts';
 export {

@@ -7,6 +7,11 @@ import { z } from 'zod';
 
 import { baseFrontMatterShape, checkIdMatchesRegisteredType } from '../registry/front-matter.ts';
 
+/** What makes an NFR `target` numeric: an optional comparison operator, then a number, at the very start.
+ * Exported so `forge spec validate --rule nfr-numeric` (`G-Product`/`G-Design`) applies the schema's own
+ * definition to raw front matter instead of keeping a second copy that could drift (`PLAN-M13.md` P24). */
+export const NFR_TARGET_PATTERN = /^(?:[<>]=?|=)?\s*\d+(?:\.\d+)?/;
+
 const verificationSchema = z
   .object({
     kind: z.enum(['test', 'benchmark', 'monitor', 'review', 'audit']),
@@ -42,7 +47,7 @@ export const nfrSchema = baseFrontMatterShape
     target: z
       .string()
       .regex(
-        /^(?:[<>]=?|=)?\s*\d+(?:\.\d+)?/,
+        NFR_TARGET_PATTERN,
         'target must start with a number (optionally preceded by a comparison operator), not a qualitative phrase',
       ),
     conditions: z.string().min(1).optional(),

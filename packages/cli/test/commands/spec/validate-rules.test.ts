@@ -10,6 +10,7 @@ import path from 'node:path';
 
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
 import { renderArtifactPath } from '@forge/schemas/registry';
+import { claimsMayOverlap } from '@forge/engine/plan';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { readArtifactTemplate } from '../../../src/commands/shared.ts';
@@ -244,6 +245,195 @@ describe('file-claim-overlap', () => {
     const result = await specValidateRule(ctx(project), 'file-claim-overlap');
 
     expect(result.violations).toEqual([]);
+  });
+
+  // The older `globsOverlap` (literal against pattern) answers "no overlap" for every pair below, so G-Ready
+  // let two ready stories claim the same files while the run plan (path-prefix rule) serialised them
+  // (`PLAN-M13.md` P24). The gate now uses the plan's rule (`claimsMayOverlap`).
+  it.each([
+    ['src/auth', 'src/auth/login.ts'],
+    ['src/**/*.ts', 'src/billing/**'],
+    ['{src,lib}/x.ts', 'lib/x.ts'],
+    ['./src/a/**', 'src/a/**'],
+    ['SRC/A/**', 'src/a/x.ts'],
+    ['src/../lib/**', 'lib/a.ts'],
+    [`src/${'a'.repeat(700)}/**`, `src/${'a'.repeat(700)}/x.ts`],
+  ])('flags ready stories claiming %j and %j (a pair globsOverlap misses)', async (a, b) => {
+    const project = await createTestProject();
+    await writeStory(project, { id: 'STORY-001', status: 'ready', files_expected: [a] });
+    await writeStory(project, { id: 'STORY-002', status: 'ready', files_expected: [b] });
+
+    const result = await specValidateRule(ctx(project), 'file-claim-overlap');
+
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0]?.subject).toBe('STORY-001, STORY-002');
+  });
+
+  it('still leaves prefix-disjoint claims alone (src/auth against src/authz)', async () => {
+    const project = await createTestProject();
+    await writeStory(project, {
+      id: 'STORY-001',
+      status: 'ready',
+      files_expected: ['src/auth'],
+    });
+    await writeStory(project, {
+      id: 'STORY-002',
+      status: 'ready',
+      files_expected: ['src/authz/x.ts'],
+    });
+
+    const result = await specValidateRule(ctx(project), 'file-claim-overlap');
+
+    expect(result.violations).toEqual([]);
+  });
+
+  it.each(['done', 'verified'])(
+    'does not flag an overlap against a %s story (it no longer writes files)',
+    async (status) => {
+      const project = await createTestProject();
+      await writeStory(project, {
+        id: 'STORY-001',
+        status,
+        files_expected: ['src/billing/**'],
+      });
+      await writeStory(project, {
+        id: 'STORY-002',
+        status: 'ready',
+        files_expected: ['src/billing/x.ts'],
+      });
+
+      expect((await specValidateRule(ctx(project), 'file-claim-overlap')).violations).toEqual([]);
+    },
+  );
+
+  it.each(['in-progress', 'in-review', 'blocked'])(
+    'still flags an overlap against a %s story',
+    async (status) => {
+      const project = await createTestProject();
+      await writeStory(project, { id: 'STORY-001', status, files_expected: ['src/billing/**'] });
+      await writeStory(project, {
+        id: 'STORY-002',
+        status: 'ready',
+        files_expected: ['src/billing/x.ts'],
+      });
+
+      expect((await specValidateRule(ctx(project), 'file-claim-overlap')).violations).toHaveLength(
+        1,
+      );
+    },
+  );
+
+  it('sees the claim of a story that fails its own schema (a size-L ready story) instead of skipping it', async () => {
+    const project = await createTestProject();
+    await writeStory(project, {
+      id: 'STORY-001',
+      status: 'ready',
+      size: 'L',
+      files_expected: ['src/billing/**'],
+    });
+    await writeStory(project, {
+      id: 'STORY-002',
+      status: 'ready',
+      files_expected: ['src/billing/x.ts'],
+    });
+
+    expect((await specValidateRule(ctx(project), 'file-claim-overlap')).violations).toHaveLength(1);
+  });
+
+  it.each([
+    ['a scalar files_expected', 'files_expected: "src/**"'],
+    ['a files_expected of objects', 'files_expected: [ { path: "src/**" } ]'],
+    ['a files_expected holding a number', 'files_expected: [ 5 ]'],
+  ])('names a ready story with %s instead of skipping its claim', async (_label, replacement) => {
+    const project = await createTestProject();
+    await writeStory(project, { id: 'STORY-001', status: 'ready', files_expected: ['src/**'] });
+    const target = path.join(project.dir, 'docs/forge/specs/stories/STORY-001-fixture.md');
+    const raw = await readFile(target, 'utf8');
+    await writeFile(target, raw.replace(/^files_expected:.*$/m, replacement), 'utf8');
+
+    const { violations } = await specValidateRule(ctx(project), 'file-claim-overlap');
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.subject).toBe('STORY-001');
+    expect(violations[0]?.message).toMatch(/files_expected is not a list/);
+  });
+
+  it('still reads a story whose type is mistyped by its STORY- id', async () => {
+    const project = await createTestProject();
+    await writeStory(project, { id: 'STORY-001', status: 'ready', files_expected: ['src/**'] });
+    await writeStory(project, { id: 'STORY-002', status: 'ready', files_expected: ['src/a/**'] });
+    const target = path.join(project.dir, 'docs/forge/specs/stories/STORY-001-fixture.md');
+    const raw = await readFile(target, 'utf8');
+    await writeFile(target, raw.replace(/^type: Story$/m, 'type: story'), 'utf8');
+
+    expect((await specValidateRule(ctx(project), 'file-claim-overlap')).violations).toHaveLength(1);
+  });
+
+  it('finds exactly the pairs a brute-force comparison with claimsMayOverlap finds (the prefix index is not lossy)', async () => {
+    const project = await createTestProject();
+    const claims: readonly (readonly string[])[] = [
+      ['src/a/**', 'lib/x.ts'],
+      ['src/a/b.ts'],
+      ['src/**/*.ts'],
+      ['docs/**'],
+      ['./src/A'],
+      ['tests/e2e/a.test.ts', 'tests/unit/**'],
+      ['{src,lib}/x.ts'],
+      ['src/../docs/y.md'],
+      ['packages/@acme/a/**'],
+      ['packages/@acme/b/**'],
+      ['lib'],
+      ['src/a', 'src/a/c/d.ts'],
+    ];
+    for (const [index, files] of claims.entries()) {
+      await writeStory(project, {
+        id: `STORY-${String(index + 1).padStart(3, '0')}`,
+        status: 'ready',
+        files_expected: files,
+      });
+    }
+    let expected = 0;
+    for (let i = 0; i < claims.length; i += 1) {
+      for (let j = i + 1; j < claims.length; j += 1) {
+        for (const a of claims[i] ?? []) {
+          for (const b of claims[j] ?? []) if (claimsMayOverlap(a, b)) expected += 1;
+        }
+      }
+    }
+
+    const { violations } = await specValidateRule(ctx(project), 'file-claim-overlap');
+
+    expect(expected).toBeGreaterThan(5);
+    expect(violations).toHaveLength(expected);
+  });
+
+  it('names a ready story whose files_expected holds a blank entry (it would claim every file)', async () => {
+    const project = await createTestProject();
+    await writeStory(project, {
+      id: 'STORY-001',
+      status: 'ready',
+      files_expected: ['src/a/**', '  '],
+    });
+    const { violations } = await specValidateRule(ctx(project), 'file-claim-overlap');
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.subject).toBe('STORY-001');
+  });
+
+  it('lists at most 200 overlapping pairs and says the listing stopped in a last violation', async () => {
+    const project = await createTestProject();
+    for (let n = 1; n <= 21; n += 1) {
+      await writeStory(project, {
+        id: `STORY-${String(n).padStart(3, '0')}`,
+        status: 'ready',
+        files_expected: ['src/**'],
+      });
+    }
+
+    const { violations } = await specValidateRule(ctx(project), 'file-claim-overlap');
+
+    // 21 stories, all pairs is 210: stopped after the cap, and said so.
+    expect(violations).toHaveLength(201);
+    expect(violations.at(-1)?.message).toMatch(/more than 200 overlapping claim pairs/);
   });
 
   it('does not flag an overlap against a draft story', async () => {

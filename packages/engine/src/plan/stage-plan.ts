@@ -42,7 +42,7 @@
  * question instead: two claims may overlap unless their fixed leading path segments (everything before the
  * first segment containing a glob character) diverge. That is a superset of true intersection, so the plan
  * only ever serialises too much, never too little, and the story-level check never calls `minimatch` (no
- * adversarial-pattern cost; `compileRunPlan`'s own step-level claim check still does). It also over-flags a few disjoint pairs (`src/*.ts` against `src/a/b.ts`); the finding says "may".
+ * adversarial-pattern cost; `compileRunPlan`'s own step-level claim check still does). It also over-flags a few disjoint pairs (`src/*.ts` against `src/a/b.ts`); the finding says "may". The rule itself lives in `claim-overlap.ts` (`claimsMayOverlap`) and is shared with `forge spec validate --rule file-claim-overlap` (`G-Ready`), so a pair of claims the gate reports is a pair the plan serialises. They still differ in which stories they compare (the gate every story that can still write, project-wide; the plan one stage) and in what they do with a hit, and the step-level check in `compileRunPlan` (and the scheduler) still uses `globsOverlap` (`PLAN-M13.md` P24, Q214).
  *
  * @see specs/03 §3.2.3
  * @see specs/06 §6.2
@@ -52,6 +52,7 @@
 import { resolveTemplate } from '../expr/index.ts';
 import type { ExpressionContext } from '../expr/index.ts';
 import type { Workflow } from '../workflow/index.ts';
+import { claimFixedPrefix, prefixesNest } from './claim-overlap.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
 import { compileRunPlan } from './run-plan.ts';
@@ -168,38 +169,13 @@ function finding(
 
 // --- overlap ------------------------------------------------------------------------------------
 
-/** Any character that makes a path segment more than a literal name. `+`, `@` and `!` only matter before a
- * `(`, but treating them as glob characters merely shortens the fixed prefix, which errs toward "overlap". */
-const GLOB_CHARACTER = /[*?[\]{}()!+@\\]/;
-
-/** The fixed leading path segments of a claim, lower-cased (macOS and Windows filesystems are
- * case-insensitive; a false "overlap" is the safe direction). `.` and empty segments are dropped, and a `..`
- * empties the prefix (the claim could resolve anywhere). */
-function fixedPrefix(glob: string): readonly string[] {
-  const prefix: string[] = [];
-  for (const segment of glob.trim().toLowerCase().split('/')) {
-    if (segment === '' || segment === '.') continue;
-    // `..` can climb out of anything named so far, so the claim could be anywhere: no fixed prefix at all.
-    if (segment === '..') return [];
-    if (GLOB_CHARACTER.test(segment)) break;
-    prefix.push(segment);
-  }
-  return prefix;
-}
-
-function prefixesNest(a: readonly string[], b: readonly string[]): boolean {
-  const shorter = a.length <= b.length ? a : b;
-  const longer = a.length <= b.length ? b : a;
-  return shorter.every((segment, index) => segment === longer[index]);
-}
-
 interface ClaimPrefixes {
   readonly pattern: string;
   readonly prefix: readonly string[];
 }
 
 function claimPrefixes(globs: readonly string[]): readonly ClaimPrefixes[] {
-  return globs.map((pattern) => ({ pattern, prefix: fixedPrefix(pattern) }));
+  return globs.map((pattern) => ({ pattern, prefix: claimFixedPrefix(pattern) }));
 }
 
 function firstOverlap(
