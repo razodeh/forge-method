@@ -72,6 +72,12 @@ export interface TestRunContext {
    * `DEFAULT_FLAKE_CONFIG` (F-TEST-6's own literal defaults) when a caller has no real project config
    * to hand — a real caller (`bin.ts`) always passes the target project's own, already-read value. */
   readonly flakeConfig?: FlakeConfig;
+  /** `false` runs the commands and reports, but leaves `docs/forge/reports/test-results.json` and `flaky.json`
+   * untouched. `forge test run` is the one command that owns those two files (each run replaces the report and
+   * prunes the flake records to what it saw); a caller that runs only ONE layer for its own purposes (`forge
+   * story verify`) must not overwrite the project-wide report with a partial one or drop the flake and
+   * quarantine history of the layers it did not run. Defaults to `true`. */
+  readonly persistState?: boolean;
 }
 
 /** `rule` selects which of `G-Verify.gate.yaml`'s checks this call answers: absent runs the
@@ -200,7 +206,8 @@ async function runDefaultRule(
     );
   }
 
-  await writeNormalizedReport(ctx.paths, { outcomes });
+  const persistState = ctx.persistState !== false;
+  if (persistState) await writeNormalizedReport(ctx.paths, { outcomes });
 
   // F-TEST-6's own rolling flake tracking — a real, separate durable-state file from
   // `test-results.json` above. A present-but-unusable `flaky.json` degrades to the empty state
@@ -266,7 +273,7 @@ async function runDefaultRule(
   // fresh critic round reproduced this directly here too: doing otherwise let a real regression's own
   // quarantine latch get destroyed on the very run that discovered the file was unusable, laundered
   // clean on the next one).
-  if (problems.length === 0) {
+  if (persistState && problems.length === 0) {
     try {
       await writeFlakyState(ctx.paths, { v: 1, tests: nextTests });
     } catch (cause) {

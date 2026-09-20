@@ -31,8 +31,8 @@ each unit:
   compatible with the previous code version.
 - Deployment record: what is recorded for each deployment (artifact, SHA, config version, trigger,
   duration, outcome).
-- Verification: the smoke test suite the later `forge deploy smoke-test` step will run, and what the
-  rollback rehearsal (`forge deploy rollback --dry-run`, then the staging rehearsal `G-Deliver`
+- Verification: the smoke test suite the later `forge test run --rule smoke` step will run, and what
+  the rollback rehearsal (`forge deploy --rollback-check`, then the staging rehearsal `G-Deliver`
   requires) must show for this strategy's trigger and path to count as executed rather than assumed.
 
 Diagram: draw the deployment topology in the project's notation as a `Diagram` file under

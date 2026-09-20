@@ -52,6 +52,10 @@
  * — is wired by `PLAN-M13.md` P10 (`commands/run/run-plan.ts`; `03` names no such subcommand, see
  * `SPEC-QUESTIONS.md`).
  *
+ * `story verify <storyId> [--json]` — the command `implement-story.workflow.yaml`'s `self-verify` step runs — is
+ * wired by `PLAN-M13.md` P22 (`commands/story.ts`: the story's `done` DoD profile, `09` §9.8; `03` §3.2.5 gained its row,
+ * see `SPEC-QUESTIONS.md` Q213).
+ *
  * @see specs/22 M6
  * @see specs/22 M8
  * @see specs/22 M12
@@ -237,6 +241,7 @@ import {
   VALIDATE_RULE_IDS,
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
+import { renderStoryVerify, storyVerify } from './commands/story.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES } from '@forge/schemas';
 import { VcsError } from '@forge/vcs';
@@ -2787,6 +2792,53 @@ async function runRefactorCommand(
   return printWorkflowDispatchResult(`refactor ${target}`, result, json);
 }
 
+/** `forge story verify <storyId> [--json]`: evaluates a story's `done` DoD profile (`09` §9.8, `10` §10.6 step 6),
+ * the command `implement-story:self-verify` runs. Arguments are checked before the config is read, like every
+ * sibling command. */
+async function runStoryCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  if (sub !== 'verify') {
+    console.error('forge: "story" needs a real subcommand (verify).');
+    return EXIT_CODES.usage;
+  }
+  const { positionals } = parseCommandFlags(rest, {});
+  const [storyId] = positionals;
+  if (storyId === undefined || positionals.length > 1) {
+    console.error('forge: "story verify" needs a real <storyId>.');
+    return EXIT_CODES.usage;
+  }
+  // `--dry-run` promises no effects (`03` §3.2); verification runs the project's own test commands, so it has no
+  // dry form. Refusing is safer than ignoring the flag and running them anyway.
+  if (dryRun) {
+    console.error(
+      'forge: "story verify" needs a real run: it runs the project\'s test commands, so it has no --dry-run form.',
+    );
+    return EXIT_CODES.usage;
+  }
+  const config = await readConfig(paths);
+  const outcome = await storyVerify(
+    {
+      paths,
+      projectRoot,
+      specsRoot: SPECS_ROOT,
+      kbRoot: KB_ROOT,
+      testCommands: config.execution.testCommands,
+      flakeConfig: config.quality.flake,
+    },
+    storyId,
+  );
+  const rendering = renderStoryVerify(outcome, json);
+  if (rendering.stdout !== undefined) console.log(rendering.stdout);
+  if (rendering.stderr !== undefined) console.error(rendering.stderr);
+  return rendering.exitCode;
+}
+
 const DEPLOY_FLAGS = { '--confirm': true } as const;
 
 async function runDeployCommand(
@@ -3286,6 +3338,10 @@ async function main(): Promise<number> {
   }
   if (command === 'refactor') {
     return runRefactorCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);
+  }
+  if (command === 'story') {
+    const [storySub, ...storyRest] = afterCommand;
+    return runStoryCommand(paths, projectRoot, storySub, storyRest, flags.dryRun, flags.json);
   }
   if (command === 'deploy') {
     return runDeployCommand(paths, projectRoot, afterCommand, flags.dryRun, flags.json);

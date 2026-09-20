@@ -17,19 +17,28 @@ steps:
     dependsOn: [design-pipeline]
     outputs: [{ type: ADR }]
 
+  # The three command steps below run the same commands the G-Deliver gate re-checks (checks/G-Deliver.gate.yaml:
+  # `deploy:dry-run`, `test:smoke`, `deploy:rollback-rehearsed`), so a failure shows up here before the gate.
+  # They are not `forge deploy <env>` (03 §3.2.5): that command IS this workflow, so a step calling it would
+  # start the workflow again. Promotion to a real environment is the project's pipeline's job ("the pipeline
+  # is the only path to production", 14 §14.3), designed by the two steps above; FORGE checks it, it does not
+  # push. `forge deploy` has no env-less form and no `--rollback-check` yet, and `test run --rule` has no
+  # `smoke`: those are the gaps pinned in test/command-steps.test.ts (P25 and P26 close them). Until they do,
+  # `forge run deliver-stage` stops at `deploy` with a usage error (exit 2) on every real run; it does not
+  # deploy, and it does not recurse.
   - id: deploy
     kind: command
-    run: 'forge deploy run --json'
+    run: 'forge deploy --dry-run --json'
     dependsOn: [design-deployment]
 
   - id: smoke-test
     kind: command
-    run: 'forge deploy smoke-test --json'
+    run: 'forge test run --rule smoke --json'
     dependsOn: [deploy]
 
   - id: rehearse-rollback
     kind: command
-    run: 'forge deploy rollback --dry-run --json'
+    run: 'forge deploy --rollback-check --json'
     dependsOn: [smoke-test]
 
   - id: deliver-gate

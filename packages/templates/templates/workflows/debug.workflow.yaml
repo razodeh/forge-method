@@ -27,9 +27,14 @@ steps:
     dependsOn: [run-rca]
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
+  # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs
+  # the project's test layers: the whole suite, including any regression test written in this loop, must be green.
+  # That is only part of 13 §13.2 step 8 PROVE: nothing here checks that the reproduction was promoted to a
+  # regression test named with the defect id, or that a race test fails on the old code. No command checks
+  # those yet (SPEC-QUESTIONS.md Q213).
   - id: prove-fix
     kind: command
-    run: 'forge story verify --json'
+    run: 'forge test run --json'
     dependsOn: [fix]
 
   - id: record

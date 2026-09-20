@@ -98,6 +98,7 @@ Global flags available on every command:
 | Command | Description |
 |---|---|
 | `forge implement <storyId>` | Single-story loop (spec → tests → code → verify → review). |
+| `forge story verify <storyId>` | Evaluate the story's `done` DoD profile (`09` §9.8): the `self-verify` step of the loop (`10` §10.6). Exit 0 only if every check passes; a check that cannot be verified is not a pass. |
 | `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage` |
 | `forge debug <symptom\|--from-failure <runId>>` | Autonomous RCA loop (see `13`). |
 | `forge review [--diff <range>]` | Multi-perspective review (design/security/perf/testing). |
