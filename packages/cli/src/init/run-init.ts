@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { TierModelMap } from '@forge/adapter-kit/types';
 import { execa } from 'execa';
 
 import { ForgeError, ProjectPaths } from '@forge/core';
@@ -15,6 +16,7 @@ import type { ConflictHandlingOptions } from '../generated-header.ts';
 import { buildForgeConfig } from './config.ts';
 import { resolveInitLevel } from './level.ts';
 import { selectPlatform } from './platform.ts';
+import { backfillTierMap, deriveTierMap, reportFresh, type TierMapReport } from './tier-map.ts';
 import type { InitOptions, InitResult, RunInitDeps } from './types.ts';
 import { writeInitTree, writeRegenerableContent } from './write-tree.ts';
 
@@ -90,7 +92,13 @@ export async function runInit(
       ...(deps.conflictOutput !== undefined ? { output: deps.conflictOutput } : {}),
     };
     const files = await writeRegenerableContent(target, deps.modulesDir, conflictOptions);
-    return { kind: 'reinitialized', projectRoot: resolvedDir, files };
+    // Not part of `writeRegenerableContent`'s regenerable set (`config.yaml` is hand-owned), so it is
+    // merged separately, and only ever *adds* missing `models.tiers` keys — see `backfillTierMap`.
+    const { reports: modelTiers, notes: modelTierNotes } = await backfillTierMap(
+      target,
+      deps.candidateAdapters,
+    );
+    return { kind: 'reinitialized', projectRoot: resolvedDir, files, modelTiers, modelTierNotes };
   }
 
   const ideaContent = await readIdeaFile(options);
@@ -101,11 +109,25 @@ export async function runInit(
   const { level, reasoning } = resolveInitLevel(options);
   const { primary, fallback } = await selectPlatform(resolvedDir, options, deps);
 
+  // Primary first, then the fallback when it is a different adapter: both are written so a run that
+  // falls back does not hit RUN-078 on its very first step. Each map is vetted against that adapter's
+  // own `listModels()`; whatever cannot be vetted is left unmapped and reported (never guessed).
+  const tierAdapters =
+    fallback === undefined || fallback.id === primary.id ? [primary] : [primary, fallback];
+  const tierModels = new Map<string, TierModelMap>();
+  const modelTiers: TierMapReport[] = [];
+  for (const adapter of tierAdapters) {
+    const derivation = await deriveTierMap(adapter);
+    tierModels.set(adapter.id, derivation.offered);
+    modelTiers.push(reportFresh(adapter.id, derivation));
+  }
+
   const config = buildForgeConfig({
     options,
     level,
     platformId: primary.id,
     fallbackPlatformId: fallback?.id,
+    tierModels,
   });
 
   await ensureGit(resolvedDir, options);
@@ -126,5 +148,6 @@ export async function runInit(
     levelReasoning: reasoning,
     platform: primary.id,
     files,
+    modelTiers,
   };
 }

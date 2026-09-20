@@ -5,4 +5,5 @@
  */
 export { runDoctor, type DoctorOptions } from './run-doctor.ts';
 export { applyDoctorFix } from './fix.ts';
+export { checkModelTiers } from './model-tiers.ts';
 export type { CheckSeverity, DoctorCheck, DoctorFixResult, DoctorReport } from './types.ts';

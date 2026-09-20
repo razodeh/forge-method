@@ -8,6 +8,7 @@ import type { ProjectLevel } from '@forge/methods/level';
 
 import type { AutonomyLevel } from '../entry/types.ts';
 import type { ConflictResolutionMode } from '../generated-header.ts';
+import type { TierMapReport } from './tier-map.ts';
 
 /** `03` §3.3's own worked flag example, typed. Every field is optional except `name`: the rest of
  * the wizard's steps all have a documented default (`DEFAULT_CONFIG`, a preset, `proposeLevel`'s own
@@ -103,6 +104,10 @@ export type InitResult =
       readonly levelReasoning: string;
       readonly platform: string | undefined;
       readonly files: readonly WrittenFile[];
+      /** One report per adapter given a tier map (primary first, then the fallback when it is a
+       * different adapter): which `models.tiers` entries now exist and which are still unmapped (agent
+       * steps on an unmapped tier fail `RUN-078`). `PLAN-M13.md` P5b, `SPEC-QUESTIONS.md` Q204. */
+      readonly modelTiers: readonly TierMapReport[];
     }
   /** `03` §3.3's own idempotency rule: re-running `init` on an existing project "MUST detect it and
    * switch to `upgrade` semantics" — real, as of `PLAN-M12.md` P3: the regenerable directories
@@ -115,4 +120,11 @@ export type InitResult =
       readonly kind: 'reinitialized';
       readonly projectRoot: string;
       readonly files: readonly WrittenFile[];
+      /** The same reports as a fresh init's, for the adapters `.forge/config.yaml` already records:
+       * tiers with no entry were filled from the adapter's defaults; an entry that was already there —
+       * hand-edited or not — was left exactly as it was. */
+      readonly modelTiers: readonly TierMapReport[];
+      /** Reasons the tier map could not be checked at all (unreadable or malformed config, a recorded
+       * adapter not available here). Empty when the check ran. Never a silent skip. */
+      readonly modelTierNotes: readonly string[];
     };

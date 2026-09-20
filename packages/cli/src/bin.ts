@@ -214,6 +214,7 @@ import {
   type ConflictResolutionMode,
 } from './generated-header.ts';
 import { parseInitFlags } from './init/parse-init-flags.ts';
+import { formatUnmappedTierWarnings, sanitizeOneLine } from './init/tier-map.ts';
 import {
   readOwnPackageVersion,
   readPackageVersion,
@@ -558,6 +559,15 @@ async function runInitCommand(
       `forge init: wrote ${String(result.files.length)} files to ${result.projectRoot} ` +
         `(level ${result.level}, platform ${result.platform ?? 'none'}).`,
     );
+  }
+  // `PLAN-M13.md` P5b: say so now, with the remedy, rather than let the first agent step fail RUN-078.
+  if (!json) {
+    for (const line of formatUnmappedTierWarnings(result.modelTiers)) console.log(line);
+    if (result.kind === 'reinitialized') {
+      for (const note of result.modelTierNotes) {
+        console.log(`forge init: warning: ${sanitizeOneLine(note)}.`);
+      }
+    }
   }
   return EXIT_CODES.success;
 }

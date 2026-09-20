@@ -12,6 +12,15 @@ export { readPackageVersion } from './package-root.ts';
 export { parseInitFlags } from './parse-init-flags.ts';
 export { selectPlatform } from './platform.ts';
 export { runInit } from './run-init.ts';
+export {
+  backfillTierMap,
+  deriveTierMap,
+  formatUnmappedTierWarnings,
+  withTierMap,
+  type BackfillOutcome,
+  type TierDerivation,
+  type TierMapReport,
+} from './tier-map.ts';
 export { writeRegenerableContent } from './write-tree.ts';
 export type { InitOptions, InitResult, RunInitDeps, WrittenFile } from './types.ts';
 export type { Manifest, ManifestModule } from './manifest.ts';

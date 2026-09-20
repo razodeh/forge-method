@@ -10,6 +10,9 @@ import { DEFAULT_CONFIG, type ForgeConfig } from '@forge/schemas/config';
 
 import type { ProjectLevel } from '@forge/methods/level';
 
+import type { TierModelMap } from '@forge/adapter-kit/types';
+
+import { withTierMap } from './tier-map.ts';
 import type { InitOptions } from './types.ts';
 
 function slugify(name: string): string {
@@ -51,6 +54,10 @@ export interface BuildConfigInput {
   readonly level: ProjectLevel;
   readonly platformId: string;
   readonly fallbackPlatformId: string | undefined;
+  /** Per adapter id, the tier -> model entries already vetted against that adapter's own
+   * `listModels()` (`deriveTierMap`); recorded under `models.tiers.<tier>.<adapter id>`. Omitted, the
+   * tier table stays exactly `DEFAULT_CONFIG`'s (empty) one. */
+  readonly tierModels?: ReadonlyMap<string, TierModelMap>;
 }
 
 export function buildForgeConfig({
@@ -58,9 +65,15 @@ export function buildForgeConfig({
   level,
   platformId,
   fallbackPlatformId,
+  tierModels,
 }: BuildConfigInput): ForgeConfig {
+  let tiers = DEFAULT_CONFIG.models.tiers;
+  for (const [adapterId, offered] of tierModels ?? [])
+    tiers = withTierMap(tiers, adapterId, offered);
+
   return {
     ...DEFAULT_CONFIG,
+    models: { ...DEFAULT_CONFIG.models, tiers },
     project: {
       ...DEFAULT_CONFIG.project,
       name: options.name,

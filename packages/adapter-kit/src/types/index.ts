@@ -32,4 +32,5 @@ export type {
   SessionUsage,
 } from './session.ts';
 export type { StructuredRequest } from './structured.ts';
+export { MODEL_TIER_NAMES, type ModelTierName, type TierModelMap } from './tiers.ts';
 export type { ToolGrant } from './tool-grant.ts';

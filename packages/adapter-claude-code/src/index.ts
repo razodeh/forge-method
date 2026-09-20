@@ -26,7 +26,7 @@ export {
 } from './tool-grant.ts';
 export { staticCapabilities, confirmedCapabilities } from './capabilities.ts';
 export { runPreflight } from './preflight.ts';
-export { listClaudeCodeModels } from './list-models.ts';
+export { defaultClaudeCodeTierModels, listClaudeCodeModels } from './list-models.ts';
 export { computeChangedFiles } from './changed-files.ts';
 export { makeSessionHandle } from './session-handle.ts';
 export { accumulateSessionResult, type AccumulateSessionResultOptions } from './session-result.ts';

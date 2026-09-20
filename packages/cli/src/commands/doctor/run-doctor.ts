@@ -25,6 +25,7 @@ import {
 } from './locks-and-worktrees.ts';
 import { checkConfigValidity, checkKbLint, checkManifest, checkSpecGraph } from './project.ts';
 import { checkDiagrams } from './diagrams.ts';
+import { checkModelTiers } from './model-tiers.ts';
 import { checkSecretReferences } from './secrets.ts';
 import { applyDoctorFix } from './fix.ts';
 import type { DoctorCheck, DoctorFixResult, DoctorReport } from './types.ts';
@@ -95,6 +96,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
     { id: 'dangling-lane-branches', promise: checkDanglingLaneBranches(projectRoot) },
     { id: 'diagrams', promise: checkDiagrams(paths, kbRoot) },
     { id: 'secret-references', promise: checkSecretReferences(paths, env) },
+    { id: 'model-tiers', promise: checkModelTiers(paths, config, adapter) },
   ];
 
   return Promise.all(

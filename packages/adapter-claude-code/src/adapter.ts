@@ -28,6 +28,7 @@ import type {
   SessionRequest,
   SessionResult,
   SkillProvisioning,
+  TierModelMap,
 } from '@forge/adapter-kit';
 import type { Options as SdkOptions } from '@anthropic-ai/claude-agent-sdk';
 
@@ -35,7 +36,7 @@ import { buildCliArgs } from './cli/build-args.ts';
 import { spawnClaudeCli } from './cli/spawn.ts';
 import { confirmedCapabilities, staticCapabilities } from './capabilities.ts';
 import type { ClaudeCodeAdapterConfig } from './config.ts';
-import { listClaudeCodeModels } from './list-models.ts';
+import { defaultClaudeCodeTierModels, listClaudeCodeModels } from './list-models.ts';
 import {
   findMissingGrantedServers,
   mapGrantedMcpServersToAllowedTools,
@@ -289,6 +290,10 @@ export class ClaudeCodeAdapter implements PlatformAdapter {
 
   listModels(): Promise<readonly ModelInfo[]> {
     return Promise.resolve(listClaudeCodeModels());
+  }
+
+  defaultTierModels(): TierModelMap {
+    return defaultClaudeCodeTierModels();
   }
 
   /** `15` §15.6's own native-skills path (`capabilities().skills === 'native'`) — thin delegation to

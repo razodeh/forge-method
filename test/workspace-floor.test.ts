@@ -104,6 +104,10 @@ const IGNORED_PATHS = new Set([
   // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
   // fixture-workflow/Story/agent scaffolding for `test/commands/loop/*.test.ts`.
   'packages/cli/test/commands/loop/helpers.ts',
+  // `packages/cli/test/init/tier-stubs.ts` (PLAN-M13.md P5b): minimal `PlatformAdapter` stand-ins shared
+  // by the tier-map, init and doctor test files — the identical "shared, importable module, not a
+  // runnable suite" shape as the helper entries above.
+  'packages/cli/test/init/tier-stubs.ts',
   // `packages/cli/test/commands/doctor/helpers.ts` (PLAN-M6.md C6): the identical shape as
   // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
   // config/manifest fixture scaffolding for `test/commands/doctor/*.test.ts`.

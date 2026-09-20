@@ -7,7 +7,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { listClaudeCodeModels } from '../src/list-models.ts';
+import { MODEL_TIER_NAMES } from '@forge/adapter-kit';
+
+import { defaultClaudeCodeTierModels, listClaudeCodeModels } from '../src/list-models.ts';
 
 describe('listClaudeCodeModels', () => {
   it('returns a non-empty, real, static table', () => {
@@ -42,5 +44,27 @@ describe('listClaudeCodeModels', () => {
     const second = listClaudeCodeModels();
     expect(first).not.toBe(second);
     expect(first).toEqual(second);
+  });
+});
+
+describe('defaultClaudeCodeTierModels', () => {
+  it('names a model for every FORGE tier', () => {
+    const map = defaultClaudeCodeTierModels();
+    for (const tier of MODEL_TIER_NAMES) {
+      expect(map[tier], tier).toEqual(expect.any(String));
+    }
+  });
+
+  it('only ever names models the adapter itself lists (init refuses anything else)', () => {
+    const listed = new Set(listClaudeCodeModels().map((model) => model.id));
+    for (const id of Object.values(defaultClaudeCodeTierModels())) {
+      expect(listed.has(id)).toBe(true);
+    }
+  });
+
+  it('maps the tiers to three distinct models, in ascending capability order', () => {
+    const { frugal, balanced, max } = defaultClaudeCodeTierModels();
+    expect(new Set([frugal, balanced, max]).size).toBe(3);
+    expect([frugal, balanced, max]).toEqual(['haiku', 'sonnet', 'opus']);
   });
 });

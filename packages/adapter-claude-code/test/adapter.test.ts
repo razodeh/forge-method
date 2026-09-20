@@ -27,7 +27,7 @@ import { ClaudeCodeAdapter } from '../src/adapter.ts';
 import type { SdkTransportModule } from '../src/adapter.ts';
 import { claudeCodeAdapterConfigSchema } from '../src/config.ts';
 import type { ForgeMcpBackend } from '../src/forge-mcp/index.ts';
-import { listClaudeCodeModels } from '../src/list-models.ts';
+import { defaultClaudeCodeTierModels, listClaudeCodeModels } from '../src/list-models.ts';
 import type { spawnClaudeCli } from '../src/cli/spawn.ts';
 
 function baseRequest(overrides: Partial<SessionRequest> = {}): SessionRequest {
@@ -193,6 +193,15 @@ describe('ClaudeCodeAdapter — preflight()/listModels()', () => {
       now: () => 0,
     });
     expect(await adapter.listModels()).toEqual(listClaudeCodeModels());
+  });
+
+  it('defaultTierModels() delegates to defaultClaudeCodeTierModels()', () => {
+    const adapter = new ClaudeCodeAdapter({
+      config: claudeCodeAdapterConfigSchema.parse({}),
+      env: {},
+      now: () => 0,
+    });
+    expect(adapter.defaultTierModels()).toEqual(defaultClaudeCodeTierModels());
   });
 
   it("provisionSkills() delegates to skills.ts's own provisionSkills, real filesystem write included", async () => {

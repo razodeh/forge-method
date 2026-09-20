@@ -21,6 +21,7 @@ import type {
 } from './provisioning.ts';
 import type { ResumeRequest, SessionHandle, SessionRequest } from './session.ts';
 import type { StructuredRequest } from './structured.ts';
+import type { TierModelMap } from './tiers.ts';
 
 export interface PlatformAdapter {
   /** `'claude-code' | ...` in practice — typed as an opaque string here, not a closed enum, so no
@@ -36,6 +37,17 @@ export interface PlatformAdapter {
 
   /** Models this platform can currently use, for tier mapping validation. */
   listModels(): Promise<readonly ModelInfo[]>;
+
+  /**
+   * Optional: which of this platform's own models should serve each FORGE budget tier (`05` §5.8) on a
+   * fresh project. `forge init` writes the result into `models.tiers.<tier>.<adapter id>` — the one
+   * place a platform's model names may be produced, since `@forge/schemas` cannot name them. Every id
+   * returned MUST also appear in `listModels()`: init drops any that does not, and never writes an id
+   * the adapter did not itself vouch for. An adapter that cannot name a model for a tier omits the
+   * method or that tier; the tier then stays unmapped and `forge doctor` reports it. Synchronous and
+   * side-effect free: a static table, not a probe.
+   */
+  defaultTierModels?(): TierModelMap;
 
   /** Start a session. Returns a handle; the stream is consumed by the caller. */
   startSession(req: SessionRequest): Promise<SessionHandle>;
