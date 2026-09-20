@@ -14104,3 +14104,35 @@ No fourth round was run (three is the limit): the round-3 fixes each have a regr
 **What the critics caught that I missed:** the order-dependence and stale-disk read in `spec:ac-coverage` (my test only covered layer-before-coverage); the shared-state clobber by `testRun`; that a skip-only layer passes through the zero-tests guard; that my first classifier accepted a typo'd subcommand; the JSON sanitization gap. **What I caught first:** `forge deploy <env>` cannot be used as a step of the workflow it starts (recursion) and `{{env}}` breaks `forge plan delivery`'s compile, so the triage's proposed strings were wrong; quick-fix and debug have a Defect, not a Story, so `story verify` with no id had nothing to verify.
 
 **Verification.** Scoped per the owner-approved cost cut (Q213 lists it). Mutation checks: counting only `fail` as an error fails 4 tests, reading the disk report fails 2, dropping `persistState: false` fails 2. Only other agents' in-flight files failed (`strict-opt-outs`, `briefs-planning-content`, `pnpm lint` in `test/brief-write-paths-in-claim.test.ts`) plus a `workspace-floor` collection-count race that passes alone.
+
+## M13 P27 — Sessions and `forge debug` (session roster read from `.forge/agents`; `forge debug` on real prompt assembly; `RUN-087`; `@forge/engine/rca` untrusted inputs)
+
+**Piece.** `packages/engine/src/dispatch/assembly-context.ts` (`readProjectAgent`, `listProjectAgents`, `listAgents`), `packages/engine/src/interaction/session.ts`, `packages/engine/src/rca/*`,
+`packages/cli/src/commands/loop/debug.ts`, and the tests P6 had pinned around both gaps (Q215).
+
+**Round 1 (fresh): 0 blocking, 6 major, 8 minor.** Major, real: `forge debug` loaded the diagnostician through the CLI's older loader (no id-versus-file-name check) while the engine had a stricter one; `callSession`
+swallowed raw assembly errors (`EMFILE`) so a retryable failure ended as `needs-more-evidence`; the audit record held only the system prompt, so the fenced defect text and model output (what an injection review needs)
+existed nowhere on disk, and my test titled "prompt.md equals what the session received" compared half of it; no end-to-end hostile-input test (forged closing marker, control token) and no `InjectionAttemptBlocked`;
+the steel-man loader still reads `modules/` (recorded, out of scope); DECIDE-owner semantics went live and coarse (recorded). Minor and fixed: the preflight ran after the Defect was scaffolded (an open Defect per failed
+attempt), only the FIX phase was preflighted, a phantom step key in `RUN-084`'s message, `RUN-084`'s text does not fit `forge debug` (new `RUN-087`), duplicated limits, the fixed `callSession` doc.
+
+**Round 2 (fresh): 1 blocking, 6 major, 7 minor.** Blocking, real, mine: the new `RUN-087` remedy failed the repo's own error-taxonomy test (`core/test/errors.test.ts`), which I had not run because I scoped by the
+packages I touched, not by the catalogue I added to. Major, real: rethrowing every `ForgeError` from `runSession` aborted a paid diagnosis on a lane-reset or telemetry error instead of ending `escalated` with evidence
+(now only errors marked as assembly refusals propagate, and `debug.ts` marks everything before dispatch); the roster failed silently on `ENOTDIR` and skipped odd file names; the hostile-input test did not prove the
+later phases received the fenced output (it passed if the loop ended after REPRODUCE); the 16 000-character cap had no test end to end and could split a surrogate pair. Recorded: FIX now has the diagnostician's `git *`
+exec, and the model-proposed REPRODUCE command runs outside every grant (pre-existing). Rejected as wrong: "no production caller of `loadProjectAgent`" (review, panel, `agent show`, doctor use it).
+
+**Round 3 (fresh): 0 blocking, 4 major, 9 minor.** Major, real: a lane that cannot be reset failed before dispatch but unmarked, so it became five failed REPRODUCE attempts (now marked); taint, the cap and the full FIX grant were
+mutation survivors (tests added: `externalContent` in `context.json`, a 30 000-character defect, the whole FIX `tools` object, a role prompt deleted mid-run with `retainLaneWorktrees: never` leaves no lane); a refused run
+created the integration worktree it did not before (the agent is now read first; the other refusals need the run context, recorded); the roster counted directories and marked programmer errors as refusals. Minor and
+fixed: line-anchored control-token stripping was bypassed by `; `-joined lists (now one item per line), `user-turn.md` was written after `prompt.md`, the phase list and its read-only flags were kept in three places
+(`isReadOnlyPhase`), `RUN-087`'s remedy claimed a narrowing path that does not exist. No fourth round: the round-3 fixes each have a test that fails without them, verified by typecheck, lint and the suites listed in Q215.
+
+**What the critics caught that I missed:** the `RUN-087` remedy failing the catalogue test (a scoping error of mine); that a blanket `ForgeError` rethrow throws a paid diagnosis away; that the audit record omitted the user
+turn; the preflight-after-scaffold ordering (an open Defect per retry); the hostile-input test that passed if the loop ended early; the surrogate-pair cut; the `; ` join that hid a control token. **What I caught first:**
+that P5's "the diagnostician is write-forbidden" was not true of the shipped definition (it declares `write: true`), which removed the design tension the brief expected; that `callSession` swallowing typed refusals
+would have turned every misconfiguration into `needs-more-evidence`.
+
+**Verification.** Scoped per the owner-approved cost cut (Q215 lists it). Mutation checks: roster lookup emptied (session-roster and the repo-wide DECIDE test fail); `debug.ts` sent an empty system prompt (the strict
+adapter refuses, 10 tests and the real-project test fail). Only the known load-sensitive flakes (`upgrade/backup`, `run-upgrade` idempotency) failed in the one whole-`packages/cli` run. One slip of mine, disclosed: I ran
+`prettier --write` over `packages/engine/src/dispatch/*.ts`, which touched other agents' in-flight files there (`execute.ts`, `outputs.ts`, `shell.ts`); their content was already prettier-clean, so I expect no change.

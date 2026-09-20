@@ -18169,3 +18169,69 @@ Files: `packages/cli/src/commands/story.ts`, `packages/cli/src/bin.ts` (one impo
 `packages/cli/src/commands/loop/test/run.ts` (`persistState`), `packages/templates/templates/workflows/{deliver-stage,quick-fix,debug}.workflow.yaml`,
 `packages/templates/templates/briefs/design-deployment-strategy.md`, `specs/03-cli-and-installer.md` (one row), and tests
 `packages/cli/test/{commands/story,bin-story-verify,commands/loop/test/run-persist-state}.test.ts`, `test/command-steps.test.ts`.
+
+## Q215 — M13 P27: sessions read their roster from `.forge/agents`, and `forge debug` is assembled like an agent step — where the roster comes from, which grant each debug phase gets, what is fenced, and what is left open
+
+**Context:** `PLAN-M13.md` P27; Q203 D4 and Q207 items 6b and 7 (the two product gaps P5 and P6 recorded), P11 triage F1 and F2. (1) A session step (`kind: session`, the facilitated types) resolved its participants and its DECIDE
+owner from `<project>/modules/*/agents`, which a real `forge init` project does not have, so in a fresh project every session ended without a decision owner and asked the human (P6 copied `modules/` into its temp project to
+reach DECIDE). (2) `forge debug`'s RCA and FIX sessions sent an empty system prompt, the adapter's first-listed model and a global stand-in grant, and fed unfenced model output into later prompts.
+
+**Decisions:**
+
+1. **The roster is `.forge/agents/*.yaml`, read by the reader dispatch uses.** `readProjectAgent` (extracted from `createPromptAssemblyContext`, still the only parser, `readAgentDefinition`) and `listProjectAgents`
+   (`packages/engine/src/dispatch/assembly-context.ts`); `PromptAssemblyContext.listAgents` is a new required field (fixtures: `createFixtureAssembly` reads the real directory, the two hand-built fm-* assemblies return `[]`).
+   `session.ts`'s `loadProjectAgentRegistry` now calls it. **Who may decide is unchanged:** `resolveDecisionOwner` (first non-critic, non-facilitator participant whose agent has a non-empty `decisions_owned`);
+   `gates.may_approve` was never consulted by sessions. The definitions are now the resolved ones (`extends` walked, overrides applied), not the raw module files.
+2. **Failure semantics changed, on purpose.** The old loader swallowed *every* error into an empty registry, i.e. a malformed agent file silently routed the decision to the human (fail-open). Now: an absent `.forge/agents`
+   is an empty roster (human fallback, as before); a file that does not load, declares another agent's id, or a `.yaml` whose name is not an agent id fails `RUN-056`; a roster path that is a file or unreadable fails `RUN-034`.
+   Directories and non-`.yaml` entries are ignored (as `forge agent list` does). The whole directory is read once, before DIVERGE (it used to be read before CONVERGE, after paid sessions), and a typed failure is
+   marked as an assembly refusal so `executeStep` folds it into one failed `session` step. Disclosed: one half-edited, unrelated agent file now fails every session step in the project (`forge agent validate` does not
+   flag the same files, its filter differs slightly).
+3. **`forge debug` on real assembly (`commands/loop/debug.ts`).** Every phase goes through `assembleAgentSession` (`assembleDebugSession`): the diagnostician's role block, the operating contract, resolved constraints, its
+   tier model, an audit record per session (`debug:<phase>:<n>`, so a later attempt does not overwrite an earlier one). The strict adapter's opt-out for `debug.test.ts` is gone (`test/strict-opt-outs.test.ts` no longer lists
+   it, and asserts the file uses none); the canary that failed "the day debug moves onto assembly" is replaced by tests that the strict adapter accepts every session. `debug.ts` loads the agent with `readProjectAgent`
+   (id-versus-file-name check included), not the CLI's older `loadProjectAgent`.
+4. **Grants per phase (the tension P5 recorded).** The premise is smaller than Q203 D4 said: the shipped diagnostician declares `tools.write: true` and `exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*']` (`15` §15.3.2 forbids
+   *escalating* a protected role to write; the shipped definition already has it). So: the six RCA phases are assembled `readOnly: true` (write false, exec false, network none: what they had before); the FIX phase gets the
+   diagnostician's own resolved grant, exactly what `forge run` gives it, never wider. No definition or grant is changed (P15 owns that). If the resolved grant cannot write (a project edited it), `forge debug` fails
+   **`RUN-087`** (new; the `RUN-084` text talks about workflow steps and `outputs:`) **before** a Defect, lane or session exists. The P11 triage suggested assembling FIX as `backend`; not adopted: `13` §13.2 names the
+   diagnostician the owner, its role text allows applying a fix, and a project without a `backend` agent would have no `forge debug`. Consequence to sign off: FIX now has the diagnostician's `git *`/`cat*` exec (it had
+   `exec: false` before) and `git_commit: lane`.
+5. **Fencing.** `RcaSessionRequest.untrusted` (`@forge/engine/rca`): the loop's instruction text (block [4]) carries no defect text or model output, only a pointer to labelled blocks; the data (`defect-expected`,
+   `defect-observed`, `known-evidence`, `prior-attempts`, `reproduction-command`, `isolated-scope`, `hypothesis`, `causal-chain-tail`, `root-cause`) is fenced with `wrapUntrustedContent` in the user turn, capped at 16 000
+   characters each (marked, never inside a surrogate pair), lists one item per line so control-token stripping (line-anchored) sees each. A stripped control token is reported as `InjectionAttemptBlocked`
+   (`phase: 'debug'`). The user turn is recorded beside `prompt.md` as `user-turn.md` (the part an injection review needs; it is not in the system prompt). A phase carrying untrusted data is `taint: 'external'` in its record.
+   `runRcaLoop` refuses a defect id that is not a plain identifier (it is the one value quoted in every instruction text). Per-phase agent guidance: `prompt.briefs.debug-<phase>` (the P5 mode-key mechanism); the
+   diagnostician's shipped `run-rca-framework` brief is deliberately not attached (it describes the workflow step that writes documents).
+6. **Refusals end the loop; other failures do not.** `callSession` used to turn every rejection into a failed attempt, so a config refusal became five failed REPRODUCE attempts and `needs-more-evidence`. Now only an error
+   marked as an assembly refusal (`markRefusal`, exported from `@forge/engine/dispatch`) propagates; a typed error thrown after a paid session (a lane reset, a diff) is still a failed attempt, so a diagnosis ends
+   `escalated` with its evidence rather than as an exception. `debug.ts` marks everything up to dispatch (assembly, the FIX grant check, the audit files, the lane reset).
+7. **Preflight.** Before the Defect artifact is scaffolded, all six phases are assembled once (unmapped tier `RUN-078`, missing role prompt or phase brief `RUN-079`/`CFG-053`, unwritable grant `RUN-087`), so a misconfigured
+   project leaves no open Defect, lane or paid diagnosis. `readProjectAgent` runs first, so a missing diagnostician also does not create the integration worktree; the other refusals happen after `buildRunEngineContext`
+   (which creates `forge/integration-current`, the same branch every run creates). Point-in-time: an escalation that expires mid-run can still refuse a later phase.
+
+**Mutation checks (real, restored, verified against `git diff`):** `loadProjectAgentRegistry` returning an empty map: `session-roster` (4 of 7) and `agent-prompts-all-workflows` ("the session never dispatched its decide
+phase", 11 sessions) fail. Both `systemPrompt: assembled.systemPrompt` in `debug.ts` reverted to `{mode: 'append', text: ''}`: 10 of `debug.test.ts`'s tests and the real-project test fail ("A strict FakePlatformAdapter
+refused 5 session(s) ... the system prompt is empty").
+
+**Left open (each for the orchestrator):**
+- **The steel-man-debate technique is still read from `<project>/modules/*/techniques`** and nothing materialises techniques into a project, so in a real project every `tradeoff` session runs CONVERGE as plain panel mode and
+  a malformed technique file is swallowed. Needs a piece: `forge init` copies techniques to `.forge/techniques/`, `loadSteelManTechnique` reads them, and the degrade is visible.
+- **With the real roster the DECIDE owner rule is live for the first time and coarse:** `pm` owns something, so `pm` decides every brainstorm; `architect` decides design-review and tradeoff. `16` §16.3 step 4 says the role
+  "whose mandate covers" the question; `decisions_owned` topics are not matched to the question. (Unchanged by requirement; B2 in the triage edits `decisions_owned`.)
+- **`taint: 'external'` is recorded, nothing restricts a tainted FIX** (no claim, no output scan on the diff `forge debug` commits), and the REPRODUCE/PROVE commands a model proposes run through `runShellCommand`
+  (`shell: true`, full environment) outside every grant. Pre-existing; the injection this piece fences is now the dominant route to it.
+- The read-only RCA phases have no exec but their instruction text (FALSIFY: "run the cheapest experiment") still says to run things; the loop runs the reproduction itself. PREVENT's prompt carries no data from earlier phases.
+- `ExecuteStepContext.model`/`tools` are dead (no reader; `DEFAULT_TOOLS` is now read-only so a future reader is not handed write access); remove with the P21 context work. `steps.ts:302` still calls them "ad-hoc".
+- The CLI's own `loadProjectAgent` (review, panel, `agent show`, `doctor model-tiers`) is an older second loader with weaker checks; collapsing it onto `readProjectAgent` is a follow-up.
+- Sessions use 20 turns / 10 minutes / $2 (`AD_HOC_LIMITS`), not the diagnostician's declared 45 / 45 minutes / $5. A model that the tier map names but the adapter does not serve makes every session fail as `ok: false`, which the loop
+  still reports as `needs-more-evidence` (not checked by preflight, as for agent steps).
+- `forge debug` leaves its Defect open on every non-`recorded` outcome, so a re-run scaffolds another (pre-existing).
+
+**Verification scope (owner-approved cost cut; the full suite was not run):** `packages/engine` (whole), `packages/testkit`, `packages/cli/test/commands/loop` and `.../run`, and earlier the whole of `packages/cli` (only the
+known `upgrade/backup` and `run-upgrade` load flakes failed); root `test/{agent-prompts-all-workflows,forge-debug-real-project,strict-opt-outs,output-contract-known-gaps,workflows,live-smoke,determinism,fm-service-workflow,
+fm-mobile-workflow,build-stage-compiles}.test.ts`; `packages/core/test/errors.test.ts` (RUN-087 passes; two failures on other pieces' in-flight codes); `pnpm typecheck`, `pnpm run boundaries`, eslint and prettier on the files I own.
+
+**Gauntlet:** three fresh critic rounds; see `GAUNTLET-LOG.md`, `## M13 P27`. Files: `packages/engine/src/dispatch/{assembly-context,types,index}.ts`, `packages/engine/src/interaction/session.ts`,
+`packages/engine/src/rca/{loop,types,index}.ts`, `packages/cli/src/commands/loop/{debug,ad-hoc-step}.ts`, `packages/cli/src/commands/run/context.ts`, `packages/core/src/errors/codes.ts` (`RUN-087`), tests
+(`packages/engine/test/interaction/session-roster.test.ts`, `test/forge-debug-real-project.test.ts`, `packages/cli/test/commands/loop/debug.test.ts`, `test/strict-opt-outs.test.ts`, `test/agent-prompts-all-workflows.test.ts`).
