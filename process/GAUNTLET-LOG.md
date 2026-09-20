@@ -14136,3 +14136,35 @@ would have turned every misconfiguration into `needs-more-evidence`.
 **Verification.** Scoped per the owner-approved cost cut (Q215 lists it). Mutation checks: roster lookup emptied (session-roster and the repo-wide DECIDE test fail); `debug.ts` sent an empty system prompt (the strict
 adapter refuses, 10 tests and the real-project test fail). Only the known load-sensitive flakes (`upgrade/backup`, `run-upgrade` idempotency) failed in the one whole-`packages/cli` run. One slip of mine, disclosed: I ran
 `prettier --write` over `packages/engine/src/dispatch/*.ts`, which touched other agents' in-flight files there (`execute.ts`, `outputs.ts`, `shell.ts`); their content was already prettier-clean, so I expect no change.
+
+## M13 P16 — Declare what the brief writes (`test/brief-write-paths-in-claim.test.ts`; `06` §6.4, §6.7)
+
+**Piece.** A content test compares what every shipped agent step's brief tells its agent to write with the step's claim (`resolveStepClaim`), and 25 steps declare `produces` for
+what was outside it (Q216). Built test-first: the first run of the test was red for 40+ references in 25 steps, against 5 the triage had verified.
+
+**Round 1 (fresh): 2 blocking, 4 major, 8 minor.** Blocking: writes stated in Acceptance sections, in the passive, or after a negation elsewhere in the sentence were invisible
+(`harden:performance-pass`, `write-prd`, `define-metrics`, `write-test-plan` open questions and assumptions, `scaffold-ci`'s `delivery/pipeline.md`), and the header claimed "every step"
+while nine steps with no claim passed vacuously (now pinned as `KNOWN_EMPTY_CLAIM`). Major: edits to other artifacts with no path (`write-epics` to Capabilities, `write-stories` to
+Epics, `debug:run-rca`'s Defect section), `prepare-release-build` knowingly partly discarded, hard-coded `docs/forge/` literals (disclosed, Q216), hook agent steps not enumerated
+(now included, count taken from raw text).
+
+**Round 2 (fresh): 0 blocking, 6 major.** Relocated docs roots leave every literal `produces` uncovered (58 references; disclosed, needs an owner call); six extractor false-negative
+classes (negation across a comma, `from` after a write verb, `e.g.`, passive, prose registers, verbs) plus a false exemption reason (`frame-problem`'s OpenQuestion was the negation
+regex, not the section); an exemption swallowed a later real write to the same path (now keyed by path and sentence); `IMPLIED_WRITES` paths chosen inside the claim (kept, and
+documented as representative); the mobile globs a guess; unbackticked register duties and state diagrams (`domain/views`, `08` §8.11.3). Also `08` §8.11.3 puts pipeline diagrams at
+`delivery/views/` (both locations claimed).
+
+**Round 3 (fresh): 0 blocking, 3 major, 8 minor.** Major: my `run-rca-framework.md` edit promised that the next step promotes the reproduction and nothing does (edit reverted; the step
+claims only the Defect's Reproduction section; open); extractor blind spots (a duty inside a `Do not` bullet: `model-data`'s "state an assumption", now claimed and pinned; the rest
+listed in the test header); the mobile claim is a guess (disclosed). Minor and fixed: `retro:run-retro` widened its claim for a permission sentence (removed, exempted), two stale YAML
+comments. Not fixed, recorded: `produces` not checked for being needed, literals not derived from the registry, skill `applies_to.paths` matching `produces`.
+
+**What the critics caught that I missed:** the whole "duty stated somewhere other than a Produce section" class; that my brief edit for `run-rca` made a promise no step keeps; that the
+first exemption keyed on path alone hid a later real write; that hook steps were outside the enumeration; the vacuous pass for the nine empty-claim steps. **What I caught first:** the
+schema-level facts (a `**/*`-style claim must be allowed by name; a `!`/`#` in a hand-written `produces` is negation for the claim matcher).
+
+**Mutation evidence.** Dropping `produces` from `intake:seed-glossary` fails the main test naming step, path and sentence; skipping every brief item fails six tests; a `WITH_WRITES_FLOOR` of 99
+fails; a mutation run by round 3 showed 43 of 58 `produces` globs are pinned by a brief and 15 (the mobile globs, non-YAML contract notations, `delivery/views`) are not.
+
+**Verification.** Scoped per the owner-approved cost cut (Q216 lists it). `pnpm typecheck` clean on this piece's files (a later run showed only another agent's in-flight
+`dispatch-agent-step.ts` error); `test/workspace-floor.test.ts` failed twice only on other agents' concurrent probe files and passed in earlier runs.

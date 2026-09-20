@@ -18235,3 +18235,99 @@ fm-mobile-workflow,build-stage-compiles}.test.ts`; `packages/core/test/errors.te
 **Gauntlet:** three fresh critic rounds; see `GAUNTLET-LOG.md`, `## M13 P27`. Files: `packages/engine/src/dispatch/{assembly-context,types,index}.ts`, `packages/engine/src/interaction/session.ts`,
 `packages/engine/src/rca/{loop,types,index}.ts`, `packages/cli/src/commands/loop/{debug,ad-hoc-step}.ts`, `packages/cli/src/commands/run/context.ts`, `packages/core/src/errors/codes.ts` (`RUN-087`), tests
 (`packages/engine/test/interaction/session-roster.test.ts`, `test/forge-debug-real-project.test.ts`, `packages/cli/test/commands/loop/debug.test.ts`, `test/strict-opt-outs.test.ts`, `test/agent-prompts-all-workflows.test.ts`).
+
+## Q216 — M13 P16: what the brief writes is now the step's claim — 25 steps declared `produces`, the extractor behind the test, one brief corrected, and what a content test cannot see
+
+**Context.** `PLAN-M13.md` P16, the second half of P14 (`Q212` decision 3, "P16 declares `produces` for them and MUST land before a real run of those steps"). After P14 an `agent` step
+that declares `outputs` is enforced `strict` at every autonomy level, its claim being `produces` plus the registry globs of those outputs (`06` §6.7); the output check passes on the
+register entry, so a further document the brief names was reverted without a failure. `P11-TRIAGE.md` counted five verified instances and `Q212` named about a dozen more by reading; the
+test built here found **25 steps** (plus the two hook steps of `build-stage`) that name a write outside their claim.
+
+**Decisions.**
+1. **The test, first (red before the fix).** `test/brief-write-paths-in-claim.test.ts` enumerates every shipped `agent` step (`WORKFLOW_INDEX`, `modules/*/workflows`, compiled against the
+   fixture context `agent-prompts-all-workflows.test.ts` uses so per-story `produces` resolve, plus the agent steps of `onComplete` and `onFailure.escalations`, which the compiler leaves
+   out of the plan), loads each brief through `resolveContentReference` (the run's own header stripping), extracts what it tells the agent to write, and asserts every reference lies in
+   `resolveStepClaim(...).globs` (P14's own derivation, not a copy), matched with `minimatch` `{ dot: true }` loaded from `packages/vcs` (the matcher `enforceClaim` calls; the root package
+   does not depend on it). Its count of scanned steps is checked against a count of `kind: agent` in the raw text of the same files, which neither the parser nor the compiler touches; the
+   workflow files on disk are checked against `WORKFLOW_INDEX` and the module directories.
+2. **The extractor** (documented in the test header). Backticked tokens only. A token is a path when it opens with a known root (`docs/`, `.forge/`, `kb/`, `specs/`, `reports/`, a KB
+   section, a project directory) or has `/` and a file extension; a backticked artifact type (`Risk`, `OpenQuestion`, `ADR`, `HandoffRecord`) is the registry location of that type; prose
+   "record ... open question / assumption" is the register. It is a write when the last verb before the token is a write verb (or the section is `Produce` and no read verb precedes, or
+   a passive write verb follows), unless a negation governs that verb in its own clause (`do not`, `never`, `must not`, `without`; a `,` `:` `;` `but` `then` ends its reach), and a read
+   verb followed by a destination preposition still ends in a write. `Inputs` and `Do not` sections yield nothing; `Acceptance` sections are read (a duty may be stated only there:
+   `write-prd`'s `OpenQuestion`). A `.mmd` also demands its `.mmd.yaml` sidecar (`08` §8.11; `outputClaimGlobs` claims it for a declared Diagram). A directory reference is covered if the
+   claim covers a typical member (`.md`, `.yaml`, `.mmd`, none). Round 2 of the critic ported it and found six classes of false negative (negation reaching across a comma, `from` after a
+   write verb, `e.g.`, passive, prose registers, verbs such as `revise`); each is now a unit case.
+3. **Self-tests against a vacuous pass.** The extractor must find named paths in named real briefs (`decompose-stages`, and 11 pinned steps from the P14/P11 lists), the synthetic
+   phrasings above, a two-sentence brief where an exempted sentence must not swallow a later real write, and at least 36 (38 when set) of the steps' briefs must yield a write. Mutations:
+   dropping one `produces` (`intake:seed-glossary`) fails the main test naming the step and path; making the extractor skip every item fails six tests.
+4. **Fixes, by declaring `produces`** (the narrowest glob the brief supports; exact files where it names them). Intake `seed-glossary`: `kb/glossary.md`. Discover `frame-problem`:
+   `product/{problem,users,scope}.md`, `risks.md`, `open-questions.md`; `define-metrics`: `product/metrics.md`, `assumptions.md`. Define-product `write-prd`: `product/capabilities.md`,
+   `assumptions.md`, `open-questions.md`; `write-ux-spec`: `product/ux-spec.md`, `open-questions.md`. Shape-solution: `select-architecture` claims `kb/architecture/**` (its brief gives
+   component KB entries no file name), `model-data` the five `data/*.md`, `assumptions.md`, the ER and (per `08` §8.11.3) `domain/views` diagrams with sidecars and the storage ADR, `select-stack`
+   `architecture-spec.md` and `engineering/standards.md`, `threat-model` its model, view, `risks.md` and the ADR the brief allows. Initialize-project: `decide-repo-strategy`
+   `delivery/repo-strategy.md` and `assumptions.md`, `scaffold-ci` `delivery/pipeline.md` and the ADR for the platform choice. Plan-stages: `decompose-stages` the plan, its view,
+   `CAP-*.md` (it updates each Capability's `stage`), `review-stages` `risks.md` and `handoffs.md` (it declares no `outputs` until P15). Plan-stage: `write-epics` `CAP-*.md`,
+   `write-stories` `EPIC-*.md` (each edits its parent's list), `write-test-plan` `specs/test-plan.md`, `engineering/testing.md`, `open-questions.md`. Build-stage `freeze-contracts`
+   `interfaces/*.{proto,graphql,ts}` and the `onFailure` rca step `sessions/rca/RCA-*.md`, `defects/DEF-*.md`. Deliver-stage `design-pipeline`/`design-deployment`
+   `delivery/pipeline/**` (the brief's "area you own") and `delivery/views/*.mmd` (+ sidecar; `08` §8.11.3's location). Harden: both passes `open-questions.md`. Operate
+   `write-runbooks`, adopt `reverse-derive-specs`, migrate `plan-migration` (open questions, assumptions). Quick-fix `reproduce` and debug `run-rca` `reports/defects/**` (the Defect's Reproduction section; for `run-rca` not the reproduction artifact, see below). fm-mobile `prepare-release-build` `test/device-matrix/**`, `**/ios/**`, `**/android/**`, `app.json`,
+   `app.config.*`, `pubspec.yaml`, `capacitor.config.*`; fm-service `draft-contract` `interfaces/<interfaceName>.{proto,graphql,ts}`. Each YAML entry carries a comment naming the brief
+   sentence. Adding `produces` changes compile output in one way: `select-stack` and `threat-model` gained redundant transitive `dependsOn` edges (the interval map reads `produces`; the
+   steps were already a chain); nothing else, no cycles.
+5. **One brief corrected** (the rest were left as written; the claim followed them). `select-architecture-style.md` gave the per-component KB entry (`applies_to: component:<slug>`) no
+   path; it now says "a file under `architecture/`". A first edit to `run-rca-framework.md` (put the reproduction under `docs/forge/reports/defects/`, "the step after you promotes it")
+   was reverted after round 3: nothing promotes it (`fix-defect.md` says keep it as the regression test, `debug:fix` has an empty claim, `forge test run` will not collect a test
+   under `reports/defects/`), so the edit made a false promise. `debug:run-rca` therefore claims only the Defect's Reproduction section; where its reproduction test goes stays
+   unspecified and outside the claim (a test in the project tree is reverted under `strict`). Open.
+6. **Exemptions and hand-declared writes.** Eleven sentence-anchored `EXEMPT` entries excuse extractor false positives (CI runtime output in `scaffold-ci`/`design-pipeline`, a KB
+   *proposal* in `document`/`stage-retro`, a `constraints/**` read in `harden`, "Do not write results into device-matrix.md", and `run-retro`'s "your role may write only
+   `delivery/sequencing/**`", a permission inside the write-back proposals, so the claim is not widened for it); each must match the sentence it names and must not be
+   covered already. `IMPLIED_WRITES` lists a dozen writes no token shows (a path only inside a command, a file "beside" a named one, an edit to another artifact) each with an anchor sentence
+   that must still be in the brief, so neither list outlives its evidence. They are representative paths chosen by hand: they prove the claim covers the range the brief permits, not
+   that the range is complete.
+7. **Hygiene, in the same file.** Every declared output's registry glob is in the claim; no `produces` is absolute, climbs out (`..`), starts with `!` or `#` (which the claim matcher
+   reads as negation or a comment, and which `outputClaimGlobs` escapes for its own globs but a hand-written entry is not), or claims a whole docs root or the whole project
+   (`**`, `docs/**`, `docs/forge/kb/*.md`); the allowances (`scaffold-project`'s `**/*`, the two mobile `**/` globs) name step and glob and go stale if the glob goes.
+8. **`KNOWN_EMPTY_CLAIM`.** Nine steps have no `outputs` and no `produces`, so under `strict` everything they write is reverted: `debug:fix`, `harden:fix-findings`,
+   `implement-story:{document,refactor}`, `migrate:{expand,contract}`, `quick-fix:{write-failing-test,fix}`, `refactor:refactor-code`. Pinned exactly (a tenth or an eleventh is a new
+   gap). They are the code-writing steps `P11-TRIAGE.md` A3 deferred; the triage says `implement-story:refactor` and `document` could take `{{run.filesExpected}}`. Left open.
+9. **Spec text.** No spec changed. `10` §10.1's build-stage worked example is compared structurally with the shipped file by `test/workflows.test.ts`; that test's copy now carries the
+   `freeze-contracts` `produces` and the escalation's `produces` (the same kind of documented deviation as Q211's), the spec example is unchanged.
+
+**Disclosed, not fixed (the orchestrator turns these into pieces).**
+- **Relocated docs roots.** The registry-derived half of a claim follows `paths.kb` and friends; the literal `docs/forge/...` in every `produces` (and in the briefs themselves) does
+  not. With `paths.kb: knowledge` a declared ADR is claimed at `knowledge/decisions/`, and `docs/forge/kb/glossary.md` (or the short form `kb/risks.md`, which the agent resolves to
+  the configured root) is claimed at the old place: 58 references become uncovered. The expression context has no `paths` root, so YAML cannot template them. Two fixes, both owner
+  calls: expand a `docs/forge/<section>/` prefix in `resolveStepClaim` (which already receives the roots), or give the compile context a `paths` root and template the YAML. The briefs
+  hard-code the default layout too, so a real relocation needs both. The test holds for the default layout only and says so.
+- **The claim guesses for `prepare-release-build`.** The brief names no app path ("the app's own paths"); the globs are the layouts it can run on. A layout outside them (a Fastlane or
+  Cordova project, `apps/mobile/app.json`) has its release configuration reverted while the `Task` record passes. `package.json` is deliberately not claimed. The proper fix is a
+  configured list of app paths the brief and the claim both read.
+- **Extractor blind spots** (header of the test): duties inside `### Do not` bullets (`model-data`'s "state an assumption with `validate_by`" is pinned by hand), un-backticked paths,
+  "except `X`", comma-separated negated verb lists, steps with no brief. `produces` entries are not checked for being needed (a mutation run showed the mobile globs, the non-YAML
+  contract notations and `delivery/views` are unpinned), and the literal globs are not derived from the registry.
+- **`prepare-release-build`'s `**/ios/**` also matches app source** such as `src/platform/ios/Button.tsx` (the brief forbids behaviour changes), while KMM `iosApp/`, a root Xcode project,
+  `eas.json`, `fastlane/**` and release scripts are outside the claim; unfalsifiable by the test.
+- **Skill activation.** `packages/agents/src/context/pack-for-step.ts` matches a skill's `applies_to.paths` against a step's `produces`; no shipped skill uses it today, but the new
+  `produces` could start injecting skill bodies.
+- **Diagram location.** The two `deliver-stage` briefs put the pipeline and topology Diagram under `delivery/pipeline/` (the `sre` `file_ownership`); `08` §8.11.3 puts them at
+  `delivery/views/pipeline.mmd` and `deployment-<env>.mmd`. Both are claimed. Which the briefs, the ownership and `forge diagram validate --gate G-Deliver` should use is unsettled (P18).
+- **Reproduction test location for `run-rca`.** The brief names none; a test written in the project tree is outside the claim. A `{{defectId}}`-scoped test glob or a brief rule
+  (a location the claim and `forge test run` both cover) is a decision, not made here.
+- **Agent prompt specialisations are not scanned** (`prompts/<agent>.<brief>.md`; only the brief). `data-engineer.implement-story.md` names `docs/forge/kb/data/pipelines/*.md`, written
+  by a per-story step whose `produces` is `files_expected`.
+- **`strict` still does not fail the step** (`Q212`), which is why 25 silent losses stayed silent until a test looked; with the `PolicyViolation` event now the only trace. The evidence
+  strengthens the owner question: failing the step would have turned each of these into a red run, not a missing file. Not changed (P14 owns the semantics).
+- **The interval map** (`plan/dependencies.ts`) reads `produces` and not the output globs, so two parallel steps writing the same register through `produces` are serialised and through
+  `outputs` are not; unchanged.
+- **Prose duties**: "is an open question" (classification) is not read as a record; `implement-story:plan`, `adopt:gap-analysis`, `replan:impact-analysis` use it. Whether a gap with no
+  evidence must become an `OpenQuestion` register entry is a brief question (they claim `handoffs.md` only).
+
+**Verification scope (owner-approved cost cut; no full unscoped suite).** Root `test/{brief-write-paths-in-claim,agent-prompts-all-workflows,output-contract-known-gaps,workflows,
+build-stage-compiles,fm-mobile-workflow,fm-service-workflow,live-smoke,determinism,workspace-floor,templates,gates,strict-opt-outs,command-steps}.test.ts`, all of `packages/{templates,
+agents}`, `packages/cli/test/{init,commands/workflow,commands/spec}`, `packages/engine/test/{workflow,plan}`; `pnpm typecheck`, `pnpm run boundaries`, `eslint`/`prettier` on the files
+owned. A compile of every workflow at HEAD against the working tree (fixture context) differs only in the two `dependsOn` edges above.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P16`. Files: `test/brief-write-paths-in-claim.test.ts`, `test/workflows.test.ts`, `test/output-contract-known-gaps.test.ts` (comment), the workflow YAML
+listed in decision 4, `packages/templates/templates/briefs/{run-rca-framework,select-architecture-style}.md`.
