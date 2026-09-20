@@ -20,7 +20,7 @@ import {
 } from '@forge/adapter-kit/conformance';
 import type { GrantedMcpServer, ResolvedSkill } from '@forge/adapter-kit/types';
 
-import { FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 const HELLO_PROMPT = 'FIXTURE:HELLO';
 const WRITE_FILE_PROMPT = 'FIXTURE:WRITE_FILE';
@@ -52,7 +52,7 @@ const SKILL: ResolvedSkill = {
 };
 
 function buildAdapter(): FakePlatformAdapter {
-  const adapter = new FakePlatformAdapter();
+  const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
 
   adapter.script((r) => r.prompt === HELLO_PROMPT, { text: ['Hello!'] });
   adapter.script((r) => r.prompt === WRITE_FILE_PROMPT, {

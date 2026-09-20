@@ -14,9 +14,11 @@
  * `@forge/adapter-kit/conformance`'s own minimal test fixtures already use.
  *
  * Known, deliberate limitations (accepted trade-offs, not oversights — a fresh critic round raised
- * both; recorded rather than silently left undocumented): `SessionRequest.systemPrompt`,
- * `permissionMode`, and `attachments` are accepted but have no observable effect, since no script field
- * models a platform reacting to them yet. `SessionLimits.wallClockMs`/`maxCostUsd` are accepted but not
+ * both; recorded rather than silently left undocumented): `permissionMode` and
+ * `attachments` are accepted but have no observable effect, since no script field models a platform
+ * reacting to them yet. `SessionRequest.prompt`/`systemPrompt` used to be in this list; they still steer
+ * no script, but are no longer ignored: strict mode (default on, `FakeAdapterOptions.strict`, `PLAN-M13.md`
+ * P6) refuses a session whose prompt is empty, a bare path, or not the nine compiled blocks. `SessionLimits.wallClockMs`/`maxCostUsd` are accepted but not
  * enforced (this package has no injectable clock — see determinism, `specs/22`). None of these
  * currently have a consumer that needs them; add the mechanism when one does, rather than speculatively
  * now. `SessionResult.usage.costUsd` *was* one such deferred item (this doc comment used to say it "is
@@ -59,8 +61,70 @@ import type {
 import { makeHandle } from './handle.ts';
 import type { SessionRequestMatcher } from './matcher.ts';
 import type { FakeSessionScript } from './script.ts';
+import {
+  assertValidStrictOptions,
+  checkSessionRequestPrompt,
+  checkUserPrompt,
+  promptOf,
+  StrictPromptViolationError,
+  stepIdOf,
+  type StrictPromptOptions,
+} from './strict.ts';
 
 export type FakeFailureKind = 'error' | 'timeout' | 'abort';
+
+/** Options for `FakePlatformAdapter` beyond its capability overrides. */
+export interface FakeAdapterOptions {
+  /** Strict-prompt mode (`PLAN-M13.md` P6, Q207). **On by default**: `startSession` rejects a request
+   * whose prompt is empty, a bare file path, or not `05` §5.3's nine blocks opening with the operating
+   * contract, and `resumeSession` rejects an empty or bare-path prompt — each rejection is also
+   * recorded in `strictViolations`. Pass `false` only for a test that deliberately drives the adapter
+   * with a hand-built request (adapter mechanics, conformance, a disclosed non-assembled session
+   * type), with a comment saying why; pass an options object to also require the operating contract's
+   * full text. */
+  readonly strict?: boolean | StrictPromptOptions;
+  /** Further model ids `listModels()` reports and `startSession` accepts, besides `FAKE_MODEL_ID`. A test
+   * of tier-to-model resolution (`05` §5.8) needs more than one distinct model, or "the model that was
+   * resolved" and "any valid model" cannot be told apart. */
+  readonly models?: readonly string[];
+}
+
+/** `strict: false`, named: for a test that deliberately drives the adapter with a hand-built
+ * `SessionRequest` (adapter mechanics, conformance suites) rather than one the engine assembled. Pass it
+ * as the second constructor argument: `new FakePlatformAdapter({}, HAND_BUILT_REQUESTS)`. Anything that
+ * dispatches through the engine should stay strict. */
+export const HAND_BUILT_REQUESTS: FakeAdapterOptions = { strict: false };
+
+/** Refusals not yet acknowledged by their test (`FakePlatformAdapter.acknowledgeStrictViolations`),
+ * across every adapter in this process. `test/setup.ts` fails any test that ends with entries here: a
+ * refusal is an error in the code under test, and a code path that swallows adapter failures (a step
+ * recorded `failed`, a retry) must not be able to hide one. Held on `globalThis` under a registered
+ * symbol, not in module scope: a test that resets the module registry gets a second copy of this module,
+ * and its refusals must still reach the one hook. */
+const UNACKNOWLEDGED_KEY = Symbol.for('@forge/testkit/strict-unacknowledged');
+function unacknowledgedViolations(): Set<StrictViolationRecord> {
+  const store = globalThis as { [UNACKNOWLEDGED_KEY]?: Set<StrictViolationRecord> | undefined };
+  const existing = store[UNACKNOWLEDGED_KEY];
+  if (existing !== undefined) return existing;
+  const created = new Set<StrictViolationRecord>();
+  store[UNACKNOWLEDGED_KEY] = created;
+  return created;
+}
+
+/** Returns and clears every refusal no test acknowledged. For the global test hook, not for tests. */
+export function takeUnacknowledgedStrictViolations(): readonly StrictViolationRecord[] {
+  const set = unacknowledgedViolations();
+  const taken = [...set];
+  set.clear();
+  return taken;
+}
+
+/** One request a strict adapter refused. */
+export interface StrictViolationRecord {
+  readonly stepId: string;
+  readonly kind: 'start' | 'resume';
+  readonly violations: readonly string[];
+}
 
 const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   streaming: true,
@@ -195,6 +259,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
   // isolation boundary; `specs/07` §7.6 C15 — "not leaked into other lanes").
   private readonly provisioningByRunAndStep = new Map<string, Map<string, StepProvisioning>>();
   private sessionCounter = 0;
+  private readonly strict: StrictPromptOptions | undefined;
+  private readonly strictViolationLog: StrictViolationRecord[] = [];
+  private readonly extraModels: readonly string[];
 
   // Present only when this instance can provision MCP at all (SPEC-QUESTIONS.md Q61 point 6) — a
   // genuinely absent instance property, not a present-but-throwing method, so a degraded
@@ -205,8 +272,15 @@ export class FakePlatformAdapter implements PlatformAdapter {
     ctx: SessionContext,
   ) => Promise<McpProvisioning>;
 
-  constructor(capabilityOverrides: Partial<AdapterCapabilities> = {}) {
+  constructor(
+    capabilityOverrides: Partial<AdapterCapabilities> = {},
+    options: FakeAdapterOptions = {},
+  ) {
     this.caps = { ...DEFAULT_CAPABILITIES, ...capabilityOverrides };
+    const strict = options.strict ?? true;
+    this.strict = strict === false ? undefined : strict === true ? {} : strict;
+    if (this.strict !== undefined) assertValidStrictOptions(this.strict);
+    this.extraModels = options.models ?? [];
     if (this.caps.mcp || this.caps.toolProxy) {
       this.provisionMcp = (servers, ctx) => this.doProvisionMcp(servers, ctx);
     }
@@ -226,6 +300,32 @@ export class FakePlatformAdapter implements PlatformAdapter {
     this.failureInjections.push({ matcher, failure });
   }
 
+  /** Every request this strict adapter refused so far (always empty when constructed with
+   * `strict: false`). A test whose subject swallows adapter failures (a retry loop, a step that
+   * records `failed` and moves on) can assert this is empty so a refusal cannot hide behind them. */
+  get strictViolations(): readonly StrictViolationRecord[] {
+    return this.strictViolationLog;
+  }
+
+  /** Declares this adapter's not-yet-acknowledged refusals as expected by the running test (one that
+   * *asserts* on a refusal). Any refusal not acknowledged fails the test that caused it, from the global
+   * `afterEach` in `test/setup.ts`, however the code under test handled the rejection. Pass the number of
+   * refusals the test means to accept: acknowledging fewer or more than that throws, so one expected
+   * refusal cannot also hide an unrelated one. The log itself is unchanged. */
+  acknowledgeStrictViolations(expectedCount?: number): void {
+    const pending = this.strictViolationLog.filter((record) =>
+      unacknowledgedViolations().has(record),
+    );
+    if (expectedCount !== undefined && pending.length !== expectedCount) {
+      throw new Error(
+        `@forge/testkit strict mode: the test expected ${String(expectedCount)} refusal(s) but this ` +
+          `adapter has ${String(pending.length)} unacknowledged: ` +
+          pending.map((record) => `${record.kind} ${record.stepId}`).join(', '),
+      );
+    }
+    for (const record of pending) unacknowledgedViolations().delete(record);
+  }
+
   capabilities(): Promise<AdapterCapabilities> {
     return Promise.resolve(this.caps);
   }
@@ -235,7 +335,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   listModels(): Promise<readonly ModelInfo[]> {
-    return Promise.resolve([{ id: FAKE_MODEL_ID, displayName: 'FORGE Fake Model' }]);
+    return Promise.resolve([
+      { id: FAKE_MODEL_ID, displayName: 'FORGE Fake Model' },
+      ...this.extraModels.map((id) => ({ id, displayName: `FORGE Fake Model (${id})` })),
+    ]);
   }
 
   installAssets(): Promise<readonly []> {
@@ -298,6 +401,14 @@ export class FakePlatformAdapter implements PlatformAdapter {
   }
 
   startSession(request: SessionRequest): Promise<SessionHandle> {
+    if (this.strict !== undefined) {
+      const violations = checkSessionRequestPrompt(request, this.strict);
+      if (violations.length > 0) {
+        // Checked before anything else (before failure injection and script matching): a request that
+        // could not steer a real agent must not be able to pass because a script happened to match it.
+        return Promise.reject(this.refuse(stepIdOf(request), 'start', violations));
+      }
+    }
     this.sessionCounter += 1;
     const sessionId = `session-${String(this.sessionCounter)}`;
     this.rememberedContextBySessionId.set(sessionId, {
@@ -352,7 +463,25 @@ export class FakePlatformAdapter implements PlatformAdapter {
     }
   }
 
+  private refuse(
+    stepId: string,
+    kind: StrictViolationRecord['kind'],
+    violations: readonly string[],
+  ): StrictPromptViolationError {
+    const record: StrictViolationRecord = { stepId, kind, violations };
+    this.strictViolationLog.push(record);
+    unacknowledgedViolations().add(record);
+    return new StrictPromptViolationError(stepId, violations);
+  }
+
   resumeSession(sessionId: string, request: ResumeRequest): Promise<SessionHandle> {
+    if (this.strict !== undefined) {
+      const violations = checkUserPrompt(promptOf(request));
+      if (violations.length > 0) {
+        const stepId = this.rememberedContextBySessionId.get(sessionId)?.stepId ?? sessionId;
+        return Promise.reject(this.refuse(stepId, 'resume', violations));
+      }
+    }
     if (!this.caps.sessionResume) {
       // Promise.reject, not throw: resumeSession is not `async`, so a bare `throw` here would be a
       // synchronous exception rather than a rejected promise — see the matching note in startSession.
@@ -565,7 +694,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
     // which prompt was requested, the identical "check model first, not folded into per-prompt
     // behaviour" ordering M4 P4's own gauntlet round found missing from an earlier fake-adapter-shaped
     // stub built for that piece's own tests.
-    if (request.model !== FAKE_MODEL_ID) {
+    if (request.model !== FAKE_MODEL_ID && !this.extraModels.includes(request.model)) {
       const errorInfo = { code: 'UNKNOWN_MODEL', message: `unknown model id: ${request.model}` };
       yield { type: 'error', code: errorInfo.code, message: errorInfo.message, retryable: false };
       yield { type: 'session.ended', reason: 'error' };
@@ -772,6 +901,9 @@ export class FakePlatformAdapter implements PlatformAdapter {
  * script vocabulary yet for e.g. an "interject attempt" or a "subagent spawn attempt" to refuse, and
  * inventing one before any consumer needs it would be scope this milestone's own plan does not call
  * for (`SPEC-QUESTIONS.md` Q61 point 11). */
-export function withCapabilities(overrides: Partial<AdapterCapabilities>): FakePlatformAdapter {
-  return new FakePlatformAdapter(overrides);
+export function withCapabilities(
+  overrides: Partial<AdapterCapabilities>,
+  options: FakeAdapterOptions = {},
+): FakePlatformAdapter {
+  return new FakePlatformAdapter(overrides, options);
 }

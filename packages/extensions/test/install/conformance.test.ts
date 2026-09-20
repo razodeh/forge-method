@@ -277,6 +277,53 @@ describe('runModuleConformance — tests/*.test.ts execution', () => {
     }
   }, 30_000);
 
+  const HAND_BUILT_REQUEST_TEST = (adapterArgs: string): string =>
+    [
+      "import { describe, it, expect } from 'vitest';",
+      "import { FAKE_MODEL_ID, FakePlatformAdapter } from '@forge/testkit';",
+      '',
+      "describe('module drives the fake adapter with a hand-built request', () => {",
+      "  it('starts a session', async () => {",
+      `    const adapter = new FakePlatformAdapter(${adapterArgs});`,
+      '    const handle = await adapter.startSession({',
+      "      runId: 'r', stepId: 's', cwd: '',",
+      "      systemPrompt: { mode: 'append', text: '' }, prompt: 'briefs/x.md',",
+      "      model: FAKE_MODEL_ID, tools: { read: true, write: false, exec: false, network: 'none' },",
+      "      permissionMode: 'auto', limits: {}, env: {}, abortSignal: new AbortController().signal,",
+      '    });',
+      '    expect((await handle.result()).ok).toBe(true);',
+      '  });',
+      '});',
+      '',
+    ].join('\n');
+
+  it('a module test that hand-builds an empty/path prompt against the default (strict) fake fails with the strict-mode refusal named (PLAN-M13 P6)', async () => {
+    const dir = await freshModuleDir();
+    await writeModuleYaml(dir);
+    await writeYaml(dir, 'tests/hand-built.test.ts', HAND_BUILT_REQUEST_TEST(''));
+
+    const error = await runConformance(dir).catch((cause: unknown) => cause);
+    expect(isForgeError(error)).toBe(true);
+    if (isForgeError(error)) {
+      expect(error.code).toBe('CFG-051');
+      expect(error.message).toMatch(/strict mode/);
+      expect(error.message).toMatch(/strict: false/);
+    }
+  }, 30_000);
+
+  it('the same module test passes once it opts out with { strict: false }', async () => {
+    const dir = await freshModuleDir();
+    await writeModuleYaml(dir);
+    await writeYaml(
+      dir,
+      'tests/hand-built.test.ts',
+      HAND_BUILT_REQUEST_TEST('{}, { strict: false }'),
+    );
+
+    const report = await runConformance(dir);
+    expect(report.testFilesRun).toBe(1);
+  }, 30_000);
+
   it('refuses (CFG-051) when a test file throws at import/collection time, not only on a failed assertion', async () => {
     const dir = await freshModuleDir();
     await writeModuleYaml(dir);

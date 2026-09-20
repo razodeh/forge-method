@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, withCapabilities } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, HAND_BUILT_REQUESTS, withCapabilities } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-capabilities-'));
@@ -37,7 +37,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 describe('withCapabilities({ sessionResume: false })', () => {
   it('resumeSession refuses with a typed, actionable error rather than pretending to resume', async () => {
-    const adapter = withCapabilities({ sessionResume: false });
+    const adapter = withCapabilities({ sessionResume: false }, HAND_BUILT_REQUESTS);
     const capabilities = await adapter.capabilities();
     expect(capabilities.sessionResume).toBe(false);
 
@@ -51,7 +51,7 @@ describe('withCapabilities({ sessionResume: false })', () => {
   });
 
   it('a default (full-capability) adapter does allow resumeSession', async () => {
-    const adapter = withCapabilities({});
+    const adapter = withCapabilities({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     const initial = await adapter.startSession(baseRequest({ cwd, prompt: 'hello' }));
     await initial.result();
@@ -67,12 +67,12 @@ describe('withCapabilities({ sessionResume: false })', () => {
 
 describe('withCapabilities({ mcp: false, toolProxy: false })', () => {
   it('provisionMcp is genuinely absent, not present-but-throwing', () => {
-    const adapter = withCapabilities({ mcp: false, toolProxy: false });
+    const adapter = withCapabilities({ mcp: false, toolProxy: false }, HAND_BUILT_REQUESTS);
     expect(adapter.provisionMcp).toBeUndefined();
   });
 
   it('a session requiring a granted MCP server is refused with a precise message naming the server', async () => {
-    const adapter = withCapabilities({ mcp: false, toolProxy: false });
+    const adapter = withCapabilities({ mcp: false, toolProxy: false }, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'needs-mcp', { requiresMcpServer: 'my-special-server' });
     const cwd = await createScratchDir();
 
@@ -82,7 +82,7 @@ describe('withCapabilities({ mcp: false, toolProxy: false })', () => {
   });
 
   it('a session that does not require MCP still runs normally', async () => {
-    const adapter = withCapabilities({ mcp: false, toolProxy: false });
+    const adapter = withCapabilities({ mcp: false, toolProxy: false }, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'no-mcp-needed', { text: ['fine'] });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'no-mcp-needed' }));
@@ -93,7 +93,7 @@ describe('withCapabilities({ mcp: false, toolProxy: false })', () => {
 
 describe('withCapabilities({ structuredOutput: false })', () => {
   it('omits a scripted structured payload rather than returning it anyway', async () => {
-    const adapter = withCapabilities({ structuredOutput: false });
+    const adapter = withCapabilities({ structuredOutput: false }, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'structured', { structured: { secret: 'leaked-anyway' } });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'structured' }));
@@ -104,7 +104,7 @@ describe('withCapabilities({ structuredOutput: false })', () => {
   });
 
   it('a default (full-capability) adapter does report a scripted structured payload', async () => {
-    const adapter = withCapabilities({});
+    const adapter = withCapabilities({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'structured', { structured: { ok: true } });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'structured' }));
@@ -116,7 +116,7 @@ describe('withCapabilities({ structuredOutput: false })', () => {
 
 describe('withCapabilities({ fileEditing: false })', () => {
   it('refuses a scripted write even when tools.write is granted', async () => {
-    const adapter = withCapabilities({ fileEditing: false });
+    const adapter = withCapabilities({ fileEditing: false }, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'write', {
       writeFiles: [{ relativePath: 'a.txt', content: 'x' }],
     });
@@ -133,7 +133,7 @@ describe('withCapabilities({ fileEditing: false })', () => {
 
 describe('withCapabilities({ bash: false })', () => {
   it('refuses a scripted exec attempt even when tools.exec would otherwise allow it', async () => {
-    const adapter = withCapabilities({ bash: false });
+    const adapter = withCapabilities({ bash: false }, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'exec', { execAttempts: ['echo hi'] });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(

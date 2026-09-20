@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionHandle } from '@forge/adapter-kit/types';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-failure-injection-'));
@@ -44,7 +44,7 @@ async function drain(handle: SessionHandle) {
 
 describe('injectFailure', () => {
   it("'error': produces a typed error event and result.error, and no other shape", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure((r) => r.prompt === 'target', 'error');
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'target' }));
@@ -58,7 +58,7 @@ describe('injectFailure', () => {
   });
 
   it("'abort': ends with reason 'aborted', no error event", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure((r) => r.prompt === 'target', 'abort');
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'target' }));
@@ -71,7 +71,7 @@ describe('injectFailure', () => {
   });
 
   it("'timeout': never settles — events stall and result() never resolves", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure((r) => r.prompt === 'target', 'timeout');
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'target' }));
@@ -88,7 +88,7 @@ describe('injectFailure', () => {
   });
 
   it('an unmatched request is unaffected by an injection registered for a different matcher', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure((r) => r.prompt === 'target', 'error');
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'not-the-target' }));
@@ -97,7 +97,7 @@ describe('injectFailure', () => {
   });
 
   it('is consumed on the first matching call — a second matching call runs normally', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure((r) => r.prompt === 'target', 'error');
     const cwd = await createScratchDir();
 
@@ -113,7 +113,7 @@ describe('injectFailure', () => {
 
 describe('a caller-supplied matcher that itself throws', () => {
   it('startSession rejects instead of throwing synchronously, for a matcher registered via .script()', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script(
       () => {
         throw new Error('matcher blew up');
@@ -132,7 +132,7 @@ describe('a caller-supplied matcher that itself throws', () => {
   });
 
   it('startSession rejects instead of throwing synchronously, for a matcher registered via .injectFailure()', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.injectFailure(() => {
       throw new Error('injection matcher blew up');
     }, 'error');
@@ -144,7 +144,7 @@ describe('a caller-supplied matcher that itself throws', () => {
   });
 
   it('a matcher that throws a non-Error value still rejects startSession with a real Error', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script(
       () => {
         // eslint-disable-next-line @typescript-eslint/only-throw-error -- deliberately non-Error, to prove startSession normalises it

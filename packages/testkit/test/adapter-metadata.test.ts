@@ -8,27 +8,27 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 describe('FakePlatformAdapter metadata methods', () => {
   it('preflight() reports ok with no issues', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     await expect(adapter.preflight()).resolves.toEqual({ ok: true, issues: [] });
   });
 
   it('listModels() reports exactly the one model id startSession accepts', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const models = await adapter.listModels();
     expect(models).toEqual([{ id: FAKE_MODEL_ID, displayName: 'FORGE Fake Model' }]);
   });
 
   it('installAssets() reports no assets installed', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     await expect(adapter.installAssets()).resolves.toEqual([]);
   });
 
   it('capabilities().interject is honestly false, and no SessionHandle ever provides a working interject', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const capabilities = await adapter.capabilities();
     expect(capabilities.interject).toBe(false);
 

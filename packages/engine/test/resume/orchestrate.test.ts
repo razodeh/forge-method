@@ -21,7 +21,12 @@ import {
   slugifyStepId,
 } from '@forge/vcs';
 import { appendEvent } from '@forge/telemetry/events';
-import { FAKE_MODEL_ID, FakePlatformAdapter, withCapabilities } from '@forge/testkit';
+import {
+  FAKE_MODEL_ID,
+  FakePlatformAdapter,
+  strictFixtureSystemPrompt,
+  withCapabilities,
+} from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
 import { toAgentId, type StepNode } from '../../src/plan/index.ts';
@@ -125,7 +130,9 @@ describe('resumeRun', () => {
       runId,
       stepId,
       cwd: lane.path,
-      systemPrompt: { mode: 'append', text: '' },
+      // Stands in for the engine's own start (not what is under test), so a fixture prompt that passes
+      // strict mode rather than the empty one dispatch used to send.
+      systemPrompt: { mode: 'append', text: strictFixtureSystemPrompt() },
       prompt: 'do work',
       model: FAKE_MODEL_ID,
       tools: { read: true, write: true, exec: false, network: 'none' },

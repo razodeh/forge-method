@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-end-reason-'));
@@ -36,7 +36,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 describe('FakeSessionScript.endReason === "error", fresh session', () => {
   it('ends with the scripted errorInfo when one is given', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'fail', {
       text: ['partial progress'],
       endReason: 'error',
@@ -64,7 +64,7 @@ describe('FakeSessionScript.endReason === "error", fresh session', () => {
   });
 
   it('ends with a reasonable default error when endReason is "error" but no errorInfo is given', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'fail-default', { endReason: 'error' });
     const cwd = await createScratchDir();
     const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'fail-default' }));
@@ -77,7 +77,7 @@ describe('FakeSessionScript.endReason === "error", fresh session', () => {
 
 describe('FakeSessionScript.endReason === "error", resumed session', () => {
   it("a resumed session's matched script can also end with a scripted error", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'continue-and-fail', {
@@ -112,7 +112,7 @@ describe('FakeSessionScript.endReason === "error", resumed session', () => {
   });
 
   it('a resumed session also uses a reasonable default error when endReason is "error" but no errorInfo is given', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'continue-and-fail-default', { endReason: 'error' });

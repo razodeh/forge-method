@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AdapterEvent } from '@forge/adapter-kit/types';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-abort-'));
@@ -57,7 +57,7 @@ async function drainAbortingAfter(
 
 describe('abortSignal checked at every phase boundary, not just inside multi-item loops', () => {
   it('an abort issued after the first text turn stops the remaining text turns from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'go', { text: ['one', 'two'] });
     const cwd = await createScratchDir();
     const controller = new AbortController();
@@ -80,7 +80,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after text ends stops the thinking phase from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'go', { text: ['one'], thinking: ['should not run'] });
     const cwd = await createScratchDir();
     const controller = new AbortController();
@@ -101,7 +101,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('the thinking phase runs normally, with no abort, and emits a thinking event per entry', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'go', { thinking: ['pondering'] });
     const cwd = await createScratchDir();
 
@@ -115,7 +115,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the first thinking entry stops the remaining thinking entries from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'go', { thinking: ['first thought', 'second thought'] });
     const cwd = await createScratchDir();
     const controller = new AbortController();
@@ -138,7 +138,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after thinking ends stops the untrustedContent phase from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'go', {
       thinking: ['thought'],
       untrustedContent: 'should not appear',
@@ -162,7 +162,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after untrustedContent stops the skillVisibleText phase from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', {
       untrustedContent: 'harmless',
@@ -193,7 +193,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the only (last) scripted write is still detected, not silently completed', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'one-write', {
       writeFiles: [{ relativePath: 'a.txt', content: 'a' }],
     });
@@ -218,7 +218,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the only (last) exec attempt is still detected, not silently completed', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'one-exec', { execAttempts: ['echo hi'] });
     const cwd = await createScratchDir();
     const controller = new AbortController();
@@ -246,7 +246,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the only (last) MCP tool attempt is still detected, not silently completed', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'one-mcp', { mcpToolAttempts: ['tool-a'] });
     const cwd = await createScratchDir();
     const controller = new AbortController();
@@ -269,7 +269,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after skillVisibleText, the last populated phase, is still detected, not silently completed', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { skillVisibleText: 'SKILL TEXT' });
     await adapter.provisionSkills([{ id: 's1', summary: 's', body: 'b', appliesTo: [] }], {
@@ -297,7 +297,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the first exec attempt stops the remaining attempts from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const commands = Array.from({ length: 20 }, (_, index) => `echo ${String(index)}`);
     adapter.script((r) => r.prompt === 'many-execs', { execAttempts: commands });
     const cwd = await createScratchDir();
@@ -326,7 +326,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the first scripted write stops the remaining writes from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'many-writes', {
       writeFiles: [
         { relativePath: 'a.txt', content: 'a' },
@@ -357,7 +357,7 @@ describe('abortSignal checked at every phase boundary, not just inside multi-ite
   });
 
   it('an abort issued right after the first MCP tool attempt stops the remaining attempts from running', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'many-mcp', {
       mcpToolAttempts: ['tool-a', 'tool-b', 'tool-c'],
     });

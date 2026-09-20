@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-resume-'));
@@ -41,7 +41,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 describe('resumeSession runs the full script phase set, not just text', () => {
   it("a resumed session's matched script can write files, into the original session's own remembered cwd", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'continue-with-write', {
@@ -64,7 +64,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it('a resumed session honours an already-aborted abortSignal', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: [] });
     adapter.script((r) => r.prompt === 'continue', { text: ['should not run'] });
@@ -91,7 +91,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it('a resumed session honours limits.maxTurns', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: [] });
     adapter.script((r) => r.prompt === 'continue', { text: ['one', 'two', 'three'] });
@@ -116,7 +116,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it("a control token in a resumed session's own newly-matched script text is promoted to a real control event", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'ask-again', {
@@ -141,7 +141,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it("a resumed request is matcher-probed with the original session's own remembered cwd, not an empty synthetic default", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'continue' && r.cwd === cwd, {
@@ -162,7 +162,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it('a resumed session whose prompt matches no registered script still completes cleanly, with no phases run', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: [] });
 
@@ -187,7 +187,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it('resuming a sessionId this adapter never started falls back to harmless defaults instead of crashing', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const resumed = await adapter.resumeSession('never-started-session-id', {
       prompt: 'anything',
       limits: {},
@@ -208,7 +208,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
     // root during a review). Cleaned up in `finally` as a safety net regardless of outcome, since this
     // test's whole point is to prove no real file is ever created outside a sandboxed scratch dir.
     const dangerousTarget = path.resolve('should-never-exist.txt');
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'unscoped-write', {
       writeFiles: [{ relativePath: 'should-never-exist.txt', content: 'x' }],
     });
@@ -232,7 +232,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it('a resumed session that completes normally still streams a usage event, like a fresh session does', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: [] });
     adapter.script((r) => r.prompt === 'continue', { text: ['one turn'] });
@@ -253,7 +253,7 @@ describe('resumeSession runs the full script phase set, not just text', () => {
   });
 
   it("a resumed session's matched script can also report structured output", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'start', { text: ['started'] });
     adapter.script((r) => r.prompt === 'continue-structured', { structured: { resumed: true } });

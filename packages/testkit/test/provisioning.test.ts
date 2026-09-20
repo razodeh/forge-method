@@ -15,7 +15,12 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter, withCapabilities } from '../src/fake-adapter.ts';
+import {
+  FAKE_MODEL_ID,
+  FakePlatformAdapter,
+  HAND_BUILT_REQUESTS,
+  withCapabilities,
+} from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-provisioning-'));
@@ -40,7 +45,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 describe('provisionSkills scoping', () => {
   it('a skill provisioned for one run does not leak into a different run that reuses the same stepId', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { skillVisibleText: 'SKILL VISIBLE' });
 
@@ -66,11 +71,11 @@ describe('provisionSkills scoping', () => {
   it("15 §15.6's strategy mapping: 'inline' and 'none' capabilities report 'inline'/'bodies-injected'", async () => {
     const cwd = await createScratchDir();
 
-    const inlineAdapter = withCapabilities({ skills: 'inline' });
+    const inlineAdapter = withCapabilities({ skills: 'inline' }, HAND_BUILT_REQUESTS);
     const inlineResult = await inlineAdapter.provisionSkills([], { runId: 'r', stepId: 's', cwd });
     expect(inlineResult.strategy).toBe('inline');
 
-    const noneAdapter = withCapabilities({ skills: 'none' });
+    const noneAdapter = withCapabilities({ skills: 'none' }, HAND_BUILT_REQUESTS);
     const noneResult = await noneAdapter.provisionSkills([], { runId: 'r', stepId: 's', cwd });
     expect(noneResult.strategy).toBe('bodies-injected');
   });
@@ -78,7 +83,7 @@ describe('provisionSkills scoping', () => {
 
 describe('provisionMcp scoping', () => {
   it('an MCP tool grant for one run does not leak into a different run that reuses the same stepId', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { mcpToolAttempts: ['granted-tool'] });
 
@@ -105,7 +110,7 @@ describe('provisionMcp scoping', () => {
   });
 
   it("grantedTools: '*' grants every tool name, not none", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { mcpToolAttempts: ['any-tool-name-at-all'] });
 
@@ -128,7 +133,7 @@ describe('provisionMcp scoping', () => {
   });
 
   it("a '*' server mixed with an explicit-list server in the same call still grants everything, not just the explicit list", async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     adapter.script((r) => r.prompt === 'go', { mcpToolAttempts: ['listed-tool', 'unlisted-tool'] });
 

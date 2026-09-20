@@ -40,7 +40,7 @@
  * @see SPEC-QUESTIONS.md Q169
  * @see PLAN-M11.md P9
  */
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '@forge/testkit';
+import { FAKE_MODEL_ID, FakePlatformAdapter, strictFixtureSystemPrompt } from '@forge/testkit';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { describe, expect, it } from 'vitest';
 
@@ -59,7 +59,8 @@ function buildRequest(overrides: Partial<SessionRequest> = {}): SessionRequest {
     runId: 'forge-s2-run',
     stepId: `forge-s2-step-${String(requestCounter)}`,
     cwd: '/forge-s2-fake-cwd',
-    systemPrompt: { mode: 'append', text: '' },
+    // Grant enforcement is the subject, not prompt assembly: a fixture prompt keeps strict mode on.
+    systemPrompt: { mode: 'append', text: strictFixtureSystemPrompt() },
     prompt: 'attempt the scripted commands',
     model: FAKE_MODEL_ID,
     tools: { read: true, write: true, exec: ['*'], network: 'none' },

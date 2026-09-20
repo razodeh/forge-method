@@ -38,6 +38,13 @@ import {
 
 afterEach(cleanupAll);
 
+/** `forge debug`'s RCA sessions (`commands/loop/debug.ts`) build their own `SessionRequest` with an empty
+ * system prompt rather than going through the engine's prompt assembly: a disclosed, still-open gap
+ * (`SPEC-QUESTIONS.md` Q203 D4; Q207 records it as the one production session type strict mode flags).
+ * Strict-prompt mode is therefore off for every adapter in this file, on purpose, until `debug.ts` is
+ * moved onto real assembly; the moment it is, delete this constant and the tests below must still pass. */
+const RCA_SESSIONS = { strict: false } as const;
+
 /** `node <path-to-script-file>` tolerates trailing argv the way `node -e` does not (`reporter.test.ts`'s
  * own established technique this session, re-verified directly for this exact use) — irrelevant here,
  * but the same *shim-as-a-real-file* idea is what makes a bare `forge` resolvable on `PATH` at all
@@ -217,7 +224,7 @@ describe('debugSymptom — recorded (real RCA-### artifact, real fix committed t
     const shim = await installForgeShim();
 
     try {
-      const adapter = new FakePlatformAdapter();
+      const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       scriptHappyPath(adapter);
 
       const result = await debugSymptom(
@@ -298,7 +305,7 @@ describe('debugSymptom — needs-more-evidence (REPRODUCE never reproduces)', ()
     const shim = await installForgeShim();
 
     try {
-      const adapter = new FakePlatformAdapter();
+      const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       // Every REPRODUCE attempt proposes a command that always succeeds (exit 0) — never reproduces.
       adapter.script((r) => r.prompt.startsWith('REPRODUCE attempt'), {
         structured: { command: 'true' },
@@ -326,7 +333,7 @@ describe('debugSymptom — escalated (hypotheses never converge)', () => {
     const shim = await installForgeShim();
 
     try {
-      const adapter = new FakePlatformAdapter();
+      const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       adapter.script((r) => r.prompt.startsWith('REPRODUCE attempt'), {
         structured: { command: 'test -f fixed.marker' },
       });
@@ -366,7 +373,7 @@ describe('debugSymptom — escalated (every FIX attempt fails to produce a real,
     const shim = await installForgeShim();
 
     try {
-      const adapter = new FakePlatformAdapter();
+      const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       adapter.script((r) => r.prompt.startsWith('REPRODUCE attempt'), {
         structured: { command: 'test -f fixed.marker' },
       });
@@ -423,7 +430,7 @@ describe('debugSymptom — a hard, thrown INTAKE/HYPOTHESISE/PREVENT refusal (RU
     const shim = await installForgeShim();
 
     try {
-      const adapter = new FakePlatformAdapter();
+      const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       adapter.script((r) => r.prompt.startsWith('REPRODUCE attempt'), {
         structured: { command: 'test -f fixed.marker' },
       });
@@ -462,9 +469,44 @@ describe('debugSymptom — a hard, thrown INTAKE/HYPOTHESISE/PREVENT refusal (RU
   }, 30_000);
 });
 
+describe('forge debug is the one known session type that bypasses prompt assembly (canary)', () => {
+  it('its RCA sessions still send an empty system prompt, which a strict adapter refuses -- delete this test and RCA_SESSIONS when `debug.ts` is moved onto real assembly', async () => {
+    const project = await createTestProject();
+    await withDiagnostician(project);
+    await seedReproducibleProject(project);
+    const shim = await installForgeShim();
+
+    try {
+      const adapter = new FakePlatformAdapter(); // strict, the default
+      scriptHappyPath(adapter);
+
+      // The loop tolerates each refused session (it is an adapter failure to it), so the outcome is not
+      // the assertion here: the recorded refusals are.
+      await debugSymptom(
+        debugDeps(project, adapter),
+        'the marker file is missing after checkout',
+      ).catch(() => undefined);
+
+      const refused = adapter.strictViolations.filter((record) =>
+        record.stepId.startsWith('debug:'),
+      );
+      expect(refused.length).toBeGreaterThan(0);
+      for (const record of refused) {
+        expect(record.violations.join(' ')).toContain('the system prompt is empty');
+      }
+      // Only debug's own sessions: nothing else in this flow may be refused.
+      expect(adapter.strictViolations).toHaveLength(refused.length);
+      adapter.acknowledgeStrictViolations(refused.length);
+    } finally {
+      shim.restorePath();
+    }
+  }, 30_000);
+});
+
 describe('debugFromFailure', () => {
   it('derives observed/affected from a real failed run’s own event log', async () => {
     const project = await createTestProject();
+    // `refactorTarget` is an ordinary engine agent step, not an RCA session: it stays strict.
     const failingAdapter = new FakePlatformAdapter();
     failingAdapter.injectFailure(() => true, 'error');
     const failingDeps = testRunDeps(project, failingAdapter);
@@ -476,7 +518,7 @@ describe('debugFromFailure', () => {
     const shim = await installForgeShim();
 
     try {
-      const debugAdapter = new FakePlatformAdapter();
+      const debugAdapter = new FakePlatformAdapter({}, RCA_SESSIONS);
       // Never reproduces — this test only checks Defect scaffolding, not the full loop.
       debugAdapter.script((r) => r.prompt.startsWith('REPRODUCE attempt'), {
         structured: { command: 'true' },
@@ -502,7 +544,7 @@ describe('debugFromFailure', () => {
     if (cleanRun.kind !== 'run') throw new Error('unreachable');
 
     await withDiagnostician(project);
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, RCA_SESSIONS);
     await expect(
       debugFromFailure(debugDeps(project, adapter), cleanRun.runId),
     ).rejects.toMatchObject({ code: 'RUN-057' });

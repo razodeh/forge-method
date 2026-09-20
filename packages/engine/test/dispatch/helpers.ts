@@ -81,8 +81,8 @@ export function emptyKbAccess(): KbAccess {
 }
 
 /** The engine-test default for `ExecuteStepContext.assembly`: every agent id resolves to a fixture agent
- * (never a legacy pass-through -- the same real compile/record path runs), brief and prompt references
- * resolve to their own text so a test can keep writing inline briefs, and the model tier table maps every
+ * (never a legacy pass-through -- the same real compile/record path runs), a brief reference
+ * resolves to fixture text naming it (any other reference, and inline prose, is returned as is) so a test can keep writing inline briefs, and the model tier table maps every
  * tier to the fake adapter's one model. Tests that assert on assembly itself build their own with real
  * files (`assembly.test.ts`). */
 export function createFixtureAssembly(
@@ -93,7 +93,16 @@ export function createFixtureAssembly(
   return {
     paths: new ProjectPaths(projectRoot),
     loadAgent: (agentId) => Promise.resolve(fixtureAgent(agentId)),
-    loadContent: (reference) => Promise.resolve(reference),
+    // A `briefs/` reference (block [4]) resolves to sentence-shaped text that still names the reference,
+    // never to the bare path: handing the path back as its own "content" would let a regression that
+    // skips real brief resolution pass the strict adapter's block [4] check. Inline prose (most tests pass
+    // their brief as text) and every other reference (role prompts) are returned unchanged.
+    loadContent: (reference) =>
+      Promise.resolve(
+        /^briefs\/[^\s/\\]+\.md$/.test(reference)
+          ? `Fixture content resolved from ${reference}.`
+          : reference,
+      ),
     openKb: () => Promise.resolve(emptyKbAccess()),
     models: { tiers: { frugal: tier, balanced: tier, max: tier }, overrides: {} },
     escalations: [],

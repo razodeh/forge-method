@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { FAKE_MODEL_ID, FakePlatformAdapter } from '../src/fake-adapter.ts';
+import { FAKE_MODEL_ID, FakePlatformAdapter, HAND_BUILT_REQUESTS } from '../src/fake-adapter.ts';
 
 async function createScratchDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'forge-testkit-scripting-'));
@@ -36,7 +36,7 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 describe('FakeSessionScript.writeFiles', () => {
   it('writes claimed files into the real, given cwd', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'write', {
       writeFiles: [
         { relativePath: 'a.txt', content: 'hello a' },
@@ -54,7 +54,7 @@ describe('FakeSessionScript.writeFiles', () => {
   });
 
   it('refuses a scripted write whose relativePath traverses outside the given cwd', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const parentDir = await createScratchDir();
     const cwd = path.join(parentDir, 'nested', 'cwd');
     await mkdir(cwd, { recursive: true });
@@ -74,7 +74,7 @@ describe('FakeSessionScript.writeFiles', () => {
   });
 
   it('refuses a scripted write whose relativePath is an absolute path', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     const outsideDir = await createScratchDir();
     const absoluteTarget = path.join(outsideDir, 'absolute-marker.txt');
@@ -89,7 +89,7 @@ describe('FakeSessionScript.writeFiles', () => {
   });
 
   it('refuses an absolute relativePath even when it would resolve inside cwd — relativePath must genuinely be relative', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();
     const absoluteButInsideCwd = path.join(cwd, 'inside.txt');
     adapter.script((r) => r.prompt === 'absolute-but-inside', {
@@ -103,7 +103,7 @@ describe('FakeSessionScript.writeFiles', () => {
   });
 
   it('does not write, and reports a refusal, when tools.write is not granted', async () => {
-    const adapter = new FakePlatformAdapter();
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     adapter.script((r) => r.prompt === 'write', {
       writeFiles: [{ relativePath: 'a.txt', content: 'x' }],
     });

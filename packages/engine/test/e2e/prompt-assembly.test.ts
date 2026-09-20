@@ -1185,7 +1185,10 @@ describe('M13 P5 -- review round 2: error classes, persistence, block [6] and di
       id: 'wf:panel',
       kind: 'agent',
       agent: toAgentId('a'),
-      brief: 'prompts/x.md',
+      // A question that *names* a prompt path in prose. (It used to be the bare path, which the strict fake
+      // adapter now refuses as a brief that is only a path, `PLAN-M13.md` P6; what the test proves -- a
+      // `prompts/` path is never loaded as a brief file -- holds for the sentence just as well.)
+      brief: 'Does prompts/x.md still describe how we review?',
     });
     await dispatchAgentStep(step, fixtureAgent('a'), ctx, 'panel', { perspectives: ['cost'] });
     const record = JSON.parse(

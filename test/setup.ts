@@ -16,6 +16,9 @@ import { pathToFileURL } from 'node:url';
 // the entry-point rail and the injection check cannot drift apart.
 import { hasGuardImport } from './network-guard.mjs';
 
+import { takeUnacknowledgedStrictViolations } from '@forge/testkit';
+import { afterEach } from 'vitest';
+
 /**
  * A fixed instant used for git author and committer dates. Chosen to match the spec pack's own
  * example dates so fixtures and documentation agree; any fixed value would do, a moving one would
@@ -71,3 +74,22 @@ if (!hasGuardImport(process.env['NODE_OPTIONS'], guardUrl)) {
       'scripts/run-tests.mjs, and cannot be installed from a setup file.',
   );
 }
+
+// `PLAN-M13.md` P6: a strict `FakePlatformAdapter` (the default) refuses a session whose prompt is empty, a
+// bare path, or not the nine compiled blocks. The refusal rejects `startSession`, but the code under test
+// may swallow that (a step recorded as failed, a retry, a `catch`), leaving a test that asserts something
+// else green: the exact way an empty prompt went unnoticed for twelve milestones. So any refusal the test
+// did not itself acknowledge (`adapter.acknowledgeStrictViolations()`) fails the test that caused it.
+afterEach(() => {
+  const refusals = takeUnacknowledgedStrictViolations();
+  if (refusals.length === 0) return;
+  throw new Error(
+    `A strict FakePlatformAdapter refused ${String(refusals.length)} session(s) during this test, and the ` +
+      `test did not acknowledge them: ${refusals
+        .map((r) => `${r.kind} ${r.stepId}: ${r.violations.join('; ')}`)
+        .join(
+          ' | ',
+        )}. Fix the request the code under test builds; if the test deliberately drives the ` +
+      'adapter with a bad request, call adapter.acknowledgeStrictViolations() after asserting the refusal.',
+  );
+});

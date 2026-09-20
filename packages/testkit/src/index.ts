@@ -9,9 +9,24 @@
 export {
   FAKE_MODEL_ID,
   FakePlatformAdapter,
+  HAND_BUILT_REQUESTS,
+  takeUnacknowledgedStrictViolations,
   withCapabilities,
+  type FakeAdapterOptions,
   type FakeFailureKind,
+  type StrictViolationRecord,
 } from './fake-adapter.ts';
+export {
+  checkSessionRequestPrompt,
+  checkUserPrompt,
+  DEFAULT_OPERATING_CONTRACT_MARKER,
+  isPathShaped,
+  OPERATING_CONTRACT_POINT_COUNT,
+  STRICT_BLOCK_NAMES,
+  StrictPromptViolationError,
+  strictFixtureSystemPrompt,
+  type StrictPromptOptions,
+} from './strict.ts';
 export type { SessionRequestMatcher } from './matcher.ts';
 export { replayFromNdjson } from './ndjson.ts';
 export type { FakeSessionScript, FakeSessionScriptErrorInfo, ScriptedFileWrite } from './script.ts';
