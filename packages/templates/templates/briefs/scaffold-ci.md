@@ -28,6 +28,14 @@ outside this step's file claim, so request a change to the claim instead of writ
   target is defined yet, do not invent one: leave that stage as a documented, disabled job, record
   why in a short `ci/README.md`, and raise it with the platform role. Publishing to a registry and
   deploying to staging or production belong to the delivery phase.
+- A record of that deployment, for the gate's `skeleton:deployed` check
+  (`forge doctor --rule skeleton-deployed`): after the smoke request, the deploy job writes
+  `docs/forge/reports/deployments/<ENV-id>.json` (the `ENV-###` of the development `Environment`
+  entry) as JSON with `v: 1`, `environment`, `outcome` (`succeeded` only when the deploy and the
+  smoke request both passed), `sha` (the deployed commit), `deployed_at`, and `health` (`url` on the
+  environment's host, `status`, `checked_at`). Say in `ci/README.md` how that file reaches the
+  repository. Until a real deployment has produced it the check fails, and the honest way through is
+  a recorded Waiver, never a hand-written record.
 - Machine-readable output from every stage, so gates can read the verdict instead of re-running
   everything. Test results go to `docs/forge/reports/test-results.json`, the file FORGE's own test
   reporter writes, so do not invent another format at that path; write lint and coverage results

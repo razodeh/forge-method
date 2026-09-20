@@ -112,7 +112,19 @@ const sharedMutablePathSchema = z
 // not its machine source of truth — the same "structured config for machines, KB for rationale" split
 // every other machine-consumed value in this codebase already follows (gates, workflows, frameworks).
 // See `SPEC-QUESTIONS.md`.
-const TEST_LAYERS = ['unit', 'integration', 'contract', 'e2e', 'nfr', 'lint', 'typecheck'] as const;
+// `smoke` is not one of F-TEST-1's five pyramid layers: it is the small suite `G-Deliver` runs against the deployed
+// target (`14` §14.9: "smoke and e2e green in the target environment"). It gets its own key rather than borrowing
+// `e2e`, whose command runs the whole capability suite in the preview environment (`PLAN-M13.md` P25, Q219).
+const TEST_LAYERS = [
+  'unit',
+  'integration',
+  'contract',
+  'e2e',
+  'nfr',
+  'smoke',
+  'lint',
+  'typecheck',
+] as const;
 const testCommandsSchema = z.record(z.enum(TEST_LAYERS), z.string().min(1));
 
 const executionSchema = z

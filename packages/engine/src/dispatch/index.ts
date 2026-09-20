@@ -62,7 +62,7 @@ export {
   type OutputCheckInput,
   type StepClaim,
 } from './outputs.ts';
-export { runShellCommand, type ShellCommandResult } from './shell.ts';
+export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {
   DocRoots,

@@ -28,10 +28,11 @@ not add for that reason. Every KB document below is a KB entry in its section, e
   yet still has its command; it runs zero tests and says so. Tests run in randomized order where the
   framework supports it. Record all these commands in the KB entry `delivery/build.md`; every gate
   uses them. FORGE's own test runner reads its layer commands from `execution.testCommands` in
-  `.forge/config.yaml` (layers unit, integration, contract, e2e, nfr, lint, typecheck), which you
-  may not edit: end your closing message with that exact map and request the change. Each mapped
-  command must be a single test-runner invocation (chained shell commands are refused), and a layer
-  with no command is reported as unable to verify.
+  `.forge/config.yaml` (layers unit, integration, contract, e2e, nfr, smoke, lint, typecheck;
+  `smoke` is the small suite `G-Deliver` runs against a deployed environment, so map it only when
+  one exists), which you may not edit: end your closing message with that exact map and request the
+  change. Each mapped command must be a single test-runner invocation (chained shell commands are
+  refused), and a layer with no command is reported as unable to verify.
 - Reproducibility: the toolchain version pinned (`.nvmrc`, `.tool-versions` or the ecosystem's
   equivalent), the dependency lockfile committed, and installation from the lockfile alone.
 - The directory layout, chosen with the directory-layout method (feature or domain first by default

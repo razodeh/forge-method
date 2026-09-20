@@ -26,6 +26,7 @@ import type { ProjectLevel } from '@forge/methods/level';
 import { SYSTEM_CLOCK } from '@forge/core';
 import { errorMessage } from '@forge/vcs';
 
+import { writeKbSyncRecord } from './kb-sync-record.ts';
 import { listSpecArtifacts, summarize, type KbEntrySummary } from './shared.ts';
 
 export interface KbCommandContext {
@@ -39,7 +40,7 @@ export interface KbCommandContext {
   readonly now?: Date;
 }
 
-async function loadLintSpecArtifacts(ctx: KbCommandContext): Promise<LintKbSpecArtifacts> {
+export async function loadLintSpecArtifacts(ctx: KbCommandContext): Promise<LintKbSpecArtifacts> {
   const docs = await listSpecArtifacts(ctx.paths, ctx.specsRoot);
   const capabilities: Capability[] = [];
   const epics: Epic[] = [];
@@ -126,6 +127,8 @@ export async function kbSync(ctx: KbCommandContext): Promise<{ readonly entryCou
   } finally {
     backend.close();
   }
+  // The record `kb lint --rule kb-synced` compares against: taken after the index is written, from the same files.
+  await writeKbSyncRecord(ctx.paths, ctx.kbRoot);
   return { entryCount: tree.entries.length };
 }
 

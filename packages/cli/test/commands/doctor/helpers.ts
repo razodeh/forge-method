@@ -63,3 +63,29 @@ export async function createTestProject(): Promise<TestProject> {
 
   return { dir, paths: new ProjectPaths(dir), config };
 }
+
+/** Writes `files` (relative path -> text) into `dir`, then stages and commits everything, so a gate rule that reads
+ * the committed project (what a clean clone would contain) sees them. */
+export async function writeAndCommit(
+  dir: string,
+  files: Readonly<Record<string, string>>,
+  message = 'fixture',
+): Promise<void> {
+  for (const [relative, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, relative)), { recursive: true });
+    await writeFile(path.join(dir, relative), text);
+  }
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '--allow-empty', '-m', message], { cwd: dir });
+}
+
+/** Writes `files` without staging or committing them: present in the working tree, absent from a clean clone. */
+export async function writeUncommitted(
+  dir: string,
+  files: Readonly<Record<string, string>>,
+): Promise<void> {
+  for (const [relative, text] of Object.entries(files)) {
+    await mkdir(path.dirname(path.join(dir, relative)), { recursive: true });
+    await writeFile(path.join(dir, relative), text);
+  }
+}

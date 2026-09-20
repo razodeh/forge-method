@@ -50,36 +50,62 @@ async function walkTextFiles(paths: ProjectPaths, root: string): Promise<readonl
   return files;
 }
 
-/** Every real `${secret:NAME}` reference found across `.forge/**`/`docs/forge/**`'s own real text
- * content, cross-checked only for whether a same-named environment variable *exists* — `03` §3.7's
- * own explicit "existence verified without printing values" contract, so `env`'s own real values
- * never appear anywhere in a returned `DoctorCheck`, only the secret *names* that are missing. */
-export async function checkSecretReferences(
+export interface SecretReferenceScan {
+  /** Names referenced at least once, sorted. */
+  readonly resolved: readonly string[];
+  /** Names referenced with no matching environment variable (or, with `requireValue`, an empty one), sorted. */
+  readonly unresolved: readonly string[];
+  /** How many references (with repeats) were found, resolved or not. */
+  readonly referenceCount: number;
+}
+
+/** Every real `${secret:NAME}` reference across `.forge/**`/`docs/forge/**`'s text content, cross-checked only for
+ * whether a same-named environment variable *exists* — `03` §3.7's own explicit "existence verified without
+ * printing values" contract, so `env`'s values never appear in a result, only secret *names*.
+ *
+ * `requireValue` (the `secrets-resolved` gate rule, `PLAN-M13.md` P25): a variable that is set to an empty or
+ * whitespace-only string does not resolve a secret, so it counts as unresolved. The `forge doctor` warning keeps
+ * the looser existence test it always had. */
+export async function scanSecretReferences(
   paths: ProjectPaths,
   env: Readonly<Record<string, string>>,
-): Promise<DoctorCheck> {
+  requireValue = false,
+): Promise<SecretReferenceScan> {
   const files = (await Promise.all(SCAN_ROOTS.map((root) => walkTextFiles(paths, root)))).flat();
 
   const unresolved = new Set<string>();
-  const resolvedCount = { value: 0 };
+  const resolved = new Set<string>();
+  let referenceCount = 0;
   for (const file of files) {
     const text = await readTextFile(paths.resolveWithin(file));
     for (const match of text.matchAll(SECRET_REFERENCE_SEARCH_PATTERN)) {
       const name = match[1];
       if (name === undefined) continue;
-      if (Object.hasOwn(env, name)) resolvedCount.value += 1;
+      referenceCount += 1;
+      const value = Object.hasOwn(env, name) ? env[name] : undefined;
+      const present = value !== undefined && (!requireValue || value.trim() !== '');
+      if (present) resolved.add(name);
       else unresolved.add(name);
     }
   }
+  const sorted = (names: ReadonlySet<string>): readonly string[] =>
+    [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return { resolved: sorted(resolved), unresolved: sorted(unresolved), referenceCount };
+}
 
-  const ok = unresolved.size === 0;
+export async function checkSecretReferences(
+  paths: ProjectPaths,
+  env: Readonly<Record<string, string>>,
+): Promise<DoctorCheck> {
+  const scan = await scanSecretReferences(paths, env);
+  const ok = scan.unresolved.length === 0;
   return check(
     'secret-references',
     ok,
     'warning',
     ok
-      ? `${String(resolvedCount.value)} real \${secret:...} reference(s), all resolvable.`
-      : `${String(unresolved.size)} unresolved \${secret:...} reference(s): ${[...unresolved].join(', ')}.`,
+      ? `${String(scan.referenceCount)} real \${secret:...} reference(s), all resolvable.`
+      : `${String(scan.unresolved.length)} unresolved \${secret:...} reference(s): ${scan.unresolved.join(', ')}.`,
     ok ? undefined : 'Set each named environment variable, then retry.',
   );
 }

@@ -9,5 +9,6 @@ export { JsonBackend } from './json-backend.ts';
 export { NodeSqliteBackend } from './node-sqlite-backend.ts';
 export { openKbIndex } from './open.ts';
 export { rebuildIndex } from './rebuild.ts';
+export { readKbIndexEntries, type KbIndexReadResult, type KbIndexedEntry } from './read.ts';
 export { scoreByTermOverlap, type SearchableDocument } from './term-score.ts';
 export type { EntryRow, KbIndexBackend, LinkKind, LinkRow, SearchHit } from './types.ts';

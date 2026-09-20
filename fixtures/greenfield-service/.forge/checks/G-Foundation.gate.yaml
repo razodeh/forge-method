@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=e9b8be3c12e32c5c401cf48328e0119a0f2f3728e604a46a0313cbf50419b248 — edits will be overwritten; use overrides/
+# forge:generated v=1 hash=b70b0fdf7be682988450ce1d3bc0552210f6e592015ae259d614cda659837932 — edits will be overwritten; use overrides/
 id: G-Foundation
 name: Foundation gate
 phase: P4
@@ -17,6 +17,12 @@ checks:
       failOn: 'errors > 0'
     - id: test:command
       run: 'forge doctor --rule test-command --json'
+      failOn: 'errors > 0'
+    # 11 F-INIT-7 / 14 §14.9: G-Foundation verifies a DEPLOYED walking skeleton (a development environment
+    # recorded with a deployment record). Like any failing deterministic check it can be covered by a
+    # recorded Waiver on a project with no environment yet (10 §10.3 rule 1).
+    - id: skeleton:deployed
+      run: 'forge doctor --rule skeleton-deployed --json'
       failOn: 'errors > 0'
   advisory:
     - id: foundation-review

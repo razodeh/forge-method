@@ -17,6 +17,12 @@ checks:
     - id: test:command
       run: 'forge doctor --rule test-command --json'
       failOn: 'errors > 0'
+    # 11 F-INIT-7 / 14 §14.9: G-Foundation verifies a DEPLOYED walking skeleton (a development environment
+    # recorded with a deployment record). Like any failing deterministic check it can be covered by a
+    # recorded Waiver on a project with no environment yet (10 §10.3 rule 1).
+    - id: skeleton:deployed
+      run: 'forge doctor --rule skeleton-deployed --json'
+      failOn: 'errors > 0'
   advisory:
     - id: foundation-review
       agent: critic

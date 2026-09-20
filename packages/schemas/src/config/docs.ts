@@ -139,7 +139,7 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'execution.sharedMutablePaths':
     'Paths multiple lanes may touch, and how conflicts on them resolve.',
   'execution.testCommands':
-    'The real shell command for each test layer (unit/integration/contract/e2e/nfr/lint/typecheck) — a layer with no command reports as unable to verify, never as passing.',
+    'The real shell command for each test layer (unit/integration/contract/e2e/nfr/smoke/lint/typecheck) — a layer with no command reports as unable to verify, never as passing.',
   'budget.perRunUsd': 'Maximum spend, in USD, for one run.',
   'budget.perStepUsdDefault': 'Default maximum spend, in USD, for one step.',
   'budget.dailyUsd': 'Maximum spend, in USD, per day across all runs.',

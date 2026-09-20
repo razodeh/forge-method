@@ -216,6 +216,7 @@
               "contract",
               "e2e",
               "nfr",
+              "smoke",
               "lint",
               "typecheck"
             ]

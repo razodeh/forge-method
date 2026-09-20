@@ -78,8 +78,6 @@ const KNOWN_UNACCEPTED: Readonly<Record<string, string>> = {
     'Q213: the shipped G-Deliver gate (`deploy:dry-run`) names this env-less form and `forge deploy` still needs an `<env>`. Wired by P26.',
   'forge deploy --rollback-check --json':
     'Q213: the shipped G-Deliver gate (`deploy:rollback-rehearsed`) names `--rollback-check`, which `forge deploy` does not have. Wired by P26.',
-  'forge test run --rule smoke --json':
-    'Q213: the shipped G-Deliver gate (`test:smoke`) names `--rule smoke`; `test run --rule` accepts lint, typecheck and oracle-lint. Wired by P25.',
 };
 
 interface CommandStep {

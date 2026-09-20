@@ -133,6 +133,16 @@ export const ERROR_CODES = {
       `FORGE requires Node.js ${show(d.required)} or newer; found ${show(d.actual)}.`,
     remedy: 'Install a supported Node.js version (nvm install --lts, or nvm use 20) and retry.',
   },
+  'ENV-006': {
+    // `forge test run --rule smoke|contract` (`PLAN-M13.md` P25): a deterministic gate check with no command to run
+    // must fail, not pass, and must say which key is missing. The gate reads the JSON envelope; this is its reason.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { field: string; reason: string }) =>
+      `No usable test command at ${show(d.field)}: ${show(d.reason)}.`,
+    remedy:
+      'Set the command in `.forge/config.yaml` (or with `forge config set <key> "<command>"`) to the single shell command that runs that layer and exits non-zero on failure, then run the check again. A gate check with no command to run fails, or takes a recorded Waiver.',
+  },
   'ADP-012': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,

@@ -12,10 +12,12 @@ strategy, build and VCS ADRs and `engineering/standards.md`. Request anything mi
 
 ### Already checked mechanically, so do not redo it
 
-The engine runs `repo:clean-build`, `repo:reproducible-install`, `ci:skeleton` and `test:command`.
-They prove a clean checkout builds and installs, a CI skeleton exists and a test command exists.
-They cannot tell whether the skeleton exercises anything, whether the layout is enforced, or whether
-CI runs what developers run. That is your job.
+The engine runs `repo:clean-build`, `repo:reproducible-install`, `ci:skeleton`, `test:command` and
+`skeleton:deployed`. They prove the committed project declares a build command, has a committed
+lockfile and a declared toolchain version, has a valid pipeline definition and a test command, and
+records a healthy deployment of the skeleton to a development environment. They do not run the build
+or the install, and they cannot tell whether the skeleton exercises anything, whether the layout is
+enforced, or whether CI runs what developers run. That is your job.
 
 ### Criteria
 

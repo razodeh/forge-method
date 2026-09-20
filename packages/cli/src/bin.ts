@@ -119,6 +119,9 @@ import {
   type DiagramCommandContext,
 } from './commands/diagram.ts';
 import { runDoctor } from './commands/doctor/index.ts';
+import { runDoctorRuleCommand } from './commands/doctor/rule-command.ts';
+import { runKbLintRuleCommand } from './commands/kb-rule-command.ts';
+import { describeRefusal } from './commands/output-port.ts';
 import {
   exportHtml,
   exportMarkdownBundle,
@@ -199,6 +202,11 @@ import { testCoverage } from './commands/loop/test/coverage.ts';
 import { testFlaky } from './commands/loop/test/flaky.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
 import { testRun } from './commands/loop/test/run.ts';
+import {
+  TEST_LAYER_RULES,
+  isTestLayerRule,
+  runTestLayerCommand,
+} from './commands/loop/test/layer-command.ts';
 import {
   abortRun,
   assertStopped,
@@ -1623,7 +1631,7 @@ async function runExportCommand(
   return exportThirdParty(target);
 }
 
-const DOCTOR_FLAGS = { '--fix': false, '--rebuild-index': false } as const;
+const DOCTOR_FLAGS = { '--fix': false, '--rebuild-index': false, '--rule': true } as const;
 
 /** `forge doctor [--fix] [--rebuild-index] [--json]` (`03` §3.7) — the first real CLI wiring this
  * command has ever had (confirmed by `SPEC-QUESTIONS.md` Q179/Q181, per `PLAN-M12.md`'s own finding).
@@ -1636,7 +1644,7 @@ async function runDoctorCommand(
   args: readonly string[],
   json: boolean,
 ): Promise<number> {
-  const { flags, positionals } = parseCommandFlags(args, DOCTOR_FLAGS);
+  const { flags, values, positionals } = parseCommandFlags(args, DOCTOR_FLAGS);
   if (positionals.length > 0) {
     throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
   }
@@ -1644,6 +1652,35 @@ async function runDoctorCommand(
   const env = realEnvSnapshot();
   const adapter = await buildAdapterForDiagnostics(config, env);
   const report = await runDoctor({
+  const doctorRule = values.get('--rule');
+  if (doctorRule !== undefined) {
+    if (
+      flags.has('--fix') ||
+      flags.has('--rebuild-index') ||
+      args.filter((a) => a === '--rule').length > 1
+    ) {
+      throw new ForgeError('USR-002', {
+        flag: '--rule',
+        value: `${doctorRule} (cannot be repeated, or combined with --fix or --rebuild-index)`,
+      });
+    }
+    // Read inside the rule command, so an unreadable config is a failing verdict and not an escaping refusal.
+    return runDoctorRuleCommand(
+      async () => {
+        const config = await readConfig(paths);
+        return {
+          paths,
+          projectRoot,
+          kbRoot: config.paths.kb,
+          reportsRoot: config.paths.reports,
+          env: realEnvSnapshot(),
+        };
+      },
+      doctorRule,
+      json,
+      console,
+    );
+  }
     paths,
     projectRoot,
     config,
@@ -1870,6 +1907,7 @@ const KB_GRAPH_FLAGS = { '--hops': true } as const;
 async function runKbCommand(
   paths: ProjectPaths,
   sub: string | undefined,
+const KB_LINT_FLAGS = { '--rule': true } as const;
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
@@ -1877,6 +1915,60 @@ async function runKbCommand(
 
   if (sub === 'list') {
     assertNoArgs(rest);
+  if (sub === 'lint') {
+    const { values: lintValues, positionals: lintPositionals } = parseCommandFlags(
+      rest,
+      KB_LINT_FLAGS,
+    );
+    assertNoArgs(lintPositionals);
+    if (rest.filter((token) => token === '--rule').length > 1) {
+      throw new ForgeError('USR-002', { flag: '--rule', value: 'given more than once' });
+    }
+    const lintRule = lintValues.get('--rule');
+    // Context is built inside the rule command: a project whose config cannot be read is a failing verdict there,
+    // not a refusal that escapes with no `errors` field for the gate to read (`PLAN-M13.md` P25).
+    if (lintRule !== undefined) {
+      return runKbLintRuleCommand(() => buildKbContext(paths), lintRule, json, console);
+    }
+    let findings: Awaited<ReturnType<typeof kbLint>>;
+    try {
+      findings = sanitizeDeep(await kbLint(await buildKbContext(paths)));
+    } catch (error) {
+      // `G-Design`'s `kb:lint` reads `errors`; a refusal printed by the top-level handler has none, which the gate
+      // reads as "not failing". Under `--json` an unreadable project is one failing finding instead.
+      if (!json) throw error;
+      const refusal = describeRefusal(error);
+      console.log(
+        JSON.stringify({
+          v: 1,
+          errors: 1,
+          findings: [
+            {
+              ruleId: 'kb:refused',
+              severity: 'error',
+              message: `The check could not run: ${refusal.message}`,
+              remedy: refusal.remedy,
+            },
+          ],
+        }),
+      );
+      return EXIT_CODES.failure;
+    }
+    // `errors` is what `G-Design`'s `kb:lint` gate check (`failOn: 'errors > 0'`) reads: without it the check
+    // evaluated an absent field and could never fail (`PLAN-M13.md` P25).
+    const errors = findings.filter((f) => f.severity === 'error').length;
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, errors, findings })
+        : findings
+            .map(
+              (f) =>
+                `${f.severity} ${f.ruleId}${f.entryId === undefined ? '' : ` ${f.entryId}`}: ${f.message}`,
+            )
+            .join('\n') || 'forge kb lint: no real findings.',
+    );
+    return errors > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
     // Every field printed below (`title` especially) is real, project-authored KB free text a
     // hostile or careless committer fully controls — sanitized once, here, before either renderer
     // sees it (`sanitizeDeep`'s own doc comment has the fuller reasoning, a fresh critic-round finding).
@@ -1918,21 +2010,6 @@ async function runKbCommand(
             'forge kb search: no real hits.',
     );
     return EXIT_CODES.success;
-  }
-  if (sub === 'lint') {
-    assertNoArgs(rest);
-    const findings = sanitizeDeep(await kbLint(ctx));
-    console.log(
-      json
-        ? JSON.stringify({ v: 1, findings })
-        : findings
-            .map(
-              (f) =>
-                `${f.severity} ${f.ruleId}${f.entryId === undefined ? '' : ` ${f.entryId}`}: ${f.message}`,
-            )
-            .join('\n') || 'forge kb lint: no real findings.',
-    );
-    return findings.some((f) => f.severity === 'error') ? EXIT_CODES.failure : EXIT_CODES.success;
   }
   if (sub === 'diff') {
     assertNoArgs(rest);
@@ -3208,8 +3285,28 @@ async function main(): Promise<number> {
     const rawRule = findRawTestRuleFlag(rest);
     if (rawRule !== undefined && !isTestRuleId(rawRule)) {
       console.error(
-        `forge: "test run --rule" needs a real rule (one of: ${TEST_RULE_IDS.join(', ')}); ` +
+        `forge: "test run --rule" needs a real rule (one of: ${[...TEST_RULE_IDS, ...TEST_LAYER_RULES].join(', ')}); ` +
           `got ${JSON.stringify(rawRule)}.`,
+    // `--rule=smoke` matches no `--rule` token, so it would silently run the whole default test suite instead.
+    if (rest.some((token) => token.startsWith('--rule='))) {
+      console.error('forge: "test run" takes `--rule <name>` (a space, not `=`).');
+      return 2;
+    }
+    if (isTestLayerRule(rawRule)) {
+      // The layer checks take exactly `--rule <name>`: an unknown flag is refused here like everywhere else.
+      const { positionals: layerPositionals } = parseCommandFlags(rest, { '--rule': true });
+      assertNoArgs(layerPositionals);
+      if (rest.filter((token) => token === '--rule').length > 1) {
+        throw new ForgeError('USR-002', { flag: '--rule', value: 'given more than once' });
+      }
+      return runTestLayerCommand(
+        projectRoot,
+        async () => (await readConfig(paths)).execution.testCommands,
+        rawRule,
+        flags.json,
+        console,
+      );
+    }
       );
       return 2;
     }

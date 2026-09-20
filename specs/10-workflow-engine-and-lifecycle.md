@@ -255,7 +255,7 @@ onReject:
 | `G-Problem` | No measurable success metric; no identified user; scope contradicts constraints |
 | `G-Product` | Capability without acceptance summary; non-numeric NFR; unresolved blocking OQ |
 | `G-Design` | Missing ADR coverage; undefined interface refs; KB contradiction; unmodelled NFR; missing or drifted required diagrams (C4 context/container, ER, sequence per cross-boundary flow) |
-| `G-Foundation` | Clean clone doesn't build; no reproducible install; CI skeleton absent; no test command |
+| `G-Foundation` | Clean clone doesn't build; no reproducible install; CI skeleton absent; no test command; walking skeleton not deployed to a development environment |
 | `G-Ready` | DoR violations; story overlap in file claims; unbound ACs; oversized stories |
 | `G-Verify` | Failing tests; AC coverage < 100% for done stories; coverage below threshold; lint/typecheck |
 | `G-Stable` | Open Sev1/Sev2 defects; flaky tests above threshold; unresolved RCA |
