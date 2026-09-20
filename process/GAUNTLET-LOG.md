@@ -13943,3 +13943,65 @@ dispatch-level cases; removing the RUN-084 short-circuit in `resumeAgentStep` fa
 `packages/cli/test/commands/run` and `loop`, root `fm-*`, `live-smoke`, `agent-prompts-all-workflows`, `output-contract-known-gaps`, core `errors.test.ts`: green.
 `pnpm typecheck` 21/21, `pnpm run boundaries`, `pnpm lint` (only the 4 pre-existing prettier warnings). `outputs.ts` branch coverage 90%. The staged commit was typechecked and its
 tests run in a clean worktree of HEAD plus only this piece's hunks. Full-suite run left to the orchestrator.
+
+
+## M13 P12 — Fix what the first live run found (Q208 findings 1, 2, 3, 5, 6, 7): run failure reasons, per-step cost ceilings, launcher shim, `result.md`, dirty-tree refusal, `init -C`
+
+Six defects reproduced by the P9 live run, each fixed tests-first with a reproduction. Decisions are in `SPEC-QUESTIONS.md` Q210.
+`RunFailed` now always carries a diagnosis (`diagnoseRun`) and a budget refusal emits `BudgetBreached` through the existing machinery
+(`BUD-003`, exit 4; other failures `RUN-085`); the per-step ceiling is step limit, then agent `max_cost_usd`, then
+`budget.perStepUsdDefault`, then the placeholder, resolved once on the node so admission, block [6] and the adapter cap read one number;
+non-model steps reserve 0 and admission counts steps already admitted in the same tick; `command` steps, gate checks and merge checks
+get an injected `commandEnv` whose `PATH` starts with a per-run launcher shim; the session's final text is kept in `result.md`;
+`VCS-DIRTY-TREE` prints as `VCS-010` (exit 5) and any coded non-`ForgeError` prints without a stack; `forge init` honours `-C`.
+
+**Rounds.** Three critic rounds (the first dispatch died to an API spend-limit cutoff and was re-dispatched fresh; every finding below is from a completed round).
+
+**Round 1 (fresh critic, after the re-dispatch): 2 blocking, 12 major, 5 minor.** Real and fixed: (blocking) the launcher shim failed
+silently through a bare `Error` and a swallowing `catch`, now `RUN-086` with a warning; `RUN-085`'s remedy promised that `forge resume`
+retries a failed step, which it does not (`toSchedulerStatus` keeps it failed), now says to start the workflow again. (major) the
+25-entry payload cap could cut off the budget entry that decides `BUD-003`'s exit code (budget entries now lead, `failedSteps` capped
+with `failedTotal`); `BudgetBreached` and the CLI could name different first steps (both now use the diagnosis's); a co-occurring
+step failure was hidden behind `BUD-003` (second line printed); `BudgetBreached.response` claimed a pause that never happens
+(`applied: 'run-stopped'` added, spec gap recorded in Q210); the shim leaked on Ctrl-C and on `SIGTERM` during `forge resume`
+(handlers installed by both, `SIGINT`/`SIGHUP` added, registration moved ahead of the first await); a `TelemetryError` still printed a
+stack (any coded error now prints as a refusal); the `result.md` sanitiser kept PEM key bodies, `sk-ant-`/`sk-`/`github_pat_`/JWT
+tokens, bare `\r`, ST-terminated OSC (and an OSC without terminator deleted the rest of the answer), zero-width/bidi/tag characters and lone
+surrogates (all handled; ZWJ/ZWNJ deliberately kept); an empty follow-up session left the previous attempt's `result.md` standing
+(removed); a `result.md` write failure had no code (now the underlying `ForgeError` code); dirty-file names could carry `\r`/bidi that
+rewrote the message on screen (stripped). A vacuous `init -C <missing dir>` test was strengthened and immediately found a real bug:
+`ProjectPaths` construction threw "Path escapes the project root" for a directory that does not exist yet, so `init -C <new dir>` never
+worked (init is now dispatched first). Disclosed rather than fixed: session-step reservation covers one session; zero ceilings reserve
+$0; **the claude-code adapter never reads `limits.maxCostUsd`**, so only admission control enforces budget; free steps are refused at
+exactly the cap; `--dry-run` shows placeholders; `gate`/`merge` CLI commands lack the overlay; participant sessions keep no `result.md`;
+`pause`/`finish-lanes` still end the run failed.
+
+**Round 2 (fresh): 0 blocking, 4 major, 8 minor.** Real and fixed: the signal handlers were process-global and permanent (now installed for the run and
+removed in `finally`, listener counts tested); ZWJ/ZWNJ/LRM/RLM/CRLF were being stripped from legitimate Persian, emoji and Windows text (kept),
+while U+2060-2064, U+061C, U+180E, the variation-selector supplement were not (stripped, and a `stripped` count added to the reference); an
+adapter crash in a later attempt left the earlier attempt's `result.md` standing; a whitespace-only sanitised answer wrote a blank file; the
+cost-ceiling resolver swallowed every error (now only `RUN-056` falls back); a skipped dependency read as satisfied in the diagnosis; refusal
+text kept newlines (a step id could forge a line); BUD-003's wording contradicted itself at the boundary ("reserves $5.00 but only $5.00 remains",
+now "spent plus reservation would reach the cap"); `launcherScript` leaked a bare `Error`. Not fixed, with reason: the critic asked for
+reservation-0 steps to be admitted at the cap, which an existing M5 P17 test forbids (recorded in Q210); `perStepUsdDefault` is a default, not a cap.
+
+**Round 3 (fresh): 1 blocking, 2 major, 8 minor.** Blocking: the JWT redaction pattern was quadratic on unbounded model output (measured 4.9 s at
+120 KB, and it would have defeated the signal handlers): anchored with a lookbehind, quantifiers bounded, input bounded to 4x the cap before any
+pattern, seven hostile shapes tested. Major: a resolver failure other than `RUN-056` left a registered run with no events (now a recorded
+`RunFailed`, `reason: 'setup'`, with `RunStarted`); `result.md` versus the spec's `result.json` and its mutable, non-attempt-scoped nature (recorded in Q210, not
+changed). Minor and fixed: refusal and result sanitisers disagreed (unified), sub-cent amounts printed $0.00 (four decimals), `init -C base ../x`
+escaped the base (refused). Minor and recorded: a ZWJ-split secret survives redaction; small secret-shape list; `VcsError` codes all exit 1; a budget
+refusal outranks step failures in the exit code; the shim shadows another `forge` first on `PATH`; `SIGQUIT`/uncaught exceptions leak the shim; a truncated file
+exceeds the cap by its marker.
+
+**What the critic caught that I missed:** that `RUN-085`'s remedy was false for its main case (I had written it from the budget case);
+that the payload cap and the exit-code choice interact; that the shim's only cleanup was `SIGTERM` in `run` (resume and Ctrl-C leaked);
+every sanitiser gap above (I had matched the CLI's own terminal sanitiser and stopped there). What my own strengthened test caught that
+no critic round could: the `init -C <new dir>` crash.
+
+**Verification.** Scoped per the owner-approved cost cut (no full unscoped suite): all of `packages/engine/test`, `packages/cli/test/
+commands/run`, `packages/cli/test/commands/loop`, `packages/cli/test/bin.test.ts`, `packages/cli/test/e2e`, `packages/cli/test/
+bin-run-failures.test.ts` (17 real subprocess cases: exit codes, `--json` parity, no stack, no shim left after normal/failed/`SIGTERM`/`SIGINT`/resumed runs, `init -C`),
+`packages/vcs/test`, `packages/core/test/errors.test.ts`, and root `test/{workflows,live-smoke,determinism,gates,workspace-floor}.test.ts`; `pnpm typecheck`, `pnpm run
+boundaries`, eslint and prettier clean on every touched file. Under a combined run of ~2100 tests alongside the other pieces, 62 failures appeared (git branch/worktree collisions and
+timeouts, including the known-flaky `resume.test.ts`); the same sets pass when run in their own groups. Left failing by a concurrent piece: `test/workspace-floor.test.ts` on a stray `artifact-fixtures.ts` in `packages/engine/test/`.

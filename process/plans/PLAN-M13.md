@@ -192,7 +192,7 @@ not on `PATH`; (5) keep the agent session's final text in the run record (or a l
 is never discarded; (6) a dirty-tree refusal is a normal remedy-bearing error, not a stack trace; (7) `forge init`
 honours `-C` or rejects it.
 
-**Depends on:** P9 (done). Finding 4 is P7 plus P11, not this piece.
+**Depends on:** P9 (done). Finding 4 is P7 plus P11, not this piece. **Status:** done (Q210).
 
 ## P13 — The shipped `build-stage` workflow must compile
 

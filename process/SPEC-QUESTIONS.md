@@ -17541,3 +17541,159 @@ coverage 90%.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P7`. Files: `packages/engine/src/dispatch/{outputs,steps,types,facades,index}.ts`,
 `packages/engine/src/{failures/classify,resume/orchestrate}.ts`, `packages/cli/src/commands/run/context.ts`, `packages/core/src/errors/codes.ts`.
+
+## Q210 — M13 P12: fix what the first live run found (Q208 findings 1, 2, 3, 5, 6, 7) — the limit hierarchy, what a non-model step reserves, the launcher shim, `result.md`, and the error codes
+
+**Context.** `PLAN-M13.md` P12. Q208 reproduced six real defects with a real `forge init` project; the run directories of that
+project (`RunPlanned, RunStarted, RunFailed(no payload)` twice; `StepFailed 127 forge: command not found` once) are the
+reproductions, and each fix below has a test written from the spec text that fails against the old behaviour. No live model
+session and no API key were used: every test uses the fake adapter or a unit fixture. Findings 4 and 8 are not this piece (P7,
+P11; 8 is an observation).
+
+**Decisions.**
+
+1. **The per-step cost ceiling (`06` §6.3, §6.9; `05` §5.2; `18` §18.2; `20` §20.8).** A model step's effective ceiling is, in
+   order: the workflow step's own `limits.maxCostUsd`, the agent's `limits.max_cost_usd`, the project's
+   `budget.perStepUsdDefault`, then the compile placeholder (`2.0`). The specs give each level but not their precedence:
+   `06` §6.9 names only "step budget (`limits.max_cost_usd`)"; `05` §5.2 puts `max_cost_usd` on the agent; `10` §10.1's example
+   puts `limits: { maxCostUsd }` on a workflow step ("limits within module ceilings", `10` §10.1 validation, which names *module*
+   ceilings, not agent ones); `18` §18.2 gives `perStepUsdDefault` ("default maximum spend for one step") to nothing else, and
+   nothing read it until now. The order above is the orchestrator's, kept: the most specific author wins, so **a step limit may
+   exceed its agent's**; that is a deliberate workflow-author choice, and the run cap still bounds it. `perStepUsdDefault`
+   reaches the engine through `BudgetConfig.perStepUsdDefault` (optional). Resolved once, in `resolveStepCostCeilings`
+   (`engine/src/run/cost-ceilings.ts`), called by `runEngine` and by `forge resume` before `resumeRun`, so the reservation
+   admission checks, the "Budget" line of block [6] (`assemble.ts` reads `node.limits.max_cost_usd`) and the cap sent to the
+   adapter (`buildSessionRequest`, the resumed-session request, `dispatch-agent-step.ts`, `session.ts`) are **the same number**:
+   every reader of `limits.maxCostUsd` reads it off the resolved node. `StepNode.maxCostSource` (`'step'|'agent'|'config'|
+   'default'`, agent/session steps only) is what lets the resolver replace a compile placeholder without ever overriding a
+   declared limit. An agent that cannot load keeps the placeholder (its own `RUN-056` refusal happens at dispatch, and guessing a
+   ceiling would only hide it behind a budget message). Disclosed: `forge run --dry-run` and `forge plan run-plan` compile
+   without the engine context and still show the placeholder for an agent step.
+2. **What reserves what.** Only steps that start a model session reserve: `agent` and `session`. `command`, `gate`, `merge`,
+   `checkpoint`, `elicit` and `subworkflow` reserve `0` (compile time, `compileLimits`). A `gate`'s advisory critique checks are
+   never dispatched as sessions today (`gates/types.ts`), so a gate needs none; the day they are, the reservation belongs on
+   the session they start, not on the gate. A `session` step (no agent id on the node; its participants each get a session
+   capped at `node.limits.maxCostUsd`) reserves the project default: its total cost can exceed one reservation, as before.
+   Admission still refuses a `0`-reservation step once the cap itself is reached (`checkBudget` treats `spent >= cap` as a
+   breach), so a breach stops everything. A workflow `command` step still rejects a `limits:` key: with reservation `0` there is
+   nothing to lower.
+3. **Admission counts what it has already admitted this tick (`20` §20.8: "a step is not launched unless the remaining budget
+   covers its cap").** `budgetCanAdmit` adds the ceilings of steps admitted earlier in the same `Scheduler.next()` call to the
+   spend it checks the next candidate against; before, two steps that each fitted alone were both admitted against the same
+   snapshot and could put up to twice the remainder in flight. Lowering reservations (finding 2) would have widened that
+   window, so it is closed here. Reset every tick by `refreshBudget`.
+4. **A run that admits nothing goes through the same breach machinery (`06` §6.9, `18` §18.4).** `explainAdmission`
+   (`budget/admit.ts`; `canAdmit` is now `explainAdmission(...).admit`) names the cap that refused. When the last tick admitted
+   nothing, `runEngine` emits `BudgetBreached` with `{trigger:'admission', level, capUsd, spentUsd, reservationUsd, stepId,
+   refusedSteps, response}` where `response` is `onBudgetBreach(level, state).kind` (`pause`/`finish-lanes`/`abort` for the run
+   cap, `refuse-new-run` for the daily cap), then `RunFailed` with a `RunFailureRecord` payload (`run/failure.ts`,
+   `diagnoseRun`): `reason` (`budget | step-failed | no-admissible-step | incomplete`), a one-line `message`, `failedSteps`,
+   and per unfinished step its `cause` (`budget`, `dependency-failed`, `dependency-unfinished`, `concurrency`, `not-admitted`),
+   capped at 25 entries (budget refusals first, so the cap can never cut off the entry that decides the reason) with
+   `unfinishedTotal` keeping the count; `failedSteps` is capped the same way with `failedTotal`. `RunFailed` is **never** bare any more: every failure path in
+   `runEngine` builds a record. `response` is the *configured* response; the payload also says `applied: 'run-stopped'`, because no
+   cooperative pause exists (`driveToCompletion`'s doc comment): every response ends the run `failed`. **Spec gap, recorded, not
+   built:** `06` §6.3 says "enter `waiting-budget`" and `20` §20.8 says breaches "pause and ask"; the recommended answer is
+   `RunPaused` for `pause`/`finish-lanes` and `RunAborted` for `abort`, resumable after a raise, which needs a
+   `waiting-budget` scheduler state and a CLI exit-code decision for a paused run. The remedy today is to raise the budget and `forge
+   resume`, which works (tested: a refused run resumed under a larger budget completes, with one breach on record).
+   `RunState.runFailure` projects the payload (absent for a bare legacy `RunFailed`, and once the run completes).
+5. **CLI output and codes.** `forge run`/`resume`/`plan`/`implement`... (`printWorkflowDispatchResult`, `runResumeCommand`) print
+   the reason on stderr after the status line: **`BUD-003`** (exit 4, `budgetExceeded`, as `BUD-002`) for a budget refusal, naming
+   the step, its reservation, what remains of which cap and what was spent, with the remedy; **`RUN-085`** (exit 1) for every
+   other failed run, carrying the engine's message; its remedy says to start the workflow again with `forge run` because `forge
+   resume` does **not** retry a failed step (`toSchedulerStatus` keeps it failed; the retry loop has no production caller). A budget
+   failure that also had a failed step prints a second line saying raising the budget will not fix that. `--json` still prints exactly one JSON line on stdout (its `runState.
+   runFailure` carries the same reason for a machine reader) and the same stderr text and exit code. A failed run recorded
+   before this change (no payload) keeps the old bare status and exit 1: nothing is invented for it.
+6. **`command` steps find `forge` (`03` §3.2.4).** The engine may not import the CLI and may not read `process.env` (R10), so
+   it gains an injected `ExecuteStepContext.commandEnv` (an env overlay) applied to `command` steps, gate checks
+   (`createGateEvaluator(..., {env})`) and merge pre/post checks (`createMergeQueueFacade(..., undefined, {env})`).
+   The CLI builds it from a **launcher shim** (`commands/run/launcher-shim.ts`): a directory `forge-launcher-<uuid>` under the OS
+   temp directory (`createSystemTempPath`, the R10 seam; never the project or the repo), created non-recursively (an existing
+   path is refused, not adopted) with mode `0700`, holding an executable `forge` that is `#!/bin/sh` + `exec '<node>' '<flags>'
+   '<entry>' "$@"` with every value single-quoted (a path with spaces, quotes or `$` is data), or `forge.cmd` on Windows. Failure to create it throws `RUN-086`, which `createLauncherShimOrWarn` turns into a
+   `forge: warning: ...` line with the remedy (`RunDeps.warn`); the run continues.
+   It replays the running process exactly: `process.execPath`, `process.execArgv` (minus `--inspect*`) and `process.argv[1]`, so
+   it works for `node --experimental-strip-types packages/cli/bin/forge.mjs` (the child's argv[1] is `src/bin.ts`), for a global
+   install (`bin/preflight.cjs`) and for a test run. `PATH` for the commands is `<shim>:<parent PATH>` (spelling `Path` reused on
+   Windows); the parent environment is the CLI's own snapshot (`realEnvSnapshot`), not an ambient read. Created by
+   `runWorkflow`/`resumeWorkflow` after the lock, removed in their `finally`, and synchronously by `handleSigterm` (`forge pause`
+   exits without unwinding); a `SIGKILL` (`forge abort`) leaves one tiny directory in the temp directory. If it cannot be
+   created the run proceeds without it (a `forge` step then fails 127 as before). Not covered: `forge merge`'s own facade and the
+   `forge debug/review/panel/session` loop contexts, which build their own engine contexts and do not run workflow `command`
+   steps.
+7. **`result.md` (`05` §5.3, `18` §18.2/§18.4, `20` §20.5).** `runAgentWork` writes the session's final text to
+   `.forge/state/runs/<runId>/steps/<slugifyStepId(stepKey)>/result.md`, beside `prompt.md`/`context.json`, **before** `SessionEnded`
+   (and so before `StepSucceeded`/`StepFailed`), for a failed session too. Contract: `writeFileAtomic`; control bytes and terminal
+   escapes stripped (the set `sanitizeForTerminal` strips: C0 but `\n`/`\t`, DEL, C1, CSI, OSC); `SECRET_PATTERNS` (the shapes the
+   event log redacts) replaced by `[REDACTED]`; capped at 256 KiB (UTF-8 bytes, cut on a character boundary, then a
+   `[truncated: N bytes omitted ...]` marker); a session with no text writes nothing. `SessionEnded`'s payload gains
+   `result: { path: 'steps/<slug>/result.md' (relative to the run directory), bytes, truncated, redactions }`: never the text.
+   What is available to store is only `SessionResult.finalText`: the adapter result carries no environment, headers or
+   credentials. **Redaction is by shape only** (a secret in another shape, or a known-secret value, is not caught; the event
+   log's redaction has the same limit). A session with no text removes any earlier attempt's `result.md` (nothing points at it).
+   If the write fails the step **fails** (`source: 'telemetry'`, the underlying `ForgeError` code, classified retryable) rather than silently dropping the answer. **Resume:** a resumed adapter session overwrites `result.md`
+   (it is what the latest session produced) and never rewrites `prompt.md` (what the first session received), decided
+   analogously to `Q203` D7 and tested. Not covered: interaction-mode participant sessions (`dispatch-agent-step.ts`) and `forge
+   debug`'s own sessions do not record a result (their text feeds the next turn/phase in memory).
+8. **Dirty tree (`20` §20.2 point 5).** `VcsError` gains an optional `details` and `VCS-DIRTY-TREE` carries `{dirtyFiles}` as data.
+   The CLI's top-level handler maps `VCS-DIRTY-TREE` to the registered **`VCS-010`** (exit 5, "environment/prerequisite missing":
+   the prerequisite is a clean tree; names up to 10 files then "and N more"; file names stripped of terminal escapes), and any
+   other `VcsError`, or any error carrying its own string `code`/`message`/`remedy` (`@forge/telemetry`'s `TelemetryError`: a seq gap
+   in the event log), to its own message and remedy with no stack (exit 1), so every command's raw `VcsError` (`forge resume`,
+   `merge`, `plan`, `implement`...) is a refusal, not a crash. Everything printed is stripped of carriage returns, bidi and zero-width characters as well as
+   terminal escapes (a file named `x
+The tree is clean` could otherwise overwrite the message on screen). A torn `manifest.json`
+   (`JSON.parse` `SyntaxError`) still prints a stack: not addressed. `runWorkflow` still throws the raw `VcsError` (its existing test,
+   `run.test.ts`, asserts `code: 'VCS-DIRTY-TREE'` and is unchanged); the mapping is at the CLI boundary. `--json` parity: stderr and
+   exit code are identical, stdout empty (this dispatcher has no JSON error envelope for any refusal).
+9. **`forge init -C` (`03` §3.2).** The target is `path.resolve(flags.project ?? cwd, [dir])`: `-C <path>` alone initialises
+   `<path>` (created if missing, as `runInit` already does for a positional dir), `-C <base> <dir>` initialises `<base>/<dir>`.
+   `init` is dispatched before `ProjectPaths` is built in `main`: that constructor resolves the root against the real file system and threw
+   "Path escapes the project root" for a `-C` directory that does not exist yet (found by the subprocess test; a real bug, fixed here).
+   `--idea-file` still resolves against the invocation cwd (documented in `run-init.ts`). Search for the same pattern: the only
+   other `process.cwd()` in the dispatcher is `flags.project ?? process.cwd()` in `main`; no other command re-reads cwd. (Other
+   global flags accepted and ignored by individual commands were not audited.)
+
+**New error codes:** `BUD-003`, `VCS-010`, `RUN-085`, `RUN-086` (launcher shim, warning) (`RUN-083`/`RUN-084` are P7's). `packages/core/test/errors.test.ts`'s
+`SAMPLE_DETAILS` gained their detail keys (the test's own instruction), and `VCS-010`'s remedy opens with "Run" to satisfy its
+imperative-verb rule.
+
+**Disclosed / not fixed.** `pause`/`finish-lanes` still end the run `failed` (spec gap above). A session step's reservation covers
+one session, not its several (`DEFAULT_SESSION_BOUNDS.maxCostUsd` 3 is a separate, estimate-based bound). A zero agent or project
+ceiling reserves $0, so any number of such steps are admitted; nothing forbids it. **The claude-code adapter never reads
+`limits.maxCostUsd`** (no `--max-budget-usd`; only `maxTurns`), so the cap "sent to the adapter" is advisory there and only admission
+control enforces budget: that is the real overspend risk and is outside this piece. `--dry-run`/`plan run-plan` show placeholders; `adopt`/`forge debug` build their own nodes. `forge gate
+check|approve|waive` and `forge merge` run gate/merge checks without the overlay. Participant sessions keep no `result.md`. Two
+`BudgetBreached` events can exist (spend breach, then admission refusal). `finding 5`'s
+"check whether `forge logs` or the transcript keeps it": `forge logs` prints events only; nothing else kept the text.
+
+**Late decisions (critic rounds 2 and 3).** (a) A failure resolving the ceilings that is not `RUN-056` (a transient I/O error reading an agent
+file) no longer throws out of `runEngine` with a manifest and no events: the run starts and fails on the record with `reason: 'setup'` (`RUN-085`,
+exit 1) and can be started again; it does mean one unreadable agent file fails the whole run rather than one step. (b) `result.md` is **not** the
+spec's file: `18` §18.2 lists `steps/<stepId>/result.json` (the whole `SessionResult`), which stays unbuilt; `result.md` is the human-readable
+answer alone, as the piece required. It is one mutable file per step (a retry or resume overwrites it, an attempt with no answer removes it, the
+removal's failure is swallowed), so an older `SessionEnded.result` reference can describe bytes that are gone. (c) The sanitiser bounds its input
+to 4x the cap before any pattern runs and anchors the JWT shape with a lookbehind: an unanchored `eyJ` start was quadratic (a 120 KB answer froze the
+engine for 5 s) and is tested on seven hostile shapes; ZWJ/ZWNJ/LRM/RLM/CRLF are kept (a secret split by a ZWJ therefore survives redaction: disclosed).
+The refusal sanitiser now strips the same invisible set (and flattens newlines). (d) `forge init -C <base> <dir>` refuses a relative `<dir>` that climbs out
+of `<base>` (`USR-002`); an absolute `<dir>` is the user naming the target. (e) Amounts under one cent print four decimals. (f) `budget.perStepUsdDefault`
+is a default, not a cap: an agent's own (required) `max_cost_usd` wins, so the knob affects only agents-less steps (sessions) in practice, which the
+`BUD-003` remedy now says. (g) A zero-reservation step is **still refused once spend has reached the cap** because an existing M5 P17 test
+(`admit.test.ts`, "exactly 0 ... still refused once run spend already meets the cap") asserts it and is not mine to change; a run that has spent its whole
+budget therefore cannot run its trailing free steps (a merge, `forge kb sync`); recommended change, needing agreement: admit reservation-0 steps. (h) A
+budget refusal outranks step failures in the exit code (4), with a second line naming the failed steps; `VCS-NOT-A-REPO` and other `VcsError`s exit 1, not 5.
+
+**Test scoping (owner-approved cost cut).** No full unscoped suite. Run: all of `packages/engine/test`, `packages/cli/test/commands/run`,
+`packages/cli/test/commands/loop`, `packages/cli/test/bin.test.ts`, `packages/cli/test/e2e`, `packages/cli/test/bin-run-failures.test.ts`,
+`packages/vcs/test`, `packages/core/test/errors.test.ts`, and root `test/{workflows,live-smoke,fm-*-workflow,determinism,gates,
+workspace-floor}.test.ts`; `pnpm typecheck`, `pnpm run boundaries`, eslint. Two root failures at the time of writing belong to
+concurrent pieces (P7's output-contract check against P6's strict-adapter suite `test/agent-prompts-all-workflows.test.ts`; a
+stray `artifact-fixtures.ts` under `packages/engine/test/`).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P12`.
+
+Files: `packages/engine/src/{budget/{admit,index,live-state},plan/{compile,types},resume/{reconstruct,types},run/{run-engine,index,
+cost-ceilings,failure},dispatch/{steps,facades,index,types,result-record}}.ts`, `packages/cli/src/{bin.ts,commands/run/{context,
+run,resume,launcher-shim,run-failure,vcs-refusal}.ts}`, `packages/vcs/src/{errors,git}.ts`, `packages/core/src/errors/codes.ts`.
