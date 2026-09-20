@@ -29,6 +29,8 @@ import {
  * adding a code without adding its keys fails, which is the point.
  */
 const SAMPLE_DETAILS = {
+  // `RUN-082` (`PLAN-M13.md` P10): a stage id no Epic declares.
+  stageId: 'mvp',
   // `CFG-053`/`RUN-079` (`PLAN-M13.md` P1): a brief/prompt reference.
   reference: 'briefs/write-vision.md',
   // `RUN-080`/`CFG-054` (`PLAN-M13.md` P5): an adapter that cannot carry a system prompt; a bad

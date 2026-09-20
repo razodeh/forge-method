@@ -48,6 +48,10 @@
  * `show`/`new`/`compile`/`graph` rows) — no piece of `PLAN-M12.md` ever named these as its own mandate;
  * disclosed here rather than silently implied complete.
  *
+ * `plan run-plan <stageId> [--json]` — the command `plan-stage.workflow.yaml`'s `derive-run-plan` step runs
+ * — is wired by `PLAN-M13.md` P10 (`commands/run/run-plan.ts`; `03` names no such subcommand, see
+ * `SPEC-QUESTIONS.md`).
+ *
  * @see specs/22 M6
  * @see specs/22 M8
  * @see specs/22 M12
@@ -186,6 +190,7 @@ import {
   abortRun,
   assertStopped,
   ensureIntegrationWorktree,
+  formatRunPlan,
   gateApprove,
   gateCheck,
   gateList,
@@ -195,10 +200,12 @@ import {
   mergeAllReady,
   mergeLane,
   pauseRun,
+  planRunPlan,
   readRunLock,
   resumeWorkflow,
   runLanes,
   runLogs,
+  runPlanJson,
   runStatus,
   runWorkflow,
   workflowIdForPlanPhase,
@@ -2623,6 +2630,30 @@ function buildPlanExpressionContext(
   return withStage;
 }
 
+/** `forge plan run-plan <stageId> [--json]` — the command `plan-stage.workflow.yaml`'s `derive-run-plan` step
+ * runs (`03` §3.2.3, `06` §6.2). Read-only and deterministic; it needs no adapter, so it is deliberately not
+ * routed through `buildRunDepsForProject`. Exit `0` for a schedulable plan (warnings are still printed), `1`
+ * when the stage's inputs are inconsistent (a cycle, an unknown dependency, ...), and a typed `RUN-082`
+ * (exit `2`) for a stage no Epic declares. */
+async function runRunPlanCommand(
+  paths: ProjectPaths,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { positionals } = parseCommandFlags(rest, {});
+  const [stageId] = positionals;
+  if (stageId === undefined || positionals.length > 1) {
+    console.error('forge: "plan run-plan" needs a real <stageId>.');
+    return EXIT_CODES.usage;
+  }
+  const report = await planRunPlan(
+    { paths, workflowsRoot: WORKFLOWS_ROOT, specsRoot: SPECS_ROOT },
+    stageId,
+  );
+  console.log(json ? runPlanJson(report) : formatRunPlan(report));
+  return report.ok ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
 const PLAN_FLAGS = { '--from': true } as const;
 
 async function runPlanCommand(
@@ -2633,8 +2664,9 @@ async function runPlanCommand(
   dryRun: boolean,
   json: boolean,
 ): Promise<number> {
+  if (phase === 'run-plan') return runRunPlanCommand(paths, rest, json);
   if (!isPlanPhase(phase)) {
-    console.error(`forge: "plan" needs a real <phase> (${PLAN_PHASES.join('|')}).`);
+    console.error(`forge: "plan" needs a real <phase> (${PLAN_PHASES.join('|')}|run-plan).`);
     return EXIT_CODES.usage;
   }
   const { values, positionals } = parseCommandFlags(rest, PLAN_FLAGS);

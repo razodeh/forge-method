@@ -31,6 +31,14 @@ export {
 } from './lock.ts';
 export { mergeAbort, mergeAllReady, mergeLane, type MergeContext } from './merge.ts';
 export { workflowIdForPlanPhase, type PlanPhase } from './plan.ts';
+export {
+  RUN_PLAN_WORKFLOW_ID,
+  formatRunPlan,
+  planRunPlan,
+  runPlanJson,
+  type RunPlanContext,
+  type StageRunPlanReport,
+} from './run-plan.ts';
 export { resumeWorkflow, type ResumeOptions } from './resume.ts';
 export {
   dryRunWorkflow,

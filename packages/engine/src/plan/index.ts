@@ -19,6 +19,17 @@ export {
 } from './dependencies.ts';
 export { compileRunPlan } from './run-plan.ts';
 export {
+  MAX_REPORTED_OVERLAPS,
+  compileStageRunPlan,
+  type OutsideStageStatus,
+  type StageFindingSeverity,
+  type StageRunPlan,
+  type StageRunPlanFinding,
+  type StageRunPlanOptions,
+  type StageStory,
+  type StoryOverlap,
+} from './stage-plan.ts';
+export {
   toAgentId,
   type AgentId,
   type ArtifactRef,

@@ -1044,6 +1044,16 @@ export const ERROR_CODES = {
     remedy:
       'Provide the question or task text for the session (for example the --question flag), or give the step a real brief, then retry.',
   },
+  'RUN-082': {
+    // `@forge/cli`'s own `forge plan run-plan <stageId>` (`03` §3.2.3, `PLAN-M13.md` P10): no Epic in the project
+    // declares this stage, so there is no stage to compile a run plan for. Distinct from an *empty* stage
+    // (an epic exists, it has no stories), which is a valid, empty plan.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stageId: string }) => `No stage ${show(d.stageId)}: no Epic declares it.`,
+    remedy:
+      'Run `forge plan stage <id>` first to write the stage’s epics and stories, or pass the stage id an existing Epic’s `stage` field names.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

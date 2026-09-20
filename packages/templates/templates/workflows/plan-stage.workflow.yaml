@@ -43,9 +43,14 @@ steps:
     dependsOn: [story-refinement]
     outputs: [{ type: HandoffRecord, subtype: test-plan }]
 
+  # Read-only: it reads the stage's Epics and Stories and prints the plan, so it runs in the supervisor at
+  # the project root (`inline`) rather than in a lane worktree of its own, branched from `main`. Whether the
+  # documents the agent steps above wrote are visible at the project root at this point of a live run is
+  # not established by any test; `PLAN-M13.md` P9's live run confirms it (`SPEC-QUESTIONS.md`, M13 P10).
   - id: derive-run-plan
     kind: command
     run: 'forge plan run-plan {{stageId}} --json'
+    inline: true
     dependsOn: [write-test-plan]
 
   - id: ready-gate

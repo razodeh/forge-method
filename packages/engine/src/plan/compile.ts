@@ -123,7 +123,43 @@ function toResourceClaims(
 ): readonly string[] {
   if (value === undefined) return [];
   const list = typeof value === 'string' ? [value] : value;
-  return list.map((glob) => safeResolveTemplate(glob, context, issues, stepId));
+  return list.flatMap((glob) => resolveClaimEntry(glob, context, issues, stepId));
+}
+
+/** A `produces` entry that is exactly one placeholder (`"{{item.files_expected}}"`), as `10` §10.1's own
+ * worked example writes it, may name a *list* of globs: `09` §9.3's `files_expected` is an array, and
+ * `resolveTemplate` (which only ever substitutes a scalar into a larger string) would refuse it with
+ * `CFG-015`, leaving the shipped `build-stage` unable to compile for any story with a real claim list. A
+ * whole-entry placeholder that evaluates to an array of strings is therefore spliced in as that many
+ * claims; anything else (a scalar, a placeholder embedded in longer text, an unresolved path) goes through
+ * `safeResolveTemplate` exactly as before, so every existing error path is unchanged. */
+const WHOLE_PLACEHOLDER = /^\{\{([^{}]*)\}\}$/;
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function resolveClaimEntry(
+  glob: string,
+  context: ExpressionContext,
+  issues: CompileIssue[],
+  stepId: string,
+): readonly string[] {
+  const inner = WHOLE_PLACEHOLDER.exec(glob.trim())?.[1];
+  if (inner !== undefined) {
+    const parsed = parseExpression(inner);
+    if (parsed.success) {
+      let value: unknown;
+      try {
+        value = evaluate(parsed.expr, context);
+      } catch (cause) {
+        // Not swallowed: the ordinary path below re-evaluates the same text and reports it as an issue.
+        if (!(cause instanceof ForgeError)) throw cause;
+      }
+      if (isStringArray(value)) return value;
+    }
+  }
+  return [safeResolveTemplate(glob, context, issues, stepId)];
 }
 
 /** `10` §10.1's own worked example writes every `dependsOn` entry bare — `[ freeze-contracts ]`,
