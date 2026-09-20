@@ -220,5 +220,6 @@ export async function assertCleanWorkingTree(cwd: string): Promise<void> {
     remedy:
       'Stash your changes (`git stash`), commit them, or explicitly abort this run. FORGE never ' +
       'discards uncommitted work.',
+    details: { dirtyFiles },
   });
 }

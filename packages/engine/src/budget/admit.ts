@@ -51,10 +51,56 @@ import type { BudgetState } from './types.ts';
  * `dailySpentUsd`/`dailyUsd`) — every value that reasoning needs is already a plain, public field on the
  * `BudgetState` the caller itself constructed, not something only this function's own internals can see. */
 export function canAdmit(node: StepNode, budgetState: BudgetState): boolean {
-  const projectedDailySpend = budgetState.dailySpentUsd + node.limits.maxCostUsd;
-  if (checkBudget({ spent: projectedDailySpend, cap: budgetState.dailyUsd }) === 'breached') {
-    return false;
+  return explainAdmission(node, budgetState).admit;
+}
+
+/** Why one step was (not) admitted: the same two checks `canAdmit` makes, but naming which cap refused
+ * the step so the run can say so (`PLAN-M13.md` P12, `Q208` finding 1). The period check is made first,
+ * matching `canAdmit`'s original order, so a step refused by both reports the daily cap. `spentUsd` is
+ * what has already been spent against that cap; `reservationUsd` is the step's own ceiling that did not
+ * fit in `capUsd - spentUsd`. */
+export type AdmissionDecision =
+  | { readonly admit: true }
+  | {
+      readonly admit: false;
+      readonly level: 'run' | 'period';
+      readonly stepId: string;
+      readonly reservationUsd: number;
+      readonly spentUsd: number;
+      readonly capUsd: number;
+    };
+
+export function explainAdmission(node: StepNode, budgetState: BudgetState): AdmissionDecision {
+  const reservationUsd = node.limits.maxCostUsd;
+  if (
+    checkBudget({
+      spent: budgetState.dailySpentUsd + reservationUsd,
+      cap: budgetState.dailyUsd,
+    }) === 'breached'
+  ) {
+    return {
+      admit: false,
+      level: 'period',
+      stepId: node.id,
+      reservationUsd,
+      spentUsd: budgetState.dailySpentUsd,
+      capUsd: budgetState.dailyUsd,
+    };
   }
-  const projectedRunSpend = budgetState.runSpentUsd + node.limits.maxCostUsd;
-  return checkBudget({ spent: projectedRunSpend, cap: budgetState.perRunUsd }) !== 'breached';
+  if (
+    checkBudget({
+      spent: budgetState.runSpentUsd + reservationUsd,
+      cap: budgetState.perRunUsd,
+    }) === 'breached'
+  ) {
+    return {
+      admit: false,
+      level: 'run',
+      stepId: node.id,
+      reservationUsd,
+      spentUsd: budgetState.runSpentUsd,
+      capUsd: budgetState.perRunUsd,
+    };
+  }
+  return { admit: true };
 }

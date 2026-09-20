@@ -71,6 +71,7 @@ import { SYSTEM_CLOCK } from '@forge/core';
 import { EXIT_CODES, ForgeError, isForgeError } from '@forge/core/errors';
 import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { ExpressionContext } from '@forge/engine/expr';
+import type { RunState } from '@forge/engine/resume';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
@@ -214,6 +215,9 @@ import {
   type PlanPhase,
   type RunDeps,
 } from './commands/run/index.ts';
+import { currentLauncher } from './commands/run/launcher-shim.ts';
+import { runFailureError, runFailureNote } from './commands/run/run-failure.ts';
+import { refusalFromCodedError, refusalFromVcsError } from './commands/run/vcs-refusal.ts';
 import { runStatusJson } from './commands/run/status.ts';
 import {
   CONFLICT_RESOLUTION_MODES,
@@ -235,6 +239,7 @@ import {
 } from './commands/spec/validate-rules.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES } from '@forge/schemas';
+import { VcsError } from '@forge/vcs';
 import type { ArtifactTypeId } from '@forge/schemas';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import type { DryRunResult, RealRunResult } from './commands/run/run.ts';
@@ -464,6 +469,11 @@ async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string):
     workflowsRoot: WORKFLOWS_ROOT,
     checksRoot: CHECKS_ROOT,
     agentsRoot: AGENTS_ROOT,
+    // The running CLI, so `command` steps' `forge ...` resolves to it wherever it was launched from.
+    launcher: currentLauncher(env),
+    warn: (message) => {
+      console.error(message);
+    },
   };
 }
 
@@ -513,8 +523,23 @@ async function runInitCommand(
   initArgs: readonly string[],
   yes: boolean,
   json: boolean,
+  project: string | undefined,
 ): Promise<number> {
-  const { dir, options } = parseInitFlags(initArgs, yes);
+  const { dir: requestedDir, options } = parseInitFlags(initArgs, yes);
+  // `03` §3.2: `--project, -C <path>` — "Operate on this project root", default the current directory. For
+  // `forge init [dir]` the target is `[dir]` resolved against that root, so `-C <path>` alone initialises
+  // `<path>`, and `-C <base> <dir>` initialises `<base>/<dir>`. It used to be parsed and dropped, writing
+  // into the current directory (`PLAN-M13.md` P12, `Q208` finding 7).
+  const base = path.resolve(project ?? process.cwd());
+  const dir = path.resolve(base, requestedDir);
+  // A relative `[dir]` stays under `-C`; an absolute one is the user naming the target outright.
+  if (
+    project !== undefined &&
+    !path.isAbsolute(requestedDir) &&
+    (path.relative(base, dir) === '..' || path.relative(base, dir).startsWith(`..${path.sep}`))
+  ) {
+    throw new ForgeError('USR-002', { flag: '[dir]', value: requestedDir });
+  }
   const env = realEnvSnapshot();
   const onConflict = defaultNonInteractiveConflictMode(options.onConflict, yes, json);
   const result = await runInit(
@@ -696,7 +721,21 @@ function printWorkflowDispatchResult(
       `forge ${label}: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
     );
   }
-  return runOutcomeExitCode(result.runState.runStatus);
+  return reportRunFailure(result.runState);
+}
+
+/** A failed run says why, on stderr, with the remedy — the way every other refusal does — and exits with the
+ * reason's own code (a budget refusal is `4`, anything else `1`). With `--json` stdout still carries the one
+ * JSON line, whose `runState.runFailure` holds the same reason for a machine reader. A failed run whose log
+ * carries no reason (recorded before it did) keeps the plain failure exit code. */
+function reportRunFailure(runState: RunState): number {
+  const failure = runFailureError(runState);
+  if (failure === undefined) return runOutcomeExitCode(runState.runStatus);
+  console.error(failure.message);
+  console.error(failure.remedy);
+  const note = runFailureNote(runState);
+  if (note !== undefined) console.error(note);
+  return failure.exitCode;
 }
 
 /** `forge pause`/`forge resume [runId]`/`forge abort [runId]`/`forge lanes [runId]` (`03` §3.2.4) all
@@ -769,7 +808,7 @@ async function runResumeCommand(
       `forge resume: runId=${result.runId} status=${renderRunStatus(result.runState.runStatus)}.`,
     );
   }
-  return runOutcomeExitCode(result.runState.runStatus);
+  return reportRunFailure(result.runState);
 }
 
 async function runPauseCommand(paths: ProjectPaths, json: boolean): Promise<number> {
@@ -3033,6 +3072,13 @@ async function main(): Promise<number> {
     return EXIT_CODES.success;
   }
 
+  // `init` creates the project, so it must run before `ProjectPaths` is built: that constructor resolves the
+  // root against the real file system and cannot be given a directory that does not exist yet (a fresh
+  // `-C <new dir>`, `PLAN-M13.md` P12).
+  if (command === 'init') {
+    return runInitCommand(flags.positionals.slice(1), flags.yes, flags.json, flags.project);
+  }
+
   const projectRoot = flags.project ?? process.cwd();
   const paths = new ProjectPaths(projectRoot);
 
@@ -3155,9 +3201,6 @@ async function main(): Promise<number> {
   // fits only the closed-subcommand-keyword shape `agent`/`workflow`/`template`/`spec`/`test` all share.
   const afterCommand = flags.positionals.slice(1);
 
-  if (command === 'init') {
-    return runInitCommand(afterCommand, flags.yes, flags.json);
-  }
   if (command === 'run') {
     const [workflowId, ...runRest] = afterCommand;
     return runRunCommand(paths, projectRoot, workflowId, runRest, flags.dryRun, flags.json);
@@ -3279,6 +3322,21 @@ try {
     console.error(error.message);
     console.error(error.remedy);
     process.exitCode = error.exitCode;
+  } else if (error instanceof VcsError) {
+    // A `VcsError` (`@forge/vcs` has no `core` edge, so it is not a `ForgeError`) that no command wrapped is
+    // still a refusal with a named remedy, not a crash: message and remedy, no Node stack (`PLAN-M13.md`
+    // P12, `Q208` finding 6). The dirty-tree case maps to the registered `VCS-010` (exit 5).
+    const refusal = refusalFromVcsError(error);
+    console.error(refusal.message);
+    console.error(refusal.remedy);
+    process.exitCode = refusal.exitCode;
+  } else if (refusalFromCodedError(error) !== undefined) {
+    // Same shape as a `VcsError`: `@forge/telemetry`'s `TelemetryError` (a seq gap in the event log, an
+    // unwritable log) carries a code and a remedy, and is a refusal to print, not a crash.
+    const refusal = refusalFromCodedError(error);
+    console.error(refusal?.message);
+    console.error(refusal?.remedy);
+    process.exitCode = refusal?.exitCode ?? 1;
   } else {
     console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
     process.exitCode = 1;

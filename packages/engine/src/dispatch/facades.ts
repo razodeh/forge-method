@@ -175,17 +175,24 @@ export function createTelemetryFacade(
   };
 }
 
+/** The environment overlay every facade that spawns a shell command applies (`ExecuteStepContext.commandEnv`). */
+export interface CommandLauncherOptions {
+  readonly env?: Readonly<Record<string, string>> | undefined;
+}
+
 /** The gate registry is closed over here, not exposed on the returned `GateEvaluator` itself — a caller
  * that wants to inspect it keeps its own reference to the `Map`/object it built before calling this. */
 export function createGateEvaluator(
   gateRegistry: ReadonlyMap<string, GateDefinition>,
+  options: CommandLauncherOptions = {},
 ): GateEvaluator {
+  const env = options.env;
   return {
     async evaluate(gateId, cwd) {
       const definition = gateRegistry.get(gateId);
       if (definition === undefined) return Promise.reject(new GateNotFoundError(gateId));
       const result = await evaluateGate(definition, cwd, async (check) =>
-        runShellCommand(check.run, cwd),
+        runShellCommand(check.run, cwd, env),
       );
       return buildGateReport(definition, result);
     },
@@ -206,11 +213,14 @@ export class GateNotFoundError extends Error {
   }
 }
 
-function toPreMergeCheck(command: string | undefined): readonly PreMergeCheck[] {
+function toPreMergeCheck(
+  command: string | undefined,
+  env: Readonly<Record<string, string>> | undefined,
+): readonly PreMergeCheck[] {
   if (command === undefined) return [];
   return [
     async (cwd) => {
-      const { exitCode, stdout, stderr } = await runShellCommand(command, cwd);
+      const { exitCode, stdout, stderr } = await runShellCommand(command, cwd, env);
       // `stderr || stdout`, not bare `stderr`: many real check commands report their failure on
       // stdout, leaving stderr empty -- the identical fallback `steps.ts`'s own inline-command failure
       // path already uses for the same reason.
@@ -219,8 +229,11 @@ function toPreMergeCheck(command: string | undefined): readonly PreMergeCheck[] 
   ];
 }
 
-function toPostMergeCheck(command: string | undefined): readonly PostMergeCheck[] {
-  return toPreMergeCheck(command);
+function toPostMergeCheck(
+  command: string | undefined,
+  env: Readonly<Record<string, string>> | undefined,
+): readonly PostMergeCheck[] {
+  return toPreMergeCheck(command, env);
 }
 
 /** Bundles `@forge/vcs`'s own `processMergeCandidate` with the per-run constants (`integrationPath`, a
@@ -285,15 +298,17 @@ function enqueueForIntegrationPath<T>(
 export function createMergeQueueFacade(
   integrationPath: string,
   conflictResolver: MergeConflictResolver | undefined,
+  options: CommandLauncherOptions = {},
 ): MergeQueueFacade {
+  const env = options.env;
   return {
     async process(candidate, checks) {
       return enqueueForIntegrationPath(integrationPath, () =>
         processMergeCandidate(asVcsMergeCandidate(candidate), {
           ...omitUndefinedValues({ conflictResolver }),
           integrationPath,
-          preChecks: toPreMergeCheck(checks.preCheck),
-          postChecks: toPostMergeCheck(checks.postCheck),
+          preChecks: toPreMergeCheck(checks.preCheck, env),
+          postChecks: toPostMergeCheck(checks.postCheck, env),
         }),
       );
     },

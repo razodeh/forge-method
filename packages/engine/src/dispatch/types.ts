@@ -291,6 +291,13 @@ export interface ExecuteStepContext {
    * back into `interaction/` -- the same "sits with the context it configures" placement `model`/
    * `tools`/`retainLaneWorktrees` already have. */
   readonly sessionBounds?: SessionBounds | undefined;
+  /** Environment variables layered over the parent's for every shell command a run spawns: `command`
+   * steps, gate checks, merge checks (`PLAN-M13.md` P12, `Q208` finding 3). The CLI supplies a `PATH` that
+   * starts with a directory holding a `forge` executable running the same CLI that launched the run, so
+   * the shipped workflows' `forge kb sync` / `forge plan run-plan` / `forge spec validate` work when `forge`
+   * is not installed globally (a checkout, `node .../forge.mjs`). Injected because the engine may neither
+   * import the CLI nor read the ambient environment (R10); `undefined` leaves the environment untouched. */
+  readonly commandEnv?: Readonly<Record<string, string>> | undefined;
   /** The project's configured documentation roots (`18` §18.3 `paths`), which the output contract check
    * (`outputs.ts`, `PLAN-M13.md` P7) roots each `18` §18.7 artifact path template under. `forge run` supplies
    * the project's own `paths` (`buildRunEngineContext`). Omitted, it defaults to `@forge/schemas`'s default

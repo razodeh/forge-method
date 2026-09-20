@@ -31,6 +31,13 @@ import {
 const SAMPLE_DETAILS = {
   // `RUN-082` (`PLAN-M13.md` P10): a stage id no Epic declares.
   stageId: 'mvp',
+  // `VCS-010`/`BUD-003`/`RUN-085` (`PLAN-M13.md` P12): a dirty working tree; an admission refusal by a
+  // budget cap (`stepId`, `cap`, `spent` are declared elsewhere in this table); a failed run's diagnosis.
+  count: 2,
+  files: 'run.err, run.out',
+  reservation: '$3.00',
+  remaining: '$1.50',
+  summary: '1 step(s) failed (retro:run-retro)',
   // `CFG-053`/`RUN-079` (`PLAN-M13.md` P1): a brief/prompt reference.
   reference: 'briefs/write-vision.md',
   // `RUN-080`/`CFG-054` (`PLAN-M13.md` P5): an adapter that cannot carry a system prompt; a bad

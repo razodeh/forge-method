@@ -140,6 +140,12 @@ export interface StepNode {
   readonly laneAffinity?: 'exclusive' | 'shared' | 'inline' | undefined;
   readonly retry: StepNodeRetryPolicy;
   readonly limits: StepNodeLimits;
+  /** `'agent'`/`'session'` only: where `limits.maxCostUsd` came from, so the run can replace a bare
+   * compile-time default with the agent's own `limits.max_cost_usd` or the project's
+   * `budget.perStepUsdDefault` (`resolveStepCostCeilings`, `PLAN-M13.md` P12) but never override a value
+   * the workflow step itself declared. `'default'` means the compile placeholder, still open to
+   * resolution; every other value is final. Steps that run no model reserve `0` and carry none. */
+  readonly maxCostSource?: 'step' | 'agent' | 'config' | 'default' | undefined;
   readonly autonomy?: AutonomyLevel | undefined;
   /** Used for resume (`06` §6.2's own comment). Equal to `id` for M5's own scope: `id`'s own stability
    * guarantee (unchanged across re-compiles of the same workflow+context, `PLAN-M5.md` P10's own Checks

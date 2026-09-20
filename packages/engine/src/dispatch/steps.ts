@@ -20,12 +20,13 @@
  * @see SPEC-QUESTIONS.md Q62
  * @see PLAN-M5.md P15
  */
-import { ForgeError } from '@forge/core/errors';
+import { ForgeError, isForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import {
+  promptRecordDirName,
   refusalFailure,
   resumePrompt,
   tryAssemble,
@@ -34,6 +35,7 @@ import {
 } from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
 import { verifyDeclaredOutputs } from './outputs.ts';
+import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { runShellCommand } from './shell.ts';
 import type {
   ExecuteStepContext,
@@ -450,6 +452,12 @@ export async function runAgentWork(
       agentId: node.agent,
       payload: { message },
     });
+    // This attempt produced no answer: an earlier attempt's `result.md` must not stand in for it.
+    await clearResultRecord(
+      ctx.assembly.paths,
+      ctx.runId,
+      promptRecordDirName(plan.kind === 'start' ? plan.assembled.stepKey : node.id),
+    ).catch(() => undefined);
     // A crash can land here after real tool-use writes already reached the lane worktree (a
     // session dropped mid-stream, not just one that never started) -- checked for real via
     // hasChanges rather than assumed false, so those writes still get committed and claim-enforced
@@ -461,12 +469,32 @@ export async function runAgentWork(
       failure: { source: 'adapter', message },
     };
   }
+  // The session's final text is kept in the run record before the step can be marked complete
+  // (`PLAN-M13.md` P12, `Q208` finding 5); the event carries only a reference to it, never the text.
+  let resultRef: ResultRecordRef | undefined;
+  let resultFailure: StepFailureInfo | undefined;
+  try {
+    resultRef = await writeResultRecord(
+      ctx.assembly.paths,
+      ctx.runId,
+      promptRecordDirName(plan.kind === 'start' ? plan.assembled.stepKey : node.id),
+      session.finalText,
+    );
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    resultFailure = {
+      source: 'telemetry',
+      code: isForgeError(cause) ? cause.code : undefined,
+      message: `Could not record the session result: ${message}`,
+      cause,
+    };
+  }
   await ctx.telemetry.emit({
     type: 'SessionEnded',
     stepId: node.id,
     laneId: lane.laneId,
     agentId: node.agent,
-    payload: { ok: session.ok },
+    payload: { ok: session.ok, ...(resultRef === undefined ? {} : { result: resultRef }) },
   });
   // `20` §20.10 S9 / `18` §18.5: `@forge/telemetry/ledger`'s own doc comment already names
   // `UsageRecorded` as "everything a LedgerEntry needs" -- but nothing in this whole codebase ever
@@ -504,6 +532,14 @@ export async function runAgentWork(
       commitSubject: session.finalText.slice(0, 72),
       detail,
       failure: { source: 'adapter', code: session.error?.code, message },
+    };
+  }
+  if (resultFailure !== undefined) {
+    return {
+      changed: session.changedFiles.length > 0,
+      commitSubject: session.finalText.slice(0, 72) || node.id,
+      detail,
+      failure: resultFailure,
     };
   }
   return {
@@ -600,9 +636,13 @@ export async function runCommandStep(
   // — this is what let the original version of this function need (and never actually exercise) a
   // second, redundant runtime check purely to satisfy the type checker.
   const run = node.run;
+  // The environment the run's launcher supplied (`ExecuteStepContext.commandEnv`): its `PATH` starts with a
+  // directory holding the `forge` that launched this run, so `forge ...` resolves to it and not to whatever
+  // (or nothing) the user has installed.
+  const commandEnv = ctx.commandEnv;
 
   if (node.laneAffinity === 'inline') {
-    const { exitCode, stdout, stderr } = await runShellCommand(run, ctx.projectRoot);
+    const { exitCode, stdout, stderr } = await runShellCommand(run, ctx.projectRoot, commandEnv);
     const detail: StepOutcomeDetail = { kind: 'command', exitCode, stdout, stderr };
     const finishedAt = ctx.now();
     if (exitCode !== 0) {
@@ -621,7 +661,7 @@ export async function runCommandStep(
     startedAt,
     { kind: 'command', exitCode: -1, stdout: '', stderr: '' },
     async (lane, baseSha) => {
-      const { exitCode, stdout, stderr } = await runShellCommand(run, lane.path);
+      const { exitCode, stdout, stderr } = await runShellCommand(run, lane.path, commandEnv);
       const detail: StepOutcomeDetail = { kind: 'command', exitCode, stdout, stderr };
       // An arbitrary shell command's own stdout/exit code say nothing about which files, if any, it
       // touched — checked for real (VcsFacade.hasChanges' own doc comment has the fuller reasoning)

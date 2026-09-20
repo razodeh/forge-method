@@ -102,6 +102,25 @@ export interface RunState {
    * hand-built events, the same "a genuine, already-satisfiable dependency, not a forward reference"
    * standing this whole piece's own Depends-on list already claims for `@forge/core`. */
   readonly artifactPaths: ReadonlySet<string>;
+  /** Why the run ended `failed`, from `RunFailed`'s own payload (`PLAN-M13.md` P12): the run-level reason
+   * and message, the steps that failed, and what stopped every step that never ran. Absent for any status
+   * but `'failed'`, and for a `RunFailed` written before the payload existed (nothing is invented for it). */
+  readonly runFailure?: RunFailureSummary;
+}
+
+/** The read side of `RunFailed`'s payload (`../run/failure.ts`'s `RunFailureRecord`, which the engine
+ * writes), re-declared structurally because this projection may not import `run`. Every field is validated
+ * on read: a hand-edited or torn payload yields no `runFailure`, never a throw, like the other reducers. */
+export interface RunFailureSummary {
+  readonly reason: string;
+  readonly message: string;
+  readonly failedSteps: readonly string[];
+  readonly failedTotal: number;
+  readonly unfinished: readonly {
+    readonly stepId: string;
+    readonly cause: { readonly kind: string } & Readonly<Record<string, unknown>>;
+  }[];
+  readonly unfinishedTotal: number;
 }
 
 /** `06` §6.10 step 3's own "re-validate every artifact produced so far... surfacing a hand-edit mismatch

@@ -176,6 +176,18 @@ export const ERROR_CODES = {
       `Computing the checksum of ${show(d.path)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
     remedy: 'Fix the underlying file access problem named above, then retry.',
   },
+  'VCS-010': {
+    // `forge run`'s `20` §20.2 point 5 refusal ("the user's uncommitted work is sacred"): raised by the CLI
+    // from `@forge/vcs`'s `VcsError('VCS-DIRTY-TREE')`, which cannot itself be a `ForgeError` (`vcs` has no
+    // `core` edge), so it used to reach the terminal as an uncaught exception with a Node stack trace
+    // (`PLAN-M13.md` P12, `Q208` finding 6). Exit 5: the missing prerequisite is a clean working tree.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { count: number; files: string }) =>
+      `The working tree has ${show(d.count)} uncommitted change(s): ${show(d.files)}.`,
+    remedy:
+      'Run `git stash`, or commit your changes, then run the command again. FORGE never discards uncommitted work.',
+  },
   'SPEC-021': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -423,6 +435,17 @@ export const ERROR_CODES = {
     message: (d: { cap: string; spent?: string }) =>
       `Run exceeded its cost cap of ${show(d.cap)} (spent ${show(d.spent)}).`,
     remedy: 'Raise `budget.perRunUsd`, or resume with a narrower scope.',
+  },
+  'BUD-003': {
+    // Admission control (`06` §6.3, `20` §20.8) refused the last ready step: its reservation does not fit in
+    // what remains of the run cap (or the daily cap). The run ended with nothing started for this reason,
+    // which used to be recorded nowhere (`PLAN-M13.md` P12, `Q208` finding 1). Exit 4, like `BUD-002`.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.budgetExceeded,
+    message: (d: { stepId: string; cap: string; reservation: string; spent: string }) =>
+      `Step ${show(d.stepId)} was not started: ${show(d.spent)} already spent plus its ${show(d.reservation)} reservation would reach the ${show(d.cap)}.`,
+    remedy:
+      'Raise `budget.perRunUsd` (or `budget.dailyUsd` for a daily cap) in .forge/config.yaml, or lower the step reservation: the step limits.maxCostUsd or the agent limits.max_cost_usd (budget.perStepUsdDefault applies only to a step whose agent declares none). Then run `forge resume`.',
   },
   'USR-001': {
     // Exit 130 per `specs/02` §2.6, which assigns it to "interrupted". A deliberate gate rejection
@@ -1078,6 +1101,25 @@ export const ERROR_CODES = {
       `Step ${show(d.stepId)} cannot produce its declared outputs: agent ${show(d.agentId)} has tools.write: false. ${show(d.detail)}`,
     remedy:
       'Set `tools.write: true` on this agent’s definition, assign the step to an agent that can write, or remove the step’s declared `outputs`.',
+  },
+  'RUN-085': {
+    // A run ended `failed` (`RunFailed`); the log names why (`PLAN-M13.md` P12, `Q208` finding 1). Printed by
+    // `forge run`/`forge resume` in place of a bare `status=failed`.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { summary: string }) => `The run failed: ${show(d.summary)}.`,
+    remedy:
+      'Run `forge logs` to read each failed step and fix what it names, then start the workflow again with `forge run`: `forge resume` continues steps that were interrupted or never started, not steps that failed.',
+  },
+  'RUN-086': {
+    // The launcher shim (`@forge/cli` `launcher-shim.ts`, `PLAN-M13.md` P12) could not be created. The run goes
+    // ahead without it (a warning, exit unchanged): only `command` steps that call `forge` are affected.
+    severity: 'warning',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { reason: string }) =>
+      `Could not create the launcher that lets command steps run \`forge\`: ${show(d.reason)}.`,
+    remedy:
+      'Set a writable TMPDIR (or free disk space), or add `forge` to PATH, then run the workflow again: command steps that call `forge` fail until one of those is true.',
   },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather

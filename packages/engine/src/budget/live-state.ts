@@ -60,6 +60,9 @@ import type { BudgetState } from './types.ts';
 export interface BudgetConfig {
   readonly perRunUsd: number;
   readonly dailyUsd: number;
+  /** `budget.perStepUsdDefault`: the per-step ceiling for a model step whose workflow step and agent
+   * declare none (`resolveStepCostCeilings`). Optional so a caller with no such value pays nothing. */
+  readonly perStepUsdDefault?: number;
   readonly onBreach: 'pause' | 'finish-lanes' | 'abort';
 }
 
@@ -155,7 +158,7 @@ export async function computeLiveBudgetState(
     .reduce((sum, entry) => sum + entry.costUsd, 0);
   return {
     perRunUsd: config.perRunUsd,
-    perStepUsdDefault: 0,
+    perStepUsdDefault: config.perStepUsdDefault ?? 0,
     dailyUsd: config.dailyUsd,
     onBreach: config.onBreach,
     runSpentUsd,

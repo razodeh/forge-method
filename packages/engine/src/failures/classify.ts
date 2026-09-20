@@ -142,11 +142,12 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       return 'validation';
     case 'telemetry':
     case 'unsupported':
-      // Neither is ever actually constructed by any real handler in @forge/engine/dispatch: a
-      // TelemetryError always escapes as a thrown RUN-038 (never folded into StepOutcome data), and
-      // 'unsupported' has no real producer at all in this milestone's own built pieces — both kept only
-      // because StepFailureInfo.source's own type includes them, so this switch must stay exhaustive.
-      // 'transient' is the least harmful default should either somehow occur despite that.
+      // 'telemetry' is constructed in one place: `runAgentWork` when the session's answer cannot be written
+      // to its run record (`result.md`, `PLAN-M13.md` P12) -- a disk hiccup a retry may well clear, so
+      // 'transient'. (A TelemetryError from the event log itself still escapes as a thrown RUN-038.)
+      // 'unsupported' has no real producer at all in this milestone's own built pieces, kept only because
+      // StepFailureInfo.source's own type includes it, so this switch must stay exhaustive; 'transient' is
+      // the least harmful default should it somehow occur.
       return 'transient';
   }
 }

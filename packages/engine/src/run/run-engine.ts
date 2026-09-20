@@ -24,8 +24,8 @@ import { checkBudget } from '@forge/telemetry/ledger';
 
 import type { ExpressionContext } from '../expr/index.ts';
 import {
-  canAdmit,
   computeLiveBudgetState,
+  explainAdmission,
   onBudgetBreach,
   type BudgetConfig,
 } from '../budget/index.ts';
@@ -38,6 +38,8 @@ import type { RunState, StepReconstructedStatus } from '../resume/types.ts';
 import { Scheduler } from '../scheduler/scheduler.ts';
 import type { ConcurrencyLimits, StepStatus } from '../scheduler/types.ts';
 import { parseWorkflow } from '../workflow/parse.ts';
+import { resolveStepCostCeilings } from './cost-ceilings.ts';
+import { diagnoseRun, type BudgetRefusal, type RunFailureRecord } from './failure.ts';
 
 /** `PLAN-M5.md`'s own literal `runEngine(workflow, context, ctx)` bullet undersells what a real call
  * needs, the same "the plan's own bullet undersells the signature" correction this whole package has
@@ -122,7 +124,10 @@ export function seedScheduler(
  * batch means nothing could *ever* become newly ready again — whether because every node reached a real
  * terminal status, or because a permanently-blocked dependent (a failed ancestor) can never satisfy
  * `computeReadySet`'s own "dependencies succeeded" rule — both are legitimate, final states for this loop
- * to stop at, not a deadlock to detect and reject.
+ * to stop at, not a deadlock to detect and reject. What this loop does *not* do is decide the outcome:
+ * it returns with unfinished nodes whenever nothing more is admissible, and `runEngine` (below) diagnoses
+ * every such node (`diagnoseRun`) into the `RunFailed` payload, so a node can never be dropped without a
+ * recorded reason (`PLAN-M13.md` P12).
  *
  * `refreshBudget`, when supplied (`20` §20.10 S9), runs once at the top of every tick, before
  * `scheduler.next()` — a real `BudgetState` refresh is genuinely asynchronous I/O (a real ledger read),
@@ -192,6 +197,32 @@ export async function runEngine(
 
   const compiled = compileRunPlan(parsed.workflow, context);
   if (!compiled.success) throw new ForgeError('RUN-045', { issues: formatIssues(compiled.issues) });
+  // The per-step cost ceiling is resolved here, once, before the scheduler or any dispatch sees a node
+  // (`PLAN-M13.md` P12): admission control's reservation, block [6] of the compiled prompt and the cap
+  // handed to the adapter all read this one number off the node.
+  let nodes: readonly StepNode[];
+  try {
+    nodes = await resolveStepCostCeilings(compiled.nodes, ctx);
+  } catch (cause) {
+    // A failure other than "no such agent" (a transient I/O error reading an agent file) cannot be papered
+    // over with a guessed ceiling, and must not leave a registered run with no events at all: the run starts
+    // and fails on the record, with the reason, and can be started again.
+    if (resumeFrom === undefined) {
+      await ctx.telemetry.emit({ type: 'RunPlanned', payload: { planRef: parsed.workflow.id } });
+      await ctx.telemetry.emit({ type: 'RunStarted' });
+    }
+    const message = cause instanceof Error ? cause.message : String(cause);
+    const record: RunFailureRecord = {
+      reason: 'setup',
+      message: `the per-step cost ceilings could not be resolved: ${message}`,
+      failedSteps: [],
+      failedTotal: 0,
+      unfinished: [],
+      unfinishedTotal: 0,
+    };
+    await ctx.telemetry.emit({ type: 'RunFailed', payload: record });
+    return reconstructRunState(readEvents(ctx.projectRoot, ctx.runId));
+  }
 
   // `20` §20.10 S9 (`PLAN-M11.md` P11): `ctx.budget`, when supplied, gets a real, live `BudgetState`
   // refreshed from this project's own real ledger before every tick (`refreshBudget` below) — composed
@@ -204,8 +235,28 @@ export async function runEngine(
   let liveBudgetState: BudgetState | undefined;
   let budgetBreachEmitted = false;
 
+  // Admission control's own record of the last tick (`PLAN-M13.md` P12): `tickReservedUsd` is the sum of the
+  // ceilings of the steps already admitted this tick, counted against the caps for the next candidate so
+  // two steps that each fit alone cannot be admitted together past the cap (`20` §20.8: "a step is not
+  // launched unless the remaining budget covers its cap"); `refusals` is what `diagnoseRun` reports if the
+  // tick admits nothing. Both are reset by `refreshBudget` at the top of every tick.
+  let tickReservedUsd = 0;
+  const refusals = new Map<string, BudgetRefusal>();
+
   function budgetCanAdmit(node: StepNode): boolean {
-    return liveBudgetState === undefined ? true : canAdmit(node, liveBudgetState);
+    const state = liveBudgetState;
+    if (state === undefined) return true;
+    const decision = explainAdmission(node, {
+      ...state,
+      runSpentUsd: state.runSpentUsd + tickReservedUsd,
+      dailySpentUsd: state.dailySpentUsd + tickReservedUsd,
+    });
+    if (decision.admit) {
+      tickReservedUsd += node.limits.maxCostUsd;
+      return true;
+    }
+    refusals.set(node.id, decision);
+    return false;
   }
 
   const combinedCanAdmit: ((node: StepNode) => boolean) | undefined =
@@ -216,14 +267,15 @@ export async function runEngine(
         : (node: StepNode) => explicitCanAdmit(node) && budgetCanAdmit(node);
 
   const scheduler = new Scheduler(
-    compiled.nodes,
+    nodes,
     ctx.limits,
     ctx.seed,
     ctx.resourceClassOf,
     combinedCanAdmit,
   );
 
-  // `BudgetBreached` (`18` §18.4's own Cost event group) is emitted once, the first tick a real breach
+  // `BudgetBreached` (`18` §18.4's own Cost event group) is emitted here once per run for a spend breach (a
+  // refused admission at the end of the run adds one more, `trigger: 'admission'`), the first tick a real breach
   // is observed at either level — not on every tick a breach continues to hold, which would otherwise
   // write one event per scheduling tick for the remainder of an already-breached run. `onBudgetBreach`
   // is genuinely consulted here (not merely imported for its own type): its own returned `kind` is what
@@ -233,6 +285,8 @@ export async function runEngine(
     budgetConfig === undefined
       ? undefined
       : async (): Promise<void> => {
+          tickReservedUsd = 0;
+          refusals.clear();
           liveBudgetState = await computeLiveBudgetState(
             ctx.projectRoot,
             ctx.runId,
@@ -263,14 +317,51 @@ export async function runEngine(
     await ctx.telemetry.emit({ type: 'RunPlanned', payload: { planRef: parsed.workflow.id } });
     await ctx.telemetry.emit({ type: 'RunStarted' });
   } else {
-    seedScheduler(scheduler, compiled.nodes, resumeFrom);
+    seedScheduler(scheduler, nodes, resumeFrom);
   }
 
-  await driveToCompletion(compiled.nodes, scheduler, ctx, refreshBudget);
+  await driveToCompletion(nodes, scheduler, ctx, refreshBudget);
 
-  await ctx.telemetry.emit({
-    type: allSucceeded(compiled.nodes, scheduler) ? 'RunCompleted' : 'RunFailed',
+  if (allSucceeded(nodes, scheduler)) {
+    await ctx.telemetry.emit({ type: 'RunCompleted' });
+    return reconstructRunState(readEvents(ctx.projectRoot, ctx.runId));
+  }
+
+  // A run that did not complete always says why (`PLAN-M13.md` P12, `Q208` finding 1). When admission
+  // control refused a ready step, that goes through the same machinery as any other budget breach: a
+  // `BudgetBreached` naming the cap, the step, its reservation and what was spent, with `onBudgetBreach`'s
+  // own response for that level. `RunFailed` then carries the diagnosis of every unfinished step.
+  const failure = diagnoseRun({
+    nodes,
+    status: (id) => scheduler.status(id),
+    budgetRefusals: refusals,
+    limits: ctx.limits,
   });
+  const liveState = liveBudgetState;
+  // The same step the diagnosis names first, so the event and the `RunFailed` reason never disagree.
+  const headline = failure.unfinished.find((entry) => entry.cause.kind === 'budget');
+  const refusal = headline === undefined ? undefined : refusals.get(headline.stepId);
+  if (liveState !== undefined && refusal !== undefined) {
+    await ctx.telemetry.emit({
+      type: 'BudgetBreached',
+      stepId: refusal.stepId,
+      payload: {
+        trigger: 'admission',
+        level: refusal.level,
+        capUsd: refusal.capUsd,
+        spentUsd: refusal.spentUsd,
+        reservationUsd: refusal.reservationUsd,
+        stepId: refusal.stepId,
+        refusedSteps: refusals.size,
+        // The configured response (`onBudgetBreach`). What the engine did is `applied`: no cooperative
+        // pause exists (`driveToCompletion`), so every response ends the run `failed`; raising the budget
+        // and `forge resume` continues it. `Q210` records the spec gap (`06` §6.3 `waiting-budget`).
+        response: onBudgetBreach(refusal.level, liveState).kind,
+        applied: 'run-stopped',
+      },
+    });
+  }
+  await ctx.telemetry.emit({ type: 'RunFailed', payload: failure });
 
   return reconstructRunState(readEvents(ctx.projectRoot, ctx.runId));
 }

@@ -13,10 +13,11 @@ import type { ExpressionContext } from '@forge/engine/expr';
 import { compileRunPlan } from '@forge/engine/plan';
 import { resumeRun } from '@forge/engine/resume';
 import type { RunState } from '@forge/engine/resume';
-import { runEngine } from '@forge/engine/run';
+import { resolveStepCostCeilings, runEngine } from '@forge/engine/run';
 import { parseWorkflow } from '@forge/engine/workflow';
 
 import { buildRunEngineContext } from './context.ts';
+import { createLauncherShimOrWarn, type LauncherShim } from './launcher-shim.ts';
 import {
   acquireRunLock,
   isProcessAlive,
@@ -24,7 +25,7 @@ import {
   releaseRunLock,
   type RunLock,
 } from './lock.ts';
-import type { RunDeps } from './run.ts';
+import { installRunSignalHandlers, type RunDeps } from './run.ts';
 
 interface RunManifest {
   readonly workflowId: string;
@@ -73,8 +74,11 @@ export async function resumeWorkflow(
   const clock = options.clock ?? SYSTEM_CLOCK;
   const lock: RunLock = { pid: process.pid, host: options.host, runId, startedAt: clock.now() };
   await acquireRunLock(deps.paths, lock);
+  const removeSignalHandlers = installRunSignalHandlers();
 
+  let shim: LauncherShim | undefined;
   try {
+    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn);
     const ctx = await buildRunEngineContext({
       paths: deps.paths,
       projectRoot: deps.projectRoot,
@@ -84,6 +88,7 @@ export async function resumeWorkflow(
       checksRoot: deps.checksRoot,
       agentsRoot: deps.agentsRoot,
       clock,
+      commandEnv: shim?.commandEnv,
     });
     // `resumeRun`'s own `ResumeContext` needs the compiled plan's real `StepNode`s (keyed by id) to
     // turn a bare, resumed `stepId` back into something re-dispatchable — re-compiled fresh from the
@@ -101,12 +106,17 @@ export async function resumeWorkflow(
         issues: compiled.issues.map((issue) => issue.message).join('; '),
       });
     }
-    const steps = new Map(compiled.nodes.map((node) => [node.id, node]));
+    // The same resolved per-step cost ceilings `runEngine` schedules with (`PLAN-M13.md` P12): a resumed
+    // session is handed the cap of the plan it is resuming, not the compile-time placeholder.
+    const resolvedNodes = await resolveStepCostCeilings(compiled.nodes, ctx);
+    const steps = new Map(resolvedNodes.map((node) => [node.id, node]));
 
     const afterResume = await resumeRun(runId, { ...ctx, steps });
     const runState = await runEngine(workflowSource, manifest.expressionContext, ctx, afterResume);
     return { runId, runState };
   } finally {
+    removeSignalHandlers();
+    await shim?.cleanup();
     await releaseRunLock(deps.paths);
   }
 }

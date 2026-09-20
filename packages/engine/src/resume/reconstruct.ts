@@ -8,7 +8,12 @@
  */
 import type { EventType, ForgeEvent } from '@forge/telemetry/events';
 
-import type { LaneReconstructedStatus, RunState, StepReconstructedStatus } from './types.ts';
+import type {
+  LaneReconstructedStatus,
+  RunFailureSummary,
+  RunState,
+  StepReconstructedStatus,
+} from './types.ts';
 
 /** The mutable working shape `applyEvent` folds into — `stepStatuses`/`laneStatuses` are real `Map`s here
  * (mutated in place across the whole fold, for the same reason `@forge/engine/dispatch`'s own
@@ -26,6 +31,7 @@ interface Accumulator {
   readonly sessionIds: Map<string, string>;
   readonly laneOrigins: Map<string, { readonly stepId: string; readonly baseSha: string }>;
   readonly artifactPaths: Set<string>;
+  runFailure: RunFailureSummary | undefined;
 }
 
 function isFiniteNonNegativeNumber(value: unknown): value is number {
@@ -56,6 +62,36 @@ function extractCostUsd(payload: unknown): number {
   if (typeof payload !== 'object' || payload === null) return 0;
   const value = (payload as Record<string, unknown>)['costUsd'];
   return isFiniteNonNegativeNumber(value) ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** `RunFailed`'s payload (`../run/failure.ts`), read defensively: anything malformed yields `undefined`. */
+function extractRunFailure(payload: unknown): RunFailureSummary | undefined {
+  if (!isRecord(payload)) return undefined;
+  const { reason, message, failedSteps, failedTotal, unfinished, unfinishedTotal } = payload;
+  if (typeof reason !== 'string' || typeof message !== 'string') return undefined;
+  if (!Array.isArray(failedSteps) || !failedSteps.every((id) => typeof id === 'string')) {
+    return undefined;
+  }
+  if (!Array.isArray(unfinished)) return undefined;
+  const entries: RunFailureSummary['unfinished'][number][] = [];
+  for (const entry of unfinished) {
+    if (!isRecord(entry) || typeof entry['stepId'] !== 'string') return undefined;
+    const cause = entry['cause'];
+    if (!isRecord(cause) || typeof cause['kind'] !== 'string') return undefined;
+    entries.push({ stepId: entry['stepId'], cause: { ...cause, kind: cause['kind'] } });
+  }
+  return {
+    reason,
+    message,
+    failedSteps,
+    failedTotal: typeof failedTotal === 'number' ? failedTotal : failedSteps.length,
+    unfinished: entries,
+    unfinishedTotal: typeof unfinishedTotal === 'number' ? unfinishedTotal : entries.length,
+  };
 }
 
 function extractStringField(payload: unknown, field: string): string | undefined {
@@ -112,6 +148,7 @@ function applyEvent(acc: Accumulator, event: ForgeEvent): Accumulator {
       return acc;
     case 'RunCompleted':
       acc.runStatus = 'completed';
+      acc.runFailure = undefined;
       return acc;
     case 'RunAborted':
       acc.runStatus = 'aborted';
@@ -119,6 +156,7 @@ function applyEvent(acc: Accumulator, event: ForgeEvent): Accumulator {
       return acc;
     case 'RunFailed':
       acc.runStatus = 'failed';
+      acc.runFailure = extractRunFailure(event.payload);
       return acc;
 
     case 'StepScheduled':
@@ -249,6 +287,7 @@ export async function reconstructRunState(events: AsyncIterable<ForgeEvent>): Pr
     sessionIds: new Map(),
     laneOrigins: new Map(),
     artifactPaths: new Set(),
+    runFailure: undefined,
   };
 
   for await (const event of events) {
@@ -278,6 +317,9 @@ export async function reconstructRunState(events: AsyncIterable<ForgeEvent>): Pr
     sessionIds: acc.sessionIds,
     laneOrigins: acc.laneOrigins,
     artifactPaths: acc.artifactPaths,
+    ...(acc.runFailure === undefined || acc.runStatus !== 'failed'
+      ? {}
+      : { runFailure: acc.runFailure }),
   };
 }
 

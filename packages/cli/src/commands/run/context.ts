@@ -45,6 +45,9 @@ export interface BuildRunContextInput {
    * assembly loads the dispatched agent from. Required: every real run dispatches agents. */
   readonly agentsRoot: string;
   readonly clock?: Clock;
+  /** Environment overlay for every command step, gate check and merge check the run spawns: a `PATH` whose
+   * first entry holds a `forge` that re-launches this CLI (`launcher-shim.ts`). Absent: nothing is added. */
+  readonly commandEnv?: Readonly<Record<string, string>> | undefined;
 }
 
 /** The fixed grant for sessions that are not agent-step dispatch (`forge debug`'s ad-hoc RCA sessions,
@@ -282,9 +285,10 @@ export async function buildRunEngineContext(
     adapter: input.adapter,
     vcs: createVcsFacade(input.projectRoot, input.runId),
     telemetry: createTelemetryFacade(input.projectRoot, input.runId, now),
-    gates: createGateEvaluator(gateRegistry),
+    gates: createGateEvaluator(gateRegistry, { env: input.commandEnv }),
     gateRegistry,
-    mergeQueue: createMergeQueueFacade(integrationPath, undefined),
+    mergeQueue: createMergeQueueFacade(integrationPath, undefined, { env: input.commandEnv }),
+    commandEnv: input.commandEnv,
     runId: input.runId,
     projectRoot: input.projectRoot,
     integrationBase,
@@ -323,6 +327,7 @@ export async function buildRunEngineContext(
     // all, so a real `forge run` enforced no budget cap regardless of what this config said.
     budget: {
       perRunUsd: input.config.budget.perRunUsd,
+      perStepUsdDefault: input.config.budget.perStepUsdDefault,
       dailyUsd: input.config.budget.dailyUsd,
       onBreach: input.config.budget.onBreach,
     },

@@ -37,6 +37,7 @@ import {
   type CompileResult,
   type RetryableFailureClass,
   type StepNode,
+  type StepNodeKind,
   type StepNodeLimits,
   type StepNodeOnFailure,
   type StepNodeRetryPolicy,
@@ -214,11 +215,33 @@ function compileRetry(
   };
 }
 
-function compileLimits(step: AgentStep | undefined): StepNodeLimits {
+/** The step kinds that start a model session and so can spend money. Everything else (`command`, `gate`,
+ * `merge`, `checkpoint`, `elicit`, `subworkflow`) runs no model: it spends nothing, so it reserves
+ * nothing (`PLAN-M13.md` P12, `Q208` finding 2). A `gate`'s advisory critique checks are never dispatched
+ * as sessions today (`gates/types.ts`), so they need no reservation either; if a later piece dispatches
+ * them, the reservation belongs on the session it starts, not on the gate step. */
+const MODEL_STEP_KINDS: ReadonlySet<StepNodeKind> = new Set<StepNodeKind>(['agent', 'session']);
+
+/** The compile-time half of the per-step cost ceiling. A model step's own declared
+ * `limits.maxCostUsd` wins and is marked `'step'`; otherwise the placeholder default is used and marked
+ * `'default'`, which `resolveStepCostCeilings` (`../run/cost-ceilings.ts`) later replaces with the
+ * agent's own `limits.max_cost_usd` or the project's `budget.perStepUsdDefault`, neither of which
+ * compilation can see. A step that runs no model reserves `0`. */
+function compileLimits(
+  kind: StepNodeKind,
+  step: AgentStep | undefined,
+): { readonly limits: StepNodeLimits; readonly maxCostSource?: 'step' | 'default' } {
+  const models = MODEL_STEP_KINDS.has(kind);
+  const declared = step?.limits?.maxCostUsd;
   return {
-    maxTurns: step?.limits?.maxTurns ?? DEFAULT_LIMITS.maxTurns,
-    wallClockMs: DEFAULT_LIMITS.wallClockMs,
-    maxCostUsd: step?.limits?.maxCostUsd ?? DEFAULT_LIMITS.maxCostUsd,
+    limits: {
+      maxTurns: step?.limits?.maxTurns ?? DEFAULT_LIMITS.maxTurns,
+      wallClockMs: DEFAULT_LIMITS.wallClockMs,
+      maxCostUsd: models ? (declared ?? DEFAULT_LIMITS.maxCostUsd) : 0,
+    },
+    ...(models
+      ? { maxCostSource: declared === undefined ? ('default' as const) : ('step' as const) }
+      : {}),
   };
 }
 
@@ -370,7 +393,7 @@ function buildLeafNode(
     consumes: [],
     laneAffinity: step.kind === 'command' && step.inline === true ? 'inline' : undefined,
     retry: compileRetry(agentStep, step.kind, issues, compiledId),
-    limits: compileLimits(agentStep),
+    ...compileLimits(step.kind, agentStep),
     autonomy: undefined,
     idempotencyKey: compiledId,
     onFailure: compileOnFailure(

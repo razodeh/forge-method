@@ -15,16 +15,21 @@ export interface VcsErrorInit {
   readonly code: string;
   readonly message: string;
   readonly remedy: string;
+  /** Structured facts a caller can turn into its own message without parsing `message` (the dirty file
+   * list of `VCS-DIRTY-TREE`, say). Never load-bearing for `message`/`remedy`, which stand alone. */
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 export class VcsError extends Error {
   override readonly name = 'VcsError';
   readonly code: string;
   readonly remedy: string;
+  readonly details: Readonly<Record<string, unknown>> | undefined;
 
   constructor(init: VcsErrorInit, options: { cause?: unknown } = {}) {
     super(init.message, options);
     this.code = init.code;
     this.remedy = init.remedy;
+    this.details = init.details;
   }
 }

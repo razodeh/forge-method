@@ -17,6 +17,12 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import { assertCleanWorkingTree } from '@forge/vcs';
 
 import { buildRunEngineContext } from './context.ts';
+import {
+  createLauncherShimOrWarn,
+  removeLiveLauncherShims,
+  type LauncherShim,
+  type LauncherSpec,
+} from './launcher-shim.ts';
 import { acquireRunLock, releaseRunLock, type RunLock } from './lock.ts';
 
 export interface RunWorkflowOptions {
@@ -37,6 +43,12 @@ export interface RunDeps {
   readonly checksRoot: string;
   /** Project-relative directory of materialized agent definitions (`.forge/agents`). */
   readonly agentsRoot: string;
+  /** How to re-launch this CLI (`launcher-shim.ts`). When present, `command` steps find the `forge` that
+   * started the run on `PATH` even if none is installed. Absent (tests, library callers): `PATH` is left as
+   * the environment gave it. */
+  readonly launcher?: LauncherSpec | undefined;
+  /** Where a non-fatal warning goes (`forge: warning: ...`), e.g. the launcher shim could not be created. */
+  readonly warn?: ((message: string) => void) | undefined;
 }
 
 async function readWorkflowSource(deps: RunDeps, workflowId: string): Promise<string> {
@@ -76,15 +88,43 @@ export interface RealRunResult {
   readonly runState: RunState;
 }
 
-let signalHandlersInstalled = false;
-
 /** `forge pause`'s own real effect (`lock.ts`'s own doc comment: `SIGTERM` terminates this process
  * outright, no cooperative mid-batch pause exists to ask it to stop between batches gracefully instead)
  * — extracted to a named function so it is directly callable (with `process.exit` stubbed) rather than
  * only reachable by a real `SIGTERM` delivered to the test runner's own process, which no test here can
  * safely do. */
 export function handleSigterm(): void {
+  // `process.exit` skips `finally` blocks, so the launcher shim directory is removed here.
+  removeLiveLauncherShims();
   process.exit(0);
+}
+
+/** Ctrl-C and a closed terminal end the run the same way (`128 + signal`, what the shell reports for a
+ * signalled process): the shim directory is removed first, since `process.exit` runs no `finally` block. */
+export function handleInterrupt(exitCode: number): void {
+  removeLiveLauncherShims();
+  process.exit(exitCode);
+}
+
+/** Installs the `SIGTERM`/`SIGINT`/`SIGHUP` handlers for the duration of one run and returns the function
+ * that removes exactly those listeners again. Scoped, not permanent: a process that keeps living after the
+ * run (a test worker, an embedder) gets its own signal behaviour back. Shared by `runWorkflow` and `forge
+ * resume`, both of which own a shim directory while they run. */
+export function installRunSignalHandlers(): () => void {
+  const onInterrupt = (): void => {
+    handleInterrupt(130);
+  };
+  const onHangup = (): void => {
+    handleInterrupt(129);
+  };
+  process.on('SIGTERM', handleSigterm);
+  process.on('SIGINT', onInterrupt);
+  process.on('SIGHUP', onHangup);
+  return () => {
+    process.off('SIGTERM', handleSigterm);
+    process.off('SIGINT', onInterrupt);
+    process.off('SIGHUP', onHangup);
+  };
 }
 
 /**
@@ -145,12 +185,11 @@ export async function runWorkflow(
   // last" one — this is that pointer, updated every time a new run actually starts.
   await writeFileAtomic(deps.paths.resolveState('last-run.json'), JSON.stringify({ runId }));
 
-  if (!signalHandlersInstalled) {
-    signalHandlersInstalled = true;
-    process.once('SIGTERM', handleSigterm);
-  }
+  const removeSignalHandlers = installRunSignalHandlers();
 
+  let shim: LauncherShim | undefined;
   try {
+    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn);
     const ctx = await buildRunEngineContext({
       paths: deps.paths,
       projectRoot: deps.projectRoot,
@@ -160,10 +199,13 @@ export async function runWorkflow(
       checksRoot: deps.checksRoot,
       agentsRoot: deps.agentsRoot,
       clock,
+      commandEnv: shim?.commandEnv,
     });
     const runState = await runEngine(workflowSource, options.expressionContext, ctx);
     return { kind: 'run', runId, runState };
   } finally {
+    removeSignalHandlers();
+    await shim?.cleanup();
     await releaseRunLock(deps.paths);
   }
 }

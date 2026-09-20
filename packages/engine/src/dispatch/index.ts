@@ -13,6 +13,7 @@ export {
   createTelemetryFacade,
   createVcsFacade,
   GateNotFoundError,
+  type CommandLauncherOptions,
 } from './facades.ts';
 export {
   runAgentStep,
@@ -40,6 +41,13 @@ export {
   parseEscalations,
   type CreatePromptAssemblyInput,
 } from './assembly-context.ts';
+export {
+  MAX_RESULT_BYTES,
+  sanitizeResultText,
+  writeResultRecord,
+  type ResultRecordRef,
+  type SanitizedResult,
+} from './result-record.ts';
 export {
   checkDeclaredOutputs,
   outputGlob,
