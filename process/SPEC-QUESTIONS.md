@@ -18388,3 +18388,128 @@ listed in decision 4, `packages/templates/templates/briefs/{run-rca-framework,se
 **Gauntlet.** Three fresh critic rounds; see `GAUNTLET-LOG.md`, `## M13 P21`.
 
 Files: `packages/cli/src/commands/run/{inputs,expression-context,story-inputs}.ts` (new), `run-plan.ts` (`readStageStories`, `planStageForRun`, `isTestPath` exported), `run.ts`, `vcs-refusal.ts` (`refusalOf`, `refusalEnvelopeLine`), `loop/implement.ts`, `bin.ts`; `packages/engine/src/plan/{story-order (new),stage-plan,run-plan,index}.ts`; `packages/core/src/errors/codes.ts` (`RUN-088`..`RUN-092`); `docs/{getting-started,method-guide}.md`; tests `test/run-inputs-compile.test.ts`, `packages/cli/test/commands/run/{inputs,expression-context}.test.ts`, `packages/engine/test/plan/run-context.test.ts`, and the two changed expectations named above.
+
+## Q219 — M13 P25: the `doctor`, `kb lint` and `test` gate checks the CLI rejected, and a Waiver-coverable `skeleton-deployed` for G-Foundation
+
+**Context.** P11 (E1, E4) found that gates name command forms the CLI rejects, and that G-Foundation had no deployment check although `11` F-INIT-7 and `14` §14.9 say it verifies a
+deployed walking skeleton. A failing deterministic check can only be waived (`10` §10.3 rule 1), so an unimplemented check forces a waiver on every project. Owner decisions (P11
+questions 7 and 8): keep every check and implement the commands; keep G-Foundation requiring a deployed skeleton, as a check a Waiver can cover.
+
+**Reproduced.** Every deterministic `run:` string in the ten shipped gate files whose command is `forge doctor`, `forge kb lint` or `forge test`, through the real source CLI in a temp
+project. Rejected before P25: `doctor --rule` for `clean-build`, `reproducible-install`, `ci-skeleton`, `secrets-resolved` (four) and `test-command` (a fifth, which P11's "four remaining"
+leaves to P23: the rule that shows an unset `execution.testCommands`, pinned unimplemented); `kb lint --rule adr-coverage` and `--rule kb-synced`; `test run --rule smoke` and `--rule contract`. Two
+defects the derivation found besides: bare `forge kb lint --json` printed `{v, findings}` with no `errors`, so G-Design's `kb:lint` (`failOn: 'errors > 0'`) read an absent field as "not failing"
+and could never fail (the envelope now carries `errors`); and **a refusal is a fail-open for every gate check**: a `ForgeError` printed by the top-level handler (`{v:1, ok:false, error}`, exit 2)
+has no `errors`/`failed` field, and `evaluateGate` ignores the exit code by design (`evaluate.test.ts` pins it), so an invalid `.forge/config.yaml` or one corrupt spec document made a check pass. Every
+new rule command therefore converts any refusal into a failing envelope (`errors: 1` / `failed: 1`, with the refusal's message and remedy). **Not fixed here (the shared evaluator and P21's refusal
+envelope are not this piece's): the same fail-open exists for every other gate line (`spec validate --rule`, bare `test run`, `test coverage`, `test flaky`) on a refusal, and for a flag-parse refusal on
+any line.** A fix is one line in `refusalEnvelopeLine` (add `errors: 1, failed: 1`) or an evaluator rule that fails a check whose output lacks the numeric field its `failOn` reads; it is a decision for
+the orchestrator. `packages/cli/test/commands/gate-family-coverage.test.ts` derives the command lines from the gate YAML, runs each through the real launcher, and requires: the rejected set equals
+the pinned set exactly, every accepted line prints a `{v:1}` envelope holding, as a number, the field its `failOn` reads, every pin is still used by a gate, a refusal (invalid config) is a failing
+verdict for every line, and the same holds through the real `evaluateGate`. Scope, exactly: these three families. `diagram`, `deploy`, `spec interfaces` are P26's.
+
+**What was built.**
+- `packages/cli/src/commands/doctor/{rules,rules-foundation,rules-delivery,committed-tree,rule-command}.ts`: `forge doctor --rule clean-build|reproducible-install|ci-skeleton|secrets-resolved|
+  skeleton-deployed`. Envelope `{v:1, rule, errors, violations:[{subject, message, remedy}]}`, exit 0/1, exit 2 for a name that is not one of these (the pin mechanism); `--rule` repeated, or with `--fix` /
+  `--rebuild-index`, is `USR-002`. At most 200 violations listed.
+- `packages/cli/src/commands/kb-rules.ts`, `kb-rule-command.ts`, `kb-sync-record.ts`: `forge kb lint --rule adr-coverage|kb-synced`, `{v:1, rule, errors, findings:[{ruleId, severity, message,
+  entryId?, remedy}]}`. `packages/kb/src/db/read.ts` (`readKbIndexEntries`) is the read-only look at the derived index. `forge kb sync` now also writes `.forge/state/kb-files.json`, a content hash of every KB file.
+- `packages/cli/src/commands/loop/test/layer.ts`, `layer-command.ts`: `forge test run --rule smoke|contract`. `@forge/engine/dispatch` `runShellCommand` gained an optional `limits` argument
+  (`timeoutMs`, `maxOutputBytes`); a caller that passes none sees exactly the behaviour and result shape it always had.
+- `ENV-006` (`packages/core/src/errors/codes.ts`), `smoke` in `execution.testCommands`' layer enum (`packages/schemas`, JSON schema regenerated), `skeleton:deployed` in `G-Foundation.gate.yaml` and its
+  `greenfield-service` fixture copy (the header hash is the sha256 of the body, recomputed and checked), one sentence in `specs/10` §10.3's catalogue row for G-Foundation (was: "Clean clone doesn't build;
+  no reproducible install; CI skeleton absent; no test command"; now ends "...; no test command; walking skeleton not deployed to a development environment", which is what `11` F-INIT-7 and `14` §14.9
+  already say), the `scaffold-ci` brief (the deploy job writes the deployment record), the `critique-project-foundation` brief (names the fifth check, and no longer says the checks prove a clean checkout builds:
+  they do not run it), the `scaffold-project` brief (`smoke` in the layer list), and one pin removed from `test/command-steps.test.ts` (`test run --rule smoke`).
+
+**Decisions (the specs are silent or give a one-line catalogue entry; each is the conservative literal reading; the owner can veto any).**
+1. *The three clean-clone rules prove structure and run nothing.* `10` §10.3 says "Clean clone doesn't build; no reproducible install; CI skeleton absent". A gate check must be deterministic and read project
+   state only, and an install needs the network, so none builds or installs. They read what a clean clone of `HEAD` would contain (`git ls-tree`, never the working tree: a manifest that is untracked, ignored,
+   staged-only, edited-but-uncommitted or a symlink is not in a clone; git is run with argument vectors and `GIT_NO_LAZY_FETCH=1`) and prove the preconditions `11` F-INIT-3 states as hard requirements and
+   `14` §14.3 gives the pipeline. `clean-build`: a committed manifest declares (`package.json` `scripts.build` that is not a no-op such as `true` or `echo x`, a Makefile `build:` target, a justfile recipe, a
+   Taskfile task, a pyproject `[build-system]`) or implies (a non-empty `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle(.kts)`, `MODULE.bazel`, `flake.nix`, `setup.py`, `pubspec.yaml`, a .NET project file) a
+   build command; a manifest that cannot be read is a violation even when another file declares a build. `reproducible-install`: every ecosystem present (JavaScript, Python, Rust, Go, Gradle, Maven, Nix,
+   Bazel, Dart, .NET, Ruby, PHP) has its committed lock with content (a JSON npm lockfile must have a `lockfileVersion` and, when `package.json` declares dependencies, must lock something; any lock that
+   is under 100 bytes beside declared dependencies is a stub) and a declared toolchain version (`.nvmrc`/`.node-version`/`.tool-versions`/`engines.node` other than `*`/`volta.node`, `.python-version`/
+   `requires-python`, `rust-toolchain(.toml)`/`rust-version`, a `go` directive, the Gradle wrapper, an `environment: sdk:` constraint, `global.json`, `.ruby-version`, `require.php`); Python requirements
+   files count as a lock only when every line is pinned (`==`, or a URL pinned to a 40-hex commit or a hash); a `pyproject.toml` that only configures tools does not make a JavaScript repository a Python one;
+   Maven, which has no lockfile FORGE can verify, and a repository with no recognised manifest, fail. `ci-skeleton`: a committed, parseable pipeline definition (GitHub Actions, GitLab CI, CircleCI, Azure
+   Pipelines, Bitbucket Pipelines, Buildkite, Jenkins) with a trigger and at least one job that has somewhere to run and a step that runs a real command or uses an action (or calls a reusable workflow);
+   every committed definition must be valid, so one good file does not excuse a broken one; scripts under `ci/` are not a pipeline. **What they cannot show**: that the build succeeds. `14` §14.3 rule 7
+   says the pipeline's stage results land in `docs/forge/reports/` for gates to read, in a format no spec defines: recorded as an open item, not invented here. Structural heuristics have false passes
+   (`scripts.build: "tsc"` over a broken build; `sleep 1` as a step is caught, a cleverer stub is not) and false fails (an ecosystem not listed above is "no recognised manifest", a waivable failure that names
+   what was looked for).
+2. *`skeleton-deployed`* (`11` F-INIT-7, `14` §14.9; owner question 8). Passes when an `Environment` entry whose `purpose` says `dev` or `development` (word-bounded, and not also naming production, staging,
+   preview or uat) has an `http(s)` URL that is not local (loopback in any spelling including IPv4-mapped and IPv4-compatible IPv6, `0.*`, link-local, `*.local`, `*.localhost`, `host.docker.internal`, a
+   single-label name; RFC 1918 ranges are allowed, a development environment on a company network is real) AND `docs/forge/reports/deployments/<ENV-id>.json`, **read from the committed project**, shows a
+   succeeded deployment. `14` §14.4 rule 5 says deployments are recorded (artifact, SHA, outcome) and §14.3 rule 7 says stage results land in `docs/forge/reports/`, but neither defines a file, and an ENV entry
+   alone describes an environment without showing anything was deployed to it, so the record's shape is P25's: `{v:1, environment, outcome:"succeeded", sha, deployed_at, health:{url, status (2xx),
+   checked_at}}`, where `sha` must be a commit in the history of the checked-out commit, both instants carry a zone (a zone-less one would make the ordering depend on the machine's `TZ`), `checked_at` is not
+   before `deployed_at`, and `health.url` is on the environment's own host. **The record is self-attested**: the check proves it is present, well-formed and consistent, not that a deployment happened; no spec
+   defines a verifiable source, and the honest bypass for a project with no environment is a Waiver. The `scaffold-ci` brief has the trunk deploy job write it; who commits it is left to the project (the
+   brief says to state it in `ci/README.md`). **The check cannot pass inside `initialize-project`** (`foundation-gate` runs right after `scaffold-ci`, before a pipeline has run), so a greenfield project takes
+   a Waiver on it first and clears it when the first deployment lands: that is the cost the owner accepted in question 8. **A Waiver covers it** exactly as it covers any failing deterministic check (`10` §10.3 rule 1):
+   `skeleton-gate.test.ts` drives the shipped `G-Foundation.gate.yaml` through `evaluateGate` with the real CLI, then `applyWaiver` and `isApproved`, proves a blank reason and an expired date are still refused, and
+   proves the waived result still lists every failing check (a Waiver is gate-wide, so the one that clears `skeleton:deployed` also covers `clean-build`, `reproducible-install` and `ci-skeleton`: the report is
+   how a reader sees what it covered).
+3. *`secrets-resolved`* (`14` §14.7 item 6, `10` §10.3 "secrets unresolved"). The same scan as `forge doctor`'s existing `secret-references` warning (`${secret:NAME}` in `.forge/**` and `docs/forge/**`, not
+   `.forge/state`), as a failing rule, with one difference: a variable set to an empty or whitespace-only string does not resolve a secret. Only names are reported, never values. It resolves against the
+   environment the check runs in (a check that reads no secret manager can mean nothing else), and it is vacuous on a project that references no secret.
+4. *`adr-coverage`* is `lintKb`'s own `kb:component-coverage` (`08` §8.7: every component in `components.md` has at least one owning ADR) plus the tree's parse errors (an ADR or the register that fails its
+   schema is missing from what the rule can see, so it must not pass silently). A `rejected`, `superseded` or `deprecated` ADR owns nothing (and the finding says so); a `proposed` one counts, because nothing in
+   the design phase promotes an ADR to `accepted` (the ADR template defaults to `proposed`; only `forge adr accept` changes it), so requiring `accepted` would force a Waiver on every project that follows the
+   shipped briefs. **An absent register, or one with no component, fails**: the rule is per component, and with none registered it holds for nothing (the same presence reading as Q214 decision 7). It reads the KB
+   only, so a corrupt spec document cannot stop it. Other lint findings (a dangling reference, staleness) are not this rule's.
+5. *`kb-synced`* (`10` §10.3 "KB not synced", `08` §8.9 "Human edits are detected via content hash; `forge kb sync` re-indexes"). Two comparisons. (a) The index must hold exactly the entries a `rebuildIndex`
+   over the current tree would write, with the same hash and path (a missing, changed or deleted entry each fails, by id). (b) The index hashes the parsed front matter of four kinds only (kb-entry, adr, diagram,
+   runbook), so an edit to an ADR or runbook body, or to `components.md`, `environments.md` or any register, would pass (a); `forge kb sync` therefore also writes `.forge/state/kb-files.json` (a sha256 of every
+   file the KB parser reads) and the check compares it with the files now (added, deleted and changed files each fail, by path). A KB synced before that record existed has none, and fails until synced again. Never
+   synced (no index) fails, including for an empty KB; an unreadable index fails; a KB file that fails its schema fails (it cannot be synced), while `forge kb sync` itself still succeeds around a file it cannot
+   read (recorded as `unreadable`). The check never repairs: the reader opens SQLite read-only and reads the JSON file without the backend (whose `close()` rewrites its file). When `index.db` cannot be opened it
+   falls back to `index.json`, as `openKbIndex` does, so `forge kb sync` (which then writes the JSON file) is a remedy that works.
+6. *`test run --rule smoke|contract`* (`13` §13.1 F-TEST-1 rule 4 "every layer has a single command ... gates invoke these"; `01` D6 "exit-code driven"). Runs `execution.testCommands.smoke|contract` through
+   `runShellCommand`, the runner `command` steps, gate checks and `kb verify` already share. The verdict is the exit code (0 passes), so it works for any test runner; it deliberately does not use
+   `runAndNormalize`, which reads vitest or pytest reports and refuses shell syntax. The string runs exactly as configured (trailing whitespace trimmed, so a YAML block scalar works): nothing is appended, nothing
+   is interpolated (not the rule name, not a path), so no other value can inject into it; a value with an interior line break or NUL is more than one command and is refused. Unset, blank or unusable is `ENV-006`
+   (message names the key, remedy says how to set it), printed as a `{v:1, failed:1, code, problems, remedy}` envelope with exit 1, because an empty stdout is "could not be parsed", a failure with no reason; an
+   empty string is `CFG-001` from the schema, which is the same failing envelope; a different layer's command never stands in. Bounded: 600 000 ms (`13`'s largest layer budget, E2E "layer < 10 min") and 8 MiB of
+   output per stream, both failing the check. The run is its own process group with stdin closed: a timeout, the cap, the shell finishing (whatever it left running is ended, so a command that exits 0 but leaves a
+   server or daemon holding the pipe passes and does not wait out the timeout), SIGINT, SIGTERM, SIGHUP and process exit all end the whole group; a process that left the group (`setsid`) and holds the pipe is cut
+   loose after a 1 s grace. (With execa's own `timeout`, `sleep 30 & sleep 30` under a 400 ms limit took 30 s to return, and Ctrl-C would have orphaned the command.) Writes nothing under the project (it must not replace
+   `test-results.json` or `flaky.json`), applies no quarantine (every failure counts), reports no duration (deterministic). `smoke` is a new key in `execution.testCommands`: it is not one of F-TEST-1's five layers,
+   and reusing `e2e` (the whole capability suite, in the preview environment) would run the wrong thing under the right name; `14` §14.9 names "smoke and e2e" separately. `ENV-006` is registered with exit code 1, the code the
+   CLI exits with.
+7. *Envelope and exit-code conventions* follow `spec validate --rule`: `{v:1, errors, ...}` (`failed` for `test`), exit 0/1, exit 2 for an unknown rule name, remedy on every violation, text from project files stripped of
+   control and format characters in the human form (a failing test's own multi-line output keeps its line breaks), no value from a secret ever printed. Command modules take an output port; only `bin.ts` prints.
+
+**Disclosed limits (not fixed).**
+- The evaluator and refusal-envelope fail-open above, for every gate line this piece did not write; and a flag-parse refusal (`--rule=x`, a duplicate `--rule`, an unknown flag) on any line prints the refusal envelope.
+  The shipped gate strings cannot reach that path.
+- The clean-clone rules prove structure; the skeleton record is self-attested; both are stated in each message. A project rooted below its git root sees only its own subtree (a CI file at the git root is a false
+  failure), and `paths.code` other than `.` is not consulted. A shallow clone can fail the ancestor check for an old deployed commit. `git` inherits `GIT_DIR`/`GIT_INDEX_FILE` from the environment (wrong inside a hook).
+- `secrets-resolved` resolves against the environment of the process running the check and is vacuous when nothing is referenced. The `.forge` / `docs/forge` scan only reads `.md`, `.yml`, `.yaml`, `.json`.
+- A multi-line `smoke: |` (several real lines, not just a trailing newline) is refused: chain with `&&` or point at a script. A command that leaves a child that ignores SIGKILL's group (a different session) is not
+  reaped; only the pipe is cut loose. The captured output tail of a failing command is put in the envelope unredacted.
+- `adr-coverage` reads `applies_to` and `sources` as `lintKb` does (Q56); it does not judge whether the ADR is about the component.
+- The G-Foundation Waiver is gate-wide by design of `10` §10.3; Maven projects can only pass `reproducible-install` by Waiver.
+- `packages/cli/test/bin.test.ts` takes ~12 minutes under load (156 real-CLI tests) and was run with `-t "kb|doctor|test run"` after the last change; the whole file passed once before it.
+- `deliver-stage.workflow.yaml`'s comment (P16's uncommitted file at the time) still says `test run --rule` has no `smoke`; it needs one line changed when P26 lands the `deploy` forms.
+
+**Verification scoping (owner-approved cost cut).** Scoped: `packages/cli/test/commands/{doctor,loop,spec}`, `kb*.test.ts`, `gate-validate`, `gate-family-coverage`, `bin.test.ts` (`-t`), `packages/kb`, `packages/engine/test/{dispatch,gates}`,
+`packages/schemas`, `packages/core/test/errors.test.ts`, `packages/templates`, `packages/agents/test/prompt`, and the root files `command-steps`, `gates`, `workflows`, `agent-prompts-all-workflows`, `output-contract-known-gaps`,
+`determinism`, `live-smoke`; plus `pnpm typecheck`, `pnpm run boundaries`, eslint and prettier on the changed files (`pnpm lint` itself fails only on other pieces' uncommitted files and the four known prettier warnings). No full
+suite. `workspace-floor` is racy while other agents run it (it plants files in the shared tree) and was not chased; my new tests are all `*.test.ts` and the only helper I extended (`doctor/helpers.ts`) is already registered. Mutation checks
+(each reverted, each failed a named test): the build-declaration early return, the JS lock check, the pipeline validity check, the go directive check, `requireValue` in the secrets scan, the local-address test, the health status test,
+the host match, the commit-exists test, the ancestor test, the `hash` and `path` comparison and the deleted-entry loop in `kb-synced`, the file-drift comparison, the unreadable-tree findings and the empty-register test in
+`adr-coverage`, the unset-command check, the timed-out / flooded pass condition, the limits argument, the `errors` count in bare `kb lint`, the refusal handlers of the doctor and test commands, the `100644/100755` mode filter in the
+committed tree, the gate line in the YAML, one rule name in `DOCTOR_RULE_IDS`, the SIGTERM handler, the stderr flood counter and the stream grace.
+
+**Gauntlet.** Three critic rounds, none empty (`GAUNTLET-LOG.md`, `## M13 P25`).
+
+Round 1 (1 blocking, 4 major, 8 minor): any refusal (an invalid config, a corrupt spec document) made every new gate check pass; the limited runner orphaned the command on Ctrl-C and SIGTERM and a
+`setsid` grandchild defeated the timeout; `skeleton-deployed` accepted "Production (never dev)", `localhost.` and IPv4-mapped loopback; the clean-clone rules passed stubs; `adr-coverage` counted a rejected ADR.
+Round 2 (0 blocking, 7 major): `kb-synced` could not see an ADR or runbook body or a register edit; `adr-coverage` failed a project that follows the briefs (proposed ADRs); a legitimate multi-MB
+`package-lock.json` was reported missing; more stubs; a YAML block-scalar test command was refused; `--rule=smoke` ran the whole default suite. Round 3 (1 blocking, 4 major): quadratic regexes on hostile
+files were only fixed at one site (an audit of every `^\s*` and lazy `[\s\S]*?` was needed); `echo x && real` was a "no-op"; `forge kb sync` regressed on an unreadable KB file; a command that exited 0 but
+left a child holding the pipe was reported timed out; more permissive stub cases; the evidence record was read from the working tree (a FIFO hung it). Each was fixed with a test that fails without it;
+round 3's fixes were verified by the scoped suite, typecheck, lint and boundaries, not by a fourth critic.
