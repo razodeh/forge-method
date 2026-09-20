@@ -16968,3 +16968,91 @@ inference}.ts`, `packages/engine/src/plan/{compile,types}.ts`, `packages/engine/
 `packages/cli/src/commands/{run/{context,run,resume},loop/*}.ts`, `packages/cli/src/bin.ts`,
 `packages/core/src/errors/codes.ts`, tests (`packages/engine/test/e2e/prompt-assembly.test.ts` is the
 full-path suite), root `test/{fm-*-workflow,live-smoke}.test.ts`.
+
+## Q205 — M13 P3c: 21 agent brief specialisations could never attach — re-keyed, split, merged or dropped, and the
+permanent test that keeps every `prompt.briefs` key attachable
+
+**Context:** `PLAN-M13.md` P3c. `assembleAgentSession` (`assemble.ts`) attaches `agent.prompt.briefs.<key>` to block [4]
+only when `<key>` is the basename (minus `.md`) of the step's workflow `brief:`, or, for an interaction-mode participant
+session, the mode name (`swarm-review`, `panel`, `debate`, `pair`; a `panel`/`debate`/`swarm-review` step's participants
+use the mode name *instead of* the basename, a `pair` step uses both). Q198/Q199 counted 22 dead keys of 33 from a quick
+script. Recomputed here with a script over every `modules/*/agents/*.agent.yaml`, every built-in and module workflow (nested
+`fanout.step`/`do` steps included), every gate's advisory checks, and `{{ownerRole}}`/`{{item.owner_role}}` resolved to the
+agents that own code (an agent with a `Code` output): **24 `<module>/<agent>.<key>` entries = 21 distinct keys** were dead
+(fm-core 19 keys, plus `data-engineer.model-warehouse` and `frontend.component-spec` that only the module overrides carry;
+`reviewer.swarm-review` was live once P5 passed the mode name). The 22 in Q198/Q199 included that one. The shipped total
+was 33 distinct keys (38 entries over all module files).
+
+**Decisions** (each names the step the agent really runs, verified against the workflows):
+
+| Old key | New | Why / what changed |
+|---|---|---|
+| `analyst.discovery` | `analyst.frame-problem` | analyst runs `frame-problem` (discover); the text is about session records and the problem statement. One phrase reworded ("discovery step" -> "problem-framing step"). |
+| `architect.design-system` | `architect.select-architecture-style` | The file is the design discipline for the style/decomposition/interaction/NFR/views step. No edits. |
+| `architect.review-change` | `architect.change-impact-analysis` | architect runs it in `replan`. No edits. |
+| `data-architect.design-data-model` | `data-architect.model-data` | `shape-solution`'s `model-data`. No edits. |
+| `integration-architect.design-integration` | `integration-architect.draft-contract` (fm-service) | Runs in fm-service's `contract-test-cycle` only. Intro reworded: one interaction per run, other crossings go in the closing message. **The fm-core copy's key is dropped**: fm-service ships its own `integration-architect`, which replaces the core one wherever that workflow exists, so a key on the core copy is dead in every install (the test models this shadowing). |
+| `test-architect.plan-testing` | `test-architect.write-test-plan` | Heading only. |
+| `ux.design-flows` | `ux.write-ux-spec` | Heading only. |
+| `release.write-release-notes` | `release.prepare-store-submission` | The only step `release` runs (fm-mobile `store-release`); its brief includes "release notes for the store". Reworked to the notes part: the deprecation ledger inside a release record and the version recommendation are gone (the build record supplies the version; deprecations go in the notes or Open items). The whole non-mobile release-notes deliverable (`release.system.md`'s trace section and ledger) has no step and no specialisation. |
+| `frontend.component-spec` (fm-web) | `frontend.document-story` | ComponentSpec is documentation: the workflow's `document` step runs `{{ownerRole}}` with `document-story`; `implement-story`'s own paragraph already defers the spec to "the documentation step". Content kept verbatim; added: it applies only when the story created/changed a reusable component, the spec path may be outside the claim (raise `FORGE_REQUEST_CHANGE:`), and update an existing spec instead of creating a second CS-###. A first draft merged it into `implement-story`; round 1 caught that as the wrong step. |
+| `platform.initialize-project` | `platform.decide-repo-strategy` + `platform.scaffold-project` | The file was already written as stages ("Repository-strategy step only", "Scaffold step only"); split so each key carries its own stage and the tags are gone. |
+| `sre.design-delivery` | `sre.design-cicd-pipeline` + `sre.design-deployment-strategy` | Pipeline stages/ladder/secrets/diagram vs strategy/rollback table/rehearsal/smoke/observability. The environment ladder stays in the pipeline file, stated in the ADR when the KB has no environment strategy (no shipped step produces one). |
+| `pm.define-product` | `pm.write-vision` + `pm.decompose-stages` | pm runs `write-vision`, `define-success-metrics`, `decompose-stages`, `propose-change`. Items 1, 2 and the open-question rule went to the Vision file; the stage-by-risk/slack/dependency items (with the sizing test) to the stage file. **Dropped: items 3, 4, 6, 8** (prioritisation method, capability-size test with `wont`, numeric NFR derivation, lower-level delta): they belong to `write-prd`, which the workflow gives to **`po`**, while `pm`/`po` definitions and `po.system.md` say capability scope and priority are the PM's (P11). Re-homing them under `po.write-prd` put a role-boundary contradiction into the prompt text (round 2/3 critics), so they are not re-homed; NFR derivation is already in the `define-success-metrics` brief. Restore: `git show d241002:packages/templates/templates/prompts/pm.define-product.md`. |
+| `data-engineer.implement-pipeline` + `data-engineer.model-warehouse` (fm-data) | `data-engineer.implement-story` | data-engineer runs no pipeline/warehouse step, only story steps as owner role. Merged into one file: a pipeline part, a warehouse-model part (only where the agent has a `DataModel` output and the story's expected files name the document), one shared diagram paragraph and one before-you-finish paragraph. Contradiction fixed: the pipeline text let the agent "write tests itself when the claim includes them"; the `implement-story` brief says test files are never the implementer's, so it is now "flag a missing test with a change request". fm-core's data-engineer (no `DataModel` output) points at the same file. |
+| `ml-engineer.integrate-model` | `ml-engineer.implement-story` | ml-engineer is a story owner. Prefixed "applies only when the story puts a model behind a feature"; the failing tests exist and are not edited; harness inside the claim (matches `ml-engineer.system.md`), datasets/tests requested; "stop and report" became "report the conflict and build only what does not depend on the model". A `plan-story` split was tried and reverted: `build-stage` has no plan step, so the guidance would not reach it. |
+| `compliance.map-compliance` | dropped | `compliance` runs no shipped step or gate. |
+| `domain-modeler.model-domain` (fm-core, fm-service) | dropped | `domain-modeler` runs no shipped step; `model-data` is data-architect's. |
+| `facilitator.run-session` | dropped | Sessions dispatch a synthetic facilitator through the session runner with no brief key. A follow-up could pass a `session` key like participants pass their mode name; not done (Q203's rule is unchanged). |
+| `finops.model-cost` | dropped | `finops` runs no shipped step. |
+| `orchestrator.schedule-run` | dropped | `orchestrator` runs no step (`derive-run-plan` is a command). |
+| `techwriter.write-docs` | dropped | `techwriter` runs no shipped step. |
+
+Dropped files are recoverable from git at `d241002` (`packages/templates/templates/prompts/<agent>.<key>.md`). Counts:
+`PROMPTS_A` 31 -> 26 keys, `PROMPTS_B` 31 -> 32; `prompts-a-content.test.ts`/`prompts-b-content.test.ts` pin the new
+numbers. Both content tests gained a check that a brief file uses at least one term from its agent's own outputs/decisions/name
+(a re-keyed generic key such as `implement-story` made the old key-word check nearly free). `a2-roster.test.ts` compares the
+shipped architect to `05` §5.3's worked example except `frameworks`/`skills` (already) and now `prompt.briefs` key names,
+which it pins to the two real keys; `prompt.system` is still asserted equal.
+
+**The permanent test:** `packages/agents/test/prompt/brief-keys-attachable.test.ts` (in `@forge/agents`: it needs that
+package's loader and `@forge/templates`; the engine is not importable, so the mode-name list is read as text). It fails with
+`<module>/<agent>.<key>`. It also pins the gate-only key (below), that the modes equal what `dispatch-agent-step.ts` passes,
+and the literal lookup lines in `assemble.ts` (a refactor there must be reviewed here). Detector cases prove it flags a brief
+another agent runs, a templated step for a non-code agent, an unknown mode, a step only in a module that shadows the agent,
+and the basename of a `panel`/`debate`/`swarm-review` step.
+
+**Disclosed limits (kept, not fixed):**
+1. `critic.critique-architecture` is attachable only through a gate advisory check, which the engine never dispatches
+   (`gates/evaluate.ts`). It is credited (the brief says gates count) but pinned as gate-only, so the first advisory dispatch
+   makes it live and any new gate-only key is a reviewed decision.
+2. A key is credited by any module's workflow (a module's steps may run another module's agent: fm-mobile runs core's
+   `release`), so `release.prepare-store-submission` is live only where fm-mobile is installed.
+3. `base-engineer.implement-story` is credited through `{{ownerRole}}`; `base-engineer` is a shared base ("not itself a
+   roster role") and a story would have to name it as owner. Children never inherit `prompt` (`resolveExtends` replaces it).
+4. Mode keys are credited only to an agent a shipped workflow step runs under that mode; interaction sessions also dispatch
+   `panel`/`debate` participants, but no shipped key relies on that.
+5. `data-engineer.implement-story.md` (both story kinds in one file) is longer than the others.
+6. Role/step incoherences the specialisations rest on, for P11: `write-prd` runs as `po` (outputs `Story` only, `kb_write`
+   `product/backlog/**`, a system prompt that reserves scope to the PM) while producing `Capability`/`NFR`; `po`/`pm`
+   boundary as above; `release.system.md` requires a trace section and a deprecation ledger that the store-submission
+   record has no place for.
+7. Stale on purpose: `specs/05` §5.3's worked example and `packages/agents/test/fixtures/architect.ts` keep
+   `design-system`/`review-change` (the spec is unamended; the example should use real names); `fixtures/greenfield-service/
+   .forge/agents/*.yaml` (17 files) are frozen generated snapshots that still carry the old keys and point at prompt
+   files that are gone (no test loads them as agents); `packages/cli/src/commands/run/run-plan.ts` (P10, uncommitted at
+   the time) still names `orchestrator.schedule-run` in a comment.
+
+**Verification (scoped by coordinator instruction, owner-approved cost cut; no full unscoped suite):** `packages/agents`
+and `packages/templates` (1031 tests), `packages/cli/test/{commands/agent,commands/workflow,e2e/init}.test.ts` and
+`packages/cli/test/init`, `test/{workspace-floor,templates,fm-core-module,fm-data-framework,fm-web-templates,
+fm-service-workflow,fm-mobile-workflow}.test.ts`, `packages/engine/test/e2e/prompt-assembly.test.ts`; `pnpm typecheck`
+(21/21), `pnpm run boundaries`, eslint clean (`pnpm lint` reports only the 4 pre-existing prettier files). Two failures in
+that scope belong to concurrent pieces, not this one: `packages/cli/test/init/model-tiers-init.test.ts` (P5b, doctor message)
+and `test/workspace-floor.test.ts` (P5b's stray `packages/cli/test/init/tier-stubs.ts`).
+
+**Gauntlet:** three critic rounds; see `GAUNTLET-LOG.md`, `## M13 P3c`.
+
+Files: `modules/*/agents/*.agent.yaml` (22), `packages/templates/templates/prompts/*.md` (62 -> 59 files),
+`packages/templates/src/content/prompts-{a,b}.ts`, `packages/agents/test/prompt/{brief-keys-attachable,prompts-a-content,
+prompts-b-content}.test.ts`, `packages/agents/test/content/a2-roster.test.ts`, `docs/authoring-guide.md`.

@@ -13644,3 +13644,63 @@ the 4 pre-existing untouched files. Full unscoped `node scripts/run-tests.mjs ru
 crash-resume passes in isolation), `kb/test/adopt/survey.test.ts` (accepted flake, passes in isolation),
 `cli/test/commands/upgrade/{backup,run-upgrade}.test.ts` (accepted load-sensitive, both pass in isolation), and the stale
 `brief-prompt-content.test.ts` case above (fixed and re-run green).
+
+## M13 P3c — Re-key the agent brief specialisations that can never attach (`prompt.briefs` keys, `@forge/templates` `PROMPTS_A`/`PROMPTS_B`)
+
+**Piece:** `assembleAgentSession` attaches `prompt.briefs.<key>` only for a key equal to the step brief's basename (or a
+participant-mode name); 21 shipped keys (Q198/Q199 said 22, one was fixed by P5) matched nothing the agent runs, so their
+authored files never reached a prompt. Each was re-keyed to a brief its agent runs, split across the briefs it serves, merged, or
+dropped along with its file and registry entry when the agent runs no step; a permanent test now fails on any dead key. Decisions
+per key and every disclosed limit: Q205. Three critic rounds (no round came back empty; the last round's findings were fixed and
+verified with the scoped suite, lint and typecheck rather than a fourth round).
+
+### Round 1: 0 blocking, 5 major, 6 minor
+
+The attachability test credited `critic.critique-architecture` through a gate advisory check the engine never dispatches (now
+pinned by name as gate-only); the `data-engineer` merge put a warehouse-model half into a step whose brief allows production
+code only (scoped to agents with a `DataModel` output and stories whose expected files name the document); the `component-spec`
+template had been merged into `frontend.implement-story` (wrong step: re-keyed to `document-story`, which the implement prompt
+already defers to, and the dropped "other standard front-matter fields" clause restored); `ml-engineer` items told an implementer
+to define the eval and "stop and report" in a step whose tests exist and are immutable; `pm.define-product` items 3/4/6/8 had been
+deleted although their step (`write-prd`) exists. Minors: scaffold prompt said the layout already existed, the pipeline prompt
+added an environment ladder and handoff its brief does not ask for, `a2-roster` no longer pinned the shipped brief values, and the
+heading of two re-keyed files still named the old step.
+
+**What the critic caught that the builder missed:** the builder had verified every key against the workflow that runs the agent but
+not the *content* against the step brief's rules (who may edit tests, which files the step may write); four of five majors were of
+that kind. The gate-advisory credit was the builder's own reading of "gates count" that turned out to be vacuous in practice.
+
+### Round 2: 0 blocking, 4 major, 6 minor (after round-1 fixes)
+
+Round 1's own fixes over-corrected in two places: the ML split into `plan-story` + `implement-story` left `build-stage` (which has no
+plan step) without the eval guidance and left the harness with no author against `ml-engineer.system.md` (merged back into
+`implement-story`, harness inside the claim); the pipeline prompt then assumed an environment strategy no step produces (the ladder
+is stated in the ADR when the KB has none). `po.write-prd`, added in round 1's fix, told the PO that scope and priority were its job
+against `po.system.md` (reworded; removed in round 3). `frontend.document-story` wrote a KB file unconditionally although the
+`document` step declares no claim (now raises `FORGE_REQUEST_CHANGE:` and updates an existing spec). Minors: `write-vision` referenced
+a handoff record it does not produce, release-notes leftovers (audience classes, a ledger), vocabulary-check weakening from generic
+brief keys (a second check requiring one term from the agent's own definition was added to both content tests), authoring-guide
+wording (`$append_guidance` exception).
+
+### Round 3: 1 blocking, 1 major, 5 minor
+
+Blocking: the new test file failed eslint (`prefer-optional-chain`) — the builder had linted it before the last edit and never re-ran
+after; fixed and `pnpm lint` re-run. Major: `po.write-prd` again (role-boundary contradiction with `po.system.md`, and a hand-back to
+a PM step that does not exist in `define-product`): removed rather than reworded, and the pm items recorded as dropped pending P11's
+decision on who runs `write-prd` (Q205). Minors fixed: `draft-contract` still invited several boundaries; the test credited a
+`fm-core/integration-architect.draft-contract` key that fm-service's own copy shadows in every install (the key was removed and
+the test made shadow-aware) and the basename of a `panel`/`debate`/`swarm-review` step (which the engine replaces with the mode
+name); release prompt reworded against `release.system.md`. Left as disclosed limits: source-text drift guards on `assemble.ts`, the
+shared data-engineer file's length, `base-engineer` credited through `{{ownerRole}}`.
+
+**Process notes:** the shared index was never used for staging until the commit (a private `GIT_INDEX_FILE` produced each critic's patch),
+because concurrent pieces commit from the same working tree. Two scoped failures belong to other pieces (P5b's doctor-message test and its
+stray `packages/cli/test/init/tier-stubs.ts` against `workspace-floor`). `Q204` was already claimed by P5b's code comments, so this piece
+took Q205. First-draft mistakes the loop corrected: keeping a key by pointing it at the nearest generic brief without reading the step
+brief's rules, and treating "a sibling piece will fix the role assignment" as licence to write the inconsistency into prompt text.
+
+**Verification:** scoped per the owner-approved cost cut (no full unscoped suite): `packages/agents` + `packages/templates` (1031 tests),
+`packages/cli/test/{commands/agent,commands/workflow,e2e/init}.test.ts` + `packages/cli/test/init`, `test/{workspace-floor,templates,
+fm-core-module,fm-data-framework,fm-web-templates,fm-service-workflow,fm-mobile-workflow}.test.ts`,
+`packages/engine/test/e2e/prompt-assembly.test.ts`; `pnpm typecheck` (21/21), `pnpm run boundaries`, eslint clean, prettier reports only the 4
+pre-existing files. Failures in that scope belong to P5b (see above).
