@@ -6,7 +6,7 @@
  * @see specs/03 §3.3
  * @see PLAN-M13.md P1
  */
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -25,12 +25,11 @@ afterEach(async () => {
 });
 
 describe('brief/prompt regenerable content', () => {
-  it('a real forge init writes no .forge/briefs or .forge/prompts yet -- both indexes are empty (Q197)', async () => {
+  it('a real forge init materializes shipped content into both .forge/briefs and .forge/prompts (M13 P2/P3 authored it; Q197 recorded the empty state)', async () => {
     const project = await createTestProject();
     for (const dir of ['.forge/briefs', '.forge/prompts']) {
-      await expect(stat(project.paths.resolveWithin(dir))).rejects.toMatchObject({
-        code: 'ENOENT',
-      });
+      const entries = await readdir(project.paths.resolveWithin(dir));
+      expect(entries.filter((name) => name.endsWith('.md')).length, dir).toBeGreaterThan(0);
     }
   });
 

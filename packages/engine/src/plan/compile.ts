@@ -226,6 +226,8 @@ function compileOnFailure(
 }
 
 interface CompileEnv {
+  /** The workflow's own declared `inputs:`; see `StepNode.runInputs`. */
+  readonly inputs: readonly { readonly name: string; readonly required: boolean }[];
   readonly workflowId: string;
   readonly workflowOnFailureDefault: string | undefined;
   readonly depth: number;
@@ -268,6 +270,38 @@ interface StepCompileOutcome {
  * *expansion* into N nodes, since `06` §6.2's own `StepNode` has no repeating-group shape for `merge` to
  * expand into) is a real, separate feature with its own design questions P10's own Checks text never
  * asked for; left undone deliberately rather than folded into this round's own fixes. */
+/** `StepNode.runInputs` / `missingRunInputs` for one agent step: each declared workflow input the context
+ * supplies (looked up by name at the context root, then in `vars`, where `forge run --epic/--story` puts
+ * its values), the fanout `item` when there is one, and the *required* declared inputs it does not supply.
+ * Both keys are omitted when there is nothing to carry. */
+function runInputsField(
+  env: CompileEnv,
+  context: ExpressionContext,
+): {
+  readonly runInputs?: Readonly<Record<string, unknown>>;
+  readonly missingRunInputs?: readonly string[];
+} {
+  const values: Record<string, unknown> = {};
+  const missing: string[] = [];
+  const root: Readonly<Record<string, unknown>> = { ...context };
+  const vars: Readonly<Record<string, unknown>> =
+    typeof context.vars === 'object' && context.vars !== null ? { ...context.vars } : {};
+  for (const input of env.inputs) {
+    const found = Object.hasOwn(root, input.name)
+      ? root[input.name]
+      : Object.hasOwn(vars, input.name)
+        ? vars[input.name]
+        : undefined;
+    if (found !== undefined) values[input.name] = found;
+    else if (input.required) missing.push(input.name);
+  }
+  if (context.item !== undefined) values['item'] = context.item;
+  return {
+    ...(Object.keys(values).length === 0 ? {} : { runInputs: values }),
+    ...(missing.length === 0 ? {} : { missingRunInputs: missing }),
+  };
+}
+
 function buildLeafNode(
   step: Exclude<WorkflowStep, { kind: 'fanout' | 'parallel' | 'sequence' }>,
   compiledId: string,
@@ -309,6 +343,10 @@ function buildLeafNode(
       issues,
       compiledId,
     ),
+    ...(agentStep === undefined ? {} : runInputsField(env, context)),
+    ...(agentStep?.gateEvidence !== undefined && agentStep.gateEvidence.length > 0
+      ? { gateEvidence: agentStep.gateEvidence }
+      : {}),
     run:
       step.kind === 'command'
         ? safeResolveTemplate(step.run, context, issues, compiledId)
@@ -575,7 +613,7 @@ export function expandFanout(
   context: ExpressionContext,
   workflowOnFailureDefault?: string,
 ): CompileResult {
-  const env: CompileEnv = { workflowId, workflowOnFailureDefault, depth: 0 };
+  const env: CompileEnv = { inputs: [], workflowId, workflowOnFailureDefault, depth: 0 };
   const outcome = compileFanout(step, workflowId, env, context, []);
   return outcome.issues.length > 0
     ? { success: false, issues: outcome.issues }
@@ -657,6 +695,7 @@ function checkPlanConsistency(
  * `SPEC-QUESTIONS.md` Q62 already established for this milestone's own scope. */
 export function compilePlan(workflow: Workflow, context: ExpressionContext): CompileResult {
   const env: CompileEnv = {
+    inputs: workflow.inputs ?? [],
     workflowId: workflow.id,
     workflowOnFailureDefault: workflow.onFailure?.default,
     depth: 0,
@@ -676,5 +715,32 @@ export function compilePlan(workflow: Workflow, context: ExpressionContext): Com
     issues.push(...checkPlanConsistency(nodes, groupIds));
   }
 
-  return issues.length > 0 ? { success: false, issues } : { success: true, nodes };
+  return issues.length > 0
+    ? { success: false, issues }
+    : { success: true, nodes: attachDependentGateEvidence(nodes) };
+}
+
+/** `05` §5.3 block [7] ("the checks that will be run against this step's output"): an agent step's
+ * evidence gates are the ones it names in `gateEvidence:` plus every `gate` step that directly depends on
+ * it -- the gate that will actually judge its output whether or not the author repeated the name. Sorted
+ * and de-duplicated so the same plan always yields the same list (prompt determinism across resume). */
+function attachDependentGateEvidence(nodes: readonly StepNode[]): readonly StepNode[] {
+  const dependentGates = new Map<string, Set<string>>();
+  for (const node of nodes) {
+    if (node.kind !== 'gate' || node.gate === undefined) continue;
+    for (const dependencyId of node.dependsOn) {
+      const gates = dependentGates.get(dependencyId) ?? new Set<string>();
+      gates.add(node.gate);
+      dependentGates.set(dependencyId, gates);
+    }
+  }
+  return nodes.map((node) => {
+    if (node.kind !== 'agent') return node;
+    const merged = new Set<string>([
+      ...(node.gateEvidence ?? []),
+      ...(dependentGates.get(node.id) ?? []),
+    ]);
+    if (merged.size === 0) return node;
+    return { ...node, gateEvidence: [...merged].sort() };
+  });
 }

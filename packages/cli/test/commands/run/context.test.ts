@@ -20,6 +20,7 @@ import {
   isTargetRegisteredWorktree,
 } from '../../../src/commands/run/context.ts';
 import {
+  AGENTS_ROOT,
   CHECKS_ROOT,
   FAKE_MODEL_ID,
   FIXTURE_GATE_ID,
@@ -194,6 +195,7 @@ describe('buildRunEngineContext', () => {
       runId: 'run-1',
       adapter: fixtureAdapter(),
       checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
     });
 
     expect(ctx.runId).toBe('run-1');
@@ -229,6 +231,7 @@ describe('buildRunEngineContext', () => {
       runId: 'run-1',
       adapter: fixtureAdapter(),
       checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
     });
     expect(ctx.limits.global).toBe(7);
   });
@@ -246,6 +249,7 @@ describe('buildRunEngineContext', () => {
       runId: 'run-1',
       adapter: fixtureAdapter(),
       checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
     });
     expect(ctx.retainLaneWorktrees).toBe(false);
   });
@@ -270,6 +274,7 @@ describe('buildRunEngineContext', () => {
         runId: 'run-1',
         adapter: fixtureAdapter(),
         checksRoot: CHECKS_ROOT,
+        agentsRoot: AGENTS_ROOT,
       });
       return ctx.claimPolicy;
     }
@@ -287,6 +292,69 @@ describe('buildRunEngineContext', () => {
     });
   });
 
+  it('always carries the real prompt-assembly deps (M13 P5, D4): an agent step can never reach the raw-brief-path behaviour through a context built here', async () => {
+    const project = await createTestProject();
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-assembly',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+
+    for (const key of [
+      'paths',
+      'loadAgent',
+      'loadContent',
+      'openKb',
+      'models',
+      'escalations',
+      'autonomy',
+      'kbPackBudgetTokens',
+      'skillsPackBudgetTokens',
+      'templatesPackageRoot',
+      'pinnedCore',
+    ] as const) {
+      expect(ctx.assembly[key], key).toBeDefined();
+    }
+    // It is wired to the project's own real files, not stubs: the fixture's agent and brief resolve...
+    expect((await ctx.assembly.loadAgent('engineer')).id).toBe('engineer');
+    expect(await ctx.assembly.loadContent('briefs/implement.md')).toContain('Implement story-1');
+    // ...and a reference that is not a real brief is refused rather than returned as text.
+    await expect(ctx.assembly.loadContent('implement story-1')).rejects.toMatchObject({
+      code: 'CFG-053',
+    });
+    await expect(ctx.assembly.loadAgent('nobody')).rejects.toMatchObject({ code: 'RUN-056' });
+    // config-sourced pieces come from the project's own config.
+    expect(ctx.assembly.models).toEqual(project.config.models);
+    expect(ctx.assembly.autonomy).toBe(project.config.execution.autonomy);
+    expect(ctx.assembly.kbPackBudgetTokens).toBe(project.config.kb.packBudgetTokens);
+    // A fresh project has no KB: the pack still opens (D6), empty.
+    const kb = await ctx.assembly.openKb();
+    expect(kb.tree.entries).toEqual([]);
+    kb.close();
+  });
+
+  it('refuses to build a context from a malformed security.toolCeilingEscalations entry (CFG-054)', async () => {
+    const project = await createTestProject();
+    await expect(
+      buildRunEngineContext({
+        paths: project.paths,
+        projectRoot: project.dir,
+        config: {
+          ...project.config,
+          security: { ...project.config.security, toolCeilingEscalations: [{ agent: 'sre' }] },
+        },
+        runId: 'run-bad-escalation',
+        adapter: fixtureAdapter(),
+        checksRoot: CHECKS_ROOT,
+        agentsRoot: AGENTS_ROOT,
+      }),
+    ).rejects.toMatchObject({ code: 'CFG-054' });
+  });
+
   it('throws RUN-052 when the real adapter reports no available models', async () => {
     const project = await createTestProject();
     const noModelsAdapter = { listModels: () => Promise.resolve([]) } as unknown as PlatformAdapter;
@@ -298,6 +366,7 @@ describe('buildRunEngineContext', () => {
         runId: 'run-1',
         adapter: noModelsAdapter,
         checksRoot: CHECKS_ROOT,
+        agentsRoot: AGENTS_ROOT,
       }),
     ).rejects.toMatchObject({ code: 'RUN-052' });
   });

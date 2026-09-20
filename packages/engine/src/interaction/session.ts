@@ -75,6 +75,7 @@ import {
 import { renderArtifactPath } from '@forge/schemas/registry';
 import * as YAML from 'yaml';
 
+import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import { dispatchAgentStep, runParticipantSession } from './dispatch-agent-step.ts';
 import type { InteractionParticipant } from './types.ts';
 import type { ExecuteStepContext, SessionBounds, StepOutcome } from '../dispatch/types.ts';
@@ -303,7 +304,10 @@ function facilitatorAgent(role: string, node: StepNode): AgentDefinition {
     parallel_safety: { file_ownership: [], exclusive: false },
     gates: { produces_evidence_for: [], may_approve: [] },
     skills: [],
-    prompt: { system: 'facilitator.system.md' },
+    // The shipped facilitator's own role prompt (`modules/fm-core/agents/facilitator.agent.yaml`): prompt
+    // assembly loads `prompt.system` as block [2]'s role instructions, so this must be a real reference
+    // (`PLAN-M13.md` P5), not a placeholder file name.
+    prompt: { system: 'prompts/facilitator.system.md' },
   };
 }
 
@@ -1646,13 +1650,19 @@ export async function runSessionStep(
           const reprompt = await runParticipantSession(
             convergePhaseNode,
             ctx,
+            facilitator,
             'critic-reprompt',
-            `You are acting as ${facilitator.name} (${facilitator.persona.voice}), framing this re-ask on ` +
-              `${CRITIC_ROLE}'s own behalf.\n\nThe prior CONVERGE contribution ("${criticFinalText}") is a ` +
+            `You are framing this re-ask on ${CRITIC_ROLE}'s own behalf.\n\nThe prior CONVERGE contribution (given in the user message, fenced as untrusted data) is a ` +
               'generic non-objection. 16 §16.7 point 2 does not accept a "this seems fine"-shaped response ' +
               'as a real contribution. State one concrete, falsifiable objection to the proposal under ' +
               'discussion -- or, if none genuinely exists, say precisely and specifically why not, rather ' +
               'than a generic assurance.',
+            {
+              untrustedInput: wrapUntrustedContent(
+                criticFinalText,
+                'forge-session-critic-contribution',
+              ).wrapped,
+            },
           );
           // A fresh critic round found an earlier draft left `criticFinalText` at its own original,
           // already-rejected generic text when the re-prompt session itself failed (`ok: false`) --

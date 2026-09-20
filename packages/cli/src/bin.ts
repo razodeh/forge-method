@@ -455,6 +455,7 @@ async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string):
     adapter: await buildAdapterForConfig(config, env),
     workflowsRoot: WORKFLOWS_ROOT,
     checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
   };
 }
 

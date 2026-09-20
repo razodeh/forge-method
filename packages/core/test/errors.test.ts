@@ -31,6 +31,10 @@ import {
 const SAMPLE_DETAILS = {
   // `CFG-053`/`RUN-079` (`PLAN-M13.md` P1): a brief/prompt reference.
   reference: 'briefs/write-vision.md',
+  // `RUN-080`/`CFG-054` (`PLAN-M13.md` P5): an adapter that cannot carry a system prompt; a bad
+  // `security.toolCeilingEscalations` entry.
+  adapterId: 'generic',
+  index: 0,
   path: '.forge/config.yaml',
   root: '/repo',
   operation: 'write',

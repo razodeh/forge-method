@@ -47,7 +47,7 @@ steps:
   - id: only
     kind: agent
     agent: '${agentTemplate}'
-    brief: fixture
+    brief: briefs/fixture.md
     produces: [ "${producesTemplate}" ]
 `;
 }
@@ -68,7 +68,11 @@ checks:
 openQuestionsPolicy: warn
 `;
 
-export function agentYaml(id: string, name: string): string {
+export function agentYaml(
+  id: string,
+  name: string,
+  options: { readonly write?: boolean } = {},
+): string {
   return `id: ${id}
 name: ${name}
 version: 1.0.0
@@ -90,7 +94,7 @@ kb_write: []
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: ${options.write === true ? 'true' : 'false'}
   exec: []
   network: false
   git_commit: none
@@ -110,9 +114,36 @@ gates:
   may_approve: []
 skills: []
 prompt:
-  system: p.md
+  system: prompts/${id}.system.md
 `;
 }
+
+/** Writes one real fixture agent plus the role prompt its `prompt.system` names (prompt assembly loads
+ * both; a reference with no file behind it is a step failure, `PLAN-M13.md` P5). */
+export async function writeFixtureAgent(
+  dir: string,
+  id: string,
+  name: string,
+  options: { readonly write?: boolean } = {},
+): Promise<void> {
+  await mkdir(path.join(dir, AGENTS_ROOT), { recursive: true });
+  await writeFile(path.join(dir, AGENTS_ROOT, `${id}.yaml`), agentYaml(id, name, options));
+  await mkdir(path.join(dir, '.forge', 'prompts'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge', 'prompts', `${id}.system.md`),
+    `Fixture role instructions for ${id}.\n`,
+  );
+}
+
+/** `05` §5.8: every tier maps to the fake adapter's one model, so agent steps resolve a real model. */
+export const FIXTURE_MODELS: ForgeConfig['models'] = {
+  tiers: {
+    frugal: { 'forge-fake-adapter': FAKE_MODEL_ID },
+    balanced: { 'forge-fake-adapter': FAKE_MODEL_ID },
+    max: { 'forge-fake-adapter': FAKE_MODEL_ID },
+  },
+  overrides: {},
+};
 
 export interface TestProject {
   readonly dir: string;
@@ -160,16 +191,20 @@ export async function createTestProject(): Promise<TestProject> {
     storyFixture(FIXTURE_STORY_ID, FIXTURE_OWNER_ROLE),
   );
 
-  await mkdir(path.join(dir, AGENTS_ROOT), { recursive: true });
+  await writeFixtureAgent(dir, 'reviewer', 'Code Reviewer');
+  await writeFixtureAgent(dir, 'architect', 'Architect');
+  await writeFixtureAgent(dir, 'security', 'Security');
+  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true });
+  // The session commands' synthetic facilitator loads this role prompt (`session.ts`'s `facilitatorAgent`).
   await writeFile(
-    path.join(dir, AGENTS_ROOT, 'reviewer.yaml'),
-    agentYaml('reviewer', 'Code Reviewer'),
+    path.join(dir, '.forge', 'prompts', 'facilitator.system.md'),
+    'Fixture facilitator role.\n',
   );
+  await mkdir(path.join(dir, '.forge', 'briefs'), { recursive: true });
   await writeFile(
-    path.join(dir, AGENTS_ROOT, 'architect.yaml'),
-    agentYaml('architect', 'Architect'),
+    path.join(dir, '.forge', 'briefs', 'fixture.md'),
+    'Fixture brief: do the one step.\n',
   );
-  await writeFile(path.join(dir, AGENTS_ROOT, 'security.yaml'), agentYaml('security', 'Security'));
 
   // `20` §20.10 S8 (`PLAN-M11.md` P11): `runWorkflow` now genuinely refuses to start against a dirty
   // working tree -- a real project commits its own workflow/gate/agent/story fixtures, so this fixture
@@ -185,6 +220,7 @@ export async function createTestProject(): Promise<TestProject> {
   const config: ForgeConfig = {
     ...DEFAULT_CONFIG,
     execution: { ...DEFAULT_CONFIG.execution, retainLaneWorktrees: 'always' },
+    models: FIXTURE_MODELS,
   };
 
   return { dir, paths: new ProjectPaths(dir), config };
@@ -248,6 +284,7 @@ export function testRunDeps(
     adapter,
     workflowsRoot: WORKFLOWS_ROOT,
     checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
   };
 }
 

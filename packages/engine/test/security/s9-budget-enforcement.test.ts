@@ -60,7 +60,7 @@ import {
   createVcsFacade,
 } from '../../src/dispatch/facades.ts';
 import type { LaneHandle } from '../../src/dispatch/types.ts';
-import { createTestContext, node } from '../dispatch/helpers.ts';
+import { createFixtureAssembly, createTestContext, node } from '../dispatch/helpers.ts';
 
 const cleanupDirs: string[] = [];
 afterEach(async () => {
@@ -359,6 +359,7 @@ function budgetFixtureContext(
     integrationPath: projectRoot,
     model: FAKE_MODEL_ID,
     tools: { read: true, write: true, exec: false, network: 'none' },
+    assembly: createFixtureAssembly(projectRoot),
     retainLaneWorktrees: false,
     claimPolicy: 'strict',
     signCommits: false,

@@ -13,6 +13,8 @@ import path from 'node:path';
 
 import { FAKE_MODEL_ID, FakePlatformAdapter } from '@forge/testkit';
 import type { PlatformAdapter, ToolGrant } from '@forge/adapter-kit';
+import { ProjectPaths, type AbsolutePath } from '@forge/core';
+import type { AgentDefinition } from '@forge/agents/schema';
 
 import {
   createGateEvaluator,
@@ -20,12 +22,88 @@ import {
   createTelemetryFacade,
   createVcsFacade,
 } from '../../src/dispatch/facades.ts';
-import type { ExecuteStepContext, LaneHandle } from '../../src/dispatch/types.ts';
+import type {
+  ExecuteStepContext,
+  KbAccess,
+  LaneHandle,
+  PromptAssemblyContext,
+} from '../../src/dispatch/types.ts';
 import type { GateDefinition } from '../../src/gates/index.ts';
 import type { StepNode, StepNodeKind } from '../../src/plan/index.ts';
 
 export async function readFileInRepo(repo: string, relativePath: string): Promise<string> {
   return readFile(path.join(repo, relativePath), 'utf8');
+}
+
+/** A small, valid `AgentDefinition` for tests that dispatch an agent step without caring which agent it
+ * is. `id` is whatever the workflow step names, so a fixture never has to pre-register one. */
+export function fixtureAgent(
+  id: string,
+  overrides: Partial<AgentDefinition> = {},
+): AgentDefinition {
+  return {
+    id,
+    name: `Fixture ${id}`,
+    version: '1.0.0',
+    tier: 'core',
+    mandate: `Do the ${id} job.`,
+    decisions_owned: [`${id}.decisions`],
+    persona: { voice: 'terse', stance: 'pragmatic', disagreement_style: 'direct' },
+    inputs: { required: [] },
+    outputs: [{ type: 'Note', schema: 'note.schema.json', path: 'docs/note.md' }],
+    kb_write: [],
+    tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+    model: { tier: 'balanced', thinking: 'medium' },
+    limits: { max_turns: 10, wall_clock_ms: 600_000, max_cost_usd: 5 },
+    parallel_safety: { file_ownership: ['**'], exclusive: false },
+    gates: { produces_evidence_for: [], may_approve: [] },
+    skills: [],
+    prompt: { system: 'prompts/fixture.system.md' },
+    ...overrides,
+  };
+}
+
+/** A KB with no entries and an index that finds nothing -- the state of every fresh project. */
+export function emptyKbAccess(): KbAccess {
+  return {
+    backend: {
+      upsertEntry: () => undefined,
+      upsertLinks: () => undefined,
+      search: () => [],
+      expand: () => [],
+      clear: () => undefined,
+      close: () => undefined,
+    },
+    tree: { entries: [], errors: [] },
+    parseErrorCount: 0,
+    close: () => undefined,
+  };
+}
+
+/** The engine-test default for `ExecuteStepContext.assembly`: every agent id resolves to a fixture agent
+ * (never a legacy pass-through -- the same real compile/record path runs), brief and prompt references
+ * resolve to their own text so a test can keep writing inline briefs, and the model tier table maps every
+ * tier to the fake adapter's one model. Tests that assert on assembly itself build their own with real
+ * files (`assembly.test.ts`). */
+export function createFixtureAssembly(
+  projectRoot: string,
+  overrides: Partial<PromptAssemblyContext> = {},
+): PromptAssemblyContext {
+  const tier = { 'forge-fake-adapter': FAKE_MODEL_ID };
+  return {
+    paths: new ProjectPaths(projectRoot),
+    loadAgent: (agentId) => Promise.resolve(fixtureAgent(agentId)),
+    loadContent: (reference) => Promise.resolve(reference),
+    openKb: () => Promise.resolve(emptyKbAccess()),
+    models: { tiers: { frugal: tier, balanced: tier, max: tier }, overrides: {} },
+    escalations: [],
+    autonomy: 'guided',
+    kbPackBudgetTokens: 10_000,
+    skillsPackBudgetTokens: 8_000,
+    templatesPackageRoot: projectRoot as AbsolutePath,
+    pinnedCore: {},
+    ...overrides,
+  };
 }
 
 const DEFAULT_TOOLS: ToolGrant = { read: true, write: true, exec: false, network: 'none' };
@@ -66,6 +144,7 @@ export function createTestContext(
     integrationPath: overrides.integrationPath ?? overrides.projectRoot,
     model: overrides.model ?? FAKE_MODEL_ID,
     tools: overrides.tools ?? DEFAULT_TOOLS,
+    assembly: overrides.assembly ?? createFixtureAssembly(overrides.projectRoot),
     retainLaneWorktrees: overrides.retainLaneWorktrees ?? false,
     claimPolicy: overrides.claimPolicy ?? 'strict',
     signCommits: overrides.signCommits ?? false,

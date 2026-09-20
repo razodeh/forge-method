@@ -10,6 +10,7 @@ import { TelemetryError } from '@forge/telemetry/errors';
 
 import type { StepNode } from '../plan/index.ts';
 import { runSessionStep } from '../interaction/session.ts';
+import { isAssemblyRefusal, refusalFailure } from './assemble.ts';
 import {
   runAgentStep,
   runCheckpointStep,
@@ -59,6 +60,16 @@ export async function executeStep(node: StepNode, ctx: ExecuteStepContext): Prom
   }
 }
 
+const EMPTY_SESSION = {
+  sessionId: '',
+  ok: false,
+  finalText: '',
+  usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+  durationMs: 0,
+  changedFiles: [],
+  controlTokens: [],
+} as const;
+
 async function dispatch(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   switch (node.kind) {
     case 'agent':
@@ -78,7 +89,25 @@ async function dispatch(node: StepNode, ctx: ExecuteStepContext): Promise<StepOu
     // directly, the same "wrap, do not touch the closed `StepOutcomeDetail` union" choice
     // `InteractionOutcome` (`interaction/types.ts`) already makes for the identical reason.
     case 'session':
-      return (await runSessionStep(node, ctx)).outcome;
+      try {
+        return (await runSessionStep(node, ctx)).outcome;
+      } catch (cause) {
+        // A participant session refused by prompt assembly (`PLAN-M13.md` P5: an unmapped model tier, a
+        // missing role prompt, an adapter that cannot carry a system prompt) throws out of the session
+        // machinery having dispatched nothing. Folded into a typed failed outcome here so it fails this
+        // one step like an agent step's refusal does, instead of rejecting the whole scheduler batch
+        // and orphaning its sibling steps.
+        if (!isAssemblyRefusal(cause)) throw cause;
+        const at = ctx.now();
+        return {
+          stepId: node.id,
+          status: 'failed',
+          startedAt: at,
+          finishedAt: at,
+          detail: { kind: 'agent', session: EMPTY_SESSION },
+          failure: refusalFailure(cause),
+        };
+      }
     // `elicit`/`subworkflow` each still need infrastructure this milestone does not build (a real
     // interactive human-input channel; recursive workflow invocation) -- unchanged, still refused with
     // the identical `RUN-039` this piece's own scope is exactly `session`, not these two.

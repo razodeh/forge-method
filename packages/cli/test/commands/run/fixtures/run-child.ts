@@ -11,7 +11,9 @@ import { ProjectPaths } from '@forge/core/fs';
 import { DEFAULT_CONFIG, type ForgeConfig } from '@forge/schemas/config';
 
 import { runWorkflow } from '../../../../src/commands/run/run.ts';
+import { FIXTURE_MODELS } from '../../loop/helpers.ts';
 import {
+  AGENTS_ROOT,
   CHECKS_ROOT,
   FIXTURE_WORKFLOW_ID,
   WORKFLOWS_ROOT,
@@ -27,6 +29,7 @@ if (projectRoot === undefined || runId === undefined || host === undefined) {
 const config: ForgeConfig = {
   ...DEFAULT_CONFIG,
   execution: { ...DEFAULT_CONFIG.execution, retainLaneWorktrees: 'always' },
+  models: FIXTURE_MODELS,
 };
 
 const deps = {
@@ -36,6 +39,7 @@ const deps = {
   adapter: fixtureAdapter(),
   workflowsRoot: WORKFLOWS_ROOT,
   checksRoot: CHECKS_ROOT,
+  agentsRoot: AGENTS_ROOT,
 };
 
 try {

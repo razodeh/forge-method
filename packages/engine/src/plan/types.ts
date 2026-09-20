@@ -150,6 +150,20 @@ export interface StepNode {
    * does. */
   readonly idempotencyKey: string;
   readonly onFailure: StepNodeOnFailure;
+  /** `'agent'` only, and present only when non-empty: the gate ids whose deterministic checks will be run
+   * against this step's output -- the gates this step's own `gateEvidence:` names, plus every `gate`-kind
+   * step that directly `dependsOn` it (added by `compilePlan`). Read by dispatch's prompt assembly for
+   * block [7] (definition of done, `05` §5.3); never used for scheduling. */
+  readonly gateEvidence?: readonly string[] | undefined;
+  /** `'agent'` only, and present only when non-empty: the values this run supplied for the workflow's own
+   * declared `inputs:` (looked up by name in the expression context), plus the fanout `item` for a
+   * per-item child. Rendered into block [4] of the compiled prompt (`PLAN-M13.md` P5): without it a run
+   * input such as `stageId` or `interfaceName` reaches no brief at all, since brief text is loaded
+   * verbatim and never template-resolved. */
+  readonly runInputs?: Readonly<Record<string, unknown>> | undefined;
+  /** `'agent'` only, present only when non-empty: declared `required: true` workflow inputs this run did
+   * not supply. Named in block [4] so a prompt never silently lacks a value its brief assumes. */
+  readonly missingRunInputs?: readonly string[] | undefined;
   /** `'command'` only. */
   readonly run?: string | undefined;
   /** `'gate'` only — the gate id to evaluate. */

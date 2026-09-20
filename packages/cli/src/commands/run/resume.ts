@@ -82,6 +82,7 @@ export async function resumeWorkflow(
       runId,
       adapter: deps.adapter,
       checksRoot: deps.checksRoot,
+      agentsRoot: deps.agentsRoot,
       clock,
     });
     // `resumeRun`'s own `ResumeContext` needs the compiled plan's real `StepNode`s (keyed by id) to

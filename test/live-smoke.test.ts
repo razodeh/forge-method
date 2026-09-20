@@ -73,7 +73,7 @@
  * @see SPEC-QUESTIONS.md Q121
  * @see PLAN-M7.md
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -85,15 +85,18 @@ import {
   ClaudeCodeAdapter,
   probeAuthAvailability,
 } from '@forge/adapter-claude-code';
+import { ProjectPaths, type AbsolutePath } from '@forge/core';
 import {
   createGateEvaluator,
   createMergeQueueFacade,
+  createPromptAssemblyContext,
   createTelemetryFacade,
   createVcsFacade,
 } from '@forge/engine/dispatch';
 import type { GateDefinition } from '@forge/engine/gates';
 import { runEngine, type RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 
 import { planLiveRuns } from '../packages/adapter-claude-code/test/conformance/live-gate.ts';
 
@@ -129,9 +132,7 @@ steps:
     kind: agent
     agent: engineer
     dependsOn: [ init ]
-    brief: >
-      Create a file named ${STORY_RELATIVE_PATH} in the current working directory containing exactly
-      this text, with no extra whitespace, quotes, or trailing newline: ${STORY_MARKER}
+    brief: briefs/live-smoke-story.md
     produces: [ "${STORY_RELATIVE_PATH}" ]
 
   - id: merge
@@ -168,10 +169,69 @@ const SEQUENTIAL_CONCURRENCY_LIMITS: ConcurrencyLimits = {
   perResourceClass: new Map(),
 };
 
+const ENGINEER_AGENT_YAML = `id: engineer
+name: Engineer
+version: 1.0.0
+tier: core
+mandate: Make the one small change the brief asks for, exactly as written.
+decisions_owned: []
+persona:
+  voice: terse
+  stance: literal
+  disagreement_style: direct
+inputs:
+  required: []
+outputs:
+  - type: Note
+    schema: note.schema.json
+    path: live-smoke-story.txt
+kb_write: []
+tools:
+  read: true
+  write: true
+  network: false
+  git_commit: lane
+  deploy: false
+model:
+  tier: frugal
+  thinking: none
+limits:
+  max_turns: 10
+  wall_clock_ms: 600000
+  max_cost_usd: 1
+parallel_safety:
+  file_ownership: ['**']
+  exclusive: false
+gates:
+  produces_evidence_for: []
+  may_approve: []
+skills: []
+prompt:
+  system: prompts/engineer.system.md
+`;
+
+/** The real files prompt assembly needs (M13 P5): the agent, its role prompt, and the brief the workflow
+ * names -- the same layout `forge init` materializes under `.forge/`. */
+async function writeLiveSmokeContent(dir: string): Promise<void> {
+  await mkdir(path.join(dir, '.forge', 'agents'), { recursive: true });
+  await mkdir(path.join(dir, '.forge', 'prompts'), { recursive: true });
+  await mkdir(path.join(dir, '.forge', 'briefs'), { recursive: true });
+  await writeFile(path.join(dir, '.forge', 'agents', 'engineer.yaml'), ENGINEER_AGENT_YAML);
+  await writeFile(
+    path.join(dir, '.forge', 'prompts', 'engineer.system.md'),
+    'You make small, exact file changes and nothing else.\n',
+  );
+  await writeFile(
+    path.join(dir, '.forge', 'briefs', 'live-smoke-story.md'),
+    `Create a file named ${STORY_RELATIVE_PATH} in the current working directory containing exactly this text, with no extra whitespace, quotes, or trailing newline: ${STORY_MARKER}\n`,
+  );
+}
+
 async function createRealTempRepo(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-m7-live-smoke-'));
   await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
   await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
+  await writeLiveSmokeContent(dir);
   return dir;
 }
 
@@ -223,6 +283,28 @@ if (runs.length === 0) {
             integrationPath: projectRoot,
             model: 'claude-sonnet-5',
             tools: { read: true, write: true, exec: false, network: 'none' },
+            assembly: createPromptAssemblyContext({
+              paths: new ProjectPaths(projectRoot),
+              integrationPath: projectRoot,
+              agentsRoot: '.forge/agents',
+              config: {
+                ...DEFAULT_CONFIG,
+                models: {
+                  tiers: {
+                    frugal: { 'claude-code': 'claude-sonnet-5' },
+                    balanced: { 'claude-code': 'claude-sonnet-5' },
+                    max: { 'claude-code': 'claude-sonnet-5' },
+                  },
+                  overrides: {},
+                },
+              },
+              templatesPackageRoot: path.resolve(
+                import.meta.dirname,
+                '..',
+                'packages',
+                'templates',
+              ) as AbsolutePath,
+            }),
             retainLaneWorktrees: false,
             claimPolicy: 'strict',
             signCommits: false,

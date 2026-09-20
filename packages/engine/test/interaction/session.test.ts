@@ -626,7 +626,8 @@ function promptRecordingAdapter(adapter: FakePlatformAdapter): {
     preflight: () => adapter.preflight(),
     listModels: () => adapter.listModels(),
     startSession: (req: SessionRequest) => {
-      prompts[req.stepId] = req.prompt;
+      // Block [4] of the compiled system prompt carries the turn's task text (PLAN-M13 P5, D9).
+      prompts[req.stepId] = `${req.systemPrompt.text}\n${req.prompt}`;
       return adapter.startSession(req);
     },
     resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),

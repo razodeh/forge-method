@@ -499,6 +499,7 @@ async function runDebugLoop(
     runId,
     adapter: deps.adapter,
     checksRoot: deps.checksRoot,
+    agentsRoot: deps.agentsRoot,
     clock,
   });
 

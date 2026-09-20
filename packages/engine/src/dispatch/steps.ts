@@ -25,6 +25,13 @@ import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
+import {
+  refusalFailure,
+  resumePrompt,
+  tryAssemble,
+  tryResolveSessionModel,
+  type AssembledSession,
+} from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
 import { runShellCommand } from './shell.ts';
 import type {
@@ -240,16 +247,16 @@ export async function runLaneLifecycle(
   return succeeded(node.id, startedAt, ctx.now(), work.detail);
 }
 
-/** `07` §7.2's own `SessionRequest` shape, filled with `Q62` part 2's own "no tier, no role" stub values
- * (`ctx.model`/`ctx.tools`, supplied by whoever constructs `ctx` — this function makes none of those
- * decisions itself) plus one real, non-stubbed thing: `prompt`, `node.brief` resolved via
- * `@forge/engine/expr`'s own template substitution — wait, `node.brief` here is already the *compiled*
- * step's own brief text (`@forge/engine/plan`'s own `compileStep`, P10, already resolves `{{...}}`
- * placeholders against the workflow's own context before this module ever sees it), so it is passed
- * through directly, not re-resolved a second time. */
+/** `07` §7.2's `SessionRequest` for an agent step, built from the assembled prompt (`assemble.ts`,
+ * `PLAN-M13.md` P5): the compiled nine-block prompt is the effective system prompt (`05` §5.3), the user
+ * prompt is a fixed kickoff line, and the model, thinking level and tool grant are the agent's own
+ * resolved values -- none of `ctx.model`/`ctx.tools` (which serve only ad-hoc, non-agent-step sessions)
+ * is read here. */
 function buildSessionRequest(
   node: StepNode,
   ctx: ExecuteStepContext,
+  assembled: AssembledSession,
+  untrustedInput: string | undefined,
   cwd: string,
   abortSignal: AbortSignal,
 ): SessionRequest {
@@ -257,10 +264,12 @@ function buildSessionRequest(
     runId: ctx.runId,
     stepId: node.id,
     cwd,
-    systemPrompt: { mode: 'append', text: '' },
-    prompt: node.brief ?? '',
-    model: ctx.model,
-    tools: ctx.tools,
+    systemPrompt: assembled.systemPrompt,
+    prompt:
+      untrustedInput === undefined ? assembled.prompt : `${assembled.prompt}\n\n${untrustedInput}`,
+    model: assembled.model,
+    thinking: assembled.thinking,
+    tools: assembled.tools,
     permissionMode: 'accept-edits',
     limits: {
       maxTurns: node.limits.maxTurns,
@@ -270,6 +279,54 @@ function buildSessionRequest(
     env: {},
     abortSignal,
   };
+}
+
+/** Options threading a pre-resolved input into an agent step: `taskText` is prose that plays block [4]
+ * (an interaction-mode synthesis/decider turn, a session phase's question) instead of a `briefs/<name>.md`
+ * reference loaded from `node.brief`; `assembled` is a prompt already assembled for this attempt (by
+ * `runAgentStep`, before any lane exists) so `runAgentWork` does not compile it a second time. */
+export interface AgentWorkOptions {
+  readonly taskText?: string | undefined;
+  /** Untrusted data the task needs (a peer session's output; already fenced by `wrapUntrustedContent`).
+   * Delivered in the user turn after the kickoff line, never compiled into the system prompt. */
+  readonly untrustedInput?: string | undefined;
+  /** Overrides the key `prompt.briefs.<key>` is looked up by (see `AssembleInput.briefKey`). */
+  readonly briefKey?: string | undefined;
+  readonly assembled?: AssembledSession | undefined;
+}
+
+/** What `runAgentWork` is about to hand the adapter: a freshly assembled prompt, or a resume of an existing
+ * session (whose system prompt is already in force; only its model is needed, for usage attribution). */
+type PreparedSession =
+  | { readonly kind: 'start'; readonly assembled: AssembledSession }
+  | { readonly kind: 'resume'; readonly sessionId: string; readonly model: string };
+
+async function prepareSession(
+  node: StepNode,
+  ctx: ExecuteStepContext,
+  source: { readonly kind: 'start' } | { readonly kind: 'resume'; readonly sessionId: string },
+  options: AgentWorkOptions,
+): Promise<
+  | { readonly ok: true; readonly value: PreparedSession }
+  | { readonly ok: false; readonly failure: StepFailureInfo }
+> {
+  if (source.kind === 'resume') {
+    const resolved = await tryResolveSessionModel(node, ctx);
+    return resolved.ok
+      ? { ok: true, value: { kind: 'resume', sessionId: source.sessionId, model: resolved.model } }
+      : resolved;
+  }
+  const result =
+    options.assembled === undefined
+      ? await tryAssemble({ node, ctx, taskText: options.taskText, briefKey: options.briefKey })
+      : ({ ok: true, value: options.assembled } as const);
+  if (!result.ok) return result;
+  try {
+    await result.value.persist();
+  } catch (cause) {
+    return { ok: false, failure: refusalFailure(cause) };
+  }
+  return { ok: true, value: { kind: 'start', assembled: result.value } };
 }
 
 /** Acquires an agent session for `lane` — either a fresh one (`source.kind === 'start'`) or a resumed
@@ -289,28 +346,60 @@ export async function runAgentWork(
   lane: LaneHandle,
   baseSha: string,
   source: { readonly kind: 'start' } | { readonly kind: 'resume'; readonly sessionId: string },
+  options: AgentWorkOptions = {},
 ): Promise<{
   readonly changed: boolean;
   readonly commitSubject: string;
   readonly detail: StepOutcomeDetail;
   readonly failure?: StepFailureInfo;
 }> {
+  // Prepared before `SessionStarted` and before anything reaches the adapter: a step that cannot be
+  // assembled (`PLAN-M13.md` P5, D4) fails as a typed outcome with nothing dispatched. A fresh session is
+  // assembled (unless `runAgentStep` already did, before creating this lane) and its audit record written
+  // now, immediately before the session starts. A *resumed* session's system prompt is already in force:
+  // only its model is resolved, and the original record is left as the session actually received it.
+  const prepared = await prepareSession(node, ctx, source, options);
+  if (!prepared.ok) {
+    return {
+      changed: false,
+      commitSubject: 'prompt assembly refused',
+      detail: { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      failure: prepared.failure,
+    };
+  }
+  const plan = prepared.value;
+  const model = plan.kind === 'start' ? plan.assembled.model : plan.model;
+  // Anything assembly noticed that a reader of the event log needs (`05` §5.4 point 2: declared inputs
+  // that could not be packed; KB files that failed to parse) rides on this event, so a step that ran
+  // without them is visible outside the prompt text.
+  const diagnostics = plan.kind === 'start' ? plan.assembled.diagnostics : undefined;
+  const hasDiagnostics =
+    diagnostics !== undefined &&
+    (diagnostics.unresolvedDeclaredInputs.length > 0 || diagnostics.kbParseErrors > 0);
   await ctx.telemetry.emit({
     type: 'SessionStarted',
     stepId: node.id,
     laneId: lane.laneId,
     agentId: node.agent,
+    ...(hasDiagnostics ? { payload: diagnostics } : {}),
   });
   const abortController = new AbortController();
   let session;
   try {
     const handle =
-      source.kind === 'start'
+      plan.kind === 'start'
         ? await ctx.adapter.startSession(
-            buildSessionRequest(node, ctx, lane.path, abortController.signal),
+            buildSessionRequest(
+              node,
+              ctx,
+              plan.assembled,
+              options.untrustedInput,
+              lane.path,
+              abortController.signal,
+            ),
           )
-        : await ctx.adapter.resumeSession(source.sessionId, {
-            prompt: node.brief ?? '',
+        : await ctx.adapter.resumeSession(plan.sessionId, {
+            prompt: resumePrompt(node.id),
             limits: {
               maxTurns: node.limits.maxTurns,
               wallClockMs: node.limits.wallClockMs,
@@ -375,7 +464,7 @@ export async function runAgentWork(
     stepId: node.id,
     agentId: node.agent,
     payload: {
-      model: ctx.model,
+      model,
       platform: ctx.adapter.id,
       inputTokens: sanitizeUsageNumber(session.usage.inputTokens),
       outputTokens: sanitizeUsageNumber(session.usage.outputTokens),
@@ -403,7 +492,15 @@ export async function runAgentWork(
   };
 }
 
-export async function runAgentStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
+export async function runAgentStep(
+  node: StepNode,
+  ctx: ExecuteStepContext,
+  options: {
+    readonly taskText?: string | undefined;
+    readonly untrustedInput?: string | undefined;
+    readonly briefKey?: string | undefined;
+  } = {},
+): Promise<StepOutcome> {
   const startedAt = ctx.now();
   await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
 
@@ -414,12 +511,42 @@ export async function runAgentStep(node: StepNode, ctx: ExecuteStepContext): Pro
     });
   }
 
+  // Assembled before a lane is created: a step refused for a missing agent/brief, an unmapped model or a
+  // grant above its ceiling must leave no worktree behind, and dispatches nothing.
+  const assembled = await tryAssemble({
+    node,
+    ctx,
+    taskText: options.taskText,
+    briefKey: options.briefKey,
+  });
+  if (!assembled.ok) {
+    return failed(
+      node.id,
+      startedAt,
+      ctx.now(),
+      { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      assembled.failure,
+    );
+  }
+
   return runLaneLifecycle(
     node,
     ctx,
     startedAt,
     { kind: 'agent', session: EMPTY_SESSION_RESULT },
-    (lane, baseSha) => runAgentWork(node, ctx, lane, baseSha, { kind: 'start' }),
+    (lane, baseSha) =>
+      runAgentWork(
+        node,
+        ctx,
+        lane,
+        baseSha,
+        { kind: 'start' },
+        {
+          assembled: assembled.value,
+          untrustedInput: options.untrustedInput,
+          briefKey: options.briefKey,
+        },
+      ),
   );
 }
 

@@ -38,6 +38,7 @@ function sessionDeps(project: Awaited<ReturnType<typeof createTestProject>>): Se
     config: project.config,
     adapter,
     checksRoot: 'docs/forge/checks',
+    agentsRoot: '.forge/agents',
   };
 }
 

@@ -22,9 +22,11 @@ import { DEFAULT_CONFIG, type ForgeConfig } from '@forge/schemas/config';
 import { ProjectPaths } from '@forge/core/fs';
 
 import type { RunDeps } from '../../../src/commands/run/run.ts';
+import { FIXTURE_MODELS, writeFixtureAgent } from '../loop/helpers.ts';
 
 export const WORKFLOWS_ROOT = 'docs/forge/workflows';
 export const CHECKS_ROOT = 'docs/forge/checks';
+export const AGENTS_ROOT = '.forge/agents';
 export const FIXTURE_WORKFLOW_ID = 'cli-fixture';
 export const FIXTURE_GATE_ID = 'G-Always';
 export const FIXTURE_ITEM_ID = 'story-1';
@@ -64,7 +66,7 @@ steps:
   - id: implement
     kind: agent
     agent: engineer
-    brief: "implement ${FIXTURE_ITEM_ID}"
+    brief: briefs/implement.md
     produces: [ "${FIXTURE_ITEM_ID}.txt" ]
     dependsOn: [ prepare ]
 
@@ -172,6 +174,15 @@ export async function createTestProject(
   await mkdir(path.join(dir, CHECKS_ROOT), { recursive: true });
   await writeFile(path.join(dir, CHECKS_ROOT, `${FIXTURE_GATE_ID}.gate.yaml`), FIXTURE_GATE_YAML);
 
+  // Real agent, role prompt and brief for the one `agent` step: prompt assembly loads all three (a step
+  // naming one that does not exist is a typed failure, never a raw-path prompt -- `PLAN-M13.md` P5).
+  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true });
+  await mkdir(path.join(dir, '.forge', 'briefs'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge', 'briefs', 'implement.md'),
+    `Implement ${FIXTURE_ITEM_ID}: write ${FIXTURE_ITEM_ID}.txt.\n`,
+  );
+
   // `20` §20.10 S8 (`PLAN-M11.md` P11): `runWorkflow` now genuinely refuses to start against a dirty
   // working tree (`assertCleanWorkingTree`, wired in for the first time) -- a real project commits its
   // own workflow/gate fixtures rather than leaving them perpetually uncommitted, so this fixture project
@@ -187,6 +198,7 @@ export async function createTestProject(
   const config: ForgeConfig = {
     ...DEFAULT_CONFIG,
     execution: { ...DEFAULT_CONFIG.execution, retainLaneWorktrees: 'always' },
+    models: FIXTURE_MODELS,
   };
 
   return { dir, paths: new ProjectPaths(dir), config };
@@ -203,6 +215,7 @@ export function testRunDeps(
     adapter,
     workflowsRoot: WORKFLOWS_ROOT,
     checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
   };
 }
 

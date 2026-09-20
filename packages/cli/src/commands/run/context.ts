@@ -20,6 +20,7 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import {
   createGateEvaluator,
   createMergeQueueFacade,
+  createPromptAssemblyContext,
   createTelemetryFacade,
   createVcsFacade,
 } from '@forge/engine/dispatch';
@@ -30,6 +31,7 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 import { resolveClaimPolicy } from '@forge/kb/adopt';
 
+import { resolvePackageRoot } from '../../init/package-root.ts';
 import { loadGateRegistry } from './gates.ts';
 
 export interface BuildRunContextInput {
@@ -39,12 +41,19 @@ export interface BuildRunContextInput {
   readonly runId: string;
   readonly adapter: PlatformAdapter;
   readonly checksRoot: string;
+  /** Project-relative directory of materialized agent definitions (`.forge/agents`), which prompt
+   * assembly loads the dispatched agent from. Required: every real run dispatches agents. */
+  readonly agentsRoot: string;
   readonly clock?: Clock;
 }
 
+/** The fixed grant for sessions that are not agent-step dispatch (`forge debug`'s ad-hoc RCA sessions,
+ * `ExecuteStepContext.tools`). Agent steps and participant sessions never read it: they resolve a
+ * per-agent grant (`PLAN-M13.md` P4/P5). */
 const DEFAULT_TOOLS: ToolGrant = { read: true, write: true, exec: false, network: 'none' };
 
-/** `RunEngineContext.model`'s own doc comment: "`07` §7.2's own 'resolved from tier'... M5 has no
+/** The model for the same ad-hoc, non-agent-step sessions (`ExecuteStepContext.model`) -- agent steps
+ * resolve theirs from `models.tiers` (`resolveStepModel`), never from here. `RunEngineContext.model`'s own doc comment: "`07` §7.2's own 'resolved from tier'... M5 has no
  * tier/role system at all, so this is one fixed value... supplied by whoever constructs `ctx`" — this
  * is that resolution. With no tier→model mapping built anywhere in this codebase yet
  * (`SPEC-QUESTIONS.md` Q62 part 2), the platform adapter's own real, reported model list is the only
@@ -282,6 +291,13 @@ export async function buildRunEngineContext(
     integrationPath,
     model,
     tools: DEFAULT_TOOLS,
+    assembly: createPromptAssemblyContext({
+      paths: input.paths,
+      integrationPath,
+      agentsRoot: input.agentsRoot,
+      config: input.config,
+      templatesPackageRoot: resolvePackageRoot('@forge/templates') as AbsolutePath,
+    }),
     retainLaneWorktrees: input.config.execution.retainLaneWorktrees !== 'never',
     // `17` §17.4 point 5 / `06` §6.7's own per-autonomy default table, via `resolveClaimPolicy`
     // (`PLAN-M10.md` P20) — this used to be the bare literal `'strict'` unconditionally, silently

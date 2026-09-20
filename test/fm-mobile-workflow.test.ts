@@ -31,12 +31,14 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { PlatformAdapter, ToolGrant } from '@forge/adapter-kit';
+import { ProjectPaths, type AbsolutePath } from '@forge/core';
 import {
   createGateEvaluator,
   createMergeQueueFacade,
   createTelemetryFacade,
   createVcsFacade,
 } from '@forge/engine/dispatch';
+import type { PromptAssemblyContext } from '@forge/engine/dispatch';
 import type { GateDefinition } from '@forge/engine/gates';
 import type { ExpressionContext } from '@forge/engine/expr';
 import { compileRunPlan } from '@forge/engine/plan';
@@ -129,6 +131,59 @@ async function createTempRepo(prefix: string): Promise<string> {
   return dir;
 }
 
+/** M13 P5 (D4): every agent step is dispatched through real prompt assembly, so a test that drives one
+ * needs an assembly. This is the small fixture flavour -- any agent id resolves to one plain agent, a
+ * brief/prompt reference resolves to its own text, the KB is empty and every tier maps to the fake
+ * adapter's model -- the same compile/record path production takes, minus the project files. */
+function fixtureAssembly(projectRoot: string): PromptAssemblyContext {
+  const tier = { 'forge-fake-adapter': FAKE_MODEL_ID };
+  return {
+    paths: new ProjectPaths(projectRoot),
+    loadAgent: (agentId) =>
+      Promise.resolve({
+        id: agentId,
+        name: agentId,
+        version: '1.0.0',
+        tier: 'core',
+        mandate: `Do the ${agentId} job.`,
+        decisions_owned: [],
+        persona: { voice: 'terse', stance: 'pragmatic', disagreement_style: 'direct' },
+        inputs: { required: [] },
+        outputs: [{ type: 'Note', schema: 'note.schema.json', path: 'docs/note.md' }],
+        kb_write: [],
+        tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+        model: { tier: 'balanced', thinking: 'medium' },
+        limits: { max_turns: 10, wall_clock_ms: 600_000, max_cost_usd: 5 },
+        parallel_safety: { file_ownership: ['**'], exclusive: false },
+        gates: { produces_evidence_for: [], may_approve: [] },
+        skills: [],
+        prompt: { system: 'prompts/fixture.system.md' },
+      }),
+    loadContent: (reference) => Promise.resolve(`Fixture text for ${reference}.`),
+    openKb: () =>
+      Promise.resolve({
+        backend: {
+          upsertEntry: () => undefined,
+          upsertLinks: () => undefined,
+          search: () => [],
+          expand: () => [],
+          clear: () => undefined,
+          close: () => undefined,
+        },
+        tree: { entries: [], errors: [] },
+        parseErrorCount: 0,
+        close: () => undefined,
+      }),
+    models: { tiers: { frugal: tier, balanced: tier, max: tier }, overrides: {} },
+    escalations: [],
+    autonomy: 'guided',
+    kbPackBudgetTokens: 10_000,
+    skillsPackBudgetTokens: 8_000,
+    templatesPackageRoot: projectRoot as AbsolutePath,
+    pinnedCore: {},
+  };
+}
+
 function fixtureRunEngineContext(projectRoot: string): RunEngineContext {
   const runId = 'run-fm-mobile-fixture';
   let tick = 0;
@@ -146,6 +201,7 @@ function fixtureRunEngineContext(projectRoot: string): RunEngineContext {
     integrationPath: projectRoot,
     model: FAKE_MODEL_ID,
     tools: FIXTURE_TOOLS,
+    assembly: fixtureAssembly(projectRoot),
     retainLaneWorktrees: false,
     claimPolicy: 'strict',
     signCommits: false,

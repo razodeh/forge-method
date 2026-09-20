@@ -23,16 +23,36 @@ export {
   runLaneLifecycle,
   runMergeStep,
 } from './steps.ts';
+export {
+  assembleAgentSession,
+  isAssemblyRefusal,
+  refusalFailure,
+  tryResolveSessionModel,
+  kickoffPrompt,
+  promptRecordDirName,
+  resumePrompt,
+  tryAssemble,
+  type AssembleInput,
+  type AssembledSession,
+} from './assemble.ts';
+export {
+  createPromptAssemblyContext,
+  parseEscalations,
+  type CreatePromptAssemblyInput,
+} from './assembly-context.ts';
 export { runShellCommand, type ShellCommandResult } from './shell.ts';
+export type { AgentWorkOptions } from './steps.ts';
 export type {
   ExecuteStepContext,
   GateEvaluator,
+  KbAccess,
   LaneHandle,
   MergeCandidateChecks,
   MergeCandidateLike,
   MergeOutcome,
   MergeQueueFacade,
   NewDispatchEvent,
+  PromptAssemblyContext,
   StepFailureInfo,
   StepOutcome,
   StepOutcomeDetail,

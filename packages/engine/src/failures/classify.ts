@@ -90,6 +90,23 @@ function classifyMergeFailure(failure: StepFailureInfo): FailureClass {
   return 'transient';
 }
 
+/** The `ForgeError` codes prompt assembly raises for a permanent, config-shaped refusal. */
+const PROMPT_POLICY_CODES: ReadonlySet<string> = new Set([
+  'RUN-039',
+  'RUN-056',
+  'RUN-077',
+  'RUN-078',
+  'RUN-079',
+  'RUN-080',
+  'RUN-081',
+  'CFG-003',
+  'CFG-004',
+  'CFG-053',
+  'CFG-054',
+  'KB-013',
+  'KB-014',
+]);
+
 /** Maps a real `StepOutcome`'s own failure to `06` §6.8's own nine-member table. Throws `RUN-042` for a
  * succeeded outcome — classifying "what went wrong" makes no sense when nothing did, the same
  * structural/config-error-throws split this whole package already holds for malformed input elsewhere
@@ -107,6 +124,15 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       return classifyVcsFailure(failure);
     case 'merge':
       return classifyMergeFailure(failure);
+    case 'prompt':
+      // Only the codes assembly raises for a *config-shaped* refusal (a missing agent/brief/prompt file, an
+      // unmapped model tier, a grant above its ceiling, an adapter that cannot carry a system prompt, a
+      // blank task, a bad escalation) fail identically on every retry: `06` §6.8's "fail immediately,
+      // surface to a human" class. Anything else -- a raw or wrapped file-system error (`EMFILE`,
+      // `ENOSPC`, `RUN-034`), a locked index -- is an infrastructure hiccup and stays retryable.
+      return failure.code !== undefined && PROMPT_POLICY_CODES.has(failure.code)
+        ? 'policy'
+        : 'transient';
     case 'telemetry':
     case 'unsupported':
       // Neither is ever actually constructed by any real handler in @forge/engine/dispatch: a

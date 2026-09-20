@@ -7,7 +7,7 @@
  * @see PLAN-M6.md A4
  */
 import type { AbsolutePath } from '@forge/core';
-import { buildContextPack, estimateTokens } from '@forge/kb/pack';
+import { buildContextPack, estimateTokens, type PinnedCore } from '@forge/kb/pack';
 import type { KbIndexBackend, KbTree } from '@forge/kb';
 import { parseSkillPackage, skillFrontMatterSchema } from '@forge/extensions/skills';
 import { SKILL_INDEX } from '@forge/templates';
@@ -50,6 +50,12 @@ export interface PackForStepOptions {
    * dependency-injection shape (and, concretely, letting a test exercise a synthetic skill fixture
    * without needing a real, shipped `@forge/templates` entry for every code path). */
   readonly skillIndex?: Readonly<Record<string, string>> | undefined;
+  /** `05` §5.4 point 1's own pinned-core items that are not KB data (`projectIdentity`, `level`,
+   * `stageGoal`) and so have no source `@forge/kb/pack` can compute for itself -- the caller (which
+   * holds the project config) supplies them here, forwarded verbatim as `PackRequest.
+   * pinnedCoreOverrides`. Without this, a real step's pinned core always omitted the project's own
+   * identity and level even though `05` §5.4 lists both as "always" included. */
+  readonly pinnedCoreOverrides?: Partial<PinnedCore> | undefined;
 }
 
 /** `15` §15.4.3 point 2: a `path`/`language` hint upgrades a skill from metadata-only to injected-body
@@ -179,6 +185,9 @@ export async function packForStep(
       declaredInputIds: step.declaredInputIds,
       briefText: step.brief,
       budgetTokens: options.budgetTokens,
+      ...(options.pinnedCoreOverrides === undefined
+        ? {}
+        : { pinnedCoreOverrides: options.pinnedCoreOverrides }),
     },
     kbBackend,
     kbTree,

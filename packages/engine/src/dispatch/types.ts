@@ -22,7 +22,13 @@
  * @see specs/20 §20.10
  * @see PLAN-M5.md P15
  */
+import type { AbsolutePath, ProjectPaths } from '@forge/core';
 import type { PlatformAdapter, SessionResult, ToolGrant } from '@forge/adapter-kit';
+import type { Escalation } from '@forge/extensions/agents';
+import type { StyleProfile } from '@forge/extensions/style';
+import type { AgentDefinition } from '@forge/agents/schema';
+import type { KbIndexBackend, KbTree } from '@forge/kb';
+import type { ForgeConfig } from '@forge/schemas/config';
 import type { ForgeEvent, EventType } from '@forge/telemetry/events';
 
 import type { GateDefinition, GateReport } from '../gates/index.ts';
@@ -154,6 +160,47 @@ export interface MergeQueueFacade {
   process(candidate: MergeCandidateLike, checks: MergeCandidateChecks): Promise<MergeOutcome>;
 }
 
+/** One open view of a project's Knowledge Body for one context-pack build (`05` §5.4): the parsed tree
+ * plus the search index over it. `close` releases the index handle -- the pack build is synchronous once
+ * its inputs are in hand, so a caller opens, packs and closes within one assembly. */
+export interface KbAccess {
+  readonly backend: KbIndexBackend;
+  readonly tree: KbTree;
+  /** Files under the KB root that failed to parse. Reported in the step's context manifest so a
+   * malformed entry that never reached the pack is visible rather than silently absent. */
+  readonly parseErrorCount: number;
+  close(): void;
+}
+
+/**
+ * Everything dispatch needs to turn an agent step into a real `SessionRequest` (`PLAN-M13.md` P5): load
+ * the agent, load the brief/prompt text, pack KB context, resolve the grant and model, compile `05`
+ * §5.3's nine blocks and write the mandatory audit record. Every field is required on purpose -- an
+ * optional one is exactly how the prior "pass the raw brief path through" behaviour stayed reachable.
+ * `createPromptAssemblyContext` builds the real thing; tests build small fixtures in their own helpers.
+ */
+export interface PromptAssemblyContext {
+  /** Where `.forge/state/runs/<runId>/steps/<stepId>/{prompt.md,context.json}` are written. */
+  readonly paths: ProjectPaths;
+  /** The project's own resolved agent `agentId`, or a `ForgeError` (`RUN-056`) when it has none. */
+  readonly loadAgent: (agentId: string) => Promise<AgentDefinition>;
+  /** Real text for a `briefs/<name>.md` / `prompts/<name>.md` reference (`@forge/agents/prompt`'s
+   * `resolveContentReference`); throws a `ForgeError` (`CFG-053`/`RUN-079`) rather than returning empty. */
+  readonly loadContent: (reference: string) => Promise<string>;
+  readonly openKb: () => Promise<KbAccess>;
+  /** `.forge/config.yaml`'s `models` block: `05` §5.8's tier -> model table and per-agent overrides. */
+  readonly models: ForgeConfig['models'];
+  /** `security.toolCeilingEscalations`, already validated into the real shape. */
+  readonly escalations: readonly Escalation[];
+  readonly autonomy: 'supervised' | 'guided' | 'autonomous';
+  readonly kbPackBudgetTokens: number;
+  readonly skillsPackBudgetTokens: number;
+  readonly templatesPackageRoot: AbsolutePath;
+  /** `05` §5.4 point 1's pinned-core items that come from config rather than the KB. */
+  readonly pinnedCore: { readonly projectIdentity?: string; readonly level?: string };
+  readonly styleProfile?: StyleProfile | undefined;
+}
+
 /** Everything one `executeStep` call needs beyond the `StepNode` itself — `PLAN-M5.md`'s own Surface text
  * shows `{ adapter, vcs, telemetry, gates, mergeQueue }` alone, undersold relative to what a real call
  * needs to actually reach `createLaneWorktree`/`appendEvent`/`startSession` at all (a run id, a project
@@ -179,11 +226,16 @@ export interface ExecuteStepContext {
    * `processMergeCandidate` requires a caller-maintained one; creating/maintaining it across a whole run
    * is out of this module's own scope (a later piece's concern), only *using* one it is handed is not. */
   readonly integrationPath: string;
-  /** `07` §7.2's own "resolved from tier" — M5 has no tier/role system at all (`Q62` part 2), so this is
-   * one fixed value every session in a run requests, supplied by whoever constructs `ctx`. */
+  /** One fixed model for sessions that are *not* agent-step dispatch: `forge debug`'s own ad-hoc RCA
+   * sessions (`packages/cli/src/commands/loop/debug.ts`), which still build their own `SessionRequest`.
+   * Agent steps and interaction-mode participant sessions never read this -- they resolve a model per
+   * agent from `assembly` (`05` §5.8) -- and a test proves it. */
   readonly model: string;
-  /** The identical "no role-based granting yet" stub as `model` above, for `SessionRequest.tools`. */
+  /** The identical "one fixed grant" stand-in as `model` above, for the same ad-hoc sessions only. Agent
+   * steps and participants resolve a per-agent grant (`resolveStepToolGrant`) and never read this. */
   readonly tools: ToolGrant;
+  /** How agent steps and participant sessions become real session requests. Required, never optional. */
+  readonly assembly: PromptAssemblyContext;
   /** `18` §18.3's own `execution.retainLaneWorktrees` simplified to a boolean for M5's own scope
    * (`never`/`always`; the real three-way `never | on-failure | always` policy is additive scope a later
    * piece can add without changing this shape, only what populates it). */
@@ -255,7 +307,18 @@ export interface SessionBounds {
  * `TelemetryError` code, an exit code as a string, a `GateReport`'s own lack of approval has none) so P16
  * loses no information this module had. */
 export interface StepFailureInfo {
-  readonly source: 'adapter' | 'vcs' | 'telemetry' | 'command' | 'gate' | 'merge' | 'unsupported';
+  readonly source:
+    | 'adapter'
+    | 'vcs'
+    | 'telemetry'
+    | 'command'
+    | 'gate'
+    | 'merge'
+    | 'unsupported'
+    /** Prompt assembly refused the step before anything was dispatched (`PLAN-M13.md` P5): a missing
+     * agent/brief, an unresolvable grant or model, a ceiling violation. `code` carries the `ForgeError`
+     * code. Never retryable -- the same inputs fail identically -- see `classifyFailure`. */
+    | 'prompt';
   readonly code?: string | undefined;
   readonly message: string;
   /** The real, registered `ForgeError` a `vcs`-sourced failure was wrapped into for provenance

@@ -12,7 +12,8 @@ import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
-import { FakePlatformAdapter } from '@forge/testkit';
+import type { SessionRequest } from '@forge/adapter-kit';
+import { FAKE_MODEL_ID, FakePlatformAdapter } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
 import { dispatchAgentStep } from '../../src/interaction/dispatch-agent-step.ts';
@@ -51,6 +52,124 @@ function testAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     ...overrides,
   };
 }
+
+describe('dispatchAgentStep -- participant sessions carry the real compiled prompt (PLAN-M13 P5, D9)', () => {
+  it('every panel participant gets the nine-block system prompt (the turn text as block [4]), a read-only per-agent grant and the tier-resolved model, never ctx.tools/ctx.model', async () => {
+    const projectRoot = await createTempRepo('participant-prompt');
+    const requests: SessionRequest[] = [];
+    const adapter = new FakePlatformAdapter();
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      { text: ['answer'] },
+    );
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      model: 'POISON-MODEL',
+      tools: { read: false, write: true, exec: ['rm -rf *'], network: 'full' },
+    });
+    const stepNode = node({
+      id: 'wf:panel',
+      kind: 'agent',
+      agent: toAgentId('test-agent'),
+      brief: 'Which database should we use?',
+    });
+
+    await dispatchAgentStep(stepNode, testAgent(), ctx, 'panel', { perspectives: ['cost'] });
+
+    const participant = requests.find((request) => request.stepId === 'wf:panel:panel:cost');
+    expect(participant).toBeDefined();
+    if (participant === undefined) return;
+    for (let block = 1; block <= 9; block += 1) {
+      expect(participant.systemPrompt.text).toContain(`## [${String(block)}] `);
+    }
+    expect(participant.systemPrompt.text).toContain('Which database should we use?');
+    expect(participant.systemPrompt.text).toContain(
+      'Answer independently from the "cost" perspective.',
+    );
+    expect(participant.tools).toEqual({ read: true, write: false, exec: false, network: 'none' });
+    expect(participant.model).toBe(FAKE_MODEL_ID);
+    expect(participant.model).not.toBe('POISON-MODEL');
+    expect(participant.permissionMode).toBe('deny-unlisted');
+  });
+
+  it("swarm-review perspective sessions look up the agent's prompt.briefs['swarm-review'] and attach it to block [4]; a differently-keyed brief does not attach", async () => {
+    const projectRoot = await createTempRepo('swarm-briefkey');
+    const requests: SessionRequest[] = [];
+    const adapter = new FakePlatformAdapter();
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      { text: ['x'], structured: { findings: [], checked: ['a'] } },
+    );
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:rev',
+      kind: 'agent',
+      agent: toAgentId('test-agent'),
+      brief: 'Review it.',
+    });
+    const agent = testAgent({
+      prompt: {
+        system: 'prompts/test.system.md',
+        briefs: {
+          'swarm-review': 'prompts/test.swarm-review.md',
+          'unrelated-key': 'prompts/test.unrelated.md',
+        },
+      },
+    });
+
+    await dispatchAgentStep(stepNode, agent, ctx, 'swarm-review', {
+      perspectives: ['design', 'security'],
+    });
+
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      // (the fixture assembly returns a reference as its own text)
+      expect(request.systemPrompt.text).toContain(
+        'Role-specific guidance for this step:\nprompts/test.swarm-review.md',
+      );
+      expect(request.systemPrompt.text).not.toContain('prompts/test.unrelated.md');
+    }
+  });
+
+  it('a participant session whose agent has an unmapped model tier throws RUN-078 and dispatches nothing', async () => {
+    const projectRoot = await createTempRepo('participant-no-model');
+    const adapter = new FakePlatformAdapter();
+    let started = 0;
+    adapter.script(
+      () => {
+        started += 1;
+        return true;
+      },
+      { text: ['x'] },
+    );
+    const base = createTestContext({ projectRoot, adapter });
+    const ctx = {
+      ...base,
+      assembly: {
+        ...base.assembly,
+        models: { tiers: { frugal: {}, balanced: {}, max: {} }, overrides: {} },
+      },
+    };
+    const stepNode = node({
+      id: 'wf:panel',
+      kind: 'agent',
+      agent: toAgentId('test-agent'),
+      brief: 'q',
+    });
+
+    await expect(
+      dispatchAgentStep(stepNode, testAgent(), ctx, 'panel', { perspectives: ['cost'] }),
+    ).rejects.toMatchObject({ code: 'RUN-078' });
+    expect(started).toBe(0);
+  });
+});
 
 describe('dispatchAgentStep', () => {
   it('solo delegates straight to runAgentStep unchanged -- one real session, no participants', async () => {
@@ -245,28 +364,36 @@ describe('dispatchAgentStep', () => {
     const prompts: Record<string, string> = {};
     adapter.script(
       (request) => {
-        prompts[request.stepId] = request.prompt;
+        // The task text plays block [4] of the compiled system prompt (PLAN-M13 P5, D9); the user turn is a
+        // fixed kickoff line, so the full effective prompt is both together.
+        prompts[request.stepId] = `${request.systemPrompt.text}\n${request.prompt}`;
         return request.stepId.includes(':debate:proposer:round-1');
       },
       { text: ['round 1: opposing case first, then mine'] },
     );
     adapter.script(
       (request) => {
-        prompts[request.stepId] = request.prompt;
+        // The task text plays block [4] of the compiled system prompt (PLAN-M13 P5, D9); the user turn is a
+        // fixed kickoff line, so the full effective prompt is both together.
+        prompts[request.stepId] = `${request.systemPrompt.text}\n${request.prompt}`;
         return request.stepId.includes(':debate:critic:round-1');
       },
       { text: ['round 1 critique -- not conceding yet'] },
     );
     adapter.script(
       (request) => {
-        prompts[request.stepId] = request.prompt;
+        // The task text plays block [4] of the compiled system prompt (PLAN-M13 P5, D9); the user turn is a
+        // fixed kickoff line, so the full effective prompt is both together.
+        prompts[request.stepId] = `${request.systemPrompt.text}\n${request.prompt}`;
         return request.stepId.includes(':debate:proposer:round-2');
       },
       { text: ['round 2: my case'] },
     );
     adapter.script(
       (request) => {
-        prompts[request.stepId] = request.prompt;
+        // The task text plays block [4] of the compiled system prompt (PLAN-M13 P5, D9); the user turn is a
+        // fixed kickoff line, so the full effective prompt is both together.
+        prompts[request.stepId] = `${request.systemPrompt.text}\n${request.prompt}`;
         return request.stepId.includes(':debate:critic:round-2');
       },
       { text: ['CONCEDE'] },
@@ -309,7 +436,9 @@ describe('dispatchAgentStep', () => {
     const prompts: Record<string, string> = {};
     adapter.script(
       (request) => {
-        prompts[request.stepId] = request.prompt;
+        // The task text plays block [4] of the compiled system prompt (PLAN-M13 P5, D9); the user turn is a
+        // fixed kickoff line, so the full effective prompt is both together.
+        prompts[request.stepId] = `${request.systemPrompt.text}\n${request.prompt}`;
         return request.stepId.includes(':debate:proposer:');
       },
       { text: ['I propose X'] },

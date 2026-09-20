@@ -41,9 +41,76 @@ import type { CompiledPrompt, CompiledPromptBlock, PromptConstraints } from './t
 export interface CompilePromptOptions {
   readonly styleProfile?: StyleProfile | undefined;
   readonly appendGuidance?: string | undefined;
+  /**
+   * The agent's own loaded `prompt.system` text (`PLAN-M13.md` P5, `SPEC-QUESTIONS.md` D1): role-level
+   * working instructions the structured fields (`mandate`/`persona`/`decisions_owned`/`outputs`) do not
+   * carry. Appended to block [2] under its own heading -- block [2] is one of `05` §5.3's two
+   * customization surfaces, so this widens no invariant: blocks [1] and [6] remain derived from nothing
+   * this option (or any other) can reach.
+   */
+  readonly roleInstructions?: string | undefined;
+  /**
+   * The agent's own `prompt.briefs.<key>` text for the workflow brief this step runs (`15` §15.3's
+   * "replace a specific brief" example), appended to block [4] under its own heading. The caller decides
+   * which key applies (this function has no notion of a workflow's brief basename); it only renders.
+   */
+  readonly roleSpecificGuidance?: string | undefined;
+  /**
+   * The session is read-only (an interaction-mode participant, a brownfield analysis turn): it writes no
+   * files, so block [5] must not tell it to produce the agent's artifact files -- the constraints block
+   * [6] says `write: false`, and two blocks of one prompt must not contradict each other.
+   */
+  readonly readOnly?: boolean | undefined;
 }
 
-function renderRoleBlock(agent: AgentDefinition): string {
+/** Horizontal whitespace (any Unicode space, never a line break) or an invisible format character
+ * (`\p{Cf}`: zero-width, bidi controls, soft hyphen, BOM, tag characters) or default-ignorable code point
+ * (Hangul fillers, invisible operators, variation selectors). */
+const HSPACE = '(?:[^\\S\\r\\n\\u2028\\u2029]|[\\p{Cf}\\p{Default_Ignorable_Code_Point}])';
+/** Anything that can precede a heading marker on its own line without stopping a renderer reading it as
+ * a heading: blockquote markers and list-item markers (`- `, `* `, `+ `, `1. `). */
+const LINE_PREFIX = `(?:${HSPACE}|>|[-*+]|\\p{Nd}+[.)])*`;
+const HASH = `[#\\uff03](?:${HSPACE})*`;
+/**
+ * A line that reads as one of this compiler's own `## [n] Name` block headings, however it is dressed:
+ * any heading depth, any leading whitespace (NBSP and other Unicode spaces included), zero-width or
+ * BOM characters, blockquote markers, spaces inside the brackets, full-width `［６］` brackets and digits.
+ * Content that reaches blocks [2]-[5] and [7]-[9] (a brief, a KB entry, a skill body, role instructions,
+ * appended guidance) is authored by parties who do not control blocks [1] and [6]; a line like
+ * `## [6] Constraints` inside it would otherwise render a second, forged block-[6] heading in the very
+ * text the model reads, even though the real block's own content is untouched. Any block number is
+ * matched: the numbering scheme is an implementation detail no content should be able to imitate.
+ * (An *unnumbered* `## Constraints` is not matched -- it cannot be confused with the numbered heading,
+ * and real briefs legitimately contain such headings.)
+ */
+const FORGED_BLOCK_HEADING = new RegExp(
+  `^(${LINE_PREFIX})((?:${HASH}){1,6}[\\[\\uff3b\\u3010\\u3014]${HSPACE}*\\p{Nd}+${HSPACE}*[\\]\\uff3d\\u3011\\u3015])`,
+  'gmu',
+);
+
+/**
+ * Defangs block-heading lookalikes in caller/author-supplied content by prefixing a backslash, so the
+ * only lines the joined text ever starts with `## [n]` are the nine this module itself emits. Applied to
+ * every block whose content is not derived purely from a constant or from `PromptConstraints`. Vertical
+ * tab, form feed and NEL are line breaks to some renderers but not to JavaScript's `^`; they are
+ * normalised to `\n` first so a heading cannot hide behind one.
+ */
+export function neutralizeBlockHeadings(content: string): string {
+  return content
+    .replace(/[\v\f\u0085]/g, '\n')
+    .replace(
+      FORGED_BLOCK_HEADING,
+      (_match, lead: string, heading: string) => `${lead}\\${heading}`,
+    );
+}
+
+/** One rendered line per value: a pattern or action string from an agent file or an escalation must not
+ * be able to start a new line (and so a forged heading) inside block [6]. */
+function oneLine(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029\v\f\u0085]+/g, ' ');
+}
+
+function renderRoleBlock(agent: AgentDefinition, roleInstructions: string | undefined): string {
   const lines: string[] = [
     `Mandate: ${agent.mandate}`,
     '',
@@ -63,7 +130,15 @@ function renderRoleBlock(agent: AgentDefinition): string {
         })`,
     ),
   ];
+  if (roleInstructions !== undefined && roleInstructions.trim() !== '') {
+    lines.push('', 'Role instructions:', roleInstructions);
+  }
   return lines.join('\n');
+}
+
+function renderStepBriefBlock(brief: string, roleSpecificGuidance: string | undefined): string {
+  if (roleSpecificGuidance === undefined || roleSpecificGuidance.trim() === '') return brief;
+  return `${brief}\n\nRole-specific guidance for this step:\n${roleSpecificGuidance}`;
 }
 
 function renderContextPackBlock(pack: AgentContextPack): string {
@@ -84,6 +159,10 @@ function renderContextPackBlock(pack: AgentContextPack): string {
   }
   return lines.join('\n');
 }
+
+/** Block [5] for a session that writes nothing: its whole output is its final message. */
+const READ_ONLY_OUTPUT_CONTRACT =
+  'This session is read-only: do not create or modify files. Your output is your final message (or the structured output the task asks for), and no artifact file is expected from you.';
 
 /**
  * `05` §5.3 point 5 names this block "exact artifact schema + file paths + front-matter template" --
@@ -109,7 +188,7 @@ function renderConstraintsBlock(constraints: PromptConstraints): string {
     'Tool grants:',
     `- read: ${String(constraints.tools.read)}`,
     `- write: ${String(constraints.tools.write)}`,
-    `- exec: ${constraints.tools.exec === undefined ? '(none)' : constraints.tools.exec.join(', ')}`,
+    `- exec: ${constraints.tools.exec === undefined ? '(none)' : constraints.tools.exec.map(oneLine).join(', ')}`,
     `- network: ${String(constraints.tools.network)}`,
     `- git_commit: ${constraints.tools.git_commit}`,
     `- deploy: ${String(constraints.tools.deploy)}`,
@@ -117,7 +196,7 @@ function renderConstraintsBlock(constraints: PromptConstraints): string {
     'Forbidden actions:',
     ...(constraints.forbiddenActions.length === 0
       ? ['(none)']
-      : constraints.forbiddenActions.map((action) => `- ${action}`)),
+      : constraints.forbiddenActions.map((action) => `- ${oneLine(action)}`)),
     '',
     'Budget:',
     `- max_turns: ${String(constraints.budget.max_turns)}`,
@@ -198,18 +277,43 @@ export function compilePrompt(
 ): CompiledPrompt {
   const blocks: CompiledPromptBlock[] = [
     { index: 1, name: 'FORGE operating contract', content: OPERATING_CONTRACT },
-    { index: 2, name: 'Role block', content: renderRoleBlock(agent) },
-    { index: 3, name: 'Project context pack', content: renderContextPackBlock(pack) },
-    { index: 4, name: 'Step brief', content: step.brief },
-    { index: 5, name: 'Output contract', content: renderOutputContractBlock(agent) },
+    {
+      index: 2,
+      name: 'Role block',
+      content: neutralizeBlockHeadings(renderRoleBlock(agent, options.roleInstructions)),
+    },
+    {
+      index: 3,
+      name: 'Project context pack',
+      content: neutralizeBlockHeadings(renderContextPackBlock(pack)),
+    },
+    {
+      index: 4,
+      name: 'Step brief',
+      content: neutralizeBlockHeadings(
+        renderStepBriefBlock(step.brief, options.roleSpecificGuidance),
+      ),
+    },
+    {
+      index: 5,
+      name: 'Output contract',
+      content:
+        options.readOnly === true
+          ? READ_ONLY_OUTPUT_CONTRACT
+          : neutralizeBlockHeadings(renderOutputContractBlock(agent)),
+    },
     { index: 6, name: 'Constraints', content: renderConstraintsBlock(constraints) },
     {
       index: 7,
       name: 'Definition of done',
-      content: renderDefinitionOfDoneBlock(definitionOfDone),
+      content: neutralizeBlockHeadings(renderDefinitionOfDoneBlock(definitionOfDone)),
     },
-    { index: 8, name: 'Skills', content: renderSkillsBlock(pack) },
-    { index: 9, name: 'House style + appended guidance', content: renderHouseStyleBlock(options) },
+    { index: 8, name: 'Skills', content: neutralizeBlockHeadings(renderSkillsBlock(pack)) },
+    {
+      index: 9,
+      name: 'House style + appended guidance',
+      content: neutralizeBlockHeadings(renderHouseStyleBlock(options)),
+    },
   ];
 
   const text = blocks

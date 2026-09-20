@@ -365,13 +365,15 @@ describe('runAgentStep', () => {
     if (caught instanceof ForgeError) expect(caught.code).toBe('RUN-039');
   });
 
-  it('defaults the session prompt to an empty string for a node with no brief of its own', async () => {
+  it('a node with no brief of its own gets an explicit no-authored-brief block [4] built only from its declared fields, and the fixed kickoff as its user prompt', async () => {
     const projectRoot = await createTempRepo('agent-no-brief');
     const adapter = new FakePlatformAdapter();
     let capturedPrompt: string | undefined;
+    let capturedSystem: string | undefined;
     adapter.script(
       (request) => {
         capturedPrompt = request.prompt;
+        capturedSystem = request.systemPrompt.text;
         return true;
       },
       { text: ['done'] },
@@ -383,10 +385,11 @@ describe('runAgentStep', () => {
     const outcome = await executeStep(stepNode, ctx);
 
     expect(outcome.status).toBe('succeeded');
-    expect(capturedPrompt).toBe('');
+    expect(capturedPrompt).toContain('wf:implement');
+    expect(capturedSystem).toContain('has no authored workflow brief');
   });
 
-  it('runAgentWork also defaults the resume-path prompt to an empty string for a node with no brief of its own', async () => {
+  it('runAgentWork resumes with the fixed continuation prompt, never a brief, for a node with no brief of its own', async () => {
     // The identical default the fresh-session path (buildSessionRequest, exercised above) already
     // proves -- covered separately here because runAgentWork's own resume branch builds its
     // ResumeRequest independently, not by delegating to buildSessionRequest.
@@ -424,7 +427,9 @@ describe('runAgentStep', () => {
     });
 
     expect(work.failure).toBeUndefined();
-    expect(capturedPrompt).toBe('');
+    expect(capturedPrompt).toBe(
+      'Continue step "wf:implement" from where the previous session stopped. Your system prompt is unchanged.',
+    );
   });
 
   it('a session crash that throws a non-Error value still produces a failed outcome, via String(cause)', async () => {

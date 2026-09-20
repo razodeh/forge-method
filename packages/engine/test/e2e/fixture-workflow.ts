@@ -23,6 +23,7 @@ import {
   createTelemetryFacade,
   createVcsFacade,
 } from '../../src/dispatch/facades.ts';
+import { createFixtureAssembly } from '../dispatch/helpers.ts';
 import type { LaneHandle } from '../../src/dispatch/types.ts';
 import { compileRunPlan, type StepNode } from '../../src/plan/index.ts';
 import type { RunEngineContext } from '../../src/run/run-engine.ts';
@@ -154,6 +155,7 @@ export function fixtureRunEngineContext(
     integrationPath: overrides.integrationPath ?? projectRoot,
     model: overrides.model ?? FAKE_MODEL_ID,
     tools: overrides.tools ?? FIXTURE_TOOLS,
+    assembly: overrides.assembly ?? createFixtureAssembly(projectRoot),
     retainLaneWorktrees: overrides.retainLaneWorktrees ?? false,
     claimPolicy: overrides.claimPolicy ?? 'strict',
     signCommits: overrides.signCommits ?? false,

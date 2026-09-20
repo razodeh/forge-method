@@ -6,7 +6,11 @@
  * @see PLAN-M6.md A5
  */
 export { OPERATING_CONTRACT } from './operating-contract.ts';
-export { compilePrompt, type CompilePromptOptions } from './compile-prompt.ts';
+export {
+  compilePrompt,
+  neutralizeBlockHeadings,
+  type CompilePromptOptions,
+} from './compile-prompt.ts';
 export {
   isWellFormedContentReference,
   listResolvableContentReferences,

@@ -162,6 +162,7 @@ export async function reviewChange(
     runId,
     adapter: deps.adapter,
     checksRoot: deps.checksRoot,
+    agentsRoot: deps.agentsRoot,
     clock,
   });
 

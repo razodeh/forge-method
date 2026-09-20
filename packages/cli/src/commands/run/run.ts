@@ -35,6 +35,8 @@ export interface RunDeps {
   readonly adapter: PlatformAdapter;
   readonly workflowsRoot: string;
   readonly checksRoot: string;
+  /** Project-relative directory of materialized agent definitions (`.forge/agents`). */
+  readonly agentsRoot: string;
 }
 
 async function readWorkflowSource(deps: RunDeps, workflowId: string): Promise<string> {
@@ -156,6 +158,7 @@ export async function runWorkflow(
       runId,
       adapter: deps.adapter,
       checksRoot: deps.checksRoot,
+      agentsRoot: deps.agentsRoot,
       clock,
     });
     const runState = await runEngine(workflowSource, options.expressionContext, ctx);

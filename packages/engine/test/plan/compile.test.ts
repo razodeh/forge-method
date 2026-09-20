@@ -43,6 +43,83 @@ function findNode(nodes: readonly StepNode[], id: string): StepNode {
   return node;
 }
 
+describe('compilePlan -- gateEvidence for block [7] (05 §5.3)', () => {
+  it("an agent step's evidence gates are the ones it names plus every gate step that directly depends on it, sorted and de-duplicated", () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          { ...agentStep({ id: 'a', brief: 'briefs/a.md' }), gateEvidence: ['G-Z', 'G-A'] },
+          agentStep({ id: 'b', brief: 'briefs/b.md' }),
+          { id: 'gate-1', kind: 'gate', gate: 'G-A', dependsOn: ['a', 'b'] },
+          { id: 'gate-2', kind: 'gate', gate: 'G-M', dependsOn: ['b'] },
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:a').gateEvidence).toEqual(['G-A', 'G-Z']);
+    expect(findNode(nodes, 'w:b').gateEvidence).toEqual(['G-A', 'G-M']);
+  });
+
+  it('an agent step no gate concerns carries no gateEvidence key at all', () => {
+    const nodes = expectOk(compilePlan(workflow([agentStep({ id: 'a' })]), {}));
+    expect('gateEvidence' in findNode(nodes, 'w:a')).toBe(false);
+  });
+});
+
+describe('compilePlan -- run inputs for block [4] (M13 P5)', () => {
+  it("an agent step carries the run's values for the workflow's declared inputs, and a fanout child also its item", () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow(
+          [
+            agentStep({ id: 'plain', brief: 'briefs/a.md' }),
+            {
+              kind: 'fanout',
+              id: 'each',
+              over: 'stage.items',
+              itemKey: '{{item.id}}',
+              step: agentStep({ brief: 'briefs/b.md' }),
+            },
+          ],
+          {
+            inputs: [
+              { name: 'stageId', type: 'string', required: true },
+              { name: 'notSupplied', type: 'string', required: false },
+            ],
+          },
+        ),
+        { stageId: 'S-2', other: 'ignored', stage: { items: [{ id: 'i1' }] } } as ExpressionContext,
+      ),
+    );
+    expect(findNode(nodes, 'w:plain').runInputs).toEqual({ stageId: 'S-2' });
+    expect(findNode(nodes, 'w:each:i1').runInputs).toEqual({ stageId: 'S-2', item: { id: 'i1' } });
+  });
+
+  it('finds a declared input in vars (where forge run --epic/--story puts it) and names a required input the run did not supply', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([agentStep({ id: 'a', brief: 'briefs/a.md' })], {
+          inputs: [
+            { name: 'story', type: 'string', required: true },
+            { name: 'stageId', type: 'string', required: true },
+            { name: 'goal', type: 'string', required: false },
+          ],
+        }),
+        { vars: { story: 'STORY-1' } },
+      ),
+    );
+    expect(findNode(nodes, 'w:a').runInputs).toEqual({ story: 'STORY-1' });
+    expect(findNode(nodes, 'w:a').missingRunInputs).toEqual(['stageId']);
+  });
+
+  it('a workflow with no declared inputs and no fanout item carries no runInputs key', () => {
+    const nodes = expectOk(
+      compilePlan(workflow([agentStep({ id: 'a' })]), { stageId: 'x' } as ExpressionContext),
+    );
+    expect('runInputs' in findNode(nodes, 'w:a')).toBe(false);
+  });
+});
+
 describe('compileStepId', () => {
   it('formats a plain step id as "workflowId:stepId"', () => {
     expect(compileStepId('w', 'implement')).toBe('w:implement');

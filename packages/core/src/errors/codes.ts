@@ -1019,6 +1019,31 @@ export const ERROR_CODES = {
     remedy:
       'Create that file with real text, or re-run `forge init` to regenerate the shipped content, then run `forge workflow validate --all` or `forge agent validate --all`.',
   },
+  'RUN-080': {
+    // `@forge/engine/dispatch`'s prompt assembly (`PLAN-M13.md` P5, `05` §5.3, `07` §7.2): the adapter
+    // reports `systemPromptControl: 'none'`, so it has no way to carry the compiled nine-block system
+    // prompt at all. Refusing is the fail-closed reading of `07` §7.2's "adapters MUST fail closed"
+    // (the engine refuses to run the step rather than run it without its operating contract and
+    // constraints); silently dropping the prompt, or moving it into the user turn where it loses its
+    // system-prompt authority, would each be a quieter way of running a weaker step.
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { adapterId: string; stepId: string }) =>
+      `Adapter ${show(d.adapterId)} cannot carry a system prompt, so step ${show(d.stepId)} was not dispatched.`,
+    remedy:
+      'Choose an adapter that reports systemPromptControl append or replace, or extend the adapter so its invoke template can carry the system prompt.',
+  },
+  'RUN-081': {
+    // `@forge/engine/dispatch`'s prompt assembly (`PLAN-M13.md` P5): a session's task text (an interaction
+    // turn's task, a session phase's question) is blank. Compiling it would leave block [4] of the system
+    // prompt empty -- the silently-weaker prompt assembly exists to prevent -- so the session is refused.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string }) =>
+      `Step ${show(d.stepId)} has no task text, so there is nothing to put in the prompt's step brief.`,
+    remedy:
+      'Provide the question or task text for the session (for example the --question flag), or give the step a real brief, then retry.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type
@@ -1628,6 +1653,19 @@ export const ERROR_CODES = {
       `${show(d.reference)} is not a brief or prompt reference: expected briefs/<name>.md or prompts/<name>.md.`,
     remedy:
       'Set the brief:/prompt: value to briefs/<name>.md or prompts/<name>.md, one directory deep, and run `forge workflow validate --all` or `forge agent validate --all` to confirm.',
+  },
+  'CFG-054': {
+    // `.forge/config.yaml`'s `security.toolCeilingEscalations` is schema-typed `unknown[]`
+    // (`SPEC-QUESTIONS.md` Q196); `@forge/engine/dispatch`'s prompt assembly (`PLAN-M13.md` P5) validates
+    // each entry into the real `Escalation` shape before any step's tool grant is resolved from it.
+    // A malformed entry is refused outright rather than skipped: skipping would quietly ignore a grant a
+    // human believes is in force, and trusting an unvalidated shape would let a typo widen a grant.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { index: number; detail: string }) =>
+      `security.toolCeilingEscalations[${show(d.index)}] is not a valid escalation: ${show(d.detail)}.`,
+    remedy:
+      'Provide agent, grant, reason, approvedBy, approvedAt and expires on each entry (see 15 §15.3.2), or remove it, then retry.',
   },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union

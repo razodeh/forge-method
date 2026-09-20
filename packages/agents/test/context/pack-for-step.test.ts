@@ -94,6 +94,24 @@ const BASE_OPTIONS: Omit<
 > = { budgetTokens: 10_000 };
 
 describe('packForStep', () => {
+  it('forwards config-sourced pinned-core items (project identity, level) that no KB tree can supply', async () => {
+    const pack = await packForStep(BASE_STEP, agentWithSkills([]), freshBackend(), EMPTY_TREE, {
+      ...BASE_OPTIONS,
+      skillsPackBudgetTokens: 8000,
+      templatesPackageRoot: realTemplatesPackageRoot,
+      pinnedCoreOverrides: { projectIdentity: 'Acme Billing', level: 'L2' },
+    });
+    expect(pack.pinnedCore.projectIdentity).toBe('Acme Billing');
+    expect(pack.pinnedCore.level).toBe('L2');
+    // Without overrides they are simply absent (a fresh project has no other source for them).
+    const bare = await packForStep(BASE_STEP, agentWithSkills([]), freshBackend(), EMPTY_TREE, {
+      ...BASE_OPTIONS,
+      skillsPackBudgetTokens: 8000,
+      templatesPackageRoot: realTemplatesPackageRoot,
+    });
+    expect(bare.pinnedCore.projectIdentity).toBeUndefined();
+  });
+
   it('includes a description/whenToUse summary for every attached skill, always', async () => {
     const agent = agentWithSkills(['git-hygiene-for-lanes']);
     const pack = await packForStep(BASE_STEP, agent, freshBackend(), EMPTY_TREE, {

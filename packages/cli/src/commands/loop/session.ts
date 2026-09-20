@@ -74,6 +74,7 @@ export interface SessionCommandDeps {
   readonly config: ForgeConfig;
   readonly adapter: PlatformAdapter;
   readonly checksRoot: string;
+  readonly agentsRoot: string;
 }
 
 /** `docs/forge/sessions/` — re-exported under this file's own name for parity with every other
@@ -257,6 +258,7 @@ export async function startSession(
     runId,
     adapter: deps.adapter,
     checksRoot: deps.checksRoot,
+    agentsRoot: deps.agentsRoot,
     clock,
   });
   const node = buildAdHocSessionStepNode(runId, type, brief);
@@ -439,6 +441,7 @@ export async function sessionResume(
     runId,
     adapter: deps.adapter,
     checksRoot: deps.checksRoot,
+    agentsRoot: deps.agentsRoot,
     clock,
   });
   const node = buildAdHocSessionStepNode(runId, record.sessionType, record.question);

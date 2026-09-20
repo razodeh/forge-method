@@ -23,6 +23,7 @@ import {
   createVcsFacade,
 } from '../../src/dispatch/facades.ts';
 import type { LaneHandle } from '../../src/dispatch/types.ts';
+import { createFixtureAssembly } from '../dispatch/helpers.ts';
 import type { StepNode } from '../../src/plan/index.ts';
 import {
   runEngine,
@@ -106,6 +107,7 @@ function fixtureContext(
     integrationPath: overrides.integrationPath ?? projectRoot,
     model: overrides.model ?? FAKE_MODEL_ID,
     tools: overrides.tools ?? DEFAULT_TOOLS,
+    assembly: overrides.assembly ?? createFixtureAssembly(projectRoot),
     retainLaneWorktrees: overrides.retainLaneWorktrees ?? false,
     claimPolicy: overrides.claimPolicy ?? 'strict',
     signCommits: overrides.signCommits ?? false,
