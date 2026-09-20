@@ -314,6 +314,10 @@ implement the missing commands; keep G-Foundation's deployed skeleton via a Waiv
 | P30 Self-verify vs review order | spec `10` §10.6 puts self-verify (step 6) before review (step 7) but the `09` §9.8 example `done` profile contains `review:blocking-findings == 0`, so a default profile can never be green at self-verify; split the profile into `verify` and `done` phases (owner decision) | Q213 |
 | P31 Strict enforcement semantics | spec `06` §6.7 says strict fails the step; the code only reverts the file (owner call); P14's reworded `06` §6.4 contradicts `02` §2.5 / `08` §8.6 on the `KbWriter` (owner decision) | Q212 |
 
+| P32 Gate on the review verdict | nothing gates on a `ReviewReport` verdict: a `blocked` or `incomplete` review still lets `implement-story` and `build-stage` advance. Decide the mechanism (a gate check, or a `verdict` front-matter field that a deterministic check reads) and implement it. Owner decision on which | Q217 |
+| P33 Strict-enforcement owner decisions | (a) strict never fails the step (spec `06` §6.7 says it does), now backed by 25 silent losses P16 found; (b) `docs/forge/...` paths in `produces` do not follow a relocated docs root (58 references); (c) 9 steps declare no outputs and no `produces`, so strict reverts everything they write (`debug:fix`, `harden:fix-findings`, `implement-story:{document,refactor}`, `migrate:{expand,contract}`, `quick-fix:{write-failing-test,fix}`, `refactor:refactor-code`); (d) `prepare-release-build`'s claim is a guess; the `run-rca` reproduction location; the diagram location (`delivery/pipeline/**` vs `delivery/views/*.mmd`) | Q212, Q216 |
+| P34 Spec text | `specs/03` §3.2.4 has no `--input` row, and its `forge run build --stage mvp` example does not match the workflow id `build-stage` (recommended text in Q218) | Q218 |
+
 Also carried from P13 (Q211): spec `10` §10.1's worked example does not compile as written (amend with `itemKey` on
 `review`, `dependsOn: [prepare]` on `freeze-contracts`, and a sentence that a merge's `dependsOn` resolves per
 item); `fixtures/greenfield-service/.forge/workflows/build-stage.workflow.yaml` is a stale hash-headed snapshot
