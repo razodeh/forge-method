@@ -1121,6 +1121,18 @@ export const ERROR_CODES = {
     remedy:
       'Set a writable TMPDIR (or free disk space), or add `forge` to PATH, then run the workflow again: command steps that call `forge` fail until one of those is true.',
   },
+  'RUN-087': {
+    // `forge debug` (`PLAN-M13.md` P27, `13` §13.2): the loop ends in a fix applied in its lane, so the
+    // diagnostician's resolved tool grant must allow writes. Refused before any session or lane exists, with
+    // the grant named, instead of after a paid diagnosis that could not be acted on. Distinct from `RUN-084`
+    // (a workflow step that declares outputs), whose remedy talks about steps and `outputs:`.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { agentId: string; detail: string }) =>
+      `\`forge debug\` cannot apply a fix: agent ${show(d.agentId)} has a resolved tool grant without write access. ${show(d.detail)}`,
+    remedy:
+      'Set `tools.write: true` in the diagnostician’s agent definition (`.forge/agents/diagnostician.yaml`; the shipped definition declares it), then run `forge debug` again.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

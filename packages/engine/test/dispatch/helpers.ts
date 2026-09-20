@@ -16,6 +16,7 @@ import type { PlatformAdapter, ToolGrant } from '@forge/adapter-kit';
 import { ProjectPaths, type AbsolutePath } from '@forge/core';
 import type { AgentDefinition } from '@forge/agents/schema';
 
+import { listProjectAgents } from '../../src/dispatch/assembly-context.ts';
 import {
   createGateEvaluator,
   createMergeQueueFacade,
@@ -93,6 +94,9 @@ export function createFixtureAssembly(
   return {
     paths: new ProjectPaths(projectRoot),
     loadAgent: (agentId) => Promise.resolve(fixtureAgent(agentId)),
+    // The session roster is the project's real `.forge/agents` (production's reader), so a session test
+    // seats exactly the agents it writes there; a project with none has an empty roster.
+    listAgents: () => listProjectAgents(new ProjectPaths(projectRoot), '.forge/agents'),
     // A `briefs/` reference (block [4]) resolves to sentence-shaped text that still names the reference,
     // never to the bare path: handing the path back as its own "content" would let a regression that
     // skips real brief resolution pass the strict adapter's block [4] check. Inline prose (most tests pass

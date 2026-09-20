@@ -27,6 +27,7 @@ export {
 export {
   assembleAgentSession,
   isAssemblyRefusal,
+  markRefusal,
   refusalFailure,
   tryResolveSessionModel,
   kickoffPrompt,
@@ -38,7 +39,9 @@ export {
 } from './assemble.ts';
 export {
   createPromptAssemblyContext,
+  listProjectAgents,
   parseEscalations,
+  readProjectAgent,
   type CreatePromptAssemblyInput,
 } from './assembly-context.ts';
 export {

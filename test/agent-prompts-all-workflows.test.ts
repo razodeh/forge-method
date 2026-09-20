@@ -26,7 +26,7 @@
  * @see PLAN-M13.md P6
  */
 import { execa } from 'execa';
-import { cp, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -255,10 +255,9 @@ beforeAll(async () => {
     // Worktrees of 70 steps are not needed after each; the prompt record lives under `.forge/state`.
     retainLaneWorktrees: false,
   };
-  // The session machinery resolves a DECIDE owner from `<project>/modules/*/agents` (a directory `forge init`
-  // does not create, so in a freshly initialised project every session ends inconclusive before DECIDE).
-  // The roster is copied in so this test reaches DECIDE's prompt too; see the M13 P6 entry (Q207).
-  await cp(modulesDir, path.join(projectDir, 'modules'), { recursive: true });
+  // No `modules/` directory is copied into the project: a real `forge init` project has none, and the session
+  // roster (who may decide) is read from `.forge/agents`, like dispatch (`PLAN-M13.md` P27, Q215).
+  expect(await stat(path.join(projectDir, 'modules')).catch(() => undefined)).toBeUndefined();
   shipped = await loadShippedWorkflows();
 }, 300_000);
 

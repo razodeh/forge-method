@@ -50,13 +50,13 @@ export interface BuildRunContextInput {
   readonly commandEnv?: Readonly<Record<string, string>> | undefined;
 }
 
-/** The fixed grant for sessions that are not agent-step dispatch (`forge debug`'s ad-hoc RCA sessions,
- * `ExecuteStepContext.tools`). Agent steps and participant sessions never read it: they resolve a
- * per-agent grant (`PLAN-M13.md` P4/P5). */
-const DEFAULT_TOOLS: ToolGrant = { read: true, write: true, exec: false, network: 'none' };
+/** `ExecuteStepContext.tools`, which no production code reads any more: every session (agent steps,
+ * participants, and since `PLAN-M13.md` P27 `forge debug`) resolves a per-agent grant. Read-only, so a future
+ * reader of the dead field cannot be handed write access by accident. */
+const DEFAULT_TOOLS: ToolGrant = { read: true, write: false, exec: false, network: 'none' };
 
-/** The model for the same ad-hoc, non-agent-step sessions (`ExecuteStepContext.model`) -- agent steps
- * resolve theirs from `models.tiers` (`resolveStepModel`), never from here. `RunEngineContext.model`'s own doc comment: "`07` §7.2's own 'resolved from tier'... M5 has no
+/** `ExecuteStepContext.model`, likewise unread: every session resolves its model from `models.tiers`
+ * (`resolveStepModel`), never from here. `RunEngineContext.model`'s own doc comment: "`07` §7.2's own 'resolved from tier'... M5 has no
  * tier/role system at all, so this is one fixed value... supplied by whoever constructs `ctx`" — this
  * is that resolution. With no tier→model mapping built anywhere in this codebase yet
  * (`SPEC-QUESTIONS.md` Q62 part 2), the platform adapter's own real, reported model list is the only

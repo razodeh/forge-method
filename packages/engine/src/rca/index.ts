@@ -23,6 +23,7 @@ export type {
   RcaLoopResult,
   RcaRecordDraft,
   RcaSessionRequest,
+  RcaUntrustedInput,
   RunRcaSession,
   RunRcaShell,
 } from './types.ts';

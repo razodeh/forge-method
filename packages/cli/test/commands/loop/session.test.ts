@@ -262,8 +262,8 @@ describe('sessionResume', () => {
     const first = await startSession(deps, 'brainstorm', OPTIONS_BY_TYPE.brainstorm);
     const id = first.record?.id;
     if (id === undefined) throw new Error('expected a real record id');
-    // This project has no real `modules/` agent roster, so DECIDE never resolves a real owner and the
-    // record ends up `inconclusive` rather than `complete` — irrelevant to this test, which only needs
+    // The fixture roster (`.forge/agents`) has no agent that owns a decision, so DECIDE never resolves a real
+    // owner and the record ends up `inconclusive` rather than `complete` — irrelevant to this test, which only needs
     // a real sidecar `SessionState` with real clusters already in it (CONVERGE ran regardless).
     expect(first.record?.status).not.toBe('truncated');
 

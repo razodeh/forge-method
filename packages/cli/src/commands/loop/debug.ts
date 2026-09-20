@@ -28,10 +28,13 @@
  * @see specs/13 §13.2 F-DEBUG-1
  * @see specs/13 §13.2 F-DEBUG-2
  */
+import path from 'node:path';
+
 import { execa } from 'execa';
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
-import { ForgeError, SYSTEM_CLOCK, type Clock } from '@forge/core';
+import { ForgeError, SYSTEM_CLOCK, writeFileAtomic, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
+import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import type {
   PlatformAdapter,
   SessionLimits,
@@ -39,7 +42,15 @@ import type {
   SessionResult,
 } from '@forge/adapter-kit/types';
 import type { AgentDefinition } from '@forge/agents/schema';
-import { runShellCommand } from '@forge/engine/dispatch';
+import {
+  assembleAgentSession,
+  markRefusal,
+  promptRecordDirName,
+  readProjectAgent,
+  runShellCommand,
+  type AssembledSession,
+} from '@forge/engine/dispatch';
+import { toAgentId, type StepNode } from '@forge/engine/plan';
 import type { RunEngineContext } from '@forge/engine/run';
 import {
   runRcaLoop,
@@ -48,6 +59,7 @@ import {
   type RcaLoopDeps,
   type RcaRecordDraft,
   type RcaSessionRequest,
+  type RcaUntrustedInput,
 } from '@forge/engine/rca';
 import type { ForgeConfig } from '@forge/schemas/config';
 import { renderArtifactPath } from '@forge/schemas/registry';
@@ -62,18 +74,17 @@ import {
   type LaneHandle,
 } from '@forge/vcs';
 
-import { loadProjectAgent } from './agent-loader.ts';
+import { AD_HOC_LIMITS, buildAdHocStepNode } from './ad-hoc-step.ts';
 import { buildRunEngineContext } from '../run/context.ts';
 import { getSharedIdAllocator, readArtifactTemplate } from '../shared.ts';
 
 const DIAGNOSTICIAN_AGENT_ID = 'diagnostician';
 const DEBUG_LANE_STEP_ID = 'debug-fix';
 
-/** `ad-hoc-step.ts`'s own real, already-established precedent for a standalone command with no
- * workflow YAML of its own to source real limits from — one fixed value every session in a `forge
- * debug` invocation requests, the identical "no tier/role system yet" stub `ExecuteStepContext.model`'s
- * own doc comment already accepts for every other real caller in this codebase. */
-const SESSION_LIMITS: SessionLimits = { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 2.0 };
+/** Every session in a `forge debug` invocation requests the ad-hoc limits (the loop has no workflow step to
+ * source them from, and its own bounds in `@forge/engine/rca` are what stop it). The node built for assembly
+ * carries the same object, so block [6] tells the agent exactly what the request enforces. */
+const SESSION_LIMITS: SessionLimits = AD_HOC_LIMITS;
 
 type OutputSchema = NonNullable<SessionRequest['outputSchema']>;
 
@@ -228,6 +239,197 @@ async function findFailedStep(
   throw new ForgeError('RUN-057', { runId });
 }
 
+// --- prompt assembly: every phase goes through the same path an agent step does ---------------------
+
+/** Numbers this invocation's sessions (`debug:falsify:3`), so each one keeps its own audit record
+ * (`prompt.md`/`context.json`, `05` §5.3) instead of overwriting the previous session of the same phase. */
+interface SessionCounter {
+  next: number;
+}
+
+/**
+ * Assembles one RCA phase's session through `assembleAgentSession`, the path every agent step and
+ * participant session takes (`PLAN-M13.md` P27): the diagnostician's role block, `05` §5.5's operating
+ * contract, resolved constraints, per-agent grant (P4) and tier model (P5b), and the audit record.
+ *
+ * Which grant each phase gets (Q215): the six RCA phases are read-only however the agent is defined
+ * (`readOnly: true` clamps to no write, no exec, no network, as before); FIX gets the diagnostician's own
+ * resolved grant, exactly what dispatch gives it in `forge run`, never a wider one. The loop's own
+ * instructions are the task text (block [4]); whatever an earlier session reported is not in it, it is
+ * delivered fenced in the user turn (`userTurn`), and a phase that carries any is marked
+ * `taint: 'external'` in its record (`20` §20.5).
+ *
+ * @throws {ForgeError} anything assembly refuses with (`RUN-056`, `RUN-078`, `RUN-079`, ...): nothing is
+ * dispatched, and `runRcaLoop` lets a typed refusal end the loop instead of retrying it.
+ */
+async function assembleDebugSession(
+  ctx: RunEngineContext,
+  agent: AgentDefinition,
+  request: RcaSessionRequest,
+  sessionCounter: SessionCounter,
+  readOnly: boolean,
+): Promise<AssembledSession> {
+  const base = buildAdHocStepNode(`debug:${request.phase}`, agent.id, request.prompt);
+  const node: StepNode =
+    request.untrusted === undefined || request.untrusted.length === 0
+      ? base
+      : { ...base, taint: 'external' };
+  const sequence = sessionCounter.next;
+  sessionCounter.next += 1;
+  return assembleAgentSession({
+    node,
+    ctx,
+    agent,
+    taskText: request.prompt,
+    role: String(sequence),
+    // `15` §15.3's `prompt.briefs.<key>`: an agent may attach its own guidance to one phase.
+    briefKey: `debug-${request.phase}`,
+    readOnly,
+  });
+}
+
+/** `forge debug` is RCA followed by a fix in its lane, so a diagnostician whose resolved grant cannot
+ * write cannot complete it. Refused with the grant-specific remedy (`RUN-087`) rather than run to a
+ * diagnosis and then fail to apply the fix. `agent.tools.write` is never widened here: changing a
+ * definition's grant is the definition's owner's decision, not this command's. */
+function requireFixGrant(assembled: AssembledSession): void {
+  if (assembled.tools.write) return;
+  throw new ForgeError('RUN-087', {
+    agentId: assembled.agent.id,
+    detail:
+      "The FIX phase edits files in its lane, and this agent's resolved tool grant (`tools.write`) does not allow it.",
+  });
+}
+
+/** Most an untrusted input may contribute to a user turn. A model reply is re-sent in every later phase, so
+ * an unbounded one would grow each prompt; the cut is marked, never silent. */
+const UNTRUSTED_INPUT_CAP = 16_000;
+
+/** `text`, cut to `UNTRUSTED_INPUT_CAP` UTF-16 units with an explicit marker (never in the middle of a
+ * surrogate pair). Exported for its test. */
+export function capUntrusted(text: string): string {
+  if (text.length <= UNTRUSTED_INPUT_CAP) return text;
+  let end = UNTRUSTED_INPUT_CAP;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)} ...(truncated, ${String(text.length)} characters)`;
+}
+
+/** The user turn: the fixed kickoff line, then each piece of data the phase reasons over, capped and fenced
+ * as untrusted (`20` §20.5), source-labelled so the instruction text can refer to it. `stripped` counts the
+ * control tokens fencing removed (`20` §20.5 point 2), which the caller reports. */
+function fenceUntrusted(
+  kickoff: string,
+  untrusted: readonly RcaUntrustedInput[] | undefined,
+): { readonly text: string; readonly stripped: number } {
+  if (untrusted === undefined || untrusted.length === 0) return { text: kickoff, stripped: 0 };
+  let stripped = 0;
+  const blocks = untrusted.map((input) => {
+    const capped = capUntrusted(input.text);
+    const wrapped = wrapUntrustedContent(capped, `forge-debug-${input.label}`);
+    stripped += wrapped.stripped.length;
+    return wrapped.wrapped;
+  });
+  return { text: [kickoff, ...blocks].join('\n\n'), stripped };
+}
+
+/** One assembled session and the exact user turn it will be sent. */
+interface PreparedSession {
+  readonly assembled: AssembledSession;
+  readonly prompt: string;
+}
+
+/**
+ * `assembleDebugSession`, then everything that must happen before the adapter is called: the FIX grant check,
+ * the audit record (`prompt.md`, `context.json`) plus the user turn beside it (`user-turn.md`: the fenced
+ * defect text and model output are the parts an injection review needs, and they are not in the system
+ * prompt), and an `InjectionAttemptBlocked` event if fencing removed a control token (`20` §20.5 point 2).
+ */
+async function prepareDebugSession(
+  ctx: RunEngineContext,
+  agent: AgentDefinition,
+  request: RcaSessionRequest,
+  sessionCounter: SessionCounter,
+  readOnly: boolean,
+): Promise<PreparedSession> {
+  try {
+    const assembled = await assembleDebugSession(ctx, agent, request, sessionCounter, readOnly);
+    if (!readOnly) requireFixGrant(assembled);
+    const { text: prompt, stripped } = fenceUntrusted(assembled.prompt, request.untrusted);
+    await writeFileAtomic(
+      ctx.assembly.paths.resolveState(
+        path.posix.join(
+          'runs',
+          ctx.runId,
+          'steps',
+          promptRecordDirName(assembled.stepKey),
+          'user-turn.md',
+        ),
+      ),
+      `${prompt}\n`,
+    );
+    // `prompt.md`, the mandatory record, lands last (`assemble.ts`): a crash between the two files never leaves
+    // it without the user turn an injection review needs.
+    await assembled.persist();
+    if (stripped > 0) {
+      await ctx.telemetry.emit({
+        type: 'InjectionAttemptBlocked',
+        stepId: assembled.stepKey,
+        agentId: toAgentId(agent.id),
+        payload: { phase: 'debug', kind: 'untrusted-input', strippedCount: stripped },
+      });
+    }
+    return { assembled, prompt };
+  } catch (cause) {
+    // Nothing was dispatched: whatever fails up to here (assembly, the grant check, the audit record) is a
+    // refusal, and `runRcaLoop` ends on a marked refusal instead of retrying it as a failed attempt.
+    throw markRefusal(cause);
+  }
+}
+
+/** `resetLaneWorktree` before a session: a lane that cannot be reset (corrupt, deleted, disk full) is an
+ * environment fault found before anything is dispatched, so it is a marked refusal that ends the loop with
+ * its own typed error instead of five failed REPRODUCE attempts and a `needs-more-evidence` plan. */
+async function resetLaneBeforeSession(lane: LaneHandle, baseSha: string): Promise<void> {
+  try {
+    await resetLaneWorktree(lane, baseSha);
+  } catch (cause) {
+    throw markRefusal(cause);
+  }
+}
+
+/** The phases a `forge debug` run assembles, with whether each is read-only. Assembled once before
+ * anything is created or paid for, so a refusal (unmapped tier, missing role prompt or phase brief, a
+ * diagnostician that cannot write) surfaces first instead of in the middle of the loop. */
+const DEBUG_PHASES: readonly RcaSessionRequest['phase'][] = [
+  'isolate',
+  'hypothesise',
+  'falsify',
+  'diagnose',
+  'fix',
+  'prevent',
+];
+
+/** The one place that says which phases may not write: every phase but FIX. Preflight and both session
+ * runners read it, so they cannot disagree. */
+function isReadOnlyPhase(phase: RcaSessionRequest['phase']): boolean {
+  return phase !== 'fix';
+}
+
+async function preflightDebug(ctx: RunEngineContext, agent: AgentDefinition): Promise<void> {
+  for (const phase of DEBUG_PHASES) {
+    const readOnly = isReadOnlyPhase(phase);
+    const assembled = await assembleDebugSession(
+      ctx,
+      agent,
+      { phase, prompt: 'Preflight: check that this phase can be assembled.' },
+      { next: 0 },
+      readOnly,
+    );
+    if (!readOnly) requireFixGrant(assembled);
+  }
+}
+
 // --- real session wiring: read-only for every phase but FIX -----------------------------------------
 
 async function runReadOnlySession(
@@ -236,6 +438,7 @@ async function runReadOnlySession(
   baseSha: string,
   agent: AgentDefinition,
   request: RcaSessionRequest,
+  sessionCounter: SessionCounter,
 ): Promise<SessionResult> {
   // A fresh critic round reproduced this directly: `loop.ts`'s own hash-colliding-FIX-attempt back
   // edge (`if (hashCollision) continue;`) returns straight to a fresh ISOLATE round with *no* reset of
@@ -247,17 +450,25 @@ async function runReadOnlySession(
   // unconditionally here too — the identical harmless-no-op-when-already-clean call `runFixSession`
   // already makes — is what actually guarantees every phase but an in-progress FIX attempt's own
   // PROVE check always sees a real, pristine lane.
-  await resetLaneWorktree(lane, baseSha);
+  await resetLaneBeforeSession(lane, baseSha);
+  const { assembled, prompt } = await prepareDebugSession(
+    ctx,
+    agent,
+    request,
+    sessionCounter,
+    isReadOnlyPhase(request.phase),
+  );
   const abortController = new AbortController();
-  const stepId = `debug:${request.phase}`;
+  const stepId = assembled.stepKey;
   const sessionRequest: SessionRequest = {
     runId: ctx.runId,
     stepId,
     cwd: lane.path,
-    systemPrompt: { mode: 'append', text: '' },
-    prompt: request.prompt,
-    model: ctx.model,
-    tools: { ...ctx.tools, write: false },
+    systemPrompt: assembled.systemPrompt,
+    prompt,
+    model: assembled.model,
+    thinking: assembled.thinking,
+    tools: assembled.tools,
     permissionMode: 'deny-unlisted',
     limits: SESSION_LIMITS,
     env: {},
@@ -355,20 +566,29 @@ async function runFixSession(
   baseSha: string,
   fixState: FixState,
   agent: AgentDefinition,
-  prompt: string,
+  request: RcaSessionRequest,
+  sessionCounter: SessionCounter,
 ): Promise<SessionResult> {
-  await resetLaneWorktree(lane, baseSha);
+  await resetLaneBeforeSession(lane, baseSha);
 
+  const { assembled, prompt } = await prepareDebugSession(
+    ctx,
+    agent,
+    request,
+    sessionCounter,
+    isReadOnlyPhase(request.phase),
+  );
   const abortController = new AbortController();
-  const stepId = 'debug:fix';
+  const stepId = assembled.stepKey;
   const sessionRequest: SessionRequest = {
     runId: ctx.runId,
     stepId,
     cwd: lane.path,
-    systemPrompt: { mode: 'append', text: '' },
+    systemPrompt: assembled.systemPrompt,
     prompt,
-    model: ctx.model,
-    tools: { ...ctx.tools, write: true },
+    model: assembled.model,
+    thinking: assembled.thinking,
+    tools: assembled.tools,
     permissionMode: 'accept-edits',
     limits: SESSION_LIMITS,
     env: {},
@@ -408,10 +628,11 @@ function buildRunSession(
   fixState: FixState,
   agent: AgentDefinition,
 ): RcaLoopDeps['runSession'] {
+  const sessionCounter: SessionCounter = { next: 1 };
   return (request) =>
     request.phase === 'fix'
-      ? runFixSession(ctx, lane, baseSha, fixState, agent, request.prompt)
-      : runReadOnlySession(ctx, lane, baseSha, agent, request);
+      ? runFixSession(ctx, lane, baseSha, fixState, agent, request, sessionCounter)
+      : runReadOnlySession(ctx, lane, baseSha, agent, request, sessionCounter);
 }
 
 // --- RECORD (13 §13.2 step 10) and closing the source Defect -----------------------------------------
@@ -484,12 +705,13 @@ async function closeDefect(deps: DebugDeps, defect: ArtifactDocument, clock: Clo
 
 async function runDebugLoop(
   deps: DebugDeps,
-  defect: ArtifactDocument,
+  scaffold: () => Promise<ArtifactDocument>,
   options: DebugOptions,
 ): Promise<DebugResult> {
   const clock = options.clock ?? SYSTEM_CLOCK;
-  const defectId = defect.get(['id']) as string;
-  const agent = await loadProjectAgent(deps.paths, deps.agentsRoot, DIAGNOSTICIAN_AGENT_ID);
+  // The one reader dispatch uses (`RUN-056` for a missing, malformed or mis-named file), and read first: a
+  // project with no usable diagnostician is refused before the run context creates the integration worktree.
+  const agent = await readProjectAgent(deps.paths, deps.agentsRoot, DIAGNOSTICIAN_AGENT_ID);
 
   const runId = `debug-${clock.now().replace(/[^0-9]/g, '')}`;
   const runCtx = await buildRunEngineContext({
@@ -502,6 +724,13 @@ async function runDebugLoop(
     agentsRoot: deps.agentsRoot,
     clock,
   });
+
+  // Refuse before a Defect, a lane or a session exists when any phase cannot be assembled (unmapped tier,
+  // missing role prompt or phase brief) or the fix cannot be applied (a diagnostician whose grant cannot
+  // write): the loop would otherwise leave an open Defect behind and pay for a diagnosis it cannot act on.
+  await preflightDebug(runCtx, agent);
+  const defect = await scaffold();
+  const defectId = defect.get(['id']) as string;
 
   const baseSha = await resolveRevision(deps.projectRoot, runCtx.integrationBase);
   const lane = await createLaneWorktree(deps.projectRoot, {
@@ -612,8 +841,11 @@ export async function debugSymptom(
   options: DebugOptions = {},
 ): Promise<DebugResult> {
   const clock = options.clock ?? SYSTEM_CLOCK;
-  const defect = await scaffoldDefect(deps.paths, deps.config.paths.reports, clock, symptom, []);
-  return runDebugLoop(deps, defect, options);
+  return runDebugLoop(
+    deps,
+    () => scaffoldDefect(deps.paths, deps.config.paths.reports, clock, symptom, []),
+    options,
+  );
 }
 
 /** `--from-failure <runId>`: the real `observed` text and `affected` step come from the run's own
@@ -625,8 +857,9 @@ export async function debugFromFailure(
 ): Promise<DebugResult> {
   const clock = options.clock ?? SYSTEM_CLOCK;
   const { stepId, message } = await findFailedStep(deps.projectRoot, runId);
-  const defect = await scaffoldDefect(deps.paths, deps.config.paths.reports, clock, message, [
-    stepId,
-  ]);
-  return runDebugLoop(deps, defect, options);
+  return runDebugLoop(
+    deps,
+    () => scaffoldDefect(deps.paths, deps.config.paths.reports, clock, message, [stepId]),
+    options,
+  );
 }

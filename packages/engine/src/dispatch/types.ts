@@ -205,6 +205,12 @@ export interface PromptAssemblyContext {
   readonly paths: ProjectPaths;
   /** The project's own resolved agent `agentId`, or a `ForgeError` (`RUN-056`) when it has none. */
   readonly loadAgent: (agentId: string) => Promise<AgentDefinition>;
+  /** Every agent of the project's resolved roster (`.forge/agents/*.yaml`), the set a session step seats
+   * participants from and resolves its DECIDE owner in (`16` §16.3, `05` §5.3 `decisions_owned`).
+   * Same directory as `loadAgent`; empty when the project has no roster; a roster file that does not
+   * load throws `RUN-056` (an unreadable roster directory, `RUN-034`) rather than being skipped
+   * (`PLAN-M13.md` P27, Q215). */
+  readonly listAgents: () => Promise<readonly AgentDefinition[]>;
   /** Real text for a `briefs/<name>.md` / `prompts/<name>.md` reference (`@forge/agents/prompt`'s
    * `resolveContentReference`); throws a `ForgeError` (`CFG-053`/`RUN-079`) rather than returning empty. */
   readonly loadContent: (reference: string) => Promise<string>;
@@ -247,13 +253,13 @@ export interface ExecuteStepContext {
    * `processMergeCandidate` requires a caller-maintained one; creating/maintaining it across a whole run
    * is out of this module's own scope (a later piece's concern), only *using* one it is handed is not. */
   readonly integrationPath: string;
-  /** One fixed model for sessions that are *not* agent-step dispatch: `forge debug`'s own ad-hoc RCA
-   * sessions (`packages/cli/src/commands/loop/debug.ts`), which still build their own `SessionRequest`.
-   * Agent steps and interaction-mode participant sessions never read this -- they resolve a model per
-   * agent from `assembly` (`05` §5.8) -- and a test proves it. */
+  /** A fixed model that no production code reads any more. `forge debug` was the last session type to use it
+   * (it now assembles every session like an agent step, `PLAN-M13.md` P27, Q215): every session resolves its
+   * model per agent from `assembly` (`05` §5.8). Kept only so the context shape does not change under
+   * concurrent work; remove it with `tools` below. */
   readonly model: string;
-  /** The identical "one fixed grant" stand-in as `model` above, for the same ad-hoc sessions only. Agent
-   * steps and participants resolve a per-agent grant (`resolveStepToolGrant`) and never read this. */
+  /** The identical "one fixed grant" stand-in as `model` above, likewise unread: every session resolves a
+   * per-agent grant (`resolveStepToolGrant`). */
   readonly tools: ToolGrant;
   /** How agent steps and participant sessions become real session requests. Required, never optional. */
   readonly assembly: PromptAssemblyContext;

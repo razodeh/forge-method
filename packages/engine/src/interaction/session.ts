@@ -34,7 +34,7 @@
  * @see specs/05 §5.3
  * @see PLAN-M10.md P10
  */
-import { ForgeError } from '@forge/core/errors';
+import { ForgeError, isForgeError } from '@forge/core/errors';
 import {
   listDirSorted,
   pathExists,
@@ -46,7 +46,7 @@ import {
 import { IdAllocator } from '@forge/core/ids';
 import type { Clock } from '@forge/core';
 import type { SessionResult } from '@forge/adapter-kit';
-import { loadAgentRegistry, type AgentDefinition } from '@forge/agents';
+import type { AgentDefinition } from '@forge/agents';
 import { KbWriter, type KbEntryInput } from '@forge/kb/write';
 import { DEFAULT_KB_ROOT, type KbSection } from '@forge/kb/schema';
 import {
@@ -78,6 +78,7 @@ import * as YAML from 'yaml';
 import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import { dispatchAgentStep, runParticipantSession } from './dispatch-agent-step.ts';
 import type { InteractionParticipant } from './types.ts';
+import { markRefusal } from '../dispatch/assemble.ts';
 import type { ExecuteStepContext, SessionBounds, StepOutcome } from '../dispatch/types.ts';
 import { toAgentId, type StepNode } from '../plan/index.ts';
 
@@ -536,7 +537,7 @@ async function persistSessionRecord(
  * to continue a session without re-asking `16` §16.3 step 1's own already-framed question. `undefined`
  * when no sidecar exists for `id` (a session record predating this piece, or a hand-authored fixture)
  * -- a real, honest absence, not a programmer error, matching `loadProjectAgentRegistry`'s own doc
- * comment reasoning for an absent `modules/` directory. */
+ * comment reasoning for an absent `.forge/agents` directory. */
 const SESSION_PHASES: ReadonlySet<string> = new Set([
   'FRAME',
   'DIVERGE',
@@ -585,7 +586,7 @@ function isPlausibleSessionState(candidate: unknown): candidate is SessionState 
  * JSON, or JSON that parses but is not a real, shape-plausible `SessionState`) -- both are the identical
  * real, honest "no real, usable prior state to resume from" case from this function's own caller's
  * point of view, matching `loadProjectAgentRegistry`'s own doc comment reasoning for an absent
- * `modules/` directory: a caller-facing distinction between "absent" and "corrupted" belongs to
+ * `.forge/agents` directory: a caller-facing distinction between "absent" and "corrupted" belongs to
  * `forge session resume`'s own error reporting (`RUN-074`, `@forge/cli/commands/loop/session.ts`), not
  * to this function's own return type. */
 export async function loadSessionState(
@@ -743,22 +744,26 @@ async function mergeDecideLane(
   }
 }
 
-/** Loads the real, on-disk `modules/<module>/agents/<id>.agent.yaml` roster this project actually has --
- * `05` §5.3's own canonical path convention, the same one `loadAgentRegistry` (`@forge/agents`) reads.
- * A project with no `modules/` directory at all (every real dispatch test's own bare tmp-dir git
- * repository, `RUN-034` under the hood) is not a programmer error here: it genuinely has no agent
- * roster to resolve a decision owner from, and returns an empty registry rather than throwing --
- * DECIDE's own owner-resolution step (`resolveDecisionOwner` below) reads that absence as "no agent
- * owns this," which is exactly the real, honest case the human-input fallback exists for. */
+/** The project's own resolved agent roster (`.forge/agents/<id>.yaml`, what `forge init`/`forge compile`
+ * materialise and what dispatch loads from), keyed by id -- the one place a session finds its participants'
+ * definitions and resolves DECIDE's owner (`resolveDecisionOwner` below). It used to read the
+ * `<project>/modules/*\/agents` source tree, which a real `forge init` project does not have, so every
+ * session in a fresh project found no owner and fell back to the human (`PLAN-M13.md` P27, Q215).
+ *
+ * A project with no `.forge/agents` at all yields an empty registry: nobody owns the decision, which is what
+ * DECIDE's human-input fallback is for. A roster file that fails to load throws `RUN-056` (surfaced as a
+ * failed step by `executeStep`) instead of being skipped -- dropping an owner silently would hand the
+ * decision to the next agent in line. */
 async function loadProjectAgentRegistry(
   ctx: ExecuteStepContext,
 ): Promise<ReadonlyMap<string, AgentDefinition>> {
   try {
-    const modulesDir = new ProjectPaths(ctx.projectRoot).resolveWithin('modules');
-    const registry = await loadAgentRegistry(modulesDir);
-    return new Map(registry.all().map((agent) => [agent.id, agent]));
-  } catch {
-    return new Map();
+    const agents = await ctx.assembly.listAgents();
+    return new Map(agents.map((agent) => [agent.id, agent]));
+  } catch (cause) {
+    // A typed roster failure (`RUN-056`, `RUN-034`) is marked so `executeStep` folds it into one failed step,
+    // like any other refusal to assemble; anything else is a programmer error and propagates as one.
+    throw isForgeError(cause) ? markRefusal(cause) : cause;
   }
 }
 
@@ -770,9 +775,9 @@ const STEEL_MAN_SESSION_TYPES: ReadonlySet<SessionType> = new Set<SessionType>([
 const STEEL_MAN_TECHNIQUE_ID = 'steel-man-debate';
 
 /** The real, on-disk `steel-man-debate` technique for this project, or `undefined` when this project
- * has no module shipping it (`fm-core` not installed, or a bare test fixture with no `modules/`
- * directory at all -- the identical shape `loadProjectAgentRegistry` immediately above already treats
- * as a real, honest absence rather than a programmer error). CONVERGE degrades to ordinary `panel`
+ * has no module shipping it. Techniques are not materialised into a project the way agents are (no
+ * `.forge/techniques`), so this still reads `<project>/modules/*\/techniques` and a fresh `forge init` project
+ * has none: its `tradeoff` sessions run CONVERGE as ordinary panel mode (disclosed, Q215). CONVERGE degrades to ordinary `panel`
  * mode when this comes back `undefined` -- a real fallback, not a crash, over an optional
  * anti-groupthink enhancement this session step's own core anatomy does not depend on. */
 async function loadSteelManTechnique(ctx: ExecuteStepContext): Promise<Technique | undefined> {
@@ -939,7 +944,7 @@ async function findExistingSessionArtifact(
 /** Every `.md` file directly under `dir`, or `[]` if `dir` does not exist at all -- a brand-new
  * project's own `kb/decisions/` before this module's first ever ADR write-back, the identical "a real,
  * honest absence, not a programmer error" case `loadProjectAgentRegistry`'s own doc comment already
- * treats a missing `modules/` directory as. */
+ * treats a missing `.forge/agents` directory as. */
 async function listMarkdownFiles(paths: ProjectPaths, dir: string): Promise<readonly string[]> {
   const target = paths.resolveWithin(dir);
   if (!(await pathExists(target))) return [];
@@ -1290,6 +1295,11 @@ export async function runSessionStep(
   }
   const sessionType = node.sessionType as SessionType;
 
+  // The roster is read before anything is dispatched: a roster file that does not load fails the step here
+  // (`RUN-056`) instead of after DIVERGE has spent real sessions. CONVERGE's steel-man debate needs a
+  // registered proposer, and DECIDE resolves its owner, from this one read.
+  const registry = await loadProjectAgentRegistry(ctx);
+
   const clock = toClock(ctx);
   const bounds = resolveSessionBounds(ctx.sessionBounds);
   const machine = new SessionPhaseMachine({
@@ -1485,13 +1495,6 @@ export async function runSessionStep(
       endDiverge = { state, directive: ended.directive };
     }
   }
-
-  // Hoisted ahead of CONVERGE (rather than declared immediately before DECIDE, as an earlier draft
-  // did): the steel-man-debate CONVERGE path below (`16` §16.7 point 3) needs a real, registered
-  // `AgentDefinition` to dispatch as the debate's own proposer, the identical registry DECIDE's own
-  // owner-resolution reads -- one real, cheap, read-only load, reused by both phases rather than
-  // fetched twice.
-  const registry = await loadProjectAgentRegistry(ctx);
 
   // CONVERGE -- every agent participant, `critic` included this time (`16` §16.3 step 3's own "critic
   // is unmuted"). `human` is filtered here for the identical reason DIVERGE's own filter is -- see

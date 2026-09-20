@@ -176,6 +176,7 @@ function fixtureAssembly(projectRoot: string): PromptAssemblyContext {
         skills: [],
         prompt: { system: 'prompts/fixture.system.md' },
       }),
+    listAgents: () => Promise.resolve([]),
     loadContent: (reference) => Promise.resolve(`Fixture text for ${reference}.`),
     openKb: () =>
       Promise.resolve({

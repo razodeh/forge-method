@@ -29,8 +29,6 @@ const ALLOWED: Readonly<Record<string, string>> = {
   'packages/testkit/test/':
     "the adapter's own mechanics, conformance and scripting suites drive it with hand-built requests " +
     '(`strict.test.ts` covers strict mode itself)',
-  'packages/cli/test/commands/loop/debug.test.ts':
-    "`forge debug`'s RCA sessions send an empty system prompt (Q203 D4); pinned by a canary test in the same file",
   'packages/extensions/test/install/conformance.test.ts':
     'module conformance fixtures: a module test that opts out, and one that must be refused for not doing so',
   'test/strict-opt-outs.test.ts': 'this file',
@@ -78,5 +76,17 @@ describe('strict-prompt opt-outs are fenced', () => {
         true,
       );
     }
+  });
+
+  it('forge debug is not one of them: its RCA sessions go through real prompt assembly (PLAN-M13.md P27)', async () => {
+    // Until P27 `commands/loop/debug.ts` sent an empty system prompt and its test file was listed above,
+    // with a canary that failed the day debug moved onto assembly. That day has come: the entry is gone,
+    // and debug's tests run against the strict adapter (`debug.test.ts` asserts no session is refused).
+    expect(reasonFor('packages/cli/test/commands/loop/debug.test.ts')).toBeUndefined();
+    const text = await readFile(
+      path.join(repoRoot, 'packages/cli/test/commands/loop/debug.test.ts'),
+      'utf8',
+    );
+    expect(OPT_OUT.test(text)).toBe(false);
   });
 });

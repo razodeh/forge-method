@@ -35,14 +35,32 @@ export interface RcaSessionRequest {
   /** Which of the ten phases this session call is for — a real caller (P9) uses this to pick the
    * real system prompt/tooling for that phase; a fake in a test uses it to script a scenario. */
   readonly phase: 'isolate' | 'hypothesise' | 'falsify' | 'diagnose' | 'fix' | 'prevent';
+  /** The phase's own instructions: trusted text the loop wrote. It never contains model output or defect
+   * text; those travel in `untrusted`, and this text says where to find them. */
   readonly prompt: string;
+  /** Data this phase reasons over that did not come from FORGE: the defect's own words, and whatever an
+   * earlier session reported (a reproduction command, a scope, a hypothesis, a root cause). It may have
+   * been produced by a session that read hostile files, so a caller must deliver it fenced as untrusted
+   * data (`20` §20.5) in the user turn, never compile it into a system prompt (`PLAN-M13.md` P27). */
+  readonly untrusted?: readonly RcaUntrustedInput[] | undefined;
+}
+
+/** One labelled piece of untrusted data for an `RcaSessionRequest`. The `label` is FORGE's own fixed name for
+ * the slot (the phase prompt refers to it) and is safe to render; `text` is the data. */
+export interface RcaUntrustedInput {
+  readonly label: string;
+  readonly text: string;
 }
 
 /** `RcaLoopDeps.runSession`'s own real type — one non-committing agent turn for a given phase,
  * returning the tool's own real `SessionResult` (`session.structured` is read as whichever plain
  * JSON shape that phase expects, tolerant of a missing/malformed report — `loop.ts`'s own
  * `structuredOrUndefined` doc comment has the fuller reasoning). A real caller (`PLAN-M8.md` P9)
- * backs this with a real adapter-driven session; a test injects a fake. */
+ * backs this with a real adapter-driven session; a test injects a fake.
+ *
+ * A rejection is a failed attempt, except one marked as a prompt-assembly refusal (`markRefusal`, a refusal
+ * before dispatch): that ends the loop (`callSession`, `loop.ts`). An implementation must deliver
+ * every `request.untrusted` input to the model as fenced data, since the instruction text points at them. */
 export type RunRcaSession = (request: RcaSessionRequest) => Promise<SessionResult>;
 
 /** `RcaLoopDeps.runShell`'s own real type — one real shell command, run against `cwd`, returning the

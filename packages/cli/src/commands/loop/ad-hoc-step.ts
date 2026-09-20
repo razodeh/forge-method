@@ -17,7 +17,11 @@
 import type { StepNode, StepNodeLimits, StepNodeRetryPolicy } from '@forge/engine/plan';
 import { toAgentId } from '@forge/engine/plan';
 
-const AD_HOC_LIMITS: StepNodeLimits = { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 2.0 };
+export const AD_HOC_LIMITS: StepNodeLimits = {
+  maxTurns: 20,
+  wallClockMs: 600_000,
+  maxCostUsd: 2.0,
+};
 const AD_HOC_RETRY: StepNodeRetryPolicy = { maxAttempts: 1, backoffMs: [0, 0], retryOn: [] };
 
 export function buildAdHocStepNode(id: string, agentId: string, brief: string): StepNode {

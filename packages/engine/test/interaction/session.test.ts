@@ -47,7 +47,7 @@ async function createTempRepo(prefix: string): Promise<string> {
   return dir;
 }
 
-/** A real, on-disk `modules/<id>/agents/architect.agent.yaml` -- `05` §5.3's own canonical path,
+/** A real, on-disk `.forge/agents/architect.yaml` -- the project's resolved roster (`PLAN-M13.md` P27),
  * schema-valid, with a real, non-empty `decisions_owned` so `resolveDecisionOwner` (`session.ts`) has
  * a genuine agent to resolve DECIDE's own owner to. */
 const ARCHITECT_AGENT_YAML = `
@@ -95,7 +95,7 @@ prompt:
 
 async function withRealAgentRoster(projectRoot: string): Promise<void> {
   const paths = new ProjectPaths(projectRoot);
-  const target = paths.resolveWithin('modules/test-module/agents/architect.agent.yaml');
+  const target = paths.resolveWithin('.forge/agents/architect.yaml');
   await writeFileAtomic(target, ARCHITECT_AGENT_YAML);
 }
 
@@ -181,7 +181,7 @@ describe('runSessionStep — end to end', () => {
   });
 
   it('a DECIDE-phase owner that resolves to no real agent falls back to a real human-input request, not a silent skip or a thrown error', async () => {
-    // No modules/ directory at all -- loadProjectAgentRegistry's own real, honest empty-registry case.
+    // No .forge/agents directory at all -- the real, honest empty-roster case.
     const projectRoot = await createTempRepo('decide-human-fallback');
     const adapter = new FakePlatformAdapter();
     const clock = createTestClock();
