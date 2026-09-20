@@ -207,6 +207,7 @@ known-gap test P10 left in `packages/engine/test/plan/stage-plan.test.ts` (it go
 `step-plan-unavailable` note.
 
 **Depends on:** P6 (the repo-wide compile test), P10. Blocks any real build-stage run and a useful second live smoke.
+**Status:** done (Q211): the shipped `build-stage` compiles and `forge plan run-plan` reports `stepPlan: compiled`. It does NOT make `forge run build-stage` start: the CLI's run context lacks `stage.stories`/`stageId`/`vars` (Q211 open item 1, needs its own piece with the merge-lane question, item 2).
 
 ## P11 — Workflow / agent / gate coherence (decision piece)
 

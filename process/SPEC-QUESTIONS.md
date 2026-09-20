@@ -17697,3 +17697,99 @@ stray `artifact-fixtures.ts` under `packages/engine/test/`).
 Files: `packages/engine/src/{budget/{admit,index,live-state},plan/{compile,types},resume/{reconstruct,types},run/{run-engine,index,
 cost-ceilings,failure},dispatch/{steps,facades,index,types,result-record}}.ts`, `packages/cli/src/{bin.ts,commands/run/{context,
 run,resume,launcher-shim,run-failure,vcs-refusal}.ts}`, `packages/vcs/src/{errors,git}.ts`, `packages/core/src/errors/codes.ts`.
+
+
+## Q211 — M13 P13: the shipped `build-stage` compiles — what was wrong (compiler and workflow), what a `merge` over a collection means, empty stages, and what is deliberately left open
+
+**Context.** `PLAN-M13.md` P13, found by P10 (Q206 decision 1). Reproduced first, through the real engine (`compileRunPlan` over the shipped file
+with a one-story stage; `forge init` cannot run here without an installed platform CLI, so `forge run build-stage --dry-run` was not run):
+one issue, `template-resolution-failed` at `build-stage:merge` (`review:{{item.id}}` did not resolve). Behind it the `review` fanout was keyed by
+position (`review:0`), so the reference would have dangled (`dangling-dependency`) even with `item` in scope.
+
+**Root cause: both, and the spec's own example.** `10` §10.1's worked `build-stage` example cannot compile as written, and Q71/Q88/Q72 had
+recorded that as a known compiler gap rather than fixing either side. The compiler half: a `merge` step got no `item` binding, so a per-item
+`dependsOn` could not be expressed (`06` §6.2 gives the id format and says fanout instances are named by the item's id, but nothing says how a
+non-fanout step waits on all of them). The workflow half: `review` omitted `itemKey`, which the compiler (Q72 #9, a deliberate uniqueness choice
+that departs from `06` §6.2 rule 1, "the item's ID in the step id") turns into positional ids.
+
+**What changed.**
+1. `compile.ts` `mergeDependsOn`: a `merge` is still ONE node ("merge-queue processing for a set of lanes", `10` §10.1 table), but its `dependsOn` is
+   resolved once per item of its `over` collection and folded into that node: `[review:S1, review:S2, ...]` in collection order, each once
+   (also once against an enclosing group's inherited dependencies), the same problem reported once not once per item. An `over` that is not a
+   collection (`implement-story`'s `over: 'storyId'`, `fm-mobile`'s `over: prepare-release-build`) or is not even an expression (`over` was never
+   read at compile time before; a critic showed prose there compiled) keeps the single resolution it always had; a test pins the other shipped
+   merges' dependencies. This is deliberately not a new DSL feature: the syntax is the worked example's own.
+2. Empty collections (a stage with no stories). Dropping the per-item dependency would make the merge a root, so `verify` (G-Verify) and `deliver`
+   could start before the design gate: found by the first critic and reproduced. An empty per-item reference now resolves to what the (empty) fanout
+   it names would have waited for, followed through chains and diamonds, and through fanouts inside `parallel`/`sequence` groups: for the shipped file
+   the merge waits on `contracts-gate`. A per-item entry naming a fanout whose collection has a different size (either direction) is a
+   `merge-over-mismatch` issue rather than a merge that skips real instances. Entries that fail for any other reason are reported, never dropped.
+3. `build-stage.workflow.yaml`: `review` gets `itemKey: '{{item.id}}'` (the smallest fix, consistent with the other two fanouts and with `06` §6.2
+   rule 1; the compiler's positional default is unchanged, its own test still pins the dangling case). And `freeze-contracts` gets
+   `dependsOn: [prepare]`: in the worked example `prepare` (creates the integration branch) has no dependent, so once the graph compiled a critic
+   showed nothing was ordered after it. One edge orders everything. `test/workflows.test.ts`'s "matches the worked example" test lists these two
+   differences (and the `16` §16.6 `standup`, PLAN-M10 P14) explicitly; it compares the shipped file to a copy of the example held in the test, not to the
+   spec text, which is unchanged.
+4. `stage-plan.ts`: a new error finding `owner-role-breaks-separation` when a story's `owner_role` is `sdet` or `reviewer` and the compiled per-story
+   steps would run two of its steps (implementation and tests, or implementation and review) under that role (`10` §10.6 "Enforced separations").
+   It follows what compiled, so a customised workflow with a fixed implementer is not refused; case and padding do not matter; it does not run when
+   the step plan is unavailable. The `step-plan-unavailable` warning stays: it is reachable by any user or overlay `build-stage` that does not
+   compile, and is tested with such a workflow. The shipped one no longer produces it: `forge plan run-plan` on a real stage reports
+   `stepPlan: compiled` with a critical path.
+
+**Spec ambiguity, and the decision.** Two: (a) how a non-fanout step names all of a fanout's per-item steps: chose the worked example's own `merge
+over ... dependsOn: [ "review:{{item.id}}" ]`, folded, because the alternative needs new syntax; (b) `06` §6.2 rule 1 says instance ids use the item's
+id, the compiler (Q72 #9) uses position when `itemKey` is omitted: chose to key the shipped fanout, not to change the compiler default (changing it
+would rename every un-keyed fanout's ids in user workflows). **Recommended spec amendment (not made: specs are normative and this needs the owner):**
+add `itemKey: "{{item.id}}"` to `review` and `dependsOn: [ prepare ]` to `freeze-contracts` in `10` §10.1's worked example, and state in `10` §10.1 that a
+`merge`'s `dependsOn` is resolved per item of its `over`. Until then `10` §10.1 still shows an example that does not compile.
+
+**Consequences closed.**
+- `it.fails('compiles the shipped build-stage to a step plan')` was in `packages/cli/test/bin-run-plan.test.ts` (not `stage-plan.test.ts` as the plan
+  said); it is now a real test, and the first test in that file asserts, against the workflow `forge init` wrote, `stepPlan: compiled`, no findings, the
+  per-story chain, the merge's exact dependencies and a non-null critical path.
+- P6's `UNCOMPILABLE_STEPS` (`build-stage:merge`) is deleted with its machinery (`compileForTest` now throws on any workflow that does not compile).
+  `merge` is a non-agent step, so no agent step appears or disappears: the agent/session step count is unchanged (that loop was already covering
+  every `build-stage` agent step; it compiled without the merge). What changed is that the whole workflow, merge included, now compiles, which a new
+  test asserts: 22 workflows on disk (20 in `@forge/templates`, 2 in modules) = 22 enumerated = 22 compiled whole, none skipped or trimmed.
+- `test/output-contract-known-gaps.test.ts` is unchanged at 37 (28 + 9): that inventory reads the parsed YAML's `outputs`, not the compiled plan, so
+  compilability does not move it. Recomputed, not assumed: the test passes unmodified.
+- `test/workflows.test.ts`: `build-stage` is back in the "all compile" `it.each`, and the test that asserted its exact failure is deleted (it exists
+  to go red when this is fixed).
+- Stale text updated: the comments in `compile.ts`, `stage-plan.ts`, `workflow-session-placements.test.ts`, `fixture-workflow.ts` (which keeps
+  literal `implement:*` ids on purpose, to drive the merge handler alone), `contract-test-cycle.workflow.yaml`, `harden.workflow.yaml`.
+- `fixtures/greenfield-service/.forge/workflows/build-stage.workflow.yaml` is a hash-headed snapshot from M6 that already differed (`StagePlan`), is not
+  compared to the template by any test, and was not regenerated (regenerating it means re-running init over the whole fixture, which the KB and
+  bench tests read). Projects that already ran `forge init` hold the old `build-stage` too: its `merge` now compiles but its un-keyed `review`
+  dangles, so `forge plan run-plan` says `step-plan-unavailable` with `dangling-dependency` until `forge upgrade` (or a re-init) refreshes it.
+
+**Left open (found here, not fixed; each is its own piece).**
+1. **`forge run build-stage --stage <id>` still cannot start.** The CLI's run context is `{stage: '<id>'}` (a string) plus `vars`; the workflow needs
+   `stage.stories`, `stageId` and `vars.integration_branch`. Compiling it that way fails with `fanout-over-not-array` on all three fanouts and
+   `template-resolution-failed` on `prepare`. Reproduced. The story selection and ordering already exist (`compileStageRunPlan`, `forge plan run-plan`);
+   `forge run` must build the same context from the stage's Epics and Stories.
+2. **Which lanes the runtime merge handler merges** (`runMergeStep`, `steps.ts`): it merges the registered lanes of its direct predecessors, which for
+   the compiled `build-stage` are the review steps' lanes, not the implement steps'. From reading the code, not executed. The engine e2e fixture depends on
+   literal `implement:*` ids for this reason. Fix with (1) and a real-dispatcher test.
+3. **One aggregate merge, after every review.** A dependent story's chain waits on its dependency's review, not on its merge (P10 chose this so the stage
+   does not serialise, Q206), so the dependent story's lane branches from an integration branch that does not yet hold the dependency's code. `10` §10.1's
+   example has one `merge`; per-story merging is a workflow-design decision (a fanout of merges, or `06` §6.5's queue per lane).
+4. A typo in a merge's `over` that evaluates to nothing is indistinguishable from a legitimate non-collection `over`, so the per-item reference then
+   fails as `{{item.id}}` unresolved rather than naming `over`.
+5. `files_expected` includes test paths (Q206 #5) and `implement` claims all of it, so `generate-tests` and `implement` overlap on tests; `10` §10.6 says
+   test files are outside the implementer's claim. The step-level overlap is reported and serialised; the rule itself is unenforced here.
+6. A per-item failure message does not name the item that failed (two items with no `id` produce one issue, not two).
+7. `test/workspace-floor.test.ts` fails on `packages/engine/test/dispatch/artifact-fixtures.ts` (a stray from P7, not this piece).
+
+**Verification scope (owner-approved cost cut; no full unscoped suite).** `packages/engine/test/{plan,dispatch,workflow,e2e}`, `packages/templates`,
+`packages/cli/test/{bin-run-plan.test.ts,commands/workflow*,commands/upgrade,commands/run,e2e/init.test.ts}`,
+`packages/agents/test/prompt/brief-keys-attachable.test.ts`, `packages/extensions/test/{resolve,compile}`, root `test/{workflows,build-stage-compiles,
+agent-prompts-all-workflows,output-contract-known-gaps,output-templates,live-smoke,determinism,fm-service-workflow,fm-mobile-workflow,workspace-floor}.test.ts`;
+`pnpm typecheck`, `pnpm run boundaries`, `pnpm lint` (only the 4 known pre-existing prettier warnings). Failures: the pre-existing
+`workspace-floor` stray (item 7) and `run/resume.test.ts` under load (passes alone). Revert-checks: removing the `itemKey` line fails 13 tests; disabling the
+merge folding fails 21.
+
+**Gauntlet.** Three fresh critic rounds; see `GAUNTLET-LOG.md`, `## M13 P13`.
+
+Files: `packages/engine/src/plan/{compile,stage-plan}.ts`, `packages/templates/templates/workflows/{build-stage,harden}.workflow.yaml`, `test/build-stage-compiles.test.ts`
+(new), and the tests and comments named above.

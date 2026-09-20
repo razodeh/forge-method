@@ -14005,3 +14005,38 @@ bin-run-failures.test.ts` (17 real subprocess cases: exit codes, `--json` parity
 `packages/vcs/test`, `packages/core/test/errors.test.ts`, and root `test/{workflows,live-smoke,determinism,gates,workspace-floor}.test.ts`; `pnpm typecheck`, `pnpm run
 boundaries`, eslint and prettier clean on every touched file. Under a combined run of ~2100 tests alongside the other pieces, 62 failures appeared (git branch/worktree collisions and
 timeouts, including the known-flaky `resume.test.ts`); the same sets pass when run in their own groups. Left failing by a concurrent piece: `test/workspace-floor.test.ts` on a stray `artifact-fixtures.ts` in `packages/engine/test/`.
+
+
+## M13 P13 — The shipped `build-stage` workflow compiles (`merge` over a collection folds its per-item `dependsOn`; `review` keyed by story id; `freeze-contracts` after `prepare`)
+
+**Piece.** Compiler (`packages/engine/src/plan/compile.ts`), the shipped workflow, `stage-plan.ts`, and the tests P6/P10 had pinned around the gap (Q211).
+
+**Round 1 (fresh): 3 blocking, 2 major, 5 minor.** Blocking, real: with no stories the merge lost its only dependency and became a root, so `verify`
+(G-Verify) and `deliver` could start before the design gate, and my own test pinned it as correct (fixed: an empty per-item reference waits on what the empty
+fanout waited for). Blocking, recorded and not fixed (out of this piece, Q211 open items 2 and 3): the runtime merge handler merges its direct
+predecessors' lanes (now the review lanes), and one aggregate merge means a dependent story branches before its dependency is merged. Major: the
+compiler's positional `itemKey` default vs `06` §6.2 rule 1 (kept, the shipped fanout is keyed; recorded), and an empty-collection branch that swallowed
+genuine errors. Minor and fixed: stale comments, a tautological test half, a separation-of-duties test that covered only the default role, `prepare` with no
+dependents.
+
+**Round 2 (fresh): 0 blocking, 3 major, 6 minor.** Major: the new `owner-role-breaks-separation` check was a hard-coded role list with a wrong citation (now
+derived from the compiled per-story steps, cited to Q36/`10` §10.6); `prepare` still unordered (`freeze-contracts` now depends on it; the test that pinned "two
+roots" now pins one); the empty branch substituted a fanout's dependencies without checking that fanout was empty, and `over` typos were dropped (mismatch check
+added; see round 3 for the `over` half). Minor and fixed: whitespaced `{{ item.id }}`, duplicate inherited dependencies, a tautological counter, no baseline
+test for the other shipped merges.
+
+**Round 3 (fresh): 0 blocking, 2 major, 10 minor.** Major: round 2's fix made a merge's `over` be parsed, so a merge whose `over` is prose (`"all lanes"`),
+which compiled before, now failed while `forge workflow validate` said OK: reverted to the old rule (only a collection is folded; anything else keeps the single
+resolution); and the empty branch failed for a fanout nested in a `sequence`/`parallel` group and for a diamond of fanouts (fanouts are now collected through
+groups, the cycle guard is per path). Minor and fixed: the mismatch check made symmetric (a merge over fewer items than its fanout), the message when the fanout
+could not be evaluated, case/padding of the role name, weak assertions (issue codes, unsorted merge order, a story that claims test files), stale comments. Not
+fixed, recorded: the spec text (`10` §10.1) is not amended, so the "matches the worked example" test compares to a copy of the example held in the test.
+No fourth round was run: the round-3 fixes were verified by tests (each has a regression test that fails without it) plus typecheck, lint and boundaries.
+
+**What the critics caught that I missed:** the empty-stage unordered DAG (I had written the test to bless it); `prepare` unordered; the runtime merge-handler
+mismatch (I had verified graph shape only); that parsing `over` broke workflows that compiled before; the nested-group and diamond cases in my own new
+helper. **What I caught first:** `forge run build-stage --stage <id>` cannot start for a different reason (the CLI run context has no `stage.stories`), so this
+piece makes the workflow compile but not the command run: Q211 open item 1.
+
+**Verification.** Scoped per the owner-approved cost cut (Q211 lists it). 22 of 22 shipped workflows compile whole. Only the pre-existing `workspace-floor`
+stray and `run/resume.test.ts` under load failed.
