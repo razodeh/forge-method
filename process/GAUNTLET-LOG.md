@@ -13843,3 +13843,53 @@ its declared outputs reports success and its text is not kept; a dirty-tree refu
 **Verification.** Independent inspection of the run directory events and `prompt.md`; a post-run scan for the key value in
 the throwaway project, captured outputs and the repository (0 files); the repo tree checked for stray init output (removed
 earlier, none present). Nothing was committed from the throwaway project. Real spend $0.3885.
+
+## M13 P6 — A test adapter that reads the prompt (`@forge/testkit` strict mode, repo-wide "every shipped agent step" test, opt-out fence)
+
+**Piece:** `FakePlatformAdapter` is now strict by default: it rejects (and records) a session whose prompt is empty, path-shaped,
+placeholder text, not the nine compiled blocks in order, or without the operating contract, and a global `afterEach` fails any
+test that leaves a refusal unacknowledged. `test/agent-prompts-all-workflows.test.ts` enumerates every shipped workflow (templates
+via a real `forge init`, plus `modules/*/workflows`) and drives all 57 agent and 13 session steps (22 workflows, 144 sessions)
+plus the interaction-mode steps through the real dispatcher against a strict adapter. Decisions, exclusions and the revert-check
+with failing test names: Q207. Three critic rounds; the third still found a blocking item (another piece's in-flight change),
+fixed rather than looping a fourth time.
+
+### Round 1: 0 blocking, 5 major, 6 minor
+
+The model check was vacuous (the test wrote one tier model into all three tiers and asserted the request used it); `forge debug`
+still ships the empty-system-prompt bug with a file-wide opt-out and no canary; strict was structural only (no block-body checks,
+`briefs/x.md` plus prose passed, `"undefined"`/zero-width prompts passed, an empty `operatingContract` option disabled the check);
+session-step coverage asserted only "at least one panel request"; interaction-mode agent steps were dispatched as plain steps;
+plus a fixture helper change that broke an existing engine test. Fixed: three distinct tier models, a canary for `forge debug` and
+a scoped opt-out, per-block and placeholder checks, session phases/read-only/role text, `dispatchAgentStep` driven for
+`swarm-review` steps, a global unacknowledged-refusal hook, module-conformance tests, a non-throwing malformed-request path.
+
+**What the critic caught that the builder missed:** the builder had judged the swarm-review steps covered because `executeStep`
+ran them; `StepNode` drops `mode`, so the participant path was never reached. It also missed that its own model assertion could not
+fail.
+
+### Round 2: 1 blocking, 4 major, 6 minor
+
+Blocking: a fixture helper change made an existing test's `prompts/...` assertion fail (the builder had not run that file). Major:
+the grant check was a tautology (same resolver as production), nothing tied a prompt to its agent, block [4] guard was dead for real
+prompts (only a body made *entirely* of a path was refused), sessions never reached DECIDE. Fixed: expected grant derived by hand
+from the agent YAML, mandate/decisions/role text asserted in block [2], a brief whose first paragraph is a path is refused,
+sessions reach diverge/converge/decide (the roster is copied into the project, a product gap disclosed in Q207).
+
+### Round 3: 1 blocking, 3 major, 6 minor
+
+Blocking: P7's output-contract check (in the shared tree) made every step fail after a clean session because the scripted fake
+writes nothing, turning the repo-wide test red; the test now treats a failure whose source is not `prompt`/`adapter` as out of
+scope and still fails on those or on "no session reached the adapter". Major: blocks [3]/[5]/[7] could be gutted undetected; the
+brief was derived from the compiled node not the YAML; module workflows ran against fm-core's agent copies. Fixed: those blocks are
+asserted, the brief is read from `.forge/briefs` and compared with the YAML, an installed-agent-parity test added. Minor fixed:
+`acknowledgeStrictViolations(n)` takes a count, the unacknowledged store lives on `globalThis`, an opt-out fence test
+(`test/strict-opt-outs.test.ts`), the participant test asserts the `:panel:cost` session was sent. Left as disclosed: the hook
+is `afterEach` only, module conformance has no hook, a few heuristic edges (`Continue.` refused, `briefs/x.md now` accepted).
+
+**Verification:** `pnpm typecheck` clean for every file of this piece (P7's in-flight `outputs.test.ts` had two unrelated type
+errors at the time), `pnpm run boundaries`, eslint and prettier clean on every touched file; scoped tests (testkit, engine, extensions
+conformance, cli loop/run, root fm-*/live-smoke/workflows and the two new files) all green except the known load-sensitive
+`cli/test/commands/run/resume.test.ts` (passes alone). Revert-check run against the final tests: reverting `buildSessionRequest`
+fails 13 tests (2 strict-adapter, 10 agent.test.ts, the repo-wide dispatch test); reverting `runParticipantSession` fails the
+participant strict-adapter test and the repo-wide dispatch test; both restored byte-identically.

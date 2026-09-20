@@ -17275,6 +17275,108 @@ co-located tests in `files_expected` (an empty `test_paths`, so `generate-tests`
 serialises them per `06` §6.2 rule 3; `spec validate --rule file-claim-overlap` remains the gate).
 
 
+## Q207 — M13 P6: the fake adapter now reads the prompt — strict by default, how the contract is checked across a package boundary, what is deliberately left unguarded
+
+**Context:** `PLAN-M13.md` P6. For twelve milestones `FakePlatformAdapter` never read `SessionRequest.prompt`/`systemPrompt`, so
+a real agent step dispatched with `prompt: node.brief` (a `briefs/x.md` path) and an empty system prompt passed every test
+(Q195). P5 (Q203) fixed the dispatch paths; this piece is the guard that stops the class recurring.
+
+**Decisions:**
+
+1. **Strict is the default, opt-out is `{ strict: false }` (`HAND_BUILT_REQUESTS`).** `new FakePlatformAdapter(caps, { strict })`,
+   `withCapabilities(caps, opts)`. Default-on because anything that dispatches an agent step through the engine already
+   produces a nine-block prompt (Q203 D4: no legacy path), so the audit found only three kinds of legitimate opt-out, each fixed
+   honestly rather than blanket-disabled: (a) tests that drive adapter mechanics or conformance with hand-built fixture prompts
+   (all of `packages/testkit/test`, `HAND_BUILT_REQUESTS`); (b) two engine tests that hand-build a request only to reach grant
+   enforcement or a resume (`s2-denylist`, `orchestrate`, later P7's `result-record-resume`), which keep strict on with
+   `strictFixtureSystemPrompt()`; (c) `forge debug`'s RCA sessions (below). `test/strict-opt-outs.test.ts` fences the opt-outs:
+   `strict: false`/`HAND_BUILT_REQUESTS` may appear only in listed files with a reason, a listed file that stops using one fails.
+   Module conformance (`forge module add` runs a module's `tests/*.test.ts` against the fake) is **now strict too**: a
+   third-party module test that hand-builds an empty/path prompt fails `CFG-051` with the strict-mode message and remedy
+   (`{ strict: false }`); tests in `conformance.test.ts` pin both outcomes. No shipped module has such a test. `specs/19` §19.4
+   and `docs/adapter-guide.md` do not yet say the fake is strict (disclosed).
+2. **Contract check without `@forge/agents`.** `@forge/testkit` may import only `adapter-kit`/`schemas` (`graph.mjs`), so it
+   cannot import `OPERATING_CONTRACT`. Two mechanisms: the caller may pass the full text (`strict: { operatingContract }`, used
+   by the repo-wide test; must sit inside block [1] verbatim, an empty string is refused because it would disable the check), and
+   by default a structural marker: block [1] must open with the first sentence of `05` §5.5 point 1 and carry all eleven
+   numbered points with text. The nine block names are copied into `strict.ts` (`STRICT_BLOCK_NAMES`). Drift is caught at the
+   repo level, not by a second transcription: `test/agent-prompts-all-workflows.test.ts` asserts the marker is a prefix of
+   `OPERATING_CONTRACT`, that its numbered points are exactly `OPERATING_CONTRACT_POINT_COUNT`, and dispatches every real
+   compiled prompt through the strict check with the full contract.
+3. **What strict refuses** (`checkSessionRequestPrompt`): user prompt empty/invisible-only (zero-width, braille blank, Hangul
+   fillers), not a string, only file path(s), only placeholder words (`undefined`, `null`, `[object Object]`, `NaN`), no words,
+   or a single word; system prompt empty, a path, text before block [1], headings not exactly the nine in order (duplicates and
+   renames included), an empty or text-less block body, a block [4] whose first paragraph is only a path, block [1] not the
+   contract (or truncated). A malformed request is a violation, never a thrown TypeError. `resumeSession` checks the user-prompt
+   rules only. Known heuristic edges (probed by critics, accepted): a single word (`Continue.`) is refused; `briefs/x.md now`
+   passes the user-prompt check; block bodies like `(none)`/`TODO` pass; only exact-form forged headings are caught (dressed-up
+   ones are `neutralizeBlockHeadings`' job, not this guard's).
+4. **Failure shape: a rejected `startSession` (`StrictPromptViolationError`, code `STRICT_PROMPT_VIOLATION`) plus a record, plus a
+   global hook.** A rejection alone is not loud enough: the engine folds it into a failed step, and a test asserting something
+   else stays green. So every refusal is logged (`adapter.strictViolations`) and added to a process-wide store (on `globalThis`,
+   surviving `vi.resetModules()`); `test/setup.ts`'s `afterEach` fails any test that ends with an unacknowledged refusal.
+   A test that asserts a refusal calls `adapter.acknowledgeStrictViolations(n)`, which throws unless exactly `n` are pending (one
+   expected refusal cannot hide another). Gaps: the hook is `afterEach` only (a refusal in `beforeAll`/`afterAll` is
+   attributed to the next test or unreported) and module conformance's private vitest config has no setup file, so a module test
+   that swallows a refusal is not caught there (its direct rejection is).
+5. **The repo-wide test** (`test/agent-prompts-all-workflows.test.ts`) enumerates workflows, not names: `WORKFLOW_INDEX` as laid down
+   by a real `runInit`, plus every `modules/*/workflows/*.workflow.yaml`, cross-checked against the template directory and each
+   `module.yaml`'s `provides.workflows`. It drives every `agent` and `session` node through `executeStep` (over
+   `buildRunEngineContext`, production's constructor) and each interaction-mode step (`mode: swarm-review`, whose `mode` `StepNode`
+   drops, Q203 D2) through `dispatchAgentStep`, and asserts per step: no strict refusal; a request reached the adapter; the agent
+   file exists and its grant (compared field by field to the YAML, derived by hand, not through `resolveStepToolGrant`) and tier
+   model (three distinct models, so the check cannot be satisfied by any valid model) reached the request; block [2] carries the
+   agent's mandate, decisions and authored role prompt; block [4] contains the whole brief read from `.forge/briefs`, and the
+   step's brief equals the YAML's; blocks [3], [5], [6], [7] carry project name, output contract, grant and gate checks; the
+   prompt record on disk equals what was sent. Sessions must reach DIVERGE, CONVERGE and DECIDE with read-only participants
+   carrying authored role text. The compiled count of agent/session steps must equal an independent count from the parsed YAML.
+   **Explicit, self-expiring exclusions:** `UNCOMPILABLE_STEPS` (`build-stage:merge`, the Q71/Q88 template gap: the step is
+   removed and the rest compiled; fails if `build-stage` compiles whole, or fails on any other step), `BRIEFLESS_AGENT_STEPS`
+   (the two `swarm-review` reviewer steps with no `brief:`, Q203), `NON_AGENT_KINDS` (command, gate, merge, checkpoint, elicit,
+   subworkflow: no adapter session; each must still be used by some shipped workflow). A new step kind fails the test until classified.
+6. **Setup honesty.** (a) `forge init` on the fake adapter leaves every tier unmapped (the fake declares no `defaultTierModels`,
+   P5b/Q204), so the test writes `frugal/balanced/max` into the in-memory config for the fake adapter; what init writes is kept.
+   The "real init layout resolves a model for a real adapter" case is P5b's own test, not this one. (b) The session machinery reads
+   its roster from `<project>/modules`, which `forge init` does not create, so every session would end before DECIDE in a fresh
+   project; the test copies `modules/` in. That is a product gap (a fresh project's sessions cannot resolve a decision owner),
+   disclosed here. (c) Module workflows run against `.forge/agents`, which init fills from `loadAgentRegistry` (last module
+   alphabetically wins on a shared id): a test asserts the installed copy is the winning module's own file.
+7. **Left unguarded, on purpose.** `forge debug`'s RCA sessions (`commands/loop/debug.ts`, two `startSession` sites, one with a
+   write grant) still send `systemPrompt: {text: ''}` (Q203 D4). It is the only production session type strict mode flags. Its
+   tests opt out (`RCA_SESSIONS`, scoped to the RCA adapters only), and a canary test asserts a strict adapter refuses those
+   requests, so the day `debug.ts` is moved onto real assembly the canary fails and forces the opt-out's removal.
+   Participants carry the dispatching agent's role block, not their own (Q203 D9); the test asserts the block is authored text,
+   not whose. Preset workflow overlays are not compiled or dispatched. The 500-character floor on briefs/role text couples the
+   guard to content (the shortest shipped brief is over 2 KB).
+
+**Interaction with P7 (output contract):** P7 makes a step that writes none of its declared outputs fail after a clean session; the
+scripted fake writes nothing, so the repo-wide test treats a failure whose source is not `prompt`/`adapter` as out of scope (what
+is under test is the prompt a session is sent). It still fails on `prompt`, `adapter`, or no session reached.
+
+**Revert-check (real, run against the final tests; nothing left behind, verified byte-identical afterwards):**
+`python3 <scratch>/revertcheck.py` edits one source anchor, runs
+`node scripts/run-tests.mjs run packages/engine/test/dispatch/strict-adapter.test.ts packages/engine/test/dispatch/agent.test.ts test/agent-prompts-all-workflows.test.ts`,
+restores the file and asserts it equals the original.
+- **A. `buildSessionRequest` (`packages/engine/src/dispatch/steps.ts`) reverted to `systemPrompt: { mode: 'append', text: '' }, prompt: node.brief ?? ''`:**
+  13 failed / 16 passed. Failing: `strict-adapter.test.ts` "runAgentStep sends the nine compiled blocks and a real kickoff, never the
+  brief path or an empty prompt" and "a participant session sends the nine compiled blocks too"; ten `agent.test.ts` `runAgentStep`
+  tests (runs a real FakePlatformAdapter session..., the session runs with cwd inside the lane worktree..., commits the agent's own
+  changes..., reverts an out-of-claim write..., emits the full 18 §18.4 event sequence..., a session ending with ok: false...,
+  does not attempt a commit at all..., a node with no brief of its own gets an explicit no-authored-brief block [4]..., falls back
+  to the step id for the commit subject..., creates a real git worktree lane...); and the repo-wide "dispatches each step through the real
+  dispatcher and the strict adapter refuses none" (57+ problems, each naming a bare-path user prompt and an empty system prompt).
+- **B. `runParticipantSession` (`packages/engine/src/interaction/dispatch-agent-step.ts`) reverted to `systemPrompt: {text: ''}, prompt`:**
+  `strict-adapter.test.ts` "a participant session sends the nine compiled blocks too" and the repo-wide "dispatches each step..." fail.
+- Mutations by hand during the critic rounds (each failed the repo-wide test): a brief left as a path, an unresolved role prompt,
+  `ctx.model`/`ctx.tools` sent instead of the assembled values, a stripped grant, block [5] rendered as `(none)`.
+
+**Verification scope (owner-approved cost cut):** the full suite was not run. Run: `packages/testkit`, `packages/engine/test`,
+`packages/extensions/test/install/conformance.test.ts`, `packages/cli/test/commands/{loop,run}` (plus, earlier in the piece, all
+`packages/cli/test` and `test/`; the wholesale failures seen there came from other pieces' in-flight edits and cleared), root
+`test/{agent-prompts-all-workflows,strict-opt-outs,fm-mobile-workflow,fm-service-workflow,live-smoke,workflows}.test.ts`;
+`pnpm typecheck`, `pnpm run boundaries`, eslint on every touched file, prettier on every touched file. Only the known
+`cli/test/commands/run/resume.test.ts` flake failed under load (passes alone).
+
 ## Q208 — M13 P9: the first live run — what a real Claude Code session did, and eight real findings
 
 **Context.** `PLAN-M13.md` P9: one cheap real workflow end to end, run by the orchestrator with the owner's
