@@ -13584,3 +13584,63 @@ blocking left.
 `test/workspace-floor.test.ts`, `packages/cli/test/commands/{workflow,agent,gate-validate}.test.ts` (45 gate-validate tests),
 `packages/cli/test/e2e/init.test.ts`, `packages/cli/test/bin.test.ts`; `pnpm typecheck` 21/21, `pnpm run boundaries` clean,
 eslint clean. Prettier reports only pre-existing files plus another batch's `assemble.ts`.
+
+## M13 P5 — Wire real prompt assembly into dispatch (`assemble.ts`, `assembly-context.ts`, both dispatch paths)
+
+**Piece:** the fix M13 exists for. `runAgentStep`/`runAgentWork` and interaction-mode `runParticipantSession` now compile
+`05` §5.3's nine blocks (agent, brief text, KB pack, per-agent grant, tier model, gate checks, run inputs), write
+`prompt.md` + `context.json`, and send the compiled text as the system prompt; assembly failure is a typed `source: 'prompt'`
+step failure with nothing dispatched. Decisions D1-D9 and every disclosed limit: Q203. Three critic rounds (a fourth was not
+needed: nothing blocking remained and the last edits are covered by new tests).
+
+### Round 1: 0 blocking, 6 major, 7 minor
+
+Session-step and adopt participant refusals threw out of the scheduler batch instead of failing one step (fixed: refusals are
+marked and folded into a failed `StepOutcome` by `executeStep`); the "read-only" participant clamp flipped only `write` while
+exec/network stayed at the agent's grant and block [6] still said `deploy: true` (fixed: `exec:false, network:none`,
+git_commit/deploy none/false, block [5] says read-only); panel/debate peer output and adopt-era model text sat in the system
+prompt (fixed: fenced, user turn only); `neutralizeBlockHeadings` was trivially defeated by NBSP/zero-width/full-width variants and
+block [6] rendered agent-file strings unescaped (fixed: broad character classes, one-line rendering); resume rewrote `prompt.md`
+with a prompt the session never received and the record was written before dispatch (fixed: `persist()` runs immediately before
+the adapter call, a resumed session recompiles nothing); declared inputs that could not be packed were only in the prompt (fixed:
+riding `SessionStarted`'s payload). Also: a blank task text crashed with the wrong error code (new `RUN-081`), `SPEC-QUESTIONS.md`
+Q198 cited in code did not exist yet, `hasId` cast without need.
+
+**What the critic caught that the builder missed:** the builder had judged the adopt tests' `request.prompt` assertions
+incidental; they encoded the trust boundary, and the critic showed the same hole in three more places (panel synthesis, debate,
+critic re-ask). The builder also had not run any heading variant beyond an ASCII one.
+
+### Round 2: 0 blocking, 6 major, 10 minor
+
+Raw Node errors carrying `.code` (`EMFILE`, `SQLITE_BUSY`) were mistaken for FORGE codes and classified as never-retry policy
+failures, and every fs error loading an agent became `RUN-056` (fixed: only `ForgeError` codes count, a fixed set maps to policy,
+`RUN-034`-wrapped I/O propagates); unresolved inputs left a step succeeding blind with no outside signal (payload added); the
+audit record path and taint were disclosed rather than changed; heading defence gaps (soft hyphen, invisible operators, bidi
+controls, Hangul fillers, list/blockquote prefixes, CJK brackets) fixed with `\p{Cf}`/`\p{Default_Ignorable_Code_Point}`;
+peer-output taint on panel synthesis/debate decider added; `JsonBackend.close()` clobbering a concurrent `forge kb sync` fixed.
+`forge debug` (disclosed leftover) was judged a design decision, not a wiring one.
+
+### Round 3: 0 blocking, 4 major, 6 minor (after the coordinator's three added requirements landed)
+
+Lint failure and a real robustness gap in the new run-inputs rendering (bigint/cycle/function/throwing getter made a
+deterministic bug look transient) fixed with a total serializer and tests; run inputs did not match what `forge run` actually
+builds (`{stage, vars}` vs declared `stageId`): looked up in `vars` too and, when a required input is absent, named as NOT
+SUPPLIED in the prompt (the CLI context shape itself is unchanged, disclosed); `prompt.briefs.<basename>` was silently dropped for
+solo/fan-out/relay/pair and a brief-less node there hit `RUN-081` (fixed: brief key threaded through, brief-less node assembled);
+`PROMPT_POLICY_CODES` missed `CFG-003/004`, `KB-013/014` (added); orphaned doc comments, a misleading taint comment and run-input
+labelling fixed. Remaining findings restated disclosed limits.
+
+**Requirements added mid-piece (coordinator, from the content agents):** (a) run inputs in block [4]; (b) mode name as brief key for
+swarm-review perspectives; (c) disclose that 22 agent `prompt.briefs` keys match no shipped step brief. All three landed and are in Q203.
+
+**Process incident:** two API spend-limit interruptions (one killed the round-3 critic mid-review, which was re-run from scratch);
+all edits were intact on disk and re-verified with `pnpm typecheck`. A stray `.gitignore` edit (forge init's own block, written into
+the repo root by a test run) was reverted, not committed. `packages/cli/test/init/brief-prompt-content.test.ts` asserted the empty-content
+state P1 recorded; it failed once P2/P3 shipped content and was updated (not weakened) to assert the directories are populated.
+
+**Verification:** whole-workspace `pnpm typecheck` (21/21), `pnpm run boundaries`, eslint clean; `pnpm lint`'s prettier step reports only
+the 4 pre-existing untouched files. Full unscoped `node scripts/run-tests.mjs run` on the tree before the feat commit: 9576 passed,
+6 failed — `engine/test/e2e/crash-resume.test.ts` and `scripts/verify-success-criteria.test.ts` SC3 (accepted load-sensitive flakes;
+crash-resume passes in isolation), `kb/test/adopt/survey.test.ts` (accepted flake, passes in isolation),
+`cli/test/commands/upgrade/{backup,run-upgrade}.test.ts` (accepted load-sensitive, both pass in isolation), and the stale
+`brief-prompt-content.test.ts` case above (fixed and re-run green).

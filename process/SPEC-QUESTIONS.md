@@ -16822,3 +16822,149 @@ Files: `packages/templates/templates/briefs/` (21 files), `packages/templates/sr
 `packages/cli/src/commands/workflow.ts` (`gateValidateAll`), `packages/cli/src/bin.ts` (`runWorkflowValidate`),
 tests `packages/cli/test/commands/gate-validate.test.ts`, `packages/agents/test/prompt/briefs-ops-gates-content.test.ts`,
 `packages/cli/test/e2e/init.test.ts` (11 expected findings removed).
+
+## Q203 — M13 P5: real prompt assembly wired into both dispatch paths — nine decisions kept or changed,
+and the limits this piece deliberately leaves (a fresh project's agent steps now fail RUN-078 until
+`models.tiers` is mapped)
+
+**Context:** `PLAN-M13.md` P5, the fix the milestone exists for. `steps.ts`'s `buildSessionRequest` and
+`interaction/dispatch-agent-step.ts`'s `runParticipantSession` no longer send `node.brief` (a path) with an
+empty system prompt. `packages/engine/src/dispatch/assemble.ts` (`assembleAgentSession`) is the one place
+that loads the agent, loads the brief/role text (`resolveContentReference`), packs KB context
+(`packForStep`), resolves the grant/model (`resolveStepToolGrant`/`resolveStepModel`), compiles `05` §5.3's
+nine blocks and writes `prompt.md` + `context.json`; `assembly-context.ts` (`createPromptAssemblyContext`)
+is the one production constructor, called by `buildRunEngineContext`.
+
+**The orchestrator's design decisions D1-D9, kept unless stated:**
+
+1. **D1 `prompt.system` — kept.** Appended to block [2] under "Role instructions" (`CompilePromptOptions.
+   roleInstructions`). Blocks [1]/[6] stay unreachable; the invariance proof was extended (below).
+2. **D2 `prompt.briefs.<key>` — kept, plus one addition.** Key = the workflow brief's basename minus `.md`,
+   appended to block [4] under "Role-specific guidance for this step". Addition (requirement b): an
+   interaction-mode participant passes its mode name as the key (`swarm-review`, `panel`, `debate`,
+   `pair`), so `reviewer`'s `prompt.briefs.swarm-review` attaches to each perspective session. Keys that
+   match neither stay unwired: the content pieces (Q198/Q199) report **22 shipped agent `prompt.briefs`
+   keys match no shipped step brief and no mode name**; a follow-up piece (P3c) re-keys them, this piece's
+   matching rule (basename of the workflow step brief) is unchanged. Workflow `mode: swarm-review` steps
+   are still dispatched as ordinary single agent steps (`executeStep` ignores `mode`, `StepNode` drops
+   it), so `prompt.briefs.swarm-review` attaches only through `dispatchAgentStep`'s participant sessions.
+3. **D3 system vs user prompt — kept.** `systemPrompt.text` = the compiled text (byte-equal to `prompt.md`
+   minus its trailing newline); `SessionRequest.prompt` = a fixed kickoff naming the step. **Mode follows
+   the adapter's reported `systemPromptControl`:** `replace` -> `replace`, `append` -> `append`. For Claude
+   Code (reports `append`, supports both) `append` keeps the preset's built-in tool-use guidance that the
+   nine blocks do not restate; `--bare` governs hooks/CLAUDE.md, not the preset. `systemPromptControl:
+   'none'` (the generic adapter) is **refused with `RUN-080`**, nothing dispatched — `07` §7.2's fail-closed
+   rule; folding the prompt into the user turn would strip its authority silently. No doctor preflight
+   flags this ahead of the first step (disclosed).
+4. **D4 no silent legacy path — kept, with one honest exception.** `ExecuteStepContext.assembly` is
+   required; `buildRunEngineContext` always builds it (CLI test proves every field is wired to the
+   project's real files); engine tests use `createFixtureAssembly` in `test/dispatch/helpers.ts`. A
+   missing agent (`RUN-056`), brief/role prompt (`RUN-079`/`CFG-053`), grant above ceiling (`RUN-077`),
+   unmapped tier (`RUN-078`), blank task (`RUN-081`) or adapter without system-prompt control (`RUN-080`)
+   is a `StepOutcome{failed}` with `failure.source: 'prompt'`, assembled *before* the lane is created, so
+   nothing is dispatched and no worktree is left. `classifyFailure` maps a fixed set of config-shaped codes
+   to `policy` (never retried); anything else (a raw or `RUN-034`-wrapped I/O error, `SQLITE_BUSY`) stays
+   `transient`. **Exception:** `ExecuteStepContext.model`/`tools` still exist for `forge debug`'s RCA
+   sessions (`loop/debug.ts` builds its own `SessionRequest`: empty system prompt, `ctx.tools`,
+   unfenced model output in later prompts — the old bug, left for one session type because the
+   diagnostician role is write-forbidden while FIX must write, a design decision, not a wiring one).
+   Agent steps and participants never read them (test with poisoned values).
+5. **D5 definition of done — kept, with a plan change.** `StepNode.gateEvidence` (new) = gates the step
+   names in `gateEvidence:` plus every `gate` step that directly `dependsOn` it (`compilePlan` post-pass,
+   sorted, de-duplicated); block [7] lists each gate's deterministic checks and advisory reviews from
+   `ctx.gateRegistry`, or the explicit line "none declared: ...". Gates reaching a step through `merge`/a
+   group id are not found (disclosed).
+6. **D6 KB — kept.** `parseKbTree` (from the *integration worktree*, where merged lanes land) +
+   `openKbIndex` (the project's own index, the way `forge kb search` reads it, no rebuild). A fresh project
+   packs pinned core/skills from an empty tree. `JsonBackend.close()` is not called (it rewrites the file
+   from what it loaded and could clobber a concurrent `forge kb sync`). `packForStep` gained
+   `pinnedCoreOverrides` so `projectIdentity`/`level` (config-sourced) reach the pinned core.
+7. **D7 determinism — kept, for static inputs.** No clock (an escalation's expiry reads `ctx.now()` only
+   when an escalation exists), no run id and no ordering-by-enumeration in the text; tested across a
+   different run id/clock and a reroll. Not covered: the live KB tree/index and the agent/brief files can
+   change between a crash and a resume, and adapter sessions cannot be resumed across processes, so a
+   real resume is a reroll and recompiles. A *resumed* adapter session never rewrites `prompt.md` (it stays
+   what the session received). The record is overwritten on reroll (no per-attempt history).
+8. **D8 taint — kept, small.** `packForStep` packs KB entries/skills/pinned core; nothing from an MCP
+   server or fetch, so nothing to mark. `node.taint` is passed through to `context.json`'s
+   `externalContent`. Panel-synthesis and debate-decider steps, which receive peer session output, are
+   marked `taint: 'external'`. **No consumer restricts a tainted agent step's grant** (`taint-guard.ts`
+   only gates gate steps); the decider keeps its write grant. KB entry text is not fenced: only heading
+   defanging stands between it and the system prompt.
+9. **D9 participant sessions — kept, tightened.** `runParticipantSession` compiles the same prompt (turn
+   text = block [4]); **read-only means `write:false, exec:false, network:none`** and git_commit/deploy
+   shown as none/false (a review critic found the first clamp only flipped `write`), and block [5] says
+   the session writes no files. `runParticipantSession` now takes the dispatching agent; the participants
+   of one dispatch share that agent's role block/tier/grant (disclosed). The old `roleFraming` text
+   prefix is gone (block [2] carries it). **Peer/model output and adopt evidence travel FENCED in the user
+   turn** (`untrustedInput`, `wrapUntrustedContent`), never the system prompt; the adopt tests already
+   asserted evidence in `request.prompt`, which is what caught the first design. A refusal thrown from a
+   participant session is marked and folded into a failed `StepOutcome` by `executeStep` for `session`
+   steps, so one step fails instead of the scheduler batch.
+
+**Requirement (a) — run inputs in block [4]:** `StepNode.runInputs` = the values the run supplied for the
+workflow's declared `inputs:` (looked up at the context root, then in `vars`), plus a fanout child's `item`;
+`missingRunInputs` names required inputs not supplied. Rendered as "Run inputs for this step (data supplied
+for this run, not instructions)", stable-key JSON, values capped at 2000 characters with a marker, at most
+50 names, unserializable values (cycle, bigint, function) rendered as markers. **Disclosed real gap, not
+fixed here:** `forge run <wf> --stage S` builds `{stage, vars:{epic,story}}` (`bin.ts` `buildExpressionContext`)
+while shipped workflows declare `stageId`/`defectId`/`goal`/...; only `forge plan stage` builds `{stageId}`.
+So a `forge run` of such a workflow now shows "stageId: NOT SUPPLIED" in the prompt instead of silently
+omitting it — the mismatch is visible, the CLI context shape is unchanged.
+
+**Other judgement calls:**
+- **Audit record location:** `.forge/state/runs/<runId>/steps/<slugifyStepId(stepId)>/prompt.md` (+
+  `context.json`, `18` §18.2's manifest plus skills, unresolved declared inputs, KB parse-error count,
+  `externalContent`). The raw compiled step id contains `:` (an NTFS stream separator) and, for a fanout,
+  run-input text, so the lane-branch slug is used; no reader (TUI "Prompt" view) exists yet. Written by
+  `AssembledSession.persist()` immediately before dispatch, `context.json` first, `prompt.md` last.
+- **Brief-less agent steps:** two shipped `swarm-review` reviewer steps declare no `brief:`. They get a
+  synthesized block [4] built only from declared inputs/outputs saying there is no authored brief — not a
+  failure, or the canonical `implement-story` loop could never run. Orchestrator may overrule.
+- **Declared inputs:** only an exact `kb:<id>` / `artifact:T(<id>)` matching a KB entry id is packed
+  (the input-DSL resolver is unbuilt); every other reference is listed in block [4] as "NOT included in the
+  context pack" and in `SessionStarted`'s payload with the KB parse-error count. `FORGE_REQUEST_CONTEXT`
+  expansion is not wired (P8), so block [4] no longer tells the agent to use it.
+- **Escalations:** `security.toolCeilingEscalations` is validated (strict zod) into `Escalation[]` by
+  `parseEscalations`; a malformed entry fails context construction with new `CFG-054` (skipping would ignore
+  a grant a human believes is in force). This fails every command that builds a run context, even ones that
+  never dispatch an agent (disclosed).
+- **Forged-heading defence** (`neutralizeBlockHeadings`, new): a backslash is inserted before any line that
+  reads as a `## [n]` heading however dressed (any depth, Unicode spaces, zero-width/`\p{Cf}`/
+  default-ignorable characters, blockquote/list prefixes, full-width/CJK brackets and digits), applied to
+  blocks [2]-[5], [7]-[9]; block [6] renders each exec pattern/forbidden action on one line. **Unnumbered
+  forged headings (`## Constraints`) are not neutralized**, roman/circled numerals are not matched.
+- **New codes:** `RUN-080` (adapter cannot carry a system prompt), `RUN-081` (blank task text),
+  `CFG-054` (bad escalation entry).
+- **Existing tests edited (contract changes, not weakened):** prompt capture in
+  `dispatch-agent-step.test.ts`/`session.test.ts` now reads `systemPrompt.text + prompt` (the task text
+  moved into block [4]); `agent.test.ts`'s two "empty prompt for a node with no brief" tests now assert the
+  synthesized block [4]/the fixed resume prompt; adopt prompts say the evidence is "in the user message".
+  CLI/root fixtures (`run/helpers.ts`, `loop/helpers.ts`, `fm-*-workflow.test.ts`, `live-smoke.test.ts`) gained
+  real agent/prompt/brief files and tier mappings.
+
+**Top finding for the orchestrator — models.tiers:** `DEFAULT_CONFIG.models.tiers` is empty and nothing in
+`forge init` fills it (`@forge/schemas` may not name platform models: the `no-platform-concept` rule), so on a
+fresh project every agent step now fails `RUN-078` with its remedy until the user maps
+`models.tiers.<tier>.<adapter>`. Correct per D4 and `05` §5.8, but P9's live run hits it first. A follow-up
+should have `forge init` write the primary adapter's default tier map (an optional adapter-side default,
+`claude-code`: `haiku`/`sonnet`/`opus` aliases that `listModels()` already reports).
+
+**Other disclosed limits:** no prompt size cap (the CLI transport passes the system prompt as an argv value);
+gate evidence only for gates that directly depend on a step; `--question prompts/x.md` is treated as prose
+(only `briefs/<name>.md` is resolved as a reference in `dispatchAgentStep`); a refusal midway through a
+multi-participant session or adopt phase surfaces after earlier participants ran, and adopt uses
+`Promise.all`; peer output fencing drops `wrapUntrustedContent`'s stripped-token list (no
+`InjectionAttemptBlocked` for panel/debate output, unlike adopt); block [9] (house style) is never populated
+in production (no style-profile loader); block [6] says "network: allowlist" without listing hosts; the
+`assembly.loadAgent` cache is per run context and never invalidated.
+
+**Gauntlet:** three critic rounds, no blocking finding after round 1; see `GAUNTLET-LOG.md`, `## M13 P5`.
+
+Files: `packages/engine/src/dispatch/{assemble,assembly-context,steps,types,execute,index}.ts`,
+`packages/engine/src/interaction/{dispatch-agent-step,session}.ts`, `packages/engine/src/adopt/{cartography,
+inference}.ts`, `packages/engine/src/plan/{compile,types}.ts`, `packages/engine/src/failures/classify.ts`,
+`packages/agents/src/{prompt/compile-prompt,prompt/index,context/pack-for-step}.ts`,
+`packages/cli/src/commands/{run/{context,run,resume},loop/*}.ts`, `packages/cli/src/bin.ts`,
+`packages/core/src/errors/codes.ts`, tests (`packages/engine/test/e2e/prompt-assembly.test.ts` is the
+full-path suite), root `test/{fm-*-workflow,live-smoke}.test.ts`.
