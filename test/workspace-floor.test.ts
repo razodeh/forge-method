@@ -185,6 +185,11 @@ const IGNORED_PATHS = new Set([
   // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
   // heuristic" shape every other entry in this set already establishes.
   'packages/engine/test/e2e/crash-helpers.ts',
+  // `packages/engine/test/dispatch/artifact-fixtures.ts` (`PLAN-M13.md` P7): valid on-disk artifact
+  // builders shared by the output-contract tests, so a fake session can write a schema-valid
+  // document -- the identical "genuinely test-only, shared, importable module, unrecognised by
+  // `TEST_FILE`'s naming heuristic" shape every other entry in this set already establishes.
+  'packages/engine/test/dispatch/artifact-fixtures.ts',
 ]);
 
 /**
