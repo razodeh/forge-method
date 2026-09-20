@@ -323,6 +323,16 @@ listed in the TUI and are part of the run audit.
 
 Each mode is a workflow primitive (see `10`), not ad-hoc code.
 
+A workflow `agent` step with `mode: swarm-review` runs one read-only session per declared perspective. The
+**engine**, not a reviewer, merges them: it creates the step's lane, writes the `ReviewReport` (`18` §18.7)
+there with per-perspective and merged verdicts computed from the perspectives' structured findings (never
+parsed from their prose), and validates it; the step's outputs (which always include the `ReviewReport`, whether
+or not the step lists it) are then checked on that lane like any other agent step's. The `reviewer` role stays
+`write: false`: reviewers cannot write what they review. A perspective that returns nothing readable, or
+findings with malformed entries and no blocking finding of its own, fails the step instead of being recorded as
+a clean review. The verdicts are
+data (in the report and in the run's `ArtifactCreated` event); nothing gates on them yet.
+
 ## 5.8 Model tier mapping
 
 Agents declare a tier; config maps tiers to concrete platform models.

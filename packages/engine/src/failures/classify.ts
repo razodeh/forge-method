@@ -93,6 +93,8 @@ function classifyMergeFailure(failure: StepFailureInfo): FailureClass {
 /** The `ForgeError` codes prompt assembly raises for a permanent, config-shaped refusal. */
 const PROMPT_POLICY_CODES: ReadonlySet<string> = new Set([
   'RUN-039',
+  // A `swarm-review` step with no perspectives (`PLAN-M13.md` P17): the same workflow fails identically.
+  'RUN-046',
   'RUN-056',
   'RUN-077',
   'RUN-078',

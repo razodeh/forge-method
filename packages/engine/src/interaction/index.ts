@@ -6,10 +6,18 @@
  * @see PLAN-M6.md A6
  */
 export { dispatchAgentStep } from './dispatch-agent-step.ts';
+export { resumeSwarmReviewStep, runSwarmReviewStep } from './swarm-review-step.ts';
+export {
+  buildReviewReport,
+  perspectiveVerdict,
+  sanitizeInline,
+  type ReviewVerdict,
+} from './review-report.ts';
 export type {
   DispatchAgentStepOptions,
   InteractionOutcome,
   InteractionParticipant,
+  PerspectiveReview,
   ReviewFinding,
   ReviewReport,
   ReviewSeverity,

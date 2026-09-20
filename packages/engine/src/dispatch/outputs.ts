@@ -132,6 +132,27 @@ export function outputGlob(type: ArtifactTypeId, roots: DocRoots): string {
 }
 
 /**
+ * The concrete repo-relative path of one artifact of `type` with id `id`, under the same configured roots
+ * `outputGlob` uses (`PLAN-M13.md` P17: the engine writes the swarm-review `ReviewReport` itself and must
+ * put it exactly where the output check looks). A template whose file name needs more than the id (`{slug}`,
+ * `{gate}`) is refused: the engine cannot know those, and a glob-only type is never engine-written.
+ * Unlike `outputGlob` the root is not glob-escaped: this is a path to write, not a pattern to match.
+ */
+export function outputPathFor(type: ArtifactTypeId, roots: DocRoots, id: string): string {
+  const definition = definitionForType(type);
+  const [first = '', ...rest] = definition.pathTemplate.split('/');
+  const named = sectionRoot(first, roots);
+  const root = normalizeRoot(named ?? roots.kb);
+  const tail = (named === undefined ? [first, ...rest] : rest).join('/').replace('{id}', id);
+  if (/\{\w+\}/.test(tail)) {
+    throw new RangeError(
+      `outputPathFor: the ${type} path template ${definition.pathTemplate} needs more than an id`,
+    );
+  }
+  return root === '' ? tail : `${root}/${tail}`;
+}
+
+/**
  * Whether any of `globs` (an agent's `parallel_safety.file_ownership`, say) covers a path an output of
  * `type` could be written to: the registry glob read with each `*` as a concrete `x`. A definition-level
  * question, asked by the repository's known-gap inventory (`test/output-contract-known-gaps.test.ts`); the
@@ -356,7 +377,11 @@ function frontMatterOf(doc: ArtifactDocument): Record<string, unknown> {
   return doc.frontMatter as Record<string, unknown>;
 }
 
-function documentProblems(
+/** The problems, if any, with one produced single-document artifact: parses, its `type` is the expected
+ * one, and `validateArtifact` (front matter schema plus required sections) accepts it. Exported so the
+ * engine-written swarm-review `ReviewReport` (`PLAN-M13.md` P17) is validated by the very code the output
+ * check judges it with afterwards, not a second copy that could disagree. */
+export function documentProblems(
   definition: ArtifactTypeDefinition,
   path: string,
   text: string,
@@ -776,6 +801,10 @@ export async function verifyDeclaredOutputs(
     baseSha,
     docRoots: docRootsOf(ctx),
     claimReverted,
-    writeForbidden: await agentCannotWrite(node, ctx),
+    // A `swarm-review` step's report is written by the engine (`PLAN-M13.md` P17), never by the reviewer, so
+    // the agent's `tools.write: false` is not why an output would be missing and `RUN-084`'s remedy ("give
+    // the agent write access") would point at the wrong fix.
+    writeForbidden:
+      node.interactionMode === 'swarm-review' ? false : await agentCannotWrite(node, ctx),
   });
 }

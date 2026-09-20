@@ -26,6 +26,7 @@ import type {
   DispatchAgentStepOptions,
   InteractionOutcome,
   InteractionParticipant,
+  PerspectiveReview,
   ReviewFinding,
   ReviewReport,
   ReviewSeverity,
@@ -152,11 +153,83 @@ function normalizeSeverity(value: unknown): ReviewSeverity | undefined {
 interface PerspectiveReviewOutput {
   readonly findings: readonly { readonly summary: string; readonly severity: ReviewSeverity }[];
   readonly checked: readonly string[];
+  /** Whether the session returned a structured object at all (`PLAN-M13.md` P17): prose alone carries no
+   * findings the engine can trust, so the persisted report calls that perspective `incomplete`. */
+  readonly structured: boolean;
+  /** Findings/checked entries that were malformed and skipped. A skipped finding may have been the blocking
+   * one, so the persisted report never calls such a perspective `clear`. */
+  readonly dropped: number;
+}
+
+/** Upper bound on the model text searched for a fenced JSON block: a hostile session cannot make the scan
+ * expensive. Longer text is treated as carrying none. */
+const MAX_PROSE_CONTRACT_CHARS = 200_000;
+
+/** A code fence line: up to three spaces of indentation (four is an indented code block, not a fence), three or
+ * more backticks or tildes, then an info string (only an opener may have one). */
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})([^`]*)$/;
+
+/**
+ * The prose form of the review output contract, for adapters that cannot deliver `structured` (the Claude Code
+ * adapter reports `structuredOutput: false`, and with an `outputSchema` set it discards the whole answer): the
+ * ONE fenced block whose info string is `json` in the final text, parsed strictly. Exactly one: the model text
+ * may quote files it read (hostile ones included), and if a second `json` block could replace or follow the
+ * reviewer's own, whoever wrote it would choose the findings. Two or more, none, an unterminated one, a
+ * `json` line inside another fence, unparseable JSON, or oversized text all read as `undefined`, which the
+ * caller treats as "no structured output" (the step fails), never as "no findings". A linear scan over lines
+ * (no backtracking pattern over model text); fences follow CommonMark (a closer has at least as many backticks
+ * as its opener and no info string).
+ */
+export function fencedJsonFromText(text: string): unknown {
+  if (text.length > MAX_PROSE_CONTRACT_CHARS) return undefined;
+  const blocks: string[] = [];
+  let fence:
+    | {
+        readonly char: string;
+        readonly length: number;
+        readonly json: boolean;
+        readonly lines: string[];
+      }
+    | undefined;
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const match = FENCE_LINE.exec(line.trimEnd());
+    if (fence === undefined) {
+      if (match?.[1] !== undefined) {
+        fence = {
+          char: match[1].charAt(0),
+          length: match[1].length,
+          json: (match[2] ?? '').trim() === 'json',
+          lines: [],
+        };
+      }
+    } else if (
+      match?.[1] !== undefined &&
+      match[1].length >= fence.length &&
+      (match[2] ?? '').trim() === ''
+    ) {
+      if (fence.json) blocks.push(fence.lines.join('\n'));
+      fence = undefined;
+    } else {
+      fence.lines.push(line);
+    }
+  }
+  // An unterminated fence is ambiguous too: everything after it may or may not have been meant as code.
+  const [only] = blocks;
+  if (blocks.length !== 1 || fence !== undefined || only === undefined) return undefined;
+  try {
+    return JSON.parse(only);
+  } catch {
+    return undefined;
+  }
 }
 
 function reviewOutputFromSession(session: SessionResult): PerspectiveReviewOutput {
-  const structured = session.structured;
-  if (typeof structured !== 'object' || structured === null) return { findings: [], checked: [] };
+  // An adapter that returned the object uses it as is; one that could only return text is read through the
+  // prose contract (`PROSE_OUTPUT_CONTRACT`).
+  const structured = session.structured ?? fencedJsonFromText(session.finalText);
+  if (typeof structured !== 'object' || structured === null || Array.isArray(structured)) {
+    return { findings: [], checked: [], structured: false, dropped: 0 };
+  }
   const raw = structured as Readonly<Record<string, unknown>>;
   const rawFindings = Array.isArray(raw['findings']) ? raw['findings'] : [];
   const findings = rawFindings.flatMap((entry) => {
@@ -169,7 +242,13 @@ function reviewOutputFromSession(session: SessionResult): PerspectiveReviewOutpu
   });
   const rawChecked = Array.isArray(raw['checked']) ? raw['checked'] : [];
   const checked = rawChecked.filter((item): item is string => typeof item === 'string');
-  return { findings, checked };
+  // A `findings` or `checked` that is present but not an array is as suspect as a bad entry inside one.
+  const wrongShape =
+    ('findings' in raw && !Array.isArray(raw['findings']) ? 1 : 0) +
+    ('checked' in raw && !Array.isArray(raw['checked']) ? 1 : 0);
+  const dropped =
+    rawFindings.length - findings.length + (rawChecked.length - checked.length) + wrongShape;
+  return { findings, checked, structured: true, dropped };
 }
 
 /** `blocking` > `major` > `minor` — the one real ranking `ReviewFinding`'s own doc comment already
@@ -443,6 +522,11 @@ const SWARM_REVIEW_OUTPUT_SCHEMA = {
   required: ['findings', 'checked'],
 } as const;
 
+/** Appended to a perspective's task when the adapter cannot return `structured` output: the same object
+ * `SWARM_REVIEW_OUTPUT_SCHEMA` describes, as one fenced JSON block at the end of the final answer. */
+const PROSE_OUTPUT_CONTRACT =
+  ' Finish your final answer with exactly one fenced code block whose info string is json and whose content is one JSON object of the form {"findings": [{"summary": string, "severity": "blocking" | "major" | "minor"}], "checked": [string]}, and put nothing after its closing fence. Text outside that block is not read.';
+
 async function dispatchSwarmReview(
   node: StepNode,
   agent: AgentDefinition,
@@ -467,6 +551,9 @@ async function dispatchSwarmReview(
   // had already completed, so the reported outcome always claimed near-zero duration regardless of
   // how long the N real perspective sessions actually took.
   const startedAt = ctx.now();
+  // An adapter that cannot deliver structured output gets no `outputSchema` (the reference adapter would
+  // discard the whole answer for one) and the prose contract instead.
+  const structuredOutput = (await ctx.adapter.capabilities()).structuredOutput;
   const participants: InteractionParticipant[] = [];
   const outputEntries: PerspectiveOutputEntry[] = [];
   // `perspectives.length === 0` already threw above, so this loop runs at least once and `firstSession`
@@ -478,14 +565,28 @@ async function dispatchSwarmReview(
       ctx,
       agent,
       `review:${perspective}`,
-      `${node.brief ?? ''}\n\nReview the change from the "${perspective}" perspective. ${perspectiveAsks(perspective)} Report real findings, each with a severity of "blocking", "major", or "minor", plus what you actually checked — an empty findings list with nothing checked reads as "never looked," not "looked and found nothing."`,
-      { outputSchema: SWARM_REVIEW_OUTPUT_SCHEMA, briefKey: 'swarm-review' },
+      `${node.brief ?? ''}\n\nReview the change from the "${perspective}" perspective. ${perspectiveAsks(perspective)} Report real findings, each with a severity of "blocking", "major", or "minor", plus what you actually checked — an empty findings list with nothing checked reads as "never looked," not "looked and found nothing."${structuredOutput ? '' : PROSE_OUTPUT_CONTRACT}`,
+      {
+        briefKey: 'swarm-review',
+        ...(structuredOutput ? { outputSchema: SWARM_REVIEW_OUTPUT_SCHEMA } : {}),
+      },
     );
-    participants.push({ role: `review:${perspective}`, session });
+    const participant = { role: `review:${perspective}`, session };
+    participants.push(participant);
     outputEntries.push({ perspective, output: reviewOutputFromSession(session) });
     firstSession ??= session;
+    // The caller's per-session hook (a step handler records usage as each session ends, so a later failure
+    // cannot lose what was already spent), and an early stop once a session failed: the remaining
+    // perspectives would spend money on a review that cannot be recorded.
+    await options.onParticipant?.(participant);
+    if (options.failFast === true && !session.ok) break;
   }
   const reviewReport = mergeReviewReport(outputEntries);
+  // Each perspective's own structured output, for the engine-written `ReviewReport` document
+  // (`swarm-review-step.ts`, `PLAN-M13.md` P17): the merged report above has no per-perspective view.
+  const perspectiveReviews: readonly PerspectiveReview[] = outputEntries.map(
+    ({ perspective, output }) => ({ perspective, ...output }),
+  );
 
   if (firstSession === undefined) {
     // Unreachable given the guard above (kept as a real, typed fallback rather than a non-null
@@ -506,7 +607,7 @@ async function dispatchSwarmReview(
     finishedAt,
     detail: { kind: 'agent' as const, session: firstSession },
   };
-  return { outcome, participants, reviewReport };
+  return { outcome, participants, reviewReport, perspectiveReviews };
 }
 
 async function loadBriefText(ctx: ExecuteStepContext, reference: string): Promise<string> {

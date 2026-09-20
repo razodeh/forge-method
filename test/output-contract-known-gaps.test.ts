@@ -14,7 +14,15 @@
  * the pinned counts and delete the fixed rows in the same commit.
  *
  * One class: `no-write-grant`, the agent's `tools.write` is `false`, so its session cannot write a file at
- * all (the live case: `retro:run-retro`). P15 flips those grants; the two reviewer steps stay until P17.
+ * all (the live case: `retro:run-retro`). P15 flips those grants.
+ *
+ * `PLAN-M13.md` P17 (`SPEC-QUESTIONS.md` Q217) removed the two `swarm-review` reviewer steps
+ * (`build-stage:review`, `implement-story:review`) from it, and they are NOT exempt: the `reviewer` stays
+ * `write: false` (separation of duties), a `mode: swarm-review` step now runs one read-only session per
+ * perspective and the ENGINE writes and validates the `ReviewReport` in the step's own lane, after which the
+ * output contract check runs on that lane like on any agent step. They are pinned below as
+ * `ENGINE_WRITTEN_STEPS`, each asserted to declare only engine-written types, so a swarm-review step that
+ * declared any other output its write-forbidden reviewer cannot produce is a gap again (and fails here).
  *
  * There used to be a second class, `no-write-scope` (9 steps whose agent's `parallel_safety.file_ownership`
  * does not cover the output's registry path). `PLAN-M13.md` P14 (`SPEC-QUESTIONS.md` Q212) removed it: a
@@ -85,8 +93,6 @@ const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
   'plan-stage:write-stories': 'no-write-grant',
   'plan-stage:write-test-plan': 'no-write-grant',
   'build-stage:freeze-contracts': 'no-write-grant',
-  'build-stage:review': 'no-write-grant',
-  'implement-story:review': 'no-write-grant',
   'verify-stage:verify-nfrs': 'no-write-grant',
   'harden:security-pass': 'no-write-grant',
   'refactor:state-invariants': 'no-write-grant',
@@ -99,8 +105,19 @@ const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
   'fm-service/contract-test-cycle.workflow.yaml:draft-contract': 'no-write-grant',
 };
 
-/** Pinned on purpose, in addition to the table: lowering it is the deliberate act P15 and P17 perform. */
-const PINNED_TOTAL = 28;
+/** Pinned on purpose, in addition to the table: lowering it is the deliberate act P15 performs (P17 took it
+ * from 28 to 26: the two reviewer steps below). */
+const PINNED_TOTAL = 26;
+
+/**
+ * The steps whose agent cannot write but whose declared outputs the engine writes itself (`PLAN-M13.md` P17): a
+ * `mode: swarm-review` step declaring only `ReviewReport`. Not gaps and not exemptions: the output check runs
+ * on their lane (`packages/engine/test/interaction/swarm-review-step.test.ts` proves it, and proves a report
+ * that is missing or invalid fails the step typed).
+ */
+const ENGINE_WRITTEN_STEPS: readonly string[] = ['build-stage:review', 'implement-story:review'];
+/** The artifact types the engine writes for a step (today only the swarm-review report). */
+const ENGINE_WRITTEN_TYPES: ReadonlySet<string> = new Set(['ReviewReport']);
 
 /**
  * The steps that used to be the `no-write-scope` class (P7 to P13: 9): their agent can write but its
@@ -126,6 +143,8 @@ const UNRESOLVED_AGENT_STEPS: readonly string[] = ['implement-story:plan'];
 interface DeclaredStep {
   readonly key: string;
   readonly agent: string;
+  readonly mode: string | undefined;
+  readonly perspectives: readonly string[];
   readonly outputTypes: readonly string[];
   readonly produces: readonly string[];
 }
@@ -145,6 +164,8 @@ function collect(
       into.push({
         key: `${prefix}:${step.id ?? inheritedId ?? step.agent}`,
         agent: step.agent,
+        mode: step.mode,
+        perspectives: step.perspectives ?? [],
         outputTypes: (step.outputs ?? []).map((output) => output.type),
         produces: typeof step.produces === 'string' ? [step.produces] : (step.produces ?? []),
       });
@@ -180,6 +201,8 @@ const registry = await loadAgentRegistry(modulesDir as AbsolutePath);
 const declared = shippedSteps();
 
 const derived = new Map<string, GapClass>();
+/** Write-forbidden agents whose outputs the engine writes (`swarm-review` + only engine-written types). */
+const engineWritten: string[] = [];
 const unresolved: string[] = [];
 /** Steps whose agent can write but whose `file_ownership` does not cover an output: the retired class. */
 const ownershipOnly: string[] = [];
@@ -190,6 +213,15 @@ for (const step of declared) {
   }
   const agent = resolveExtends(step.agent, registry);
   if (!agent.tools.write) {
+    if (
+      step.mode === 'swarm-review' &&
+      // No perspectives is RUN-046 at run time: such a step writes no report, so it is not engine-written.
+      step.perspectives.length > 0 &&
+      step.outputTypes.every((type) => ENGINE_WRITTEN_TYPES.has(type))
+    ) {
+      engineWritten.push(step.key);
+      continue;
+    }
     derived.set(step.key, 'no-write-grant');
     continue;
   }
@@ -214,8 +246,19 @@ describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () =
     );
   });
 
-  it('pins the count: fixing a step (P15, P17) must lower it deliberately', () => {
+  it('pins the count: fixing a step (P15) must lower it deliberately', () => {
     expect(derived.size).toBe(PINNED_TOTAL);
+  });
+
+  it('the swarm-review reviewer steps are not gaps because the engine writes their report, not because they are exempt (P17)', () => {
+    expect([...engineWritten].sort()).toEqual([...ENGINE_WRITTEN_STEPS].sort());
+    for (const key of engineWritten) {
+      expect(derived.has(key), `${key} is listed as a gap`).toBe(false);
+      // Still write-forbidden: the reviewer's grant was not touched to make this pass.
+      const step = declared.find((entry) => entry.key === key);
+      expect(step?.agent).toBe('reviewer');
+      expect(resolveExtends('reviewer', registry).tools.write).toBe(false);
+    }
   });
 
   it('recomputes the retired no-write-scope class from the real definitions: the same 9 steps, none of them a gap', () => {

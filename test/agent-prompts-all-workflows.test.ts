@@ -208,6 +208,15 @@ beforeAll(async () => {
     requests.push(request);
     return false;
   }, {});
+  // A swarm-review perspective returns the structured review object (`PLAN-M13.md` P17): a swarm-review step
+  // whose perspectives return nothing readable fails, so these sessions must answer for the step to succeed.
+  adapter.script(
+    (request) => /:review:(design|security|testing|performance)$/.test(request.stepId),
+    {
+      text: ['review done'],
+      structured: { findings: [], checked: ['the fixture change'] },
+    },
+  );
 
   // A real `forge init`, cwd = the temp dir: `init` writes into cwd and ignores -C, so it is never run
   // against the repository itself.
@@ -732,12 +741,26 @@ describe('every agent and session step of every shipped workflow is dispatched w
         }
 
         agentSteps += 1;
-        problems.push(...(await checkAgentStep(node, workflow, sent, where)));
-
-        // A step that declares an interaction mode with perspectives dispatches one participant session per
-        // perspective, through a path `executeStep` does not take for a workflow step.
         const flat = declared.find((step) => step.id === stepKey(node, workflow).split(':')[1]);
         const mode = flat?.mode;
+        // A `swarm-review` step is dispatched by `executeStep` itself as one read-only session per perspective
+        // and the engine persists the report in its lane (`PLAN-M13.md` P17): there is no session carrying the
+        // step's own id, so its requests are the perspectives' (checked below), and the step must succeed
+        // (the engine-written report satisfies the output check even though these fake sessions write nothing).
+        const engineDispatched = mode === 'swarm-review';
+        if (engineDispatched) {
+          if (outcome.status !== 'succeeded') {
+            problems.push(
+              `${where}: the swarm-review step failed: ${outcome.failure?.source ?? ''} ${outcome.failure?.message ?? ''}`,
+            );
+          }
+        } else {
+          problems.push(...(await checkAgentStep(node, workflow, sent, where)));
+        }
+
+        // A step that declares an interaction mode with perspectives dispatches one participant session per
+        // perspective (for the modes other than `swarm-review`, through a path `executeStep` does not take
+        // for a workflow step).
         if (mode !== undefined && !SINGLE_SESSION_MODES.has(mode)) {
           if (!PERSPECTIVE_MODES.has(mode)) {
             problems.push(
@@ -748,20 +771,44 @@ describe('every agent and session step of every shipped workflow is dispatched w
           const perspectives = flat?.perspectives ?? [];
           if (perspectives.length === 0)
             problems.push(`${where}: mode ${mode} declares no perspectives`);
-          const modeBefore = requests.length;
-          const agent = await ctx.assembly.loadAgent(String(node.agent));
-          await dispatchAgentStep(node, agent, ctx, mode as 'swarm-review' | 'panel', {
-            perspectives,
-          });
-          const modeSent = requests.slice(modeBefore);
-          if (noteRefusals(where)) continue;
-          if (modeSent.length < perspectives.length) {
+          let modeSent: readonly SessionRequest[] = sent;
+          if (!engineDispatched) {
+            const modeBefore = requests.length;
+            const agent = await ctx.assembly.loadAgent(String(node.agent));
+            await dispatchAgentStep(node, agent, ctx, mode as 'swarm-review' | 'panel', {
+              perspectives,
+            });
+            modeSent = requests.slice(modeBefore);
+            if (noteRefusals(where)) continue;
+            dispatched += modeSent.length;
+          }
+          // Exactly one session per perspective for an engine-dispatched review: no ordinary step session.
+          if (
+            engineDispatched
+              ? modeSent.length !== perspectives.length
+              : modeSent.length < perspectives.length
+          ) {
             problems.push(
               `${where}: mode ${mode} dispatched ${String(modeSent.length)} session(s) for ${String(perspectives.length)} perspective(s)`,
             );
           }
-          dispatched += modeSent.length;
           for (const request of modeSent) {
+            if (engineDispatched) {
+              // Each request is the session of ONE declared perspective: its own id names it and its block [4]
+              // asks for exactly that one.
+              const perspective = perspectives.find((name) =>
+                request.stepId.endsWith(`:review:${name}`),
+              );
+              const blockFour = blocksOf(request.systemPrompt.text).get(4) ?? '';
+              if (
+                perspective === undefined ||
+                !blockFour.includes(`Review the change from the "${perspective}" perspective.`)
+              ) {
+                problems.push(
+                  `${where} [${request.stepId}]: block [4] does not ask for this session's own perspective`,
+                );
+              }
+            }
             problems.push(...(await checkAnyRequest(request, `${where} (mode ${mode})`)));
             if (request.tools.write || request.tools.exec !== false) {
               problems.push(`${where} [${request.stepId}]: ${mode} participant is not read-only`);

@@ -10,6 +10,7 @@ import { TelemetryError } from '@forge/telemetry/errors';
 
 import type { StepNode } from '../plan/index.ts';
 import { runSessionStep } from '../interaction/session.ts';
+import { runSwarmReviewStep } from '../interaction/swarm-review-step.ts';
 import { isAssemblyRefusal, refusalFailure } from './assemble.ts';
 import {
   runAgentStep,
@@ -75,7 +76,12 @@ const EMPTY_SESSION = {
 async function dispatch(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   switch (node.kind) {
     case 'agent':
-      return runAgentStep(node, ctx);
+      // `PLAN-M13.md` P17: a `swarm-review` step runs its perspectives and the engine persists the merged
+      // `ReviewReport` in the step's own lane; every other agent step, whatever its declared mode, is the one
+      // ordinary session it always was.
+      return node.interactionMode === 'swarm-review'
+        ? runSwarmReviewStep(node, ctx)
+        : runAgentStep(node, ctx);
     case 'command':
       return runCommandStep(node, ctx);
     case 'gate':

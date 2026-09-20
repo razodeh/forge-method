@@ -38,6 +38,7 @@ import { readEvents } from '@forge/telemetry/events';
 
 import type { ExecuteStepContext, StepOutcome } from '../dispatch/index.ts';
 import { runAgentWork, runLaneLifecycle } from '../dispatch/index.ts';
+import { resumeSwarmReviewStep } from '../interaction/swarm-review-step.ts';
 import type { StepNode } from '../plan/index.ts';
 import { reconstructRunState } from './reconstruct.ts';
 import { decideResumeStrategy } from './strategy.ts';
@@ -254,11 +255,19 @@ async function resumeOneStep(
   if (origin === undefined) return undefined;
 
   const lane = await laneHandleFor(ctx, runId, stepId);
-  const capabilities = await ctx.adapter.capabilities();
-  const sessionId = runState.sessionIds.get(stepId);
-  const strategy = decideResumeStrategy(sessionId, capabilities);
-
-  const outcome = await resumeAgentStep(node, ctx, lane, origin.baseSha, strategy, sessionId);
+  let outcome: StepOutcome | undefined;
+  if (node.interactionMode === 'swarm-review') {
+    // `PLAN-M13.md` P17: the lane holds only what the engine wrote after every perspective ended, and there
+    // is no adapter session to resume. A committed report for this (run, step) is finished and verified; with
+    // none the lane is discarded (below) and the step starts over, so no second `REVIEW-NNN` can appear.
+    outcome = await resumeSwarmReviewStep(node, ctx, lane, origin.baseSha);
+    if (outcome === undefined) return undefined;
+  } else {
+    const capabilities = await ctx.adapter.capabilities();
+    const sessionId = runState.sessionIds.get(stepId);
+    const strategy = decideResumeStrategy(sessionId, capabilities);
+    outcome = await resumeAgentStep(node, ctx, lane, origin.baseSha, strategy, sessionId);
+  }
   // A gauntlet critic round (surfaced by P20's own crash-resume E2E test, not caught by this piece's
   // own unit tests -- those only ever checked resumeRun's in-memory *returned* RunState, never the
   // durable log a later, independent reconstruction reads) found this call bypasses `@forge/engine/

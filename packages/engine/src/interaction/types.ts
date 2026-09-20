@@ -43,6 +43,17 @@ export interface ReviewReport {
   readonly findings: readonly ReviewFinding[];
 }
 
+/** One perspective's own structured output, before any merging (`PLAN-M13.md` P17): what the engine renders
+ * into the persisted `ReviewReport` document per perspective. `structured` is false when the session
+ * returned no object at all; `dropped` counts malformed entries skipped while reading it. */
+export interface PerspectiveReview {
+  readonly perspective: string;
+  readonly findings: readonly { readonly summary: string; readonly severity: ReviewSeverity }[];
+  readonly checked: readonly string[];
+  readonly structured: boolean;
+  readonly dropped: number;
+}
+
 /** One non-primary session a multi-session mode drove — a panelist's own independent answer, a debate
  * round's proposer/critic turn, or one swarm-review perspective's own raw session (before its findings
  * were folded into `InteractionOutcome.reviewReport`). Kept alongside the primary `outcome` rather than
@@ -73,6 +84,8 @@ export interface InteractionOutcome {
   readonly outcome: StepOutcome;
   readonly participants?: readonly InteractionParticipant[];
   readonly reviewReport?: ReviewReport;
+  /** `swarm-review` only: each perspective's own output in dispatch order (`PLAN-M13.md` P17). */
+  readonly perspectiveReviews?: readonly PerspectiveReview[];
 }
 
 export interface DispatchAgentStepOptions {
@@ -105,4 +118,11 @@ export interface DispatchAgentStepOptions {
    * instruction text of its own — real, technique-driven sequencing, not a hard-coded assumption about
    * what "steel-man" means. Ignored on round 2 onward and ignored entirely for every other mode. */
   readonly steelManRequirement?: string;
+  /** `swarm-review` only (`PLAN-M13.md` P17): called with each perspective's participant as soon as its session
+   * ends, before the next one starts. */
+  readonly onParticipant?: (participant: InteractionParticipant) => Promise<void>;
+  /** `swarm-review` only (`PLAN-M13.md` P17): stop dispatching perspectives after the first session that did
+   * not end ok. Off by default: `forge review` keeps running the rest and folds a failed one into an empty
+   * (flagged) perspective. */
+  readonly failFast?: boolean;
 }

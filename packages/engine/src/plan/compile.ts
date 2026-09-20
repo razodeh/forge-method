@@ -533,6 +533,10 @@ function buildLeafNode(
     ...(agentStep?.gateEvidence !== undefined && agentStep.gateEvidence.length > 0
       ? { gateEvidence: agentStep.gateEvidence }
       : {}),
+    ...(agentStep?.mode === undefined ? {} : { interactionMode: agentStep.mode }),
+    ...(agentStep?.perspectives === undefined || agentStep.perspectives.length === 0
+      ? {}
+      : { perspectives: agentStep.perspectives }),
     run:
       step.kind === 'command'
         ? safeResolveTemplate(step.run, context, issues, compiledId)

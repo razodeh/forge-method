@@ -170,6 +170,13 @@ export interface StepNode {
   /** `'agent'` only, present only when non-empty: declared `required: true` workflow inputs this run did
    * not supply. Named in block [4] so a prompt never silently lacks a value its brief assumes. */
   readonly missingRunInputs?: readonly string[] | undefined;
+  /** `'agent'` only, present only when the step declares one: the `05` §5.7 interaction mode it names
+   * (`mode:` in the workflow YAML), carried through verbatim. `executeStep` acts on exactly one value,
+   * `swarm-review` (`PLAN-M13.md` P17): those steps run one read-only session per perspective and the engine
+   * itself persists the merged `ReviewReport`. Every other mode is carried but not acted on here. */
+  readonly interactionMode?: string | undefined;
+  /** `'agent'` only, present only when non-empty: the review perspectives of a `swarm-review` step. */
+  readonly perspectives?: readonly string[] | undefined;
   /** `'command'` only. */
   readonly run?: string | undefined;
   /** `'gate'` only — the gate id to evaluate. */
