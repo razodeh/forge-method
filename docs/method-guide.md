@@ -76,7 +76,8 @@ wired with expressions, fanout and gate placement. `intake`, `discover`, `define
 `implement-story`, `quick-fix`, `verify-stage`, `debug`, `harden`, `refactor`, `deliver-stage`,
 `operate`, `adopt`, `migrate`, `retro` and `replan` are the workflows FORGE ships out of the box
 (`specs/10` §10.5) — `forge run <id> --dry-run` shows you the compiled step plan for any of them
-without starting a real session.
+without starting a real session (the ones that declare inputs, such as `build-stage` or `quick-fix`,
+take `--stage`, `--story` or `--input name=value`; see the getting-started guide, section 5).
 
 ## Gates: how "done" is enforced, not just asserted
 

@@ -22,6 +22,9 @@
  * fakes role-awareness with no real roster behind it would be worse than one that visibly has none").
  * Left for whichever later piece actually threads the ten-phase lifecycle through a real run.
  *
+ * Story ordering (`stage.stories[*].runs_after`/`depends_on`, `09` §9.3) is applied first, by `story-order.ts`
+ * (`PLAN-M13.md` P21), so a run orders stories the way the stage plan does.
+ *
  * @see specs/06 §6.2, §6.6, §6.7
  * @see specs/10 §10.1, §10.2
  * @see PLAN-M5.md P11
@@ -31,6 +34,7 @@ import { ForgeError } from '@forge/core/errors';
 import type { ExpressionContext } from '../expr/index.ts';
 import type { Workflow } from '../workflow/index.ts';
 import { compilePlan } from './compile.ts';
+import { applyDeclaredStoryOrder } from './story-order.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
 import {
@@ -41,7 +45,8 @@ import {
 import type { RunPlanResult } from './types.ts';
 
 /** `06` §6.2's own full plan-compilation pipeline, rules 1–3 and 5–6 (rule 4's own scope boundary is
- * documented at the top of this file). Stops and reports at the *first* stage that fails — unlike P10's
+ * documented at the top of this file), preceded by the declared story dependencies of `stage.stories` (`09`
+ * §9.3, see `story-order.ts`) when the context carries any. Stops and reports at the *first* stage that fails — unlike P10's
  * own `compilePlan`, which collects every issue across an entire tree in one pass, each stage here
  * operates on the *previous* stage's own complete output, so a claim-overlap issue found against a plan
  * that failed to compile at all (missing fanout expansions, say) would be checking incomplete, already-
@@ -52,7 +57,10 @@ export function compileRunPlan(workflow: Workflow, context: ExpressionContext): 
   const compiled = compilePlan(workflow, context);
   if (!compiled.success) return compiled;
 
-  const withContracts = insertContractDependencies(compiled.nodes);
+  // `stage.stories[*].depends_on` (`09` §9.3): a story starts after the ones it depends on end, whether or not
+  // their file claims overlap (`PLAN-M13.md` P21). A no-op for a context without stage stories.
+  const ordered = applyDeclaredStoryOrder(compiled.nodes, workflow.id, context);
+  const withContracts = insertContractDependencies(ordered);
   const claims = buildClaimIntervalMap(withContracts);
   const withClaims = applyClaimOverlaps(withContracts, claims);
   if (!withClaims.success) return withClaims;

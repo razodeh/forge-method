@@ -142,10 +142,37 @@ forge run discover --dry-run
 # forge run discover --dry-run: compiled 5 steps.
 ```
 
-Not every shipped workflow dry-runs cleanly with no other context — some (`plan-stage`, `quick-fix`)
-need variables like `--stage`/`--epic`/`--story` that a real intake step would have already set.
-That's expected: `discover`, `define-product`, `initialize-project`, `intake`, `shape-solution`,
-`verify-stage`, `deliver-stage`, and `plan-stages` all dry-run standalone.
+A workflow that needs a value to run says so, and takes it as a flag. `--stage <id>` also supplies
+`stageId`, `--story <id>` also supplies `storyId`, and `--input <name>=<value>` (repeat it for more
+than one) supplies anything else the workflow declares under `inputs:`:
+
+```bash
+forge run build-stage --stage mvp --dry-run       # the stage's stories, in dependency order
+forge run plan-stage --stage mvp --dry-run
+forge run implement-story --story STORY-001 --dry-run   # owner role and file claim come from the Story
+forge run quick-fix --input defectId=DEF-001 --dry-run
+forge run debug --input defectId=DEF-001 --dry-run
+forge run refactor --input goal="Split the billing module" --dry-run
+```
+
+Left out, the run is refused before anything starts, naming the input and how to supply it
+(`Workflow quick-fix needs run input(s) that were not supplied: defectId.` and the remedy
+`Pass each with --input <name>=<value>`). A value must be a plain token (letters, digits and
+`. _ - / : @ + ,`, not starting with `-`) when the workflow puts it in a shell command, as it does
+for a stage id, a story id or a build target; `--input ownerRole=` may not contradict the Story's
+own `owner_role`, and a story owned by `sdet` or `reviewer` is refused (the tests or the review and
+the implementation would share one role). `build-stage` reads the stage's Epics and Stories from
+`docs/forge/specs` (the same reader `forge plan run-plan <stage>` uses), so the stage must exist:
+run `plan-stage` first, or `--stage` is refused with `RUN-082`. It also refuses a stage with a
+blocked story, or with no story left to build (`RUN-090`), and orders the stories exactly as
+`forge plan run-plan` shows; `implement-story` (and `forge implement`) refuse a blocked or already
+delivered story. Workflows with no declared inputs (`discover`, `define-product`,
+`initialize-project`, `intake`, `shape-solution`, `verify-stage`, `deliver-stage`, `plan-stages`,
+`harden`, `operate`, `retro`, `adopt`) dry-run standalone. Under `--json` a refusal raised as a
+coded error (a dirty tree, a missing input, an unknown stage; from `run`, `implement`, `plan` and
+the rest) also prints one line, `{"v":1,"ok":false,"error":{"code","message","remedy","exitCode"}}`,
+on stdout; stderr and the exit code are the same as without it. A command that prints its own usage
+message (for example `forge story verify` with an unknown story) does not.
 
 Dropping `--dry-run` starts a **real** run: it invokes your configured platform adapter, spawns real
 agent sessions, and (with a real `ANTHROPIC_API_KEY`) spends real money. This guide stops short of

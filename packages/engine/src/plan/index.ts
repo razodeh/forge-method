@@ -22,7 +22,13 @@ export { compileRunPlan } from './run-plan.ts';
 export {
   MAX_REPORTED_OVERLAPS,
   compileStageRunPlan,
+  SEPARATED_ROLES,
+  buildStageRunContext,
   type OutsideStageStatus,
+  orderedStageStories,
+  resolveWorkflowVars,
+  workflowReadsStageCollections,
+  type StageRunContext,
   type StageFindingSeverity,
   type StageRunPlan,
   type StageRunPlanFinding,

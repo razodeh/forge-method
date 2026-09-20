@@ -1133,6 +1133,62 @@ export const ERROR_CODES = {
     remedy:
       'Set `tools.write: true` in the diagnostician’s agent definition (`.forge/agents/diagnostician.yaml`; the shipped definition declares it), then run `forge debug` again.',
   },
+  'RUN-088': {
+    // `forge run <workflow> --input <name>=<value>` (`03` §3.2.4, `PLAN-M13.md` P21): a pair that is not
+    // `name=value`, a name that cannot be an input (a reserved context root), a value the input's declared
+    // type refuses, or the same input given two different values (twice, or through `--stage`/`--story`).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { input: string; reason: string }) =>
+      `Cannot use run input ${show(d.input)}: ${show(d.reason)}.`,
+    remedy:
+      'Pass each run input as `--input <name>=<value>` (repeat the flag for more than one): the name is a plain identifier such as `stageId`, and the value matches the input’s declared type. The message names the rule broken: a value a shell command reads may only be a plain token, and an owner role is set in the Story document, not here. The workflow file’s `inputs:` block lists what it declares.',
+  },
+  'RUN-089': {
+    // `PLAN-M13.md` P21: the workflow cannot be planned because a run input it needs was not supplied (a
+    // declared `required: true` input, or a placeholder its steps read at the top of the context). Named here
+    // instead of the compiler's own list of unresolved placeholders.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { workflowId: string; missing: string }) =>
+      `Workflow ${show(d.workflowId)} needs run input(s) that were not supplied: ${show(d.missing)}.`,
+    remedy:
+      'Pass each with `--input <name>=<value>` (for example `--input stageId=mvp`); `--stage <id>` also supplies `stageId` and `--story <id>` also supplies `storyId`. A story’s `ownerRole` is read from the Story document when `--story` names one.',
+  },
+  'RUN-090': {
+    // `PLAN-M13.md` P21: `forge run <workflow> --stage <id>` for a workflow that runs over the stage's stories, when
+    // the stage cannot be run as it stands: its Epics and Stories contradict each other (a dependency cycle, an
+    // unknown dependency, a listed story with no document, a story failing its schema...), a story is blocked, or
+    // no story is left to build. The same findings `forge plan run-plan` prints.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stageId: string; findings: string }) =>
+      `Stage ${show(d.stageId)} cannot be run: ${show(d.findings)}`,
+    remedy:
+      'Run `forge plan run-plan <stage>` to see every finding, fix the Epic or Story documents it names (`forge spec validate` checks their schemas; a blocked story needs its `blocked_by` resolved), then run the workflow again.',
+  },
+  'RUN-091': {
+    // `PLAN-M13.md` P21, `10` §10.6 "Enforced separations": the story's owner role is `sdet` or `reviewer`, so the
+    // workflow would run two of its agent steps (the tests and the implementation, or the review and the
+    // implementation) under one role. The stage plan reports the same thing for `build-stage` (`RUN-090`).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { workflowId: string; role: string; steps: string }) =>
+      `Workflow ${show(d.workflowId)} would run ${show(d.steps)} under the one role ${show(d.role)}, so the agent that writes the failing tests or reviews the work would also implement it.`,
+    remedy:
+      'Set the story’s `owner_role` to an implementing role (not `sdet` or `reviewer`) in its Story document, then run the workflow again.',
+  },
+  'RUN-092': {
+    // `PLAN-M13.md` P21: `forge run implement-story --story <id>` / `forge implement <id>` for a Story that is not
+    // ready to implement: already delivered (`done`/`verified`) or blocked (`status: blocked` or a `blocked_by`
+    // entry). The stage path reports the same through the plan (`RUN-090`).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { storyId: string; state: string }) =>
+      `Story ${show(d.storyId)} cannot be implemented: it is ${show(d.state)}.`,
+    remedy:
+      'Resolve what blocks the story (its `blocked_by` entries), or choose a story that is not delivered, then run the workflow again.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

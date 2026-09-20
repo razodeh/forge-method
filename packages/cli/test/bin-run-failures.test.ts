@@ -294,14 +294,31 @@ describe('forge run: a dirty working tree is a refusal, not a stack trace (Q208 
     expect(result.stderr).not.toMatch(/\n\s+at /u);
   });
 
-  it('is identical under --json: the same refusal on stderr, nothing on stdout', async () => {
+  it('is identical under --json on stderr and exit code, and stdout is the one-line JSON error envelope (P21)', async () => {
     const dir = await project();
     await writeFile(path.join(dir, 'stray.txt'), 'uncommitted');
     const plain = run(['run', 'p12-command', '-C', dir]);
     const json = run(['run', 'p12-command', '-C', dir, '--json']);
     expect(json.status).toBe(plain.status);
-    expect(json.stdout).toBe('');
     expect(json.stderr).toBe(plain.stderr);
+    // Was: nothing on stdout ("this dispatcher has no JSON error envelope for any refusal", Q210 decision 8).
+    expect(plain.stdout).toBe('');
+    expect(json.stdout.trimEnd().split('\n')).toHaveLength(1);
+    const envelope = JSON.parse(json.stdout) as {
+      v: number;
+      ok: boolean;
+      error: { code: string; message: string; remedy: string; exitCode: number };
+    };
+    expect(envelope.v).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(Object.keys(envelope.error).sort()).toEqual(['code', 'exitCode', 'message', 'remedy']);
+    expect(envelope.error.code).toBe('VCS-010');
+    expect(envelope.error.exitCode).toBe(5);
+    expect(envelope.error.message).toContain(
+      'The working tree has 1 uncommitted change(s): stray.txt.',
+    );
+    expect(envelope.error.remedy).toContain('Run `git stash`, or commit your changes');
+    expect(json.stdout).not.toMatch(/\n\s+at /u);
   });
 
   it('never leaves the run half-started: no run directory is created for a refused run', async () => {

@@ -11,8 +11,8 @@
  * @see specs/02 §2.6
  * @see specs/20 §20.2
  */
-import { ForgeError } from '@forge/core/errors';
-import type { VcsError } from '@forge/vcs';
+import { ForgeError, isForgeError } from '@forge/core/errors';
+import { VcsError } from '@forge/vcs';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
 
@@ -92,4 +92,45 @@ export function refusalFromCodedError(error: unknown): CliRefusal | undefined {
     remedy: sanitizeRefusalText(remedy),
     exitCode: 1,
   };
+}
+
+/** Any error that is a refusal (rather than a crash) as its code, message, remedy and exit code: a `ForgeError`, a
+ * `VcsError` (`@forge/vcs` has no `core` edge, so it is not one), or another package's coded error
+ * (`@forge/telemetry`'s `TelemetryError`). `undefined` for anything else, which keeps its stack. Terminal escapes
+ * are stripped from every one of them: a message can quote a file name, a story id or a flag value, none of which
+ * may reach a terminal as a control sequence. Newlines are kept in a `ForgeError` message (some, like a cycle
+ * graph, are deliberately several lines).
+ *
+ * @see PLAN-M13.md P12 (a `VcsError` is a refusal), P21 */
+export function refusalOf(error: unknown): CliRefusal | undefined {
+  if (isForgeError(error)) {
+    return {
+      code: error.code,
+      message: sanitizeForTerminal(error.message),
+      remedy: sanitizeForTerminal(error.remedy),
+      exitCode: error.exitCode,
+    };
+  }
+  if (error instanceof VcsError) return refusalFromVcsError(error);
+  return refusalFromCodedError(error);
+}
+
+/** A refusal as the one-line JSON envelope `--json` prints on stdout: `{"v":1,"ok":false,"error":{code,message,
+ * remedy,exitCode}}` (`03` §3.5: `--json` output is versioned, machine-readable and one line). The same code,
+ * message, remedy and exit code the plain-text refusal prints on stderr, so a CI reader and a human see one
+ * reason. Only refusals get one (`refusalOf`): a crash keeps its stack and prints no envelope. A command that
+ * succeeds prints its own versioned line, which has no `ok` field; the envelope is how a *refusal* is told apart.
+ *
+ * @see PLAN-M13.md P12 (the dirty-tree refusal this completes), P21 */
+export function refusalEnvelopeLine(refusal: CliRefusal): string {
+  return JSON.stringify({
+    v: 1,
+    ok: false,
+    error: {
+      code: refusal.code,
+      message: refusal.message,
+      remedy: refusal.remedy,
+      exitCode: refusal.exitCode,
+    },
+  });
 }

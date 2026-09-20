@@ -56,6 +56,14 @@
  * wired by `PLAN-M13.md` P22 (`commands/story.ts`: the story's `done` DoD profile, `09` §9.8; `03` §3.2.5 gained its row,
  * see `SPEC-QUESTIONS.md` Q213).
  *
+ * `run <workflow>` takes `--input <name>=<value>` (repeatable), and `--stage`/`--story` also supply `stageId`/`storyId`
+ * (`PLAN-M13.md` P21, `commands/run/expression-context.ts`): a workflow that declares `inputs:` is refused, naming
+ * what is missing, when they are not given; `build-stage` gets its stories from the stage's Epics and Stories. Under
+ * `--json`, any refusal that is *thrown* (a coded `ForgeError`, a `VcsError`, another package's coded error) also
+ * prints the one-line `{v:1, ok:false, error}` envelope on stdout, at the end of this file; a command that prints its
+ * own usage message and returns (`forge story verify <unknown>`, `forge test run --rule <bad>`) does not (see
+ * `SPEC-QUESTIONS.md` Q218).
+ *
  * @see specs/22 M6
  * @see specs/22 M8
  * @see specs/22 M12
@@ -221,7 +229,9 @@ import {
 } from './commands/run/index.ts';
 import { currentLauncher } from './commands/run/launcher-shim.ts';
 import { runFailureError, runFailureNote } from './commands/run/run-failure.ts';
-import { refusalFromCodedError, refusalFromVcsError } from './commands/run/vcs-refusal.ts';
+import { buildRunExpressionContext } from './commands/run/expression-context.ts';
+import { extractInputFlags } from './commands/run/inputs.ts';
+import { refusalEnvelopeLine, refusalOf } from './commands/run/vcs-refusal.ts';
 import { runStatusJson } from './commands/run/status.ts';
 import {
   CONFLICT_RESOLUTION_MODES,
@@ -244,7 +254,6 @@ import {
 import { renderStoryVerify, storyVerify } from './commands/story.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES } from '@forge/schemas';
-import { VcsError } from '@forge/vcs';
 import type { ArtifactTypeId } from '@forge/schemas';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import type { DryRunResult, RealRunResult } from './commands/run/run.ts';
@@ -662,25 +671,6 @@ function parseCommandFlags(
   return { values, flags, positionals };
 }
 
-/** `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>]` (`03` §3.2.4) into
- * `@forge/engine/expr`'s `ExpressionContext` — `stage` maps directly to its own named field;
- * `epic`/`story` have no dedicated `ExpressionContext` field (only `item`/`stage`/`run`/`config`/`kb`/
- * `failures`/`vars` exist), so both fold into `vars`, the one field `10`/`06`'s own workflow
- * expressions already read arbitrary caller-supplied values from. A real, disclosed decision — see
- * `SPEC-QUESTIONS.md`. */
-function buildExpressionContext(values: ReadonlyMap<string, string>): ExpressionContext {
-  const stage = values.get('--stage');
-  const epic = values.get('--epic');
-  const story = values.get('--story');
-  const vars: Record<string, string> = {};
-  if (epic !== undefined) vars['epic'] = epic;
-  if (story !== undefined) vars['story'] = story;
-  return {
-    ...(stage !== undefined ? { stage } : {}),
-    ...(Object.keys(vars).length > 0 ? { vars } : {}),
-  };
-}
-
 /** Renders a real `RunState['runStatus']` for a human — `undefined` (no `RunStarted` event was ever
  * recorded at all, an empty log) is a real, reachable state `String(...)` would otherwise stringify
  * as the literal text `"undefined"`, the exact user-facing anti-pattern this codebase's own render
@@ -767,6 +757,9 @@ function assertNoArgs(args: readonly string[]): void {
 
 const RUN_FLAGS = { '--stage': true, '--epic': true, '--story': true } as const;
 
+/** `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>] [--input <name>=<value>]...` (`03` §3.2.4).
+ * The expression context the workflow compiles against is `buildRunExpressionContext`'s (`PLAN-M13.md` P21): run
+ * inputs, `stageId`, the stage's stories for a workflow that runs over them, and the workflow's own `vars:`. */
 async function runRunCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -779,13 +772,25 @@ async function runRunCommand(
     console.error('forge: "run" needs a real <workflow> id.');
     return EXIT_CODES.usage;
   }
-  const { values, positionals } = parseCommandFlags(rest, RUN_FLAGS);
+  const { inputs, rest: flagArgs } = extractInputFlags(rest);
+  const { values, positionals } = parseCommandFlags(flagArgs, RUN_FLAGS);
   if (positionals.length > 0) {
     throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
   }
 
   const deps = await buildRunDepsForProject(paths, projectRoot);
-  const expressionContext = buildExpressionContext(values);
+  const { context: expressionContext, warnings } = await buildRunExpressionContext(
+    deps,
+    workflowId,
+    {
+      stage: values.get('--stage'),
+      epic: values.get('--epic'),
+      story: values.get('--story'),
+      inputs,
+    },
+    SPECS_ROOT,
+  );
+  for (const warning of warnings) console.error(`forge: warning: ${warning}`);
   const result = await runWorkflow(deps, {
     workflowId,
     expressionContext,
@@ -3371,28 +3376,25 @@ async function main(): Promise<number> {
   return 2;
 }
 
+// `--json` is read from argv here, not from `parseGlobalFlags`' result: a refusal thrown while parsing the flags
+// (`USR-002`) is one too, and its reader asked for JSON.
+const jsonRequested = process.argv
+  .slice(2)
+  .some((arg) => arg === '--json' || arg.startsWith('--json='));
+
 try {
   process.exitCode = await main();
 } catch (error) {
-  if (isForgeError(error)) {
-    console.error(error.message);
-    console.error(error.remedy);
-    process.exitCode = error.exitCode;
-  } else if (error instanceof VcsError) {
-    // A `VcsError` (`@forge/vcs` has no `core` edge, so it is not a `ForgeError`) that no command wrapped is
-    // still a refusal with a named remedy, not a crash: message and remedy, no Node stack (`PLAN-M13.md`
-    // P12, `Q208` finding 6). The dirty-tree case maps to the registered `VCS-010` (exit 5).
-    const refusal = refusalFromVcsError(error);
+  // A refusal (a `ForgeError`, a `VcsError`, another package's coded error) prints its message and remedy on stderr
+  // and exits with its own code; under `--json` stdout also gets the one-line `{v:1, ok:false, error}` envelope
+  // (`PLAN-M13.md` P21; the dirty-tree refusal is the one P12 left as plain text). Anything else is a crash and
+  // keeps its stack, with no envelope.
+  const refusal = refusalOf(error);
+  if (refusal !== undefined) {
+    if (jsonRequested) console.log(refusalEnvelopeLine(refusal));
     console.error(refusal.message);
     console.error(refusal.remedy);
     process.exitCode = refusal.exitCode;
-  } else if (refusalFromCodedError(error) !== undefined) {
-    // Same shape as a `VcsError`: `@forge/telemetry`'s `TelemetryError` (a seq gap in the event log, an
-    // unwritable log) carries a code and a remedy, and is a refusal to print, not a crash.
-    const refusal = refusalFromCodedError(error);
-    console.error(refusal?.message);
-    console.error(refusal?.remedy);
-    process.exitCode = refusal?.exitCode ?? 1;
   } else {
     console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
     process.exitCode = 1;

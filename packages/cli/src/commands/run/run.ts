@@ -51,7 +51,8 @@ export interface RunDeps {
   readonly warn?: ((message: string) => void) | undefined;
 }
 
-async function readWorkflowSource(deps: RunDeps, workflowId: string): Promise<string> {
+/** The project's own materialised copy of a workflow (`.forge/workflows/<id>.workflow.yaml`), `RUN-053` when absent. */
+export async function readWorkflowSource(deps: RunDeps, workflowId: string): Promise<string> {
   const relPath = `${deps.workflowsRoot}/${workflowId}.workflow.yaml`;
   if (!(await pathExists(deps.paths.resolveWithin(relPath)))) {
     throw new ForgeError('RUN-053', { workflowId, path: relPath });

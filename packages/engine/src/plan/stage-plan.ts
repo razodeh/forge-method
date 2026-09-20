@@ -4,9 +4,11 @@
  * `06` §6.2 defines a run plan as a workflow compiled against project state: for a stage, the
  * implementation workflow (`build-stage`) fanned out over the stage's stories. `compileRunPlan` already does
  * that compilation (fanout expansion, contract-freeze dependencies, claim-overlap serialisation, cycle
- * rejection, critical path) but knows nothing about a *story's* own declared `depends_on`, and nothing built
- * the `stage.stories` collection it fans out over. This module is that missing layer, and it stays
- * deterministic (no clock, no randomness, no I/O: the caller reads the stories).
+ * rejection, critical path) and, since `PLAN-M13.md` P21, applies the story ordering a context carries
+ * (`stage.stories[*].runs_after` or `depends_on`, `story-order.ts`); nothing built the `stage.stories`
+ * collection it fans out over, or worked out the ordering (declared dependencies plus serialised claim
+ * overlaps). This module is that missing layer, and it stays deterministic (no clock, no randomness, no I/O: the
+ * caller reads the stories).
  *
  * Three things happen here, in this order:
  *
@@ -19,10 +21,11 @@
  *    contradict a declared dependency (that would invent a cycle the inputs do not contain).
  * 2. **Workflow compile.** `compileRunPlan` over the workflow with `stage.stories` set to those stories
  *    (each `{id, owner_role, depends_on, files_expected, test_paths}`, the fields `build-stage` templates on).
- * 3. **Story dependencies onto steps.** For each ordering edge `B after A`, every step where B's work begins
- *    (a per-story step that depends on no other step of B) gains a `dependsOn` edge to every step where A's work
- *    ends (a per-story step no other step of A depends on), so B never starts before A has finished, whether or
- *    not either claims files. This stops at A's last *per-story* step: a stage-wide `merge` is one node that
+ * 3. **Story dependencies onto steps.** For each ordering edge `B after A` (`runsAfter`, put in the context as
+ *    each story's `runs_after`, so `compileRunPlan` applies it: `forge run` compiles the same edges), every step
+ *    where B's work begins (a per-story step that depends on no other step of B) gains a `dependsOn` edge to every
+ *    step where A's work ends (a per-story step no other step of A depends on), so B never starts before A has
+ *    finished, whether or not either claims files. This stops at A's last *per-story* step: a stage-wide `merge` is one node that
  *    follows every story, and waiting for it would serialise the whole stage. It needs the workflow's
  *    per-story steps keyed by story id (`itemKey: '{{item.id}}'`); one that is not has no steps to order and is
  *    reported as `step-plan-unavailable`. The critical path is recomputed over the result.
@@ -51,11 +54,12 @@
  */
 import { resolveTemplate } from '../expr/index.ts';
 import type { ExpressionContext } from '../expr/index.ts';
-import type { Workflow } from '../workflow/index.ts';
+import type { Workflow, WorkflowStep } from '../workflow/index.ts';
 import { claimFixedPrefix, prefixesNest } from './claim-overlap.ts';
 import { computeCriticalPath } from './critical-path.ts';
-import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
+import { renderCycleAsMermaid } from './cycles.ts';
 import { compileRunPlan } from './run-plan.ts';
+import { storyChains, type StoryChain } from './story-order.ts';
 import type { ClaimOverlap, CriticalPathResult, StepNode } from './types.ts';
 
 /** `{{stageId}}` (a workflow's declared run input) resolves at the top level of the expression context, the
@@ -72,7 +76,7 @@ interface StageExpressionContext extends ExpressionContext {
  * implementation, taken from the story's own `owner_role`, and its tests or its review). It is the story-owner
  * half of the rule only; whether an implementer's file claim covers a test path is a different rule
  * (`checkTestImplementationSeparation`), not decided here. */
-const SEPARATED_ROLES: ReadonlySet<string> = new Set(['sdet', 'reviewer']);
+export const SEPARATED_ROLES: ReadonlySet<string> = new Set(['sdet', 'reviewer']);
 
 /** One story of the stage, in the structural shape the run plan needs (deliberately not the KB `Story`
  * type: the plan needs a few of its fields, and a hand-built value in a test says exactly which). */
@@ -94,6 +98,10 @@ export type OutsideStageStatus = 'satisfied' | 'pending';
 
 export interface StageRunPlanOptions {
   readonly outsideStage?: ReadonlyMap<string, OutsideStageStatus> | undefined;
+  /** Values the workflow reads besides the stage (its other run inputs, `vars.epic`...), merged into the context
+   * the plan compiles against so that a workflow reading them compiles here as it does in the run. The stage's
+   * own `stageId`, `vars` and `stage` win. */
+  readonly extraContext?: ExpressionContext | undefined;
 }
 
 export type StageFindingSeverity = 'error' | 'warning';
@@ -145,6 +153,10 @@ export interface StageRunPlan {
   /** Step-level claim overlaps in the compiled plan (`06` §6.7's interval map). */
   readonly stepOverlaps: readonly ClaimOverlap[];
   readonly findings: readonly StageRunPlanFinding[];
+  /** For each planned story, the stories that must end before it starts: its declared dependencies plus the
+   * claim overlaps that were serialised. `forge run` puts this in the context it compiles (`runs_after`), so a
+   * run orders stories exactly as this plan does. Empty when the story graph has a cycle. */
+  readonly runsAfter: Readonly<Record<string, readonly string[]>>;
   /** True when no finding has `error` severity: the plan is safe to schedule from. */
   readonly ok: boolean;
 }
@@ -487,83 +499,102 @@ function longestStoryChain(
   return path;
 }
 
-function storyItem(story: StageStory): Readonly<Record<string, unknown>> {
-  return {
+function storyItem(
+  story: StageStory,
+  runsAfter: ReadonlyMap<string, readonly string[]> | undefined,
+): Readonly<Record<string, unknown>> {
+  const item: Record<string, unknown> = {
     id: story.id,
     owner_role: story.ownerRole,
     depends_on: [...story.dependsOn],
     files_expected: [...story.filesExpected],
     test_paths: [...story.testPaths],
   };
+  // The full ordering of the plan (declared dependencies plus serialised claim overlaps), for `compileRunPlan`
+  // to apply (`story-order.ts`). Absent, only `depends_on` orders the stories.
+  if (runsAfter !== undefined) item['runs_after'] = [...(runsAfter.get(story.id) ?? [])];
+  return item;
 }
 
-/** A story's own steps: the compiled nodes whose id is `${workflowId}:${step}:${storyId}`, i.e. a fanout over
- * `stage.stories` with `itemKey: '{{item.id}}'`. Its *heads* are the ones that depend on no other step of the
- * same story (where the story's work begins), its *terminals* the ones no other step of the story depends on
- * (where its work ends). A workflow that keys per-story steps some other way (no `itemKey`, a prefixed key)
- * has no such nodes, and its stories cannot be ordered: the caller says so instead of pretending. */
-interface StoryChain {
-  readonly heads: readonly StepNode[];
-  readonly terminals: readonly StepNode[];
-  /** Every step of the story, in plan order. */
-  readonly all: readonly StepNode[];
-}
-
-function storyChains(
-  nodes: readonly StepNode[],
-  workflowId: string,
-  storyIds: ReadonlySet<string>,
-): ReadonlyMap<string, StoryChain> {
-  const prefix = `${workflowId}:`;
-  const owned = new Map<string, StepNode[]>();
-  for (const node of nodes) {
-    if (!node.id.startsWith(prefix)) continue;
-    const rest = node.id.slice(prefix.length);
-    const at = rest.indexOf(':');
-    if (at === -1) continue;
-    const story = rest.slice(at + 1);
-    if (storyIds.has(story)) owned.set(story, [...(owned.get(story) ?? []), node]);
-  }
-  const chains = new Map<string, StoryChain>();
-  for (const [story, own] of owned) {
-    const ids = new Set(own.map((node) => node.id));
-    const dependedOn = new Set(own.flatMap((node) => node.dependsOn.filter((dep) => ids.has(dep))));
-    chains.set(story, {
-      all: own,
-      heads: own.filter((node) => !node.dependsOn.some((dep) => ids.has(dep))),
-      terminals: own.filter((node) => !dependedOn.has(node.id)),
-    });
-  }
-  return chains;
-}
-
-/** Adds `B after A` to the plan: every head step of B depends on every terminal step of A, so B's work does
- * not start until A's has ended, whatever the steps in between are (and whether or not either story claims
- * files). It stops at A's last *per-story* step: a stage-wide `merge` step is a single node that follows every
- * story, so waiting for it would serialise the whole stage. */
-function applyStoryDependencies(
-  nodes: readonly StepNode[],
-  chains: ReadonlyMap<string, StoryChain>,
-  predecessors: ReadonlyMap<string, readonly string[]>,
-): readonly StepNode[] {
-  const added = new Map<string, string[]>();
-  for (const [story, chain] of chains) {
-    for (const predecessor of predecessors.get(story) ?? []) {
-      const terminals = chains.get(predecessor)?.terminals ?? [];
-      for (const head of chain.heads) {
-        added.set(head.id, [
-          ...(added.get(head.id) ?? []),
-          ...terminals.map((terminal) => terminal.id),
-        ]);
-      }
+/** The workflow's own `vars:` block (`build-stage`'s `integration_branch`), each entry a template over the run
+ * inputs already in `context`, resolved in declaration order (a later var may read an earlier one through
+ * `{{vars.x}}`). An entry that does not resolve is left out rather than thrown: whatever step reads it reports
+ * the unresolved placeholder with its own step id, and a caller checking the run's inputs names the missing
+ * one first. Nothing else in the engine resolves `vars:`, so every caller that builds a run context for a
+ * workflow with a `vars:` block goes through here (`forge run`, and the stage plan below). */
+export function resolveWorkflowVars(
+  workflow: Workflow,
+  context: ExpressionContext,
+): Readonly<Record<string, string>> {
+  const resolved: Record<string, string> = {};
+  const given: object =
+    typeof context.vars === 'object' && context.vars !== null ? context.vars : {};
+  for (const [name, template] of Object.entries(workflow.vars ?? {})) {
+    try {
+      resolved[name] = resolveTemplate(template, { ...context, vars: { ...given, ...resolved } });
+    } catch {
+      // Left unset, see above.
     }
   }
-  return nodes.map((node) => {
-    const extra = (added.get(node.id) ?? []).filter((id) => !node.dependsOn.includes(id));
-    return extra.length === 0
-      ? node
-      : { ...node, dependsOn: [...node.dependsOn, ...new Set(extra)] };
+  return resolved;
+}
+
+/** The expression context a stage run compiles against: `stageId` (a declared run input, read at the root),
+ * the workflow's own resolved `vars:`, and `stage.stories`, the collection `build-stage`'s fanouts run over.
+ * Shared by the plan (`compileStageRunPlan`) and by `forge run`, so the plan a user is shown and the run that
+ * starts are built from the same value, never two constructions that can drift. `ordered` is the order the
+ * stories are declared to the workflow (see `orderedStageStories`). */
+export interface StageRunContext extends ExpressionContext {
+  readonly stageId: string;
+  readonly vars: Readonly<Record<string, string>>;
+  readonly stage: {
+    readonly id: string;
+    readonly stories: readonly Readonly<Record<string, unknown>>[];
+  };
+}
+
+export function buildStageRunContext(
+  workflow: Workflow,
+  stageId: string,
+  ordered: readonly StageStory[],
+  runsAfter?: ReadonlyMap<string, readonly string[]>,
+  extra?: ExpressionContext,
+): StageRunContext {
+  // The workflow's `vars:` may read its other run inputs, not only `stageId`.
+  const varsContext: StageExpressionContext = { ...extra, stageId };
+  return {
+    stageId,
+    vars: resolveWorkflowVars(workflow, varsContext),
+    stage: { id: stageId, stories: ordered.map((story) => storyItem(story, runsAfter)) },
+  };
+}
+
+/** The stories of a plan in the order they are declared to the workflow: wave by wave (ids ascending within a
+ * wave). With a cycle there are no waves and no order, so the plan's own (id-sorted) list is used. */
+export function orderedStageStories(plan: {
+  readonly stories: readonly StageStory[];
+  readonly waves: readonly (readonly string[])[];
+}): readonly StageStory[] {
+  if (plan.waves.length === 0) return plan.stories;
+  const byId = new Map(plan.stories.map((story) => [story.id, story]));
+  return plan.waves.flat().flatMap((id) => {
+    const story = byId.get(id);
+    return story === undefined ? [] : [story];
   });
+}
+
+/** Whether the workflow reads the stage's own collections (`over: 'stage.stories'`): a workflow that does needs
+ * a stage whose Epics and Stories exist to run at all, and one that does not (`plan-stage`, which is what
+ * *writes* them) must not be refused for their absence. Looks through groups and fanout bodies. */
+export function workflowReadsStageCollections(workflow: Workflow): boolean {
+  const overStage = (over: string): boolean => /^stage(\.|$)/.test(over.trim());
+  const reads = (step: WorkflowStep): boolean => {
+    if (step.kind === 'fanout') return overStage(step.over) || reads(step.step);
+    if (step.kind === 'merge') return overStage(step.over);
+    if (step.kind === 'parallel' || step.kind === 'sequence') return step.steps.some(reads);
+    return false;
+  };
+  return workflow.steps.some(reads);
 }
 
 /** `10` §10.6 "Enforced separations" (see `SEPARATED_ROLES`), from what the workflow actually compiled to: the
@@ -601,6 +632,37 @@ function separationFindings(
  * the order the caller supplied them in. */
 function compareStories(a: StageStory, b: StageStory): number {
   return compareIds(a.id, b.id) || compareIds(JSON.stringify(a), JSON.stringify(b));
+}
+
+/** Whether a compile that failed with a `dependency-cycle` failed *because of* the story ordering: the same
+ * workflow compiles when the stories carry no ordering at all. A cycle the workflow has on its own
+ * (a customised `build-stage` whose steps depend on each other) is not the stories' doing and stays the
+ * `step-plan-unavailable` warning it always was. */
+function stageOrderCreatesCycle(
+  workflow: Workflow,
+  context: ExpressionContext,
+  failed: { readonly success: false; readonly issues: readonly { readonly code: string }[] },
+): boolean {
+  if (!failed.issues.some((issue) => issue.code === 'dependency-cycle')) return false;
+  const unordered = { ...context, stage: withoutStoryOrder(context.stage) };
+  return compileRunPlan(workflow, unordered).success;
+}
+
+/** The stage's stories with no ordering between them (neither `runs_after` nor `depends_on`). */
+function withoutStoryOrder(stage: unknown): unknown {
+  if (typeof stage !== 'object' || stage === null || !('stories' in stage)) return stage;
+  const stories: unknown = stage.stories;
+  if (!Array.isArray(stories)) return stage;
+  return {
+    ...stage,
+    stories: (stories as readonly unknown[]).map((story) => {
+      if (typeof story !== 'object' || story === null) return story;
+      const rest: Record<string, unknown> = { ...(story as Readonly<Record<string, unknown>>) };
+      delete rest['runs_after'];
+      delete rest['depends_on'];
+      return rest;
+    }),
+  };
 }
 
 /**
@@ -652,24 +714,33 @@ export function compileStageRunPlan(
 
   // With a cycle no step order exists either; the cycle finding already says so.
   if (!graph.hasCycle) {
-    // The workflow's own `vars:` (`build-stage`'s `integration_branch`) are templates over the run inputs.
-    const varsContext: StageExpressionContext = { stageId };
-    const vars: Record<string, string> = {};
-    for (const [name, template] of Object.entries(workflow.vars ?? {})) {
-      try {
-        vars[name] = resolveTemplate(template, varsContext);
-      } catch {
-        // Left unset: any step that reads it reports the unresolved placeholder itself, with its own step id.
-      }
-    }
-    const context: StageExpressionContext = {
+    const stageContext = buildStageRunContext(
+      workflow,
       stageId,
-      vars,
-      stage: { stories: ordered.map(storyItem) },
-    };
+      ordered,
+      graph.predecessors,
+      options.extraContext,
+    );
+    const extra = options.extraContext;
+    const extraVars: object =
+      typeof extra?.vars === 'object' && extra.vars !== null ? extra.vars : {};
+    const context: ExpressionContext =
+      extra === undefined
+        ? stageContext
+        : { ...extra, ...stageContext, vars: { ...extraVars, ...stageContext.vars } };
 
     const compiled = compileRunPlan(workflow, context);
-    if (!compiled.success) {
+    if (!compiled.success && stageOrderCreatesCycle(workflow, context, compiled)) {
+      const cycle = compiled.issues.find((issue) => issue.code === 'dependency-cycle');
+      findings.push(
+        finding(
+          'plan-dependency-cycle',
+          'error',
+          cycle?.message ?? 'The compiled plan has a dependency cycle.',
+          [],
+        ),
+      );
+    } else if (!compiled.success) {
       findings.push(
         finding(
           'step-plan-unavailable',
@@ -707,23 +778,11 @@ export function compileStageRunPlan(
         );
       } else {
         findings.push(...separationFindings(unique, chains, workflow.id));
-        const withStories = applyStoryDependencies(compiled.nodes, chains, graph.predecessors);
-        const cycle = detectCycles(withStories);
-        if (cycle !== undefined) {
-          findings.push(
-            finding(
-              'plan-dependency-cycle',
-              'error',
-              `A dependency cycle was found in the compiled plan: ${cycle.cycle.join(' -> ')}.\n\n${renderCycleAsMermaid(cycle.cycle)}`,
-              [...new Set(cycle.cycle)].sort(compareIds),
-            ),
-          );
-        } else {
-          nodes = withStories;
-          criticalPath = computeCriticalPath(nodes);
-          stepOverlaps = compiled.claims.overlaps;
-          stepPlan = 'compiled';
-        }
+        // `compileRunPlan` applied the story ordering (`runs_after`) itself, and rejected a cycle it creates.
+        nodes = compiled.nodes;
+        criticalPath = computeCriticalPath(nodes);
+        stepOverlaps = compiled.claims.overlaps;
+        stepPlan = 'compiled';
       }
     }
   }
@@ -737,6 +796,7 @@ export function compileStageRunPlan(
     overlapCount: graph.overlapCount,
     blocked: graph.blocked,
     storyCriticalPath: graph.hasCycle ? [] : longestStoryChain(graph.waves, graph.predecessors),
+    runsAfter: graph.hasCycle ? {} : Object.fromEntries(graph.predecessors),
     stepPlan,
     nodes,
     criticalPath,

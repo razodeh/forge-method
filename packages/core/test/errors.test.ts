@@ -52,6 +52,13 @@ const SAMPLE_DETAILS = {
   host: 'build-01',
   tool: 'git',
   reason: 'rate limit',
+  // `RUN-088` (`PLAN-M13.md` P21): a `--input` pair that cannot be used.
+  input: 'stageId=',
+  // `RUN-092` (`PLAN-M13.md` P21): a story that is not ready to implement.
+  storyId: 'STORY-014',
+  state: 'blocked by STORY-999',
+  // `RUN-091` (`PLAN-M13.md` P21): the steps that would share one role.
+  steps: 'implement-story:red, implement-story:green',
   lane: 'feat/story-014',
   artifact: 'STORY-014',
   expectedParent: 'EPIC-003',

@@ -27,7 +27,8 @@ import {
   type StageRunPlanFinding,
   type StageStory,
 } from '@forge/engine/plan';
-import { parseWorkflow } from '@forge/engine/workflow';
+import type { ExpressionContext } from '@forge/engine/expr';
+import { parseWorkflow, type Workflow } from '@forge/engine/workflow';
 import { epicSchema, storySchema } from '@forge/schemas';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
@@ -51,7 +52,7 @@ export type StageRunPlanReport = StageRunPlan;
  * deliberately narrow and only decides which of the story's own claims the test-writing step also claims. */
 const TEST_PATH = /(^|\/)(tests?|__tests__|e2e)(\/|$)|\.(test|spec)\.[cm]?[jt]sx?$|_test\.[a-z]+$/;
 
-function isTestPath(glob: string): boolean {
+export function isTestPath(glob: string): boolean {
   return TEST_PATH.test(glob);
 }
 
@@ -105,6 +106,37 @@ export async function planRunPlan(
   stageId: string,
 ): Promise<StageRunPlanReport> {
   const workflow = await loadWorkflow(ctx);
+  const { stories, outsideStage, inputFindings } = await readStageStories(ctx, stageId);
+  return compileStageReport(workflow, stageId, stories, outsideStage, inputFindings);
+}
+
+/** What the project's own documents say about one stage: the stories to plan, what is known about the stories
+ * outside it, and the findings about the inputs themselves (a schema failure, a duplicate id...). */
+export interface StageInputs {
+  readonly stories: readonly StageStory[];
+  readonly outsideStage: ReadonlyMap<string, OutsideStageStatus>;
+  readonly inputFindings: readonly StageRunPlanFinding[];
+}
+
+function compileStageReport(
+  workflow: Workflow,
+  stageId: string,
+  stories: readonly StageStory[],
+  outsideStage: ReadonlyMap<string, OutsideStageStatus>,
+  inputFindings: readonly StageRunPlanFinding[],
+  extraContext?: ExpressionContext,
+): StageRunPlanReport {
+  const plan = compileStageRunPlan(workflow, stageId, stories, { outsideStage, extraContext });
+  const findings = [...inputFindings, ...plan.findings];
+  return { ...plan, findings, ok: !findings.some((f) => f.severity === 'error') };
+}
+
+/**
+ * Reads a stage's Epics and Stories from the specs root: the one reader behind `forge plan run-plan` and
+ * `forge run <workflow> --stage` (`PLAN-M13.md` P21), so the plan a user is shown and the run that starts are
+ * built from the same documents by the same code. Same failure modes as `planRunPlan` (`RUN-082`, `CFG-006/007`).
+ */
+export async function readStageStories(ctx: RunPlanContext, stageId: string): Promise<StageInputs> {
   const docs = await listSpecArtifacts(ctx.paths, ctx.specsRoot);
 
   // Everything below reads raw front matter first, so a document that fails its schema is reported rather
@@ -299,9 +331,19 @@ export async function planRunPlan(
     (x, y) => compareIds(x.code, y.code) || compareIds(x.subjects.join(','), y.subjects.join(',')),
   );
 
-  const plan = compileStageRunPlan(workflow, stageId, stories, { outsideStage });
-  const findings = [...inputFindings, ...plan.findings];
-  return { ...plan, findings, ok: !findings.some((f) => f.severity === 'error') };
+  return { stories, outsideStage, inputFindings };
+}
+
+/** The stage's run plan against an arbitrary workflow (the one being run, which need not be `build-stage`):
+ * the same story graph and findings `planRunPlan` reports, and the context the run compiles against. */
+export async function planStageForRun(
+  ctx: RunPlanContext,
+  stageId: string,
+  workflow: Workflow,
+  extraContext?: ExpressionContext,
+): Promise<StageRunPlanReport> {
+  const { stories, outsideStage, inputFindings } = await readStageStories(ctx, stageId);
+  return compileStageReport(workflow, stageId, stories, outsideStage, inputFindings, extraContext);
 }
 
 /** The `--json` body: the report under the standard `{ v: 1 }` envelope, with the numeric `errors`/`warnings`

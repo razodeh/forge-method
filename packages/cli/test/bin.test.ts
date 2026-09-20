@@ -2395,28 +2395,25 @@ describe('forge plan (real subprocess dispatch, PLAN-M12.md P4)', () => {
 });
 
 describe('forge implement / forge refactor / forge deploy (real subprocess dispatch, PLAN-M12.md P4)', () => {
-  it('runs `forge implement <storyId> --dry-run` for real, reaching the real production template — a real, pre-existing, disclosed gap (SPEC-QUESTIONS.md) means it reports a real compile issue rather than a fabricated success', async () => {
-    // `implementStory`'s own `ImplementStoryExpressionContext` (`loop/implement.ts`, built before this
-    // piece) supplies `storyId`/`ownerRole` but never populates `ExpressionContext.run`
-    // (`testPaths`/`filesExpected`) — the real, shipped `implement-story.workflow.yaml` template
-    // references `{{run.testPaths}}`/`{{run.filesExpected}}`, so a real dry-run against the genuine
-    // production template (as opposed to the simplified fixture template `loop/implement.test.ts`'s
-    // own unit tests use) genuinely cannot compile today, for *any* real Story. Confirmed directly by
-    // running this exact command against a real project — a real, pre-existing gap this dispatcher-
-    // wiring piece surfaces rather than silently working around; fixing `implementStory` itself is
-    // outside this piece's own mandate (wiring an already-real function, not completing it).
+  it('runs `forge implement <storyId> --dry-run` for real, and the real production template compiles (PLAN-M13.md P21)', async () => {
+    // This test documented a gap: `implementStory` supplied `storyId`/`ownerRole` but never `run.testPaths`/
+    // `run.filesExpected`, which the shipped `implement-story.workflow.yaml` claims its `red` and `green` steps
+    // produce, so a dry-run against the genuine template failed with `template-resolution-failed` for any Story
+    // (`SPEC-QUESTIONS.md` P4 finding 4). `implementStory` now reads both from the Story document, the same
+    // way `forge run implement-story --story` does, so the plan compiles.
     const dir = await realProject();
     await clearPlatformPrimary(dir);
     await writeOversizedStory(dir);
     const result = run(['implement', 'STORY-001', '--dry-run', '--json', '-C', dir]);
-    expect(result.status).toBe(2);
+    expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
-      readonly plan: { readonly success: boolean; readonly issues: readonly { code: string }[] };
+      readonly plan: {
+        readonly success: boolean;
+        readonly nodes: readonly { readonly id: string }[];
+      };
     };
-    expect(parsed.plan.success).toBe(false);
-    expect(parsed.plan.issues.some((issue) => issue.code === 'template-resolution-failed')).toBe(
-      true,
-    );
+    expect(parsed.plan.success).toBe(true);
+    expect(parsed.plan.nodes.some((node) => node.id === 'implement-story:green')).toBe(true);
   });
 
   it('exits 2 for `forge implement` with no real <storyId>', async () => {
