@@ -181,6 +181,19 @@ record which is authoritative.
 
 **Depends on:** none. Independent of the prompt work.
 
+## P12 — Fix what the live smoke run found (Q208)
+
+**Mandate:** the run-time defects P9 reproduced live, each a small, testable fix:
+(1) a run with no admissible step must say why (emit `BudgetBreached`/a typed failure naming the cap and the step's
+reservation) instead of a bare `RunFailed`; (2) the plan-level `maxCostUsd` must come from the agent's
+`limits.max_cost_usd` (then the step, then the default), and a `command` step must not reserve the agent-sized default
+(reserve 0, or accept `limits` on command steps); (3) command steps must find the running CLI (`forge`) even when it is
+not on `PATH`; (5) keep the agent session's final text in the run record (or a linked transcript) so a step's answer
+is never discarded; (6) a dirty-tree refusal is a normal remedy-bearing error, not a stack trace; (7) `forge init`
+honours `-C` or rejects it.
+
+**Depends on:** P9 (done). Finding 4 is P7 plus P11, not this piece.
+
 ## P11 — Workflow / agent / gate coherence (decision piece)
 
 **Mandate:** content authoring (Q200/Q201/Q202) found places where shipped definitions contradict each
@@ -233,6 +246,10 @@ go to `SPEC-QUESTIONS.md`; expect some.
 
 **Depends on:** P5, P5b, P2a.
 
+**Status:** run once (Q208, `## M13 P9` in the log): real assembly proven live, $0.3885 spent; two product gaps found
+that make the workflow itself fail (`forge` not on `PATH` for command steps; a write-forbidden agent's step reports
+success with no output). Re-run after P7 and P12 land.
+
 ---
 
 ## Sequencing
@@ -246,7 +263,7 @@ P0 ─┬─ P1 ─┬─ P2a ─ P2b ─ P2c
                           ├─ P3c
                           ├─ P7
                           └─ P8
-P10 (independent)   P11 (after P9)
+P10 (independent)   P11 (after P9)   P12 (from P9)
 ```
 
 P2/P3 are content and can run alongside P4. P5 is the join point. Same gauntlet discipline as

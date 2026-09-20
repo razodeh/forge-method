@@ -17273,3 +17273,63 @@ scope and recorded above: shell interpolation of `stageId`, lane-output visibili
 co-located tests in `files_expected` (an empty `test_paths`, so `generate-tests` claims nothing), and that two
 `ready` stories with overlapping claims are a `G-Ready` failure per `09` §9.3 rule 4 but only a warning here (the plan
 serialises them per `06` §6.2 rule 3; `spec validate --rule file-claim-overlap` remains the gate).
+
+
+## Q208 — M13 P9: the first live run — what a real Claude Code session did, and eight real findings
+
+**Context.** `PLAN-M13.md` P9: one cheap real workflow end to end, run by the orchestrator with the owner's
+authorization and key (from the gitignored `.env`, loaded for one command, never printed; a post-run scan found
+the value in no file of the throwaway project, the captured output or the repo). Workflow `retro` at level L0:
+one agent step (`em`, brief `run-retro`) and one `forge kb sync` command step; throwaway project outside the repo,
+real `forge init`, real Claude Code 2.1.278 in bare mode, model tier `balanced` -> `sonnet` from the P5b map.
+Three attempts; the first two failed before any session started and cost nothing.
+
+**What worked (first evidence in the history of this build).**
+- Real prompt assembly reached a real session: `steps/<id>/prompt.md` is a 15.6 KB nine-block system prompt whose block [4]
+  holds the actual `run-retro` brief text, block [6] the agent's real grant and the step's real budget, and
+  `context.json` its pack manifest. No path-as-prompt, no empty system prompt.
+- The P5b tier map resolved `balanced` -> `sonnet` with no RUN-078; the adapter ran it (`UsageRecorded`: model `sonnet`, 15,232
+  output tokens, 177.5 s, **$0.3885**, `estimated: true`). That is the whole spend of the run.
+- The lane was created, the session started and ended `ok`, usage was recorded, the step was marked succeeded.
+
+**Findings.** Each is real, reproduced, and none is fixed by this entry.
+1. **A run with no admissible step fails silently.** `budgetCanAdmit` refuses a step when `runSpentUsd + node.limits.maxCostUsd`
+   would breach `perRunUsd` (`budget/admit.ts`); the scheduler then admits nothing, `driveToCompletion` returns, and the engine
+   emits `RunFailed` with no `StepFailed`, no `BudgetBreached` and no message; `forge run` prints only `status=failed`. The
+   only clue is the absence of events. Repro: `budget.perRunUsd` below any step's reservation.
+2. **The per-step reservation ignores the agent's own limit and applies to command steps.** The compiled plan's
+   `limits.maxCostUsd` is the workflow step's value or the compile default of `2.0` (`plan/compile.ts` `DEFAULT_LIMITS`), never the
+   agent's `limits.max_cost_usd` (`em` declares 3.0; a $0.75 edit of the agent file changed nothing in the plan), and it is charged
+   to `forge kb sync`, a step that costs nothing. So the smallest usable `perRunUsd` for `retro` is about $2.75, not the
+   agent's real ceiling. A workflow `command` step also rejects a `limits:` key (`Unrecognized key(s) ... 'limits'`), so a
+   command step's reservation cannot be lowered from YAML at all.
+3. **`command` steps assume `forge` is on `PATH`.** `write-back-kb` failed `127 /bin/sh: forge: command not found` when the CLI
+   was launched from a checkout (`node .../forge.mjs`). Many shipped workflows run `forge ...` in command steps
+   (`kb sync`, `plan run-plan`, `spec validate`); an unpublished or non-global install cannot run any of them. Fix direction:
+   prepend the running CLI's own bin directory to the command step's `PATH`.
+4. **An agent step whose declared outputs it cannot write is reported as succeeded.** `em` has `write: false` and block [6]
+   correctly lists "writing or modifying files" as forbidden, but its declared outputs are `SessionRecord` and `Risk` files
+   under `docs/forge/**`. The session spent 177 s and 15k output tokens, the lane worktree stayed clean (no commit, no
+   file), and `StepSucceeded` was still emitted. This is the P2b/P2a/P2c "write-forbidden agent on a file-producing step"
+   contradiction observed live, and it is why P7 (declared outputs exist and validate after an agent step) is needed
+   rather than optional.
+5. **The run keeps no record of what the agent said.** `SessionEnded` carries `{ok: true}` only; the run directory holds
+   `events.ndjson`, `manifest.json` and the per-step `prompt.md`/`context.json`, and nothing of the session's final text.
+   With finding 4 that means a real retrospective's whole content was discarded. (Not yet checked: whether `forge logs`
+   or the adapter transcript keeps it.)
+6. **A dirty working tree surfaces as a raw stack trace.** `forge run` on a project with uncommitted files prints an
+   uncaught `VcsError: The working tree has 2 uncommitted change(s): run.err, run.out.` with a Node stack, not the
+   remedy-bearing error every other refusal prints. The refusal itself is correct.
+7. **`forge init` accepts `-C <dir>` and silently ignores it,** writing into the current directory (it reported
+   `wrote 291 files to <repo root>`). Every other command honours `-C`. This wrote 290 untracked files into the repo
+   checkout during this session; they were confirmed fresh and untracked and deleted before any commit. Init should honour
+   `-C` or reject it.
+8. **`forge run retro` needs no level match but the bare workflow list does:** `discover`, `define-product`, `shape-solution`,
+   `plan-stage` and `harden` contain `session` steps that need a human; there is no unattended cheap smoke target
+   other than `retro`, `plan-stages`, `adopt` and `verify-stage`. (Observation, not a defect.)
+
+**Decision.** The smoke run is declared *partially successful*: the M13 root cause (real prompt assembly) is proven live; the
+run as a whole is `failed` for findings 3 and 4, which are honest product gaps rather than test artifacts. Findings 1, 2, 3, 4,
+5, 6 and 7 are recorded here as M13 follow-ups (see `PLAN-M13.md` P7 and the new P12) rather than fixed inside P9, per the
+plan's "findings go to SPEC-QUESTIONS.md; expect some". Spend: $0.3885 real, of a $0.75 step ceiling and a $3.00 run cap set
+in the throwaway project.

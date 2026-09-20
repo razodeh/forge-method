@@ -13818,3 +13818,28 @@ workflow compiles, which is the cue to delete the `.fails`.
 `packages/cli/test/commands/workflow-session-placements.test.ts`, `packages/templates`, `test/workspace-floor.test.ts`, and the
 `plan` slice of `packages/cli/test/bin.test.ts`; `pnpm typecheck` (21/21), `pnpm run boundaries`, eslint clean on every touched
 file, prettier clean on every touched file.
+
+
+## M13 P9 — First live smoke run (`forge run retro`, real Claude Code, real API key)
+
+Run by the orchestrator with the owner's explicit authorization ("use my anthropic api key", key placed in the gitignored
+`.env`); driven from a throwaway project under the session scratchpad, budget-capped (step ceiling $0.75 via the workflow
+step's `limits`, run cap $3.00, `onBreach: abort`), the key loaded for a single command and never printed. Full findings and
+decision are in `SPEC-QUESTIONS.md` Q208.
+
+**Attempts.** (1) `status=failed` in 1 s: my own output files dirtied the project (FORGE requires a clean tree) — no spend.
+(2) `status=failed` in 1 s: `perRunUsd` $1.00 was below the per-step reservation of $2.00 the plan charges every step — no
+spend, no message (finding 1/2). (3) with a $0.75 step limit and $3.00 run cap: a real session ran 177 s, cost $0.3885,
+step succeeded; the run failed on the second step (`forge: command not found`, finding 3).
+
+**Proven live.** Real nine-block prompt (15.6 KB, `prompt.md` recorded) reached a real session; the P5b tier map resolved
+`balanced` -> `sonnet`; usage and cost were recorded; the lane lifecycle ran.
+
+**Found live.** Silent run failure when nothing is admissible under the budget; the plan reserves a default $2 for every step
+including commands and ignores the agent's own limit; command steps assume `forge` on `PATH`; an agent step that cannot write
+its declared outputs reports success and its text is not kept; a dirty-tree refusal is a raw stack trace; `forge init` ignores
+`-C`.
+
+**Verification.** Independent inspection of the run directory events and `prompt.md`; a post-run scan for the key value in
+the throwaway project, captured outputs and the repository (0 files); the repo tree checked for stray init output (removed
+earlier, none present). Nothing was committed from the throwaway project. Real spend $0.3885.
