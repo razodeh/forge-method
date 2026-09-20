@@ -34,7 +34,7 @@ import {
   type AssembledSession,
 } from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
-import { verifyDeclaredOutputs } from './outputs.ts';
+import { docRootsOf, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { runShellCommand } from './shell.ts';
 import type {
@@ -140,6 +140,9 @@ function buildCommitMessage(node: StepNode, ctx: ExecuteStepContext, subject: st
   ].join('\n');
 }
 
+/** Bound on the paths a `PolicyViolation` event lists (the totals are always recorded). */
+const MAX_VIOLATION_PATHS_LOGGED = 50;
+
 /** `06` §6.4's own lane lifecycle, steps 1-3 plus claim enforcement (`Q62`'s own sixth note: enforcement
  * runs once a lane's session ends, before handing the lane to the merge queue — a later, separate
  * `merge`-kind step's own job, `ExecuteStepContext.laneRegistry`'s own doc comment has the fuller
@@ -206,7 +209,7 @@ export async function runLaneLifecycle(
 
   const work = await runWork(lane, baseSha);
   // What claim enforcement reverted, for the output contract check below: an artifact the session wrote
-  // but the step's `produces` claim did not cover never reached the lane branch, and the check says so.
+  // but the step's claim did not cover never reached the lane branch, and the check says so.
   let claimReverted: readonly string[] = [];
 
   if (work.changed) {
@@ -217,12 +220,35 @@ export async function runLaneLifecycle(
       return failed(node.id, startedAt, ctx.now(), work.detail, commitResult.failure);
     await ctx.telemetry.emit({ type: 'LaneCommitted', stepId: node.id, laneId: lane.laneId });
 
+    // `06` §6.7 (P14): an agent step's claim is its `produces` plus its declared outputs' registry paths,
+    // and a step that declares outputs is `strict` at every autonomy level (`resolveStepClaim`).
+    const claim = resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy);
     const enforceResult = await runVcsStep(node.id, () =>
-      ctx.vcs.enforceClaim(lane, baseSha, node.produces, ctx.claimPolicy),
+      ctx.vcs.enforceClaim(lane, baseSha, claim.globs, claim.policy),
     );
     if (!enforceResult.ok)
       return failed(node.id, startedAt, ctx.now(), work.detail, enforceResult.failure);
     claimReverted = enforceResult.value.reverted;
+    if (enforceResult.value.outOfClaim.length > 0) {
+      // `06` §6.7: an out-of-claim write is a policy violation. Enforcement never fails the step for it, so
+      // this event is the record of which files fell outside the claim and whether they were reverted
+      // (`strict`) or kept (`warn`): a brief-named document outside a step's outputs and `produces` is
+      // otherwise discarded without a trace.
+      await ctx.telemetry.emit({
+        type: 'PolicyViolation',
+        stepId: node.id,
+        laneId: lane.laneId,
+        payload: {
+          kind: 'out-of-claim-write',
+          policy: claim.policy,
+          paths: enforceResult.value.outOfClaim
+            .slice(0, MAX_VIOLATION_PATHS_LOGGED)
+            .map((file) => (file.length > 300 ? `${file.slice(0, 300)}...` : file)),
+          totalOutOfClaim: enforceResult.value.outOfClaim.length,
+          totalReverted: enforceResult.value.reverted.length,
+        },
+      });
+    }
     if (enforceResult.value.reverted.length > 0) {
       const revertCommitResult = await runVcsStep(node.id, () =>
         ctx.vcs.commit(

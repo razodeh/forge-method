@@ -50,10 +50,14 @@ export {
 } from './result-record.ts';
 export {
   checkDeclaredOutputs,
+  docRootsOf,
+  outputClaimGlobs,
   outputGlob,
   outputPathCoveredBy,
+  resolveStepClaim,
   verifyDeclaredOutputs,
   type OutputCheckInput,
+  type StepClaim,
 } from './outputs.ts';
 export { runShellCommand, type ShellCommandResult } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';

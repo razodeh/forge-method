@@ -91,9 +91,10 @@ Lane lifecycle:
 
 **Rules:**
 
-- Lanes never touch `.forge/state/` or `docs/forge/kb/` unless the step's ownership grants it.
-  KB writes from lanes go through the KB proposal channel, applied by the supervisor on the
-  integration branch (this prevents KB merge conflicts entirely).
+- Lanes never touch `.forge/state/`. A lane may write a `docs/forge/` path (the KB included) only if
+  it is one of the step's declared `outputs` or lies in its `produces` (§6.7); any other KB change
+  from a lane goes through the KB proposal channel, applied by the supervisor on the integration
+  branch (this prevents KB merge conflicts entirely).
 - `.gitignore` MUST exclude `.forge/state/`. Worktrees live there, so they never self-reference.
 - Non-git projects: FORGE requires git. `init` offers to `git init`. If refused, parallelism is
   disabled and lanes degrade to sequential in-place execution with a loud warning.
@@ -147,10 +148,18 @@ This is the single highest-leverage difference between FORGE and naive parallel 
 
 - Each step declares `produces` globs. The scheduler builds an interval map; overlapping claims are
   serialised.
+- A step's claim is the set of paths it may write: its `produces` globs plus, when it is an `agent`
+  step that declares `outputs`, the `18` §18.7 paths of those outputs (the output contract is checked for
+  `agent` steps only, so a `command` step's declared outputs are not part of its claim). This is what `05` §5.5 rule 6 means by "paths you
+  own for this step"; a role's `file_ownership` is its default territory for keeping unrelated lanes
+  apart and does not narrow a declared output.
 - At lane completion, the actual changed file set is diffed against the claim. **Out-of-claim
   writes** are a policy violation:
   - `strict` (default for `autonomous`): revert out-of-claim files, fail the step, log.
   - `warn` (default for `guided`): keep, but flag in the merge review and require approval.
+  - An `agent` step that declares `outputs` is always `strict`, whatever the autonomy level: its claim is
+    `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; it
+    reverts only what is neither. `warn` remains the `guided` default for steps that declare none.
 - Shared files that are unavoidably touched by many lanes (lockfiles, DI registries, route tables,
   i18n catalogs, `CHANGELOG`) are declared in config as `sharedMutablePaths` with a strategy:
   `serialize` (claim exclusively for the duration), `regenerate` (a post-merge command rebuilds it),

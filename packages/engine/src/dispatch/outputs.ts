@@ -26,6 +26,11 @@
  * paths come from git's own diff listing and are only ever matched against that glob and read through
  * `git show`; no path an agent supplies is opened on disk.
  *
+ * **The claim.** The same registry globs are the step's claim (`resolveStepClaim`, `PLAN-M13.md` P14, `06` §6.7):
+ * `enforceClaim` is handed `produces` plus these globs, and a step that declares outputs is enforced `strict`
+ * at every autonomy level, so the output the check will demand is by construction never reverted. Anything
+ * outside `produces` and the outputs still is, and the revert is named in the `LaneCommitted` event.
+ *
  * **Validation** reuses the validators `forge spec validate` and `forge kb lint` run: `validateArtifact`
  * (`@forge/core/artifacts`, `18` §18.6's two phases) for single-document types, and the register-file
  * schemas `parseKbTree` uses (`@forge/schemas`) for the register types. Where no register schema exists
@@ -139,6 +144,64 @@ export function outputPathCoveredBy(
 ): boolean {
   const sample = outputGlob(type, roots).replace(/\\/g, '').replace(/\*/g, 'x');
   return globs.some((glob) => minimatch(sample, glob, MATCH_OPTIONS));
+}
+
+/** A glob no path in a lane diff can match: it climbs out of the repository or is absolute. */
+function escapesRepository(glob: string): boolean {
+  return glob.startsWith('/') || glob === '..' || glob.startsWith('../') || /^[A-Za-z]:/.test(glob);
+}
+
+/**
+ * The claim globs one declared output contributes: its registry glob (`outputGlob`, the very derivation
+ * the output check locates the file with, so the two cannot drift), plus for a `Diagram` its
+ * `<path>.yaml` sidecar, which the check demands be produced too (`08` §8.11). A type the registry does
+ * not know contributes nothing (the output check fails it loudly), and a glob that climbs out of the
+ * repository (a configured root of `../elsewhere`) is dropped rather than admitted: it can match no
+ * path git lists, and the output then fails as missing instead of being written outside the project.
+ * A leading `!` or `#` is escaped so the claim matcher, which keeps glob negation and comments on, reads
+ * the configured root literally.
+ */
+export function outputClaimGlobs(outputs: StepNode['outputs'], roots: DocRoots): readonly string[] {
+  const globs: string[] = [];
+  for (const output of outputs) {
+    const definition = artifactTypeById(output.type);
+    if (definition === undefined) continue;
+    const glob = outputGlob(definition.id, roots);
+    for (const candidate of definition.id === 'Diagram' ? [glob, `${glob}.yaml`] : [glob]) {
+      if (escapesRepository(candidate)) continue;
+      globs.push(/^[!#]/.test(candidate) ? `\\${candidate}` : candidate);
+    }
+  }
+  return [...new Set(globs)];
+}
+
+/** What `runLaneLifecycle` hands `enforceClaim` for one step. */
+export interface StepClaim {
+  readonly globs: readonly string[];
+  readonly policy: 'strict' | 'warn';
+}
+
+/**
+ * `06` §6.7 as amended (`PLAN-M13.md` P14, `SPEC-QUESTIONS.md` Q212): the paths an `agent` step may write are
+ * its `produces` globs plus the registry paths of its declared `outputs`, and a step that declares
+ * `outputs` is enforced `strict` whatever the project's default (`defaultPolicy`, from autonomy and
+ * adoption): its claim is complete by construction, so `strict` can only revert what is neither a
+ * declared output nor a declared `produces`. Any other step keeps `produces` and the default policy;
+ * `command` steps too, because their declared outputs are ignored (the check does not run for them, so
+ * nothing would confine a declared output the shell never writes).
+ */
+export function resolveStepClaim(
+  node: Pick<StepNode, 'kind' | 'outputs' | 'produces'>,
+  roots: DocRoots,
+  defaultPolicy: 'strict' | 'warn',
+): StepClaim {
+  if (node.kind !== 'agent' || node.outputs.length === 0) {
+    return { globs: node.produces, policy: defaultPolicy };
+  }
+  return {
+    globs: [...new Set([...node.produces, ...outputClaimGlobs(node.outputs, roots)])],
+    policy: 'strict',
+  };
 }
 
 /** The DSL's `subtype` spelled as the artifact's own field value, where the two differ. */
@@ -505,7 +568,11 @@ function listFiles(files: readonly string[]): string {
 async function checkOne(
   output: StepNode['outputs'][number],
   input: OutputCheckInput,
-  files: { readonly committed: readonly string[]; readonly uncommitted: readonly string[] },
+  files: {
+    readonly committed: readonly string[];
+    readonly uncommitted: readonly string[];
+    readonly nonRegular?: readonly string[] | undefined;
+  },
 ): Promise<readonly Problem[]> {
   const label = describeOutput(output);
   const definition = artifactTypeById(output.type);
@@ -545,7 +612,7 @@ async function checkOne(
     const reverted = input.claimReverted.filter(matches);
     if (reverted.length > 0) {
       notes.push(
-        `the session wrote ${listFiles(reverted)} but claim enforcement reverted it: the step's \`produces\` claim does not cover that path, so add the path to \`produces\``,
+        `the session wrote ${listFiles(reverted)} but claim enforcement reverted it: the step's claim (its \`produces\` globs plus its declared outputs' registry paths) does not cover that path, which a declared output's own path always should; check the project's configured docs roots`,
       );
     }
     notes.push(
@@ -561,7 +628,33 @@ async function checkOne(
     ];
   }
 
-  const problems: Problem[] = [];
+  // The declared output's registry path is inside the step's claim (`resolveStepClaim`), so claim enforcement
+  // keeps a symlink or submodule entry planted beside a valid artifact. Only regular files may occupy the
+  // path a merge would carry forward: one such entry fails the output, valid sibling or not.
+  // A Diagram's `.mmd.yaml` sidecar is in the claim too (`outputClaimGlobs`), so it is held to the same rule.
+  const inClaim = (file: string): boolean =>
+    matches(file) ||
+    (definition.id === 'Diagram' && minimatch(file, `${glob}.yaml`, MATCH_OPTIONS));
+  const nonRegular = new Set((files.nonRegular ?? []).filter(inClaim));
+  const problems: Problem[] = [...nonRegular].map((path) => ({
+    kind: 'invalid' as const,
+    text: `${label}: ${path} is a symlink or submodule at a path the declared output owns; only regular files may be committed there`,
+  }));
+  // The claim is the type's whole registry glob (a Diagram's sidecar included), so it also lets a step remove an
+  // artifact of that type that existed at the base. Deleting one is not producing one: refused, file named.
+  // Git's listing is bounded by `MAX_PROBLEMS` here so a mass deletion costs a handful of reads, not one per file.
+  const presentPaths = new Set(present.map((file) => file.path));
+  let removed = 0;
+  for (const path of files.committed.filter(inClaim)) {
+    if (presentPaths.has(path) || nonRegular.has(path) || removed >= MAX_PROBLEMS) continue;
+    if ((await vcs.readAtRevision(lane, baseSha, path)) !== undefined) {
+      removed += 1;
+      problems.push({
+        kind: 'invalid',
+        text: `${label}: ${path} existed before the session and no longer holds a regular file at its head (deleted, or over the size limit); a step declaring ${output.type} may add or update artifacts of that type, not remove them`,
+      });
+    }
+  }
   const valid: ValidFile[] = [];
   for (const file of present) {
     const result = await validateFile(
@@ -641,6 +734,12 @@ export async function checkDeclaredOutputs(
   };
 }
 
+/** The docs roots claim derivation and the output check both resolve registry paths against: the
+ * project's configured ones, else the default layout (never skipped: a mis-wired context fails loudly). */
+export function docRootsOf(ctx: Pick<ExecuteStepContext, 'docRoots'>): DocRoots {
+  return ctx.docRoots ?? DEFAULT_CONFIG.paths;
+}
+
 /** Whether the step's agent is barred from writing files by its own definition (`tools.write: false`). That
  * is the grant the session ran with: `resolveStepToolGrant` never lets a `security.toolCeilingEscalations`
  * entry change `tools.write` (escalations only widen the ceiling an overlay may request), so none is
@@ -675,7 +774,7 @@ export async function verifyDeclaredOutputs(
     vcs: ctx.vcs,
     lane,
     baseSha,
-    docRoots: ctx.docRoots ?? DEFAULT_CONFIG.paths,
+    docRoots: docRootsOf(ctx),
     claimReverted,
     writeForbidden: await agentCannotWrite(node, ctx),
   });

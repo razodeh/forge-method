@@ -73,7 +73,14 @@ export interface VcsFacade {
   changedFiles(
     handle: LaneHandle,
     baseSha: string,
-  ): Promise<{ readonly committed: readonly string[]; readonly uncommitted: readonly string[] }>;
+  ): Promise<{
+    readonly committed: readonly string[];
+    readonly uncommitted: readonly string[];
+    /** The subset of `committed` whose entry at `HEAD` is a symlink or a submodule rather than a regular file.
+     * A declared output's registry path is inside the step's claim (`06` §6.7, P14), so claim enforcement
+     * keeps such an entry there; the output check refuses it (`outputs.ts`). Absent means none. */
+    readonly nonRegular?: readonly string[];
+  }>;
   /** The content of `file` (repo-relative) at `revision` (`'HEAD'` or a resolved sha) in the lane's
    * repository, read from the git object database -- never from the worktree, so an uncommitted edit cannot
    * stand in for what would merge. `undefined` when the file does not exist at that revision (an added file's

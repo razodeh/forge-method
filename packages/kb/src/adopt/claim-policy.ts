@@ -16,6 +16,10 @@
  * own test before writing this one. This function is the first real implementation of that mapping;
  * `context.ts` is updated to call it instead of hard-coding a literal.
  *
+ * This is the DEFAULT policy. `@forge/engine/dispatch`'s `resolveStepClaim` (`PLAN-M13.md` P14, `06` §6.7 as
+ * amended) overrides it to `strict` for an `agent` step that declares `outputs`, at every autonomy level and
+ * for adopted and non-adopted projects alike; only a step declaring none keeps what this returns.
+ *
  * @see specs/17 §17.4
  * @see specs/06 §6.7
  * @see PLAN-M10.md P20

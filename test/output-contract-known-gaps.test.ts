@@ -13,12 +13,21 @@
  * size of the gap visible and makes changing it deliberate. When P11 fixes some steps this goes red: lower
  * the pinned counts and delete the fixed rows in the same commit.
  *
- * Two classes. `no-write-grant`: the agent's `tools.write` is `false`, so its session cannot write a file
- * at all (the live case: `retro:run-retro`). `no-write-scope`: `tools.write` is true but none of the
- * agent's `parallel_safety.file_ownership` globs covers the output's registry path (or it declares none),
- * so the agent's own definition never claims the place the output must go. `file_ownership` is not enforced
- * at run time today, so this class is a definition inconsistency rather than a hard stop; it is inventoried
- * because P11 must settle it too.
+ * One class: `no-write-grant`, the agent's `tools.write` is `false`, so its session cannot write a file at
+ * all (the live case: `retro:run-retro`). P15 flips those grants; the two reviewer steps stay until P17.
+ *
+ * There used to be a second class, `no-write-scope` (9 steps whose agent's `parallel_safety.file_ownership`
+ * does not cover the output's registry path). `PLAN-M13.md` P14 (`SPEC-QUESTIONS.md` Q212) removed it: a
+ * step's claim is now its `produces` globs plus the registry paths of its declared `outputs`, and
+ * `file_ownership` is enforced nowhere at run time (only `forge agent validate`'s overlap check reads it), so
+ * an agent whose ownership omits the output path was never blocked by that, and under `strict` claim
+ * enforcement the output is no longer reverted either. The 9 steps are pinned below as
+ * `OWNERSHIP_ONLY_STEPS`; their outputs are asserted to lie inside their claim (definition level here;
+ * concrete registry paths of every type through the real claim matcher in
+ * `packages/engine/test/dispatch/output-claim.test.ts`). That is all "not a gap" means: the output survives
+ * claim enforcement. Documents their briefs name beyond the output (`decide-repo-strategy`'s
+ * `delivery/repo-strategy.md`, the `sre` pipeline Diagram, the mobile app's own build files) are outside the
+ * claim and are reverted; declaring them is `PLAN-M13.md` P16's job.
  *
  * Only steps that are dispatched are counted (`steps:`, including fanout children and parallel/sequence
  * members); `onComplete` and `onFailure.escalations` steps are not compiled into the run plan. A step whose
@@ -38,7 +47,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import type { AbsolutePath } from '@forge/core';
-import { outputGlob, outputPathCoveredBy } from '@forge/engine/dispatch';
+import { outputGlob, outputPathCoveredBy, resolveStepClaim } from '@forge/engine/dispatch';
 import { parseWorkflow, type WorkflowStep } from '@forge/engine/workflow';
 import { artifactTypeById } from '@forge/schemas/registry';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
@@ -50,12 +59,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const modulesDir = path.join(repoRoot, 'modules');
 const templatesRoot = path.join(repoRoot, 'packages', 'templates');
 
-type GapClass = 'no-write-grant' | 'no-write-scope';
+type GapClass = 'no-write-grant';
 
 /**
  * The inventory. Keys are `<workflow>:<step id>`, with the module workflows prefixed `<module>/<file>:`.
- * Each entry is a step P11 must resolve; deleting one here without fixing the workflow or the agent
- * makes this test fail, and so does fixing one without deleting it.
+ * Each entry is a step whose agent cannot write; deleting one here without fixing the agent makes this test
+ * fail, and so does fixing one without deleting it.
  */
 const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
   'intake:propose-level': 'no-write-grant',
@@ -69,7 +78,6 @@ const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
   'shape-solution:model-data': 'no-write-grant',
   'shape-solution:select-stack': 'no-write-grant',
   'shape-solution:threat-model': 'no-write-grant',
-  'initialize-project:decide-repo-strategy': 'no-write-scope',
   'plan-stages:decompose-stages': 'no-write-grant',
   'plan-stage:write-epics': 'no-write-grant',
   'plan-stage:write-stories': 'no-write-grant',
@@ -78,29 +86,37 @@ const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
   'build-stage:review': 'no-write-grant',
   'implement-story:review': 'no-write-grant',
   'verify-stage:verify-nfrs': 'no-write-grant',
-  'debug:run-rca': 'no-write-scope',
   'harden:security-pass': 'no-write-grant',
-  'harden:performance-pass': 'no-write-scope',
   'refactor:state-invariants': 'no-write-grant',
-  'deliver-stage:design-pipeline': 'no-write-scope',
-  'deliver-stage:design-deployment': 'no-write-scope',
-  'operate:instrument-observability': 'no-write-scope',
-  'operate:define-slos': 'no-write-scope',
-  'operate:write-runbooks': 'no-write-scope',
   'adopt:reverse-derive-specs': 'no-write-grant',
   'adopt:gap-analysis': 'no-write-grant',
   'migrate:plan-migration': 'no-write-grant',
   'retro:run-retro': 'no-write-grant',
   'replan:propose-change': 'no-write-grant',
   'replan:impact-analysis': 'no-write-grant',
-  'fm-mobile/store-release.workflow.yaml:prepare-release-build': 'no-write-scope',
   'fm-service/contract-test-cycle.workflow.yaml:draft-contract': 'no-write-grant',
 };
 
-/** Pinned on purpose, in addition to the table: lowering these is the deliberate act P11 performs. */
-const PINNED_TOTAL = 37;
-const PINNED_NO_WRITE_GRANT = 28;
-const PINNED_NO_WRITE_SCOPE = 9;
+/** Pinned on purpose, in addition to the table: lowering it is the deliberate act P15 and P17 perform. */
+const PINNED_TOTAL = 28;
+
+/**
+ * The steps that used to be the `no-write-scope` class (P7 to P13: 9): their agent can write but its
+ * `file_ownership` does not cover the declared output's registry path. Not gaps since P14: the step's claim
+ * covers the output, and ownership is not enforced at run time. Kept as an explicit list so the recomputed
+ * definition-level fact is visible and any new such step is noticed.
+ */
+const OWNERSHIP_ONLY_STEPS: readonly string[] = [
+  'initialize-project:decide-repo-strategy',
+  'debug:run-rca',
+  'harden:performance-pass',
+  'deliver-stage:design-pipeline',
+  'deliver-stage:design-deployment',
+  'operate:instrument-observability',
+  'operate:define-slos',
+  'operate:write-runbooks',
+  'fm-mobile/store-release.workflow.yaml:prepare-release-build',
+];
 
 /** Steps whose agent is a run-time template: cannot be classified from the workflow alone. */
 const UNRESOLVED_AGENT_STEPS: readonly string[] = ['implement-story:plan'];
@@ -109,6 +125,7 @@ interface DeclaredStep {
   readonly key: string;
   readonly agent: string;
   readonly outputTypes: readonly string[];
+  readonly produces: readonly string[];
 }
 
 function collect(
@@ -127,6 +144,7 @@ function collect(
         key: `${prefix}:${step.id ?? inheritedId ?? step.agent}`,
         agent: step.agent,
         outputTypes: (step.outputs ?? []).map((output) => output.type),
+        produces: typeof step.produces === 'string' ? [step.produces] : (step.produces ?? []),
       });
     }
   }
@@ -161,6 +179,8 @@ const declared = shippedSteps();
 
 const derived = new Map<string, GapClass>();
 const unresolved: string[] = [];
+/** Steps whose agent can write but whose `file_ownership` does not cover an output: the retired class. */
+const ownershipOnly: string[] = [];
 for (const step of declared) {
   if (step.agent.includes('{{')) {
     unresolved.push(step.key);
@@ -182,7 +202,7 @@ for (const step of declared) {
       )
     );
   });
-  if (uncovered) derived.set(step.key, 'no-write-scope');
+  if (uncovered) ownershipOnly.push(step.key);
 }
 
 describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () => {
@@ -192,13 +212,37 @@ describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () =
     );
   });
 
-  it('pins the counts: fixing a step (P11) must lower these deliberately', () => {
-    const count = (kind: GapClass): number =>
-      [...derived.values()].filter((v) => v === kind).length;
+  it('pins the count: fixing a step (P15, P17) must lower it deliberately', () => {
     expect(derived.size).toBe(PINNED_TOTAL);
-    expect(count('no-write-grant')).toBe(PINNED_NO_WRITE_GRANT);
-    expect(count('no-write-scope')).toBe(PINNED_NO_WRITE_SCOPE);
-    expect(PINNED_NO_WRITE_GRANT + PINNED_NO_WRITE_SCOPE).toBe(PINNED_TOTAL);
+  });
+
+  it('recomputes the retired no-write-scope class from the real definitions: the same 9 steps, none of them a gap', () => {
+    expect([...ownershipOnly].sort()).toEqual([...OWNERSHIP_ONLY_STEPS].sort());
+    for (const key of ownershipOnly) expect(derived.has(key), `${key} is a gap`).toBe(false);
+  });
+
+  it('every ownership-only step is covered by its own claim (produces plus declared outputs), whatever its agent owns', () => {
+    for (const step of declared.filter((entry) => ownershipOnly.includes(entry.key))) {
+      const claim = resolveStepClaim(
+        {
+          kind: 'agent',
+          produces: step.produces,
+          outputs: step.outputTypes.map((type) => ({ type })),
+        },
+        DEFAULT_CONFIG.paths,
+        'warn',
+      );
+      expect(claim.policy, `${step.key} is enforced strict`).toBe('strict');
+      for (const type of step.outputTypes) {
+        const definition = artifactTypeById(type);
+        expect(definition, `${step.key} declares unregistered ${type}`).toBeDefined();
+        if (definition === undefined) continue;
+        expect(
+          outputPathCoveredBy(definition.id, DEFAULT_CONFIG.paths, claim.globs),
+          `${step.key}: ${type} is outside its claim ${claim.globs.join(', ')}`,
+        ).toBe(true);
+      }
+    }
   });
 
   it('includes the step the live smoke run found (retro:run-retro, Q208 finding 4)', () => {

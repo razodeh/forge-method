@@ -185,6 +185,9 @@ describe('runAgentStep', () => {
       // session -- the ledger's own sole input, previously never produced by any real dispatch code.
       'UsageRecorded',
       'LaneCommitted',
+      // `06` §6.7 (P14): an out-of-claim write is recorded as a policy violation naming the files, before
+      // the revert commit, because enforcement never fails the step for it.
+      'PolicyViolation',
       'LaneCommitted',
       'LaneReady',
       'StepSucceeded',

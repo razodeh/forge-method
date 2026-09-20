@@ -194,25 +194,29 @@ describe('an agent step with declared outputs', () => {
     expect(failure.message).toMatch(/write access|an agent that can write/);
   });
 
-  it('claim enforcement is the tree that counts: an artifact outside the step `produces` claim is reverted, and the failure says so', async () => {
-    const reverted = await runScenario({
+  it('claim enforcement is the tree that counts, and a declared output is inside the claim: strict with no `produces` keeps it (Q209 finding, P14)', async () => {
+    // Before P14 this scenario reverted the step's own output under `strict` and the contract then failed it
+    // ("add the path to `produces`"). Outputs are now part of the claim, so both policies keep the file.
+    for (const claimPolicy of ['strict', 'warn'] as const) {
+      const kept = await runScenario({
+        outputs: [{ type: 'Epic' }],
+        writes: [{ relativePath: EPIC_PATH, content: epicText() }],
+        produces: [],
+        claimPolicy,
+      });
+      expect(kept.outcome.status).toBe('succeeded');
+    }
+    // What claim enforcement still reverts is what lies outside outputs and `produces`, and the failure
+    // for a missing output says so when the stray write was the only thing the session did.
+    const stray = await runScenario({
       outputs: [{ type: 'Epic' }],
-      writes: [{ relativePath: EPIC_PATH, content: epicText() }],
+      writes: [{ relativePath: 'src/not-the-epic.ts', content: 'x\n' }],
       produces: [],
       claimPolicy: 'strict',
     });
-    const failure = expectFailed(reverted.outcome);
+    const failure = expectFailed(stray.outcome);
     expect(failure.code).toBe('RUN-083');
-    expect(failure.message).toMatch(/reverted/);
-    expect(failure.message).toContain('produces');
-    // With the warn policy nothing is reverted, so the very same session satisfies the contract.
-    const warned = await runScenario({
-      outputs: [{ type: 'Epic' }],
-      writes: [{ relativePath: EPIC_PATH, content: epicText() }],
-      produces: [],
-      claimPolicy: 'warn',
-    });
-    expect(warned.outcome.status).toBe('succeeded');
+    expect(failure.message).toContain('the session committed no file');
   });
 
   it('a session that failed (adapter error) keeps its adapter failure: the contract is only checked after an ok session', async () => {

@@ -90,9 +90,28 @@ export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
       const committed = stdout.split('\0').filter((entry) => entry !== '');
       const committedSet = new Set(committed);
       const everything = await diffLaneChanges(vcsHandle, resolvedBase);
+      // The raw form carries each entry's new mode: 120000 is a symlink and 160000 a submodule, neither an
+      // artifact and neither something the claim may carry in under a declared output's path. The records are
+      // `:<oldmode> <newmode> <oldsha> <newsha> <status>` NUL `<path>` NUL.
+      const { stdout: raw } = await wrapGitFailure(
+        () =>
+          execa(
+            'git',
+            ['diff', '--no-renames', '-z', '--raw', '--no-abbrev', resolvedBase, 'HEAD', '--'],
+            { cwd: handle.path },
+          ),
+        `listing the entry modes of the lane worktree at "${handle.path}" against "${baseSha}"`,
+      );
+      const fields = raw.split('\0');
+      const nonRegular: string[] = [];
+      for (let index = 0; index + 1 < fields.length; index += 2) {
+        const newMode = (fields[index] ?? '').split(' ')[1];
+        if (newMode === '120000' || newMode === '160000') nonRegular.push(fields[index + 1] ?? '');
+      }
       return {
         committed: committed.sort(),
         uncommitted: everything.filter((file) => !committedSet.has(file)),
+        nonRegular: nonRegular.sort(),
       };
     },
     async readAtRevision(handle, revision, file) {
