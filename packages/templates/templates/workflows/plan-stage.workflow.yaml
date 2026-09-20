@@ -13,6 +13,8 @@ steps:
     agent: po
     brief: briefs/write-epics.md
     outputs: [{ type: Epic, cardinality: many }]
+    # "Then add each new epic's id to its capability's `epics` list": the step edits Capability records (Q216).
+    produces: ['docs/forge/specs/capabilities/CAP-*.md']
 
   - id: write-stories
     kind: agent
@@ -20,6 +22,8 @@ steps:
     brief: briefs/write-stories.md
     dependsOn: [write-epics]
     outputs: [{ type: Story, cardinality: many }]
+    # "An update of each epic's `stories` list": the step edits Epic records (Q216).
+    produces: ['docs/forge/specs/epics/EPIC-*.md']
 
   # `16` §16.6's own placement table, P5 Planning: `estimation`, `story-refinement` (`PLAN-M10.md`
   # P14) — both unconditional, run in that order once stories exist, before the test plan is written
@@ -42,6 +46,12 @@ steps:
     brief: briefs/write-test-plan.md
     dependsOn: [story-refinement]
     outputs: [{ type: HandoffRecord, subtype: test-plan }]
+    # The test plan itself (the HandoffRecord only registers it), and the test strategy the brief creates
+    # when the project has none (Q216).
+    produces:
+      - 'docs/forge/specs/test-plan.md'
+      - 'docs/forge/kb/engineering/testing.md'
+      - 'docs/forge/kb/open-questions.md'
 
   # Read-only: it reads the stage's Epics and Stories and prints the plan, so it runs in the supervisor at
   # the project root (`inline`) rather than in a lane worktree of its own, branched from `main`. Whether the

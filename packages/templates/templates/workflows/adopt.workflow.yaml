@@ -14,6 +14,8 @@ steps:
     brief: briefs/reverse-derive-specs.md
     dependsOn: [inventory-codebase]
     outputs: [{ type: ADR, cardinality: many }, { type: DataModel }]
+    # "Anything you cannot evidence is an explicit open question" (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: gap-analysis
     kind: agent

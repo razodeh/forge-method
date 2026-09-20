@@ -181,7 +181,11 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // worked example leaves `prepare` unordered against everything (Q211). And `itemKey: "{{item.id}}"` on the `review` fanout.
   // The worked example omits it, which made `review` compile to positional ids (`review:0`) that `merge`'s own
   // `dependsOn: [ "review:{{item.id}}" ]` cannot name, so the file did not compile (Q211).
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey and freeze-contracts after prepare (Q211)", () => {
+  // `PLAN-M13.md` P16 added a `produces` on `freeze-contracts`: its brief has the agent put a contract's non-YAML source
+  // (protobuf, GraphQL SDL, TypeScript types) beside the YAML record, only the YAML is a declared output, and under `strict`
+  // the source would be reverted (Q216). The worked example below carries the same three globs, and the same
+  // `produces` on the `onFailure` escalation's `rca` step (an RCA record, and the Defect it names).
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211) and freeze-contracts' produces (Q216)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -214,6 +218,7 @@ steps:
     outputs:
       - type: InterfaceContract
         cardinality: many
+    produces: [ "docs/forge/specs/interfaces/*.proto", "docs/forge/specs/interfaces/*.graphql", "docs/forge/specs/interfaces/*.ts" ]
     gateEvidence: [ G-Design ]
 
   - id: contracts-gate
@@ -288,7 +293,7 @@ onFailure:
   default: block
   escalations:
     - when: "failures.test-failure > 2"
-      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md }
+      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md, produces: [ "docs/forge/sessions/rca/RCA-*.md", "docs/forge/reports/defects/DEF-*.md" ] }
 
 onComplete:
   - kind: agent

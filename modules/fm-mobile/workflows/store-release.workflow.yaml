@@ -64,6 +64,20 @@ steps:
     outputs:
       - type: Task
         cardinality: one
+    # The device-matrix suite the next step runs (the brief has the step create it if missing, and it may
+    # add a helper beside it), the native projects a release configuration lives in at any depth (a monorepo
+    # keeps them under `apps/<name>/`), and the cross-platform manifests that carry the version and build
+    # number. The brief names none of the app's own paths; these are the layouts it can be run on, and Q216
+    # records them as a guess. `package.json` is left out on purpose: it holds dependencies and scripts, and
+    # the brief forbids changing application behaviour.
+    produces:
+      - 'test/device-matrix/**'
+      - '**/ios/**'
+      - '**/android/**'
+      - 'app.json'
+      - 'app.config.*'
+      - 'pubspec.yaml'
+      - 'capacitor.config.*'
     gateEvidence: [G-Deliver]
     limits: { maxTurns: 30, maxCostUsd: 4.0 }
 

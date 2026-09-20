@@ -55,12 +55,12 @@ verification.
 - `architecture/components.md`: a `type: Component` file whose `components` list holds one entry per
   component with exactly these fields: `id` as `component:<slug>`, `label`, `responsibility`,
   `owner`, `dependsOn`, `failureModes`. The schema is strict, so nothing else goes in an entry.
-- For every component, one active KB entry whose `applies_to` names `component:<slug>` (lower-case
-  letters, digits and hyphens) and whose `sources` cite the owning ADR as `kind: decision` with the
-  real ADR id. That link is how component coverage is decided. Cite exactly one ADR per component
-  (the style and decomposition ADR), and add no component-scoped KB entries for pattern, NFR or
-  stack ADRs: two accepted ADRs of one category with overlapping scope and no supersession link are
-  reported as a contradiction.
+- For every component, one active KB entry, a file under `architecture/`, whose `applies_to` names
+  `component:<slug>` (lower-case letters, digits and hyphens) and whose `sources` cite the owning
+  ADR as `kind: decision` with the real ADR id. That link is how component coverage is decided. Cite
+  exactly one ADR per component (the style and decomposition ADR), and add no component-scoped KB
+  entries for pattern, NFR or stack ADRs: two accepted ADRs of one category with overlapping scope
+  and no supersession link are reported as a contradiction.
 - Diagrams, each registered as a `Diagram` with caption and alt text, `depicts` naming real
   components, and at most about 20 nodes and 30 edges (split into layered views beyond that): the
   context view (`architecture/views/context.mmd`), the container view

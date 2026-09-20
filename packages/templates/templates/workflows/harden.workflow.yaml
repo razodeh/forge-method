@@ -9,6 +9,8 @@ steps:
     agent: security
     brief: briefs/security-hardening-pass.md
     outputs: [{ type: Defect, cardinality: many }]
+    # A class of vulnerability the pass could not examine is recorded as an OpenQuestion (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: performance-pass
     kind: agent
@@ -16,6 +18,8 @@ steps:
     brief: briefs/performance-hardening-pass.md
     dependsOn: [security-pass]
     outputs: [{ type: Defect, cardinality: many }]
+    # An NFR the pass could not measure is recorded as an OpenQuestion (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   # `16` §16.6's own placement table, P8 Stabilization: `war-room` "on Sev1", `five-whys` "in RCA"
   # (`PLAN-M10.md` P14).

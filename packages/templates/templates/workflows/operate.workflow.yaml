@@ -23,6 +23,8 @@ steps:
     brief: briefs/write-runbooks.md
     dependsOn: [define-slos]
     outputs: [{ type: Runbook, cardinality: many }]
+    # "Where you could not find [a tool], record an open question instead of inventing a[n action]" (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: operate-gate
     kind: gate

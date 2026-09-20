@@ -13,9 +13,18 @@ steps:
     brief: briefs/decompose-stages.md
     inputs: ['artifact:Capability(*)']
     outputs: [{ type: HandoffRecord, subtype: stage-plan }]
+    # The stage plan and its view (the HandoffRecord only registers them), and the `stage` field of each
+    # Capability the brief has the step update (Q216).
+    produces:
+      - 'docs/forge/plans/stages.md'
+      - 'docs/forge/plans/views/stages.mmd'
+      - 'docs/forge/plans/views/stages.mmd.yaml'
+      - 'docs/forge/specs/capabilities/CAP-*.md'
 
   - id: review-stages
     kind: agent
     agent: em
     brief: briefs/review-stage-plan.md
     dependsOn: [decompose-stages]
+    # Declares no `outputs` yet (P15 adds them): until then its Risk entries and verdict record are its claim (Q216).
+    produces: ['docs/forge/kb/risks.md', 'docs/forge/reports/handoffs.md']

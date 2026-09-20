@@ -9,6 +9,13 @@ steps:
     agent: sre
     brief: briefs/design-cicd-pipeline.md
     outputs: [{ type: ADR }]
+    # The pipeline Diagram the brief has the step draw "under the area you own" (`delivery/pipeline/`), and the
+    # `delivery/views/` location `08` §8.11.3 gives it. A declared Diagram output would claim only `*/views/*.mmd`,
+    # not `delivery/pipeline/` (Q216).
+    produces:
+      - 'docs/forge/kb/delivery/pipeline/**'
+      - 'docs/forge/kb/delivery/views/*.mmd'
+      - 'docs/forge/kb/delivery/views/*.mmd.yaml'
 
   - id: design-deployment
     kind: agent
@@ -16,6 +23,11 @@ steps:
     brief: briefs/design-deployment-strategy.md
     dependsOn: [design-pipeline]
     outputs: [{ type: ADR }]
+    # The deployment-topology Diagram, in the same two places as the pipeline one (Q216).
+    produces:
+      - 'docs/forge/kb/delivery/pipeline/**'
+      - 'docs/forge/kb/delivery/views/*.mmd'
+      - 'docs/forge/kb/delivery/views/*.mmd.yaml'
 
   # The three command steps below run the same commands the G-Deliver gate re-checks (checks/G-Deliver.gate.yaml:
   # `deploy:dry-run`, `test:smoke`, `deploy:rollback-rehearsed`), so a failure shows up here before the gate.

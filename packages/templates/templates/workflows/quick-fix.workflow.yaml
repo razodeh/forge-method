@@ -13,6 +13,9 @@ steps:
     agent: diagnostician
     brief: briefs/reproduce-defect.md
     inputs: ['artifact:Defect({{defectId}})']
+    # The reproduction goes into the Defect record itself, and a reproduction script beside it, named after
+    # the defect id (Q216).
+    produces: ['docs/forge/reports/defects/**']
 
   - id: write-failing-test
     kind: agent

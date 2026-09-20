@@ -24,6 +24,13 @@ steps:
     dependsOn: [discovery-interview, problem-brainstorm]
     inputs: ['kb:constraints/**']
     outputs: [{ type: Assumption, cardinality: many }]
+    # The three `product/` KB entries the brief names, and the Risk and OpenQuestion registers it appends to (Q216).
+    produces:
+      - 'docs/forge/kb/product/problem.md'
+      - 'docs/forge/kb/product/users.md'
+      - 'docs/forge/kb/product/scope.md'
+      - 'docs/forge/kb/risks.md'
+      - 'docs/forge/kb/open-questions.md'
 
   - id: define-metrics
     kind: agent
@@ -31,6 +38,8 @@ steps:
     brief: briefs/define-success-metrics.md
     dependsOn: [frame-problem]
     outputs: [{ type: NFR, cardinality: many }]
+    # The metrics KB entry, and the Assumption register the brief records unvalidated targets in (Q216).
+    produces: ['docs/forge/kb/product/metrics.md', 'docs/forge/kb/assumptions.md']
 
   - id: problem-gate
     kind: gate

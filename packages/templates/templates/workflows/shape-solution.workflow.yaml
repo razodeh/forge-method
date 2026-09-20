@@ -13,6 +13,10 @@ steps:
     brief: briefs/select-architecture-style.md
     inputs: ['artifact:Capability(*)', 'kb:constraints/**']
     outputs: [{ type: ADR, cardinality: many }]
+    # The architecture spec, NFR strategy, component inventory, views (with their `.mmd.yaml` Diagram
+    # sidecars) and one component-scoped KB entry per component (a file under `architecture/`, name left to
+    # the agent) are this step's to write beyond the ADRs, so it claims the architecture section (Q216).
+    produces: ['docs/forge/kb/architecture/**']
 
   - id: model-data
     kind: agent
@@ -20,6 +24,21 @@ steps:
     brief: briefs/model-data.md
     dependsOn: [select-architecture]
     outputs: [{ type: DataModel }]
+    # The five `data/` KB entries, the Assumption register (an estimate without a basis is stated as an assumption with
+    # `validate_by`), and the ER views the brief names, the state diagrams it asks for (`08`
+    # §8.11.3 puts them under `domain/views/`), and the storage ADR (Q216).
+    produces:
+      - 'docs/forge/kb/data/data-model.md'
+      - 'docs/forge/kb/data/access-patterns.md'
+      - 'docs/forge/kb/data/consistency.md'
+      - 'docs/forge/kb/data/migrations.md'
+      - 'docs/forge/kb/data/lifecycle.md'
+      - 'docs/forge/kb/assumptions.md'
+      - 'docs/forge/kb/data/views/*.mmd'
+      - 'docs/forge/kb/data/views/*.mmd.yaml'
+      - 'docs/forge/kb/domain/views/*.mmd'
+      - 'docs/forge/kb/domain/views/*.mmd.yaml'
+      - 'docs/forge/kb/decisions/ADR-*.md'
 
   - id: select-stack
     kind: agent
@@ -27,6 +46,11 @@ steps:
     brief: briefs/select-tech-stack.md
     dependsOn: [model-data]
     outputs: [{ type: ADR, cardinality: many }]
+    # The "Deployable units and runtimes" table lives in the architecture spec, and the library list and
+    # conventions are added to the engineering standards (Q216).
+    produces:
+      - 'docs/forge/kb/architecture/architecture-spec.md'
+      - 'docs/forge/kb/engineering/standards.md'
 
   - id: threat-model
     kind: agent
@@ -34,6 +58,14 @@ steps:
     brief: briefs/threat-model.md
     dependsOn: [select-stack]
     outputs: [{ type: HandoffRecord, subtype: threat-model }]
+    # The threat model and its data-flow view (the HandoffRecord only registers them), the Risk register,
+    # and the ADR the brief allows for a decision still open (Q216).
+    produces:
+      - 'docs/forge/kb/architecture/threat-model.md'
+      - 'docs/forge/kb/architecture/views/threat-model.mmd'
+      - 'docs/forge/kb/architecture/views/threat-model.mmd.yaml'
+      - 'docs/forge/kb/risks.md'
+      - 'docs/forge/kb/decisions/ADR-*.md'
 
   # `16` §16.6's own placement table, P3 Solution Shaping (`PLAN-M10.md` P14):
   #   - `tradeoff` "for contested ADRs" — after the ADR-producing steps, unconditional.

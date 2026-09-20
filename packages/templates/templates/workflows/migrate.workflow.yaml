@@ -13,6 +13,8 @@ steps:
     agent: architect
     brief: briefs/plan-migration.md
     outputs: [{ type: ADR }]
+    # "Unknowns ... are open questions or explicit assumptions with a validation method" (Q216).
+    produces: ['docs/forge/kb/open-questions.md', 'docs/forge/kb/assumptions.md']
 
   - id: expand
     kind: agent

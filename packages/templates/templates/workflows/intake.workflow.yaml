@@ -33,6 +33,8 @@ steps:
     brief: briefs/seed-glossary.md
     dependsOn: [confirm-level]
     outputs: [{ type: Assumption, cardinality: many }]
+    # The brief's main deliverable is the glossary itself, a KB entry that is not a registry output (Q216).
+    produces: ['docs/forge/kb/glossary.md']
 
 onComplete:
   - kind: command

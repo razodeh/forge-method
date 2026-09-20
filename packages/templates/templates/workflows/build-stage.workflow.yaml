@@ -41,6 +41,12 @@ steps:
     outputs:
       - type: InterfaceContract
         cardinality: many
+    # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside its YAML
+    # record in the same directory (Q216).
+    produces:
+      - 'docs/forge/specs/interfaces/*.proto'
+      - 'docs/forge/specs/interfaces/*.graphql'
+      - 'docs/forge/specs/interfaces/*.ts'
     gateEvidence: [G-Design]
 
   - id: contracts-gate
@@ -133,7 +139,13 @@ onFailure:
   default: block
   escalations:
     - when: 'failures.test-failure > 2'
-      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md }
+      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record and,
+      # if none exists for the failure, the Defect it names (Q216).
+      do:
+        kind: agent
+        agent: diagnostician
+        brief: briefs/rca.md
+        produces: ['docs/forge/sessions/rca/RCA-*.md', 'docs/forge/reports/defects/DEF-*.md']
 
 onComplete:
   - kind: agent

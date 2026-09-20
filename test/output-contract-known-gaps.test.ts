@@ -26,8 +26,10 @@
  * concrete registry paths of every type through the real claim matcher in
  * `packages/engine/test/dispatch/output-claim.test.ts`). That is all "not a gap" means: the output survives
  * claim enforcement. Documents their briefs name beyond the output (`decide-repo-strategy`'s
- * `delivery/repo-strategy.md`, the `sre` pipeline Diagram, the mobile app's own build files) are outside the
- * claim and are reverted; declaring them is `PLAN-M13.md` P16's job.
+ * `delivery/repo-strategy.md`, the `sre` pipeline Diagram, the mobile app's own build files) were outside the
+ * claim and reverted; `PLAN-M13.md` P16 declares them as `produces` (`SPEC-QUESTIONS.md` Q216), and
+ * `test/brief-write-paths-in-claim.test.ts` compares the paths and register entries each brief tells its agent
+ * to write with the step's claim (for the default docs layout; its header lists what it cannot see).
  *
  * Only steps that are dispatched are counted (`steps:`, including fanout children and parallel/sequence
  * members); `onComplete` and `onFailure.escalations` steps are not compiled into the run plan. A step whose

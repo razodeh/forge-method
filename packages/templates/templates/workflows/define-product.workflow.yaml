@@ -27,6 +27,12 @@ steps:
     brief: briefs/write-prd.md
     dependsOn: [write-vision, capability-brainstorm]
     outputs: [{ type: Capability, cardinality: many }, { type: NFR, cardinality: many }]
+    # The capability index (the Capability and NFR files are the outputs), plus the Assumption and
+    # OpenQuestion registers the brief records unvalidated claims and blocking questions in (Q216).
+    produces:
+      - 'docs/forge/kb/product/capabilities.md'
+      - 'docs/forge/kb/assumptions.md'
+      - 'docs/forge/kb/open-questions.md'
 
   - id: story-refinement
     kind: session
@@ -40,6 +46,8 @@ steps:
     brief: briefs/write-ux-spec.md
     dependsOn: [write-prd]
     outputs: [{ type: HandoffRecord, subtype: ux-spec }]
+    # The UX spec itself (the HandoffRecord only registers it), and the OpenQuestion register (Q216).
+    produces: ['docs/forge/kb/product/ux-spec.md', 'docs/forge/kb/open-questions.md']
 
   - id: product-gate
     kind: gate

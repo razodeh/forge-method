@@ -13,6 +13,9 @@ steps:
     agent: platform
     brief: briefs/decide-repo-strategy.md
     outputs: [{ type: ADR }]
+    # The ADR is the decision; the KB entry with the layout and ownership the scaffold implements is not an
+    # output, and the CODEOWNERS handles the brief has the step "record as an assumption" go to the register (Q216).
+    produces: ['docs/forge/kb/delivery/repo-strategy.md', 'docs/forge/kb/assumptions.md']
 
   - id: scaffold-project
     kind: agent
@@ -26,7 +29,13 @@ steps:
     agent: sre
     brief: briefs/scaffold-ci.md
     dependsOn: [scaffold-project]
-    produces: ['.github/**', 'ci/**']
+    # The pipeline files, the KB entry that lists the stages, and the ADR that records the platform choice
+    # when none was stated (Q216).
+    produces:
+      - '.github/**'
+      - 'ci/**'
+      - 'docs/forge/kb/delivery/pipeline.md'
+      - 'docs/forge/kb/decisions/ADR-*.md'
 
   - id: foundation-gate
     kind: gate

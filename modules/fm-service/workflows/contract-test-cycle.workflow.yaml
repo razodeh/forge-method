@@ -51,6 +51,12 @@ steps:
     outputs:
       - type: InterfaceContract
         cardinality: one
+    # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside the YAML
+    # record, under the same name (Q216).
+    produces:
+      - 'docs/forge/specs/interfaces/{{interfaceName}}.proto'
+      - 'docs/forge/specs/interfaces/{{interfaceName}}.graphql'
+      - 'docs/forge/specs/interfaces/{{interfaceName}}.ts'
     gateEvidence: [G-Integration]
     limits: { maxTurns: 30, maxCostUsd: 4.0 }
 
