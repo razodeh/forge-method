@@ -194,6 +194,20 @@ honours `-C` or rejects it.
 
 **Depends on:** P9 (done). Finding 4 is P7 plus P11, not this piece.
 
+## P13 — The shipped `build-stage` workflow must compile
+
+**Mandate:** found by P10 (Q206) running the real workflow: `build-stage.workflow.yaml` does not compile.
+The `merge` step's per-item `dependsOn` cannot resolve `item.id`, and the `review` fanout declares no `itemKey`. So
+`forge run build-stage` (the workflow that turns planned stories into code, `10` §10.4) cannot start at all, and
+`forge plan run-plan` reports `stepPlan: unavailable` for every stage. Read `06`/`10`/`22` for what the fanout
+and per-item dependency contract is meant to be, fix the workflow (or the compiler, if the compiler is what is wrong;
+record which and why), and make a repository-level test that EVERY shipped workflow in every module compiles
+(P6's repo-wide test may already cover this once it lands; extend rather than duplicate). Delete the `it.fails`
+known-gap test P10 left in `packages/engine/test/plan/stage-plan.test.ts` (it goes red when this is fixed) and the
+`step-plan-unavailable` note.
+
+**Depends on:** P6 (the repo-wide compile test), P10. Blocks any real build-stage run and a useful second live smoke.
+
 ## P11 — Workflow / agent / gate coherence (decision piece)
 
 **Mandate:** content authoring (Q200/Q201/Q202) found places where shipped definitions contradict each
@@ -263,7 +277,7 @@ P0 ─┬─ P1 ─┬─ P2a ─ P2b ─ P2c
                           ├─ P3c
                           ├─ P7
                           └─ P8
-P10 (independent)   P11 (after P9)   P12 (from P9)
+P10 (independent)   P11 (after P9)   P12 (from P9)   P13 (from P10)
 ```
 
 P2/P3 are content and can run alongside P4. P5 is the join point. Same gauntlet discipline as
