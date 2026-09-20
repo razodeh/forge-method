@@ -17150,3 +17150,126 @@ and `test/workspace-floor.test.ts` (P5b's stray `packages/cli/test/init/tier-stu
 Files: `modules/*/agents/*.agent.yaml` (22), `packages/templates/templates/prompts/*.md` (62 -> 59 files),
 `packages/templates/src/content/prompts-{a,b}.ts`, `packages/agents/test/prompt/{brief-keys-attachable,prompts-a-content,
 prompts-b-content}.test.ts`, `packages/agents/test/content/a2-roster.test.ts`, `docs/authoring-guide.md`.
+
+## Q206 — M13 P10: `forge plan run-plan` — what the specs define, what the shipped workflow needs, and what was built
+
+**Context.** `plan-stage.workflow.yaml`'s `derive-run-plan` runs `forge plan run-plan {{stageId}} --json`; nothing
+handled `run-plan`, so every real `plan-stage` run failed at that step. The P3b content agent's
+`orchestrator.schedule-run` prompt (since dropped by P3c, no shipped workflow dispatches that role) was written to
+audit an engine-compiled plan and mark its own plan provisional if none existed; the output shape below is what a
+consumer of that kind reads.
+
+**What the specs say.** `03` §3.2.3 lists no `run-plan` subcommand: `forge plan stage <id>` "produce[s] the run plan
+DAG". `06` §6.2 defines a run plan as a workflow *compiled against project state* (fanout over the stage's stories,
+implicit contract-freeze and claim dependencies, cycle rejection with a Mermaid graph, critical path and cost);
+`10` §10.2 P5 lists "run plan DAG" among P5's outputs. So the spec and the workflow disagree on *shape*: the spec has
+the plan produced as part of `plan stage`; the workflow splits it into planning agents plus a deterministic
+`command` step. **Chosen (smallest change that makes a real `plan-stage` pass the step):** keep the workflow's
+split and add the subcommand it names; no workflow restructure. `run-plan` is read-only (it prints; recording the
+plan under `docs/forge/plans/` is left to whoever consumes it, `10` §10.2 P5).
+
+**What already existed.** `@forge/engine/plan`'s `compileRunPlan` (`06` §6.2 rules 1-3, 5-6) compiles a *workflow*;
+nothing built the `stage.stories` collection `build-stage` fans out over, nothing applied a *story's* `depends_on`
+(`09` §9.3), and the shipped `build-stage` does not compile at all (decision 1).
+
+**What was built.**
+- `@forge/engine/plan` `compileStageRunPlan` (`stage-plan.ts`, pure): story graph -> waves (declared `depends_on`
+  plus serialised file-claim overlaps, `06` §6.2 rule 3), cycles / self / unknown dependencies / duplicate ids as
+  findings not throws, longest story chain, then `compileRunPlan` over `build-stage` with `stage.stories` set, and
+  each story's ordering applied to the steps: B's first per-story step waits for A's last per-story step (not only
+  its file-writing ones, so a story with no claims is still ordered; not the stage-wide `merge`, a single node that
+  follows every story, which would serialise the stage), critical path recomputed. It needs the workflow's
+  per-story steps keyed `itemKey: '{{item.id}}'`; any other keying is `step-plan-unavailable`, not a silent
+  no-op. Stories are fed to the workflow
+  wave by wave so the engine's declaration-order serialisation can never contradict a declared dependency.
+- `compile.ts`: a `produces` entry that is exactly one placeholder evaluating to a string array is spliced
+  (`files_expected` is an array, `09` §9.3; `resolveTemplate` only substitutes scalars, so `produces:
+  '{{item.files_expected}}'` refused every multi-glob story with CFG-015). Anything else goes the old path.
+- `@forge/cli` `commands/run/run-plan.ts` + `bin.ts`: reads the stage's Epics (`stage == stageId`) and Stories from
+  `docs/forge/specs`, and the project's `.forge/workflows/build-stage.workflow.yaml`; prints a human summary, or
+  with `--json` `{v:1, ok, errors, warnings, stageId, workflowId, stories, waves, storyCriticalPath, overlapCount, blocked,
+  storyOverlaps, stepPlan, criticalPath, stepOverlaps, findings, nodes}` (fixed key order; no clock, randomness or
+  locale-dependent ordering; ids sort by codepoint). Exit 0 = no error findings (warnings printed), 1 = error
+  findings (cycle, unknown dependency, a story an Epic lists that does not exist, a story or epic failing its
+  schema, duplicate ids), 2 = usage / `RUN-082` (new: no Epic declares the stage) / `RUN-053` (no `build-stage`
+  workflow) / `CFG-006/007` (a corrupt document anywhere under the specs root, the same all-or-nothing read `spec
+  validate` makes). Numeric `errors` is there so a gate's `failOn: 'errors > 0'` can read it.
+- `plan-stage.workflow.yaml`: `derive-run-plan` gets `inline: true`. Without it the command step ran in a lane
+  worktree branched from `main` (`context.ts` `integrationBase`), which cannot hold the documents the earlier steps
+  wrote. It is read-only, so inline is also the honest kind.
+
+**Decisions and where they diverge from a literal reading.**
+1. *Story-level plan is the plan of record; the step-level one is best effort.* The shipped `build-stage` does not
+   compile (`merge`'s per-item `dependsOn` cannot resolve `item.id`, the documented gap in `compile.ts`/Q72; the
+   `review` fanout has no `itemKey`, so `review:{{item.id}}` would dangle even if it could). Failing the step on that
+   would fail every real `plan-stage` for a defect that is not in the user's stories, so it is a
+   `step-plan-unavailable` *warning* carrying the compiler's messages, `stepPlan: "unavailable"`, `criticalPath:
+   null` (cost unknown, not zero), and the plan continues from the stories. When `build-stage` is fixed the steps
+   appear with no change. This is a P11-class coherence gap; recorded, not fixed here.
+2. *Overlap is decided by static path prefix, not glob intersection.* `globsOverlap` (also behind `spec validate
+   --rule file-claim-overlap`) is literal-against-pattern only: it misses `src/auth` vs `src/auth/login.ts`,
+   `src/**/*.ts` vs `src/billing/**`, brace sets, `./` prefixes, and returns false without a word for a glob over 512
+   characters. The run plan needs the opposite bias (a missed overlap puts two stories in one wave to write the same
+   files), so two claims count as overlapping unless their fixed leading path segments diverge (case-insensitive).
+   This over-flags a few disjoint pairs (`src/*.ts` vs `src/a/b.ts`), reports them as "may claim overlapping
+   files", and the story-level check never calls `minimatch`. The `spec validate` rule and `G-Ready` are unchanged and can still disagree
+   with the plan (the plan is stricter).
+3. *Serialisation direction.* Overlapping stories that no dependency orders run lower id first; an added edge is
+   never allowed to close a cycle (checked both directions). Reported overlaps are capped at 100 (`overlapCount` is
+   the true total) so a stage where every story claims one file does not print quadratic output.
+4. *Delivered, blocked, duplicate and cross-stage stories.* `done`/`verified` stories are not scheduled and a
+   dependency on one is met; a dependency on an undelivered story of another stage (or on one that failed its
+   schema) is a warning and lists the dependent under `blocked`; on an unknown id, an error. A `blocked_by` (or
+   `status: blocked`) story keeps its wave and is listed under `blocked`: dropping it would move everything that
+   follows it. A story id declared by two documents is an error and neither copy is planned (a done copy does not
+   excuse a ready one); across other stages "not delivered" wins, so the answer never depends on which file was read
+   last. A story a stage Epic lists but whose own `epic` names an Epic of another stage is an error
+   (`story-epic-mismatch`); the story's own `epic` field decides membership. Findings are sorted by code then
+   subject, so file names and walk order never change the bytes. `draft` status is not inspected (the readiness
+   gate owns it). An Epic with no stories, and nothing delivered, is `ok` with a `stage-has-no-stories` warning.
+5. *Test paths.* `09` §9.3 has one `files_expected` list; `build-stage`'s test step needs `test_paths`. Derived: the
+   claims under a `test`/`tests`/`__tests__`/`e2e` directory or named `*.test.*`/`*.spec.*` (JS/TS) or `*_test.*`. Heuristic, narrow; a co-located test inside a source
+   claim (`src/x/**` holding `a.test.ts`) yields an empty `test_paths`.
+6. *Story ids in step ids.* `build-stage`'s `review` fanout has no `itemKey`, so its steps would be keyed by
+   position (`review:0`), and position depends on the wave order this plan feeds in; deterministic, but not stable
+   across a re-plan that changes the wave order. Fixing that is the `itemKey` fix in 1.
+
+**Left undone / limits (disclosed).**
+- Where lane output lands during a real `plan-stage` is not established here: `inline` runs at `projectRoot`, gates
+  evaluate at the integration worktree. If the Epics and Stories are only on the integration branch when
+  `derive-run-plan` runs, the command reports `RUN-082`. P9's live run settles it; the command takes `-C`/`--project`
+  so a workflow can point it at the right tree.
+- `compileRunPlan` (unchanged) still does pairwise `minimatch` over step claims: roughly a second at 100 stories with
+  four claims each, and a `src/{1..99999}/x.ts` brace claim costs seconds per comparison. The story-level plan does
+  not use it, but the step-level compile does.
+- A `stageId` with shell metacharacters reaches the workflow's `run:` string unquoted (`forge plan stage <id>` takes
+  it as user input). Same trust level as the user's own shell; not hardened here.
+- `--dry-run` is accepted and ignored (`run-plan` is always read-only); no `--graph` rendering (`06` §6.2's
+  `forge plan stage <id> --graph`).
+- Mermaid is rendered for cycles only. In human output finding text is printed on one line (story files can quote
+  anything); only the engine's own cycle graph is printed as a block. JSON is the escaped `JSON.stringify` form.
+- Overlap pairs cost O(n^2) with a reachability DFS each: 500 mutually overlapping stories take under a second, 1000
+  about six, 2000 about a minute (`compileRunPlan`'s step-level claim check adds a similar quadratic term). Stages
+  are expected to hold tens to low hundreds of stories.
+- A story whose `id` is not a string, or an Epic whose `stage` is not a string, is invisible to the command (the
+  schema rejects both; `RUN-082` then says "no Epic declares it", which is slightly misleading for that case).
+- An `.spec.` file counts as a test path only for JS/TS extensions (`api/openapi.spec.yaml` does not).
+
+**Verification scoping (owner-approved cost cut).** Scoped tests only: `packages/engine/test/plan`,
+`packages/core/test/errors.test.ts`, `packages/cli/test/bin-run-plan.test.ts`, `packages/cli/test/commands/run`,
+`packages/cli/test/commands/workflow-session-placements.test.ts`, `test/workspace-floor.test.ts`, and the `plan` and
+`doctor` slices of `packages/cli/test/bin.test.ts`; plus `pnpm typecheck`, `pnpm run boundaries`, `pnpm lint`. No
+full-suite run; the orchestrator runs it.
+
+**Gauntlet.** Three critic rounds, none empty. Round 1 (1 blocking, 7 major): the step ran in a lane worktree
+branched from `main` (now inline), `globsOverlap` false negatives, duplicate ids double-counted, cross-stage and
+delivered dependencies, quadratic output, recursion depth, a dropped dependency when a story claims no files.
+Round 2 (0 blocking, 6 major): file-name-dependent output, `..` in a claim, blocked/duplicate/cross-stage handling,
+the unavailable step plan reading as free. Round 3 (0 blocking, 4 major): story dependencies missing from a compiled
+step plan (no claims, or an `itemKey` other than the id), no ordering onto the story's last step, DEL/C1 bytes in
+`--json`, silent drops (a mistyped Story, duplicate Epic ids, a numeric stage). All fixed and covered by tests; the
+round-3 fixes were verified by the scoped suite, lint and typecheck, not by a fourth critic. Findings judged out of
+scope and recorded above: shell interpolation of `stageId`, lane-output visibility (P9), cubic overlap time,
+co-located tests in `files_expected` (an empty `test_paths`, so `generate-tests` claims nothing), and that two
+`ready` stories with overlapping claims are a `G-Ready` failure per `09` §9.3 rule 4 but only a warning here (the plan
+serialises them per `06` §6.2 rule 3; `spec validate --rule file-claim-overlap` remains the gate).

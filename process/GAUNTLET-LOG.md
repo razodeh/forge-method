@@ -13762,3 +13762,59 @@ commands/upgrade,e2e/init,bin,bin-init-tiers}` (bin.test.ts run whole), `package
 boundaries`, eslint clean, prettier reports only the 4 pre-existing files. Two scoped failures seen under machine load
 (`upgrade/{backup,run-upgrade}.test.ts`) pass in isolation (the accepted load-sensitive pair); one stray-file failure
 (`tier-stubs.ts` vs `workspace-floor`) was this piece's and is fixed (helper registered like its siblings).
+
+## M13 P10 — `forge plan run-plan` (`@forge/engine/plan` `stage-plan.ts`, `commands/run/run-plan.ts`, `RUN-082`)
+
+**Piece:** `plan-stage.workflow.yaml`'s `derive-run-plan` step runs `forge plan run-plan {{stageId}} --json`; nothing handled
+`run-plan`, so every real `plan-stage` run failed at that step. Built the subcommand and the deterministic computation behind
+it: a stage's stories into waves (declared dependencies plus serialised file-claim overlaps), cycles / unknown dependencies /
+duplicates as findings, and `build-stage` compiled against them when it compiles. Decisions, the spec-vs-workflow
+disagreement and every disclosed limit: Q206. Three critic rounds (no round came back empty; the last round's findings were
+fixed and verified with the scoped suite, lint and typecheck rather than a fourth round).
+
+### Round 1: 1 blocking, 7 major, 9 minor
+
+The command step ran in a lane worktree branched from `main`, which cannot hold the stage documents (now `inline: true`);
+`globsOverlap` returned false for `src/auth` vs `src/auth/login.ts`, `src/**/*.ts` vs `src/billing/**`, brace sets, `./`
+prefixes and any glob over 512 characters, so overlapping stories shared a wave (replaced with a sound static-prefix check);
+duplicate story ids were double-counted and which copy was planned depended on input order; a dependency on an earlier
+stage's delivered story was a hard error; overlap output was quadratic (1225 findings at 50 stories) and a 4000+ story chain
+overflowed the stack (both capped/iterative now); a declared dependency was dropped when the dependent story claimed no files;
+`step-plan-unavailable` read as `ok:true` with cost 0 (now `stepPlan`, `criticalPath: null`). Minors: terminal-escape bytes in
+human output, silently dropped stories, a cyclic graph still emitting nodes, no numeric `errors` field, the test-path heuristic
+matching `docs/forge/specs/**`.
+
+### Round 2: 0 blocking, 6 major, 9 minor
+
+Output depended on file names (finding order, last-writer-wins on cross-stage duplicate ids); a story id declared twice
+(one `done`) passed; a story listed by one stage's Epic but naming another's was planned twice; `..` in a claim broke the
+superset promise; blocked / undelivered-prerequisite stories were reported as fine; an empty stage passed silently. Also
+fixed: forged multi-line dependency names, the "never calls minimatch" overclaim, a dependency on a schema-invalid story
+reported as unknown, in-progress stories planned as fresh work.
+
+### Round 3: 0 blocking, 4 major, 11 minor
+
+Story dependencies were absent from a *compiled* step plan when no story claimed files or the workflow's `itemKey` was not
+the bare id, with nothing saying so; the edge stopped at `implement` rather than the story's last per-story step; `--json`
+passed DEL/C1 bytes; a mistyped Story, duplicate Epic ids and a numeric Epic stage were silently ignored. All fixed (a
+workflow whose per-story steps are not keyed by story id is now `step-plan-unavailable`). Left as disclosed limits: cubic
+overlap time beyond a few hundred stories, shell interpolation of `stageId`, co-located tests giving an empty `test_paths`, two
+`ready` stories with overlapping claims a warning here but a `G-Ready` failure per `09` §9.3 rule 4.
+
+**What the critics caught that the builder missed:** that the step would run somewhere the documents are not; that the
+codebase's own overlap check has systematic false negatives and the run plan needs the opposite bias; that the shipped
+`build-stage` does not compile at all (found by running the real thing, not from the spec); that a per-story dependency must
+land on the story's *last* step, not the writing step; and every determinism hole that only shows when file names change. The
+builder's own determinism test re-ran the same tree, which cannot catch any of them.
+
+**Process notes:** the first design compiled `build-stage` and made it the plan; running it against the real shipped workflow
+showed it never compiles (`merge`'s per-item `dependsOn`, `review` without an `itemKey`), which is when the story-level plan
+became the plan of record. Machine load made `workspace-floor` and `bin.test.ts` time out or fail mid-run when other pieces'
+in-flight files were in the tree; both passed in isolation. An `it.fails` test tracks the `build-stage` gap: it turns red the day the
+workflow compiles, which is the cue to delete the `.fails`.
+
+**Verification:** scoped per the owner-approved cost cut (no full unscoped suite): `packages/engine/test/plan`,
+`packages/core/test/errors.test.ts`, `packages/cli/test/bin-run-plan.test.ts`, `packages/cli/test/commands/run`,
+`packages/cli/test/commands/workflow-session-placements.test.ts`, `packages/templates`, `test/workspace-floor.test.ts`, and the
+`plan` slice of `packages/cli/test/bin.test.ts`; `pnpm typecheck` (21/21), `pnpm run boundaries`, eslint clean on every touched
+file, prettier clean on every touched file.
