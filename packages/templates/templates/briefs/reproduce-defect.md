@@ -1,17 +1,15 @@
-# Reproduce the defect
-
 Turn a reported defect into a deterministic, minimal reproduction before anyone tries to fix it.
 This is a hard gate: no fix may be attempted until a reproduction exists. The next step writes the
 failing test from what you record here, so what you record is its specification.
 
-## Inputs
+### Inputs
 
 - The `Defect` you were given: observed behaviour, expected behaviour, first seen, frequency,
   environment, severity, affected stories and evidence (stack traces, logs, trace ids, failing
   tests).
 - The code and tests it names, and the acceptance criteria of any story listed in `affected`.
 
-## Method
+### Method
 
 1. Restate the defect as "expected X, observed Y". If the Defect cannot be stated that way, stop and
    say exactly which fact is missing. Vagueness here becomes thrashing later.
@@ -27,7 +25,7 @@ failing test from what you record here, so what you record is its specification.
    NEEDS-MORE-EVIDENCE, and it is different from a reproduction you were not able to run (see
    below).
 
-## Produce
+### Produce
 
 Record the reproduction in the `Defect` itself, in a "Reproduction" section of its body, and list
 any supporting file in its `evidence`. Record:
@@ -41,7 +39,7 @@ If a command alone cannot express the reproduction, add a small script and list 
 `evidence`; put it under `docs/forge/reports/defects/` beside the Defect records, named after the
 defect id. Do not put a reproduction only in your final message; the next session cannot see it.
 
-## Acceptance
+### Acceptance
 
 - Someone who has only the Defect and the recorded command sees the recorded failure.
 - The reproduction fails because of the reported defect, not because of setup you introduced.
@@ -49,7 +47,7 @@ defect id. Do not put a reproduction only in your final message; the next sessio
   Defect's `status` field as it is), lists what you tried and what each attempt showed, and names
   the logging, tracing or data that would make it reproducible.
 
-## Do not
+### Do not
 
 - Do not fix the defect, and do not change production code or existing tests to make it easier to
   reproduce.

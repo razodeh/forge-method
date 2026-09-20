@@ -1,18 +1,16 @@
-# Run the RCA loop on the defect
-
 Take one defect from a reported symptom to a proven root cause and a recorded diagnosis. The fix is
 the next step's job, made by a different agent. Yours is the part that decides whether that agent
 fixes the right thing: the RCA loop, in strict order, from intake through diagnosis and the
 prevention analysis.
 
-## Inputs
+### Inputs
 
 - The `Defect`: observed and expected behaviour, first seen, frequency, environment, severity,
   affected stories and evidence.
 - The KB's `constraints/**`, and `engineering/debugging/**` where it exists. Read the tests and code
   the Defect names.
 
-## The loop
+### The loop
 
 Do each phase in order and record its result as you go. Do not start a phase because the previous
 one seems obvious.
@@ -46,14 +44,14 @@ one seems obvious.
    Sev2 defect needs at least one. If the defect was hard to diagnose for lack of logs, traces or an
    error code, the prevention action is to add that observability.
 
-## Produce
+### Produce
 
 An `RCA` record carrying the defect id, severity, symptom, reproduction (the command or test path),
 timeline, every hypothesis with `refuted_by` and status, root cause, causal chain, prevention, blast
 radius, KB writes and time to diagnose. Because the fix is applied after you, state in `fix` the
 intended change and its location, marked as prescribed and not yet applied.
 
-## Do not
+### Do not
 
 - Do not change production code. The only files you add are the reproduction and the RCA record.
 - Do not stop at the first hypothesis that fits, and do not keep a hypothesis you have not tried to

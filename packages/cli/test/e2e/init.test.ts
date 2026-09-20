@@ -1,6 +1,6 @@
 /**
  * `E1 init` — `specs/22` M6's own literal exit-test line:
- * `pnpm test -- --grep "E1 init"   # full artifact set, all validators clean` -- as of `PLAN-M13.md` P1, `agent`/`workflow` validate report the itemized, disclosed findings below instead of zero.
+ * `pnpm test -- --grep "E1 init"   # full artifact set, all validators clean` -- clean again as of `PLAN-M13.md` P2/P3, which authored the content P1's real checks look for.
  *
  * A real `forge init` against the real, complete `modules/` roster at the repo root (not a fixture
  * module), followed by every real validator this milestone ships: `forge agent validate --all`,
@@ -19,19 +19,13 @@
  * `Epic(*)`/`Story(*)`, matching what `plan-stage.workflow.yaml` actually produces) and its references
  * were corrected to match. See `SPEC-QUESTIONS.md` for the full record.
  *
- * **`PLAN-M13.md` P1 update — genuinely clean no longer, disclosed rather than hidden.** Both `forge
- * agent validate --all` and `forge workflow validate --all` stayed clean from Q194 above until
- * `PLAN-M13.md` P1 replaced each command's own permissive existence-check stub (`briefExists: () =>
- * true`, and no agent-prompt check at all) with a real one. Both now correctly report every one of the
- * 34 real, shipped agents' own `prompt.system`/`prompt.briefs.*` reference (62 real `unknown-prompt`
- * findings) and every real, shipped workflow's own `brief:` reference (53 real `unknown-brief` issues)
- * as unresolved — no real brief/prompt *content* has been authored anywhere in this codebase yet
- * (`BRIEF_INDEX`/`PROMPT_INDEX` in `packages/templates/src/index.ts` are still empty). This is a real,
- * disclosed, intentionally temporary regression: `PLAN-M13.md` P2/P3 (content authoring, not yet
- * built) closes it, the same way Q194 above closed Q192's own disclosed `unknown-artifact-type` gap.
- * See `SPEC-QUESTIONS.md` Q197. `EXPECTED_M13_P1_AGENT_FINDINGS`/`EXPECTED_WORKFLOW_ISSUES` below are
- * the real, complete, itemized findings/issues — by real id, not merely a count — so this test still
- * fails the moment either real list's shape changes for any reason other than real content landing.
+ * **`PLAN-M13.md` P1 -> P2/P3.** P1 replaced `agent validate --all`'s and `workflow validate --all`'s
+ * permissive existence stubs with real checks that every agent `prompt.system`/`prompt.briefs.*` and
+ * every workflow `brief:` (and, from P2c, every gate `brief:`) resolves to real, non-empty content
+ * (`SPEC-QUESTIONS.md` Q197). For a while that made a fresh `forge init` report 62 `unknown-prompt` and
+ * 53 `unknown-brief` findings, asserted here as an itemized list. P2a/P2b/P2c (briefs) and P3a/P3b
+ * (prompts) authored all of it, so both validators are asserted clean (`[]`) again; a missing or
+ * empty content file now fails this test with the offending id.
  *
  * @see specs/22 M6
  * @see PLAN-M6.md C9
@@ -46,7 +40,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { ProjectPaths, readTextFile } from '@forge/core/fs';
 import type { ForgeConfig } from '@forge/schemas/config';
-import type { ValidationIssue } from '@forge/engine/workflow';
 import * as YAML from 'yaml';
 
 import { runInit } from '../../src/init/run-init.ts';
@@ -59,24 +52,8 @@ import {
 } from '../../src/commands/doctor/project.ts';
 import { templateValidateAll } from '../../src/commands/template.ts';
 import { workflowValidateAll } from '../../src/commands/workflow.ts';
-import { EXPECTED_M13_P1_AGENT_FINDINGS } from '../fixtures/m13-p1-expected-agent-findings.ts';
 
 const REAL_MODULES_DIR = fileURLToPath(new URL('../../../../modules/', import.meta.url));
-
-/**
- * The real, complete, itemized `unknown-brief` issues `forge workflow validate --all` reports against
- * the real, complete `modules/` roster right now — see this file's own top-of-file doc comment and
- * `SPEC-QUESTIONS.md` Q197. Captured directly from a real run of this exact test body (not hand-typed
- * from a spec or guessed): every real, shipped workflow's own `brief:` reference currently resolves to
- * nothing, since `BRIEF_INDEX` (`packages/templates/src/index.ts`) is still empty. Gate-embedded
- * `brief:` references (`packages/templates/templates/checks/*.gate.yaml`) are a separate, real,
- * pre-existing gap this list does not cover: no command validates a gate document's own step-level
- * references at all today (confirmed: `run/gates.ts` has no `validate` of its own), the identical
- * "genuinely never checked, not merely a stub returning `true`" situation `briefExists` itself was in
- * before this piece — out of scope here, recorded in `SPEC-QUESTIONS.md` Q197, not silently expanded
- * into or hidden by this list.
- */
-const EXPECTED_WORKFLOW_ISSUES: readonly (ValidationIssue & { readonly id: string })[] = [];
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -129,7 +106,7 @@ describe('E1 init', () => {
     // right now -- see this file's own top-of-file doc comment (`PLAN-M13.md` P1, `SPEC-QUESTIONS.md`
     // Q197): every real `unknown-prompt` finding is asserted explicitly, by real agent id, below.
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
-    expect(agentFindings).toEqual(EXPECTED_M13_P1_AGENT_FINDINGS);
+    expect(agentFindings).toEqual([]);
 
     // Part 3: `forge template validate --all`.
     const templateResults = await templateValidateAll();
@@ -148,6 +125,6 @@ describe('E1 init', () => {
     const allWorkflowIssues = [...workflowResults.entries()].flatMap(([id, issues]) =>
       issues.map((issue) => ({ id, ...issue })),
     );
-    expect(allWorkflowIssues).toEqual(EXPECTED_WORKFLOW_ISSUES);
+    expect(allWorkflowIssues).toEqual([]);
   });
 });

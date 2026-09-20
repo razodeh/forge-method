@@ -1,10 +1,8 @@
-# Performance and reliability hardening pass
-
 Measure the stage against its performance and reliability requirements and file every miss as a
 defect. Measure first; do not tune. A later step fixes what you file, and `G-Stable` will not pass
 while a Sev1 or Sev2 defect is open.
 
-## Inputs
+### Inputs
 
 This step declares no inputs. Read the NFRs enforced at this stage (latency percentiles, throughput,
 resource limits, availability and recovery targets) and each one's `verification` reference, the
@@ -12,7 +10,7 @@ architecture spec's stated failure mode per component boundary, the SLOs if any 
 and load-test tooling already in the repository, and the existing reports under
 `docs/forge/reports/`.
 
-## Method
+### Method
 
 For each performance NFR, run or design the benchmark that its own statement describes: the same
 load, data volume, percentile and environment. If a benchmark exists, use it rather than writing an
@@ -36,7 +34,7 @@ Then check reliability against the failure modes the architecture states for eac
 - recovery: startup and restart behaviour, and that a rollback or restart does not lose or duplicate
   data.
 
-## Produce
+### Produce
 
 `Defect` records, one per distinct finding (many, possibly none), with the standard front matter and
 `status: open` (the gate counts only that literal value as open, so a finding must start there).
@@ -55,7 +53,7 @@ Then check reliability against the failure modes the architecture states for eac
 For each NFR, whether it passed or failed, note the measured value in the defect or in your final
 summary, so a reader sees what was measured, not only what failed.
 
-## Do not
+### Do not
 
 - Do not change code, configuration or the NFR targets, and do not fix anything you find.
 - Do not report a result from a benchmark that differs from the NFR's stated conditions without

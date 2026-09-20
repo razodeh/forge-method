@@ -1,19 +1,17 @@
-# Draft the interface contract
-
 Design and write the contract for one cross-boundary interaction, the one named by this run's
 `interfaceName` input. That input is not one of this step's declared inputs, so if the interface's
 name is not in your context, ask with `FORGE_ASK:` rather than choosing one. Once it merges it is
 the frozen source that consumer and provider both build against and that the next step turns into
 contract tests, so it has to be complete and testable.
 
-## Inputs
+### Inputs
 
 - The `ArchitectureSpec`: which components sit on each side of the interaction, the pattern chosen
   (request/response, event, queue, stream) and the constraints on it.
 - `kb:architecture/integration/**`: existing protocols, conventions, versioning rules and other
   contracts this one must stay consistent with.
 
-## Produce
+### Produce
 
 One `InterfaceContract` at `docs/forge/specs/interfaces/<interfaceName>.yaml`, with an unused
 `INT-###` id and the standard front matter. The contract file is YAML (OpenAPI, AsyncAPI, JSON
@@ -38,7 +36,7 @@ the YAML record carry the id, title and a reference to it. The contract states:
 - Examples: at least one valid example per operation and one per documented error, which the tests
   can validate.
 
-## Acceptance
+### Acceptance
 
 `G-Integration` runs on the merged contract before this interaction's tests are written. It checks
 version skew and migration order, and its cross-service contract check runs any contract tests that
@@ -52,7 +50,7 @@ alone, so:
 - If it changes an existing contract, the change is classified breaking or not, with the migration
   path for each consumer.
 
-## Do not
+### Do not
 
 - Do not describe only the happy path.
 - Do not write implementation code or the tests; those are separate roles and steps.

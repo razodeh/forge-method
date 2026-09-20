@@ -1,17 +1,15 @@
-# Refactor under green
-
 The story's tests pass. Improve the structure of what you just wrote without changing what it does.
 This is the third step of red, green, refactor, and the rule that makes it safe is that behaviour is
 held fixed by the tests you were not allowed to touch.
 
-## Inputs
+### Inputs
 
 - `diff:lane`: everything this story has changed in its lane so far. Refactor only what is in this
   diff. Code the story did not write is not yours to reshape here.
 - The story's tests and the project standards in your context. The tests define which behaviour must
   not change.
 
-## Produce
+### Produce
 
 A cleaner version of your own change, still inside the story's file claim. Look for the things a
 reviewer will flag in this diff:
@@ -26,7 +24,7 @@ reviewer will flag in this diff:
 Make each change small and independently understandable. Run the story's tests after each one if you
 can, and stop as soon as a test fails: undo that change rather than adjusting a test.
 
-## Acceptance
+### Acceptance
 
 - The whole suite that was green before is green after, with no test edited, skipped or removed.
 - No observable behaviour changes: same inputs, outputs, errors, side effects and performance
@@ -38,7 +36,7 @@ can, and stop as soon as a test fails: undo that change rather than adjusting a 
 - Name the commands that show the tests still pass. If your grant does not let you run them, say so
   and give the command and the outcome you expect; never report a result you did not observe.
 
-## Do not
+### Do not
 
 - Do not add features, fix newly noticed bugs, or change a contract. Note anything you find and
   leave it for a request or a new story.

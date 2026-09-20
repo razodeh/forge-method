@@ -133,7 +133,9 @@ describe('build-path briefs (P2b)', () => {
 
     it('is a substantive markdown brief, not a stub', () => {
       const lines = text.trim().split('\n');
-      expect(text.startsWith('# '), 'starts with a title heading').toBe(true);
+      expect(text, 'no level 1-2 headings: the brief sits inside block [4]').not.toMatch(
+        /^#{1,2} /m,
+      );
       expect(lines.length).toBeGreaterThanOrEqual(25);
       expect(lines.length).toBeLessThanOrEqual(90);
     });
@@ -163,7 +165,7 @@ describe('build-path briefs (P2b)', () => {
   it('has no two identical briefs, and no two that share an opening paragraph', () => {
     const bodies = BATCH_KEYS.map((key) => briefText(key));
     expect(new Set(bodies).size).toBe(bodies.length);
-    const openings = bodies.map((body) => body.split('\n\n')[1] ?? '');
+    const openings = bodies.map((body) => body.split('\n\n')[0] ?? '');
     expect(new Set(openings).size).toBe(openings.length);
   });
 });

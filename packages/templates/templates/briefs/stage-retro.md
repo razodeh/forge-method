@@ -1,10 +1,8 @@
-# Run the stage retrospective
-
 The stage has just completed. Write the retrospective that feeds the next stage: what the data shows
 happened, what to change, and who owns each change. This retro is mandatory because it is the only
 mechanism by which the process improves itself.
 
-## Inputs
+### Inputs
 
 This step declares no inputs, so gather evidence from what your context pack and read access give
 you. Raw event logs are not packed and your command access is limited to reading and `git log`, so
@@ -13,7 +11,7 @@ exit criteria, the cost ledger and whatever event summaries reach you, gate repo
 `docs/forge/reports/gates/`, review reports, `RCA` and `Defect` records, the flaky-test report, and
 merge and revert history for the stage. Prefer recorded data over recollection.
 
-## Method
+### Method
 
 Reconstruct the timeline from the records you have, then examine the numbers that describe how the
 stage went:
@@ -29,7 +27,7 @@ stage went:
 Every figure you cite must come from a record you read. If a figure is not in your context, say it
 is unavailable; do not estimate it.
 
-## Produce
+### Produce
 
 A `SessionRecord` with `sessionType: retro` (this is what the workflow calls the retrospective
 subtype; it is not a separate front-matter field), with the `##` sections the record requires:
@@ -42,13 +40,13 @@ Frame, Diverge, Converge, Decisions, Non-decisions, Actions and KB write-back.
 - KB write-back lists what should change in `engineering/ways-of-working.md` and any other KB page,
   and states these as proposals where you do not own the page.
 
-## Acceptance
+### Acceptance
 
 - The record is grounded: each conclusion cites the event, report or record that supports it.
 - It includes what went well, so it is not only a list of faults.
 - Every action names an owner and can be checked later as done or not done.
 
-## Do not
+### Do not
 
 - Do not soften a gate failure or an overrun because the stage ultimately passed.
 - Do not assign blame to an agent or a person; describe the process condition that made the failure

@@ -1,16 +1,14 @@
-# Document the story
-
 The story has passed review. Leave the project's documentation and knowledge in the state a newcomer
 would need to understand and safely change what this story added. Do this from the change that was
 actually reviewed, not from the plan.
 
-## Inputs
+### Inputs
 
 - `diff:lane`: the reviewed change. Everything you document must be traceable to it.
 - The story's acceptance criteria and the contracts it implements, in your context. They are the
   source of truth for behaviour; the documentation must agree with them.
 
-## Produce
+### Produce
 
 Update only what this change made stale or missing:
 
@@ -34,7 +32,7 @@ Update only what this change made stale or missing:
 - Notes for operators or users only where the change alters how the system is run, configured or
   observed.
 
-## Acceptance
+### Acceptance
 
 - No public symbol added or changed by the diff is undocumented.
 - Every example and command in the documentation is one you could run against this change and get
@@ -43,7 +41,7 @@ Update only what this change made stale or missing:
   over it in prose.
 - Each decision proposal names the story and acceptance criteria it arose from.
 
-## Do not
+### Do not
 
 - Do not change production code beyond doc comments on this story's own new code, and do not change
   tests or contracts. If documenting reveals a bug, report it.

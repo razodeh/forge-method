@@ -1,11 +1,9 @@
-# Freeze the stage's contracts
-
 Every story in this stage is about to be built in its own lane, in parallel, and no lane can see
 another lane's in-flight work. Your job is to write down, before any of that starts, every seam the
 lanes share, so each implementer imports a contract instead of inventing one. After this step and
 the `G-Design` gate that follows it, those contracts are frozen for the stage.
 
-## Inputs
+### Inputs
 
 - `Epic(*)` and `Story(*)` for this stage. For each story read `interfaces`, `data`,
   `files_expected`, `depends_on` and every acceptance criterion. Two stories whose file claims or
@@ -19,7 +17,7 @@ the `G-Design` gate that follows it, those contracts are frozen for the stage.
   yours are unused, and before writing a contract that overlaps one.
 - `kb:data/**`: the data model. Entities, keys and migration ids come from here.
 
-## Produce
+### Produce
 
 `InterfaceContract` artifacts, one per contract, under `docs/forge/specs/interfaces/`. Each carries
 an `INT-###` id that is not already taken and the standard front matter. The contract file is YAML
@@ -39,7 +37,7 @@ kinds a stage can share:
 Where the stack can generate code from a contract, name the generator and its output location in the
 contract, so implementers import the generated types and never re-declare them.
 
-## Acceptance
+### Acceptance
 
 `G-Design` runs `forge spec interfaces --check-frozen` and fails on any `undefined_refs`. So:
 
@@ -54,7 +52,7 @@ contract, so implementers import the generated types and never re-declare them.
 - Contracts agree with the ADRs and data model they cite. Where they cannot, stop and report the
   conflict.
 
-## Do not
+### Do not
 
 - Do not write implementation code, tests or stories; you own contracts only.
 - Do not add contracts for seams no story in this stage uses.

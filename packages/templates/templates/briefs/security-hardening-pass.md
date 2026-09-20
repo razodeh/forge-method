@@ -1,18 +1,16 @@
-# Security hardening pass
-
 Review what this stage actually built against the threats the project said it must resist, and file
 every gap as a defect. You are the adversary here: for each finding state the exploit path, not just
 the risk category. A later step fixes what you file, and `G-Stable` will not pass while a Sev1 or
 Sev2 defect is open.
 
-## Inputs
+### Inputs
 
 This step declares no inputs. Read the `ThreatModel` (under `security/` in the KB), the architecture
 spec's component boundaries and trust zones, the data model (what is sensitive), the stage's
 security NFRs, the constraints in the KB, the code and configuration the stage added or changed, and
 the dependency manifests and lockfiles.
 
-## Method
+### Method
 
 Take each threat in the threat model and each component boundary the stage touched, and check the
 code against it rather than against a generic list. Cover, where they apply to this stage:
@@ -34,7 +32,7 @@ review. A class you could not examine (no access to run or read what is needed) 
 `OpenQuestion` with status `open` naming what is missing, so the stage cannot pass on an unexamined
 threat; raise it with `FORGE_ASK:` if you cannot write that register.
 
-## Produce
+### Produce
 
 `Defect` records, one per distinct finding (many, possibly none), in the standard front matter with
 `status: open` (the gate counts only that literal value as open, so a finding must start there):
@@ -52,7 +50,7 @@ threat; raise it with `FORGE_ASK:` if you cannot write that register.
   and Sev4 for hardening gaps you could not exploit. Do not inflate to get attention or deflate to
   get past the gate, and give the reason for each.
 
-## Do not
+### Do not
 
 - Do not fix anything, and do not change code, configuration or tests.
 - Do not report a finding you cannot point to in the code or configuration, and do not report

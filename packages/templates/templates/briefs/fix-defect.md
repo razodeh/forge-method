@@ -1,10 +1,8 @@
-# Fix the defect at its root cause
-
 Fix the defect or defects assigned to this step with the smallest change that removes the cause. A
 reproduction (a failing test or command) and, where one exists, an `RCA` record come before you.
 They are your specification; the reproduction's job is to go from failing to passing.
 
-## Inputs
+### Inputs
 
 - The `Defect` records in scope (under `docs/forge/reports/defects/`; if this step names none and
   several exist, ask with `FORGE_ASK:` which one). On a hardening pass this is every finding, and
@@ -23,7 +21,7 @@ stop on that defect and say so. Do not guess from the description. A reproductio
 confirm it fails or that it now passes: give the command and the expected output, mark it not run,
 and never write an unrun result as observed.
 
-## Produce
+### Produce
 
 A change per defect, confined to the code the diagnosis names, that fixes its cause.
 
@@ -39,7 +37,7 @@ A change per defect, confined to the code the diagnosis names, that fixes its ca
 - Carry out the prevention actions the RCA named that are part of the code change, such as a type
   constraint or a lint rule. List the rest for follow-up.
 
-## Acceptance
+### Acceptance
 
 - The reproduction (or the regression test you added) passes, and the affected test layer still
   passes.
@@ -53,7 +51,7 @@ A change per defect, confined to the code the diagnosis names, that fixes its ca
 - State the exact commands that should prove the fix, and mark each defect ready for verification,
   not closed.
 
-## Do not
+### Do not
 
 - Do not mask the symptom. These are refused in review: widening a `catch`, adding a retry to hide a
   race, loosening or deleting an assertion, adding a sleep, or adding a null check that hides an

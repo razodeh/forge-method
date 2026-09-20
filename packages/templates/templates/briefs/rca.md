@@ -1,10 +1,8 @@
-# Find the root cause of repeated test failures
-
 The stage's implementation work has failed its tests more than twice, which is the point where
 retrying stops being useful. Establish why, so the next attempt changes the cause instead of the
 symptom. You diagnose; you do not fix.
 
-## Inputs
+### Inputs
 
 You are dispatched by the stage's failure handling, so your inputs are whatever the failing work
 left behind: the failing story and its acceptance criteria, the failing test output and its history,
@@ -12,7 +10,7 @@ the lane's diff, the frozen contracts the story uses, and any `Defect` already r
 Identify the failing story and the failing tests first and state them at the top of your RCA. Use
 the KB's `constraints/**` and `engineering/debugging/**` where they bear on the failure.
 
-## Method
+### Method
 
 Follow the RCA loop in order and do not skip a phase.
 
@@ -39,7 +37,7 @@ Follow the RCA loop in order and do not skip a phase.
 6. Diagnose as a causal chain, then keep asking why until the answer is a decision, a missing check
    or a wrong assumption rather than "the code was wrong".
 
-## Produce
+### Produce
 
 An `RCA` record: defect id, severity, symptom, reproduction (the command), timeline, hypotheses with
 `refuted_by` and status, root cause, causal chain, blast radius, prevention actions, and time to
@@ -53,7 +51,7 @@ applying it:
   `FORGE_REQUEST_CHANGE:` against the test;
 - contract or criterion at fault: the specific ambiguity and the change needed.
 
-## Do not
+### Do not
 
 - Do not edit production code, tests or contracts. A diagnosis that arrives with an edit has skipped
   the proof.

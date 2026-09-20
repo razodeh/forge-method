@@ -1,16 +1,14 @@
-# Carry out the refactor
-
 Change the structure of the code to meet the stated goal while every invariant holds. The earlier
 step wrote down what must not change; the test run after you decides whether it did not.
 
-## Inputs
+### Inputs
 
 The invariants handoff (goal, scope, invariants and the commands that guard them). This step
 declares no inputs, so find it: it is the latest `HandoffRecord` in `docs/forge/reports/handoffs.md`
 whose `step` is `state-invariants`. Also the code in scope, the project standards, and the frozen
 contracts the scope touches.
 
-## Produce
+### Produce
 
 The refactored code, inside the scope the handoff lists.
 
@@ -23,7 +21,7 @@ The refactored code, inside the scope the handoff lists.
 - If a step breaks a test, undo that step and find a smaller one.
 - Where the handoff named a differential check, run it on the same inputs before and after.
 
-## Acceptance
+### Acceptance
 
 - The commands the handoff names pass, and no existing test was edited, deleted, skipped or loosened
   to get there. Mechanical updates to a test that a rename made necessary are permitted only if you
@@ -35,7 +33,7 @@ The refactored code, inside the scope the handoff lists.
 - The goal is actually met: the structure the goal described is now what the code looks like.
 - Name the commands that prove the invariants hold.
 
-## Do not
+### Do not
 
 - Do not fix bugs, add features or change behaviour along the way. Record what you notice for later.
 - Do not delete a test because it now fails or seems redundant.

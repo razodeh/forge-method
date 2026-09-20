@@ -1,17 +1,15 @@
-# Design the deployment strategy
-
 Decide how each deployable unit is rolled out and, more importantly, how it is rolled back
 automatically. The steps after you deploy, run smoke tests and rehearse the rollback against your
 design, and `G-Deliver` fails if the rollback was never exercised.
 
-## Inputs
+### Inputs
 
 This step declares no inputs. Read the KB: the pipeline ADR written just before this step, the
 architecture spec's deployable units and their statefulness, the environment strategy in
 `delivery/`, the stage's NFRs (availability, latency, recovery time) and any migrations planned for
 this stage.
 
-## Produce
+### Produce
 
 An `ADR` in category `delivery`, framework `deployment-strategy`, with the headings the ADR schema
 requires, `## Context`, `## Options considered`, `## Decision`, `## Diagram`, `## Consequences` and
@@ -41,7 +39,7 @@ Diagram: draw the deployment topology in the project's notation as a `Diagram` f
 `docs/forge/kb/delivery/pipeline/`, the area you own, with a caption. Reference it from the ADR's
 `diagrams` and its `## Diagram` section. `G-Deliver` fails on a missing or stale topology diagram.
 
-## Acceptance
+### Acceptance
 
 - Every deployable unit in the architecture spec is covered or explicitly out of scope with a
   reason.
@@ -49,7 +47,7 @@ Diagram: draw the deployment topology in the project's notation as a `Diagram` f
 - The strategy's prerequisites are either present or listed as follow-on work with an owner.
 - Reversibility, blast radius and revisit trigger are filled in.
 
-## Do not
+### Do not
 
 - Do not pick blue/green or canary because it sounds safer; choose what the unit's traffic, cost and
   risk justify, and score it.

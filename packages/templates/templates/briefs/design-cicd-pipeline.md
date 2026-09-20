@@ -1,10 +1,8 @@
-# Design the CI/CD pipeline
-
 Decide the platform and the stage graph that carries this stage's changes from a pull request to
 production, and record the decision. The stages after you (`deploy`, `smoke-test`, rehearsed
 rollback, then `G-Deliver`) all run against what you specify here.
 
-## Inputs
+### Inputs
 
 This step declares no inputs. Read the KB: `constraints/**` (hosting, compliance, budget), the build
 and artifact strategy in `delivery/`, the architecture spec's deployable units, the stage's
@@ -12,7 +10,7 @@ non-functional requirements, and any existing pipeline or CI files in the reposi
 what is there. If the repository already has a working pipeline, design the change to it; do not
 design a replacement from scratch.
 
-## Produce
+### Produce
 
 An `ADR` in category `delivery`, framework `cicd-pipeline-design`, with the headings the ADR schema
 requires, `## Context`, `## Options considered`, `## Decision`, `## Diagram`, `## Consequences` and
@@ -35,7 +33,7 @@ validation fails an ADR missing a required heading.
   `docs/forge/kb/delivery/pipeline/`, the area you own, with a caption. Reference it from the ADR's
   `diagrams` and its `## Diagram` section. `G-Deliver` fails on a missing or stale pipeline diagram.
 
-## Acceptance
+### Acceptance
 
 State each of these explicitly in the ADR; each is checkable.
 
@@ -52,7 +50,7 @@ State each of these explicitly in the ADR; each is checkable.
 - Every stage writes machine-readable results under `docs/forge/reports/` so gates read the verdict.
 - Reversibility, blast radius and a revisit trigger are filled in.
 
-## Do not
+### Do not
 
 - Do not write the pipeline configuration files themselves in this step; you decide the design.
 - Do not choose a platform because it is fashionable. Use the scores, and cite the constraints.

@@ -1,11 +1,9 @@
-# Plan the story's implementation
-
 Write the implementation plan for one story before any test or code exists. The plan is a handoff to
 the test author and then to you as implementer, so it must be specific enough that the tests can be
 written against it and the code can be checked against it. It is also validated against the story's
 file claim.
 
-## Inputs
+### Inputs
 
 - The `Story`: acceptance criteria, `files_expected`, `interfaces`, `data`, `depends_on` and
   `context_refs`. Every acceptance criterion must be accounted for in the plan.
@@ -15,7 +13,7 @@ file claim.
 - Relevant prior art in the repository. Read the code the story will touch or sit beside before
   deciding where new code goes; follow existing patterns over inventing new ones.
 
-## Produce
+### Produce
 
 A `HandoffRecord` (the implementation-plan handoff) for this story, registered in
 `reports/handoffs.md`. Its `step` names this planning step. It has no free-form body, so carry the
@@ -37,7 +35,7 @@ plan in the fields:
 
 Address the receiver by role: `to` is the role that writes the tests next.
 
-## Acceptance
+### Acceptance
 
 - Every acceptance criterion maps to at least one planned test and at least one planned code change.
 - No planned path is outside the story's file claim. If the work needs a file outside it, say which
@@ -46,7 +44,7 @@ Address the receiver by role: `to` is the role that writes the tests next.
   If one does not, that is an open question, not a detail you invent.
 - The approach names its riskiest step and how you would find out early that it is wrong.
 
-## Do not
+### Do not
 
 - Do not write tests or production code in this step.
 - Do not plan work the criteria do not ask for, or a refactor of code the story does not need to

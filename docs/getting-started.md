@@ -97,22 +97,18 @@ forge gate list    # G-Deliver, G-Design, G-Foundation, G-Integration, G-Operate
 forge skill list    # the built-in skill library materialized into your project
 ```
 
-Two validators do **not** come back clean on a fresh project right now, and that is a disclosed,
-temporary state rather than a bug in your project. FORGE now genuinely checks that every workflow
-step's `brief:` and every agent's `prompt.system`/`prompt.briefs.*` resolves to a real file under
-`.forge/briefs/` / `.forge/prompts/`, but the brief and prompt content itself has not been authored
-yet (`process/plans/PLAN-M13.md` P2/P3). Until it lands:
+Both validators come back clean on a fresh project. They do real work: FORGE checks that every
+workflow step's `brief:`, every gate's `brief:` and every agent's `prompt.system`/`prompt.briefs.*`
+resolves to a real, non-empty file under `.forge/briefs/` / `.forge/prompts/`, and `forge init`
+materializes the shipped briefs and prompts there.
 
 ```bash
-forge agent validate --all      # exits 1: 62 `unknown-prompt` errors, one per shipped agent prompt reference
-forge workflow validate --all   # exits 1: 53 `unknown-brief` errors, one per shipped workflow step brief
+forge agent validate --all      # forge agent validate --all: no real findings.
+forge workflow validate --all   # forge workflow validate --all: no real issues.
 ```
 
-Both are the expected, complete list for a fresh `forge init` (see `SPEC-QUESTIONS.md` Q197). An
-earlier revision of this guide disclosed three real `unknown-artifact-type` findings here
-(`StagePlan`/`ReviewReport` referenced but not yet registered); both were fixed post-M12
-(`ReviewReport` registered as a real type, `StagePlan` corrected to the real `Epic`/`Story`
-artifacts the shipped workflows actually depend on).
+A missing or empty brief or prompt file shows up here as `unknown-prompt` / `unknown-brief`, so
+these two commands are what to run after you edit or add an agent, workflow or gate.
 
 ## 4. Author your first spec artifact
 

@@ -26,7 +26,6 @@ import {
   agentValidateOne,
 } from '../../src/commands/agent.ts';
 import { cleanupAll, createTestProject } from './upgrade/helpers.ts';
-import { EXPECTED_M13_P1_AGENT_FINDINGS } from '../fixtures/m13-p1-expected-agent-findings.ts';
 
 afterEach(cleanupAll);
 
@@ -227,13 +226,9 @@ describe('agentValidateAll — fixture roster', () => {
 });
 
 describe('agentValidateAll — real, complete A2/A3 roster', () => {
-  // Not genuinely zero real findings right now -- `PLAN-M13.md` P1 turned this check's own
-  // `unknown-prompt` existence check from nonexistent to real, and no real prompt content has been
-  // authored anywhere in this codebase yet (`PROMPT_INDEX` is still empty). The real, complete,
-  // itemized list of every current finding is asserted explicitly, by real agent id
-  // (`EXPECTED_M13_P1_AGENT_FINDINGS`, shared with `packages/cli/test/e2e/init.test.ts`'s own E1 init
-  // test, which asserts the identical real fact) -- see `SPEC-QUESTIONS.md` Q197.
-  it('reports exactly the real, disclosed M13 P1 unknown-prompt findings against the real, complete, currently-shipped roster', async () => {
+  // Genuinely clean: every shipped agent's `prompt.system`/`prompt.briefs.*` reference resolves to real,
+  // non-empty content (`PLAN-M13.md` P1 added the check, P3a/P3b authored the content).
+  it('reports no findings against the real, complete, currently-shipped roster: every prompt reference resolves', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-agent-real-'));
     try {
       const result = await runInit(
@@ -245,7 +240,7 @@ describe('agentValidateAll — real, complete A2/A3 roster', () => {
 
       const paths = new ProjectPaths(dir);
       const findings = await agentValidateAll({ paths, agentsRoot: AGENTS_ROOT });
-      expect(findings).toEqual(EXPECTED_M13_P1_AGENT_FINDINGS);
+      expect(findings).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

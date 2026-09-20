@@ -1,11 +1,9 @@
-# Write the failing tests (red)
-
 Write the tests that define "done" for one story before any of its implementation exists. You are a
 separate session from whoever implements it, and that separation is the point: the implementer will
 be forbidden to edit what you write here, so a weak or wrong test you leave behind is not fixed
 later, it is built against.
 
-## Inputs
+### Inputs
 
 - The `Story`: read every acceptance criterion (id, given/when/then, kind, and `nfr` where present),
   `files_expected`, `interfaces` and the test ids in `tests`.
@@ -31,7 +29,7 @@ later, it is built against.
   project's existing test layout puts tests for that code, in the layer the reproduction says the
   defect fails at.
 
-## Produce
+### Produce
 
 Test files at the test paths the plan or the story names (on a defect fix, the location described
 above), and nowhere else.
@@ -52,7 +50,7 @@ above), and nowhere else.
 - Make tests deterministic: seeded randomness, an injected clock, no reliance on wall time or
   network, and one command that runs them.
 
-## Acceptance
+### Acceptance
 
 - Every criterion has at least one bound test, and no test is unbound. On a defect fix the defect
   has one test, named with its id.
@@ -65,7 +63,7 @@ above), and nowhere else.
 - If a criterion cannot be tested as written (ambiguous, or not observable), say which and why. Do
   not invent behaviour to make it testable.
 
-## Do not
+### Do not
 
 - Do not write or edit production code, and do not add stubs to make imports resolve.
 - Do not write a test that passes today. If one does, the behaviour already exists or the test is

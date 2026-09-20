@@ -1,10 +1,8 @@
-# Prepare the store submission record
-
 Write the store submission record for the release build that just passed the store-readiness gate.
 Someone will use it to complete the submission, so every fact in it must come from the project, not
 from you.
 
-## Inputs
+### Inputs
 
 `kb:delivery/**`: the release plan and notes, the environment and pipeline decisions and the changes
 since the last release. It does not hold everything you need, so also find: the `Task` the
@@ -12,7 +10,7 @@ release-build step wrote under `docs/forge/specs/tasks/` (version, build number,
 device matrix at `docs/forge/kb/mobile/device-matrix.md`, and the `G-Deliver` report under
 `docs/forge/reports/gates/`. The build target is the `buildTarget` input of this run.
 
-## Produce
+### Produce
 
 One Markdown document at `docs/forge/kb/delivery/release/store-submission-<buildTarget>.md`, in the
 release area you own, and no other file. Include:
@@ -34,7 +32,7 @@ release area you own, and no other file. Include:
   it (crash rate, ratings, error rate) with thresholds, and how to withdraw or supersede the build.
 - Open items: each thing that is not ready, who owns it, and whether it blocks submission.
 
-## Acceptance
+### Acceptance
 
 - Every stated fact traces to a KB entry or report you read; anything missing is in Open items, not
   invented.
@@ -42,7 +40,7 @@ release area you own, and no other file. Include:
 - The release notes contain no internal ticket ids, commit hashes or codenames.
 - No secret, token or credential appears in the record.
 
-## Do not
+### Do not
 
 - Do not mark a checklist item done because it is usually done. Mark it done only with the evidence.
 - Do not claim device coverage the matrix does not show.

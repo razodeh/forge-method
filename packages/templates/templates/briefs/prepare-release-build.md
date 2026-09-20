@@ -1,12 +1,10 @@
-# Prepare the release build
-
 Prepare the mobile app for a release build of the target this run was started for (the workflow's
 `buildTarget` input). That input is not one of this step's declared inputs, so if the target's name
 is not in your context, ask with `FORGE_ASK:` rather than guessing; wherever `<buildTarget>` appears
 below, put that name. When you finish, the release configuration is in the repository and the
 device-matrix test suite can run against it; the store-readiness gate follows that run.
 
-## Inputs
+### Inputs
 
 - `kb:engineering/standards.md`: the project's build, versioning and code conventions.
 - The repository: the app's build configuration, version and build-number fields, signing and
@@ -15,7 +13,7 @@ device-matrix test suite can run against it; the store-readiness gate follows th
 - The `G-Verify` result this build packages, and the KB's `delivery/` and `mobile/` entries if
   present.
 
-## Produce
+### Produce
 
 The release configuration changes, inside the app's own paths, and one `Task` record describing
 them.
@@ -44,7 +42,7 @@ them.
   `docs/forge/kb/mobile/device-matrix.md`, and anything else that must still be done by a person,
   such as a certificate renewal or store account action.
 
-## Acceptance
+### Acceptance
 
 - Version and build number are set, consistent across platforms, and higher than the last release.
 - The build commands in the `Task` are exactly the ones that produce the artifact.
@@ -52,7 +50,7 @@ them.
 - The device-matrix test file exists at the path above and is runnable.
 - Name the commands that build the release and run the suite.
 
-## Do not
+### Do not
 
 - Do not submit to a store, upload a build, or change store listings; that is a later step.
 - Do not disable a test, lint rule or signing check to get the build through.
