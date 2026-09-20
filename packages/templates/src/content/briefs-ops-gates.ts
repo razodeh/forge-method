@@ -6,7 +6,7 @@
  * `../../../agents/test/prompt/content-index.test.ts` proves each entry names a real, non-empty file, and
  * that no file under `templates/briefs/` is left out of the index.
  *
- * Empty until P2c lands its content. Assigned to this batch (author exactly these, no others):
+ * The keys of this batch (exactly these, no others):
  *   - reverse-derive-specs
  *   - adoption-gap-analysis
  *   - plan-migration
@@ -32,4 +32,26 @@
  * @see specs/22 M13
  * @see PLAN-M13.md P2c
  */
-export const OPS_AND_GATE_BRIEFS: Readonly<Record<string, string>> = {};
+export const OPS_AND_GATE_BRIEFS: Readonly<Record<string, string>> = {
+  'reverse-derive-specs': 'templates/briefs/reverse-derive-specs.md',
+  'adoption-gap-analysis': 'templates/briefs/adoption-gap-analysis.md',
+  'plan-migration': 'templates/briefs/plan-migration.md',
+  'migration-expand': 'templates/briefs/migration-expand.md',
+  'migration-contract': 'templates/briefs/migration-contract.md',
+  'instrument-observability': 'templates/briefs/instrument-observability.md',
+  'define-slos': 'templates/briefs/define-slos.md',
+  'write-runbooks': 'templates/briefs/write-runbooks.md',
+  'propose-change': 'templates/briefs/propose-change.md',
+  'change-impact-analysis': 'templates/briefs/change-impact-analysis.md',
+  'run-retro': 'templates/briefs/run-retro.md',
+  'critique-delivery-readiness': 'templates/briefs/critique-delivery-readiness.md',
+  'critique-architecture': 'templates/briefs/critique-architecture.md',
+  'critique-project-foundation': 'templates/briefs/critique-project-foundation.md',
+  'critique-integration': 'templates/briefs/critique-integration.md',
+  'critique-operational-readiness': 'templates/briefs/critique-operational-readiness.md',
+  'critique-problem-framing': 'templates/briefs/critique-problem-framing.md',
+  'critique-product-definition': 'templates/briefs/critique-product-definition.md',
+  'critique-stage-plan': 'templates/briefs/critique-stage-plan.md',
+  'critique-stabilization': 'templates/briefs/critique-stabilization.md',
+  'critique-verification': 'templates/briefs/critique-verification.md',
+};

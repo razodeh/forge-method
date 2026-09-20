@@ -12,13 +12,14 @@
  */
 import {
   ForgeError,
+  isForgeError,
   listDirEntriesSorted,
   pathExists,
   readTextFile,
   writeFileAtomic,
   type ProjectPaths,
 } from '@forge/core';
-import { listResolvableContentReferences } from '@forge/agents/prompt';
+import { listResolvableContentReferences, resolveContentReference } from '@forge/agents/prompt';
 import { artifactTypeById } from '@forge/schemas';
 import {
   parseWorkflow,
@@ -29,7 +30,7 @@ import {
   type WorkflowExistenceOracle,
 } from '@forge/engine/workflow';
 
-import { loadGateRegistry } from './run/gates.ts';
+import * as YAML from 'yaml';
 
 export interface WorkflowCommandContext {
   readonly paths: ProjectPaths;
@@ -71,20 +72,53 @@ export async function workflowShow(ctx: WorkflowCommandContext, id: string): Pro
   return readWorkflow(ctx, id);
 }
 
-async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExistenceOracle> {
-  const [agentEntries, gateRegistry, workflowIds, briefPaths] = await Promise.all([
-    pathExists(ctx.paths.resolveWithin(ctx.agentsRoot)).then((exists) =>
-      exists ? listDirEntriesSorted(ctx.paths.resolveWithin(ctx.agentsRoot)) : [],
-    ),
-    loadGateRegistry(ctx.paths, ctx.checksRoot),
-    listWorkflowIds(ctx),
-    listResolvableContentReferences(ctx.paths, 'briefs'),
-  ]);
-  const agentIds = new Set(
-    agentEntries
+/** Every real agent id materialized under `<agentsRoot>/` -- one shared definition for the workflow
+ * oracle's `agentExists` and `gateValidateAll`'s advisory-check `agent`. */
+async function listAgentIds(
+  ctx: Pick<WorkflowCommandContext, 'paths' | 'agentsRoot'>,
+): Promise<ReadonlySet<string>> {
+  if (!(await pathExists(ctx.paths.resolveWithin(ctx.agentsRoot)))) return new Set();
+  const entries = await listDirEntriesSorted(ctx.paths.resolveWithin(ctx.agentsRoot));
+  return new Set(
+    entries
       .filter((entry) => !entry.isDirectory && entry.name.endsWith('.yaml'))
       .map((entry) => entry.name.replace(/\.yaml$/, '')),
   );
+}
+
+/** Every gate id defined under `<checksRoot>/`, read tolerantly: a gate file that is unparseable or has no
+ * string `id` is simply not a known gate here. It is `gateValidateAll` that reports it, so one malformed
+ * gate cannot crash `forge workflow validate --all` before that report is ever produced (the strict,
+ * throwing `loadGateRegistry` is for gate *evaluation*, where a broken gate must stop the run). */
+async function listGateIds(
+  ctx: Pick<WorkflowCommandContext, 'paths' | 'checksRoot'>,
+): Promise<ReadonlySet<string>> {
+  const ids = new Set<string>();
+  const dir = ctx.paths.resolveWithin(ctx.checksRoot);
+  if (!(await pathExists(dir))) return ids;
+  for (const entry of await listDirEntriesSorted(dir)) {
+    if (entry.isDirectory || !entry.name.endsWith(GATE_FILE_SUFFIX)) continue;
+    try {
+      const parsed: unknown = YAML.parse(
+        await readTextFile(ctx.paths.resolveWithin(`${ctx.checksRoot}/${entry.name}`)),
+      );
+      if (isRecord(parsed) && typeof parsed['id'] === 'string' && parsed['id'] !== '') {
+        ids.add(parsed['id']);
+      }
+    } catch {
+      // Reported by `gateValidateAll`; not a known gate here.
+    }
+  }
+  return ids;
+}
+
+async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExistenceOracle> {
+  const [agentIds, gateIds, workflowIds, briefPaths] = await Promise.all([
+    listAgentIds(ctx),
+    listGateIds(ctx),
+    listWorkflowIds(ctx),
+    listResolvableContentReferences(ctx.paths, 'briefs'),
+  ]);
   const workflowIdSet = new Set(workflowIds);
   // `validateWorkflow` checks `step.agent`/`step.gate`/etc. as literal ids -- it has no template
   // awareness of its own (its own doc comment: "nothing in this piece parses that mini-syntax").
@@ -110,7 +144,7 @@ async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExisten
     // content authoring, is a separate, not-yet-built piece). This is the real, disclosed, temporary
     // state `SPEC-QUESTIONS.md` Q197 records, not a bug in this check.
     briefExists: (briefPath) => isTemplateReference(briefPath) || briefPaths.has(briefPath),
-    gateExists: (id) => isTemplateReference(id) || gateRegistry.has(id),
+    gateExists: (id) => isTemplateReference(id) || gateIds.has(id),
     artifactTypeExists: (id) => artifactTypeById(id) !== undefined,
     workflowExists: (id) => isTemplateReference(id) || workflowIdSet.has(id),
   };
@@ -142,6 +176,207 @@ export async function workflowValidateAll(
     const workflow = await readWorkflow(ctx, id);
     const structural = validateStructure(workflow);
     results.set(id, structural.length > 0 ? structural : validateWorkflow(workflow, oracle));
+  }
+  return results;
+}
+
+/**
+ * One real, itemized defect in a gate definition, found by {@link gateValidateAll}.
+ *
+ * `checkId` is the advisory check's own `id` (for example `architect-review`), so a finding names the
+ * exact `checks.advisory[]` entry to fix, the way a workflow issue names its `stepId`; it is absent for
+ * a finding about the gate file as a whole.
+ */
+export interface GateValidationIssue {
+  readonly code:
+    | 'invalid-gate-file'
+    | 'duplicate-gate-id'
+    | 'duplicate-check-id'
+    | 'missing-brief'
+    | 'malformed-brief-reference'
+    | 'unknown-brief'
+    | 'unknown-agent';
+  readonly severity: 'error';
+  readonly message: string;
+  readonly checkId?: string | undefined;
+}
+
+const GATE_FILE_SUFFIX = '.gate.yaml';
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * `validate --all`'s gate half -- `specs/22` M13 acceptance ("every workflow/gate `brief:` reference ...
+ * resolves to real, non-empty content; `forge workflow validate --all` fails with a named `unknown-brief`
+ * finding ... never a silent pass"). A gate's `checks.advisory[].brief` is a `briefs/<name>.md` reference
+ * exactly like a workflow step's, but nothing validated it before this (`SPEC-QUESTIONS.md` Q197 item 2):
+ * `briefExists` only ever sees workflow steps. Each reference goes through the very loader dispatch will
+ * use (`resolveContentReference`), so this validator can never pass a reference the loader refuses.
+ *
+ * What it does *not* judge is a brief's content beyond "non-blank": whether a resolvable brief is any
+ * good is the content tests' job (`packages/agents/test/prompt/briefs-*-content.test.ts`), which run
+ * against the shipped files, not against a project's own edits.
+ *
+ * It reads the gate files itself rather than through `loadGateRegistry`: that registry keys by gate id
+ * (a second file with the same id silently replaces the first) and assumes well-formed YAML, so a
+ * validator built on it could skip a gate or crash on the very malformed input it exists to report.
+ * A file it cannot interpret is an `invalid-gate-file` finding; the advisory check's `agent` must be a
+ * real `.forge/agents/` id, as a workflow step's is.
+ *
+ * Findings are keyed by gate id (the file's stem when the id itself is unreadable); a gate with no
+ * findings is absent from the map. Deliberately *not* folded into `workflowValidateAll`'s own result
+ * map: that map is keyed by workflow id and its callers treat every key as one.
+ *
+ * @see specs/22 M13
+ * @see specs/10 §10.3
+ */
+export async function gateValidateAll(
+  ctx: Pick<WorkflowCommandContext, 'paths' | 'checksRoot' | 'agentsRoot'>,
+): Promise<ReadonlyMap<string, readonly GateValidationIssue[]>> {
+  const results = new Map<string, GateValidationIssue[]>();
+  const report = (gateId: string, issue: GateValidationIssue): void => {
+    const existing = results.get(gateId);
+    if (existing === undefined) results.set(gateId, [issue]);
+    else existing.push(issue);
+  };
+
+  const checksDir = ctx.paths.resolveWithin(ctx.checksRoot);
+  if (!(await pathExists(checksDir))) return results;
+  const gateFiles = (await listDirEntriesSorted(checksDir)).filter(
+    (entry) => !entry.isDirectory && entry.name.endsWith(GATE_FILE_SUFFIX),
+  );
+  const agentIds = await listAgentIds(ctx);
+  const gateFileById = new Map<string, string>();
+
+  for (const entry of gateFiles) {
+    const stem = entry.name.slice(0, -GATE_FILE_SUFFIX.length);
+    const invalid = (reason: string): void => {
+      report(stem, {
+        code: 'invalid-gate-file',
+        severity: 'error',
+        message: `Gate file "${entry.name}" ${reason}.`,
+      });
+    };
+    let parsed: unknown;
+    try {
+      parsed = YAML.parse(
+        await readTextFile(ctx.paths.resolveWithin(`${ctx.checksRoot}/${entry.name}`)),
+      );
+    } catch {
+      invalid('is not parseable YAML');
+      continue;
+    }
+    if (!isRecord(parsed) || typeof parsed['id'] !== 'string' || parsed['id'] === '') {
+      invalid('has no string "id"');
+      continue;
+    }
+    const gateId = parsed['id'];
+    const firstFile = gateFileById.get(gateId);
+    if (firstFile !== undefined) {
+      report(gateId, {
+        code: 'duplicate-gate-id',
+        severity: 'error',
+        message: `Gate id "${gateId}" is defined by both "${firstFile}" and "${entry.name}"; only one definition can take effect.`,
+      });
+    } else {
+      gateFileById.set(gateId, entry.name);
+    }
+
+    const checks = parsed['checks'];
+    if (checks !== undefined && checks !== null && !isRecord(checks)) {
+      report(gateId, {
+        code: 'invalid-gate-file',
+        severity: 'error',
+        message: `Gate "${gateId}" has a "checks" that is not a mapping.`,
+      });
+      continue;
+    }
+    const advisory = isRecord(checks) ? checks['advisory'] : undefined;
+    if (advisory === undefined || advisory === null) continue;
+    if (!Array.isArray(advisory)) {
+      report(gateId, {
+        code: 'invalid-gate-file',
+        severity: 'error',
+        message: `Gate "${gateId}" has a "checks.advisory" that is not a list.`,
+      });
+      continue;
+    }
+    const seenCheckIds = new Set<string>();
+    for (const check of advisory as readonly unknown[]) {
+      if (!isRecord(check) || typeof check['id'] !== 'string' || check['id'] === '') {
+        report(gateId, {
+          code: 'invalid-gate-file',
+          severity: 'error',
+          message: `Gate "${gateId}" has an advisory check with no string "id".`,
+        });
+        continue;
+      }
+      const checkId = check['id'];
+      const where = `Advisory check "${checkId}" of gate "${gateId}"`;
+      if (seenCheckIds.has(checkId)) {
+        report(gateId, {
+          code: 'duplicate-check-id',
+          severity: 'error',
+          message: `${where} is declared more than once.`,
+          checkId,
+        });
+      }
+      seenCheckIds.add(checkId);
+
+      const agent = check['agent'];
+      if (typeof agent !== 'string' || !agentIds.has(agent)) {
+        report(gateId, {
+          code: 'unknown-agent',
+          severity: 'error',
+          message:
+            typeof agent === 'string'
+              ? `${where} references unknown agent "${agent}".`
+              : `${where} declares no agent.`,
+          checkId,
+        });
+      }
+
+      const brief = check['brief'];
+      if (typeof brief !== 'string' || brief.trim() === '') {
+        report(gateId, {
+          code: 'missing-brief',
+          severity: 'error',
+          message: `${where} declares no brief.`,
+          checkId,
+        });
+        continue;
+      }
+      const malformed = (): GateValidationIssue => ({
+        code: 'malformed-brief-reference',
+        severity: 'error',
+        message: `${where} has malformed brief reference ${JSON.stringify(brief)}; expected "briefs/<name>.md".`,
+        checkId,
+      });
+      // `resolveContentReference` also accepts `prompts/<name>.md`; a gate's `brief:` is a brief, so a
+      // prompt reference is the wrong kind of content even though it would resolve.
+      if (!brief.startsWith('briefs/')) {
+        report(gateId, malformed());
+        continue;
+      }
+      try {
+        await resolveContentReference(ctx.paths, brief);
+      } catch (error) {
+        if (!isForgeError(error)) throw error;
+        report(
+          gateId,
+          error.code === 'CFG-053'
+            ? malformed()
+            : {
+                code: 'unknown-brief',
+                severity: 'error',
+                message: `${where} references unknown brief "${brief}" (${error.code}: the loader cannot resolve it to non-blank text).`,
+                checkId,
+              },
+        );
+      }
+    }
   }
   return results;
 }

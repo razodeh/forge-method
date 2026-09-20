@@ -175,7 +175,7 @@ import {
 } from './commands/spec.ts';
 import { uninstall } from './commands/uninstall.ts';
 import { runUpgrade } from './commands/upgrade/index.ts';
-import { workflowValidateAll } from './commands/workflow.ts';
+import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
@@ -258,17 +258,34 @@ async function runWorkflowValidate(paths: ProjectPaths, json: boolean): Promise<
     agentsRoot: AGENTS_ROOT,
     checksRoot: CHECKS_ROOT,
   });
+  // `specs/22` M13: a gate's advisory `brief:` is validated by this same command, in its own
+  // `gates` result field (workflow ids and gate ids are different namespaces).
+  const gateResults = await gateValidateAll({
+    paths,
+    checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
+  });
   const allIssues = [...results.values()].flat();
+  const allGateIssues = [...gateResults.values()].flat();
   if (json) {
-    console.log(JSON.stringify({ v: 1, results: Object.fromEntries(results) }));
-  } else if (allIssues.length === 0) {
+    console.log(
+      JSON.stringify({
+        v: 1,
+        results: Object.fromEntries(results),
+        gates: Object.fromEntries(gateResults),
+      }),
+    );
+  } else if (allIssues.length === 0 && allGateIssues.length === 0) {
     console.log('forge workflow validate --all: no real issues.');
   } else {
     for (const [id, issues] of results) {
       for (const issue of issues) console.error(`${id}: ${issue.code} ${issue.message}`);
     }
+    for (const [id, issues] of gateResults) {
+      for (const issue of issues) console.error(`gate ${id}: ${issue.code} ${issue.message}`);
+    }
   }
-  return allIssues.length > 0 ? 1 : 0;
+  return allIssues.length + allGateIssues.length > 0 ? 1 : 0;
 }
 
 async function runTemplateValidate(json: boolean): Promise<number> {
