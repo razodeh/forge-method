@@ -270,6 +270,51 @@ success with no output). Re-run after P7 and P12 land.
 
 ---
 
+## P14-P27 — Making a real run work (from the P11 triage)
+
+Authoritative scope, evidence and proposed spec text: **`process/plans/P11-TRIAGE.md`** (§5 order of work, §6
+proposed spec text, §2 register, §3 the 37 pinned steps). Every agent building one of these reads its rows
+there first, then `process/plans/M13-AGENT-NOTES.md` for the standing process rules.
+
+**Owner decisions (2026-09-20).** M13 scope: the *full* triage list. Q1 yes (authoring roles write, confined to
+a claim made of their declared outputs; `reviewer` and `critic` stay read-only). Q2 yes (the engine writes and
+validates the swarm-review `ReviewReport`; `reviewer` stays `write: false`). Q3 yes, after a failing two-step
+test confirms the lane-visibility gap (auto-merge a successful lane no `merge` step consumes; later lanes
+branch from the integration tip; explicit `merge` steps untouched). Q4-Q8 were not asked separately: choosing the
+full list at the triage's recommended dispositions is recorded as approval of them (interactive `elicit` in M13;
+optional `Story.test_paths`; test-running exec grant from `execution.testCommands`; keep every gate check and
+implement the missing commands; keep G-Foundation's deployed skeleton via a Waiver-coverable
+`skeleton-deployed` check). The owner can veto any of these; each is a separate piece.
+
+| Piece | What it changes | Depends on |
+|---|---|---|
+| P14 Outputs are the claim | claim passed to `enforceClaim` = `produces` ∪ registry globs of declared outputs; steps declaring `outputs` are enforced `strict` at any autonomy; drop the `no-write-scope` class from the known-gaps test | P7 |
+| P16 Declare what the brief writes | `produces` on output-declaring steps whose brief writes further documents; content test that brief-named write paths lie inside the step claim | P14 |
+| P15 Authoring roles can write | `tools.write: true` on the authoring roles (not `reviewer`/`critic`), both `integration-architect` copies; architect ceiling, spec `05` §5.3 example and its roster test, `20` §20.1; `outputs` on the two unchecked steps | P14, P16 |
+| P17 Swarm-review persists its report | engine creates a lane, writes/validates `REVIEW-NNN.md`, P7 still runs | P7 |
+| P18 Definition and registry coherence | agent `outputs[]` aligned to registry and steps; five HandoffRecord briefs get the `subtype:` line; `write-prd` moves to `pm`; ADR templates; stale greenfield fixtures; spec example keys; repo test | P15 (same agent YAML files) |
+| P19 Lane visibility | failing two-step test first; then auto-merge of lanes no `merge` step consumes, branch-from-integration-tip, read-only inline steps read the integration worktree; fix `runMergeStep` predecessor semantics (merges the review lanes, not the implement lanes: Q211) | P14 |
+| P20 `elicit` and intake | interactive `elicit` (TTY plus `--answers`), a `capture-constraints` step, a compiled level-recording command step | P19 |
+| P21 Run inputs | `forge run --input`, `--stage` also sets `stageId`, a `build-stage` run context (`stage.stories`, `stageId`, `vars.integration_branch`; Q211 open item 1) | P13 |
+| P22 Command steps that exist | wire `forge story verify`; fix the three `deploy` strings | none |
+| P23 Tests can run | exec grant derived from `execution.testCommands`, plus `doctor --rule test-command` | P15 |
+| P24 Gates I | the six missing `spec validate --rule` names; a shared conservative overlap rule for G-Ready | none |
+| P25 Gates II | the four remaining `doctor` rules, two `kb lint` rules, `test` smoke and contract, G-Foundation `skeleton-deployed` | none |
+| P26 Gates III | diagram, interfaces-frozen, deploy dry-run and rollback-check, version-skew, migration-order, SLO and runbook coverage | P25 |
+| P27 Sessions and `forge debug` | session roster read from `.forge/agents`; `forge debug` moved onto real prompt assembly (removes P6's pinned opt-out) | none |
+| P9-2 (orchestrator, live) | re-run `retro` with a low `budget.perRunUsd` after P14, P15, P16, P18 | P14-P18 |
+| P9-3 (orchestrator, live) | `plan-stage` at L1 | P14-P19, P27 |
+
+Also carried from P13 (Q211): spec `10` §10.1's worked example does not compile as written (amend with `itemKey` on
+`review`, `dependsOn: [prepare]` on `freeze-contracts`, and a sentence that a merge's `dependsOn` resolves per
+item); `fixtures/greenfield-service/.forge/workflows/build-stage.workflow.yaml` is a stale hash-headed snapshot
+(P18); existing projects hold the un-keyed `review` until `forge upgrade`.
+
+**Deferred past M13** (P11-TRIAGE §5): advisory critique dispatch and parser, the six role-less agents,
+`subworkflow`, `onComplete` wiring, G-Stable auto-close, migrate cut-over, operate creation steps, retry-loop
+interplay, `kb_write` enforcement, path-scoped write grants, front-matter stamping, the input DSL, the adapter
+cost-cap gap.
+
 ## Sequencing
 
 ```
