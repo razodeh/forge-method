@@ -18021,3 +18021,151 @@ hiding a Forbidden list, `@scope` directories over-reported, per-item heading cl
 Files: `packages/cli/src/commands/spec/{gate-rules,validate-rules}.ts`, `packages/engine/src/plan/{claim-overlap,index,stage-plan}.ts`,
 `packages/schemas/src/artifacts/{nfr,index}.ts`, the two briefs, and tests `packages/cli/test/commands/spec/{gate-rules,gate-rule-coverage,validate-rules}.test.ts`,
 `packages/engine/test/plan/claim-overlap.test.ts`.
+
+## Q213 — M13 P22: command steps that exist — `forge story verify`, the defect loops, the `deliver-stage` strings, and the three commands still not wired
+
+**Context.** `PLAN-M13.md` P22, `P11-TRIAGE.md` register D5 (Break 7): nine workflow `command` steps named commands the CLI
+does not accept or mis-shaped ones. Owner scope (triage §5, the plan's owner-decision table): wire `forge story verify`; fix the three
+`deploy` strings; for the rest verify first, fix string errors, wire only what the specs define, disclose the remainder. Reproduced
+first by running the real source CLI on each string in a throwaway project (see decision 1), before any change:
+
+| string (step) | what the CLI did | verdict |
+|---|---|---|
+| `forge story verify {{storyId}} --json` (`implement-story:self-verify`) | `"story verify" is not wired`, exit 2 | wired (decision 2) |
+| `forge story verify --json` (`quick-fix:verify`, `debug:prove-fix`) | same | string error: a defect loop has no story (decision 3) |
+| `forge deploy run --json`, `deploy smoke-test --json`, `deploy rollback --dry-run --json` | accepted: `run`, `smoke-test` and `rollback` parsed as the `<env>` positional (the `runDeployCommand` shape) | string error, and a semantic one no parse check can see (decision 4) |
+| `forge adopt inventory --json` | `"adopt inventory" is not wired`, exit 2. `forge adopt` is wired nowhere in `bin.ts` | disclosed (decision 5) |
+| `forge migrate run --phase expand --json` | `"migrate run" is not wired`, exit 2 | disclosed |
+| `forge spec re-derive --json` | `"spec" needs a real subcommand (list\|show\|validate\|trace\|matrix\|orphans\|new)`, exit 2 | disclosed |
+
+**Decision 1: how the CLI is asked, and the test.** `bin.ts` runs `main()` on import, so there is no importable parser and no parse-only entry, and
+the brief forbids a new user-facing flag. `test/command-steps.test.ts` therefore derives every `kind: command` step from the parsed shipped workflows
+(templates and `modules/*/workflows`, walking the whole document so nested and `onFailure`/`onComplete` steps count), splits each `run` on `&&`, `||`, `;`,
+`|` and newlines, and runs every distinct `forge ...` segment against the real source CLI in a fresh throwaway project holding only a default
+`.forge/config.yaml` (no test command, no workflow, no spec: nothing to change, nothing to run). A first design used an EMPTY directory; a critic showed
+it stops every command at "no config" (exit 5) before its own argument checks, so `forge kb synk` read as accepted. Every invocation is classified
+positively or the test fails: REJECTED = exit 2 with a dispatcher refusal ("is not wired", "needs a real ...", `USR-002` "Invalid value", `USR-003` "is
+not yet supported"); ACCEPTED = exit 0, or exit 1 with no stack trace, or exit 2 with a refusal that only exists after arguments were read ("No such
+workflow", "no Story with id"); anything else (a crash, a timeout, a surprise code) is UNCLASSIFIED and fails. Known blind spots, stated in the test:
+a command that ignores unknown flags (`forge test flaky --bogus`) and a wrong workflow/story id (understood but not found). The test also checks the
+step count against an independent regex count of `kind: command`, pins the three steps that run no `forge` command at all (a misspelt binary cannot
+pass), checks the classifier is not vacuous (`forge kb synk`, an unknown flag, `story verify` with no id are rejected; real commands accepted), and
+that a probe writes nothing outside the throwaway project. Parsing cannot see a subcommand-looking word given as `<env>`, so a second test states the
+shape rule directly (no `forge deploy` step passes a word that is not a template expression; every `forge story verify` names its story by
+expression). The pinned, commented `KNOWN_UNACCEPTED` list is two-way. Before any change it failed for the `story verify` strings (3 steps) and the
+three `deploy` steps; with the six unaccepted strings pinned it passes.
+
+**Decision 2: `forge story verify <storyId> [--json]` (`packages/cli/src/commands/story.ts`).** `03` lists no `story` command (one row is added
+to `03` §3.2.5: quoted below); `10` §10.6 step 6 says "self-verify: run the story's DoD check set; attach outputs" and `09` §9.8 defines the set: the
+story's `dod_profile`, a `done` list, "machine-checked", "a story cannot be marked `done` unless every `done` check passes, and the checks are
+commands, not opinions". The command is exactly that evaluation and nothing else (it never edits a story or its status; no model). It reads the profile
+from `<kb>/engineering/dod-profiles.yaml` (same place `spec validate --rule definition-of-ready` reads, Q about `09` §9.8's location), evaluates each
+`done` entry: a plain string as the bounded expression over `story` (`@forge/methods/dod` `evaluateDodProfile`, the function P8 built for this), a
+`{ check: id }` through a resolver that has deterministic answers for only:
+`build:typecheck` and `build:lint` (`execution.testCommands.typecheck`/`.lint`, run as `test run --rule`), `test:unit|integration|contract|e2e` (that
+layer's `execution.testCommands` entry run ALONE through the real `testRun`), `spec:ac-coverage` (each acceptance criterion of THIS story has a passing bound
+test and none has a failing one, judged only on the outcomes of the layers run by this same invocation: test layers are run first whatever their place in
+the profile, and an earlier report on disk is never read, because nothing on it says which code it describes; with no layer run it is `unverifiable`). A trailing ` --scope story` / ` --story` (`09` §9.8's spelling) is accepted.
+
+*Conservative readings, where the spec is silent:* (a) **fail closed**. Any id with no deterministic implementation (`review:blocking-findings == 0`,
+`security:secrets-scan`, `docs:public-api-documented`, `kb:no-new-contradictions`, `test:nfr`, a project's own ids) is `unverifiable`, which is not a
+pass: `09` §9.5 ("a layer that cannot be verified must never read as passing") and `evaluateDodProfile`'s own rule for an id the resolver does not
+know. So `errors` counts every non-pass check and the exit code is 1. The report keeps `fail` (ran, said no) apart from `unverifiable` (could not be
+asked). A missing profiles file, an unparseable one, and a profile id the file does not define are each one `(profile)` `unverifiable` check. (b) `--scope
+story` runs the WHOLE layer command: the Story schema has no test-path list (Q5 in the triage, an optional `Story.test_paths`, is a separate,
+not-yet-built piece), and a broader run is never a weaker check; the message says so. (c) `test:nfr` is unverifiable: `13` §13.1 makes NFR out-of-band,
+nightly, and the default test run excludes it. (d) An empty `done` list verified nothing, so it is `unverifiable` (a `(profile)` check), not a vacuous pass; a profile of plain expressions is a real choice and
+is evaluated as one. (d2) `spec:ac-coverage` counts a criterion as covered only with a passing bound test and NO failing one (`09` §9.5 "missing or failing"),
+stricter than `test coverage --rule acceptance-criteria` (any passing test), because a quarantined failing test does not count toward a layer's `failed`.
+(d3) Two documents sharing the id, or a profile name that is an inherited Object property, are refused/unverifiable, never guessed at. (e) A
+`ready`-phase id in a `done` list (`spec:story-refs-resolve`) is unverifiable here (that resolver lives in `validate-rules.ts`, another piece's file).
+Exit codes: 0 every check passes; 1 some check is not a pass; 2 the story does not exist (`forge spec list` is the remedy), the document is not a valid
+Story, or a usage mistake (no id, two ids, an unknown flag, a bad subcommand; checked before the config is read, like the sibling commands).
+`--json` is one `{ v: 1, storyId, profile, phase: 'done', passed, errors, checks: [{ check, status, message }] }` line; `errors` is a bare number because
+gate checks read it as `failOn: 'errors > 0'`.
+
+*Shared state.* `forge test run` owns `docs/forge/reports/test-results.json` and `flaky.json` (each run replaces the report and prunes flake records to what it saw).
+Running one layer through `testRun` for a story would have replaced the project-wide report with a partial one and dropped the flake and quarantine history of the
+other layers (critic round 1, reproduced by reading `run.ts`). `TestRunContext.persistState` (default `true`, so `forge test run` is unchanged) now gates both writes;
+`story verify` passes `false`; a test seeds a quarantined integration record and a report, runs the real `testRun` through verify, and asserts both files are byte-identical.
+
+**Disclosed consequence, not fixed (spec inconsistency).** `10` §10.6 puts self-verify at step 6, BEFORE review (7) and document (8), yet `09` §9.8's
+example `backend-default` `done` list contains `review:blocking-findings == 0` and `docs:public-api-documented`. With the profile the
+`scaffold-project` brief writes, `self-verify` can therefore never be fully green at step 6, and under fail-closed it is red for any id above with no
+implementation. That is honest, but it makes `implement-story` stall at self-verify on a default profile until one of these is decided: (i) split the
+list into `verify` and `done` phases, run `verify` at step 6 and `done` at commit; (ii) implement `review:blocking-findings` (needs P17's persisted
+`REVIEW-NNN.md`) and the other three and accept that self-verify only passes after review; (iii) let a profile mark a check `deferred`. Recommendation
+(i); it needs a spec change to `09` §9.8, so it is left for the owner. Until then a project can keep only implemented ids in its profile.
+
+**Decision 3: the two defect loops run `forge test run --json`.** `quick-fix:verify` and `debug:prove-fix` have a Defect, not a Story (their input is
+`defectId`), so `forge story verify` with no id has nothing to evaluate and would be a usage error. `13` §13.2 F-DEBUG step 8 PROVE ("the reproduction
+now passes; it is promoted to a permanent regression test") is exactly "the suite, including the regression test, is green", and `forge test run
+--json` is what `refactor`, `verify-stage` and `migrate` already use for that. Both strings were changed to it and a test pins them. It is only PART of PROVE: nothing checks that the reproduction was promoted to a regression test
+named with the defect id, or that a race test fails on the old code (`13` §13.2 step 8); the two YAML files say so in a comment and no command checks it yet
+(an open item, below). Rejected: a
+story-less `story verify` form that verifies "all in-progress stories" (invents behaviour the specs do not define).
+
+**Decision 4: the three `deliver-stage` strings.** The triage (D5) and the plan's P22 row proposed rewriting them to the spec'd `forge deploy <env>` form. This piece
+deviates from that, for the reason that follows, and the owner should confirm it. It cannot be used: `forge deploy <env>` IS the
+`deliver-stage` run (`03` §3.2.5, `deployEnvironment` dispatches that workflow), so a step of that workflow calling it starts the workflow again (a real
+nested run is refused by the run lock), and `{{env}}` is not in the context `forge plan delivery` and `forge run deliver-stage` compile with (a
+`{{env}}` would make both fail at compile time, the P13/P21 class of break). `14` §14.3 rule 1 says "the pipeline is the only path to production", so
+FORGE has no deploy executor by design: the workflow designs the pipeline (steps 1-2) and checks it. The three steps therefore run the commands the
+shipped G-Deliver gate already names for the same evidence (`deploy:dry-run`, `test:smoke`, `deploy:rollback-rehearsed`), so a failure shows here
+before the gate: `forge deploy --dry-run --json`, `forge test run --rule smoke --json`, `forge deploy --rollback-check --json`. The step ids are
+unchanged; a YAML comment states the reasoning; `design-deployment-strategy.md` named the old strings and now names these. **These three strings are
+not accepted by the CLI yet** (env-less `forge deploy`, `--rollback-check`, `test run --rule smoke`); they are pinned in `KNOWN_UNACCEPTED` and are
+P26 (deploy dry-run, rollback-check) and P25 (`test run --rule smoke`) of `PLAN-M13.md`, which must delete the pins when they wire them. Net effect
+now: `deploy` fails with "needs a real <env>" (a usage message that names the problem) instead of silently running the wrong thing as env `run`;
+`fixtures/greenfield-service/.forge` still holds the old snapshot (P18).
+
+**Decision 5: `adopt inventory`, `migrate run`, `spec re-derive` are disclosed, not wired.** Verified against the real CLI and the specs: none is a
+string error with a different real command. `03` §3.2.1/`17` §17.6 define `forge adopt [dir] [--scope] [--depth] [--no-verify]`, the whole eight-phase
+pipeline, with no `inventory` subcommand; `forge adopt` is wired nowhere in `bin.ts` (the library, `commands/adopt.ts`, exists), and its CARTOGRAPHY/
+INFERENCE phases need a run-engine dispatch context: substantial product surface, deferred by triage §5. `03` defines no `forge migrate` and `10` §10.5 gives
+`migrate` no cut-over step (D7, Q202 finding 8). `03` §3.2.2 lists `list|show|validate|trace|matrix|orphans|new` for `forge spec`; `09` §9.7 says only
+that affected tests are re-derived, with no command. Each stays a real, failing step (exit 2, a usage message naming the problem); the pins in
+`test/command-steps.test.ts` list them with the reason.
+
+**Spec change (`03` §3.2.5), quoted.** Added after the `forge implement <storyId>` row: `| forge story verify <storyId> | Evaluate the story's done DoD
+profile (09 §9.8): the self-verify step of the loop (10 §10.6). Exit 0 only if every check passes; a check that cannot be verified is not a pass. |`
+
+**Also decided.** (a) `forge story verify --dry-run` is refused (exit 2): the global flag promises no effects, and verification runs the project's own test
+commands, so a dry form would either run them anyway or verify nothing. (b) A profile made only of plain expressions over `story` is evaluated as one and can
+pass without running a command: `ready` lists are written that way (`09` §9.8's own example) and the schema does not require a command-backed check; a project
+that wants a command in its DoD lists one. (c) Where a quarantined flaky test fails, a layer still reads as passing (`13` F-TEST-6 excludes it from the gate) and the
+message counts them; a failing bound test still defeats `spec:ac-coverage`. (d) The `scaffold-project` brief says each `done` id "is mapped to its task-runner
+command in `delivery/build.md`"; that is prose this command does not read. The mapping used is the fixed table plus `execution.testCommands`, so an id outside it is
+`unverifiable`. (e) A story naming a check with a failing tool whose output has no countable diagnostics (`typecheck: 'false'`) is `unverifiable`, as `test run --rule
+typecheck` already treats it.
+
+**Open items, for the orchestrator (not fixed here).**
+1. The self-verify ordering problem above (`10` §10.6 step 6 vs the `09` §9.8 example list): needs an owner decision and a spec edit.
+2. `13` §13.2 step 8 PROVE (regression test named with the defect id, promoted from the reproduction; a race test that fails on the old code) has no command; the
+   defect loops verify only that the suite is green.
+3. `deliver-stage` cannot complete (`forge run deliver-stage` stops at `deploy`, exit 2) until P26 (env-less `forge deploy --dry-run`, `--rollback-check`) and P25
+   (`test run --rule smoke`) land; both must delete their pins in `test/command-steps.test.ts`. The workflow's `deploy` step is a dry-run check: there is no
+   FORGE-side deploy executor (`14` §14.3), and `forge deploy <env>` cannot be a step of the workflow it starts. The owner should confirm the deviation from the
+   triage's "rewrite to `forge deploy <env>`".
+4. `adopt inventory`, `migrate run`, `spec re-derive`: product decisions (D7 for `migrate`; wiring `forge adopt` whole for the first; a `re-derive` command for `09` §9.7).
+5. `fixtures/greenfield-service/.forge/workflows/{quick-fix,debug,deliver-stage}.workflow.yaml` hold the old strings (P18's stale-snapshot item; the command-steps
+   test reads only the shipped templates and `modules/`).
+6. Blind spots of the command-steps classifier, stated in its header: a command that ignores unknown flags (`forge test flaky --bogus`) and a wrong workflow or
+   story id read as accepted.
+7. Global flags other than `--json`, `-C`, `--dry-run` are ignored by `story verify`, as by its siblings.
+
+**Verification.** Scoped per the owner-approved cost cut (no full suite): `test/command-steps.test.ts` (11), `packages/cli/test/commands/story.test.ts` (37) and
+`bin-story-verify.test.ts` (10, real subprocesses, including real vitest through the CLI), `loop/test/run-persist-state.test.ts` (4); the root enumerators
+(`agent-prompts-all-workflows`, `output-contract-known-gaps`, `workflows`, `build-stage-compiles`, `workspace-floor`, `fm-*-workflow`, `live-smoke`,
+`determinism`, `templates`); all of `packages/cli/test/{bin*.test.ts,commands/loop,commands/run,commands/spec,init}`, `packages/templates`,
+`packages/agents/test/prompt`, `packages/engine/test/{workflow,plan}`; `pnpm typecheck` (21/21), `pnpm run boundaries`; eslint and prettier on every changed file.
+Mutation evidence: counting only `fail` (not `unverifiable`) as an error fails 4 story tests; reading the on-disk report instead of this invocation's layers fails 2;
+removing `persistState: false` from the two `testRun` calls fails 2 (including the seeded-state byte-identity test). The failures seen in scoped runs all belong
+to other pieces' in-flight files and passed or were unrelated: `strict-opt-outs` (lists `packages/cli/test/commands/loop/debug.test.ts`), `workspace-floor`
+(stray `packages/engine/test/dispatch/artifact-fixtures.ts`, and a collection-count race that passes alone), `briefs-planning-content` (unfinished markers in
+`frame-problem.md` and `define-success-metrics.md`), and `pnpm lint` errors in `test/brief-write-paths-in-claim.test.ts`.
+
+Files: `packages/cli/src/commands/story.ts`, `packages/cli/src/bin.ts` (one import, `runStoryCommand`, one dispatch line, a header paragraph),
+`packages/cli/src/commands/loop/test/run.ts` (`persistState`), `packages/templates/templates/workflows/{deliver-stage,quick-fix,debug}.workflow.yaml`,
+`packages/templates/templates/briefs/design-deployment-strategy.md`, `specs/03-cli-and-installer.md` (one row), and tests
+`packages/cli/test/{commands/story,bin-story-verify,commands/loop/test/run-persist-state}.test.ts`, `test/command-steps.test.ts`.
