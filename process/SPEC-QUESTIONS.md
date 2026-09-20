@@ -17793,3 +17793,113 @@ merge folding fails 21.
 
 Files: `packages/engine/src/plan/{compile,stage-plan}.ts`, `packages/templates/templates/workflows/{build-stage,harden}.workflow.yaml`, `test/build-stage-compiles.test.ts`
 (new), and the tests and comments named above.
+
+## Q212 — M13 P14: outputs are the claim — what a step may write, why `strict` is now safe for a declared output, and what the widened claim still lets through
+
+**Context.** `PLAN-M13.md` P14 (owner decision 2026-09-20, `P11-TRIAGE.md` edit set C, A2/A3): `Q209` found that `strict` claim enforcement (`supervised`, `autonomous`,
+any adopted project) reverted a step's own declared output, because `enforceClaim` was handed only `node.produces` and 49 of 57 shipped agent steps declare none; the
+P7 output check then failed the step ("add the path to `produces`"). The owner decided authoring roles will write, confined to a claim made of their step's declared
+outputs (P15 flips the grants; no grant is touched here).
+
+**Decisions.**
+1. **The claim.** `resolveStepClaim(node, docRoots, defaultPolicy)` (`packages/engine/src/dispatch/outputs.ts`, called from `runLaneLifecycle`, the only production
+   caller of `enforceClaim`): for an `agent` step that declares `outputs`, the claim is `produces` UNION `outputClaimGlobs(outputs, roots)`, the `outputGlob`
+   registry glob per declared output, the very function the P7 check locates files with, resolved through the same `docRootsOf(ctx)` (configured `paths.*`, else the
+   default layout). One derivation, so a renamed registry path or a relocated docs root moves the claim and the check together. Additions: a `Diagram` also claims
+   `<glob>.yaml` (the check demands the `.mmd.yaml` sidecar); a type the registry lacks contributes nothing (the check fails it loudly); a glob that climbs out of the
+   repository or is absolute (a configured root of `../x`, `/abs`, `C:`) is dropped, so it can match no path git lists and the output fails as missing instead of
+   being written elsewhere; a leading `!` or `#` of a configured root is escaped, because `enforceClaim`'s matcher (unlike the check's) keeps glob negation and comments
+   on and an unescaped `!docs/...` would put every other path inside the claim.
+2. **Policy.** An `agent` step that declares `outputs` is enforced `strict` at every autonomy level, adopted or not (`resolveClaimPolicy` remains the DEFAULT for every
+   other step, including a `command` step that declares outputs, which the P7 check ignores, `Q209` decision 8, so nothing would confine an output its shell never
+   writes). `warn`/`strict` semantics are unchanged: `strict` reverts out-of-claim files (`git checkout <base> -- f`, or `git rm` for a file new in the lane) and makes
+   a second `LaneCommitted {reason:'claim-revert'}`; `warn` reverts nothing. Neither fails the step (`06` §6.7 says `strict` "fail[s] the step"; the code never did,
+   unchanged and disclosed below).
+3. **Why `strict` cannot silently discard a legitimate deliverable now.** A file is reverted only if it is neither in `produces` nor at the registry glob of a declared
+   output. The output check accepts a file only if it matches that same glob (`checkOne` matches `files.committed` against `outputGlob`), so every file the check could
+   count as the step's output is inside the claim by construction and is never reverted. The forced-strict case cannot lose the output: a session that writes only
+   stray files fails RUN-083 ("the session committed no file"), loudly, and there was nothing legitimate to lose. What `strict` still reverts is what the step never
+   declared; that loss is now recorded (decision 5), not silent. The one true residual is a document a brief names outside the outputs (`P11-TRIAGE` P: rows 2, 7,
+   11, 13, 16): under `guided` that was kept (`warn`) and is now reverted, which is a behaviour change owners accepted by choosing "strict at every level"; P16
+   declares `produces` for them and MUST land before a real run of those steps. Critic-identified instances (briefs read, not run): `initialize-project:decide-repo-strategy`
+   (`delivery/repo-strategy.md`), `deliver-stage:design-pipeline`/`design-deployment` (a pipeline `Diagram` outside `kb/*/views`), `fm-mobile/store-release:prepare-release-build`
+   (the app's own build files), `freeze-contracts`/`draft-contract` (a `.proto`/`.graphql` beside the YAML), and once P15 lands `intake:seed-glossary`,
+   `discover:frame-problem`, `shape-solution:threat-model`, `plan-stages:decompose-stages`.
+4. **The claim is the type's whole namespace, so the check gained two refusals.** `epics/EPIC-*.md` covers every existing Epic. Added to `checkOne`: (a) a symlink or
+   submodule entry at HEAD under the output's glob (or a Diagram's sidecar glob) fails the output even beside a valid sibling (`VcsFacade.changedFiles` gained an
+   optional `nonRegular` from `git diff --raw` modes 120000/160000; before, a symlink was only refused when it was the sole match, and claim enforcement would now keep a
+   planted one); (b) a file that existed at the base and no longer holds a regular file at HEAD under the output's glob (a Diagram's sidecar included) fails the output
+   (a step may add or update artifacts of its type, not remove them; at most five are read per check, and a slug rename, being a delete plus an add, is refused by design). Updating an existing artifact of the type remains allowed (`Q209` decision 5), and so does rewriting one: an `Epic` step may edit any Epic. That is what
+   a §18.7 path claim means; narrowing it to "only files this step created" is a design decision left open.
+5. **A trace for what was discarded.** Enforcement never fails the step, so `runLaneLifecycle` now emits a `PolicyViolation` event
+   `{kind:'out-of-claim-write', policy, paths (at most 50), totalOutOfClaim, totalReverted}` whenever any path lay outside the claim, before the revert commit; under
+   `warn` it is the "flag" `06` §6.7 promises and nothing else emits (`outOfClaim` was read by no one). `reconstruct.ts` and the TUI read model already ignore
+   `PolicyViolation`; the audit projection lists it. `packages/engine/test/dispatch/agent.test.ts`'s exact event-sequence assertion for an out-of-claim write gained this
+   one event (a contract change, not a weakened assertion).
+6. **The `no-write-scope` class is dropped.** Recomputed from the real definitions: the same 9 steps (`decide-repo-strategy`, `run-rca`, `performance-pass`,
+   `design-pipeline`, `design-deployment`, `instrument-observability`, `define-slos`, `write-runbooks`, `prepare-release-build`); every agent has `tools.write: true`,
+   `file_ownership` is read only by `forge agent validate`'s overlap check (grep of `packages/*/src`: nothing in the engine, scheduler, prompt or adapters), and each
+   step's output is inside its claim. They are pinned in `OWNERSHIP_ONLY_STEPS` and asserted, so the recomputed fact stays visible. **Honest limit:** "no longer a gap"
+   means the output survives enforcement. Four of them (item 3) still lose brief-named files (P16), and the coverage assertion in that test is definition-level; the
+   non-tautological proof is `output-claim.test.ts`, which renders a concrete path for every registry type by `renderArtifactPath` (independent of `outputGlob`) and
+   matches it against the claim with `enforceClaim`'s own matcher, under the default and a relocated layout. `no-write-grant` stays at 28 (P15, P17); the total is 28.
+7. **Spec text (quoted).** `06` §6.7, new bullet after the `produces`/interval-map bullet: "A step's claim is the set of paths it may write: its `produces` globs plus,
+   when it declares `outputs`, the `18` §18.7 paths of those outputs. This is what `05` §5.5 rule 6 means by \"paths you own for this step\"; a role's `file_ownership`
+   is its default territory for keeping unrelated lanes apart and does not narrow a declared output." New sub-bullet under `strict`/`warn`: "A step that declares
+   `outputs` is always `strict`, whatever the autonomy level: its claim is `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; it
+   reverts only what is neither. `warn` remains the `guided` default for steps that declare none." (The triage proposed "complete by construction"; a critic showed that
+   overclaims, since a brief may name other documents, so the wording states only what is true.) `06` §6.4 rule 1 (the `PLAN-M13.md` P14 row lists §6.4 wording;
+   the triage's C5): "Lanes never touch `.forge/state/`. A lane may write a `docs/forge/` path (the KB included) only if it is one of the step's declared `outputs` or lies in
+   its `produces` (§6.7); any other KB change from a lane goes through the KB proposal channel, applied by the supervisor on the integration branch (this prevents KB merge
+   conflicts entirely)." `05` §5.5 was not touched (word-for-word tested); an agent is still never told its claim paths (`grep produces packages/agents/src/prompt` is
+   empty): P16/P18 territory.
+
+**Tests written first, from the spec/triage text.** `packages/engine/test/dispatch/output-claim.test.ts` (34) against a real git lane, real enforcement, real event log
+(only the model session is faked): declared output kept and not reverted under both default policies (strict = autonomous/supervised/adopted, warn = guided) with no
+`produces`; an out-of-claim write reverted and traced under both; `produces` still in the claim (union); a stray-only session fails RUN-083 with nothing lost; a relocated
+docs root is followed and the old path is refused; a no-outputs/no-produces step keeps today's policy under strict and warn; a step with only `produces` keeps the default;
+`command` steps unchanged; derived globs (dedupe, Diagram sidecar, unknown type, `../`, `/abs`, `C:`), `!`/`#` roots through the real matcher; symlink alone, beside a valid
+artifact, outside the claim, Diagram orphan sidecar; deletion refused and update allowed; `changedFiles.nonRegular` for symlink, file turned symlink and a 160000 entry;
+`PolicyViolation` payloads (none when clean, `warn` flag, 50-path cap with totals); every registry type's concrete path lies in its claim, two layouts.
+`packages/cli/test/commands/run/output-claim.test.ts` (10): full `runWorkflow` (real prompt assembly, scheduler, event log, `resolveClaimPolicy` from config) with
+the fake adapter for `autonomous`, `supervised`, `guided`, `guided + adopted`: the output is kept and the dependent gate runs; a stray write is reverted and traced; the
+union with `produces`; a stray-only session fails RUN-083 at every level. `output-contract.test.ts`'s test "claim enforcement is the tree that counts" asserted the Q209 bug
+itself (strict + empty `produces` reverts the output); it now asserts both policies keep it, and a stray-only session fails with "the session committed no file". The
+`outputs.test.ts` unit test of the "reverted" note stays (the branch is only reachable if the two matchers disagree).
+
+**Three critic rounds** (`GAUNTLET-LOG.md`, `## M13 P14`): round 1 one blocking (silent loss under forced strict: answered by the trace, decision 5, and the P16 ordering) and four major
+(enforcement skipped on self-commit: disclosed; spec overclaim: reworded; the whole-namespace claim and a symlink beside a valid artifact: decision 4; the tautological
+known-gaps assertion: replaced by the concrete-path test); round 2 four major (namespace deletion, the spec's "complete by construction", no trace, the Diagram sidecar
+outside the symlink rule) and vacuous tests (a lane never registered on failure); round 3 two major (the sidecar outside the deletion rule: fixed; the §6.4 vs `02`/`08`
+KB-writer tension: recorded above) and minor items (command steps: spec now says `agent` step; event path length: clipped).
+
+**Mutation evidence.** Dropping the union (`globs: produces` only): 11 of 26 engine cases and 9 of 10 CLI cases fail. Keeping the default policy (not forcing strict): 2 engine,
+1 CLI. Removing the `!`/`#` escape: 1. Removing the traversal filter: 1 (the pure derivation; end to end the outcome is identical, since no glob starting `../` matches a
+git path). Removing the `nonRegular` filter, the deletion rule, the `160000` mode, the Diagram sidecar rule, the `PolicyViolation` emit, and the 50-path cap: 1, 1, 1, 1, 4, 1.
+
+**Disclosed, not fixed (the orchestrator turns these into pieces).**
+- `06` §6.7 says `strict` fails the step; the code reverts and succeeds, before and after. A `guided` project lost the `warn` "flag in the merge review and require
+  approval" path for output-declaring steps (only the event remains). Deciding whether an out-of-claim write should fail a strict step is an owner call (it would make P16
+  mandatory rather than advisable).
+- Enforcement is skipped when the adapter reports no changed files (an agent with `git *` exec that commits its own work), so `strict` does not bind it (`Q209`, unchanged).
+- The scheduler interval map, `plan/dependencies.ts` and the context-pack path filter (`assemble.ts`) still use `node.produces` only: two parallel steps declaring the same
+  register file are not serialised by their outputs. The plan layer has no docs roots.
+- `packages/cli/src/commands/run/context.ts` and `specs/17` §17.4, `specs/20` §20.2 still describe `guided` as `warn` without the output-declaring override.
+- The claim covers the whole type namespace (an `Epic` step may rewrite any Epic, including frozen `InterfaceContract`s for a contract step).
+- `02` §2.5 and `08` §8.6 (KB writes go through `KbWriter`: central ID allocation, mandatory `sources`, deprecate-not-delete) are still contradicted by lanes
+  writing `kb/` outputs (ADR, Risk, Assumption, OpenQuestion, Runbook, Environment) as raw files, which P7 already required and the reworded `06` §6.4 now states; `kb_write` is
+  enforced nowhere (schema and `agent validate` only). The deletion rule recovers "files retained" only. Reconciling those two specs is an owner decision (the triage's C5).
+- `PolicyViolation` noise and gaps: under `warn` a step with neither outputs nor `produces` flags every file it writes (`forge audit --category policy-violation` shows ordinary
+  work); a crash between the emit and the revert commit, then a rollback and re-run, or a retry, emits it twice for one lane; `VCS-CLAIM-REVERT-FAILED` fails the step before
+  the emit; path strings are clipped to 300 characters and 50 listed.
+- The deletion rule reads `readAtRevision`, which fails open on a file over 8 MiB at the base (a deletion of one is not flagged) and reports growth past 8 MiB as removal.
+- `test/workspace-floor.test.ts` fails on `packages/engine/test/dispatch/artifact-fixtures.ts` (a P7 stray, already in Q211 item 7).
+
+**Verification scope (owner-approved cost cut; no full unscoped suite).** All of `packages/engine/test`, `packages/cli/test/commands/{run,loop}`, `packages/kb/test/adopt`,
+`packages/tui/test/state`, `packages/vcs`, `packages/core/test/errors.test.ts`, root `test/{agent-prompts-all-workflows,output-contract-known-gaps,workflows,
+build-stage-compiles,live-smoke,determinism,fm-mobile-workflow,fm-service-workflow,workspace-floor}.test.ts`; `pnpm typecheck` (only another agent's in-flight
+`gate-rules.test.ts` errors), `pnpm run boundaries`, `eslint`/`prettier` on every file I own (`pnpm lint` also shows other agents' in-flight files). Failures: the known
+`resume.test.ts`/`crash-resume.test.ts` load flakes (pass alone) and the pre-existing `workspace-floor` stray.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P14`. Files: `packages/engine/src/dispatch/{outputs,steps,facades,types,index}.ts`, `packages/kb/src/adopt/claim-policy.ts` (comment),
+`specs/06-orchestration-and-parallelism.md`, the tests named above, `test/output-contract-known-gaps.test.ts`.

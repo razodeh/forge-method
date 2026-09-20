@@ -14040,3 +14040,36 @@ piece makes the workflow compile but not the command run: Q211 open item 1.
 
 **Verification.** Scoped per the owner-approved cost cut (Q211 lists it). 22 of 22 shipped workflows compile whole. Only the pre-existing `workspace-floor`
 stray and `run/resume.test.ts` under load failed.
+
+## M13 P14 — Outputs are the claim (`resolveStepClaim` in `@forge/engine/dispatch` `outputs.ts`; `06` §6.4, §6.7)
+
+**Piece.** An `agent` step's claim is `produces` plus the registry globs of its declared `outputs`, and a step that declares outputs is enforced `strict` at every autonomy level
+(Q212). Tests first from the triage text: 34 engine cases (real git lane, real enforcement, real event log) and 10 through `runWorkflow` for `autonomous`, `supervised`, `guided`,
+`guided + adopted`; the `no-write-scope` class (9 steps) leaves `test/output-contract-known-gaps.test.ts` (37 to 28).
+
+**Round 1 (fresh): 1 blocking, 4 major, 6 minor.** Blocking: forced `strict` plus an outputs-only claim reverts a brief-named document (`repo-strategy.md`, the `sre` pipeline
+Diagram, the mobile app's build files, a `.proto` beside the YAML) and the step still succeeds, and `guided` used to keep them. Answered, not removed: it is the
+owner-accepted consequence of "strict at every level", so the loss is now traced (`PolicyViolation` naming the files, also flagged under `warn`) and P16 must land before a real run;
+the brief-vs-claim inventory is in Q212. Major: enforcement skipped when the adapter reports no changed files (pre-existing, disclosed); the spec's "complete by construction"
+overclaimed (reworded); the claim is the whole type namespace and a symlink beside a valid artifact passed (`changedFiles.nonRegular`, refused); the known-gaps coverage assertion was a
+tautology (replaced by a concrete-path test over every registry type, default and relocated layout). Minor and fixed: stale comments.
+
+**Round 2 (fresh): 0 blocking, 4 major, 4 minor.** Major: deleting an existing artifact of the declared type was kept by the claim and passed (refused, bounded read); no trace of what
+strict discarded (the `PolicyViolation` event); a Diagram sidecar was in the claim but outside the symlink rule; tests that could not fail (a failed step's lane is never registered, so
+`committed` was `[]` regardless: now read from the captured lane). Minor and fixed: 160000 and file-turned-symlink pinned through `changedFiles`, 50-path cap pinned.
+
+**Round 3 (fresh): 0 blocking, 2 major, 6 minor.** Major: the sidecar was still outside the deletion rule (reproduced; fixed with a test that fails without it); the reworded `06` §6.4
+contradicts `02` §2.5 and `08` §8.6 (KB writes through `KbWriter`) and `kb_write` is enforced nowhere: recorded in Q212 as an owner decision, not amended here. Minor: the spec said
+"step that declares outputs" while only agent steps are covered (now says `agent`), event path length (clipped). Not fixed, recorded: event noise under `warn`, a duplicate event on
+resume or retry, no event when the revert itself fails, oversize files in the deletion read. No fourth round: the round-3 fixes are covered by mutation-checked tests.
+
+**What the critics caught that I missed:** the silent revert of brief-named documents under forced strict (I had scoped the piece to the output and its claim); that the claim is the whole
+type namespace (deletion, a symlink beside a valid file); the Diagram sidecar in the claim but not in the checks; three tests that were vacuous through a lane the failing step never registered;
+a tautological coverage assertion I wrote to justify dropping the class. **What I caught first:** a leading `!`/`#` in a configured docs root would negate the claim under `enforceClaim`'s
+matcher (which, unlike the check's, keeps glob negation on), and that a `command` step's declared outputs must stay on the default policy.
+
+**Mutation evidence.** Dropping the union fails 11 engine and 9 CLI cases; not forcing strict fails 2 and 1; removing each of the `!`/`#` escape, traversal filter, `nonRegular` filter, deletion rule,
+`160000` mode, sidecar rule, `PolicyViolation` emit and 50-path cap fails its own test.
+
+**Verification.** Scoped per the owner-approved cost cut (Q212 lists it). Staged tree also run in a clean worktree of HEAD plus only this piece's hunks (233 tests). Only the known load-sensitive
+`resume.test.ts`/`crash-resume.test.ts` flakes (pass alone) and the pre-existing `workspace-floor` stray failed.
