@@ -17903,3 +17903,121 @@ build-stage-compiles,live-smoke,determinism,fm-mobile-workflow,fm-service-workfl
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P14`. Files: `packages/engine/src/dispatch/{outputs,steps,facades,types,index}.ts`, `packages/kb/src/adopt/claim-policy.ts` (comment),
 `specs/06-orchestration-and-parallelism.md`, the tests named above, `test/output-contract-known-gaps.test.ts`.
+
+
+## Q214 — M13 P24: the six missing `spec validate --rule` names, and one conservative overlap rule shared by G-Ready and the run plan
+
+**Context.** P11 (E1, E5) found that gates name `forge spec validate --rule <name>` forms the CLI rejects, and that `spec validate --rule file-claim-overlap`
+(G-Ready) still used `globsOverlap` while the run plan (Q206 decision 2) used a stricter prefix rule. Owner decision (P11 question 7): keep every gate check and
+implement the commands; a failing deterministic check can only be waived (`10` §10.3 rule 1), so an unimplemented check forces a waiver on every project.
+
+**Reproduced.** Every deterministic `run:` string in the ten shipped `*.gate.yaml` files, `forge spec validate --rule <name> --json` through the real source CLI
+(`-C <tmp>`): exactly **ten** names were rejected with exit 2. Six are P24's: `metrics-defined`, `user-identified`, `scope-contradicts-constraints` (G-Problem),
+`capability-acceptance`, `blocking-open-questions` (G-Product), `nfr-numeric` (G-Product, G-Design). Four are P26's and are **pinned unimplemented**:
+`version-skew`, `migration-order-violations` (G-Integration), `slo-observability-coverage`, `runbook-coverage` (G-Operate). P11's "six" was right for P24.
+`packages/cli/test/commands/spec/gate-rule-coverage.test.ts` derives the names from the gate YAML, fails while a name is neither implemented nor pinned, fails if a
+pinned name becomes implemented (or leaves every gate), fails on a `forge spec validate` run string in any form it does not understand, and runs every derived
+command line through the real launcher (v1 envelope, `errors == violations.length`, exit 0/1; exit 2 for a pinned name). **Scope, exactly:** the `spec validate`
+family. The other families (`doctor --rule`, `kb lint --rule`, `test ...`, `diagram ...`, `deploy ...`, `spec interfaces --check-frozen`) are still rejected by the
+CLI, so G-Design, G-Foundation, G-Deliver, G-Verify and G-Integration still hold checks that need a waiver until P25/P26.
+
+**What was built.**
+- `packages/cli/src/commands/spec/gate-rules.ts`: the six rules, dispatched from `specValidateRule`; same `{v:1, errors, violations}` envelope and exit codes as the
+  existing rules (`VALIDATE_RULE_IDS` grew, so the `bin.ts` usage error lists them with no `bin.ts` change). Each reads project documents only (spec-root
+  `Vision`/`Capability`/`NFR`; KB `product/metrics.md`, `users.md`, `scope.md`, `constraints/*.md`, `open-questions.md`), is deterministic (sorted by id) and reads
+  **raw front matter, not the schema**: a whitespace-only `acceptance_summary` satisfies `z.string().min(1)`, and a non-numeric NFR target fails the schema, so a
+  schema-first read would pass on exactly the input each rule exists to catch (`oversized-stories` already does the same). A KB file that fails its own schema, and a
+  tree-level `parseKbTree` failure (`kbRoot` a plain file: its error path is `kbRoot` itself and it carries no entries), is a violation naming the file, never a skip;
+  a corrupt spec document throws `CFG-006`/`CFG-007` as for every other rule, so the gate fails on unparseable output. Listings are capped at 200 with a last violation
+  stating the total.
+- `@forge/schemas` exports `NFR_TARGET_PATTERN` (the schema's own regex) so `nfr-numeric` cannot drift from it.
+- `@forge/engine/plan` `claim-overlap.ts`: `claimsMayOverlap` (+ `claimFixedPrefix`, `prefixesNest`), the path-prefix rule moved out of `stage-plan.ts`.
+  `stage-plan.ts` and `validate-rules.ts` `file-claim-overlap` both use it. `globsOverlap` is untouched and still serves the scheduler, `compileRunPlan`'s step-level
+  check and `agent validate`.
+- The two briefs whose output the rules read (`define-success-metrics`, `frame-problem`) now say which layout the check reads.
+
+**Decisions (the specs are silent or give a one-line catalogue entry; each is the conservative literal reading).**
+1. *`metrics-defined`* ("No measurable success metric", `10` §10.3). At G-Problem the Vision does not exist yet (`write-vision` runs after the gate; Q202 gap), the KB
+   `product/metrics.md` does (`define-success-metrics`), so the rule reads both. A metric is measurable when its statement, baseline and instrumentation are real text
+   (not blank, a `<...>` template placeholder, `TBD`/`to be determined`/`n/a`/`pending`/`later`/`-`; `unknown` and `none` are answers for a baseline only) and its
+   target **leads with a number** (a number token among its first three words: `>= 60% of signups`, `<= 2 tickets per week`; `ship by Q3 2026` and `improve
+   significantly (see 2026 plan)` fail). The brief now states this. It fails when there is no measurable metric, and also names each incomplete metric. KB metrics
+   are a `MET-###` heading/list/bare line followed by `field: value` lines (`- **Target (numeric):** ...`, a value on a nested bullet), or a table with an `id` column
+   and statement/metric, baseline, target, instrumentation columns (an escaped `\|` is text). A `MET-###` line with no field and no heading is a *reference*
+   (`MET-001 traces to persona:x`), not a definition. The specs define no body format; this is the reading the brief's own words support, and anything else is reported
+   as no metric, never silently accepted. Fenced code, blockquotes, four-space code and HTML comments are examples, not declarations. A Vision `success_metrics` that
+   is not a list is a violation.
+2. *`user-identified`* ("no identified user"). Passes on a `persona:<slug>` id (lower case, not a placeholder slug: `tbd`, `tbd2`, `unknown-user`, `slug`, `x`) that
+   *defines* a persona in `product/users.md`, meaning it sits in a heading, list item (any indent), table row, `id:` line or opens a line (a sentence, blockquote or
+   code line that mentions an id does not count), or as a `Vision.target_users` entry that is itself a persona id (`write-vision`: "named as its `persona:<slug>` id").
+   Whether the persona is specific, named, has a role or a job is the critic's (PF2). Fails an empty project.
+3. *`scope-contradicts-constraints`*. A semantic contradiction is not decidable deterministically. The critique brief says the mechanical check proves "declared scope
+   does not contradict declared constraints" (and "that a scope is present"), so the rule reads only *declared* contradictions: an item listed both under an in-scope
+   and an out-of-scope/non-goals/exclusions/deferred heading of `product/scope.md`, or listed in scope while a `constraints/*.md` file lists the same item under a
+   Forbidden/Prohibited/Must-not heading, as `X is prohibited`, `X - forbidden by PCI`, or `Forbidden: X`. Sections are read with a heading stack, classified once per
+   heading (an item under `## In scope` / `### Payments` is in scope; a bold or `Word:` label does not end a section; the deepest classifying heading wins; a level-1
+   title classifies only when nothing deeper exists; `Scope`, `MVP scope` and `In scope` are the in-scope list; `Scope and non-goals` classifies nothing). Items match by
+   NFC-normalised equality (markup, case, a trailing `(...)` or ` - note`, which `frame-problem` asks for), never by shared words. Prose naming an *action* (`Staff must
+   not exceed budget`) is deliberately not decomposed: an early version dropped the verb and made an in-scope `Budget` a false contradiction. **It needs a scope to read:**
+   no `product/scope.md`, or one with no readable in-scope item, is a violation (nothing was checked; an "empty scope passes" reading let almost any real document
+   through), as is an unreadable scope or constraint file. No constraints file means nothing to contradict.
+4. *`capability-acceptance`* ("Capability without acceptance summary"). Non-blank and not a `<...>` template placeholder or stand-in (every shipped template prose field is
+   a `'<...>'` string, which is schema-valid). Whether it is *testable* is PD2. **An empty set fails** (one violation). A document with a `CAP-` id and any other `type`
+   is reported (G-Product does not run the generic `spec validate`, so a typo'd type would hide a document from the rule).
+5. *`nfr-numeric`* ("non-numeric NFR"). The schema's own pattern on raw front matter; a YAML number (`target: 300`) is read as its text (numeric; the schema wanting a
+   string is `spec validate`'s finding at G-Design); an array/object/boolean/null is not numeric. An NFR whose statement, metric or `verification.ref` is empty or an
+   unfilled template placeholder fails even though the template's default target `< 300ms` is numeric (`09` §9.3: "numeric and verifiable"). **An empty set fails.**
+   `NFR-` ids with another `type` are reported. The KB `architecture/nfr.md` prose entry is not read.
+6. *`blocking-open-questions`*. `OpenQuestion` has only `open|resolved` (Q23) and every shipped gate has `openQuestionsPolicy: block`, so, as `definition-of-ready`
+   already reads `spec:no-blocking-open-questions`, every open question is blocking (project-wide). An unparseable register is a violation. No register passes.
+7. *Presence versus per-item.* `metrics-defined`, `user-identified`, `scope-contradicts-constraints`, `capability-acceptance`, `nfr-numeric` fail an empty project on
+   purpose (`specValidateRule`'s doc comment amended); `blocking-open-questions` passes one. The owner can veto: the alternative is a vacuous pass on a project with no
+   metrics, users, scope, capabilities or NFRs, which a waiver-only gate then lets through.
+8. *The shared overlap rule* lives in `@forge/engine/plan`, not a lower package: `cli` already imports `@forge/engine/plan`, `kb` needs no overlap test, and the
+   primitive has no dependency, so moving it to `core` would add a package edge and nothing else. It answers `true` unless two claims' fixed leading segments diverge
+   (case-insensitive, NFC; `.`/empty segments and trailing dots/blanks dropped). No fixed prefix at all (may overlap anything) for a negated `!` claim, an absolute claim,
+   a `..` in any segment (also behind a backslash, or padded), and the prefix stops at glob syntax (`* ? [ ] { }`, an extglob opener `+( @( !(`), a backslash, a `:`, or an
+   8.3 name (`progra~1`); ordinary directory names containing `@ ( ) + ~` (`@acme`, `(shop)`, `c++`, `~tmp`) are literal, so a `@scope` monorepo's packages are not all
+   "overlapping" (round 3). It never calls `minimatch`, has no length cap to fall off, and cannot miss an overlap (fuzzed by two critics against `minimatch`, 0 misses in
+   ~600k mutated pairs; a generated soundness test compares it with `minimatch` over concrete paths); it over-reports `src/*.ts` against `src/a/b.ts`.
+   **What changed in G-Ready's `file-claim-overlap` beyond the primitive** (the aggressive primitive made these matter): it reads raw front matter, not `storySchema` (a
+   schema-invalid story, such as a size-L story at `ready`, still claims files; before, its claim was invisible); a story with `type` other than `Story` but a `STORY-` id
+   is still a story; a `files_expected` that is not a list of non-blank strings is a violation naming the story (it cannot be compared and nothing else in G-Ready
+   reports it); it no longer compares `done`/`verified` stories (they cannot write; the run plan drops them too, Q206 decision 4; every other non-`draft` status is
+   still compared, as before); it finds overlaps through a prefix index (cost is the overlaps found, not the pairs: 300 stories x 300 claims took 17 s pairwise) and lists
+   at most 200 pairs, then one violation saying the listing stopped. Per-claim-pair reporting is otherwise unchanged and `errors` stays a positive count. `09` §9.3 rule 4
+   says "another `ready` story"; the gate has always compared every non-`draft` story, and that is kept apart from the `done`/`verified` exclusion.
+
+**Disclosed limits (not fixed; each would need a format the specs do not define).**
+- The KB-prose parsers accept the layouts above and no other; an agent writing a different layout gets a violation whose message names the expected layout. Tables and
+  paragraphs as constraints, Setext headings, and a fence indented four or more spaces inside a list item are not read. `statement: x` and `instrumentation: z` pass
+  (a one-word value is real text; only the critic can judge it). A persona id in a list item that negates it (`- no persona:foo yet`) counts.
+- `scope-contradicts-constraints` catches explicit duplication only (PF5, the advisory critic's, covers the rest); a `Vision`, `Capability` or `NFR` with `status:
+  deprecated` still counts (no status vocabulary exists); `NFR_TARGET_PATTERN` is anchored at the start only (the schema's own definition), so `2x faster than rivals`
+  passes; `mistypedDocs` covers `CAP-`/`NFR-` ids, not a wrong-case type on a document with no such id.
+- The step-level check in `compileRunPlan` and the scheduler still use `globsOverlap`; the plan and the gate share the story-level test but differ in which stories they
+  compare (gate: everything that can still write, project-wide; plan: one stage) and in what a hit does (gate: a violation, waivable; plan: serialise).
+- `define-success-metrics` says to submit `product/metrics.md` as a KB proposal when it is outside the agent's write scope; a proposal is not in the tree, so
+  `metrics-defined` fails until it is applied (correct, but a step-level coherence gap for a later piece).
+- A corrupt document still prints the `ForgeError` on stderr and nothing on stdout with `--json` (as every rule does); the gate's unparseable-output rule fails it.
+
+**Verification scoping (owner-approved cost cut).** Scoped: `packages/cli/test/commands/spec` (gate-rules 150 tests, gate-rule-coverage incl. a real-CLI run of every derived
+command line, validate-rules 47), `packages/cli/test/commands/gate-validate.test.ts`, `packages/cli/test/bin-run-plan.test.ts`, `packages/engine/test/plan` and
+`test/gates`, `packages/schemas`, `packages/templates`, `packages/agents/test/prompt`, and the root files `build-stage-compiles`, `agent-prompts-all-workflows`,
+`output-contract-known-gaps`, `workflows`, `determinism`, `live-smoke`, `workspace-floor`; plus `pnpm typecheck`, `pnpm run boundaries`, eslint and prettier on the changed
+directories. No full-suite run and no whole-`packages/cli` run (it did not finish under load twice); the orchestrator runs the full suite. `workspace-floor`'s "collects a
+test planted anywhere" test timed out once under load and passed alone. Mutation checks (each reverted, each made a named test fail): `globsOverlap` back in the gate,
+NFR check disabled, placeholder check removed, comment stripping removed, digit check removed, tree-level errors ignored, fence stripping removed, `done` stories compared,
+`..` only before a glob segment.
+
+**Gauntlet.** Three critic rounds, none empty (`GAUNTLET-LOG.md`, `## M13 P24`). Round 1 (2 blocking, 5 major): an unreadable KB tree passed every KB-reading rule; a
+scope rule that only fired on flat, exactly-equal lists; presence rules that accepted templates, fences, TBDs; the aggressive primitive making `done` stories and
+schema-invalid stories matter in G-Ready; quadratic regexes; the coverage test's scope overclaimed. Round 2 (2 blocking, 5 major): cubic backtracking on a U+2028 line,
+`file-claim-overlap` failing open on an unreadable `files_expected`, phantom metrics from traceability lines, weak persona/number checks. Round 3 (0 blocking, 8 major):
+Vision `target_users` accepting anything, real persona/metric layouts rejected, the verb-stripped prose fallback creating false contradictions, a stray comment opener
+hiding a Forbidden list, `@scope` directories over-reported, per-item heading classification, `..` behind a backslash, pairwise claim comparison. All but the items under
+"Disclosed limits" were fixed with a regression test each; the round-3 fixes were verified by the scoped suite, typecheck, lint and boundaries, not by a fourth critic.
+
+Files: `packages/cli/src/commands/spec/{gate-rules,validate-rules}.ts`, `packages/engine/src/plan/{claim-overlap,index,stage-plan}.ts`,
+`packages/schemas/src/artifacts/{nfr,index}.ts`, the two briefs, and tests `packages/cli/test/commands/spec/{gate-rules,gate-rule-coverage,validate-rules}.test.ts`,
+`packages/engine/test/plan/claim-overlap.test.ts`.
