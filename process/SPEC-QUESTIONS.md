@@ -17435,3 +17435,109 @@ run as a whole is `failed` for findings 3 and 4, which are honest product gaps r
 5, 6 and 7 are recorded here as M13 follow-ups (see `PLAN-M13.md` P7 and the new P12) rather than fixed inside P9, per the
 plan's "findings go to SPEC-QUESTIONS.md; expect some". Spend: $0.3885 real, of a $0.75 step ceiling and a $3.00 run cap set
 in the throwaway project.
+
+## Q209 — M13 P7: the output contract check — what "produced", "present" and "subtype" mean, where it runs, and the gaps it exposes (37 shipped steps now fail honestly)
+
+**Context.** `PLAN-M13.md` P7, the fix for `Q208` finding 4: a real 177 s Claude Code session by `em` (`write: false`) wrote nothing and
+`retro:run-retro` was still recorded `StepSucceeded`, although block [1] of every prompt promises "output that fails validation is
+rejected" (`05` §5.5). `packages/engine/src/dispatch/outputs.ts` (new) checks, after an `agent` step's session ends ok, that every
+declared `outputs` entry exists and validates; failure is a typed `validation`-class step failure.
+
+**Decisions.**
+1. **Where it runs, and which tree.** In `runLaneLifecycle` (`steps.ts`), after the session, the commit and claim enforcement (which run only when
+   the adapter reports changed files, as for every step), against the lane branch's *committed* state (`git diff <base> HEAD` for the file list, `git show HEAD:<path>` for content; two new `VcsFacade` methods,
+   `changedFiles` and `readAtRevision`). That is what a `merge` step carries forward: a file only in the worktree, a symlink (rejected by tree mode), or one strict claim
+   enforcement reverted, is not a produced output, and the message says which of those happened. A lane that fails the contract does not emit
+   `LaneReady` (resume re-registers every `ready` lane for merging). Because the hook is in the shared lifecycle,
+   the resume path (`resumeRun` -> `runLaneLifecycle(existing)`) is checked identically. No agent-supplied path is ever opened on disk (git
+   supplies names, `git show` reads content), so traversal/symlink content cannot escape.
+2. **"Files this session produced"** = the lane branch's diff against its base sha (added, modified; a deleted file does not count). A matching
+   file that already existed and was untouched does not satisfy the contract. For a register file (`collection: true`) the unit is the entry: new
+   id, or content different from the base version (key order ignored); a register touched without such an entry fails.
+3. **Locating a file.** `18` §18.7's path templates, rooted at the project's configured `paths.{specs,kb,sessions,reports}` (`ExecuteStepContext.
+   docRoots`, supplied by `buildRunEngineContext`; optional in the type with the default layout as fallback, so the check is never skipped and a
+   mis-wired context fails loudly). `{id}` -> `<PREFIX>-*`, `{id}-{slug}` -> `<PREFIX>-*`, every other placeholder -> `*`; a template that opens
+   with a placeholder (`Diagram`) lives in the KB. So a template whose id nobody can know is matched by glob over the lane diff, never skipped.
+   Roots are normalised (`./docs/specs/`), escaped, and matched with negation/comment syntax off.
+4. **Validation reuses existing validators**: `validateArtifact` (`@forge/core/artifacts`, what `forge spec validate` runs; front matter schema
+   plus `requiredSections`, plus the file's `type` must be the declared one) for single-document types; the register file schemas
+   `parseKbTree` uses (`risksFileSchema`...) for Risk/Assumption/OpenQuestion/Environment; `interfaceContractSchema` on the base keys of a
+   plain-YAML contract (or `validateArtifact` for a `---` form); `diagramSchema` on the `.mmd.yaml` sidecar (which must be produced too, and the
+   `.mmd` must be non-empty). HandoffRecord and Waiver have no file-level schema (`Q23`): each entry found in the front matter (the front
+   matter itself when it is one entry, else every array of mappings except `changelog`) is checked against the entry schema, at least one is
+   required, and a present `type` must match. **Not checked** (disclosed): that an artifact's id equals its file name; the body of an
+   InterfaceContract beyond its base keys; register entries under an unexpected top-level key for HandoffRecord/Waiver.
+5. **Cardinality.** `one` and `many` both need at least one produced file and validate every produced file; a `one` output that finds several
+   files (the step also updated an older artifact) is not an error. The spec gives `cardinality` no stronger meaning.
+6. **Subtype** has no spec definition; decided: `SessionRecord.sessionType` must equal the subtype's canonical form (`retrospective` -> `retro`,
+   the DSL's name for `16` §16.2's session type; the briefs say so); every other type must carry the subtype as a hyphenated word (a segment equal
+   to it or ending `-<subtype>`, so `step: write-test-plan -> ...` satisfies `test-plan`, prose like `not-a-test-plan-at-all` does not) in a
+   *produced register entry's* `step` or `delivered` items (the two conventions the briefs use, because the entry has no `subtype` key), or
+   anywhere in a produced document. **Real mismatch found:** five of the twelve shipped HandoffRecord subtypes (`level-proposal`, `stage-plan`,
+   `nfr-verification`, `refactor-invariants`, `implementation-plan`) are recorded by their briefs in a `step:` value that does not contain the
+   subtype word (`propose-level -> confirm-level`, `decompose-stages -> review-stages`, ...), so a brief-compliant agent fails the check. The
+   check follows the stated rule; fixing those briefs (or the subtype names) is content work for P11.
+7. **Failure shape.** `StepFailureInfo.source: 'output'` (new), `code` `RUN-083`; `classifyFailure` maps it to `validation` (`06` §6.8), so
+   `node.onFailure` / `retry.retryOn` apply as for any failure (the retry loop still has no production caller, `PLAN-M11.md` P11: the step
+   fails, no retry is wired). The message names the step, each unmet output with its expected glob and the failed check, at most five
+   problems and 700 characters each, followed by the remedy text (the remedy is in the message so `forge run` output and the event payload carry
+   it). **`RUN-084`** is the same failure when an output is missing and the agent's own definition has `tools.write: false`: the message says so
+   and the remedy is "set `tools.write: true`, assign the step to an agent that can write, or remove the step's `outputs`". Only
+   `agent.tools.write` is consulted: `resolveStepToolGrant` never lets a `toolCeilingEscalations` entry change it. `resumeRun` does not roll back
+   and re-run a `RUN-084` failure (a second paid session would be identical).
+8. **Scope by kind (recorded).** Applies to `kind: agent` steps only. `command` steps that "produce" files through a shell command, and steps whose
+   outputs a later `command` step produces, are not checked (a declared output on a command step is ignored, tested). `session` steps
+   (`runSessionStep`, participants of `swarm-review`/`panel`/`debate`/`pair`) do not go through `runLaneLifecycle`; participant sessions are
+   read-only and declare no outputs. A workflow `mode: swarm-review` agent step is dispatched as an ordinary agent step (`executeStep` ignores
+   `mode`), so it is checked like any other. `onComplete` and `onFailure.escalations` steps are not compiled into the plan and are not dispatched.
+9. **No exemptions, no grant changes.** Write-forbidden agents are not exempt and no agent grant was touched (P11, an owner decision). The
+   repository-level inventory `test/output-contract-known-gaps.test.ts` derives from the shipped workflows and agents every agent step whose agent
+   has `write: false` (28) or a `file_ownership` that does not cover the declared output's registry path (9): **37 steps** pinned, with the
+   `retro:run-retro` step of `Q208` among them and one step (`implement-story:plan`, agent `{{ownerRole}}`) listed as unclassifiable. The check does
+   not depend on it; it goes red when P11 fixes steps so the count is lowered deliberately.
+
+**Findings this piece exposes (for P11 / the owner).**
+- **`RUN-084` is classified `validation`, so it is retryable, yet resume special-cases it as deterministic.** When the retry loop is wired
+  (`PLAN-M11.md` P11) a write-forbidden step would spend `maxAttempts` paid sessions before the never-retry rule stops it. Also, an agent that
+  stops on `FORGE_CONFLICT`/`FORGE_HANDOFF` (`05` §5.5) without producing its outputs is failed as generic `validation`, where `06` §6.8 says a
+  `conflict` halts the step; the check does not read `SessionResult.controlTokens`. Both belong with the retry-loop wiring.
+- **`06` §6.4 says lanes never write `kb/`** (KB changes go through a proposal channel), yet the check requires ADR, Risk, Assumption, OpenQuestion,
+  Environment and Runbook outputs, which live under `kb/`, in the lane's commit. The shipped workflows declare exactly that, so the check follows
+  them; the tension between the two spec sections is unresolved.
+- **Strict claim enforcement reverts declared outputs.** `resolveClaimPolicy` gives `strict` to adopted projects and to `supervised`/
+  `autonomous` autonomy; almost no shipped step declares `produces`, so `enforceClaim` reverts everything such a step writes, including its own
+  declared output, and the check now (correctly) fails the step with "claim enforcement reverted ... add the path to `produces`". Only `guided`
+  non-adopted projects (the default) get `warn`. Recommendation: treat the registry globs of a step's declared `outputs` as part of its claim.
+  Until then `test/fm-mobile-workflow.test.ts` and `test/fm-service-workflow.test.ts` (which built a `strict` context) use `claimPolicy: 'warn'`,
+  the default a real project gets, and their fake sessions now write a *valid* Task / InterfaceContract instead of a stub.
+- **Agent-declared `outputs[].path` values disagree with the registry** for roughly 25 of the 58 shipped agent output declarations (`em`:
+  `sessions/retros/{id}.md` vs `sessions/SESSION-*.md`; `pm`: `kb/product/capabilities/{id}.md` vs `specs/capabilities/CAP-*.md`), and 22 name a type
+  the registry does not have (`PRD`, `ArchitectureSpec`, `Code`, ...). The check follows the registry as the task specified; the agent-level
+  paths are what a brief-less agent would follow. Reconcile in P11.
+- **Not fixed here, disclosed:** on a rerolled lane whose new session changes nothing, claim enforcement does not run (`work.changed` false) although
+  earlier attempts' commits are on the branch (same when an agent commits its own work); `docRoots` is optional; a project rooted in a subdirectory of its git
+  repository would not match (`git diff` paths are repo-relative); a file over 8 MiB reads as absent; the failure message embeds the list of
+  committed files, so two "identical" failures can differ in `normaliseErrorSignature`; `ArtifactValidated`/`ArtifactRejected` events are not emitted.
+
+**Three critic rounds** (`GAUNTLET-LOG.md`, `## M13 P7`): round 1 five major (subtype rule, grant misattribution, strict-claim tests, resume, register
+vacuity), round 2 one blocking (coverage floor) plus four major, round 3 one major (a quadratic regex on agent text). All fixed; the disclosed items
+above are what was left by decision.
+
+**Mutation evidence (no vacuous pass).** Making `checkDeclaredOutputs` return `undefined` unconditionally fails 25 of the 39 unit cases in
+`outputs.test.ts`; making `verifyDeclaredOutputs` a no-op fails 9 of 13 cases in `output-contract.test.ts` (typed failure, invalid, many, subtype,
+grant, claim-revert, resume-lifecycle, classification, never-retry); removing the `RUN-084` short-circuit in `resumeAgentStep` fails the
+resume test (a second session starts).
+
+**Existing tests changed (contract, not weakened):** `fm-mobile`/`fm-service` fake sessions write valid artifacts (see above). The repository-wide
+`test/agent-prompts-all-workflows.test.ts` (P6) dispatches every shipped step with a fake that writes nothing and saw 38 `output` failures once
+this check existed in the shared tree; P6 now treats a failure whose source is not `prompt`/`adapter` as out of its scope, and the file passes with
+this piece committed. No other existing test needed a change: no other engine/cli test declared outputs on an agent step.
+
+**Verification scope (owner-approved cost cut).** All of `packages/engine/test`, `packages/cli/test/commands/run` and `.../loop`, root
+`test/fm-*`, `live-smoke`, `agent-prompts-all-workflows`, `output-contract-known-gaps`, `packages/core/test/errors.test.ts`, plus `pnpm typecheck`,
+`pnpm run boundaries`, `pnpm lint` (4 pre-existing prettier warnings only); not the full suite. The staged tree was also typechecked and its tests
+run in a clean worktree of HEAD plus only this piece's hunks, so the commit stands alone next to P12's in-flight work. `outputs.ts` branch
+coverage 90%.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M13 P7`. Files: `packages/engine/src/dispatch/{outputs,steps,types,facades,index}.ts`,
+`packages/engine/src/{failures/classify,resume/orchestrate}.ts`, `packages/cli/src/commands/run/context.ts`, `packages/core/src/errors/codes.ts`.

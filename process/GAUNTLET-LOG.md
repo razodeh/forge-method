@@ -13893,3 +13893,53 @@ conformance, cli loop/run, root fm-*/live-smoke/workflows and the two new files)
 `cli/test/commands/run/resume.test.ts` (passes alone). Revert-check run against the final tests: reverting `buildSessionRequest`
 fails 13 tests (2 strict-adapter, 10 agent.test.ts, the repo-wide dispatch test); reverting `runParticipantSession` fails the
 participant strict-adapter test and the repo-wide dispatch test; both restored byte-identically.
+
+## M13 P7 — Output contract check after an agent step (`@forge/engine/dispatch` `outputs.ts`, `RUN-083`/`RUN-084`, `VcsFacade.changedFiles`/`readAtRevision`)
+
+**Piece:** after an `agent` step's session ends ok, every declared `outputs` entry must exist at its `18` §18.7 registry path among the files the lane branch committed
+against its base and validate against its schema, or the step fails (`source: 'output'`, class `validation`; `RUN-084` when the agent has `tools.write: false`). Runs in
+the shared `runLaneLifecycle`, so resume is covered; a failing lane emits no `LaneReady`. Write-forbidden agents are not exempt and no grant changed; the 37 shipped steps
+this now fails honestly are pinned in `test/output-contract-known-gaps.test.ts` (P11). Decisions, the scope by step kind, and the findings it exposes: Q209. Three rounds.
+
+### Round 1: 0 blocking, 5 major, 6 minor
+
+Subtype matching accepted prose (`not-a-test-plan-at-all`) and rejected brief-compliant output; the write-forbidden detection re-derived the grant and misattributed
+RUN-083/084 (it consulted escalations that never change `tools.write`; the RUN-084 remedy pointed at a knob that does nothing); the strict-claim finding was hidden in two
+edited fm-* tests with a dangling Q reference; a resumed RUN-084 failure was rolled back and re-run (a second paid session); register/Diagram/Waiver vacuity (no `type`
+check, an empty `.mmd` passed, a stale sidecar passed). Minor: uncapped messages, a `git diff` with a file named `HEAD`, an unvalidated revision, roots like `./docs`,
+`as` casts. Fixed: subtype only in a register entry's `step`/`subtype:` items with hyphenated-word matching, `agent.tools.write` only, no re-run on RUN-084, message
+caps, root normalisation, Diagram sidecar produced and non-empty, `--` and a revision guard. Recorded, not fixed: the strict-claim reversion and the five brief subtype
+mismatches (Q209).
+
+**What the critic caught that the builder missed:** the builder had judged the grant re-derivation correct because a test passed; the critic showed the real resolver never
+lets an escalation change `write`. It also found that the resume path turned a deterministic failure into doubled spend, which no test exercised.
+
+### Round 2: 1 blocking, 4 major, ~19 minor
+
+Blocking: the per-file coverage floor (83.8% branches on `outputs.ts`). Major: `LaneReady` was emitted before the check, so `resumeRun` re-registered a contract-failed lane
+for merging; the `docRoots` wiring was untested end to end (a mutation dropping it passed, and the test helper silently dropped a `docRoots` override); a plain-YAML contract
+starting with `---` was rejected as unterminated front matter; a committed symlink whose target text was a valid Epic passed (the code comment claimed it could not). Fixed:
+tests for every register type, Waiver, Diagram, BOM and `---` forms, an `executeStep` test with relocated roots (helper now forwards `docRoots`), the check moved before
+`LaneReady`, tree-mode check (`ls-tree`) in `readAtRevision`, a fallback to plain YAML on an unterminated front matter, control-character stripping, a message/remedy
+separator, the RUN-083 remedy no longer promises a re-run command that does not exist. Left as disclosed in Q209: id-vs-filename, byte-touch "produced", registers validate whole
+files, claim enforcement skipped when the adapter reports no changed files.
+
+**What the critic caught that the builder missed:** the builder had not run coverage; the floor is per file and 83.8% failed it. The builder also believed `LaneReady` ordering
+was harmless because dependents stay blocked; the critic reproduced the merge after resume with `onFailure: continue`.
+
+### Round 3: 0 blocking, 1 major, 8 minor
+
+Major: `replace(/^-+|-+$/g, '')` in the subtype matcher is quadratic on a long dash run inside agent-controlled text (9 s at 160k dashes; the file-size cap does not prevent it).
+Minor fixed: a deleted or symlinked output was described as "committed" (now "appear in the lane's diff but hold no regular file at its head"); free prose in a `delivered` item
+satisfied a subtype (now only `subtype: <name>` items and `step`); bidirectional and zero-width characters survived message sanitising; a stale `LaneReady` comment in
+`execute.ts`. Fixed each with a test (a linear-time test with 300k dashes). Left as disclosed: RUN-084 is retryable by class while resume special-cases it, control tokens
+(`FORGE_CONFLICT`) are not read by the check, the raw `git` calls live in the engine facade, `06` §6.4's "lanes never write kb/" conflicts with kb-located outputs (all in Q209).
+Three rounds were the limit; the round-3 major and minors were fixed and re-verified (unit, dispatch and cli suites, typecheck, lint) rather than opening a fourth round.
+
+**Mutation checks (no vacuous pass):** `checkDeclaredOutputs` returning `undefined` unconditionally fails 25 of the 39 unit cases then present; `verifyDeclaredOutputs` a no-op fails 9 of 13
+dispatch-level cases; removing the RUN-084 short-circuit in `resumeAgentStep` fails the resume test (a second session starts). All restored byte-identically.
+
+**Verification (scoped, owner-approved cost cut):** all of `packages/engine/test` (75 files; `interaction/session.test.ts` is the known load-sensitive flake, 48/48 alone),
+`packages/cli/test/commands/run` and `loop`, root `fm-*`, `live-smoke`, `agent-prompts-all-workflows`, `output-contract-known-gaps`, core `errors.test.ts`: green.
+`pnpm typecheck` 21/21, `pnpm run boundaries`, `pnpm lint` (only the 4 pre-existing prettier warnings). `outputs.ts` branch coverage 90%. The staged commit was typechecked and its
+tests run in a clean worktree of HEAD plus only this piece's hunks. Full-suite run left to the orchestrator.

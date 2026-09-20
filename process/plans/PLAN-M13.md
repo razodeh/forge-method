@@ -245,6 +245,9 @@ not hidden.
 
 **Depends on:** P5.
 
+**Status:** built (Q209, `## M13 P7` in the log). Shipped write-forbidden agents on file-producing steps now fail honestly: 37 steps
+are pinned in `test/output-contract-known-gaps.test.ts` until P11 resolves them.
+
 ## P8 — Context expansion protocol
 
 **Mandate:** `05` §5.4 point 4 — resolve `FORGE_REQUEST_CONTEXT:` mid-session via the existing
