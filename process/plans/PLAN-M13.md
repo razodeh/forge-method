@@ -305,6 +305,15 @@ implement the missing commands; keep G-Foundation's deployed skeleton via a Waiv
 | P9-2 (orchestrator, live) | re-run `retro` with a low `budget.perRunUsd` after P14, P15, P16, P18 | P14-P18 |
 | P9-3 (orchestrator, live) | `plan-stage` at L1 | P14-P19, P27 |
 
+**Found while building P14-P27 (each turns into a piece; see the Q entry cited):**
+
+| Piece | What it changes | Source |
+|---|---|---|
+| P28 Confine model-proposed commands (**security**) | `forge debug`'s REPRODUCE/PROVE commands, proposed by the model, run through `runShellCommand` with `shell: true` and the full environment, outside every tool grant; nothing enforces `taint: 'external'` for a tainted step; no claim or output scan runs on the diff `forge debug` commits. Run them under the agent's resolved grant and a scrubbed environment, enforce taint on grants, scan the committed diff | Q215 findings 3-4 |
+| P29 Debug and session leftovers | steel-man technique files read from `<project>/modules/*/techniques` (init should copy them to `.forge/techniques/`); collapse the CLI's older `loadProjectAgent` onto `readProjectAgent`; `forge debug` uses ad-hoc limits (20 turns/10 min/$2) not the diagnostician's declared ones; FIX now has `git*`/`cat*` exec and `git_commit: lane` (owner sign-off); DECIDE-owner matching is coarse (`decisions_owned` not matched to the question) | Q215 findings 1-2, 5-11 |
+| P30 Self-verify vs review order | spec `10` §10.6 puts self-verify (step 6) before review (step 7) but the `09` §9.8 example `done` profile contains `review:blocking-findings == 0`, so a default profile can never be green at self-verify; split the profile into `verify` and `done` phases (owner decision) | Q213 |
+| P31 Strict enforcement semantics | spec `06` §6.7 says strict fails the step; the code only reverts the file (owner call); P14's reworded `06` §6.4 contradicts `02` §2.5 / `08` §8.6 on the `KbWriter` (owner decision) | Q212 |
+
 Also carried from P13 (Q211): spec `10` §10.1's worked example does not compile as written (amend with `itemKey` on
 `review`, `dependsOn: [prepare]` on `freeze-contracts`, and a sentence that a merge's `dependsOn` resolves per
 item); `fixtures/greenfield-service/.forge/workflows/build-stage.workflow.yaml` is a stale hash-headed snapshot
