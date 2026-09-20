@@ -148,6 +148,52 @@ content from untrusted sources is wrapped and taints the step; crash-resume stil
 
 **Depends on:** P1, P4. Needs at least P2a for an end-to-end test on a real workflow.
 
+## P5b — `forge init` writes the model-tier map
+
+**Mandate:** P5 (Q203) made an unmapped tier a hard failure (RUN-078, `05` §5.8), which is correct, but
+`DEFAULT_CONFIG.models.tiers` is empty and `forge init` fills nothing in, so on a fresh project every
+agent step fails. `@forge/schemas` cannot name platform models (`no-platform-concept` lint), so the
+map must be written at init time from the selected adapter (`listModels()` already reports the
+`haiku`/`sonnet`/`opus` aliases): `models.tiers.<tier>.<adapterId>`. Re-running init must not
+overwrite a user's edited map.
+
+**Depends on:** P5. Blocks P9.
+
+## P3c — Re-key the agent brief specialisations that can never attach
+
+**Mandate:** Q198/Q199: 22 of the 33 `prompt.briefs.<key>` entries in `modules/fm-core/agents/*` use
+keys (copied from `05` §5.3's illustrative names) that match no shipped step brief and no
+participant-mode name, so their authored content never reaches a prompt. Re-key each to the nearest
+real step brief basename (or mode name), rename the prompt file and `PROMPTS_A`/`PROMPTS_B` entry to
+match, merge or choose where two steps compete for one agent, and drop any with no sensible match.
+Add a repository-level test that every `prompt.briefs` key across all agents is attachable (matches a
+shipped step brief basename or a participant mode name), so this cannot regress.
+
+**Depends on:** P5 (the matching rule).
+
+## P10 — `forge plan run-plan`
+
+**Mandate:** `plan-stage.workflow.yaml`'s `derive-run-plan` step runs `forge plan run-plan {{stageId}}
+--json`, but `PLAN_PHASES` in `packages/cli/src/bin.ts` has no `run-plan` and nothing handles it, so any
+real `plan-stage` run fails at that step. Read `03`/`10`/`09` for what the command must produce (the
+engine-compiled run plan for a stage) and implement it, or, if the spec and workflow disagree,
+record which is authoritative.
+
+**Depends on:** none. Independent of the prompt work.
+
+## P11 — Workflow / agent / gate coherence (decision piece)
+
+**Mandate:** content authoring (Q200/Q201/Q202) found places where shipped definitions contradict each
+other, which a live run will hit: steps assigned to agents that cannot produce the declared output
+(`write: false` roles on file-producing steps; missing `kb_write`/output slots); no test-runner exec
+grant for `diagnostician`/`sdet`/`backend`/`sre`; `intake` creates no `constraints/**`;
+`execution.testCommands` set by no step; gate rule names with no `forge spec validate --rule`
+implementation; `G-Stable` unreachable without a human; spec `09` §9.3 vs `10` §10.6 on test globs.
+Each is a decision, not a mechanical fix, so the first deliverable is a triage in `SPEC-QUESTIONS.md`
+(fix / spec-change / defer) for the owner. Not started.
+
+**Depends on:** P9 (the live run decides which of these actually bite first).
+
 ## P6 — A test adapter that reads the prompt
 
 **Mandate:** make this class of gap impossible to miss again.
@@ -185,7 +231,7 @@ not hidden.
 Needs the owner's key and spends real money, so it is run by the owner, not by an agent. Findings
 go to `SPEC-QUESTIONS.md`; expect some.
 
-**Depends on:** P5, P2a.
+**Depends on:** P5, P5b, P2a.
 
 ---
 
@@ -196,9 +242,11 @@ P0 ─┬─ P1 ─┬─ P2a ─ P2b ─ P2c
     │      └─ P3
     └─ P4 ─────────┐
            P1 ─────┴─ P5 ─┬─ P6
+                          ├─ P5b ── P9 (needs P2a)
+                          ├─ P3c
                           ├─ P7
-                          ├─ P8
-                          └─ P9 (needs P2a)
+                          └─ P8
+P10 (independent)   P11 (after P9)
 ```
 
 P2/P3 are content and can run alongside P4. P5 is the join point. Same gauntlet discipline as
