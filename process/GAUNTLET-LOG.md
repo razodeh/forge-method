@@ -13704,3 +13704,61 @@ brief's rules, and treating "a sibling piece will fix the role assignment" as li
 fm-core-module,fm-data-framework,fm-web-templates,fm-service-workflow,fm-mobile-workflow}.test.ts`,
 `packages/engine/test/e2e/prompt-assembly.test.ts`; `pnpm typecheck` (21/21), `pnpm run boundaries`, eslint clean, prettier reports only the 4
 pre-existing files. Failures in that scope belong to P5b (see above).
+
+## M13 P5b — `forge init` writes the model-tier map (`PlatformAdapter.defaultTierModels`, `tier-map.ts`, doctor `model-tiers`)
+
+**Piece:** a fresh project's agent steps no longer fail `RUN-078`. adapter-kit gained an optional `defaultTierModels()`; Claude Code
+maps `frugal`/`balanced`/`max` to the `haiku`/`sonnet`/`opus` aliases; `forge init` writes only ids the adapter also lists (nothing
+guessed; generic adapter, failed or empty `listModels()` -> unmapped, reported with the remedy, init still succeeds); re-init fills
+only absent/blank entries and never replaces a value; `forge doctor` has a `model-tiers` check that asks `resolveStepModel` itself.
+Every decision and disclosed limit: Q204. Three critic rounds.
+
+### Round 1: 0 blocking, 6 major, 8 minor
+
+Doctor did not do the `listModels()` validation `05` §5.8 assigns to it (added, with a "could not verify" note instead of implying it
+ran); doctor re-implemented `resolveStepModel` and passed on an empty `platform.primary` where a real step fails (now calls the resolver;
+the test that asserted the wrong behaviour was corrected); `backfillTierMap` returned `[]` for "nothing to do" and "could not act" alike
+(unreadable/duplicate-key config, unknown recorded adapter: now returned as notes and printed); a whitespace-only value counted as mapped
+and doctor's remedy could not fix what it flagged (blank/null/whitespace are now fillable and reported by the same test the resolver uses);
+two tests would have passed with a wrong implementation (the "does not rewrite" fixtures were canonical YAML: replaced by a non-canonical
+layout, plus mutation checks); the `bin.ts` hunk contained another piece's uncommitted work (split with a hand-built patch). Minors:
+anchored/aliased maps could re-point another tier (refused), alias bomb threw out of re-init (now a note), a forged second report line via
+newline in adapter text (one-line sanitizer), unreadable agents named, output capped, `fallback` path untested (added).
+
+### Round 2: 0 blocking, 4 major, 10 minor
+
+A user edit made while `listModels()` was in flight was overwritten (reproduced: two-phase read-then-apply fixes it, test rewrites the file
+mid-call); the `bin.ts` reporting block had no test (new `bin-init-tiers.test.ts`: real subprocess, plain vs `--json`, notes, unmapped
+tiers with the remedy); whole-file re-serialization (CRLF now preserved; symlink/mode loss is the repo-wide `writeFileAtomic`
+convention, accepted and disclosed); doctor severity vs the spec's "doctor error" (revised in round 3). Minors fixed: an anchored blank
+scalar leaking one tier's model into another, padded ids warning of a `RUN-078` that would not happen, unbounded model lists, hostile
+values in doctor messages, an unreadable-agents-only project claiming "no agents installed".
+
+### Round 3: 0 blocking, 1 major, 8 minor
+
+Doctor's hard failure for an unlisted model rested on the Claude Code `listModels()` being authoritative; it is a static table and the
+real adapter never refuses an unlisted `--model` (only the testkit fake does), so a valid newer id would have failed `forge doctor` with
+exit 5 and init would never fix it: downgraded to a warning with a different remedy, deviation recorded in Q204. Minors fixed: an
+LF-stays-LF test (an unconditional CRLF conversion would have passed every test), bidi/line-separator characters, the tier-vocabulary
+drift test moved from the multi-minute file to a fast one. Left as disclosed limits: mixed line endings become CRLF, a stale reason when the
+file changes between the two phases, re-init cannot fill an empty `platform.primary`, no `listModels()` timeout, conformance suite does not
+check `defaultTierModels ⊆ listModels`. No fourth critic: the round-3 fix was a severity change plus tests, verified by the scoped runs below.
+
+**What the critics caught that the builder missed:** the spec's own doctor-time validation duty; that the doctor check must call the
+resolver rather than restate it; the lost update during `listModels()`; alias/anchor sharing; and that the Q196 premise "`startSession`
+refuses an unlisted model" is true of the fake and false of the real adapter. The builder had also written tests whose fixtures could not
+distinguish "did not write" from "rewrote identically".
+
+**Process notes:** another piece's in-flight prompt rename (P3c) made every real-roster `runInit` fail for about an hour; this piece's
+tests were verified meanwhile in a clean `git worktree` of `HEAD` plus its own files, then re-run in the main tree once P3c landed.
+The first `--json`/re-init test run in that worktree failed 146 `bin.test.ts` cases because the copied `bin.ts` carried another piece's
+uncommitted hunks: not a regression (rebuilt from `HEAD` plus this piece's hunks only). `forge doctor` hard-failing the bin/upgrade
+subprocess tests (exit 5) was the first design; it was the reason the check became a warning before the critics raised the same point.
+The feat commit used a private index so concurrent commits from the shared tree could not sweep up or revert these files.
+
+**Verification:** scoped per the owner-approved cost cut (no full unscoped suite): `packages/cli/test/{init,commands/doctor,
+commands/upgrade,e2e/init,bin,bin-init-tiers}` (bin.test.ts run whole), `packages/adapter-claude-code/test/{list-models,adapter}`,
+`packages/adapter-kit/test`, `packages/agents/test/resolve`, `test/workspace-floor.test.ts`; `pnpm typecheck` (21/21), `pnpm run
+boundaries`, eslint clean, prettier reports only the 4 pre-existing files. Two scoped failures seen under machine load
+(`upgrade/{backup,run-upgrade}.test.ts`) pass in isolation (the accepted load-sensitive pair); one stray-file failure
+(`tier-stubs.ts` vs `workspace-floor`) was this piece's and is fixed (helper registered like its siblings).

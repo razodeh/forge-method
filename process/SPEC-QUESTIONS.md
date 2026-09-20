@@ -16969,6 +16969,100 @@ inference}.ts`, `packages/engine/src/plan/{compile,types}.ts`, `packages/engine/
 `packages/core/src/errors/codes.ts`, tests (`packages/engine/test/e2e/prompt-assembly.test.ts` is the
 full-path suite), root `test/{fm-*-workflow,live-smoke}.test.ts`.
 
+## Q204 — M13 P5b: `forge init` writes the model-tier map from the selected adapter — where it lives, the tier-to-alias
+mapping, what a generic or failing adapter gets, what re-init may touch, and why doctor's model check is a warning
+
+**Context:** `PLAN-M13.md` P5b. P5 (Q203) made a tier with no `models.tiers.<tier>.<adapterId>` entry a hard `RUN-078` (`05`
+§5.8), which is right, but `DEFAULT_CONFIG.models.tiers` is `{frugal:{}, balanced:{}, max:{}}` and `forge init` filled nothing in,
+so every agent step on a fresh project failed until the user hand-wrote the map. `@forge/schemas` cannot name platform models
+(`no-platform-concept`), so the map has to be produced at init time from the selected adapter.
+
+**Decisions:**
+
+1. **Home: an optional adapter method, not `listModels()` plus a table in `cli`.** `PlatformAdapter.defaultTierModels?():
+   TierModelMap` (`@forge/adapter-kit/types`, with `MODEL_TIER_NAMES`/`ModelTierName`/`TierModelMap`). `listModels()` is an
+   unordered catalogue with no notion of "small/mid/large", and `packages/cli` may not name a model, so the only place that
+   can say which model serves which tier is the adapter. The tier names are FORGE's own vocabulary (they are the
+   `models.tiers` keys), not a platform's, so naming them in adapter-kit leaks nothing. **`specs/07` §7.2 is silent on this and
+   was not edited:** it is an additive optional member; this entry is the record. A test asserts the adapter-kit list, the
+   `DEFAULT_CONFIG` keys and the agent schema's tier enum agree (the resolver's own private list is exercised by resolving every
+   tier through it). Consumed by `packages/cli/src/init/tier-map.ts`; `models.tiers.<tier>.<adapterId>` is written by
+   `buildForgeConfig` into the config `writeInitTree` already writes, so no second writer exists for a fresh init.
+2. **Mapping (Claude Code): `frugal` -> `haiku`, `balanced` -> `sonnet`, `max` -> `opus`**, the short aliases. Aliases, not the
+   pinned ids `listModels()` also reports, because an alias tracks the release the CLI currently serves for that family (a
+   project initialised today does not keep asking for a retired snapshot) and they are what the CLI's own `--model` help
+   documents. `fable` is listed but unmapped: the tiers line up with the three-family haiku/sonnet/opus ordering; that is a
+   judgement no test can prove, and a project that disagrees edits `models.tiers`, which init never overwrites. The shipped agents
+   use `balanced` (23) and `max` (11) only; all three tiers are mapped anyway, so a `models.overrides` entry or a new agent on
+   `frugal` does not hit `RUN-078`.
+3. **Never write a guessed id.** `deriveTierMap` keeps a tier only when the adapter both names a model for it *and* lists that
+   id in `listModels()` (own-property read of the returned map, non-blank, no padding, string). No `defaultTierModels`, a
+   throwing one, a `listModels()` that rejects or returns `[]`, a non-object return, an unlisted id, an omitted tier: each leaves
+   that tier (or all three) unmapped with a stated reason and **never fails init**. **The generic adapter** declares nothing
+   (`07` §7.5's `adapter.yaml` has no model catalogue; its `listModels()` is honestly `[]`), so it gets no map. It is also not in
+   `KNOWN_ADAPTER_MODULES`, so `forge init` cannot select it today at all (disclosed in `bin.ts` since M12 P1); a project that
+   uses it maps its own tiers by hand. Where a user can see this: `InitResult.modelTiers` (per adapter: mapped, unmapped, note)
+   carries it in `--json`, and plain `forge init` prints one warning per adapter naming the tiers, the reason and the remedy
+   (`models.tiers.<tier>.<adapter>` in `.forge/config.yaml`). Adapter-supplied text in that line goes through
+   `sanitizeOneLine` (control characters, bidi/line-separator characters, and every line break removed).
+4. **Fallback adapter.** `platform.fallback` gets a vetted map too, when it differs from the primary, so a run that falls back
+   does not hit `RUN-078` on its first step. (Nothing consumes the fallback at run time yet; latent.)
+5. **Re-init: fill, never replace.** Before this piece a re-init did not touch `config.yaml` at all (so trivially could not
+   overwrite an edit) but also could not repair a project initialised before P5b, which is exactly the broken population. Now
+   `backfillTierMap` fills `models.tiers.<tier>.<adapterId>` for the recorded primary/fallback **only where the entry is absent,
+   `null` or blank/whitespace** (`resolveStepModel` already treats those as unmapped, so nothing a person chose is lost). Any
+   real value — hand-edited, an id the adapter does not list, a value of an unexpected type — is left exactly as it is. Edited
+   through the YAML document model (comments and key order survive), written atomically, and only when something was filled.
+   Anchored maps/scalars and aliases are refused rather than written through (filling one would change every tier sharing it).
+   Reports describe the state after the merge with aliases resolved, the way `configSchema` reads the file. The adapter is asked
+   only when something is missing (a complete map costs no `listModels()` call). **Two-phase:** adapter first (slow), then the
+   file is re-read and the fills applied to that fresh text, so an edit made while `listModels()` was in flight is kept (a
+   critic reproduced the lost update on the first draft). CRLF files stay CRLF.
+   Nothing is skipped silently: an unreadable, malformed (incl. duplicate-key), non-mapping or alias-bomb config, a config
+   recording no platform, a recorded adapter the CLI was not given, a write failure — each comes back as `modelTierNotes` and is
+   printed as a warning in plain mode (`--json` carries the array; stdout stays exactly one JSON line).
+6. **Precedence unchanged.** `resolveStepModel` is untouched. Overlay/config-provided mapping wins because init only ever adds
+   what is missing, and a test resolves a hand-set value, a per-agent tier override, and every tier name through the real
+   resolver against a fresh init.
+7. **Doctor: new `model-tiers` check** (`packages/cli/src/commands/doctor/model-tiers.ts`). For every installed agent it calls
+   `resolveStepModel` itself (so tier overrides, blank entries and prototype-named ids cannot drift from what a real step does)
+   and groups the `RUN-078` reasons; with the adapter available it also cross-checks each model a step would ask for against
+   `listModels()`, naming the available ids (`05` §5.8: "Model identifiers MUST be resolved via the adapter's `listModels()` at
+   doctor time"), and says plainly when it could not verify (no adapter / a different one / it lists none / listing failed).
+   Scoped to *installed* agents (a tier no agent uses need not be mapped; no agents installed -> nothing can fail yet).
+   **Severity is `warning` for both, a deliberate deviation from §5.8's wording "doctor error":** an unmapped tier stops agent
+   steps, not FORGE (agent-free workflows, spec/KB commands and gates still run) and `03` §3.7 reserves exit 5 for a hard
+   prerequisite; and the `listModels()` cross-check is a warning because the Claude Code adapter's list is a *static table*
+   that does not gate `--model` (only the testkit fake refuses unlisted ids; the Q196 note that "`startSession` refuses any model
+   the adapter did not report" holds for the fake, not for the real adapter), so a valid newer id would otherwise fail
+   `forge doctor` with exit 5 and init would never fix it. The remedy text differs by cause. Effect on existing fixtures: a
+   project initialised against the testkit fake (no `defaultTierModels`) now shows this warning in `forge doctor`; no test that
+   asserted a clean doctor changed, because a warning never flips `ok`.
+8. **`docs/getting-started.md`:** no statement in it became untrue (it says nothing about models/tiers); not edited.
+
+**Disclosed limits (not fixed):**
+- A fill re-serializes the whole file: line folding, indentation and blank lines are normalised (a hand-formatted config shows
+  churn in a diff; values and comments are unchanged), a UTF-8 BOM is dropped, and mixed line endings all become CRLF if any
+  CRLF is present. `writeFileAtomic` replaces a symlinked config with a regular file and does not preserve file mode — the
+  repo-wide convention of that one writer (`18` §18.10), not specific to this piece.
+- No lock: a change landing between the final re-read and the rename can still be lost (the window is a read-to-rename gap, not the
+  length of an adapter probe). If the file changes between the two phases the *reason* in a report can be stale; data is never lost.
+- `listModels()` has no timeout in init or doctor; an adapter that probes over a network could hang either.
+- Doctor checks `platform.primary` only (or the passed adapter's id when it is empty); a stale fallback map is not reported (the
+  fallback is not consumed at run time yet). Re-init does not fill for an empty `platform.primary` although doctor resolves it to
+  the registry's first adapter, so it cannot repair what doctor flags there (it says so in a note).
+- `@forge/adapter-kit`'s conformance suite does not assert `defaultTierModels() ⊆ listModels()`; only init's vetting and the
+  Claude Code adapter's own test hold it. `specs/07` §7.2 and `05` §5.8 were not amended (decision 1).
+- The testkit's `FakePlatformAdapter` declares no defaults (P6's file); tests that need an unmapped adapter force
+  `defaultTierModels: undefined` so they do not depend on that.
+
+**Gauntlet:** three critic rounds (no blocking finding in any); see `GAUNTLET-LOG.md`, `## M13 P5b`.
+
+Files: `packages/adapter-kit/src/types/{tiers,adapter,index}.ts`, `packages/adapter-claude-code/src/{list-models,adapter,index}.ts`,
+`packages/cli/src/init/{tier-map,config,run-init,types,index}.ts`, `packages/cli/src/commands/doctor/{model-tiers,run-doctor,index}.ts`,
+`packages/cli/src/bin.ts` (reporting block), tests `packages/cli/test/{init/{tier-map,model-tiers-init,tier-stubs},commands/doctor/model-tiers,bin-init-tiers}.test.ts`,
+`test/workspace-floor.test.ts` (one ignored helper path).
+
 ## Q205 — M13 P3c: 21 agent brief specialisations could never attach — re-keyed, split, merged or dropped, and the
 permanent test that keeps every `prompt.briefs` key attachable
 
