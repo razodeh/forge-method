@@ -40,9 +40,17 @@ export {
   parseEscalations,
   type CreatePromptAssemblyInput,
 } from './assembly-context.ts';
+export {
+  checkDeclaredOutputs,
+  outputGlob,
+  outputPathCoveredBy,
+  verifyDeclaredOutputs,
+  type OutputCheckInput,
+} from './outputs.ts';
 export { runShellCommand, type ShellCommandResult } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {
+  DocRoots,
   ExecuteStepContext,
   GateEvaluator,
   KbAccess,

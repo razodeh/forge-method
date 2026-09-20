@@ -65,6 +65,20 @@ export interface VcsFacade {
    * already does — not attempting a real `git commit` against an empty diff and treating the resulting
    * "nothing to commit" failure as though the step itself had gone wrong. */
   hasChanges(handle: LaneHandle, baseSha: string): Promise<boolean>;
+  /** The files a lane produced against `baseSha`, split by whether they reached the lane branch: `committed`
+   * is what `baseSha..HEAD` changed (added, modified or deleted -- exactly what a later merge would carry
+   * into the integration branch), `uncommitted` what exists only in the worktree or index (never merged).
+   * The output contract check (`outputs.ts`, `PLAN-M13.md` P7) reads the committed set: an artifact that
+   * never reached the branch is not a produced output, whatever the worktree holds. */
+  changedFiles(
+    handle: LaneHandle,
+    baseSha: string,
+  ): Promise<{ readonly committed: readonly string[]; readonly uncommitted: readonly string[] }>;
+  /** The content of `file` (repo-relative) at `revision` (`'HEAD'` or a resolved sha) in the lane's
+   * repository, read from the git object database -- never from the worktree, so an uncommitted edit cannot
+   * stand in for what would merge. `undefined` when the file does not exist at that revision (an added file's
+   * base, a deleted file's head) or is not a regular file there (a symlink or submodule entry). */
+  readAtRevision(handle: LaneHandle, revision: string, file: string): Promise<string | undefined>;
   enforceClaim(
     handle: LaneHandle,
     baseSha: string,
@@ -277,7 +291,18 @@ export interface ExecuteStepContext {
    * back into `interaction/` -- the same "sits with the context it configures" placement `model`/
    * `tools`/`retainLaneWorktrees` already have. */
   readonly sessionBounds?: SessionBounds | undefined;
+  /** The project's configured documentation roots (`18` §18.3 `paths`), which the output contract check
+   * (`outputs.ts`, `PLAN-M13.md` P7) roots each `18` §18.7 artifact path template under. `forge run` supplies
+   * the project's own `paths` (`buildRunEngineContext`). Omitted, it defaults to `@forge/schemas`'s default
+   * layout (`docs/forge/...`): the check itself never becomes optional, and a project that relocated its
+   * docs but built a context without this fails loudly (a declared output is "not found") rather than
+   * passing. */
+  readonly docRoots?: DocRoots | undefined;
 }
+
+/** The four `paths` config keys an artifact path template's first segment names (`18` §18.7): `specs/...`,
+ * `kb/...`, `sessions/...`, `reports/...`. */
+export type DocRoots = Pick<ForgeConfig['paths'], 'kb' | 'specs' | 'sessions' | 'reports'>;
 
 /** `16` §16.8's own literal bound table, all optional and independently overridable — see
  * `ExecuteStepContext.sessionBounds`'s own doc comment for how a caller supplies this. */
@@ -318,7 +343,11 @@ export interface StepFailureInfo {
     /** Prompt assembly refused the step before anything was dispatched (`PLAN-M13.md` P5): a missing
      * agent/brief, an unresolvable grant or model, a ceiling violation. `code` carries the `ForgeError`
      * code. Never retryable -- the same inputs fail identically -- see `classifyFailure`. */
-    | 'prompt';
+    | 'prompt'
+    /** The step's session ended ok but a declared `outputs` entry is absent or invalid (`PLAN-M13.md` P7,
+     * `outputs.ts`). `code` is `RUN-083` (or `RUN-084` when the agent's own grant is the cause). Always
+     * classified `validation` (`06` §6.8) by `classifyFailure`. */
+    | 'output';
   readonly code?: string | undefined;
   readonly message: string;
   /** The real, registered `ForgeError` a `vcs`-sourced failure was wrapped into for provenance

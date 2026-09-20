@@ -8,6 +8,7 @@
  *
  * @see PLAN-M5.md P15
  */
+import { execa } from 'execa';
 import { appendEvent, type NewForgeEvent } from '@forge/telemetry/events';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
 import {
@@ -18,6 +19,7 @@ import {
   processMergeCandidate,
   removeLaneWorktree,
   resolveRevision,
+  wrapGitFailure,
   type LaneHandle as VcsLaneHandle,
   type MergeCandidate,
   type MergeConflictResolver,
@@ -52,6 +54,9 @@ function asVcsLaneHandle(handle: LaneHandle): VcsLaneHandle {
   return handle as unknown as VcsLaneHandle;
 }
 
+/** The largest artifact file `readAtRevision` will return (8 MiB): far beyond any real document. */
+const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
+
 export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
   return {
     async createLane(stepId, integrationBase) {
@@ -69,6 +74,47 @@ export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
     async hasChanges(handle, baseSha) {
       const changed = await diffLaneChanges(asVcsLaneHandle(handle), baseSha);
       return changed.length > 0;
+    },
+    async changedFiles(handle, baseSha) {
+      const vcsHandle = asVcsLaneHandle(handle);
+      const resolvedBase = await resolveRevision(handle.path, baseSha);
+      // `-z`/`--no-renames` for the reasons `diffLaneChanges`' own doc comment gives: raw NUL-separated paths
+      // (no `core.quotePath` mangling) and a rename reported as a delete plus an add.
+      const { stdout } = await wrapGitFailure(
+        () =>
+          execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase, 'HEAD', '--'], {
+            cwd: handle.path,
+          }),
+        `listing the commits of the lane worktree at "${handle.path}" against "${baseSha}"`,
+      );
+      const committed = stdout.split('\0').filter((entry) => entry !== '');
+      const committedSet = new Set(committed);
+      const everything = await diffLaneChanges(vcsHandle, resolvedBase);
+      return {
+        committed: committed.sort(),
+        uncommitted: everything.filter((file) => !committedSet.has(file)),
+      };
+    },
+    async readAtRevision(handle, revision, file) {
+      // `git show <rev>:<path>` reads the object database; a file absent at `revision` exits non-zero. Bounded
+      // so one enormous file cannot exhaust memory; an over-limit file reads as absent, which fails the check
+      // rather than passing. A flag-shaped revision must never reach git (`@forge/vcs`'s own rule for refs).
+      if (revision.startsWith('-')) return undefined;
+      // Only a regular file (mode 100644/100755) is an artifact: a symlink's blob is its target text, which
+      // could be a perfectly valid document while the tree entry a merge carries is a link.
+      const entry = await execa('git', ['ls-tree', '-z', revision, '--', file], {
+        cwd: handle.path,
+        reject: false,
+      });
+      const mode = entry.exitCode === 0 ? entry.stdout.split(' ')[0] : undefined;
+      if (mode !== '100644' && mode !== '100755') return undefined;
+      const result = await execa('git', ['show', `${revision}:${file}`], {
+        cwd: handle.path,
+        reject: false,
+        stripFinalNewline: false,
+        maxBuffer: MAX_ARTIFACT_BYTES,
+      });
+      return result.exitCode === 0 && !result.failed ? result.stdout : undefined;
     },
     async enforceClaim(handle, baseSha, declaredGlobs, policy) {
       return enforceClaim(asVcsLaneHandle(handle), baseSha, declaredGlobs, policy);

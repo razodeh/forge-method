@@ -94,7 +94,22 @@ function fixtureAdapter(capabilityOverrides: Partial<AdapterCapabilities> = {}):
     writeFiles: [
       {
         relativePath: `docs/forge/specs/interfaces/${INTERFACE_NAME}.yaml`,
-        content: `id: INT-001\ntype: InterfaceContract\n`,
+        // A valid `InterfaceContract` file (`18` §18.7): the step declares `outputs: [InterfaceContract]`,
+        // and the output contract check (M13 P7) validates its front matter keys, not just its existence.
+        content: [
+          'id: INT-001',
+          'type: InterfaceContract',
+          'schemaVersion: 1',
+          `title: ${INTERFACE_NAME}`,
+          'status: draft',
+          'created: 2026-01-15',
+          'updated: 2026-01-15',
+          'revision: 1',
+          'author: integration-architect',
+          'changelog: []',
+          'openapi: 3.1.0',
+          '',
+        ].join('\n'),
       },
     ],
   });
@@ -205,7 +220,10 @@ function fixtureRunEngineContext(projectRoot: string): RunEngineContext {
     tools: FIXTURE_TOOLS,
     assembly: fixtureAssembly(projectRoot),
     retainLaneWorktrees: false,
-    claimPolicy: 'strict',
+    // `guided` autonomy (the default a project gets) resolves to `warn` (`06` §6.7). `strict` would revert
+    // the contract this step writes, since the shipped step declares `outputs` but no `produces` claim, and
+    // the output contract check (M13 P7) would then fail it; see Q209.
+    claimPolicy: 'warn',
     signCommits: false,
     now,
     laneRegistry: new Map(),

@@ -214,6 +214,10 @@ async function resumeAgentStep(
     const preAttemptHead = await resolveRevision(lane.path, 'HEAD');
     const attempt = await runAgentAttempt(node, ctx, lane, baseSha, { kind: 'resume', sessionId });
     if (attempt.status === 'succeeded') return attempt;
+    // `RUN-084` (the output contract check, `PLAN-M13.md` P7): the step declares outputs its agent's own
+    // grant forbids writing. A second, fresh session is deterministic waste (real spend, identical outcome),
+    // unlike every other failure here, where a fresh session can plausibly do better.
+    if (attempt.failure?.code === 'RUN-084') return attempt;
     await rollbackLaneToBase(lane, preAttemptHead);
     return runAgentAttempt(node, ctx, lane, baseSha, { kind: 'start' });
   }

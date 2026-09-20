@@ -1054,6 +1054,31 @@ export const ERROR_CODES = {
     remedy:
       'Run `forge plan stage <id>` first to write the stage’s epics and stories, or pass the stage id an existing Epic’s `stage` field names.',
   },
+  'RUN-083': {
+    // `@forge/engine/dispatch`'s output contract check (`PLAN-M13.md` P7, `05` §5.5): after an agent step's
+    // session ended ok, a declared `outputs` entry was not found at its `18` §18.7 registry location among
+    // the files the session produced, or did not validate against its artifact schema. A `validation`-class
+    // step failure (`06` §6.8): the step fails instead of being reported as succeeded. `detail` names every
+    // unmet output, the expected path glob and the check that failed.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; detail: string }) =>
+      `Step ${show(d.stepId)} did not produce its declared outputs: ${show(d.detail)}`,
+    remedy:
+      'Write each declared output to the expected path with valid front matter (the `.forge/templates/<Type>.md` scaffold shows the shape), or correct the step’s `outputs:` declaration, then run the workflow again.',
+  },
+  'RUN-084': {
+    // The same output-contract failure as `RUN-083`, when the cause is the agent's own tool grant: the step
+    // declares outputs but the agent it is assigned to has `tools.write: false`, so it could not have
+    // written any file. Not an exemption (the check still ran and still fails the step): a distinct code so
+    // the remedy points at the real fix, which no amount of re-running the same step will supply.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; agentId: string; detail: string }) =>
+      `Step ${show(d.stepId)} cannot produce its declared outputs: agent ${show(d.agentId)} has tools.write: false. ${show(d.detail)}`,
+    remedy:
+      'Set `tools.write: true` on this agent’s definition, assign the step to an agent that can write, or remove the step’s declared `outputs`.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

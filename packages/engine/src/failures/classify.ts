@@ -133,6 +133,13 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       return failure.code !== undefined && PROMPT_POLICY_CODES.has(failure.code)
         ? 'policy'
         : 'transient';
+    case 'output':
+      // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
+      // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as
+      // for any other step failure. (Retrying a session that could not write is futile when the cause is
+      // the agent's grant, `RUN-084`, but the never-retry rule already escalates the second identical
+      // failure, and the retry loop has no production caller yet, `PLAN-M11.md` P11.)
+      return 'validation';
     case 'telemetry':
     case 'unsupported':
       // Neither is ever actually constructed by any real handler in @forge/engine/dispatch: a

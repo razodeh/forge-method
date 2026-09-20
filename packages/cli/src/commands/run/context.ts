@@ -305,6 +305,14 @@ export async function buildRunEngineContext(
     // `warn`), and blind to whether the project is a `forge adopt`-adopted brownfield codebase at all.
     claimPolicy: resolveClaimPolicy(input.config.execution.autonomy, input.config.project.adopted),
     signCommits: input.config.vcs.signCommits,
+    // `PLAN-M13.md` P7: the output contract check roots each artifact path template (`18` §18.7) under the
+    // project's own configured docs directories, so a project that relocated `paths.specs` is checked there.
+    docRoots: {
+      kb: input.config.paths.kb,
+      specs: input.config.paths.specs,
+      sessions: input.config.paths.sessions,
+      reports: input.config.paths.reports,
+    },
     now,
     laneRegistry: new Map(),
     limits: concurrencyLimits(input.config),

@@ -34,9 +34,11 @@ import type { ExecuteStepContext, StepOutcome } from './types.ts';
  * ever emits either (`@forge/engine/scheduler`, P12, tracks `StepOutcome` only in memory, via
  * `markSucceeded`/`markFailed` — it never touches the event log itself). Without this, the durable log a
  * real crash-resume reads back (`06` §6.10) has no terminal event distinguishing a successful step from a
- * failed one — `LaneReady`, the last event a lane-based handler itself emits, fires unconditionally even
- * when `work.failure` is set, by design (`steps.ts`'s own `runLaneLifecycle`: the lane itself really is
- * "ready," i.e. claim-enforced and inspectable, regardless of whether the *work* inside it succeeded).
+ * failed one — `LaneReady`, the last event a lane-based handler itself emits, fires even when
+ * `work.failure` is set, by design (`steps.ts`'s own `runLaneLifecycle`: the lane itself really is "ready,"
+ * i.e. claim-enforced and inspectable, regardless of whether the *work* inside it succeeded), but not when
+ * the output contract check (`PLAN-M13.md` P7) fails an otherwise-ok session: resume re-registers every
+ * `ready` lane for merging, and a lane missing its declared output must not be.
  * `executeStep` is the one place every real `StepOutcome`, from every kind, already passes through once
  * dispatch finishes — the natural, single point to close this gap rather than duplicating it per handler. */
 export async function executeStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {

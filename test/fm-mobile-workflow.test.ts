@@ -93,7 +93,25 @@ function fixtureAdapter(): PlatformAdapter {
     writeFiles: [
       {
         relativePath: `docs/forge/specs/tasks/TASK-release-${BUILD_TARGET}.md`,
-        content: `# Release build task for ${BUILD_TARGET}\n`,
+        // A valid `Task` artifact (`18` §18.7): the step declares `outputs: [Task]`, and the output contract
+        // check (M13 P7) validates what the session wrote against the Task schema, not just its existence.
+        content: [
+          '---',
+          'id: TASK-001',
+          'type: Task',
+          'schemaVersion: 1',
+          `title: Release build task for ${BUILD_TARGET}`,
+          'status: draft',
+          'created: 2026-01-15',
+          'updated: 2026-01-15',
+          'revision: 1',
+          'author: mobile',
+          'changelog: []',
+          '---',
+          '',
+          `# Release build task for ${BUILD_TARGET}`,
+          '',
+        ].join('\n'),
       },
     ],
   });
@@ -203,7 +221,10 @@ function fixtureRunEngineContext(projectRoot: string): RunEngineContext {
     tools: FIXTURE_TOOLS,
     assembly: fixtureAssembly(projectRoot),
     retainLaneWorktrees: false,
-    claimPolicy: 'strict',
+    // `guided` autonomy (the default a project gets) resolves to `warn` (`06` §6.7). `strict` would revert
+    // the Task this step writes, since the shipped step declares `outputs` but no `produces` claim, and the
+    // output contract check (M13 P7) would then fail it; see Q209.
+    claimPolicy: 'warn',
     signCommits: false,
     now,
     laneRegistry: new Map(),

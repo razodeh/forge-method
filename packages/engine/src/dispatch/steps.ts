@@ -33,6 +33,7 @@ import {
   type AssembledSession,
 } from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
+import { verifyDeclaredOutputs } from './outputs.ts';
 import { runShellCommand } from './shell.ts';
 import type {
   ExecuteStepContext,
@@ -202,6 +203,9 @@ export async function runLaneLifecycle(
   }
 
   const work = await runWork(lane, baseSha);
+  // What claim enforcement reverted, for the output contract check below: an artifact the session wrote
+  // but the step's `produces` claim did not cover never reached the lane branch, and the check says so.
+  let claimReverted: readonly string[] = [];
 
   if (work.changed) {
     const commitResult = await runVcsStep(node.id, () =>
@@ -216,6 +220,7 @@ export async function runLaneLifecycle(
     );
     if (!enforceResult.ok)
       return failed(node.id, startedAt, ctx.now(), work.detail, enforceResult.failure);
+    claimReverted = enforceResult.value.reverted;
     if (enforceResult.value.reverted.length > 0) {
       const revertCommitResult = await runVcsStep(node.id, () =>
         ctx.vcs.commit(
@@ -239,10 +244,26 @@ export async function runLaneLifecycle(
     }
   }
 
-  await ctx.telemetry.emit({ type: 'LaneReady', stepId: node.id, laneId: lane.laneId });
-  if (work.failure !== undefined)
+  if (work.failure !== undefined) {
+    await ctx.telemetry.emit({ type: 'LaneReady', stepId: node.id, laneId: lane.laneId });
     return failed(node.id, startedAt, ctx.now(), work.detail, work.failure);
+  }
 
+  // `PLAN-M13.md` P7 (`05` §5.5): the session ended ok, but "ok" says nothing about whether the step's
+  // declared `outputs` exist. Checked against the lane as it now stands (committed, claim-enforced): what
+  // a merge would carry forward. `agent` steps only (`outputs.ts`). A lane that fails the contract is not
+  // announced `LaneReady`: resume re-registers every `ready` lane for merging, and a lane whose declared
+  // output is missing or invalid must not be merged after a resume when it would not have been before.
+  const outputCheck = await runVcsStep(node.id, () =>
+    verifyDeclaredOutputs(node, ctx, lane, baseSha, claimReverted),
+  );
+  if (!outputCheck.ok)
+    return failed(node.id, startedAt, ctx.now(), work.detail, outputCheck.failure);
+  if (outputCheck.value !== undefined) {
+    return failed(node.id, startedAt, ctx.now(), work.detail, outputCheck.value);
+  }
+
+  await ctx.telemetry.emit({ type: 'LaneReady', stepId: node.id, laneId: lane.laneId });
   ctx.laneRegistry.set(node.id, lane);
   return succeeded(node.id, startedAt, ctx.now(), work.detail);
 }

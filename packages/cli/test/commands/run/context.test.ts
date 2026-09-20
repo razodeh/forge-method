@@ -337,6 +337,29 @@ describe('buildRunEngineContext', () => {
     kb.close();
   });
 
+  it("wires the project's own configured docs roots into the output contract check (M13 P7): a relocated paths.specs is where declared outputs are looked for", async () => {
+    const project = await createTestProject();
+    const relocated = {
+      ...project.config,
+      paths: { ...project.config.paths, specs: 'documentation/specs', kb: 'documentation/kb' },
+    };
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: relocated,
+      runId: 'run-docroots',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    expect(ctx.docRoots).toEqual({
+      kb: 'documentation/kb',
+      specs: 'documentation/specs',
+      sessions: relocated.paths.sessions,
+      reports: relocated.paths.reports,
+    });
+  });
+
   it('refuses to build a context from a malformed security.toolCeilingEscalations entry (CFG-054)', async () => {
     const project = await createTestProject();
     await expect(
