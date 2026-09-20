@@ -16738,3 +16738,87 @@ against `KB_SECTIONS`, and test-layer commands against `scaffold-project`.
 
 **Verification was scoped by instruction** (no full unscoped test run for this piece; the orchestrator runs the
 single full-suite check after all pieces land).
+
+## Q202 — M13 P2c: ops/adopt/migrate/retro/replan briefs and the ten gate critique briefs — what the
+critique briefs ask for when the engine parses nothing, and the gate-brief validator
+
+**Context:** `PLAN-M13.md` P2c authored 21 briefs (11 workflow briefs: `reverse-derive-specs`,
+`adoption-gap-analysis`, `plan-migration`, `migration-expand`, `migration-contract`,
+`instrument-observability`, `define-slos`, `write-runbooks`, `propose-change`, `change-impact-analysis`,
+`run-retro`; ten gate briefs: `critique-*`) and closed Q197 item 2 (gate-embedded `brief:` references were
+validated by nothing). The coordinator's assignment file matched the assigned list exactly.
+
+**Judgement calls:**
+
+1. **No advisory verdict is machine-read today.** `evaluateGate` carries `checks.advisory` through untouched
+   (`engine/gates/types.ts`: "nothing ... turns an advisory check's agent response into an `OpenQuestion`"),
+   `objection-list.schema.json` (declared by `critic.agent.yaml`) does not exist, and `ObjectionList` is not in
+   `18` §18.7's registry. So there is no parser to match; each critique brief therefore *defines* the document
+   itself: a per-criterion verdict table (`pass|fail|not-evidenced|n/a`, with a citation) plus objections with
+   `id, criterion, severity, where, claim, test, question`, i.e. `05` §5.2's "objection list with severity +
+   test" plus `10` §10.3 rule 2's open-question wording. Severity vocabulary is `13` F-REVIEW-1's
+   (`blocking|major|minor`). If a later piece builds the parser it must match, or amend, these briefs;
+   `packages/agents/test/prompt/briefs-ops-gates-content.test.ts` pins the field names.
+2. **Only `blocking`/`major` objections carry a `question`.** `10` §10.3 rule 2 says advisory checks "create
+   OQ-### entries" with no severity filter, and every shipped gate has `openQuestionsPolicy: block`, under
+   which any open question holds the gate. Asking for a question on a `minor` finding would let polish notes
+   hold gates, so `minor` carries `question: none`. Conservative reading, not a spec statement.
+3. **`n/a` verdict.** Criteria that depend on level or on an artifact type that need not exist (a ThreatModel
+   below L3, discovery session records) would otherwise become false `not-evidenced` objections, which under
+   `block` hold the gate. `n/a` carries no severity and must state its reason.
+4. **Critic cannot run anything.** `critic` has `write: false` and an exec grant of `git log/ls/rg/cat`, so every
+   brief tells it to *propose* the falsifying `test`, never claim to have run it. Likewise `backend`
+   (migration briefs) and `sre` cannot run a suite; those briefs ask for "the exact commands that should prove
+   it" (operating contract rule 5), not "the suite passes".
+5. **Critic agent input mismatch (not fixed here).** `critic.agent.yaml` declares `inputs.required:
+   ArchitectureSpec`, which cannot exist at `G-Problem`, `G-Product` or `G-Ready`; eight of ten critique briefs
+   review other artifacts (each gate's own `evidence:` list). Left as is: an agent-definition change, not a brief.
+6. **HandoffRecord has no `subtype` key.** The schema is strict and workflows label records with `subtype:`.
+   Briefs tell the agent to record it as the first `delivered` entry (`subtype: <name>`) and spell out the strict
+   key set, `assumptions` object shape and `ASM-` ids. Tested against the schema's required keys.
+7. **ADR `date` for reconstructed decisions.** `17` §17.2 says `date: unknown`; `adr.schema.json` requires a real
+   date. `reverse-derive-specs` asks for the earliest citable commit date (else today's) and says in Context that
+   the original date is unknown. `framework: reconstructed`, evidence and confidence go in the body because the
+   front matter is `additionalProperties: false`.
+8. **Migrate workflow gap (disclosed, not fixed).** `migrate.workflow.yaml` has no step that switches readers or
+   deploys a release between `migrate-data` and `contract`, and `forge migrate run` is not a wired command.
+   `migration-contract` therefore verifies preconditions from named inputs only and treats "stop and hand back"
+   as an expected outcome; `plan-migration` must record who performs the reader switch. The ADR's `blast_radius`
+   is components, not paths, so `plan-migration` also produces an explicit change set of paths for the later
+   steps.
+9. **Operate briefs plan, they do not create.** No step creates alerts or dashboards; `define-slos` and
+   `write-runbooks` reference *planned* items by id and say so. `run-retro`'s KB write-back is a proposal:
+   `em` may write only `delivery/sequencing/**` and `forge kb sync` only re-indexes.
+10. **Gate-brief validator: home and shape.** `03` §3.2 has no `forge gate validate`, and `10`/`22` M13 name
+    `forge workflow validate --all` as the command that fails on missing briefs, so `gateValidateAll`
+    (`commands/workflow.ts`) is called by that command and reported in a separate `gates` JSON field and as
+    `gate <id>: <code> ...` stderr lines (additive to the `v: 1` contract; not folded into
+    `workflowValidateAll`'s workflow-id-keyed map). It reads gate files itself rather than through
+    `loadGateRegistry`, which silently drops a duplicate gate id and throws on bad YAML. Findings:
+    `unknown-brief` (loader refuses: missing, blank, directory, symlink escape), `malformed-brief-reference`
+    (not `briefs/<name>.md`, including a `prompts/` reference), `missing-brief`, `unknown-agent`,
+    `duplicate-gate-id`, `duplicate-check-id`, `invalid-gate-file`.
+11. **Disclosed limits.** The validator proves non-blank, resolvable text, not quality: a one-word brief passes;
+    quality is enforced by the content tests on shipped files only. A project with no `.forge/checks/` reports
+    nothing (as `workflow validate` does for no workflows). A templated `{{...}}` gate brief is `malformed`
+    (gates are never templated), unlike the workflow oracle's "unverifiable" stance. `docs/getting-started.md`
+    still says 53 `unknown-brief` findings; that count is now stale and is for the coordinator's final pass.
+
+12. **Heading convention.** Block [4] sits under the compiler's own `## [4] Step brief`, so the 21 briefs open
+    with prose and use `###` sections only, matching P2a (P2b's start with `#`; the orchestrator normalises them).
+    The content test refuses `#`/`##` headings and a leading heading.
+13. **Briefs must name the strict front matter.** ADR, NFR, Runbook, SessionRecord and HandoffRecord schemas are
+    `additionalProperties: false` and nothing stamps `id/type/schemaVersion/created/updated/revision/author/
+    changelog` onto agent-written output (block [5] renders only schema, path and cardinality), so each brief
+    lists the required keys; the content test derives the required set from `packages/schemas/json` and asserts it.
+14. **Not fixable by a brief (disclosed, agent definitions):** `sre`'s declared outputs are ADR and Runbook only
+    (no NFR, no HandoffRecord) with `kb_write`/ownership limited to `delivery/pipeline/**` and `ops/observability/**`,
+    yet `define-slos` and `write-runbooks` ask for NFRs and Runbooks under other paths; no agent declares
+    HandoffRecord output; `architect` declares no DataModel. Block [5] and operating-contract rule 6 will
+    contradict those briefs until the agent definitions are widened. `G-Integration` is `phase: P3` while its
+    critique asks about contract tests and migrations; the brief accepts planned tests/sequencing and `n/a`.
+
+Files: `packages/templates/templates/briefs/` (21 files), `packages/templates/src/content/briefs-ops-gates.ts`,
+`packages/cli/src/commands/workflow.ts` (`gateValidateAll`), `packages/cli/src/bin.ts` (`runWorkflowValidate`),
+tests `packages/cli/test/commands/gate-validate.test.ts`, `packages/agents/test/prompt/briefs-ops-gates-content.test.ts`,
+`packages/cli/test/e2e/init.test.ts` (11 expected findings removed).

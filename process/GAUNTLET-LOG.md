@@ -13544,3 +13544,43 @@ resolve-reference, compile-prompt), `test/workspace-floor.test.ts`, `test/templa
 `forge init` + `workflow validate --all` reports none of this batch's briefs. `pnpm typecheck` 21/21, `pnpm run boundaries` clean,
 `pnpm lint`: eslint clean, prettier reports the 4 pre-existing files plus the shared init.test empty-array residue and another
 batch's brief, none of mine.
+
+## M13 P2c — Ops/adopt/migrate/retro/replan briefs and the ten gate critique briefs (21 files, `@forge/templates` `OPS_AND_GATE_BRIEFS`), plus `gateValidateAll`
+
+**Piece:** 21 briefs (11 workflow, 10 `critique-*` gate briefs) and real validation of gate-embedded `brief:` references, closing
+Q197 item 2. `forge workflow validate --all` now also runs `gateValidateAll` (reported in a separate `gates` JSON field and as
+`gate <id>: <code>` stderr lines, exit 1 on any finding). Decisions and disclosed limits: Q202.
+
+### Round 1: 0 blocking, 8 major, ~6 minor
+
+The critique briefs said the ObjectionList was defined by "your output contract" (it is not: no schema exists, block [5] renders
+only a name and path) and had nowhere for `pass` verdicts. The migration briefs scoped work to an ADR's `blast_radius`, which is
+components not paths, and asked a `backend` agent with no test grant to record suite results. The operate briefs required alerts
+and dashboards that no step creates. HandoffRecord/SessionRecord instructions used a `subtype` key the strict schema lacks and
+omitted `assumptions` object shape, `constraints_applied`. `run-retro` described `forge kb sync` as applying a write-back it only
+re-indexes. Several criteria (thresholds, `must` NFRs, alternatives considered, ThreatModel below L3) could not be evidenced and
+would have produced false gate-holding objections. `gateValidateAll` could crash or skip a gate on malformed or duplicate gate
+files. Fixed: verdict table plus `n/a`, explicit change set, "commands that should prove it", planned-not-provisioned alerts,
+schema-exact handoff shape, conditional criteria, and a validator that reads gate files itself.
+
+### Round 2: 0 blocking, 4 major, ~15 minor
+
+`invalid-gate-file` was unreachable from the CLI: `workflowValidateAll`'s oracle used the throwing `loadGateRegistry`, so one
+malformed gate crashed the command before the gate report. `G-Operate` demanded provisioned dashboards/backups the workflow cannot
+create. The migrate workflow has no reader-switch/deploy step, so `migration-contract` could never succeed (now: named recorded
+evidence, stop-and-hand-back is a valid outcome, `plan-migration` must say who records it). The content test only checked words
+appeared. Fixed, including a tolerant `listGateIds` for the oracle, subprocess tests for a malformed gate and the `--json` field,
+`from`/`step:` ids checked against the shipped workflow, enum values checked against the schemas.
+
+### Round 3: 0 blocking, 4 major, ~15 minor
+
+The five briefs that write strict-front-matter artifacts never listed the required keys, and the test exempted them on an
+unverified "the engine fills" assumption (nothing does). The brief/agent-definition output mismatches (Q202 item 14) are
+not fixable in a brief. `critique-operational-readiness` contradicted itself on `blocking`; `critique-integration` assumed
+implementation artifacts at a P3 gate. Fixed except the agent-definition gap (recorded). Three-round cap reached with nothing
+blocking left.
+
+**Verification (scoped by instruction; no full unscoped run):** `packages/agents/test/prompt` (content-index, all content tests),
+`test/workspace-floor.test.ts`, `packages/cli/test/commands/{workflow,agent,gate-validate}.test.ts` (45 gate-validate tests),
+`packages/cli/test/e2e/init.test.ts`, `packages/cli/test/bin.test.ts`; `pnpm typecheck` 21/21, `pnpm run boundaries` clean,
+eslint clean. Prettier reports only pre-existing files plus another batch's `assemble.ts`.
