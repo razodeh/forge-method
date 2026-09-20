@@ -1,6 +1,8 @@
 /**
- * Content-quality invariants for `PROMPTS_A` (`PLAN-M13.md` P3a) — the 31 `prompt.system` /
- * `prompt.briefs.*` files of agents analyst..frontend.
+ * Content-quality invariants for `PROMPTS_A` (`PLAN-M13.md` P3a) — the 26 `prompt.system` /
+ * `prompt.briefs.*` files of agents analyst..frontend (31 as authored; `PLAN-M13.md` P3c dropped four
+ * unattachable specialisations, merged data-engineer's two into one and re-keyed the rest,
+ * `SPEC-QUESTIONS.md` Q205).
  *
  * `content-index.test.ts` proves each index entry names a real, non-empty file. This file proves the
  * content is what P5 will splice into a compiled prompt: not a placeholder, not front matter, not a
@@ -101,8 +103,8 @@ const entries = Object.keys(PROMPT_INDEX)
   });
 
 describe('PROMPTS_A content', () => {
-  it('covers exactly the 31 keys of the 14 agents assigned to this batch, in the index', () => {
-    expect(entries).toHaveLength(31);
+  it('covers exactly the 26 keys of the 14 agents assigned to this batch, in the index', () => {
+    expect(entries).toHaveLength(26);
     expect(new Set(entries.map((entry) => entry.agentId)).size).toBe(14);
     for (const { key } of entries) expect(PROMPT_INDEX[key]).toBe(`templates/prompts/${key}.md`);
   });
@@ -162,6 +164,15 @@ describe('PROMPTS_A content', () => {
       const terms = roleVocabulary(agent, isSystem ? undefined : part);
       const hits = terms.filter((term) => lower.includes(term));
       expect(hits.length, `none of ${terms.join(', ')} appear`).toBeGreaterThanOrEqual(2);
+      // A brief's own key words (`implement`, `story`, `plan`) are generic, so they cannot carry this
+      // check alone: the file must also use at least one term from the agent's own outputs, decisions
+      // or name.
+      if (!isSystem) {
+        const own = roleVocabulary(agent, undefined).filter((term) => lower.includes(term));
+        expect(own.length, `no term of the agent's own definition appears`).toBeGreaterThanOrEqual(
+          1,
+        );
+      }
     });
 
     if (isSystem) {

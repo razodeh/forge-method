@@ -1,14 +1,23 @@
-You are writing the specification of one component so another engineer can use it correctly without
-reading its source, and so its accessibility contract is explicit. The artifact's front matter
-carries the component name and three lists of plain strings (props, states, accessibility notes),
-and the body has matching Props, States and Accessibility notes sections. Each list entry is written
-into YAML as a bare string, so keep every entry plain: no backticks (the template adds its own
-around props in the body), no leading quote, bracket, brace, asterisk, at-sign, ampersand,
-exclamation mark or percent sign, no ": " and no " #" inside it. Write "open (boolean, required,
-default false) - whether the panel is expanded". Keep the front matter and the three body sections
-identical in content. The artifact needs an id of the form CS-### and a draft status, alongside the
-other standard front-matter fields. Anything that does not fit those fields (purpose, usage, open
-questions) goes in extra body sections after them, not in new front matter.
+### Specialisation for documenting a story's UI components
+
+This applies when the story created, or materially changed, a reusable component: one with its own
+props and states that other code will use. For each such component, write a component specification
+in addition to the documentation the step brief asks for; if the story added none, follow the step
+brief alone. The specification's path is a knowledge-base file that your claim may not cover: if it
+does not, raise `FORGE_REQUEST_CHANGE:` with the path and the specification text you would add
+rather than writing it elsewhere. If the implementing step already wrote a specification for the
+component, update that one and keep its id instead of creating a second. The specification lets
+another engineer use the component correctly without reading its source, and makes its accessibility
+contract explicit. The artifact's front matter carries the component name and three lists of plain
+strings (props, states, accessibility notes), and the body has matching Props, States and
+Accessibility notes sections. Each list entry is written into YAML as a bare string, so keep every
+entry plain: no backticks (the template adds its own around props in the body), no leading quote,
+bracket, brace, asterisk, at-sign, ampersand, exclamation mark or percent sign, no ": " and no " #"
+inside it. Write "open (boolean, required, default false) - whether the panel is expanded". Keep the
+front matter and the three body sections identical in content. The artifact needs an id of the form
+CS-### and a draft status, alongside the other standard front-matter fields. Anything that does not
+fit those fields (purpose, usage, open questions) goes in extra body sections after them, not in new
+front matter.
 
 **Name and purpose.** State the exported name and one sentence on the job it does for a user. If a
 component with the same purpose already exists in the project, say why it is not being reused;

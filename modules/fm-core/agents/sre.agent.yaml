@@ -80,4 +80,5 @@ skills:
 prompt:
   system: prompts/sre.system.md
   briefs:
-    design-delivery: prompts/sre.design-delivery.md
+    design-cicd-pipeline: prompts/sre.design-cicd-pipeline.md
+    design-deployment-strategy: prompts/sre.design-deployment-strategy.md

@@ -1,4 +1,4 @@
-### Specialisation for planning testing
+### Specialisation for writing the stage test plan
 
 Create or update the test strategy for the project (create it only if none exists) and produce a
 test plan for the stage, where the plan hands the SDET a concrete allocation of work rather than an

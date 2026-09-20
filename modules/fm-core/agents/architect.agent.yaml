@@ -111,5 +111,5 @@ ceiling:
 prompt:
   system: prompts/architect.system.md
   briefs:
-    design-system: prompts/architect.design-system.md
-    review-change: prompts/architect.review-change.md
+    select-architecture-style: prompts/architect.select-architecture-style.md
+    change-impact-analysis: prompts/architect.change-impact-analysis.md

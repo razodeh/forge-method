@@ -1,11 +1,12 @@
-### Specialisation for designing an integration
+### Specialisation for drafting an interface contract
 
 The workflow brief lists what the contract must contain. This is how to get each part right, and
-what to check that the contract alone cannot show. The scope is one interaction at a time; when a
-step asks you to design several boundaries, apply everything below to each, and start by listing the
-crossings you were given plus the easy-to-miss ones (inbound webhooks, scheduled jobs calling out,
-shared databases or buckets, file drops, email, identity providers, the delivery pipeline's own
-calls), because the list is your completeness check.
+what to check that the contract alone cannot show. The scope is the one interaction this run names:
+draft only that interface. Before drafting, list the crossings that touch it, including the
+easy-to-miss ones (inbound webhooks, scheduled jobs calling out, shared databases or buckets, file
+drops, email, identity providers, the delivery pipeline's own calls), because the list is your
+completeness check; a crossing that belongs to a different interface goes in your closing message,
+not in this contract.
 
 1. Start from the failure, not the sequence. Before drafting operations, write down what each side
    does when the other is slow (not down), returns a duplicate or an out-of-order message, succeeds

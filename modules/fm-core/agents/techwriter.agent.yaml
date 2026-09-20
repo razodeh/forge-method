@@ -75,5 +75,3 @@ skills:
 
 prompt:
   system: prompts/techwriter.system.md
-  briefs:
-    write-docs: prompts/techwriter.write-docs.md

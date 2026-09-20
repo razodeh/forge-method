@@ -189,11 +189,28 @@ prompt:
     // T3/T5 actually shipped) -- the worked example is illustrative prose from a piece written before
     // T3/T5 existed, not a byte-for-byte content contract for those two fields specifically. Every
     // other field is asserted equal.
-    function omitFrameworksAndSkills(agent: AgentDefinition): Record<string, unknown> {
+    //
+    // `prompt.briefs`' *keys* differ deliberately too (`PLAN-M13.md` P3c, `SPEC-QUESTIONS.md` Q205):
+    // the worked example's `design-system`/`review-change` are illustrative names that match no workflow
+    // step brief, so `assembleAgentSession` could never attach them (`15` §15.3 keys a specialisation by
+    // the step brief's basename). The shipped agent uses the real ones, pinned below; every shipped key
+    // is proven attachable by `packages/agents/test/prompt/brief-keys-attachable.test.ts`. `prompt.system`
+    // is still asserted equal.
+    function omitDeliberateDifferences(agent: AgentDefinition): Record<string, unknown> {
       const excluded = new Set(['frameworks', 'skills']);
-      return Object.fromEntries(Object.entries(agent).filter(([key]) => !excluded.has(key)));
+      return Object.fromEntries(
+        Object.entries(agent)
+          .filter(([key]) => !excluded.has(key))
+          .map(([key, value]) => [key, key === 'prompt' ? { system: agent.prompt.system } : value]),
+      );
     }
-    expect(omitFrameworksAndSkills(shipped)).toEqual(omitFrameworksAndSkills(workedResult.agent));
+    expect(omitDeliberateDifferences(shipped)).toEqual(
+      omitDeliberateDifferences(workedResult.agent),
+    );
+    expect(shipped.prompt.briefs).toEqual({
+      'select-architecture-style': 'prompts/architect.select-architecture-style.md',
+      'change-impact-analysis': 'prompts/architect.change-impact-analysis.md',
+    });
     expect(shipped.frameworks?.length).toBeGreaterThan(0);
     expect(shipped.skills?.length).toBeGreaterThan(0);
   });

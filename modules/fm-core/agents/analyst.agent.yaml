@@ -69,4 +69,4 @@ skills: []
 prompt:
   system: prompts/analyst.system.md
   briefs:
-    discovery: prompts/analyst.discovery.md
+    frame-problem: prompts/analyst.frame-problem.md

@@ -81,4 +81,5 @@ skills: []
 prompt:
   system: prompts/pm.system.md
   briefs:
-    define-product: prompts/pm.define-product.md
+    write-vision: prompts/pm.write-vision.md
+    decompose-stages: prompts/pm.decompose-stages.md

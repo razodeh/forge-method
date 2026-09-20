@@ -69,5 +69,3 @@ skills: []
 
 prompt:
   system: prompts/compliance.system.md
-  briefs:
-    map-compliance: prompts/compliance.map-compliance.md

@@ -87,5 +87,3 @@ skills:
 
 prompt:
   system: prompts/domain-modeler.system.md
-  briefs:
-    model-domain: prompts/domain-modeler.model-domain.md

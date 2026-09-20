@@ -67,5 +67,3 @@ skills: []
 
 prompt:
   system: prompts/orchestrator.system.md
-  briefs:
-    schedule-run: prompts/orchestrator.schedule-run.md

@@ -81,4 +81,4 @@ skills:
 prompt:
   system: prompts/test-architect.system.md
   briefs:
-    plan-testing: prompts/test-architect.plan-testing.md
+    write-test-plan: prompts/test-architect.write-test-plan.md

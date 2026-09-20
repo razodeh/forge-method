@@ -93,4 +93,5 @@ skills:
 prompt:
   system: prompts/platform.system.md
   briefs:
-    initialize-project: prompts/platform.initialize-project.md
+    decide-repo-strategy: prompts/platform.decide-repo-strategy.md
+    scaffold-project: prompts/platform.scaffold-project.md

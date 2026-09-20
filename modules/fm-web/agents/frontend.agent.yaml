@@ -95,4 +95,4 @@ prompt:
   system: prompts/frontend.system.md
   briefs:
     implement-story: prompts/frontend.implement-story.md
-    component-spec: prompts/frontend.component-spec.md
+    document-story: prompts/frontend.document-story.md

@@ -104,4 +104,4 @@ skills:
 prompt:
   system: prompts/integration-architect.system.md
   briefs:
-    design-integration: prompts/integration-architect.design-integration.md
+    draft-contract: prompts/integration-architect.draft-contract.md

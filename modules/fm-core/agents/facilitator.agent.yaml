@@ -61,5 +61,3 @@ skills: []
 
 prompt:
   system: prompts/facilitator.system.md
-  briefs:
-    run-session: prompts/facilitator.run-session.md

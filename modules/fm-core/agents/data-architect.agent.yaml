@@ -84,4 +84,4 @@ skills:
 prompt:
   system: prompts/data-architect.system.md
   briefs:
-    design-data-model: prompts/data-architect.design-data-model.md
+    model-data: prompts/data-architect.model-data.md

@@ -74,4 +74,4 @@ skills:
 prompt:
   system: prompts/data-engineer.system.md
   briefs:
-    implement-pipeline: prompts/data-engineer.implement-pipeline.md
+    implement-story: prompts/data-engineer.implement-story.md

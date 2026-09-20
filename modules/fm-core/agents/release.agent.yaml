@@ -70,4 +70,4 @@ skills:
 prompt:
   system: prompts/release.system.md
   briefs:
-    write-release-notes: prompts/release.write-release-notes.md
+    prepare-store-submission: prompts/release.prepare-store-submission.md

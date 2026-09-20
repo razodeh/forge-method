@@ -66,5 +66,3 @@ skills: []
 
 prompt:
   system: prompts/finops.system.md
-  briefs:
-    model-cost: prompts/finops.model-cost.md

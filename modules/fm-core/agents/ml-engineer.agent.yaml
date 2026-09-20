@@ -71,4 +71,4 @@ skills:
 prompt:
   system: prompts/ml-engineer.system.md
   briefs:
-    integrate-model: prompts/ml-engineer.integrate-model.md
+    implement-story: prompts/ml-engineer.implement-story.md

@@ -68,6 +68,13 @@ briefs:
   $append_guidance: overrides/prompts/backend.house-rules.md
 ```
 
+Apart from `$append_guidance`, a `briefs.<key>` entry attaches to a step only when `<key>` is the
+basename, without `.md`, of that step's own `brief:` (`implement-story` for
+`brief: briefs/implement-story.md`), and only for the agent that step runs; an interaction-mode
+participant session (`swarm-review`, `panel`, `debate`, `pair`) attaches the entry named after its
+mode. A key that matches neither is never read, so name it after a brief the agent's steps actually
+use.
+
 What can never change: `gates.may_approve` (separation of duties isn't user-editable), and
 `tier`/`id` (create a new agent instead of mutating an identity). Tool grants are ceiling-bound — a
 module declares a ceiling per agent (`module.yaml`'s `ceilings:` block); an overlay can narrow

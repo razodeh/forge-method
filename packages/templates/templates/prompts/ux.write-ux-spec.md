@@ -1,4 +1,4 @@
-### Specialisation for designing flows
+### Specialisation for writing the UX spec
 
 Design the flows one capability at a time, tracing each element back to that capability's acceptance
 summary, and record them in the UX specification the step brief asks for, which must also carry a

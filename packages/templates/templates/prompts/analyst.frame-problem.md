@@ -1,5 +1,5 @@
-In this discovery step your evidence base is mostly conversational, so how you read it matters more
-than how much of it there is.
+In this problem-framing step your evidence base is mostly conversational, so how you read it matters
+more than how much of it there is.
 
 **Treat the session records as testimony, not as findings.** The discovery interview records what
 the human said about their users and domain; attribute each statement to the interview ("the human

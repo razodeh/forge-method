@@ -6,24 +6,26 @@
  * `../../../agents/test/prompt/content-index.test.ts` proves each entry names a real, non-empty file, and
  * that no file under `templates/prompts/` is left out of the index.
  *
- * Assigned to this batch (exactly these, no others):
+ * Assigned to this batch (exactly these, no others; `PLAN-M13.md` P3c re-keyed, split or dropped the
+ * specialisations that could never attach, see `SPEC-QUESTIONS.md` Q205):
  *   - integration-architect.system
- *   - integration-architect.design-integration
+ *   - integration-architect.draft-contract
  *   - ml-engineer.system
- *   - ml-engineer.integrate-model
+ *   - ml-engineer.implement-story
  *   - mobile.system
  *   - mobile.implement-story
  *   - mobile.prepare-release-build
  *   - orchestrator.system
- *   - orchestrator.schedule-run
  *   - platform.system
- *   - platform.initialize-project
+ *   - platform.decide-repo-strategy
+ *   - platform.scaffold-project
  *   - pm.system
- *   - pm.define-product
+ *   - pm.write-vision
+ *   - pm.decompose-stages
  *   - po.system
  *   - po.write-stories
  *   - release.system
- *   - release.write-release-notes
+ *   - release.prepare-store-submission
  *   - reviewer.system
  *   - reviewer.swarm-review
  *   - sdet.system
@@ -31,36 +33,37 @@
  *   - security.system
  *   - security.threat-model
  *   - sre.system
- *   - sre.design-delivery
+ *   - sre.design-cicd-pipeline
+ *   - sre.design-deployment-strategy
  *   - techwriter.system
- *   - techwriter.write-docs
  *   - test-architect.system
- *   - test-architect.plan-testing
+ *   - test-architect.write-test-plan
  *   - ux.system
- *   - ux.design-flows
+ *   - ux.write-ux-spec
  *
  * @see specs/22 M13
  * @see PLAN-M13.md P3b
  */
 export const PROMPTS_B: Readonly<Record<string, string>> = {
   'integration-architect.system': 'templates/prompts/integration-architect.system.md',
-  'integration-architect.design-integration':
-    'templates/prompts/integration-architect.design-integration.md',
+  'integration-architect.draft-contract':
+    'templates/prompts/integration-architect.draft-contract.md',
   'ml-engineer.system': 'templates/prompts/ml-engineer.system.md',
-  'ml-engineer.integrate-model': 'templates/prompts/ml-engineer.integrate-model.md',
+  'ml-engineer.implement-story': 'templates/prompts/ml-engineer.implement-story.md',
   'mobile.system': 'templates/prompts/mobile.system.md',
   'mobile.implement-story': 'templates/prompts/mobile.implement-story.md',
   'mobile.prepare-release-build': 'templates/prompts/mobile.prepare-release-build.md',
   'orchestrator.system': 'templates/prompts/orchestrator.system.md',
-  'orchestrator.schedule-run': 'templates/prompts/orchestrator.schedule-run.md',
   'platform.system': 'templates/prompts/platform.system.md',
-  'platform.initialize-project': 'templates/prompts/platform.initialize-project.md',
+  'platform.decide-repo-strategy': 'templates/prompts/platform.decide-repo-strategy.md',
+  'platform.scaffold-project': 'templates/prompts/platform.scaffold-project.md',
   'pm.system': 'templates/prompts/pm.system.md',
-  'pm.define-product': 'templates/prompts/pm.define-product.md',
+  'pm.write-vision': 'templates/prompts/pm.write-vision.md',
+  'pm.decompose-stages': 'templates/prompts/pm.decompose-stages.md',
   'po.system': 'templates/prompts/po.system.md',
   'po.write-stories': 'templates/prompts/po.write-stories.md',
   'release.system': 'templates/prompts/release.system.md',
-  'release.write-release-notes': 'templates/prompts/release.write-release-notes.md',
+  'release.prepare-store-submission': 'templates/prompts/release.prepare-store-submission.md',
   'reviewer.system': 'templates/prompts/reviewer.system.md',
   'reviewer.swarm-review': 'templates/prompts/reviewer.swarm-review.md',
   'sdet.system': 'templates/prompts/sdet.system.md',
@@ -68,11 +71,11 @@ export const PROMPTS_B: Readonly<Record<string, string>> = {
   'security.system': 'templates/prompts/security.system.md',
   'security.threat-model': 'templates/prompts/security.threat-model.md',
   'sre.system': 'templates/prompts/sre.system.md',
-  'sre.design-delivery': 'templates/prompts/sre.design-delivery.md',
+  'sre.design-cicd-pipeline': 'templates/prompts/sre.design-cicd-pipeline.md',
+  'sre.design-deployment-strategy': 'templates/prompts/sre.design-deployment-strategy.md',
   'techwriter.system': 'templates/prompts/techwriter.system.md',
-  'techwriter.write-docs': 'templates/prompts/techwriter.write-docs.md',
   'test-architect.system': 'templates/prompts/test-architect.system.md',
-  'test-architect.plan-testing': 'templates/prompts/test-architect.plan-testing.md',
+  'test-architect.write-test-plan': 'templates/prompts/test-architect.write-test-plan.md',
   'ux.system': 'templates/prompts/ux.system.md',
-  'ux.design-flows': 'templates/prompts/ux.design-flows.md',
+  'ux.write-ux-spec': 'templates/prompts/ux.write-ux-spec.md',
 };
