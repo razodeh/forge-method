@@ -257,6 +257,294 @@ describe('compilePlan — dependsOn qualification', () => {
   });
 });
 
+describe('compilePlan -- a merge over a collection depends on every item of the fanout it names (10 §10.1 build-stage)', () => {
+  const stories = [{ id: 'story-2' }, { id: 'story-1' }, { id: 'story-3' }];
+  const review: FanoutStep = {
+    kind: 'fanout',
+    id: 'review',
+    over: 'stage.stories',
+    itemKey: '{{item.id}}',
+    step: agentStep({ agent: 'reviewer' }),
+  };
+  const merge = (overrides: Record<string, unknown> = {}): WorkflowStep => ({
+    kind: 'merge',
+    id: 'merge',
+    over: 'stage.stories',
+    dependsOn: ['review:{{item.id}}'],
+    policy: { conflict: 'agent' },
+    ...overrides,
+  });
+
+  it('resolves the per-item dependsOn once per item, in collection order, into ONE merge node', () => {
+    const nodes = expectOk(compilePlan(workflow([review, merge()]), { stage: { stories } }));
+    expect(nodes.filter((n) => n.kind === 'merge').map((n) => n.id)).toEqual(['w:merge']);
+    expect(findNode(nodes, 'w:merge').dependsOn).toEqual([
+      'w:review:story-2',
+      'w:review:story-1',
+      'w:review:story-3',
+    ]);
+  });
+
+  it('does not depend on anything of a different fanout', () => {
+    const other: FanoutStep = { ...review, id: 'other' };
+    const nodes = expectOk(compilePlan(workflow([review, other, merge()]), { stage: { stories } }));
+    expect(findNode(nodes, 'w:merge').dependsOn.some((d) => d.startsWith('w:other'))).toBe(false);
+    expect(findNode(nodes, 'w:merge').dependsOn).toHaveLength(3);
+  });
+
+  it('puts inherited (sequence) and static dependencies ahead of the per-item ones, each once', () => {
+    const wf = workflow([
+      agentStep({ id: 'gate-ish' }),
+      agentStep({ id: 'early' }),
+      review,
+      {
+        kind: 'sequence',
+        id: 'tail',
+        dependsOn: ['early'],
+        steps: [merge({ dependsOn: ['gate-ish', 'review:{{item.id}}'] })],
+      },
+    ]);
+    const nodes = expectOk(compilePlan(wf, { stage: { stories: [{ id: 'a' }, { id: 'b' }] } }));
+    expect(findNode(nodes, 'w:merge').dependsOn).toEqual([
+      'w:early',
+      'w:gate-ish',
+      'w:review:a',
+      'w:review:b',
+    ]);
+  });
+
+  it('an empty collection: the merge waits for whatever the empty fanout would have waited for, so it is never an unordered root', () => {
+    // gate -> review (per item) -> merge -> tail. With no stories `review` has no instances; a merge that
+    // simply dropped its per-item dependency would become a root and `tail` could start before `gate` ends.
+    const guarded: FanoutStep = { ...review, dependsOn: ['gate'] };
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'gate' }),
+          guarded,
+          merge(),
+          agentStep({ id: 'tail', dependsOn: ['merge'] }),
+        ]),
+        { stage: { stories: [] } },
+      ),
+    );
+    expect(nodes.map((n) => n.id)).toEqual(['w:gate', 'w:merge', 'w:tail']);
+    expect(findNode(nodes, 'w:merge').dependsOn).toEqual(['w:gate']);
+    expect(findNode(nodes, 'w:tail').dependsOn).toEqual(['w:merge']);
+  });
+
+  it('an empty collection follows a chain of empty fanouts back to the first thing they wait for, and keeps static entries', () => {
+    const first: FanoutStep = { ...review, id: 'first', dependsOn: ['gate'] };
+    const second: FanoutStep = { ...review, id: 'second', dependsOn: ['first:{{item.id}}'] };
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'gate' }),
+          agentStep({ id: 'other' }),
+          first,
+          second,
+          merge({ dependsOn: ['other', 'second:{{item.id}}'] }),
+        ]),
+        { stage: { stories: [] } },
+      ),
+    );
+    expect(findNode(nodes, 'w:merge').dependsOn).toEqual(['w:other', 'w:gate']);
+  });
+
+  it('an empty collection still reports a genuine error in a dependency instead of swallowing it', () => {
+    const issues = expectFail(
+      compilePlan(
+        workflow([review, merge({ dependsOn: ['{{vars.typo}}', 'review:{{item.id}}'] })]),
+        {
+          stage: { stories: [] },
+        },
+      ),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'template-resolution-failed', stepId: 'w:merge' }),
+    );
+  });
+
+  it('an empty collection whose per-item target is no known fanout is refused, not silently dropped', () => {
+    const issues = expectFail(
+      compilePlan(workflow([merge({ dependsOn: ['nowhere:{{item.id}}'] })]), {
+        stage: { stories: [] },
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'template-resolution-failed', stepId: 'w:merge' }),
+    );
+  });
+
+  it('a merge whose over is not a parseable expression keeps compiling as it always did (over was never read before)', () => {
+    for (const over of ['all lanes', 'lane-1, lane-2', 'the lanes of stage 1', 'stage.stories |']) {
+      const nodes = expectOk(
+        compilePlan(workflow([agentStep({ id: 'a' }), merge({ over, dependsOn: ['a'] })]), {
+          stage: { stories },
+        }),
+      );
+      expect(findNode(nodes, 'w:merge').dependsOn).toEqual(['w:a']);
+    }
+  });
+
+  it('an empty merge over a stage whose named fanout is NOT empty is a mismatch, not a merge that skips real reviews', () => {
+    const elsewhere: FanoutStep = { ...review, over: 'stage.other', dependsOn: ['gate'] };
+    const issues = expectFail(
+      compilePlan(workflow([agentStep({ id: 'gate' }), elsewhere, merge()]), {
+        stage: { stories: [], other: [{ id: 'x' }] },
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'merge-over-mismatch', stepId: 'w:merge' }),
+    );
+  });
+
+  it('an empty merge finds the fanout it names when that fanout sits inside a sequence or parallel group', () => {
+    const guarded: FanoutStep = { ...review, dependsOn: ['gate'] };
+    for (const kind of ['sequence', 'parallel'] as const) {
+      const wf = workflow([
+        agentStep({ id: 'gate' }),
+        { kind, id: 'group', steps: [guarded] },
+        merge(),
+      ]);
+      const empty = expectOk(compilePlan(wf, { stage: { stories: [] } }));
+      expect(findNode(empty, 'w:merge').dependsOn).toEqual(['w:gate']);
+    }
+  });
+
+  it('an empty merge over a diamond of fanouts (two paths to the same fanout) waits on the shared start once', () => {
+    const start: FanoutStep = { ...review, id: 'start', dependsOn: ['gate'] };
+    const left: FanoutStep = { ...review, id: 'left', dependsOn: ['start:{{item.id}}'] };
+    const right: FanoutStep = { ...review, id: 'right', dependsOn: ['start:{{item.id}}'] };
+    const join: FanoutStep = {
+      ...review,
+      id: 'join',
+      dependsOn: ['left:{{item.id}}', 'right:{{item.id}}'],
+    };
+    const wf = workflow([
+      agentStep({ id: 'gate' }),
+      start,
+      left,
+      right,
+      join,
+      merge({ dependsOn: ['join:{{item.id}}'] }),
+    ]);
+    expect(
+      findNode(expectOk(compilePlan(wf, { stage: { stories: [] } })), 'w:merge').dependsOn,
+    ).toEqual(['w:gate']);
+    expect(
+      findNode(expectOk(compilePlan(wf, { stage: { stories: [{ id: 'a' }] } })), 'w:merge')
+        .dependsOn,
+    ).toEqual(['w:join:a']);
+  });
+
+  it('a merge and the fanout it waits on that disagree on how many items there are is a mismatch either way', () => {
+    const wider: FanoutStep = { ...review, over: 'stage.wider' };
+    const issues = expectFail(
+      compilePlan(workflow([wider, merge()]), {
+        stage: { stories: [{ id: 'a' }], wider: [{ id: 'a' }, { id: 'b' }] },
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'merge-over-mismatch', stepId: 'w:merge' }),
+    );
+  });
+
+  it('says why when the named fanout could not be evaluated (not that it is "not empty")', () => {
+    const broken: FanoutStep = { ...review, over: 'stage.nothing' };
+    const issues = expectFail(compilePlan(workflow([broken, merge()]), { stage: { stories: [] } }));
+    const mismatch = issues.find((i) => i.code === 'merge-over-mismatch');
+    expect(mismatch?.message).toContain('stage.nothing');
+    expect(mismatch?.message).not.toContain('is not empty');
+  });
+
+  it('a whitespaced placeholder ({{ item.id }}) behaves the same for an empty and a non-empty collection', () => {
+    const spaced = merge({ dependsOn: ['review:{{ item.id }}'] });
+    const guarded: FanoutStep = { ...review, dependsOn: ['gate'] };
+    const wf = workflow([agentStep({ id: 'gate' }), guarded, spaced]);
+    expect(
+      findNode(expectOk(compilePlan(wf, { stage: { stories: [] } })), 'w:merge').dependsOn,
+    ).toEqual(['w:gate']);
+    expect(
+      findNode(expectOk(compilePlan(wf, { stage: { stories: [{ id: 'a' }] } })), 'w:merge')
+        .dependsOn,
+    ).toEqual(['w:review:a']);
+  });
+
+  it('lists a dependency named both by an enclosing sequence and by the merge itself once', () => {
+    const wf = workflow([
+      agentStep({ id: 'early' }),
+      review,
+      {
+        kind: 'sequence',
+        id: 'tail',
+        dependsOn: ['early'],
+        steps: [merge({ dependsOn: ['early', 'review:{{item.id}}'] })],
+      },
+    ]);
+    const nodes = expectOk(compilePlan(wf, { stage: { stories: [{ id: 'a' }] } }));
+    expect(findNode(nodes, 'w:merge').dependsOn).toEqual(['w:early', 'w:review:a']);
+  });
+
+  it('a failing static dependency is reported once, not once per item', () => {
+    const issues = expectFail(
+      compilePlan(
+        workflow([review, merge({ dependsOn: ['{{vars.typo}}', 'review:{{item.id}}'] })]),
+        { stage: { stories } },
+      ),
+    );
+    expect(issues.filter((i) => i.stepId === 'w:merge')).toHaveLength(1);
+  });
+
+  it('still refuses a per-item dependency the fanout was not keyed for, item by item (no silent dangling merge)', () => {
+    const unkeyed: FanoutStep = {
+      kind: 'fanout',
+      id: 'review',
+      over: 'stage.stories',
+      step: agentStep({ agent: 'reviewer' }),
+    };
+    const issues = expectFail(compilePlan(workflow([unkeyed, merge()]), { stage: { stories } }));
+    expect(issues.filter((i) => i.code === 'dangling-dependency')).toHaveLength(3);
+  });
+
+  it('reports an item that cannot name itself at the merge step, once (the same problem is not repeated per item)', () => {
+    const issues = expectFail(
+      compilePlan(workflow([review, merge()]), { stage: { stories: [{ id: 'ok' }, {}, {}] } }),
+    );
+    const own = issues.filter((i) => i.stepId === 'w:merge');
+    expect(own).toHaveLength(1);
+    expect(own[0]?.code).toBe('template-resolution-failed');
+  });
+
+  it('a merge whose over is not a collection keeps the old single resolution: static dependencies compile, an item reference is still refused', () => {
+    // Not annotated: a workflow input such as `storyId` sits at the context root, which `ExpressionContext` does
+    // not name (the same shape `test/workflows.test.ts`'s fixture context takes).
+    const withStoryId = { storyId: 'S-1', stage: { stories } };
+    const ok = expectOk(
+      compilePlan(
+        workflow([agentStep({ id: 'commit' }), merge({ over: 'storyId', dependsOn: ['commit'] })]),
+        withStoryId,
+      ),
+    );
+    expect(findNode(ok, 'w:merge').dependsOn).toEqual(['w:commit']);
+    const issues = expectFail(
+      compilePlan(workflow([review, merge({ over: 'storyId' })]), {
+        ...withStoryId,
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'template-resolution-failed', stepId: 'w:merge' }),
+    );
+  });
+
+  it('is deterministic: the same inputs give the same nodes twice', () => {
+    const wf = workflow([review, merge()]);
+    const a = expectOk(compilePlan(wf, { stage: { stories } }));
+    const b = expectOk(compilePlan(wf, { stage: { stories } }));
+    expect(b).toEqual(a);
+  });
+});
+
 describe('compilePlan — plan-wide consistency: dangling dependencies and duplicate ids', () => {
   it("reports a dangling-dependency compile issue for a plain typo'd dependsOn reference, rather than silently succeeding", () => {
     const issues = expectFail(
@@ -267,7 +555,7 @@ describe('compilePlan — plan-wide consistency: dangling dependencies and dupli
     );
   });
 
-  it('reports a dangling-dependency compile issue when a fanout cross-reference\'s itemKey scheme does not match the fanout it targets -- 10 §10.1\'s own "review"/"merge" fanouts omit itemKey, unlike "generate-tests"/"implement"', () => {
+  it('reports a dangling-dependency compile issue when a fanout cross-reference\'s itemKey scheme does not match the fanout it targets -- the shipped build-stage\'s "review" fanout was once unkeyed, unlike "generate-tests"/"implement"', () => {
     // B (the target) omits itemKey, so its real compiled ids are positional: w:B:0, w:B:1. C's own
     // dependsOn templates against item.id instead, producing "w:B:story-1" -- an id nothing was ever
     // compiled with. This must not silently succeed with a permanently-unsatisfiable dependency.

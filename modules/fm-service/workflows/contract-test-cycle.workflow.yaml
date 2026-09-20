@@ -4,10 +4,9 @@
 # merge -- 15 §15.4's own `contract-testing` skill (already listed on `integration-architect`'s own
 # `skills`) is the procedural knowledge this workflow's own steps exercise, not duplicated here.
 #
-# `dependsOn` never reaches into a fanout's own `item` binding from outside it (the identical
-# `build-stage.workflow.yaml` gap `test/workflows.test.ts`'s own comment documents, SPEC-QUESTIONS.md
-# Q71/Q88) -- this workflow has no fanout at all, so that gap does not apply here; every step below is
-# a plain leaf, compiled once, with a literal `dependsOn` id.
+# This workflow has no fanout at all: every step below is a plain leaf, compiled once, with a literal
+# `dependsOn` id (a `merge` over a collection is the one step that resolves a per-item `dependsOn`,
+# SPEC-QUESTIONS.md Q211; nothing here needs it).
 #
 # Every `agent`/non-inline `command` step commits its own real work only to its OWN, isolated lane
 # worktree (`@forge/engine/dispatch`'s own `runLaneLifecycle`, confirmed directly: `runAgentStep`/

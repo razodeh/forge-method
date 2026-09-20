@@ -290,6 +290,9 @@ interface CompileEnv {
   readonly workflowId: string;
   readonly workflowOnFailureDefault: string | undefined;
   readonly depth: number;
+  /** The workflow's top-level `fanout` steps by id: what a `merge` over an *empty* collection needs to know
+   * about the fanout it would have waited for (see `mergeDependsOn`). Empty for a standalone `expandFanout`. */
+  readonly fanouts?: ReadonlyMap<string, FanoutStep>;
 }
 
 interface StepCompileOutcome {
@@ -316,19 +319,143 @@ interface StepCompileOutcome {
   readonly groupIds: readonly string[];
 }
 
-/** A `merge` step compiles as one ordinary leaf, like every other non-fanout kind — it never gets an
- * `item` binding in its own `ExpressionContext` the way a fanout's per-item child does. A verify round
- * confirmed this means `10` §10.1's own literal worked example does not compile verbatim: its `merge`
- * step's own `dependsOn: ["review:{{item.id}}"]` cannot resolve `item.id` (there is no `item` in scope for
- * a plain leaf), which `qualifyDependsOn`/`safeResolveTemplate` correctly turn into a clean, non-crashing
- * `template-resolution-failed` issue rather than silently producing a broken id or a raw throw — but it
- * does mean a real merge-over-a-fanout's-own-expanded-items dependency, as the spec's own example intends,
- * cannot be expressed today. Giving `merge` its own per-item dependency *aggregation* (resolve
- * `dependsOn` once per item in its own `over` collection, folding the results into one combined
- * `dependsOn` array for the single compiled node — a different mechanism from fanout's own per-item
- * *expansion* into N nodes, since `06` §6.2's own `StepNode` has no repeating-group shape for `merge` to
- * expand into) is a real, separate feature with its own design questions P10's own Checks text never
- * asked for; left undone deliberately rather than folded into this round's own fixes. */
+/** `10` §10.1's own `merge` step is `over: "stage.stories"` with `dependsOn: [ "review:{{item.id}}" ]`: one
+ * merge-queue node (`10` §10.1's step-kind table, "merge-queue processing for a set of lanes"; `06` §6.2's
+ * `StepNode` has no repeating shape for it) that must wait for *every* item's review. A `merge` therefore
+ * gets no `item` binding of its own (it is one node), but its `dependsOn` is resolved once per item of its
+ * own `over` collection and the results are folded, first occurrence wins, into that one node's
+ * `dependsOn`: `[review:s1, review:s2, review:s3]`, in collection order. Q211 (`M13 P13`) is the record.
+ *
+ * Deliberately conservative:
+ * - an `over` that is not a collection (`implement-story`'s `over: 'storyId'`, a step id in `fm-mobile`)
+ *   keeps the single-resolution behaviour it always had, so an `{{item...}}` reference there is still
+ *   refused rather than guessed;
+ * - an *empty* collection must not turn the merge into an unordered root (it would then let the gate after
+ *   it, and everything after that, start before the plan's own first step): a per-item entry
+ *   `<fanout>:{{item...}}` names a fanout with no instances, so the merge waits for whatever that fanout
+ *   itself would have waited for, followed back through any chain of such fanouts (the same "an empty child
+ *   is transparent to the chain" rule a `sequence` applies). Entries that are not per-item resolve as usual,
+ *   and an entry that names no known fanout, or fails for any other reason, is reported, never dropped;
+ * - a per-item reference whose target fanout is not keyed to match is still a `dangling-dependency`
+ *   (`checkPlanConsistency`), not a silent no-op;
+ * - the same problem in the same entry is reported once, not once per item. */
+function mergeDependsOn(
+  step: Extract<WorkflowStep, { kind: 'merge' }>,
+  context: ExpressionContext,
+  env: CompileEnv,
+  issues: CompileIssue[],
+  stepId: string,
+): readonly string[] {
+  const raw = step.dependsOn ?? [];
+  const collection = evaluateCollection(step.over, context);
+  // Anything that is not a collection (a run input, a step id, prose that is not an expression: `over` was
+  // never read at compile time before) keeps the single resolution a `merge` always had.
+  if (!Array.isArray(collection)) return qualifyDependsOn(raw, context, env, issues, stepId);
+
+  const folded: string[] = [];
+  const add = (deps: readonly string[]): void => {
+    for (const dep of deps) if (!folded.includes(dep)) folded.push(dep);
+  };
+  const report = (found: readonly CompileIssue[]): void => {
+    for (const problem of found) {
+      if (
+        !issues.some((known) => known.code === problem.code && known.message === problem.message)
+      ) {
+        issues.push(problem);
+      }
+    }
+  };
+
+  // Each entry that names a known fanout per item must name one with as many instances as this merge has
+  // items, or the merge would skip (or wait on missing) instances.
+  for (const entry of raw) {
+    const scratch: CompileIssue[] = [];
+    const fanout = namedFanout(entry, env);
+    if (fanout !== undefined) {
+      const named = evaluateCollection(fanout.over, context);
+      if (!Array.isArray(named) || named.length !== collection.length) {
+        scratch.push(
+          issue(
+            'merge-over-mismatch',
+            `merge over "${step.over}" (${String(collection.length)} items) waits on "${entry}", but that ` +
+              `fanout ("${fanout.id ?? entry}", over "${fanout.over}") ` +
+              (Array.isArray(named)
+                ? `has ${String(named.length)} items`
+                : 'did not evaluate to a collection') +
+              ': the merge would skip or wait on the wrong instances.',
+            stepId,
+          ),
+        );
+      }
+    }
+    report(scratch);
+  }
+
+  if (collection.length === 0) {
+    for (const entry of raw) {
+      const scratch: CompileIssue[] = [];
+      add(emptyCollectionWaits(entry, context, env, scratch, stepId, new Set()));
+      report(scratch);
+    }
+    return folded;
+  }
+  for (const item of collection as readonly unknown[]) {
+    const scratch: CompileIssue[] = [];
+    add(qualifyDependsOn(raw, { ...context, item }, env, scratch, stepId));
+    report(scratch);
+  }
+  return folded;
+}
+
+/** Evaluates a `merge`'s or fanout's `over` to a value, or `undefined` when it cannot (unparseable, or the
+ * evaluator refuses): the caller treats that as "not a collection". */
+function evaluateCollection(over: string, context: ExpressionContext): unknown {
+  const parsed = parseExpression(over);
+  if (!parsed.success) return undefined;
+  try {
+    return evaluate(parsed.expr, context);
+  } catch (cause) {
+    if (!(cause instanceof ForgeError)) throw cause;
+    return undefined;
+  }
+}
+
+/** A per-item placeholder: `{{item.id}}`, `{{ item.id }}`, `{{item}}`. */
+const ITEM_PLACEHOLDER = /\{\{\s*item\b/;
+
+/** The known fanout a per-item `dependsOn` entry (`<fanout>:...{{item...}}`) names, if any. */
+function namedFanout(entry: string, env: CompileEnv): FanoutStep | undefined {
+  const at = entry.indexOf(':');
+  if (at === -1 || !ITEM_PLACEHOLDER.test(entry.slice(at + 1))) return undefined;
+  return env.fanouts?.get(entry.slice(0, at));
+}
+
+/** What one `dependsOn` entry of a merge over an empty collection waits for: a per-item entry naming a known
+ * fanout waits for that fanout's own `dependsOn` (an empty fanout is transparent, as an empty child is to a
+ * `sequence`), followed back through any chain of such fanouts; `path` guards a cycle the validator would
+ * already have refused, and is per path so two routes to one fanout (a diamond) both resolve. That the named
+ * fanout really is empty is checked by the caller (`merge-over-mismatch`). Anything else resolves normally
+ * against the item-less context, so a real error in it is reported. */
+function emptyCollectionWaits(
+  entry: string,
+  context: ExpressionContext,
+  env: CompileEnv,
+  issues: CompileIssue[],
+  stepId: string,
+  path: Set<string>,
+): readonly string[] {
+  const fanout = namedFanout(entry, env);
+  if (fanout?.id !== undefined && !path.has(fanout.id)) {
+    path.add(fanout.id);
+    const waits = (fanout.dependsOn ?? []).flatMap((inner) =>
+      emptyCollectionWaits(inner, context, env, issues, stepId, path),
+    );
+    path.delete(fanout.id);
+    return waits;
+  }
+  return qualifyDependsOn([entry], context, env, issues, stepId);
+}
+
 /** `StepNode.runInputs` / `missingRunInputs` for one agent step: each declared workflow input the context
  * supplies (looked up by name at the context root, then in `vars`, where `forge run --epic/--story` puts
  * its values), the fanout `item` when there is one, and the *required* declared inputs it does not supply.
@@ -509,8 +636,9 @@ function compileFanout(
   collection.forEach((item: unknown, index) => {
     const itemContext: ExpressionContext = { ...context, item };
     // A bare positional index when itemKey is omitted (P8's own FanoutStep.itemKey is optional, and
-    // `10` §10.1's own "review"/"merge" fanouts never declare one) -- forfeits `06` §6.2's own "resume
-    // stays stable across a re-compile *of the same collection order*" guarantee for exactly this
+    // `10` §10.1's own worked "review" fanout never declared one; the shipped build-stage now does, Q211) --
+    // forfeits `06` §6.2's own "resume stays stable across a re-compile *of the same collection order*"
+    // guarantee for exactly this
     // fanout, but guarantees uniqueness, which an omitted itemKey would otherwise not: every expanded
     // item still needs a *distinct* compiled id regardless of whether the author gave this fanout a
     // stable natural key to use for it.
@@ -636,11 +764,19 @@ function compileStepAtDepth(
   const compiledId =
     requiresOwnId && step.id !== undefined ? compileStepId(baseId, step.id) : baseId;
   const dependsOnIssues: CompileIssue[] = [];
-  const ownDependsOn = qualifyDependsOn(step.dependsOn, context, env, dependsOnIssues, compiledId);
-  const outcome = buildLeafNode(step, compiledId, env, context, [
-    ...inheritedDependsOn,
-    ...ownDependsOn,
-  ]);
+  const ownDependsOn =
+    step.kind === 'merge'
+      ? mergeDependsOn(step, context, env, dependsOnIssues, compiledId)
+      : qualifyDependsOn(step.dependsOn, context, env, dependsOnIssues, compiledId);
+  // A merge folds many dependencies into one node, so one an enclosing group also names is listed once.
+  const combined = [...inheritedDependsOn, ...ownDependsOn];
+  const outcome = buildLeafNode(
+    step,
+    compiledId,
+    env,
+    context,
+    step.kind === 'merge' ? [...new Set(combined)] : combined,
+  );
   return dependsOnIssues.length > 0
     ? { ...outcome, issues: [...dependsOnIssues, ...outcome.issues] }
     : outcome;
@@ -683,8 +819,8 @@ export function expandFanout(
  * (which only reasons about the *static, unexpanded* graph, confirmed by inspection of `checkNoCycles`'s
  * own doc comment) ever checks a `dependsOn` value against the *real, expanded* set of compiled ids —
  * `dependsOn: ['nonexistent']`, or a per-item cross-fanout reference whose `itemKey` scheme doesn't
- * actually match the fanout it points at (`10` §10.1's own `review`/`merge` fanouts, which omit
- * `itemKey`, expand to positional-index ids — a sibling fanout templating a reference against `item.id`
+ * actually match the fanout it points at (`10` §10.1's own worked `review` fanout, which omits
+ * `itemKey`, expands to positional-index ids — a sibling fanout templating a reference against `item.id`
  * instead silently produces a dangling, permanently-unsatisfiable dependency, not a wrong-but-honest one
  * and not a caught error), compiled cleanly with `success: true` before this check existed. Two duplicate
  * compiled ids (a `parallel`/`sequence` never folds its own children's ids together with anything that
@@ -744,6 +880,23 @@ function checkPlanConsistency(
   return issues;
 }
 
+/** The workflow's `fanout` steps by id, looking inside `parallel`/`sequence` groups (a dependency names a step by
+ * its bare id wherever it sits) but not inside another fanout's per-item child. */
+function collectFanouts(steps: readonly WorkflowStep[]): ReadonlyMap<string, FanoutStep> {
+  const found = new Map<string, FanoutStep>();
+  const walk = (list: readonly WorkflowStep[]): void => {
+    for (const step of list) {
+      if (step.kind === 'fanout') {
+        if (step.id !== undefined) found.set(step.id, step);
+      } else if (step.kind === 'parallel' || step.kind === 'sequence') {
+        walk(step.steps);
+      }
+    }
+  };
+  walk(steps);
+  return found;
+}
+
 /** `06` §6.2's own plan-compilation rule 1, for a whole workflow's own `steps:` list — `workflow.
  * onComplete`/`workflow.onFailure.escalations[].do` are deliberately not compiled here: both are
  * conditionally-triggered subtrees outside the main DAG proper (one runs only once the whole run
@@ -758,6 +911,7 @@ export function compilePlan(workflow: Workflow, context: ExpressionContext): Com
     workflowId: workflow.id,
     workflowOnFailureDefault: workflow.onFailure?.default,
     depth: 0,
+    fanouts: collectFanouts(workflow.steps),
   };
   const nodes: StepNode[] = [];
   const issues: CompileIssue[] = [];

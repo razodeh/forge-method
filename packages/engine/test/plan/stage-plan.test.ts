@@ -405,6 +405,47 @@ describe('compileStageRunPlan — review findings', () => {
     expect(plan.findings[0]?.message).toContain('-->');
   });
 
+  it('refuses a story owned by the role that writes its tests (sdet) or reviews it (reviewer): 10 §10.6 enforced separations', () => {
+    for (const role of ['sdet', 'reviewer']) {
+      const plan = compileStageRunPlan(workflow(), 'mvp', [
+        story('STORY-001', { ownerRole: role }),
+        story('STORY-002'),
+      ]);
+      expect(plan.ok).toBe(false);
+      expect(plan.findings).toEqual([
+        expect.objectContaining({
+          code: 'owner-role-breaks-separation',
+          severity: 'error',
+          subjects: ['STORY-001'],
+        }),
+      ]);
+      expect(plan.findings[0]?.message).toContain(role);
+      // Still planned, so the rest of the report is not lost.
+      expect(plan.waves).toEqual([['STORY-001', 'STORY-002']]);
+    }
+  });
+
+  it('does not refuse an sdet-owned story when the workflow runs a fixed implementer (the check follows what compiled)', () => {
+    const fixed = parseWorkflow(
+      STAGE_WORKFLOW.replace("agent: '{{item.owner_role}}'", 'agent: backend'),
+    );
+    if (!fixed.success) throw new Error(JSON.stringify(fixed.issues));
+    const plan = compileStageRunPlan(fixed.workflow, 'mvp', [
+      story('STORY-001', { ownerRole: 'sdet' }),
+    ]);
+    expect(plan.ok).toBe(true);
+    expect(plan.findings).toEqual([]);
+  });
+
+  it('matches the protected role whatever its case or padding', () => {
+    for (const role of ['SDET', ' Reviewer ']) {
+      const plan = compileStageRunPlan(workflow(), 'mvp', [
+        story('STORY-001', { ownerRole: role }),
+      ]);
+      expect(plan.findings.map((f) => f.code)).toEqual(['owner-role-breaks-separation']);
+    }
+  });
+
   it('marks the step plan compiled or unavailable', () => {
     expect(compileStageRunPlan(workflow(), 'mvp', [story('STORY-001')]).stepPlan).toBe('compiled');
     const parsed = parseWorkflow(STAGE_WORKFLOW.replace("'stage.stories'", "'stage.nothing'"));

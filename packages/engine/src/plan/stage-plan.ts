@@ -28,12 +28,12 @@
  *    reported as `step-plan-unavailable`. The critical path is recomputed over the result.
  *
  * **The story-level plan (1) is the plan of record; the step-level one (2, 3) is best effort.** The shipped
- * `build-stage` does not compile today (its `merge` step's per-item `dependsOn`, and its `review` fanout's
- * missing `itemKey`, are known gaps, `compile.ts` and Q72), and a stage's stories are still perfectly
- * plannable without it. A workflow that will not compile is therefore reported as a `step-plan-unavailable`
- * *warning* with the compiler's own messages, `stepPlan: 'unavailable'`, and no steps, cost or step-level
- * critical path (unknown, not zero), rather than failing a stage whose own inputs are sound. When the
- * workflow is fixed the steps appear with no change here.
+ * `build-stage` compiles (`PLAN-M13.md` P13, Q211), so a real stage gets its step graph and critical path. A
+ * project's own workflow that does not (a customised `build-stage` with an unresolvable reference, or one whose
+ * per-story steps are not keyed by story id) is still reported, not fatal: a stage's stories are plannable
+ * without it, and failing the plan for a defect that is not in the stories would be wrong. That case is a
+ * `step-plan-unavailable` *warning* with the compiler's own messages, `stepPlan: 'unavailable'`, and no steps,
+ * cost or step-level critical path (unknown, not zero).
  *
  * **Overlap is decided by static path prefix, not glob intersection.** `globsOverlap` (literal against
  * pattern, both ways) misses real overlaps (`src/auth` against `src/auth/login.ts`, `src/**\/*.ts` against
@@ -62,6 +62,16 @@ import type { ClaimOverlap, CriticalPathResult, StepNode } from './types.ts';
 interface StageExpressionContext extends ExpressionContext {
   readonly stageId: string;
 }
+
+/** The roles that write a story's failing tests (`sdet`) and review it (`reviewer`), identified by name the way
+ * `protectionReason` (`@forge/extensions`) identifies the protected `red`/`review` steps (`SPEC-QUESTIONS.md`
+ * Q36: no workflow field marks a step's phase). `10` §10.6 "Enforced separations": the agent that writes a story's
+ * tests never makes them pass, and the reviewer is never the implementer. The check (`separationFindings`) looks at
+ * the compiled per-story steps: a story is refused when one of these roles would run two of its steps (its
+ * implementation, taken from the story's own `owner_role`, and its tests or its review). It is the story-owner
+ * half of the rule only; whether an implementer's file claim covers a test path is a different rule
+ * (`checkTestImplementationSeparation`), not decided here. */
+const SEPARATED_ROLES: ReadonlySet<string> = new Set(['sdet', 'reviewer']);
 
 /** One story of the stage, in the structural shape the run plan needs (deliberately not the KB `Story`
  * type: the plan needs a few of its fields, and a hand-built value in a test says exactly which). */
@@ -519,6 +529,8 @@ function storyItem(story: StageStory): Readonly<Record<string, unknown>> {
 interface StoryChain {
   readonly heads: readonly StepNode[];
   readonly terminals: readonly StepNode[];
+  /** Every step of the story, in plan order. */
+  readonly all: readonly StepNode[];
 }
 
 function storyChains(
@@ -541,6 +553,7 @@ function storyChains(
     const ids = new Set(own.map((node) => node.id));
     const dependedOn = new Set(own.flatMap((node) => node.dependsOn.filter((dep) => ids.has(dep))));
     chains.set(story, {
+      all: own,
       heads: own.filter((node) => !node.dependsOn.some((dep) => ids.has(dep))),
       terminals: own.filter((node) => !dependedOn.has(node.id)),
     });
@@ -575,6 +588,37 @@ function applyStoryDependencies(
       ? node
       : { ...node, dependsOn: [...node.dependsOn, ...new Set(extra)] };
   });
+}
+
+/** `10` §10.6 "Enforced separations" (see `SEPARATED_ROLES`), from what the workflow actually compiled to: the
+ * implementing agent is a template over the story's own `owner_role`, so only the plan can see it. A story is
+ * refused when its owner role is a protected one and two of its own agent steps would run under that role. */
+function separationFindings(
+  stories: readonly StageStory[],
+  chains: ReadonlyMap<string, StoryChain>,
+  workflowId: string,
+): readonly StageRunPlanFinding[] {
+  const found: StageRunPlanFinding[] = [];
+  for (const story of stories) {
+    const role = story.ownerRole.trim().toLowerCase();
+    if (!SEPARATED_ROLES.has(role)) continue;
+    const running = (chains.get(story.id)?.all ?? []).filter(
+      (node) => node.kind === 'agent' && String(node.agent).trim().toLowerCase() === role,
+    );
+    if (running.length < 2) continue;
+    found.push(
+      finding(
+        'owner-role-breaks-separation',
+        'error',
+        `Story ${story.id} is owned by "${story.ownerRole}", so the ${workflowId} workflow would run ` +
+          `${running.map((node) => node.id).join(' and ')} under that one role: the agent that ` +
+          `${role === 'sdet' ? 'writes the failing tests' : 'reviews the work'} would also implement it ` +
+          '(10 §10.6 enforced separations). Give the story an implementing owner_role.',
+        [story.id],
+      ),
+    );
+  }
+  return found;
 }
 
 /** Sorts by id, and by content among equal ids, so which of two same-id stories is planned never depends on
@@ -686,6 +730,7 @@ export function compileStageRunPlan(
           ),
         );
       } else {
+        findings.push(...separationFindings(unique, chains, workflow.id));
         const withStories = applyStoryDependencies(compiled.nodes, chains, graph.predecessors);
         const cycle = detectCycles(withStories);
         if (cycle !== undefined) {

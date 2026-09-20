@@ -61,12 +61,10 @@ steps:
   - id: merge
     kind: merge
     over: "stage.items"
-    # Literal compiled ids, not "implement:{{item.id}}": compile.ts's own doc comment documents that a
-    # merge step (an ordinary leaf, not itself a fanout) has no "item" binding in scope, so a templated
-    # per-item dependency the way 10 §10.1's own worked example writes one is a real, known,
-    # deliberately-undone gap ("a real, separate feature... left undone deliberately", buildLeafNode's
-    # own doc comment) -- not something this fixture should route around by depending on it working.
-    # "over" itself is still required by the schema even though this leaf never actually reads it.
+    # Literal compiled ids on purpose: this fixture drives the merge handler (which lanes it merges, in what
+    # order), not the compiler's per-item folding, which plan/compile.test.ts and test/build-stage-compiles.
+    # test.ts cover (10 section 10.1's own review:{{item.id}} form compiles, Q211). Merging the lanes the
+    # implement steps produced is what this run needs to exercise.
     dependsOn: [ "implement:story-1", "implement:story-2" ]
     policy: { conflict: abort }
 

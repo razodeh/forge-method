@@ -155,15 +155,10 @@ describe('16 §16.6 P5 Planning — plan-stage.workflow.yaml', () => {
 });
 
 describe('16 §16.6 P6 Implementation — build-stage.workflow.yaml', () => {
-  // `build-stage.workflow.yaml` is `10` §10.1's own literal worked example (confirmed against
-  // `parse.test.ts`'s own `WORKED_EXAMPLE`) and carries a real, pre-existing, already-documented
-  // compile gap unrelated to this piece: `merge`'s own `dependsOn: ['review:{{item.id}}']` cannot
-  // resolve `item.id` outside a fanout's own per-item scope (`compile.ts`'s own doc comment on
-  // `buildLeafNode`, "a real merge-over-a-fanout's-own-expanded-items dependency ... cannot be
-  // expressed today"), so `compilePlan` never succeeds for this file at all, with or without this
-  // piece's own `standup` addition. This test therefore checks the *parsed*, uncompiled `Workflow`
-  // document directly — still real structural validation (`parseWorkflow`), just not full plan
-  // compilation, which no test of this file could pass today.
+  // `build-stage.workflow.yaml` is `10` §10.1's own worked example (plus this piece's `standup` and the
+  // `review` itemKey, Q211). It used to carry a compile gap (`merge`'s per-item `dependsOn`), so this test
+  // checked the *parsed* `Workflow` only; it compiles now (`test/build-stage-compiles.test.ts`), and this
+  // test still only needs the parsed document to check the standup's placement and trigger.
   it('contains a standup with a real, evaluable elapsed-time/blocked-lane trigger', async () => {
     const files = await readWorkflowFiles();
     const file = files.find((f) => f.relPath.endsWith('build-stage.workflow.yaml'));

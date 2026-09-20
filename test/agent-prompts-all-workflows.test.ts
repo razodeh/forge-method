@@ -93,17 +93,6 @@ const FIXTURE_CONTEXT = {
 };
 
 /**
- * Workflows that cannot compile against `FIXTURE_CONTEXT` for a known reason, and the exact steps that
- * fail (`10` §10.1, Q71/Q88: a `merge` step's `dependsOn` templated against a sibling fanout's `item`
- * cannot resolve). Such a workflow is still covered: those steps are removed (they are not agent steps)
- * and the rest is compiled. This test fails if a listed workflow now compiles whole, no longer exists,
- * fails on any other step, or if an unlisted workflow fails to compile.
- */
-const UNCOMPILABLE_STEPS: Readonly<Record<string, readonly string[]>> = {
-  'build-stage': ['merge'],
-};
-
-/**
  * Agent steps that declare no `brief:` at all, by `<workflowId>:<stepId>` (no fanout item suffix). Q203:
  * these two `swarm-review` reviewer steps are dispatched with a block [4] synthesized from their declared
  * inputs and outputs, because perspective briefs are the reviewer agent's own `prompt.briefs.<mode>`. Any
@@ -316,37 +305,18 @@ function declaredPromptSteps(workflow: Workflow): readonly FlatStep[] {
   );
 }
 
+/** Every shipped workflow must compile whole against `FIXTURE_CONTEXT`: there is no exclusion list. It used to
+ * carry one entry, `build-stage:merge` (a `merge` step's per-item `dependsOn` could not resolve `item.id`,
+ * Q71/Q88), which compiled the rest of `build-stage` without that step; the compiler now folds a merge's
+ * per-item dependencies (Q211, `PLAN-M13.md` P13), so a workflow that fails to compile is a real failure. */
 function compileForTest(workflow: Workflow): readonly StepNode[] {
   const attempt = compileRunPlan(workflow, FIXTURE_CONTEXT);
   if (attempt.success) return attempt.nodes;
-  const expected = UNCOMPILABLE_STEPS[workflow.id];
-  if (expected === undefined) {
-    throw new Error(
-      `${workflow.id} fails to compile against FIXTURE_CONTEXT: ${JSON.stringify(attempt.issues)}. ` +
-        'Add the input it references to FIXTURE_CONTEXT (or, for a genuine compiler limitation, ' +
-        'to UNCOMPILABLE_STEPS with its justification).',
-    );
-  }
-  const failing = [...new Set(attempt.issues.map((issue) => issue.stepId))].map((id) =>
-    String(id).replace(`${workflow.id}:`, ''),
+  throw new Error(
+    `${workflow.id} fails to compile against FIXTURE_CONTEXT: ${JSON.stringify(attempt.issues)}. ` +
+      'Add the input it references to FIXTURE_CONTEXT, or fix the workflow or the compiler: nothing ' +
+      'is excluded from compilation.',
   );
-  expect(failing.sort()).toEqual([...expected].sort());
-  const kept = workflow.steps
-    .filter((step) => step.id === undefined || !expected.includes(step.id))
-    .map((step) => ({
-      ...step,
-      dependsOn: (step.dependsOn ?? []).filter(
-        (dependency) =>
-          !expected.some((id) => dependency === id || dependency.startsWith(`${id}:`)),
-      ),
-    }));
-  const retry = compileRunPlan({ ...workflow, steps: kept }, FIXTURE_CONTEXT);
-  if (!retry.success) {
-    throw new Error(
-      `${workflow.id} still fails without ${expected.join(', ')}: ${JSON.stringify(retry.issues)}`,
-    );
-  }
-  return retry.nodes;
 }
 
 /** `<workflowId>:<stepId>` from a compiled node id, dropping a fanout item suffix. */
@@ -436,29 +406,35 @@ describe('enumeration is real', () => {
     }
   });
 
-  it('the exclusion sets name only things that still exist and are still true', () => {
-    for (const workflowId of Object.keys(UNCOMPILABLE_STEPS)) {
-      const entry = shipped.find((candidate) => candidate.workflow.id === workflowId);
-      expect(
-        entry,
-        `UNCOMPILABLE_STEPS names "${workflowId}", which no longer ships`,
-      ).toBeDefined();
-      if (entry === undefined) continue;
-      const whole = compileRunPlan(entry.workflow, FIXTURE_CONTEXT);
-      expect(
-        whole.success,
-        `${workflowId} now compiles whole; remove it from UNCOMPILABLE_STEPS`,
-      ).toBe(false);
-      const stepIds = new Set(entry.workflow.steps.map((step) => step.id));
-      for (const stepId of UNCOMPILABLE_STEPS[workflowId] ?? []) {
-        expect(stepIds.has(stepId), `${workflowId} has no step "${stepId}"`).toBe(true);
-        const step = flatSteps(entry.workflow.steps).find((candidate) => candidate.id === stepId);
-        expect(
-          step?.kind,
-          `${workflowId}:${stepId} is excluded but is not a non-agent step`,
-        ).not.toMatch(/^(agent|session)$/);
-      }
+  it('every shipped workflow compiles WHOLE against the fixture context: none skipped, none trimmed', async () => {
+    const templatesDir = path.join(repoRoot, 'packages', 'templates', 'templates', 'workflows');
+    let onDisk = (await listWorkflowFiles(templatesDir)).length;
+    for (const name of await readdir(modulesDir)) {
+      const dir = path.join(modulesDir, name, 'workflows');
+      const found = await stat(dir).then(
+        (info) => info.isDirectory(),
+        () => false,
+      );
+      if (found) onDisk += (await listWorkflowFiles(dir)).length;
     }
+    expect(shipped.length).toBe(onDisk);
+    for (const { origin, workflow } of shipped) {
+      const result = compileRunPlan(workflow, FIXTURE_CONTEXT);
+      expect(
+        result.success,
+        `${origin} does not compile: ${JSON.stringify(result.success ? [] : result.issues)}`,
+      ).toBe(true);
+    }
+    // The step that used to be cut out to make `build-stage` compile is there, and depends on the reviews.
+    const buildStage = shipped.find((entry) => entry.workflow.id === 'build-stage');
+    const whole = compileRunPlan(buildStage!.workflow, FIXTURE_CONTEXT);
+    if (!whole.success) throw new Error('build-stage does not compile');
+    const merge = whole.nodes.find((node) => node.kind === 'merge');
+    expect(merge, 'build-stage compiled without its merge step').toBeDefined();
+    expect(merge?.dependsOn).toEqual(['build-stage:review:story-1']);
+  });
+
+  it('the remaining exclusion set names only things that still exist and are still true', () => {
     for (const key of BRIEFLESS_AGENT_STEPS) {
       const [workflowId, stepId] = key.split(':') as [string, string];
       const entry = shipped.find((candidate) => candidate.workflow.id === workflowId);

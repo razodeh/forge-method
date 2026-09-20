@@ -151,7 +151,8 @@ async function writeStory(
   });
 }
 
-/** A `build-stage` that does compile: the shipped one's `merge`/`review` steps are what currently block it. */
+/** A minimal `build-stage`: one fanout over the stories, for tests about the story-level plan. The shipped one
+ * (what `project()` writes) compiles too and is exercised above and by `test/build-stage-compiles.test.ts`. */
 const COMPILABLE_STAGE_WORKFLOW = `id: build-stage
 name: Compilable stage
 version: 1.0.0
@@ -218,10 +219,28 @@ describe('forge plan run-plan (real subprocess)', () => {
     expect(plan.waves).toEqual([['STORY-001', 'STORY-002'], ['STORY-003']]);
     expect(plan.stories.map((s) => s.id)).toEqual(['STORY-001', 'STORY-002', 'STORY-003']);
     expect(plan.storyCriticalPath).toEqual(['STORY-001', 'STORY-003']);
-    // Whether the shipped build-stage compiles to steps is a separate matter (it does not today); either
-    // way the story-level plan is the plan, and the output says which one it is.
+    // The shipped build-stage (what `forge init` wrote into this project) compiles: a real stage gets its step
+    // graph and a critical path, and nothing says the step plan is unavailable (`PLAN-M13.md` P13, Q211).
     expect(plan.errors).toBe(0);
-    expect(typeof plan.warnings).toBe('number');
+    expect(plan.warnings).toBe(0);
+    expect(plan.findings).toEqual([]);
+    expect(plan.stepPlan).toBe('compiled');
+    const byId = new Map(plan.nodes.map((n) => [n.id, n.dependsOn]));
+    expect(byId.get('build-stage:review:STORY-003')).toEqual(['build-stage:implement:STORY-003']);
+    expect(byId.get('build-stage:generate-tests:STORY-003')).toContain(
+      'build-stage:review:STORY-001',
+    );
+    expect([...(byId.get('build-stage:merge') ?? [])].sort()).toEqual([
+      'build-stage:review:STORY-001',
+      'build-stage:review:STORY-002',
+      'build-stage:review:STORY-003',
+    ]);
+    expect(byId.get('build-stage:verify')).toEqual(['build-stage:merge']);
+    expect(plan.criticalPath.path.length).toBeGreaterThan(0);
+    expect(plan.criticalPath.path).toContain('build-stage:review:STORY-003');
+    expect(plan.criticalPath.estimatedCost).toBeGreaterThan(0);
+    const human = forge(['plan', 'run-plan', 'mvp'], dir).stdout;
+    expect(human).not.toContain('no step-level plan');
   });
 
   it('adds the step-level graph, with story dependencies on the steps, when the stage workflow compiles', async () => {
@@ -654,10 +673,9 @@ describe('forge plan run-plan (real subprocess)', () => {
     expect(human).toContain('unknown-dependency');
   });
 
-  // KNOWN GAP (`SPEC-QUESTIONS.md`, M13 P10): the shipped build-stage does not compile to steps, so a
-  // real stage gets no step graph, critical path or cost. `it.fails` keeps this suite green while that is
-  // true and turns red the day the workflow is fixed, which is the cue to delete the `.fails`.
-  it.fails('compiles the shipped build-stage to a step plan', async () => {
+  // Was an `it.fails` known gap (M13 P10): the shipped build-stage did not compile, so a real stage got no
+  // step graph, critical path or cost. Closed by P13 (Q211); this is the direct, subprocess-free check.
+  it('compiles the shipped build-stage to a step plan', async () => {
     const files = await readWorkflowFiles();
     const file = files.find((f) => f.relPath.endsWith('build-stage.workflow.yaml'));
     const parsed = parseWorkflow(file?.content ?? '');
@@ -673,6 +691,8 @@ describe('forge plan run-plan (real subprocess)', () => {
       },
     ]);
     expect(plan.stepPlan).toBe('compiled');
+    expect(plan.findings).toEqual([]);
+    expect(plan.nodes.map((n) => n.id)).toContain('build-stage:merge');
   });
 
   it('strips DEL and C1 control bytes from --json too, which JSON.stringify writes raw', async () => {
@@ -754,11 +774,5 @@ describe('forge plan run-plan (real subprocess)', () => {
     ]);
     expect(plan.blocked).toEqual(['STORY-002']);
     expect(plan.stories.map((story) => story.id)).toEqual(['STORY-001', 'STORY-002', 'STORY-003']);
-  });
-
-  it('parses the shipped build-stage (so the known-gap test below fails for the stated reason only)', async () => {
-    const files = await readWorkflowFiles();
-    const file = files.find((f) => f.relPath.endsWith('build-stage.workflow.yaml'));
-    expect(parseWorkflow(file?.content ?? '').success).toBe(true);
   });
 });

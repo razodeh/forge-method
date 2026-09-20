@@ -91,16 +91,10 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
     expect(result.workflow.id).toBe(id);
   });
 
-  // `build-stage` is excluded here, not skipped silently: `compile.ts`'s own documented limitation
-  // (SPEC-QUESTIONS.md Q71, generalised at Q88) means a `merge`/plain step can never resolve a
-  // `dependsOn` templated against a sibling fanout's own `item` binding (no `item` in scope outside
-  // that fanout's own child step) -- `10` §10.1's own literal worked example hits this directly via its
-  // own `merge` step's `dependsOn: [ "review:{{item.id}}" ]`, so a byte-for-byte-faithful `build-
-  // stage.workflow.yaml` genuinely cannot compile today. The dedicated test below asserts this exact,
-  // already-known failure shape rather than silently dropping coverage of it.
-  const COMPILABLE_WORKFLOW_IDS = (Object.keys(WORKFLOW_INDEX) as WorkflowId[]).filter(
-    (id) => id !== 'build-stage',
-  );
+  // Every one of the 20, `build-stage` included (`PLAN-M13.md` P13, `SPEC-QUESTIONS.md` Q211: it used to be
+  // excluded here for a `merge`-over-fanout gap that is now closed in the compiler and the `review` keying).
+  // `test/build-stage-compiles.test.ts` pins the exact graph it compiles to.
+  const COMPILABLE_WORKFLOW_IDS = Object.keys(WORKFLOW_INDEX) as WorkflowId[];
 
   it.each(COMPILABLE_WORKFLOW_IDS)(
     '%s compiles via compileRunPlan against the shared fixture context',
@@ -115,14 +109,33 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
     },
   );
 
-  it('build-stage fails to compile today with exactly the known merge-over-fanout template-resolution gap (Q71/Q88), not some other defect', () => {
-    const parsed = parseWorkflow(readWorkflowSource('build-stage'));
-    if (!parsed.success) throw new Error('build-stage failed to parse');
-    const compiled = compileRunPlan(parsed.workflow, FIXTURE_CONTEXT);
-    expect(compiled.success).toBe(false);
-    if (compiled.success) return;
-    for (const i of compiled.issues) expect(i.code).toBe('template-resolution-failed');
-    expect(compiled.issues.some((i) => i.stepId === 'build-stage:merge')).toBe(true);
+  // A `merge` over a collection now folds its per-item `dependsOn` (Q211). The other shipped `merge` steps have
+  // an `over` that is not a collection (a run input, a step id) and must keep the single resolution they had.
+  it('the other shipped merge steps compile to exactly the dependencies they always had', () => {
+    const compileMerges = (source: string, context: object): Record<string, readonly string[]> => {
+      const parsed = parseWorkflow(source);
+      if (!parsed.success) throw new Error('does not parse');
+      const compiled = compileRunPlan(parsed.workflow, context);
+      if (!compiled.success) throw new Error(JSON.stringify(compiled.issues));
+      return Object.fromEntries(
+        compiled.nodes.filter((n) => n.kind === 'merge').map((n) => [n.id, n.dependsOn]),
+      );
+    };
+    expect(compileMerges(readWorkflowSource('implement-story'), FIXTURE_CONTEXT)).toEqual({
+      'implement-story:merge': ['implement-story:commit'],
+    });
+    expect(
+      compileMerges(
+        readFileSync(
+          path.join(repoRoot, 'modules', 'fm-mobile', 'workflows', 'store-release.workflow.yaml'),
+          'utf8',
+        ),
+        { ...FIXTURE_CONTEXT, buildTarget: 'ios' },
+      ),
+    ).toEqual({
+      'store-release:merge-release-build': ['store-release:prepare-release-build'],
+      'store-release:merge-submission': ['store-release:prepare-store-submission'],
+    });
   });
 
   it("WORKFLOW_INDEX names exactly the 20 ids 10 §10.5's own table lists, no more and no fewer", () => {
@@ -163,7 +176,12 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // position `packages/templates/templates/workflows/build-stage.workflow.yaml`'s own comment documents
   // (`dependsOn: [contracts-gate]`, dependency-terminal) — still a real, structural fidelity check on
   // everything else in the file, not a license to let the comparison silently stop mattering.
-  it("build-stage matches 10 §10.1's own literal worked example byte-for-byte, plus 16 §16.6's own standup addition", () => {
+  //
+  // `PLAN-M13.md` P13 added two more deliberate differences. `dependsOn: [ prepare ]` on `freeze-contracts`: the
+  // worked example leaves `prepare` unordered against everything (Q211). And `itemKey: "{{item.id}}"` on the `review` fanout.
+  // The worked example omits it, which made `review` compile to positional ids (`review:0`) that `merge`'s own
+  // `dependsOn: [ "review:{{item.id}}" ]` cannot name, so the file did not compile (Q211).
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey and freeze-contracts after prepare (Q211)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -190,6 +208,7 @@ steps:
   - id: freeze-contracts
     kind: agent
     agent: architect
+    dependsOn: [ prepare ]
     brief: briefs/freeze-contracts.md
     inputs: [ artifact:Epic(*), artifact:Story(*), kb:architecture/**, kb:data/** ]
     outputs:
@@ -239,6 +258,7 @@ steps:
   - id: review
     kind: fanout
     over: "stage.stories"
+    itemKey: "{{item.id}}"
     dependsOn: [ "implement:{{item.id}}" ]
     step:
       kind: agent

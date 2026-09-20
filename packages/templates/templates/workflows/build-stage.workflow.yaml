@@ -27,9 +27,15 @@ steps:
     run: 'git switch -c {{vars.integration_branch}} || git switch {{vars.integration_branch}}'
     inline: true
 
+  # `dependsOn: [prepare]` is not in `10` §10.1's worked example, which leaves `prepare` (the step that creates
+  # the integration branch) with no dependent, so nothing ordered any other step after it: a merge, the
+  # verify gate and `deliver` could all be scheduled before the branch existed. Every later step already
+  # follows `freeze-contracts` (through `contracts-gate`, or the per-story chains), so one edge orders them
+  # all. See `SPEC-QUESTIONS.md` Q211.
   - id: freeze-contracts
     kind: agent
     agent: architect
+    dependsOn: [prepare]
     brief: briefs/freeze-contracts.md
     inputs: ['artifact:Epic(*)', 'artifact:Story(*)', 'kb:architecture/**', 'kb:data/**']
     outputs:
@@ -89,9 +95,15 @@ steps:
       retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
       onFailure: escalate
 
+  # Keyed by story id like `generate-tests`/`implement`, which `10` §10.1's own worked example omits here:
+  # `merge` below waits on `review:{{item.id}}`, and an un-keyed fanout compiles to positional ids
+  # (`review:0`), so that reference would dangle and `forge run build-stage` could not start. Keying is also
+  # what makes a resumed run and a re-planned stage agree on which review is whose (`06` §6.2 rule 1: "the
+  # item's ID in the step id"). See `SPEC-QUESTIONS.md` Q211.
   - id: review
     kind: fanout
     over: 'stage.stories'
+    itemKey: '{{item.id}}'
     dependsOn: ['implement:{{item.id}}']
     step:
       kind: agent
