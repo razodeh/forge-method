@@ -14384,3 +14384,16 @@ Rounds: 2 fresh critic rounds plus the mutation runs (Q225). Round 1 (7 major): 
 **Mutation evidence.** Derivation off (21 of 87 tests fail), a pattern widened to `<command>*` (19) and to `*` (22), the `*` refusal removed (9), `grantWithTestExec` turning `exec: false` into a list (5), the syntax stage removed (17), the derivation applied before the taint/read-only clamps in `assemble.ts` (the tainted and read-only tests fail), engine limits removed for a trusted command and exit 127 read as a reproduction (their tests fail).
 
 **Verification.** Scoped per the owner-approved cost cut (Q230 lists it), then `pnpm typecheck`, boundaries, lint (the four known prettier warnings only) and the key tests again in a clean worktree of the final commit (rule 15). Open items (whole-layer reproduction, `15` I7 wording, `StepNode.taint` never set by plan compilation, the doctor's limits) are in Q230.
+
+
+## M13 P9-2 — Second live run: `retro` completes end to end (real Claude Code, real API key)
+
+Run by the orchestrator with the owner's authorization, from a clean checkout of `main` (a git worktree, so no other agent's in-flight edits were in the code under test), in a throwaway project outside the repository, budget-capped (agent step ceiling $0.75 through the workflow step's `limits`, `perRunUsd` 1.5, command step reserves $0). The key was loaded for the single command, never printed, and a post-run scan found it in 0 files (both project directories, the captured outputs, and the repository). Full record in `SPEC-QUESTIONS.md` Q231.
+
+**Attempt 1 ($0.4586, failed).** `em` wrote a session record; P7's output check rejected it (`RUN-083`): `started`/`ended` carried a `-04:00` offset, and the schema accepts only UTC with a trailing `Z`; the brief never said so. `forge run` reported the failed step and the remedy (P12). Fixed in `c6af45c` (a brief-only change).
+
+**Attempt 2 ($0.3795, completed).** `RunPlanned ... LaneCreated SessionStarted SessionEnded UsageRecorded LaneCommitted LaneReady StepSucceeded MergeQueued MergeStarted MergeCompleted LaneRemoved ... StepSucceeded RunCompleted`. The integration branch's tip is a merge commit landing `docs/forge/sessions/SESSION-001.md` (134 lines, `author: em`); `retro:write-back-kb` (`forge kb sync`) succeeded with no `forge` on `PATH`.
+
+**Proven live for the first time.** Prompt assembly (P5), tier map (P5b), per-step ceilings and reservation (P12), an authoring role writing inside its claim (P14/P15/P36), the output contract accepting a valid record and rejecting an invalid one (P7), engine lane integration (P19), a compiled command step finding `forge` (P12). Not exercised: gates, `build-stage`, stacked lanes, `elicit`, any `merge` node.
+
+**Process finding.** Checking out `main` clean showed HEAD did not build: P25's commit `7a0ac5b` left `packages/cli/src/bin.ts` with 18 syntax errors that no scoped test or working-tree typecheck could see. Repaired in `a144033`; `M13-AGENT-NOTES.md` rule 15 now requires every piece to typecheck and test its own commit in a clean worktree. Total live spend across P9 and P9-2: about $1.23.
