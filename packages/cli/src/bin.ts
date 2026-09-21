@@ -238,6 +238,12 @@ import {
 } from './commands/run/index.ts';
 import { currentLauncher } from './commands/run/launcher-shim.ts';
 import { runFailureError, runFailureNote } from './commands/run/run-failure.ts';
+import {
+  createAskPort,
+  readAnswersFile,
+  unmatchedAnswerWarnings,
+  type CliAskPort,
+} from './commands/run/ask.ts';
 import { buildRunExpressionContext } from './commands/run/expression-context.ts';
 import { extractInputFlags } from './commands/run/inputs.ts';
 import { refusalEnvelopeLine, refusalOf } from './commands/run/vcs-refusal.ts';
@@ -265,6 +271,7 @@ import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES } from '@forge/schemas';
 import type { ArtifactTypeId } from '@forge/schemas';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
+import { readWorkflowSource } from './commands/run/run.ts';
 import type { DryRunResult, RealRunResult } from './commands/run/run.ts';
 
 const AGENTS_ROOT = '.forge/agents';
@@ -765,7 +772,38 @@ function assertNoArgs(args: readonly string[]): void {
   }
 }
 
-const RUN_FLAGS = { '--stage': true, '--epic': true, '--story': true } as const;
+const RUN_FLAGS = {
+  '--stage': true,
+  '--epic': true,
+  '--story': true,
+  '--answers': true,
+} as const;
+
+/** The port an `elicit` step asks through (`PLAN-M13.md` P20): the answers in `--answers <file>` (relative to the
+ * current directory, as any file argument is) and, when stdin and stderr are both a terminal, a prompt on stderr for
+ * the rest. Off a terminal a question with no answer fails its step with the remedy, instead of waiting on stdin.
+ * The caller closes it. */
+async function buildElicitAskPort(
+  answersFile: string | undefined,
+  workflowSource: string | undefined,
+): Promise<CliAskPort> {
+  const answers =
+    answersFile === undefined
+      ? undefined
+      : await readAnswersFile(path.resolve(process.cwd(), answersFile));
+  if (answers !== undefined && workflowSource !== undefined) {
+    for (const warning of unmatchedAnswerWarnings(workflowSource, answers)) {
+      console.error(`forge: warning: ${warning}`);
+    }
+  }
+  return createAskPort({
+    answers,
+    interactive: process.stdin.isTTY && process.stderr.isTTY,
+    warn: (message) => {
+      console.error(message);
+    },
+  });
+}
 
 /** `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>] [--input <name>=<value>]...` (`03` §3.2.4).
  * The expression context the workflow compiles against is `buildRunExpressionContext`'s (`PLAN-M13.md` P21): run
@@ -801,26 +839,52 @@ async function runRunCommand(
     SPECS_ROOT,
   );
   for (const warning of warnings) console.error(`forge: warning: ${warning}`);
-  const result = await runWorkflow(deps, {
-    workflowId,
-    expressionContext,
-    dryRun,
-    host: os.hostname(),
-  });
-  return printWorkflowDispatchResult(`run ${workflowId}`, result, json);
+  const askPort = await buildElicitAskPort(
+    values.get('--answers'),
+    await readWorkflowSource(deps, workflowId),
+  );
+  try {
+    const result = await runWorkflow(
+      { ...deps, ask: askPort },
+      {
+        workflowId,
+        expressionContext,
+        dryRun,
+        host: os.hostname(),
+      },
+    );
+    return printWorkflowDispatchResult(`run ${workflowId}`, result, json);
+  } finally {
+    askPort.close();
+  }
 }
 
 async function runResumeCommand(
   paths: ProjectPaths,
   projectRoot: string,
-  runId: string | undefined,
+  args: readonly string[],
   json: boolean,
 ): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, { '--answers': true });
+  if (positionals.length > 1) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[1] ?? '' });
+  }
+  const runId = positionals[0];
   const deps = await buildRunDepsForProject(paths, projectRoot);
-  const result = await resumeWorkflow(deps, {
-    ...(runId !== undefined ? { runId } : {}),
-    host: os.hostname(),
-  });
+  // A run stopped at a question is asked again here, with the answers of `--answers` (`PLAN-M13.md` P20).
+  const askPort = await buildElicitAskPort(values.get('--answers'), undefined);
+  let result: Awaited<ReturnType<typeof resumeWorkflow>>;
+  try {
+    result = await resumeWorkflow(
+      { ...deps, ask: askPort },
+      {
+        ...(runId !== undefined ? { runId } : {}),
+        host: os.hostname(),
+      },
+    );
+  } finally {
+    askPort.close();
+  }
   if (json) {
     console.log(JSON.stringify({ v: 1, runId: result.runId, runState: result.runState }));
   } else {
@@ -2797,7 +2861,7 @@ async function runRunPlanCommand(
   return report.ok ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
-const PLAN_FLAGS = { '--from': true } as const;
+const PLAN_FLAGS = { '--from': true, '--answers': true } as const;
 
 async function runPlanCommand(
   paths: ProjectPaths,
@@ -2832,13 +2896,22 @@ async function runPlanCommand(
   if (from !== undefined) vars['from'] = from;
   const expressionContext = buildPlanExpressionContext(stageId, vars);
 
-  const result = await runWorkflow(deps, {
-    workflowId,
-    expressionContext,
-    dryRun,
-    host: os.hostname(),
-  });
-  return printWorkflowDispatchResult(`plan ${phase}`, result, json);
+  // A planning workflow may ask the human (`replan`'s approval, `PLAN-M13.md` P20).
+  const askPort = await buildElicitAskPort(values.get('--answers'), undefined);
+  try {
+    const result = await runWorkflow(
+      { ...deps, ask: askPort },
+      {
+        workflowId,
+        expressionContext,
+        dryRun,
+        host: os.hostname(),
+      },
+    );
+    return printWorkflowDispatchResult(`plan ${phase}`, result, json);
+  } finally {
+    askPort.close();
+  }
 }
 
 // --- the agent-facing loop family: `implement`/`debug`/`refactor`/`deploy`/`review`/`panel`/`ask`/
@@ -3377,12 +3450,7 @@ async function main(): Promise<number> {
     return runRunCommand(paths, projectRoot, workflowId, runRest, flags.dryRun, flags.json);
   }
   if (command === 'resume') {
-    return runResumeCommand(
-      paths,
-      projectRoot,
-      parseOptionalRunIdPositional(afterCommand),
-      flags.json,
-    );
+    return runResumeCommand(paths, projectRoot, afterCommand, flags.json);
   }
   if (command === 'pause') {
     assertNoArgs(afterCommand);

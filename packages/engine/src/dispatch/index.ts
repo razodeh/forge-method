@@ -71,9 +71,12 @@ export {
   resolveMergeChecks,
   type ResolvedMergeChecks,
 } from './merge-checks.ts';
+export { checkElicitAnswer, sanitizeAnswer } from './elicit.ts';
 export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {
+  AskPort,
+  AskRequest,
   DocRoots,
   ExecuteStepContext,
   GateEvaluator,

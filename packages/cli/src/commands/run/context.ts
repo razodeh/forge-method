@@ -25,6 +25,7 @@ import {
   createTelemetryFacade,
   createVcsFacade,
 } from '@forge/engine/dispatch';
+import type { AskPort } from '@forge/engine/dispatch';
 import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
 import { parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
@@ -49,6 +50,9 @@ export interface BuildRunContextInput {
   /** Environment overlay for every command step, gate check and merge check the run spawns: a `PATH` whose
    * first entry holds a `forge` that re-launches this CLI (`launcher-shim.ts`). Absent: nothing is added. */
   readonly commandEnv?: Readonly<Record<string, string>> | undefined;
+  /** How an `elicit` step gets its answers (`--answers`, a terminal): `ask.ts`. Absent, an `elicit` step fails
+   * `RUN-101` (`PLAN-M13.md` P20). */
+  readonly ask?: AskPort | undefined;
   /** The run's expression context (its inputs), which names the integration branch: see `integrationBranchFor`.
    * Absent for a command that is not a workflow run. */
   readonly expressionContext?: unknown;
@@ -472,6 +476,7 @@ export async function buildRunEngineContext(
     gateRegistry,
     mergeQueue: createMergeQueueFacade(integrationPath, undefined, { env: input.commandEnv }),
     commandEnv: input.commandEnv,
+    ...(input.ask === undefined ? {} : { ask: input.ask }),
     runId: input.runId,
     projectRoot: input.projectRoot,
     integrationBase: input.lanesFromIntegration === true ? integrationBranch : TRUNK,

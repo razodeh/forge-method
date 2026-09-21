@@ -26,9 +26,12 @@ steps:
     dependsOn: [impact-analysis]
     questions:
       - name: changeApproved
-        prompt: 'The change proposal and its impact analysis are shown above -- approve or reject?'
+        prompt: 'The change proposal and its impact analysis are the change-proposal and impact-analysis entries in the handoff records (docs/forge/reports/handoffs.md on the integration branch): approve or reject the change?'
+        choices: [approve, reject]
 
+  # A rejected change re-derives nothing. The answer reaches the command as data in the environment (elicit,
+  # PLAN-M13.md P20), never in the command text.
   - id: re-derive
     kind: command
-    run: 'forge spec re-derive --json'
+    run: '[ "$FORGE_ANSWER_changeApproved" != approve ] && echo "change rejected: nothing re-derived" || forge spec re-derive --json'
     dependsOn: [approve-change]

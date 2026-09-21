@@ -39,6 +39,7 @@ import {
 import { readEvents } from '@forge/telemetry/events';
 
 import type { ExecuteStepContext, StepOutcome } from '../dispatch/index.ts';
+import { readRecordedAnswers } from '../dispatch/elicit.ts';
 import { runAgentWork, runLaneLifecycle } from '../dispatch/index.ts';
 import { resumeSwarmReviewStep } from '../interaction/swarm-review-step.ts';
 import type { StepNode } from '../plan/index.ts';
@@ -387,7 +388,7 @@ async function abortInterruptedRebases(
   }
 }
 
-export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunState> {
+export async function resumeRun(runId: string, callerCtx: ResumeContext): Promise<RunState> {
   // Swept once, first, before anything else in this function (or anything it calls) ever touches git
   // state for this run again: a real crash (`06` §6.10, this milestone's own E3 crash-resume test) can
   // land a real `git` subprocess mid-write and abandon its own lock file forever, since `git` itself
@@ -399,7 +400,21 @@ export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunS
   // confirmed gone (this whole function's own reason for existing), and this project's own
   // single-writer-per-run design means nothing else is legitimately touching this exact repository
   // concurrently with a resume — `clearStaleRepoLocks`'s own doc comment has the fuller reasoning.
-  await clearStaleRepoLocks(ctx.projectRoot);
+  await clearStaleRepoLocks(callerCtx.projectRoot);
+
+  // A step this function re-drives (an agent session the crash interrupted) is assembled here, before `runEngine`
+  // seeds its own view of the run, so it needs the same two things `runEngine` gives every step: the plan (which
+  // `elicit` steps it depends on) and what the human answered, from the event log (`PLAN-M13.md` P20). Without them
+  // a re-driven step's prompt would silently lack the answers its brief tells it to work from.
+  const answers = callerCtx.answers ?? new Map<string, Readonly<Record<string, string>>>();
+  for (const [stepId, recorded] of await readRecordedAnswers(callerCtx.projectRoot, runId)) {
+    if (!answers.has(stepId)) answers.set(stepId, recorded);
+  }
+  const ctx: ResumeContext = {
+    ...callerCtx,
+    answers,
+    stepGraph: callerCtx.stepGraph ?? callerCtx.steps,
+  };
 
   const runState = await reconstructRunState(readEvents(ctx.projectRoot, runId));
   await abortInterruptedRebases(ctx, runId, runState);

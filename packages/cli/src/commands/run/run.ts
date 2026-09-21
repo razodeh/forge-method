@@ -8,6 +8,7 @@
 import { ForgeError, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
+import type { AskPort } from '@forge/engine/dispatch';
 import type { ExpressionContext } from '@forge/engine/expr';
 import { compileRunPlan, type RunPlanResult, type StepNode } from '@forge/engine/plan';
 import { runEngine } from '@forge/engine/run';
@@ -49,6 +50,9 @@ export interface RunDeps {
   readonly launcher?: LauncherSpec | undefined;
   /** Where a non-fatal warning goes (`forge: warning: ...`), e.g. the launcher shim could not be created. */
   readonly warn?: ((message: string) => void) | undefined;
+  /** How an `elicit` step gets its answers (`--answers`, a terminal; `ask.ts`, `PLAN-M13.md` P20). Absent (tests,
+   * library callers): an `elicit` step fails `RUN-101` instead of guessing. */
+  readonly ask?: AskPort | undefined;
 }
 
 /** The project's own materialised copy of a workflow (`.forge/workflows/<id>.workflow.yaml`), `RUN-053` when absent. */
@@ -201,6 +205,7 @@ export async function runWorkflow(
       agentsRoot: deps.agentsRoot,
       clock,
       commandEnv: shim?.commandEnv,
+      ask: deps.ask,
       expressionContext: options.expressionContext,
       lanesFromIntegration: true,
     });

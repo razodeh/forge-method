@@ -89,6 +89,7 @@ export async function resumeWorkflow(
       agentsRoot: deps.agentsRoot,
       clock,
       commandEnv: shim?.commandEnv,
+      ask: deps.ask,
       // The integration branch the run started on (`forge run --stage`): its lanes and merges are there.
       expressionContext: manifest.expressionContext,
       lanesFromIntegration: true,

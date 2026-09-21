@@ -590,9 +590,9 @@ export const ERROR_CODES = {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
     message: (d: { stepId: string; kind: string }) =>
-      `Step ${show(d.stepId)} has kind ${show(d.kind)}, which this milestone's own dispatcher does not yet support.`,
+      `Step ${show(d.stepId)} has kind ${show(d.kind)}, which the engine does not run.`,
     remedy:
-      'Remove elicit/session/subworkflow steps from any workflow scheduled until a later milestone builds real support for them.',
+      'Remove the subworkflow step from the workflow you are running, or replace it with the steps of the workflow it names: nested workflows are not built yet. (elicit and session steps are supported; any other kind reporting this is missing a field its own kind requires.)',
   },
   'RUN-040': {
     severity: 'error',

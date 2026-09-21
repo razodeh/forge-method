@@ -105,8 +105,14 @@ export interface GateStep extends WorkflowStepBase {
  * running piece can render and collect answers against, the minimal shape "structured" plausibly
  * requires. Entirely this piece's own design. */
 export interface ElicitQuestion {
+  /** An identifier (letters, digits, underscores; starts with a letter), unique across the workflow: the answer is
+   * bound under this name in the run's `answers` and read by a `command` step as `$FORGE_ANSWER_<name>`. */
   readonly name: string;
   readonly prompt: string;
+  /** When present the answer must be exactly one of these (compared after trimming, case-sensitively), so a
+   * value that reaches a command or a config key is one the workflow author listed, not free text
+   * (`PLAN-M13.md` P20). Absent, any non-blank answer is accepted. */
+  readonly choices?: readonly string[] | undefined;
 }
 
 export interface ElicitStep extends WorkflowStepBase {

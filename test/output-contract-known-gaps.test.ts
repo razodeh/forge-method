@@ -128,6 +128,7 @@ const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'fm-mobile/store-release.workflow.yaml:prepare-store-submission',
   'fm-service/contract-test-cycle.workflow.yaml:draft-contract',
   'harden:security-pass',
+  'intake:capture-constraints',
   'intake:propose-level',
   'intake:seed-glossary',
   'plan-stage:write-epics',

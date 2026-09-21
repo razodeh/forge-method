@@ -1,7 +1,7 @@
 id: intake
 name: Intake
 version: 1.0.0
-description: Turns a raw idea into a level selection, constraints, and a glossary seed (10 §10.2 P0).
+description: Turns a raw idea into constraints, a confirmed scale level and a glossary seed (10 §10.2 P0).
 levels: [L0, L1, L2, L3, L4]
 steps:
   - id: elicit-idea
@@ -11,12 +11,46 @@ steps:
         prompt: 'In one or two sentences, what are we building?'
       - name: greenfield
         prompt: 'Is this a new project (greenfield) or a change to an existing one (brownfield)?'
+        choices: [greenfield, brownfield]
+
+  # The constraints are the human's to state (10 §10.2 P0): four questions, one per constraints/ file of the KB
+  # (08 §8.2). "none" and "unknown" are both real answers and mean different things.
+  - id: elicit-constraints
+    kind: elicit
+    dependsOn: [elicit-idea]
+    questions:
+      - name: businessConstraints
+        prompt: 'Business constraints: budget, deadline, team, buy-versus-build stance. Answer "none" if there are none, "unknown" if you do not know yet.'
+      - name: technicalConstraints
+        prompt: 'Technical constraints: mandated or forbidden stacks and vendors, existing systems to fit. Answer "none" or "unknown".'
+      - name: regulatoryConstraints
+        prompt: 'Regulatory constraints: GDPR, HIPAA, PCI, data residency, audit needs. Answer "none" or "unknown".'
+      - name: operationalConstraints
+        prompt: 'Operational constraints: SLOs, support model, on-call reality, environments available. Answer "none" or "unknown".'
+
+  # Writes docs/forge/kb/constraints/*, which every later brief reads and which intake used to leave empty (P11
+  # register D6). The claim is the constraints directory; the handoff is the checked output.
+  - id: capture-constraints
+    kind: agent
+    agent: analyst
+    brief: briefs/capture-constraints.md
+    dependsOn: [elicit-constraints]
+    outputs: [{ type: HandoffRecord, subtype: constraints-captured }]
+    produces: ['docs/forge/kb/constraints/**']
+
+  # The step above writes files no declared output covers, so the run checks them: a session that wrote only the
+  # handoff must not pass for having captured the constraints. Reads the integrated tree (an inline step, P19).
+  - id: verify-constraints
+    kind: command
+    dependsOn: [capture-constraints]
+    inline: true
+    run: 'for f in business technical regulatory operational; do [ -s "docs/forge/kb/constraints/$f.md" ] || { echo "capture-constraints did not write docs/forge/kb/constraints/$f.md" >&2; exit 1; }; done'
 
   - id: propose-level
     kind: agent
     agent: analyst
     brief: briefs/propose-level.md
-    dependsOn: [elicit-idea]
+    dependsOn: [verify-constraints]
     inputs: ['kb:constraints/**']
     outputs: [{ type: HandoffRecord, subtype: level-proposal }]
 
@@ -25,18 +59,32 @@ steps:
     dependsOn: [propose-level]
     questions:
       - name: levelConfirmed
-        prompt: 'The proposed scale level and reasoning are shown above -- confirm or override.'
+        prompt: "Which scale level should this project use? The analyst's proposal and reasoning are the level-proposal entry in the handoff records (docs/forge/reports/handoffs.md on the integration branch): enter that level to confirm it, or another to override it."
+        choices: [L0, L1, L2, L3, L4]
+
+  # Recording the level is a compiled step, not an onComplete hook (those are never compiled, P11 register D11). The
+  # answer reaches the command as data in the environment, never in the command text (elicit, PLAN-M13.md P20), and
+  # `forge config set` validates it against L0..L4. It runs against the project root: `.forge/config.yaml` there is
+  # the file every later `forge run` reads, and this step itself runs in the integration worktree.
+  - id: record-level
+    kind: command
+    dependsOn: [confirm-level]
+    inline: true
+    run: 'cd "$FORGE_PROJECT_ROOT" && forge config set project.level "$FORGE_ANSWER_levelConfirmed" && echo "project.level recorded in .forge/config.yaml: commit that file before the next forge run"'
 
   - id: seed-glossary
     kind: agent
     agent: analyst
     brief: briefs/seed-glossary.md
-    dependsOn: [confirm-level]
+    dependsOn: [record-level]
     outputs: [{ type: Assumption, cardinality: many }]
     # The brief's main deliverable is the glossary itself, a KB entry that is not a registry output (Q216).
     produces: ['docs/forge/kb/glossary.md']
 
-onComplete:
-  - kind: command
+  # What used to be `onComplete: forge kb sync`, which nothing ran (D11): the last step, so the index covers the
+  # constraints and the glossary the run just wrote.
+  - id: sync-kb
+    kind: command
+    dependsOn: [seed-glossary]
     run: 'forge kb sync'
     inline: true

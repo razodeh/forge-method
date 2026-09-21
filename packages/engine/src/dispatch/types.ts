@@ -261,6 +261,30 @@ export interface PromptAssemblyContext {
   readonly styleProfile?: StyleProfile | undefined;
 }
 
+/** One question an `elicit` step puts to the human (`PLAN-M13.md` P20). */
+export interface AskRequest {
+  readonly stepId: string;
+  readonly question: {
+    readonly name: string;
+    readonly prompt: string;
+    readonly choices?: readonly string[] | undefined;
+  };
+  /** 1-based position of this question in its step, and how many the step asks. */
+  readonly index: number;
+  readonly total: number;
+}
+
+/**
+ * How a run gets a human's answer, injected because the engine may not touch a terminal or a file the caller
+ * chose (`02` §2.2: no upward imports, R10: no ambient input). `@forge/cli` supplies one that reads an
+ * `--answers` file and, when it has a terminal, prompts. Returns the raw text of the answer, or `undefined` when
+ * this run cannot obtain one (no answer supplied and nobody to ask): the step then fails naming the question,
+ * it never invents a value. The engine validates and sanitises whatever comes back; a port need not.
+ */
+export interface AskPort {
+  ask(request: AskRequest): Promise<string | undefined>;
+}
+
 /** Everything one `executeStep` call needs beyond the `StepNode` itself — `PLAN-M5.md`'s own Surface text
  * shows `{ adapter, vcs, telemetry, gates, mergeQueue }` alone, undersold relative to what a real call
  * needs to actually reach `createLaneWorktree`/`appendEvent`/`startSession` at all (a run id, a project
@@ -353,6 +377,15 @@ export interface ExecuteStepContext {
    * is not installed globally (a checkout, `node .../forge.mjs`). Injected because the engine may neither
    * import the CLI nor read the ambient environment (R10); `undefined` leaves the environment untouched. */
   readonly commandEnv?: Readonly<Record<string, string>> | undefined;
+  /** How an `elicit` step gets its answers (`PLAN-M13.md` P20). Absent, an `elicit` step fails `RUN-101`: a
+   * context built without one has no way to ask, and guessing would be worse. */
+  readonly ask?: AskPort | undefined;
+  /** The answers the run has so far, keyed by the `elicit` step's compiled id, then by question name. Filled by
+   * `runElicitStep`; `runEngine` seeds it from the event log (`ElicitationAnswered`) before scheduling, so a
+   * resumed run neither asks again nor loses what a later step reads. Later steps see the answers of the elicit
+   * steps they depend on: a `command` step as `FORGE_ANSWER_<name>` in its environment, an agent step as data in
+   * block [4] of its prompt. Absent, a step sees none and an `elicit` step's answers are recorded in events only. */
+  readonly answers?: Map<string, Readonly<Record<string, string>>> | undefined;
   /** The project's configured documentation roots (`18` §18.3 `paths`), which the output contract check
    * (`outputs.ts`, `PLAN-M13.md` P7) roots each `18` §18.7 artifact path template under. `forge run` supplies
    * the project's own `paths` (`buildRunEngineContext`). Omitted, it defaults to `@forge/schemas`'s default
@@ -419,7 +452,11 @@ export interface StepFailureInfo {
     /** The step's session ended ok but a declared `outputs` entry is absent or invalid (`PLAN-M13.md` P7,
      * `outputs.ts`). `code` is `RUN-083` (or `RUN-084` when the agent's own grant is the cause). Always
      * classified `validation` (`06` §6.8) by `classifyFailure`. */
-    | 'output';
+    | 'output'
+    /** An `elicit` step got no usable answer (`PLAN-M13.md` P20): none could be asked (no terminal, no answers
+     * file entry) or one broke the question's own rules. `code` is `RUN-101` or `RUN-102`. Always classified
+     * `policy` by `classifyFailure`: asking again changes nothing until a human supplies the answer. */
+    | 'elicit';
   readonly code?: string | undefined;
   readonly message: string;
   /** The real, registered `ForgeError` a `vcs`-sourced failure was wrapped into for provenance

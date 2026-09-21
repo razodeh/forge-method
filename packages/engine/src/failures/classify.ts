@@ -146,6 +146,11 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       return failure.code !== undefined && PROMPT_POLICY_CODES.has(failure.code)
         ? 'policy'
         : 'transient';
+    case 'elicit':
+      // A question no answer was given for, or one whose answer broke the question's rules (`PLAN-M13.md` P20):
+      // asking again cannot change either until a human supplies the answer, so it is `06` §6.8's "fail
+      // immediately, surface to a human" class.
+      return 'policy';
     case 'output':
       // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
       // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as

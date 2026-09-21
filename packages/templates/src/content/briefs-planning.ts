@@ -9,6 +9,7 @@
  * Assigned to this batch (exactly these, no others):
  *   - propose-level
  *   - seed-glossary
+ *   - capture-constraints (PLAN-M13.md P20)
  *   - frame-problem
  *   - define-success-metrics
  *   - write-vision
@@ -33,6 +34,7 @@
 export const PLANNING_BRIEFS: Readonly<Record<string, string>> = {
   'propose-level': 'templates/briefs/propose-level.md',
   'seed-glossary': 'templates/briefs/seed-glossary.md',
+  'capture-constraints': 'templates/briefs/capture-constraints.md',
   'frame-problem': 'templates/briefs/frame-problem.md',
   'define-success-metrics': 'templates/briefs/define-success-metrics.md',
   'write-vision': 'templates/briefs/write-vision.md',

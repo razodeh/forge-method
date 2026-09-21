@@ -39,6 +39,7 @@ import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.t
 import { resolveLaneBase } from './lane-base.ts';
 import { docRootsOf, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
+import { commandStepEnvironment } from './elicit.ts';
 import { runShellCommand } from './shell.ts';
 import { runVcsStep } from './vcs-step.ts';
 import type {
@@ -651,8 +652,10 @@ export async function runCommandStep(
   const run = node.run;
   // The environment the run's launcher supplied (`ExecuteStepContext.commandEnv`): its `PATH` starts with a
   // directory holding the `forge` that launched this run, so `forge ...` resolves to it and not to whatever
-  // (or nothing) the user has installed.
-  const commandEnv = ctx.commandEnv;
+  // (or nothing) the user has installed. On top of it, the answers of the `elicit` steps this one depends on
+  // (`FORGE_ANSWER_<name>`) and the project root (`FORGE_PROJECT_ROOT`): data a command reads from its
+  // environment, never spliced into its text (`PLAN-M13.md` P20, `elicit.ts`).
+  const commandEnv = commandStepEnvironment(node, ctx);
 
   if (node.laneAffinity === 'inline') {
     // Runs in the integration worktree, not the project root (`PLAN-M13.md` P19, Q221): an inline step has no

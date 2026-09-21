@@ -154,7 +154,13 @@ const REJECTION_MESSAGES = [
   /is not yet supported/,
 ] as const;
 /** Refusals that only exist downstream of argument parsing: the invocation was understood. */
-const UNDERSTOOD_REFUSALS = [/^No such workflow /m, /no Story with id/] as const;
+const UNDERSTOOD_REFUSALS = [
+  /^No such workflow /m,
+  /no Story with id/,
+  // `forge config set <key> <value>` found the key and validated the value: a step that passes an elicit answer
+  // (`"$FORGE_ANSWER_x"`) reaches it here as the literal text, which is not a valid level (PLAN-M13.md P20).
+  /^Invalid configuration in /m,
+] as const;
 const STACK_TRACE = /^\s+at .+:\d+:\d+\)?$/m;
 
 type Classification = 'accepted' | 'rejected' | 'unclassified';
@@ -208,6 +214,7 @@ for (const command of distinct) verdicts.set(command, await ask(command));
 /** Command steps that run no `forge` command at all. Pinned so a misspelt binary cannot pass unnoticed. */
 const NON_FORGE_STEPS: readonly string[] = [
   'build-stage:prepare',
+  'intake:verify-constraints',
   'fm-service/contract-test-cycle.workflow.yaml:run-contract-tests',
   'fm-mobile/store-release.workflow.yaml:run-device-matrix-tests',
 ];

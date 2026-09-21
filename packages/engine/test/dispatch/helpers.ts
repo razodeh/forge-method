@@ -166,6 +166,8 @@ export function createTestContext(
     gateRegistry,
     ...(overrides.sessionBounds === undefined ? {} : { sessionBounds: overrides.sessionBounds }),
     ...(overrides.docRoots === undefined ? {} : { docRoots: overrides.docRoots }),
+    ...(overrides.ask === undefined ? {} : { ask: overrides.ask }),
+    ...(overrides.answers === undefined ? {} : { answers: overrides.answers }),
   };
 }
 

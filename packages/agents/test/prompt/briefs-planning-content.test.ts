@@ -46,6 +46,7 @@ const templatesRoot = path.resolve(
 const PLANNING_KEYS = [
   'propose-level',
   'seed-glossary',
+  'capture-constraints',
   'frame-problem',
   'define-success-metrics',
   'write-vision',

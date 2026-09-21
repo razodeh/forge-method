@@ -31,6 +31,7 @@ import {
   type BudgetConfig,
 } from '../budget/index.ts';
 import type { BudgetState } from '../budget/types.ts';
+import { readRecordedAnswers } from '../dispatch/elicit.ts';
 import { executeStep } from '../dispatch/execute.ts';
 import { integrateLane, resolveLaneChecks, type ConflictPolicy } from '../dispatch/integrate.ts';
 import type { ExecuteStepContext, StepFailureInfo, StepOutcome } from '../dispatch/types.ts';
@@ -110,12 +111,28 @@ export function seedScheduler(
   scheduler: Scheduler,
   nodes: readonly StepNode[],
   resumeFrom: RunState,
+  answers?: ReadonlyMap<string, unknown>,
 ): void {
   for (const node of nodes) {
     const reconstructed = resumeFrom.stepStatuses.get(node.id);
     if (reconstructed === undefined) continue;
     const mapped = toSchedulerStatus(reconstructed);
+    // A succeeded `elicit` step whose answers the log cannot give back (an unreadable or redacted record) is asked
+    // again: its dependents read those answers, and a step that "succeeded" with none would leave them running
+    // without (`PLAN-M13.md` P20). Only when the caller supplies the recorded answers.
+    if (
+      mapped === 'succeeded' &&
+      node.kind === 'elicit' &&
+      answers !== undefined &&
+      !answers.has(node.id)
+    ) {
+      continue;
+    }
     if (mapped === 'succeeded') scheduler.markSucceeded(node.id);
+    // An `elicit` step fails only for want of a usable answer (`PLAN-M13.md` P20) and has no side effect to repeat:
+    // its failure is "not asked yet", so a resume asks again (with `--answers`, or on a terminal). Every other
+    // failed step stays failed.
+    else if (mapped === 'failed' && node.kind === 'elicit') continue;
     else if (mapped === 'failed') scheduler.markFailed(node.id);
     else if (mapped === 'skipped') scheduler.markSkipped(node.id);
   }
@@ -439,18 +456,30 @@ export async function runEngine(
           });
         };
 
+  // `runMergeStep` finds the lanes a merge lands in the compiled plan (`ExecuteStepContext.stepGraph`); the copy
+  // shares every field, including the lane registry, with the caller's context.
+  //
+  // `answers` is the run's record of what the human said to its `elicit` steps (`PLAN-M13.md` P20). A resumed run
+  // starts from the event log's `ElicitationAnswered` events, so an answered step is neither asked again nor
+  // forgotten by the steps that read its answers; the caller's own map (a test's, or one it inspects afterwards)
+  // is kept and filled, never replaced.
+  const answers = ctx.answers ?? new Map<string, Readonly<Record<string, string>>>();
+  if (resumeFrom !== undefined) {
+    for (const [stepId, recorded] of await readRecordedAnswers(ctx.projectRoot, ctx.runId)) {
+      if (!answers.has(stepId)) answers.set(stepId, recorded);
+    }
+  }
   if (resumeFrom === undefined) {
     await ctx.telemetry.emit({ type: 'RunPlanned', payload: { planRef: parsed.workflow.id } });
     await ctx.telemetry.emit({ type: 'RunStarted' });
   } else {
-    seedScheduler(scheduler, nodes, resumeFrom);
+    seedScheduler(scheduler, nodes, resumeFrom, answers);
   }
 
-  // `runMergeStep` finds the lanes a merge lands in the compiled plan (`ExecuteStepContext.stepGraph`); the copy
-  // shares every field, including the lane registry, with the caller's context.
   const runCtx: RunEngineContext = {
     ...ctx,
     stepGraph: new Map(nodes.map((node) => [node.id, node] as const)),
+    answers,
   };
   await driveToCompletion(nodes, scheduler, runCtx, refreshBudget);
 

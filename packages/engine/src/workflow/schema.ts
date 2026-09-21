@@ -41,10 +41,27 @@ const stepLimitsSchema = z
   })
   .strict();
 
+/** A question's `name` is an identifier: it names the answer in the run's `answers` (`PLAN-M13.md` P20) and the
+ * environment variable a `command` step reads it from (`FORGE_ANSWER_<name>`), so it is letters, digits and
+ * underscores, starting with a letter. */
+export const ELICIT_QUESTION_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
 const elicitQuestionSchema = z
   .object({
-    name: nonBlank(),
+    name: z.string().regex(ELICIT_QUESTION_NAME),
     prompt: nonBlank(),
+    // An answer is trimmed before it is compared, so a choice with surrounding space could never be answered, and a
+    // repeated one is a mistake.
+    choices: z
+      .array(nonBlank())
+      .min(1)
+      .refine((list) => list.every((choice) => choice === choice.trim()), {
+        message: 'a choice must not start or end with whitespace',
+      })
+      .refine((list) => new Set(list).size === list.length, {
+        message: 'a choice is listed twice',
+      })
+      .optional(),
   })
   .strict();
 

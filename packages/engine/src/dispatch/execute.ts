@@ -12,6 +12,7 @@ import type { StepNode } from '../plan/index.ts';
 import { runSessionStep } from '../interaction/session.ts';
 import { runSwarmReviewStep } from '../interaction/swarm-review-step.ts';
 import { isAssemblyRefusal, refusalFailure } from './assemble.ts';
+import { runElicitStep } from './elicit.ts';
 import {
   runAgentStep,
   runCheckpointStep,
@@ -116,10 +117,11 @@ async function dispatch(node: StepNode, ctx: ExecuteStepContext): Promise<StepOu
           failure: refusalFailure(cause),
         };
       }
-    // `elicit`/`subworkflow` each still need infrastructure this milestone does not build (a real
-    // interactive human-input channel; recursive workflow invocation) -- unchanged, still refused with
-    // the identical `RUN-039` this piece's own scope is exactly `session`, not these two.
+    // `PLAN-M13.md` P20: `elicit` asks the human through the injected `AskPort` (`elicit.ts`).
     case 'elicit':
+      return runElicitStep(node, ctx);
+    // A nested workflow needs recursive workflow invocation this codebase does not have (deferred past M13, owner
+    // decision 2026-09-20): refused with `RUN-039`, whose text says exactly that.
     case 'subworkflow':
       throw new ForgeError('RUN-039', { stepId: node.id, kind: node.kind });
     case 'fanout':

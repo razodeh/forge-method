@@ -508,6 +508,20 @@ function buildLeafNode(
   const agentStep = step.kind === 'agent' ? step : undefined;
   const sessionStep = step.kind === 'session' ? step : undefined;
 
+  // What a human answers is not known until the `elicit` step has run, and a plan is compiled before that: a
+  // placeholder cannot carry it. A `command` step reads an answer from its environment instead, where it is data
+  // however it is spelled (`PLAN-M13.md` P20, `FORGE_ANSWER_<name>`), so the placeholder is refused, saying so.
+  if (step.kind === 'command' && /\{\{\s*answers\b/.test(step.run)) {
+    issues.push(
+      issue(
+        'answers-not-known-at-plan-time',
+        `Step "${compiledId}" reads an elicit answer with a {{answers...}} placeholder, but answers do not exist until the run asks for them. ` +
+          'Read the answer from the environment inside the command instead: "$FORGE_ANSWER_<question name>" (quoted).',
+        compiledId,
+      ),
+    );
+  }
+
   const node: StepNode = {
     id: compiledId,
     kind: step.kind,
@@ -877,6 +891,22 @@ function checkPlanConsistency(
     issues.push(
       issue('duplicate-compiled-step-id', `More than one compiled step has the id "${id}".`, id),
     );
+  }
+  const questionOwners = new Map<string, string[]>();
+  for (const node of nodes) {
+    for (const question of node.questions ?? []) {
+      questionOwners.set(question.name, [...(questionOwners.get(question.name) ?? []), node.id]);
+    }
+  }
+  for (const [name, owners] of questionOwners) {
+    if (owners.length > 1) {
+      issues.push(
+        issue(
+          'duplicate-elicit-question',
+          `Elicit question "${name}" is asked by ${owners.join(', ')}; a question name must be unique in a workflow, because it names the answer every later step reads.`,
+        ),
+      );
+    }
   }
   if (duplicateIds.size === 0) {
     const resolvableIds = new Set([...seenIds, ...groupIds]);

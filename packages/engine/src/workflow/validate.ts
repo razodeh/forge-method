@@ -200,6 +200,33 @@ function checkUniqueStepIds(addressable: readonly WorkflowStep[]): readonly Vali
   return issues;
 }
 
+/** An `elicit` question's name is its answer's name in the run's `answers` (`PLAN-M13.md` P20), so two questions
+ * of one workflow may not share one: the later answer would silently replace the earlier for every step that reads
+ * it. */
+function checkUniqueElicitQuestions(steps: readonly WorkflowStep[]): readonly ValidationIssue[] {
+  const owners = new Map<string, string[]>();
+  for (const step of steps) {
+    if (step.kind !== 'elicit') continue;
+    for (const question of step.questions) {
+      owners.set(question.name, [
+        ...(owners.get(question.name) ?? []),
+        step.id ?? '(unidentified)',
+      ]);
+    }
+  }
+  const issues: ValidationIssue[] = [];
+  for (const [name, stepIds] of owners) {
+    if (stepIds.length > 1) {
+      issues.push({
+        code: 'duplicate-elicit-question',
+        severity: 'error',
+        message: `Elicit question "${name}" is asked ${String(stepIds.length)} times (${stepIds.join(', ')}); question names must be unique across a workflow.`,
+      });
+    }
+  }
+  return issues;
+}
+
 /** Cycle detection over the *static*, unexpanded graph only (`PLAN-M5.md` P8's own mandate, verbatim):
  * a `dependsOn` entry that does not exactly match a known step id — the shape `10` §10.1's own worked
  * example uses for a per-item fanout dependency (`"generate-tests:{{item.id}}"`) always takes — is
@@ -335,6 +362,7 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
     ...checkUniqueStepIds(addressable),
     ...checkNoCycles(addressable),
     ...checkProducesGlobs(allSteps),
+    ...checkUniqueElicitQuestions(allSteps),
     ...(addressableExceeded || allExceeded ? [excessiveDepthIssue('excessive-nesting-depth')] : []),
   ];
 }
