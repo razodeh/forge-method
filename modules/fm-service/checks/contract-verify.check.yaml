@@ -16,14 +16,18 @@
 # {"contracts": N, "testsCovering": M} -- see test/fm-service-checks.test.ts for the real pass/fail
 # fixture runs 19 §19.3's own Check-authoring "test" row asks for, including running this exact string
 # via a real child process, not a stub.
+#
+# No `docs/forge/specs/interfaces/` directory, or one with no frozen contract, FAILS (`errors: 1`, a `reason`;
+# `failOn` reads `errors > 0`): `testsCovering < contracts` is `0 < 0` for an empty set, which used to pass
+# (`PLAN-M13.md` P41, `10` §10.3: a check must positively show success).
 id: contract:verify
 name: Contract verification coverage
 description: >
   Scans every frozen interface contract under docs/forge/specs/interfaces/ and fails if any contract
   has no corresponding contract test under test/contract/.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");function walk(d,pred){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p,pred));else if(pred(e.name))files.push(p);}return files;}const contracts=walk("docs/forge/specs/interfaces",(n)=>n.toLowerCase().endsWith(".yaml")).map((p)=>path.basename(p,path.extname(p)));const testFiles=new Set(walk("test/contract",(n)=>n.toLowerCase().endsWith(".contract.test.ts")).map((p)=>path.basename(p,".contract.test.ts")));const testsCovering=contracts.filter((name)=>testFiles.has(name)).length;console.log(JSON.stringify({contracts:contracts.length,testsCovering}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const contractsDir="docs/forge/specs/interfaces";function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d,pred){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p,pred));else if(pred(e.name))files.push(p);}return files;}const contractFiles=walk(contractsDir,(n)=>/\.(ya?ml|json)$/i.test(n));const contracts=contractFiles.map((p)=>path.basename(p,path.extname(p)));const testFiles=new Set(walk("test/contract",(n)=>n.toLowerCase().endsWith(".contract.test.ts")).filter((p)=>fs.statSync(p).size>0).map((p)=>path.basename(p,".contract.test.ts")));const testsCovering=contracts.filter((name)=>testFiles.has(name)).length;let errors=0,reason;if(!isDir(contractsDir)){errors=1;reason="no docs/forge/specs/interfaces directory found: freeze the interface contracts before this gate runs";}else if(contracts.length===0){errors=1;reason="no frozen contracts (*.yaml, *.yml, *.json) found under docs/forge/specs/interfaces";}else if(contractFiles.some((p)=>fs.statSync(p).size===0)){errors=1;reason="an empty contract file under docs/forge/specs/interfaces cannot be verified: "+contractFiles.filter((p)=>fs.statSync(p).size===0).join(", ");}const out={contracts:contracts.length,testsCovering,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'testsCovering < contracts'
+failOn: 'testsCovering < contracts || errors > 0'
 remedy: >
   Re-run the command above locally and read its printed counts, then for every frozen contract under
   docs/forge/specs/interfaces/ with no matching test/contract/<name>.contract.test.ts file, either run

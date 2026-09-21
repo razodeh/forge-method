@@ -96,6 +96,12 @@ async function rewriteGateBrief(
   await writeFileAtomic(abs, text.replace(line, to === null ? '' : `      brief: ${to}\n`));
 }
 
+/** One well-formed deterministic check, for fixtures about something else: a gate with none is itself an error
+ * (`no-deterministic-checks`, `PLAN-M13.md` P41), so a fixture gate that only means to be wrong about its
+ * advisory checks carries this. */
+const ONE_CHECK =
+  "  deterministic:\n    - id: d\n      run: 'echo {}'\n      failOn: 'errors > 0'\n";
+
 describe('gateValidateAll', () => {
   it('reports zero findings on a fresh init against the real module roster, and is not vacuous: all ten shipped gates carry a brief', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-gate-validate-'));
@@ -359,7 +365,7 @@ describe('gateValidateAll', () => {
     );
     await writeFileAtomic(
       project.paths.resolveWithin('.forge/checks/stem.gate.yaml'),
-      'id: G-Other\nchecks:\n  advisory:\n    - id: r\n      agent: critic\n      brief: briefs/missing.md\n',
+      `id: G-Other\nchecks:\n${ONE_CHECK}  advisory:\n    - id: r\n      agent: critic\n      brief: briefs/missing.md\n`,
     );
     const results = await gateValidateAll(ctxFor(project));
     expect(results.get('G-Y')?.map((issue) => issue.message)).toEqual([
@@ -381,17 +387,17 @@ describe('gateValidateAll', () => {
   it.each([
     [
       'a non-list advisory',
-      'id: G-X\nchecks:\n  advisory: nope\n',
+      `id: G-X\nchecks:\n${ONE_CHECK}  advisory: nope\n`,
       'Gate "G-X" has a "checks.advisory" that is not a list.',
     ],
     [
       'an advisory entry with no id',
-      'id: G-X\nchecks:\n  advisory:\n    - agent: critic\n',
+      `id: G-X\nchecks:\n${ONE_CHECK}  advisory:\n    - agent: critic\n`,
       'Gate "G-X" has an advisory check with no string "id".',
     ],
     [
       'a null advisory entry',
-      'id: G-X\nchecks:\n  advisory:\n    -\n',
+      `id: G-X\nchecks:\n${ONE_CHECK}  advisory:\n    -\n`,
       'Gate "G-X" has an advisory check with no string "id".',
     ],
   ])('reports %s as invalid-gate-file, not a crash', async (_l, content, message) => {
@@ -399,6 +405,61 @@ describe('gateValidateAll', () => {
     await writeFileAtomic(project.paths.resolveWithin('.forge/checks/G-X.gate.yaml'), content);
     const results = await gateValidateAll(ctxFor(project));
     expect(results.get('G-X')).toEqual([{ code: 'invalid-gate-file', severity: 'error', message }]);
+  });
+
+  // `PLAN-M13.md` P41: the same strict document validator `loadGateRegistry` refuses a gate with (GATE-506), reported
+  // here for every gate at once. A misspelled `checks:` is an empty gate, and an empty gate passes vacuously.
+  it.each([
+    [
+      'a misspelled checks key',
+      'id: G-X\nchekcs:\n  deterministic: []\n',
+      ['unknown-gate-key', 'no-deterministic-checks'],
+      'unknown key "chekcs" (did you mean "checks"?)',
+    ],
+    [
+      'a misspelled deterministic key',
+      `id: G-X\nchecks:\n  determinstic:\n    - id: a\n      run: x\n      failOn: "!ok"\n`,
+      ['unknown-gate-key', 'no-deterministic-checks'],
+      'did you mean "deterministic"?',
+    ],
+    [
+      'an advisory-only gate',
+      'id: G-X\nchecks:\n  advisory:\n    - id: r\n      agent: critic\n      brief: briefs/critique-architecture.md\n',
+      ['no-deterministic-checks'],
+      'no deterministic check',
+    ],
+    [
+      'an unknown key inside an advisory check',
+      `id: G-X\nchecks:\n${ONE_CHECK}  advisory:\n    - id: r\n      agnet: critic\n      brief: briefs/critique-architecture.md\n`,
+      ['unknown-gate-key', 'unknown-agent'],
+      'did you mean "agent"?',
+    ],
+    [
+      'a check with no failOn',
+      'id: G-X\nchecks:\n  deterministic:\n    - id: a\n      run: x\n',
+      ['invalid-gate-value'],
+      'checks.deterministic[0].failOn',
+    ],
+  ])('reports %s', async (_label, content, codes, fragment) => {
+    const project = await createProject();
+    await writeFileAtomic(project.paths.resolveWithin('.forge/checks/G-X.gate.yaml'), content);
+    const issues = (await gateValidateAll(ctxFor(project))).get('G-X') ?? [];
+    expect(issues.map((issue) => issue.code).sort()).toEqual([...codes].sort());
+    expect(issues.map((issue) => issue.message).join('\n')).toContain(fragment);
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('G-X.gate.yaml');
+  });
+
+  it('reports the same problem loadGateRegistry throws for (one validator, two callers)', async () => {
+    const project = await createProject();
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/checks/G-X.gate.yaml'),
+      'id: G-X\nchekcs:\n  deterministic: []\n',
+    );
+    const [issue] = (await gateValidateAll(ctxFor(project))).get('G-X') ?? [];
+    const thrown = await loadGateRegistry(project.paths, '.forge/checks').catch((e: unknown) => e);
+    expect(thrown).toMatchObject({ code: 'GATE-506' });
+    expect((thrown as Error).message).toContain('chekcs');
+    expect(issue?.message).toContain('chekcs');
   });
 
   it('reports nothing for a project with no checks directory', async () => {

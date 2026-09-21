@@ -3,37 +3,18 @@
  * `@forge/templates`' own shipped gate definitions) parsed into `@forge/engine/gates`' own
  * `GateDefinition` shape, for `createGateEvaluator` (`@forge/engine/dispatch`) to evaluate against.
  *
- * `GateDefinition` is a real subset of what a `.gate.yaml` file actually carries (`name`/`phase`/
- * `autonomyOverride`/`approval`/`evidence` are real, shipped fields `GateDefinition` itself has no use
- * for — `10` §10.3's own gate-authoring surface, not `@forge/engine/gates`' own evaluation contract) —
- * this reads exactly the fields that contract declares, structurally, rather than round-tripping
- * every field a gate file happens to carry.
+ * The document is read STRICTLY (`parseGateDocument`, `@forge/engine/gates`, `PLAN-M13.md` P41): an unknown
+ * key, a wrong-typed value, a gate with no deterministic check, or two files claiming one gate id is
+ * `GATE-506`, naming the file and the key, never a default. A misspelled `checks:` used to become an empty
+ * gate that passed vacuously (the P35 finding). `forge workflow validate --all` (`gateValidateAll`) runs the
+ * same validator and reports every problem instead of stopping at the first.
  *
  * @see specs/10 §10.3
  */
+import { ForgeError } from '@forge/core';
 import { listDirEntriesSorted, readTextFile, type ProjectPaths } from '@forge/core/fs';
-import type { AdvisoryCheck, DeterministicCheck, GateDefinition } from '@forge/engine/gates';
+import { parseGateDocument, type GateDefinition } from '@forge/engine/gates';
 import * as YAML from 'yaml';
-
-interface RawGateFile {
-  readonly id: string;
-  readonly checks?: {
-    readonly deterministic?: readonly DeterministicCheck[];
-    readonly advisory?: readonly AdvisoryCheck[];
-  };
-  readonly openQuestionsPolicy?: 'block' | 'warn';
-}
-
-function toGateDefinition(raw: RawGateFile): GateDefinition {
-  return {
-    id: raw.id,
-    checks: {
-      deterministic: raw.checks?.deterministic ?? [],
-      advisory: raw.checks?.advisory ?? [],
-    },
-    openQuestionsPolicy: raw.openQuestionsPolicy ?? 'warn',
-  };
-}
 
 export async function loadGateRegistry(
   paths: ProjectPaths,
@@ -61,11 +42,34 @@ export async function loadGateRegistry(
     }
     throw error;
   }
+  const fileById = new Map<string, string>();
   for (const entry of entries) {
     if (entry.isDirectory || !entry.name.endsWith('.gate.yaml')) continue;
     const text = await readTextFile(paths.resolveWithin(`${checksRoot}/${entry.name}`));
-    const raw = YAML.parse(text) as RawGateFile;
-    const definition = toGateDefinition(raw);
+    let raw: unknown;
+    try {
+      raw = YAML.parse(text);
+    } catch (cause) {
+      throw new ForgeError(
+        'GATE-506',
+        {
+          file: entry.name,
+          key: '(document)',
+          detail: `not parseable YAML (${cause instanceof Error ? (cause.message.split('\n')[0] ?? '') : 'unknown error'})`,
+        },
+        { cause },
+      );
+    }
+    const definition = parseGateDocument(raw, entry.name);
+    const firstFile = fileById.get(definition.id);
+    if (firstFile !== undefined) {
+      throw new ForgeError('GATE-506', {
+        file: entry.name,
+        key: 'id',
+        detail: `gate id "${definition.id}" is also defined by ${firstFile}; only one definition can take effect`,
+      });
+    }
+    fileById.set(definition.id, entry.name);
     registry.set(definition.id, definition);
   }
   return registry;

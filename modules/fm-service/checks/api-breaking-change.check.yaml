@@ -36,21 +36,33 @@
 # malformed `git diff` invocation -- a real, reachable shell-injection defect this piece's own first
 # draft introduced, not one inherited from an existing precedent. Fixed two ways, neither alone
 # trusted as sufficient: (1) `FORGE_BASE_REF` is validated against a real ref-name allowlist pattern
-# before use, falling back to `HEAD` outright for anything that does not match (closing both shell
-# metacharacters and a leading `-` that could otherwise be read as a `git` flag); (2) the git
+# before use, REFUSING anything that does not match (closing both shell metacharacters and a leading
+# `-` that could otherwise be read as a `git` flag; it used to fall back to `HEAD`, which passed
+# without comparing what the caller asked to compare, `PLAN-M13.md` P41); (2) the git
 # invocation itself now uses `execFileSync` with a real argv array (`["diff", baseRef, "--",
 # "docs/forge/specs/interfaces"]`), which never spawns a shell at all regardless of `baseRef`'s own
 # content. test/fm-service-checks.test.ts pins a real hostile `FORGE_BASE_REF` fixture directly.
+#
+# `FORGE_BASE_REF` is REQUIRED (`PLAN-M13.md` P41). It used to default to `HEAD`, and `git diff HEAD` shows only
+# uncommitted edits: in a run the lanes are committed and integrated, so the default compared nothing and passed
+# for every real change. An unset ref is a failure with a reason that says how to fix it.
+#
+# A `git diff` that FAILS (no commits yet, a base ref that does not exist, not a repository) is a failure,
+# not "no changes": the script prints `{"removedOperations": 0, "errors": 1, "reason": "git diff ...
+# failed, so nothing was compared: ..."}` and `failOn` reads `errors > 0` (`10` §10.3, `PLAN-M13.md`
+# P35/P41: a check must positively show success; it used to swallow the failure and report 0).
 id: api:breaking-change
 name: API breaking-change detector
 description: >
-  Diffs docs/forge/specs/interfaces/ against FORGE_BASE_REF (default HEAD) and fails if any OpenAPI
-  path or HTTP method key was removed with no matching addition elsewhere in the same diff.
-run: 'node -e ''const {execFileSync}=require("node:child_process");const rawRef=process.env.FORGE_BASE_REF||"HEAD";const baseRef=/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(rawRef)?rawRef:"HEAD";let diff="";try{diff=execFileSync("git",["diff",baseRef,"--","docs/forge/specs/interfaces"],{encoding:"utf8"});}catch(e){diff="";}const keyPattern=/^[+-]\s*"?(\/[\w{}\/-]*|get|post|put|delete|patch|options|head)"?\s*:/i;const removed=[];const added=new Set();for(const line of diff.split("\n")){if(line.startsWith("+++")||line.startsWith("---"))continue;if(!keyPattern.test(line))continue;const text=line.slice(1).trim();if(line[0]==="+")added.add(text);else if(line[0]==="-")removed.push(text);}const removedOperations=removed.filter((t)=>!added.has(t)).length;console.log(JSON.stringify({removedOperations}));'''
+  Diffs docs/forge/specs/interfaces/ against FORGE_BASE_REF (required: the branch, tag or commit to
+  compare against) and fails if any OpenAPI
+  path or HTTP method key was removed with no matching addition elsewhere in the same diff. Fails,
+  with a reason, when the diff itself cannot be taken.
+run: 'node -e ''const {execFileSync}=require("node:child_process");const fs=require("node:fs");const baseRef=process.env.FORGE_BASE_REF||"";let diff="",errors=0,reason;if(baseRef===""){errors=1;reason="FORGE_BASE_REF is not set: name the branch, tag or commit to compare against (git diff HEAD only sees uncommitted edits, so a committed removal would go unseen)";}else if(!/^[A-Za-z0-9][A-Za-z0-9._\/-]*(?:[~^][0-9]*)*$/.test(baseRef)||baseRef.includes("..")){errors=1;reason="FORGE_BASE_REF is not a plain ref name (letters, digits, . _ / -, then optional ~N or ^N; no ..): "+JSON.stringify(baseRef);}else{try{diff=execFileSync("git",["-c","color.ui=false","-c","diff.external=","diff","--no-color","--no-ext-diff",baseRef,"--","docs/forge/specs/interfaces"],{encoding:"utf8",stdio:["ignore","pipe","pipe"],maxBuffer:268435456});}catch(e){errors=1;reason="git diff "+baseRef+" failed, so nothing was compared: "+String((e&&e.stderr)||(e&&e.message)||e).trim().split("\n")[0];}}if(errors===0&&diff===""&&!(fs.existsSync("docs/forge/specs/interfaces")&&fs.readdirSync("docs/forge/specs/interfaces").length>0)){errors=1;reason="no interface contracts found under docs/forge/specs/interfaces, so there is nothing to compare: freeze the interface contracts first";}const keyPattern=/^[+-]\s*"?(\/[\w{}\/-]*|get|post|put|delete|patch|options|head)"?\s*:/i;const removed=new Map();const added=new Map();for(const line of diff.split("\n")){if(line.startsWith("+++")||line.startsWith("---"))continue;if(!keyPattern.test(line))continue;const text=line.slice(1).trim();const bag=line[0]==="+"?added:removed;bag.set(text,(bag.get(text)||0)+1);}let removedOperations=0;for(const [text,count] of removed){removedOperations+=Math.max(0,count-(added.get(text)||0));}const out={removedOperations,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'removedOperations > 0'
+failOn: 'removedOperations > 0 || errors > 0'
 remedy: >
-  Re-run the command above locally (set FORGE_BASE_REF to the branch or tag you are comparing against)
+  Re-run the command above locally (FORGE_BASE_REF must name the branch or tag you are comparing against)
   and read the printed count, then open the diff yourself: for every removed path or method with no
   matching addition, either restore it, add a new versioned path/method alongside it rather than
   replacing it in place, or -- if this really is a deliberate, reviewed breaking change -- record a

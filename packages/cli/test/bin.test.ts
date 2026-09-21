@@ -115,7 +115,10 @@ const RUN_FIXTURE_GATE = `id: ${RUN_GATE_ID}
 name: Always-passing bin-dispatcher fixture gate
 phase: verify
 checks:
-  deterministic: []
+  deterministic:
+    - id: always-ok
+      run: "echo '{\\"ok\\":true}'"
+      failOn: "!ok"
   advisory: []
 openQuestionsPolicy: warn
 `;
@@ -848,7 +851,114 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
       readonly gateId: string;
       readonly recorded: boolean;
     };
-    expect(parsed).toEqual({ v: 1, gateId: RUN_GATE_ID, recorded: true });
+    // `PLAN-M13.md` P41: approving evaluates the gate first and carries the evaluation as the audit trail.
+    expect(parsed).toMatchObject({
+      v: 1,
+      gateId: RUN_GATE_ID,
+      recorded: true,
+      evaluation: { basis: 'checks', checksPassed: 1, checksFailed: 0, approver: 'human' },
+    });
+  });
+
+  it("runs a gate's `forge ...` check with the launcher shim first on PATH, so `gate check`/`approve` work when no `forge` is on PATH (a checkout launch); every shipped check is a forge command", async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+    await writeFile(
+      path.join(dir, RUN_CHECKS_ROOT, 'G-Shim.gate.yaml'),
+      [
+        'id: G-Shim',
+        'checks:',
+        '  deterministic:',
+        '    - id: self',
+        '      run: "forge gate list --json"',
+        '      failOn: "length(gates) > 999"',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const bare = { PATH: '/usr/bin:/bin' };
+
+    const check = run(['gate', 'check', 'G-Shim', '--json', '-C', dir], bare);
+    expect(check.status).toBe(0);
+    expect((JSON.parse(check.stdout) as { report: { passed: boolean } }).report.passed).toBe(true);
+
+    const approve = run(['gate', 'approve', 'G-Shim', '--json', '-C', dir], bare);
+    expect(approve.status).toBe(0);
+  });
+
+  it('REFUSES `forge gate approve <id>` for a gate with a failing check: exit 3, a GATE-507 envelope on --json, and no GateApproved recorded (10 section 10.3 rule 1; it used to record the approval unevaluated)', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+
+    const result = run(['gate', 'approve', RUN_FAILING_GATE_ID, '--json', '-C', dir]);
+
+    expect(result.status).toBe(3);
+    const envelope = JSON.parse(result.stdout) as {
+      readonly ok: boolean;
+      readonly error: { readonly code: string; readonly exitCode: number; readonly remedy: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error).toMatchObject({ code: 'GATE-507', exitCode: 3 });
+    expect(envelope.error.remedy).toContain('forge gate waive');
+    expect(result.stderr).toContain(RUN_FAILING_GATE_ID);
+    const events = run(['logs', '--json', '-C', dir]);
+    expect(events.stdout).not.toContain(`"gateId":"${RUN_FAILING_GATE_ID}"`);
+  });
+
+  it('approves a failing gate under a recorded waiver, and the approval says so (basis "waiver", the waiver, the failing check)', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+    const waived = run([
+      'gate',
+      'waive',
+      RUN_FAILING_GATE_ID,
+      '--reason',
+      'known flaky',
+      '--owner',
+      'radwan',
+      '--expires',
+      '2099-01-01T00:00:00.000Z',
+      '--json',
+      '-C',
+      dir,
+    ]);
+    // `waive` exits gateFailed because the underlying checks still fail; the waiver is recorded all the same.
+    expect(waived.status).toBe(3);
+
+    const result = run(['gate', 'approve', RUN_FAILING_GATE_ID, '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly evaluation: {
+        readonly basis: string;
+        readonly checksFailed: number;
+        readonly checksWaived: number;
+        readonly waiver: { readonly owner: string };
+        readonly checks: readonly { readonly checkId: string; readonly waived: boolean }[];
+      };
+    };
+    expect(parsed.evaluation).toMatchObject({
+      basis: 'waiver',
+      checksFailed: 1,
+      checksWaived: 1,
+      waiver: { owner: 'radwan' },
+    });
+    expect(parsed.evaluation.checks.every((check) => check.waived)).toBe(true);
+  });
+
+  it('prints each failing check and why in human-mode `forge gate check` (it printed only passed=false)', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+
+    const result = run(['gate', 'check', RUN_FAILING_GATE_ID, '-C', dir]);
+
+    expect(result.status).toBe(3);
+    expect(result.stdout).toContain(`${RUN_FAILING_GATE_ID}: passed=false`);
+    expect(result.stdout).toContain('FAIL always-fail (exit 0)');
   });
 
   it('exits with a real EXIT_CODES.gateFailed (3) for `forge gate check <id>` against a real, failing gate', async () => {

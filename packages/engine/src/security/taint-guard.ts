@@ -27,8 +27,8 @@
  * - **A second, taint-blind path to `GateApproved` exists and is out of this piece's scope, disclosed
  *   rather than silently ignored**: `forge gate approve <id>` (`@forge/cli`'s own `packages/cli/src/
  *   commands/run/gate-commands.ts`, `gateApprove`) emits a real `GateApproved` event directly, with no
- *   taint concept, no `StepNode`, and no check of the gate's own deterministic results at all — the
- *   same unconditional shape `gateReject`/`gateWaive` already have. Judged a legitimately separate,
+ *   taint concept and no `StepNode` (since `PLAN-M13.md` P41 it does evaluate the gate first and refuses unless the
+ *   checks pass or a waiver covers them, but it still cannot tell an agent that ran it from a person). Judged a legitimately separate,
  *   spec-external channel rather than a bypass of *this* invariant: `20` §20.5 point 3 and `15` §15.5.4
  *   both say "a tainted **step** cannot approve a gate" — a human operator typing this command has
  *   reviewed the gate themselves and is not a step the run dispatched, the identical class of

@@ -25,6 +25,9 @@ import { parse as parseYaml } from 'yaml';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { CheckRunner, DeterministicCheck, GateDefinition } from '../../src/gates/types.ts';
 
+/** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
+const like = (text: string): string => expect.stringContaining(text) as string;
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const checksDir = path.join(repoRoot, 'modules', 'fm-data', 'checks');
 
@@ -83,7 +86,7 @@ describe('checks/lineage.check.yaml — real command, real parser, real failOn',
   it('has the real DeterministicCheck shape plus a non-empty remedy (19 §19.6), and its run: script never interpolates an untrusted/environment value into the shell', () => {
     expect(raw.id).toBe('lineage:coverage');
     expect(raw.run.length).toBeGreaterThan(0);
-    expect(raw.failOn).toBe('violations > 0');
+    expect(raw.failOn).toBe('violations > 0 || errors > 0');
     expect(raw.remedy.trim().length).toBeGreaterThan(0);
     expect(raw.run).not.toContain('process.env');
     expect(raw.run).not.toContain('execSync');
@@ -99,7 +102,11 @@ describe('checks/lineage.check.yaml — real command, real parser, real failOn',
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 0,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
   it('fails when a pipeline doc has no Lineage section at all', async () => {
@@ -107,7 +114,11 @@ describe('checks/lineage.check.yaml — real command, real parser, real failOn',
     await writePipelineDoc(dir, 'orders', '# Orders pipeline\n\nNo lineage section here.\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
   it('fails when a Lineage section is present but omits a Target', async () => {
@@ -119,14 +130,63 @@ describe('checks/lineage.check.yaml — real command, real parser, real failOn',
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
-  it('passes vacuously (0 violations) against a project with no pipelines/ directory yet, rather than crashing', async () => {
+  // `PLAN-M13.md` P41: this used to assert a PASS ("passes vacuously ... rather than crashing"). A check that
+  // scanned nothing has shown nothing, and a gate fails closed (P35): a missing input is a failure with a reason.
+  it('FAILS, with a reason, against a project with no pipelines/ directory: nothing scanned is not a pass', async () => {
     const dir = await makeFixtureDir();
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
-    expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, pipelinesScanned: 0 });
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      violations: 0,
+      pipelinesScanned: 0,
+      errors: 1,
+      reason: like('no docs/forge/kb/data/pipelines directory'),
+    });
+  });
+
+  it('FAILS when the pipelines/ directory exists but holds no pipeline document', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'docs', 'forge', 'kb', 'data', 'pipelines'), { recursive: true });
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      errors: 1,
+      reason: like('no pipeline documents'),
+    });
+  });
+
+  it('fails when Source: is empty and the next line holds the Target (the Source value must be on its own line)', async () => {
+    const dir = await makeFixtureDir();
+    await writePipelineDoc(
+      dir,
+      'orders',
+      '# Orders\n\n## Lineage\n\nSource:\nTarget: warehouse.fct_orders\n',
+    );
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({ violations: 1 });
+  });
+
+  it('does not read a Lineage section inside an HTML comment, and accepts bullet-form Source/Target lines', async () => {
+    const dir = await makeFixtureDir();
+    await writePipelineDoc(
+      dir,
+      'commented',
+      '# P\n\n<!--\n## Lineage\nSource: a\nTarget: b\n-->\n',
+    );
+    const failing = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(failing.passed).toBe(false);
+    const dir2 = await makeFixtureDir();
+    await writePipelineDoc(dir2, 'bullets', '# P\n\n## Lineage\n\n- Source: a\n- Target: b\n');
+    const ok = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir2, realRunner);
+    expect(ok.passed).toBe(true);
   });
 
   it('fails when the "## Lineage" section itself is empty, even though an unrelated later section names Source/Target -- a critic round found the first draft\'s own regex checked the WHOLE file text, not the Lineage section\'s own content', async () => {
@@ -138,7 +198,11 @@ describe('checks/lineage.check.yaml — real command, real parser, real failOn',
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 });
 
@@ -148,7 +212,7 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
   it('has the real DeterministicCheck shape plus a non-empty remedy (19 §19.6), and its run: script never interpolates an untrusted/environment value into the shell', () => {
     expect(raw.id).toBe('data-quality:tests');
     expect(raw.run.length).toBeGreaterThan(0);
-    expect(raw.failOn).toBe('violations > 0');
+    expect(raw.failOn).toBe('violations > 0 || errors > 0');
     expect(raw.remedy.trim().length).toBeGreaterThan(0);
     expect(raw.run).not.toContain('process.env');
     expect(raw.run).not.toContain('execSync');
@@ -163,7 +227,11 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
     await writeFile(path.join(testsDir, 'orders.dq.test.ts'), '// real content\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 0,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
   it('fails when a pipeline doc has no matching test file', async () => {
@@ -171,7 +239,11 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
     await writePipelineDoc(dir, 'orders', '# Orders pipeline\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
   it('fails when the matching test file exists but is empty', async () => {
@@ -182,14 +254,36 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
     await writeFile(path.join(testsDir, 'orders.dq.test.ts'), '');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 
-  it('passes vacuously (0 violations) against a project with no pipelines/ directory yet, rather than crashing', async () => {
+  // `PLAN-M13.md` P41: this used to assert a PASS ("passes vacuously ... rather than crashing"). A check that
+  // scanned nothing has shown nothing, and a gate fails closed (P35): a missing input is a failure with a reason.
+  it('FAILS, with a reason, against a project with no pipelines/ directory: nothing scanned is not a pass', async () => {
     const dir = await makeFixtureDir();
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
-    expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, pipelinesScanned: 0 });
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      violations: 0,
+      pipelinesScanned: 0,
+      errors: 1,
+      reason: like('no docs/forge/kb/data/pipelines directory'),
+    });
+  });
+
+  it('FAILS when the pipelines/ directory exists but holds no pipeline document', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'docs', 'forge', 'kb', 'data', 'pipelines'), { recursive: true });
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      errors: 1,
+      reason: like('no pipeline documents'),
+    });
   });
 
   it('fails for pipeline "orders" even though an unrelated "orders-archive" test file exists -- a critic round found the first draft\'s own match used a naive startsWith prefix test, which "orders-archive.dq.test.ts".startsWith("orders") wrongly satisfied', async () => {
@@ -201,7 +295,11 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
     await writeFile(path.join(testsDir, 'orders-archive.dq.test.ts'), '// real content\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 2 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 2,
+      errors: 0,
+    });
   });
 
   it("fails when the only matching entry under test/data-quality/ is a DIRECTORY, not a file -- a second critic round found the first fix's own fs.readdirSync(testsDir) (no withFileTypes) plus a bare size > 0 check let a directory entry satisfy a pipeline's own requirement", async () => {
@@ -212,6 +310,10 @@ describe('checks/data-quality.check.yaml — real command, real parser, real fai
     await writeFile(path.join(decoyDir, 'fake.txt'), 'not a real test file\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, pipelinesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      pipelinesScanned: 1,
+      errors: 0,
+    });
   });
 });

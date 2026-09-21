@@ -2,14 +2,10 @@
  * `10` §10.3's own gate YAML shape, generically: a gate definition, its two check kinds, the runner seam a
  * caller supplies, and the results this piece produces.
  *
- * `GateDefinition` deliberately models only `id`, `checks`, and `openQuestionsPolicy` — the fields
- * `evaluateGate`/`applyWaiver`/`buildGateReport` actually read — not the full worked-example YAML (`name`,
- * `phase`, `autonomyOverride`, `approval`, `evidence`, `onReject`). Unlike `06` §6.2's own "phase" concept
- * (`SPEC-QUESTIONS.md` Q73), these omitted fields are all trivially representable as plain data; they are
- * left out because nothing in this piece's own Mandate ("proves the mechanism against a trivial fixture
- * gate," real gate *content* being M6's job) ever reads them, not because they are unbuildable. Whichever
- * later piece actually parses a real `gates/<id>.gate.yaml` file into a full, round-trippable type is free
- * to define its own richer shape and project it down to this one when calling `evaluateGate`.
+ * `GateDefinition` models `id`, `checks` and `openQuestionsPolicy` (what `evaluateGate`/`applyWaiver`/
+ * `buildGateReport` read) and, since `PLAN-M13.md` P41, the `approval` block and `autonomyOverride` that
+ * `approveGate` enforces. `name`, `phase`, `evidence` and `onReject` of the worked-example YAML are still not
+ * modelled (nothing reads them); `parseGateDocument` (`document.ts`) accepts them and drops them.
  *
  * @see specs/10 §10.3
  * @see PLAN-M5.md P14
@@ -54,13 +50,12 @@ export interface AdvisoryCheck {
 }
 
 /** `checks.deterministic` having zero entries (`10` §10.3's own catalogue implies every real gate has at
- * least one) is `@forge/extensions`' own `checkGateHasChecks` (`GATE-502`, `15` §15.10 I4) to reject at
- * compile time, before a `GateDefinition` this malformed would ever reach `evaluateGate` in a real pipeline
- * — a different package, a different layer, already built. Not re-validated here: an empty deterministic
- * list simply evaluates to a vacuously-passing gate, which is odd but not unsafe (unlike, say, `06`
- * §6.3's own `Scheduler` constructor, P12, where an equivalent "trust an earlier validation pass" choice
- * would have silently corrupted a *live* concurrency-safety mechanism — there is no live safety state here
- * for a missing check to compromise). */
+ * least one; `15` §15.10 I4: "a gate cannot be defined with zero deterministic checks") is refused where a
+ * gate *document* is read (`parseGateDocument`, `document.ts`: `GATE-506` naming the file and key) and by
+ * `@forge/extensions`' `checkGateHasChecks` (`GATE-502`) at compile time, so it never reaches `evaluateGate`
+ * from a real project. `evaluateGate` itself still evaluates a hand-built definition with an empty
+ * deterministic list to a vacuous pass (the tests of the engine build such gates on purpose); a caller that
+ * builds a definition some other way owns that check (`PLAN-M13.md` P41). */
 export interface GateDefinition {
   readonly id: string;
   readonly checks: {
@@ -68,6 +63,20 @@ export interface GateDefinition {
     readonly advisory: readonly AdvisoryCheck[];
   };
   readonly openQuestionsPolicy: 'block' | 'warn';
+  /** `10` §10.3's `approval:` block, when the gate document carries one (`document.ts` reads it). Absent on a
+   * hand-built definition, which `approveGate` reads as the spec's default: a human, one approver. */
+  readonly approval?: GateApprovalPolicy;
+  /** `10` §10.3's `autonomyOverride` (`null` or `'alwaysHuman'`; `03` §3.6 also names the three levels). `null`
+   * and absent mean "no override". */
+  readonly autonomyOverride?: string | null;
+}
+
+/** `10` §10.3's `approval:` block: who may approve (`roles`, `human` or an agent role) and how many distinct
+ * approvers it takes (`quorum`). `required` says whether approval is asked at all at `guided`/`supervised`. */
+export interface GateApprovalPolicy {
+  readonly required: boolean;
+  readonly roles: readonly string[];
+  readonly quorum: number;
 }
 
 /** The caller-supplied seam for actually running a declared command — a real `execa` wrapper in
@@ -86,7 +95,7 @@ export interface GateDefinition {
 export type CheckRunner = (
   check: DeterministicCheck,
   cwd: string,
-) => Promise<{ readonly stdout: string; readonly exitCode: number }>;
+) => Promise<{ readonly stdout: string; readonly exitCode: number; readonly stderr?: string }>;
 
 /** One deterministic check's own outcome, always recorded — passing or failing — so `buildGateReport`'s
  * own audit trail (rule 4: "the exact command output") can show every check that ran, not only the ones
@@ -102,6 +111,11 @@ export interface DeterministicCheckResult {
   readonly passed: boolean;
   readonly stdout: string;
   readonly exitCode: number;
+  /** What the command wrote on stderr, sanitised (terminal escapes and control bytes stripped, secret shapes
+   * redacted) and capped at `MAX_CHECK_STDERR_CHARS`, so a crash or a refusal that printed only to stderr
+   * leaves its cause in the audit trail (`10` §10.3 rule 4: "the exact command output"). Absent when the
+   * runner reported none, and when the command wrote nothing to it. */
+  readonly stderr?: string;
   readonly reason?: string;
 }
 

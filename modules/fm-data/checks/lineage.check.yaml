@@ -20,10 +20,11 @@
 # "pipelinesScanned": M}` -- see test/fm-data-checks.test.ts for the real pass/fail fixture runs (built
 # against a real, temporary directory tree, not a stub).
 #
-# A project with no `docs/forge/kb/data/pipelines/` directory yet (no pipeline documented at all)
-# passes vacuously (`{"violations": 0, "pipelinesScanned": 0}`) rather than crashing on a missing
-# directory -- the identical "no dist/ yet" convention `checks/a11y.check.yaml`/`checks/
-# bundle-size.check.yaml` already establish for their own fixed directory.
+# A project with no `docs/forge/kb/data/pipelines/` directory, or one with no pipeline document in it,
+# FAILS: `{"violations": 0, "pipelinesScanned": 0, "errors": 1, "reason": "..."}` and `failOn` reads
+# `errors > 0`. Nothing scanned is nothing shown (`10` §10.3, `PLAN-M13.md` P35/P41); the check used to
+# pass vacuously. A project that genuinely has no pipeline yet records a waiver, or does not install
+# `fm-data`.
 #
 # A critic round found the first draft's own `hasSource`/`hasTarget` regexes ran against the WHOLE
 # file text rather than the "## Lineage" section's own content -- a doc with an empty "## Lineage"
@@ -38,9 +39,9 @@ name: Pipeline lineage coverage
 description: >
   Scans docs/forge/kb/data/pipelines/*.md and fails if any pipeline doc lacks a real "## Lineage"
   section naming both a Source and a Target within that section.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="docs/forge/kb/data/pipelines";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function lineageSection(text){const m=/##[ \t]*lineage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text);return m?m[1]:null;}let violations=0,pipelinesScanned=0;for(const f of walk(dir)){pipelinesScanned++;const text=fs.readFileSync(f,"utf8");const section=lineageSection(text);const hasSource=section!==null&&/\bsource:\s*\S/i.test(section);const hasTarget=section!==null&&/\btarget:\s*\S/i.test(section);if(!hasSource||!hasTarget)violations++;}console.log(JSON.stringify({violations,pipelinesScanned}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="docs/forge/kb/data/pipelines";function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function lineageSection(text){const m=/##[ \t]*lineage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text.replace(/<!--[\s\S]*?-->/g,""));return m?m[1]:null;}let violations=0,pipelinesScanned=0,errors=0,reason;if(!isDir(dir)){errors=1;reason="no docs/forge/kb/data/pipelines directory found: document each pipeline before this gate runs";}else{for(const f of walk(dir)){pipelinesScanned++;const text=fs.readFileSync(f,"utf8");const section=lineageSection(text);const hasSource=section!==null&&/^[ \t]*(?:[-*][ \t]*)?source:[ \t]*\S/im.test(section);const hasTarget=section!==null&&/^[ \t]*(?:[-*][ \t]*)?target:[ \t]*\S/im.test(section);if(!hasSource||!hasTarget)violations++;}if(pipelinesScanned===0){errors=1;reason="no pipeline documents (*.md) found under docs/forge/kb/data/pipelines";}}const out={violations,pipelinesScanned,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'violations > 0'
+failOn: 'violations > 0 || errors > 0'
 remedy: >
   Re-run the command above locally and read its printed counts, then open each pipeline doc under
   docs/forge/kb/data/pipelines/ named by a violation: add a "## Lineage" section naming both a real

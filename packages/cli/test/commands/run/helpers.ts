@@ -115,7 +115,10 @@ const FIXTURE_GATE_YAML = `id: ${FIXTURE_GATE_ID}
 name: Always-passing fixture gate
 phase: verify
 checks:
-  deterministic: []
+  deterministic:
+    - id: always-ok
+      run: "echo '{\\"ok\\":true}'"
+      failOn: "!ok"
   advisory: []
 openQuestionsPolicy: warn
 `;

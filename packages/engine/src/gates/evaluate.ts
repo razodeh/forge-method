@@ -10,6 +10,7 @@
  */
 import { ForgeError } from '@forge/core/errors';
 
+import { sanitizeResultText } from '../dispatch/result-record.ts';
 import { evaluate, parseExpression, type Expr } from '../expr/index.ts';
 import type {
   CheckRunner,
@@ -19,19 +20,45 @@ import type {
   GateEvaluationResult,
 } from './types.ts';
 
-const SUPPORTED_PARSERS = new Set(['forge-json', 'json']);
+export const SUPPORTED_PARSERS: ReadonlySet<string> = new Set(['forge-json', 'json']);
 
 /** The same ceiling `evaluate` enforces (`CFG-016`): the fail-closed walk below is recursive over the same tree,
  * so it must stop where `evaluate` would, before a flat 5000-term `&&` chain can overflow the real call stack. */
 const MAX_WALK_DEPTH = 200;
+
+/** How much of a check's stderr the audit trail keeps: enough for a stack trace's head or a refusal's message,
+ * not a log (`PLAN-M13.md` P41). */
+export const MAX_CHECK_STDERR_CHARS = 8192;
+
+/** A check's stderr as the audit trail records it: terminal escapes, control bytes and invisible characters
+ * stripped and secret shapes redacted (`sanitizeResultText`, the sanitiser an agent session's answer goes
+ * through, `PLAN-M13.md` P12), THEN capped, so a key cut in half by the cap cannot survive the redaction. Empty
+ * stderr is recorded as absent. */
+function recordedStderr(stderr: string | undefined): string | undefined {
+  if (stderr === undefined || stderr.trim() === '') return undefined;
+  const { text } = sanitizeResultText(stderr);
+  if (text.length <= MAX_CHECK_STDERR_CHARS) return text;
+  return `${text.slice(0, MAX_CHECK_STDERR_CHARS).replace(/[\uD800-\uDBFF]$/u, '')}\n[stderr truncated: ${String(
+    text.length - MAX_CHECK_STDERR_CHARS,
+  )} more characters]`;
+}
 
 function failed(
   check: DeterministicCheck,
   stdout: string,
   exitCode: number,
   reason: string,
+  stderr?: string,
 ): DeterministicCheckResult {
-  return { checkId: check.id, run: check.run, passed: false, stdout, exitCode, reason };
+  return {
+    checkId: check.id,
+    run: check.run,
+    passed: false,
+    stdout,
+    exitCode,
+    ...(stderr === undefined ? {} : { stderr }),
+    reason,
+  };
 }
 
 function describeType(value: unknown): string {
@@ -88,7 +115,7 @@ function pathName(expr: Expr & { readonly kind: 'path' }): string {
  *  - an ordering comparison (`<`, `<=`, `>`, `>=`) has two finite numbers or two strings (a numeric string
  *    such as `"3"` is a wrong type, not a number); `==`/`!=` compare two values of the same type;
  *  - a path used as a yes/no value (an operand of `!`, `&&`, `||`, or the whole expression) is a boolean;
- *  - `length(...)` is over a string or an array, and `in` searches an array, or a string for a string;
+ *  - `length(...)` is over a string or an array, and `in` searches an array (whose elements are primitives of the value's own type), or a string for a string;
  *  - the expression reads at least one path (a constant such as `false` can never show success; the caller
  *    counts them through `state`).
  * The tree is walked, never the source text, so a path inside a nested `!`, `length` or a comparison is found
@@ -164,7 +191,21 @@ function unreliableFailOn(
       if (problem !== undefined) return problem;
       const value = evaluate(expr.value, output);
       const collection = evaluate(expr.collection, output);
-      if (Array.isArray(collection)) return undefined;
+      if (Array.isArray(collection)) {
+        // `evaluate` searches with `includes` (`===`), so `'a' in [1, 2]` is quietly false. That is a wrong-typed
+        // output, not an answer: the value and every element must be primitives of one type.
+        const primitive = (item: unknown): boolean =>
+          typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean';
+        const mismatched = (collection as readonly unknown[]).find(
+          (element: unknown) => !primitive(element) || typeof element !== typeof value,
+        );
+        return mismatched === undefined && primitive(value)
+          ? undefined
+          : `failOn looks for ${operandLabel(expr.value, value)} inside ${operandLabel(
+              expr.collection,
+              collection,
+            )} with "in", but not every element is a primitive of the same type as the value`;
+      }
       if (typeof collection === 'string') {
         return typeof value === 'string'
           ? undefined
@@ -197,8 +238,11 @@ async function evaluateDeterministicCheck(
 ): Promise<DeterministicCheckResult> {
   let stdout: string;
   let exitCode: number;
+  let stderr: string | undefined;
   try {
-    ({ stdout, exitCode } = await runner(check, cwd));
+    const ran = await runner(check, cwd);
+    ({ stdout, exitCode } = ran);
+    stderr = recordedStderr(ran.stderr);
   } catch (cause) {
     return failed(
       check,
@@ -208,36 +252,34 @@ async function evaluateDeterministicCheck(
     );
   }
 
+  const fail = (reason: string): DeterministicCheckResult =>
+    failed(check, stdout, exitCode, reason, stderr);
+
   if (check.parser !== undefined && !SUPPORTED_PARSERS.has(check.parser)) {
-    return failed(check, stdout, exitCode, `unsupported parser ${JSON.stringify(check.parser)}`);
+    return fail(`unsupported parser ${JSON.stringify(check.parser)}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return failed(check, stdout, exitCode, 'check output could not be parsed as JSON');
+    return fail('check output could not be parsed as JSON');
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return failed(check, stdout, exitCode, 'parsed check output was not a JSON object');
+    return fail('parsed check output was not a JSON object');
   }
 
   if (typeof check.failOn !== 'string') {
-    return failed(check, stdout, exitCode, 'failOn is missing: a check without one cannot pass');
+    return fail('failOn is missing: a check without one cannot pass');
   }
 
   const parseResult = parseExpression(check.failOn);
   if (!parseResult.success) {
-    return failed(
-      check,
-      stdout,
-      exitCode,
-      `failOn expression is invalid: ${parseResult.error.message}`,
-    );
+    return fail(`failOn expression is invalid: ${parseResult.error.message}`);
   }
 
   const marker = failureMarker(parsed as Readonly<Record<string, unknown>>);
-  if (marker !== undefined) return failed(check, stdout, exitCode, marker);
+  if (marker !== undefined) return fail(marker);
 
   let failOnTriggered: unknown;
   try {
@@ -247,12 +289,9 @@ async function evaluateDeterministicCheck(
       parsed as Readonly<Record<string, unknown>>,
       state,
     );
-    if (unreliable !== undefined) return failed(check, stdout, exitCode, unreliable);
+    if (unreliable !== undefined) return fail(unreliable);
     if (state.paths === 0) {
-      return failed(
-        check,
-        stdout,
-        exitCode,
+      return fail(
         `failOn (${JSON.stringify(check.failOn)}) reads nothing from the check output, so it can never show the check succeeded`,
       );
     }
@@ -263,22 +302,26 @@ async function evaluateDeterministicCheck(
     // rethrow anything else" convention: anything else escaping `evaluate` would be a genuine bug in that
     // module, not a reason to silently fail this one check.
     if (!(cause instanceof ForgeError)) throw cause;
-    return failed(check, stdout, exitCode, `failOn evaluation failed: ${cause.message}`);
+    return fail(`failOn evaluation failed: ${cause.message}`);
   }
 
   const shouldFail = Boolean(failOnTriggered);
   if (shouldFail) {
     // `failOn` itself spoke: the normal failing path, no separate reason needed.
-    return { checkId: check.id, run: check.run, passed: false, stdout, exitCode };
+    return {
+      checkId: check.id,
+      run: check.run,
+      passed: false,
+      stdout,
+      exitCode,
+      ...(stderr === undefined ? {} : { stderr }),
+    };
   }
   if (exitCode !== 0 && exitCode !== 1) {
     // Exit 0 (ok) and exit 1 (`EXIT_CODES.failure`: the command ran and reports findings in its body) are the two
     // codes a command that reached a verdict uses. Every other code (2 usage, 3..6, a signal, a spawn failure)
     // means the command did not reach one, whatever its stdout happens to hold.
-    return failed(
-      check,
-      stdout,
-      exitCode,
+    return fail(
       `check command exited ${String(exitCode)}, which is not a verdict (0 or 1); its output is not trusted`,
     );
   }
@@ -288,16 +331,20 @@ async function evaluateDeterministicCheck(
     // the body of a `forge` command (its `{"v":1,...}` envelope) is the verdict. Any other program that exits 1
     // beside a body that does not trip `failOn` is a contradiction, and a crash exits 1 too (a signal reads as 1
     // in `runShellCommand`): not a pass.
-    return failed(
-      check,
-      stdout,
-      exitCode,
+    return fail(
       `check command exited 1 but its output is not a forge {"v":1} envelope and does not trip failOn (${JSON.stringify(
         check.failOn,
       )}); a program that reports findings must say so in the output`,
     );
   }
-  return { checkId: check.id, run: check.run, passed: true, stdout, exitCode };
+  return {
+    checkId: check.id,
+    run: check.run,
+    passed: true,
+    stdout,
+    exitCode,
+    ...(stderr === undefined ? {} : { stderr }),
+  };
 }
 
 /** `10` §10.3's own gate mechanism. Every deterministic check runs (concurrently — nothing here requires

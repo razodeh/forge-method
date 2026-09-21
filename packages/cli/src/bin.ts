@@ -211,6 +211,8 @@ import {
   abortRun,
   assertStopped,
   ensureIntegrationWorktree,
+  formatGateApproval,
+  formatGateReport,
   formatRunPlan,
   gateApprove,
   gateCheck,
@@ -236,7 +238,7 @@ import {
   type PlanPhase,
   type RunDeps,
 } from './commands/run/index.ts';
-import { currentLauncher } from './commands/run/launcher-shim.ts';
+import { createLauncherShimOrWarn, currentLauncher } from './commands/run/launcher-shim.ts';
 import { runFailureError, runFailureNote } from './commands/run/run-failure.ts';
 import {
   createAskPort,
@@ -1043,12 +1045,37 @@ function gateSubFlags(sub: string): Readonly<Record<string, boolean>> | undefine
   }
 }
 
+/** `forge gate <sub>`. `check`, `approve` and `waive` run the gate's checks, and every shipped check is a `forge ...`
+ * command, so they run with the launcher shim first on `PATH` exactly as a run's gate step does: a checkout launch
+ * (`node packages/cli/bin/forge.mjs`) has no `forge` on `PATH`, and without the shim every check would exit 127
+ * (`PLAN-M13.md` P12, P41). */
 async function runGateCommand(
   paths: ProjectPaths,
   projectRoot: string,
   sub: string | undefined,
   rest: readonly string[],
   json: boolean,
+): Promise<number> {
+  if (sub !== 'check' && sub !== 'approve' && sub !== 'waive') {
+    return runGateSubcommand(paths, projectRoot, sub, rest, json, undefined);
+  }
+  const shim = await createLauncherShimOrWarn(currentLauncher(realEnvSnapshot()), (message) => {
+    console.error(message);
+  });
+  try {
+    return await runGateSubcommand(paths, projectRoot, sub, rest, json, shim?.commandEnv);
+  } finally {
+    await shim?.cleanup();
+  }
+}
+
+async function runGateSubcommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+  commandEnv: Readonly<Record<string, string>> | undefined,
 ): Promise<number> {
   const subFlags = sub === undefined ? undefined : gateSubFlags(sub);
   if (sub === undefined || subFlags === undefined) {
@@ -1079,22 +1106,29 @@ async function runGateCommand(
     return EXIT_CODES.usage;
   }
   const runId = await resolveDispatchRunId(paths, values.get('--run'));
-  const ctx: GateCommandContext = { paths, projectRoot, checksRoot: CHECKS_ROOT, runId };
+  const ctx: GateCommandContext = {
+    paths,
+    projectRoot,
+    checksRoot: CHECKS_ROOT,
+    runId,
+    commandEnv,
+  };
 
   if (sub === 'check') {
     const report = await gateCheck(ctx, gateId);
-    console.log(
-      json ? JSON.stringify({ v: 1, report }) : `${gateId}: passed=${String(report.passed)}`,
-    );
+    console.log(json ? JSON.stringify({ v: 1, report }) : formatGateReport(report));
     return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
   }
   if (sub === 'approve') {
     const reason = values.get('--reason');
-    await gateApprove(ctx, gateId, reason);
+    // Evaluates the gate first and throws `GATE-507` (checks failing, no waiver) or `GATE-508` (approver not
+    // authorised): the top-level handler prints the refusal, its `--json` envelope and exit code 3
+    // (`PLAN-M13.md` P41). Only an approval that was decided is recorded.
+    const summary = await gateApprove(ctx, gateId, reason);
     console.log(
       json
-        ? JSON.stringify({ v: 1, gateId, recorded: true })
-        : `forge gate approve ${gateId}: recorded.`,
+        ? JSON.stringify({ v: 1, gateId, recorded: true, evaluation: summary })
+        : formatGateApproval(gateId, summary),
     );
     return EXIT_CODES.success;
   }
@@ -1121,9 +1155,7 @@ async function runGateCommand(
     return EXIT_CODES.usage;
   }
   const report = await gateWaive(ctx, gateId, { reason, owner, expiresAt });
-  console.log(
-    json ? JSON.stringify({ v: 1, report }) : `${gateId}: passed=${String(report.passed)}`,
-  );
+  console.log(json ? JSON.stringify({ v: 1, report }) : formatGateReport(report));
   return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
 }
 

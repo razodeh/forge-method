@@ -9,14 +9,20 @@
 # should tune to its own target; nothing in the spec pack names a concrete number, so this follows the
 # same "state a reasonable default, do not leave the check unusable" choice `modules/fm-core`'s own
 # `test:coverage` check already makes with its own `coverage < 80` literal.
+#
+# A missing `dist/`, or one with no built JS/CSS files, is a FAILURE, not a pass: the script prints `errors: 1` and
+# a `reason`, and `failOn` also reads `errors > 0` (`10` §10.3, `PLAN-M13.md` P35/P41: a check must positively
+# show success; a build nobody made has not been shown to be under budget, nor has one whose files are all
+# empty). It used to treat a
+# missing directory as an empty list and pass.
 id: bundle:size
 name: Bundle size budget
 description: >
   Sums the byte size of every built JS/CSS file under dist/ (source maps excluded) and fails if the
   total exceeds a fixed budget.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";const budgetBytes=250000;function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(/\.(js|mjs|css)$/i.test(e.name)&&!e.name.toLowerCase().endsWith(".map"))files.push(p);}return files;}let bytes=0;for(const f of walk(dir))bytes+=fs.statSync(f).size;console.log(JSON.stringify({bytes,budgetBytes}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";const budgetBytes=250000;function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(/\.(js|mjs|css)$/i.test(e.name)&&!e.name.toLowerCase().endsWith(".map"))files.push(p);}return files;}let bytes=0,filesFound=0,errors=0,reason;if(!isDir(dir)){errors=1;reason="no dist/ directory found: build the app before this gate runs";}else{for(const f of walk(dir)){filesFound++;bytes+=fs.statSync(f).size;}if(filesFound===0){errors=1;reason="no built JS or CSS files found under dist/";}else if(bytes===0){errors=1;reason="every built JS/CSS file under dist/ is empty";}}const out={bytes,budgetBytes,filesFound,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'bytes > budgetBytes'
+failOn: 'bytes > budgetBytes || errors > 0'
 remedy: >
   Re-run the command above locally to see the real total and the budget it was compared against, then
   either reduce the shipped bundle (code-split a route, lazy-load a heavy dependency, drop an unused

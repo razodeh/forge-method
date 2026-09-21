@@ -186,6 +186,19 @@ appliesTo: { gates: [G-Verify, G-Deliver] }
 severity: error
 ```
 
+A check must positively show success (`specs/10` §10.3, "Check contract"). It exits `0` or `1` and
+prints one JSON object; that object must not say it failed (`ok` other than `true`,
+`success: false`, a top-level `error`), and every field `failOn` reads must be present with the
+right type (a number, or a string, for `>`). If the command cannot do its job (a missing directory,
+a failing `git diff`), have it print a failing count and a `reason` — for example
+`{"violations":0,"errors":1,"reason":"no dist/ directory found"}` with
+`failOn: 'violations > 0 || errors > 0'` — rather than printing `0` for nothing scanned: a check
+that finds nothing to check has not passed. An exit code of `1` beside a clean body only counts when
+the body is a `forge` envelope (`{"v":1,...}`). The gate report records each check's stdout, exit
+code and stderr (sanitised and capped), and `forge gate check <id>` prints the `reason` of every
+failing check. A gate file with an unknown key (a misspelled `checks:`) or no deterministic check is
+refused when it is loaded, and `forge workflow validate --all` lists the problem.
+
 A failing check without a `remedy` is a dead end for whichever agent hits it — always write one
 (`specs/19` §19.6). Built-in check thresholds (coverage minimum, complexity maximum, flake rate,
 bundle size) are tunable but never removable; lowering one below the module's floor prints the delta

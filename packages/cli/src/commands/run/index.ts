@@ -14,6 +14,8 @@ export {
 } from './context.ts';
 export { abortRun, assertStopped, pauseRun, type StopResult } from './control.ts';
 export {
+  formatGateApproval,
+  formatGateReport,
   gateApprove,
   gateCheck,
   gateList,

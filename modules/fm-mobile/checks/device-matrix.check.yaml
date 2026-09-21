@@ -21,20 +21,16 @@
 # `{"violations": N, "devicesScanned": M}` -- see test/fm-mobile-checks.test.ts for the real pass/fail
 # fixture runs (a real, temporary directory tree, not a stub).
 #
-# A project with no `docs/forge/kb/mobile/device-matrix.md` file at all passes vacuously
-# (`{"violations": 0, "devicesScanned": 0}`) -- the identical "nothing to check yet" convention
-# `checks/a11y.check.yaml`/`checks/lineage.check.yaml` already establish for their own fixed target. A
-# project that HAS created the file but never added a real "## Coverage" section counts as one real
-# violation (`devicesScanned: 0`) -- the identical "created the file but never filled it in is a real
-# defect, not a fresh, honest 'nothing yet' state" distinction `checks/lineage.check.yaml`'s own doc
-# comment already draws for a missing "## Lineage" section on an existing file.
+# A project with no `docs/forge/kb/mobile/device-matrix.md` file at all FAILS with one violation and a
+# `reason` (`{"violations": 1, "devicesScanned": 0, "reason": "..."}`): nothing was tested on any device,
+# and a gate must positively show success (`10` §10.3, `PLAN-M13.md` P35/P41; it used to pass vacuously
+# with `{"violations": 0, ...}`). The same holds, as it always did, for a file that exists but never got
+# a real "## Coverage" section (`devicesScanned: 0`, one violation).
 #
-# A bullet line that does not match the exact `Device: ... | OS: ... | Result: pass|fail` shape is
-# silently ignored rather than counted as a violation -- the smallest real, mechanically-detectable
-# proxy this check can build without a full markdown-table parser; a project whose own matrix entries
-# are malformed in a way this regex cannot recognise gets neither credit nor blame for them, the
-# identical "smallest real, working default" tradeoff `checks/a11y.check.yaml`'s own doc comment
-# already discloses for its own two mechanically-detectable defects.
+# A bullet line that starts `- Device:` but does not match the exact `Device: ... | OS: ... | Result: <text>`
+# shape IS a violation (`PLAN-M13.md` P41: it used to be silently ignored, so a device row this check could not
+# read counted for nothing and could not fail), and a `Result:` that is not exactly `pass` is a violation
+# (`crashed`, `blocked`, `pass (flaky)`). Lines that are not device bullets (a table, prose) are still not read.
 #
 # Platform detection is anchored, NOT a bare substring test -- a critic round found the first draft's
 # own `device.includes("ios")`/`os.includes("ios")` (plain `String.prototype.includes`) let an
@@ -53,7 +49,7 @@ name: Device matrix coverage
 description: >
   Scans docs/forge/kb/mobile/device-matrix.md's own "## Coverage" section and fails if any listed
   device row did not pass, or if no row covers an iOS device and no row covers an Android device.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const file=path.join("docs","forge","kb","mobile","device-matrix.md");let text;try{text=fs.readFileSync(file,"utf8");}catch(e){if(e.code==="ENOENT"){console.log(JSON.stringify({violations:0,devicesScanned:0}));process.exit(0);}throw e;}const m=/##[ \t]*coverage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text);if(!m){console.log(JSON.stringify({violations:1,devicesScanned:0}));process.exit(0);}const section=m[1];const lineRe=/^-\s*Device:\s*(.+?)\s*\|\s*OS:\s*(.+?)\s*\|\s*Result:\s*(pass|fail)\s*$/i;const iosDeviceRe=/\b(iphone|ipad|ipod)\b/i;const iosOsRe=/^ios\b/i;const androidDeviceRe=/\bandroid\b/i;const androidOsRe=/^android\b/i;let devicesScanned=0,violations=0,hasIos=false,hasAndroid=false;for(const line of section.split("\n")){const mm=lineRe.exec(line.trim());if(!mm)continue;devicesScanned++;const device=mm[1];const os=mm[2];const result=mm[3].toLowerCase();if(iosDeviceRe.test(device)||iosOsRe.test(os))hasIos=true;if(androidDeviceRe.test(device)||androidOsRe.test(os))hasAndroid=true;if(result!=="pass")violations++;}if(!hasIos)violations++;if(!hasAndroid)violations++;console.log(JSON.stringify({violations,devicesScanned}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const file=path.join("docs","forge","kb","mobile","device-matrix.md");let text;try{text=fs.readFileSync(file,"utf8");}catch(e){if(e.code==="ENOENT"){console.log(JSON.stringify({violations:1,devicesScanned:0,reason:"no docs/forge/kb/mobile/device-matrix.md found: record the devices this release was tested on before this gate runs"}));process.exit(0);}throw e;}const m=/##[ \t]*coverage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text);if(!m){console.log(JSON.stringify({violations:1,devicesScanned:0,reason:"docs/forge/kb/mobile/device-matrix.md has no ## Coverage section listing the devices tested"}));process.exit(0);}const section=m[1];const lineRe=/^(?:[-*+]|\d+[.)])\s*Device:\s*(.+?)\s*\|\s*OS:\s*(.+?)\s*\|\s*Result:\s*(.+?)\s*$/i;const iosDeviceRe=/\b(iphone|ipad|ipod)\b/i;const iosOsRe=/^ios\b/i;const androidDeviceRe=/\bandroid\b/i;const androidOsRe=/^android\b/i;let devicesScanned=0,violations=0,hasIos=false,hasAndroid=false;for(const line of section.split("\n")){const mm=lineRe.exec(line.trim());if(!mm){if(/^(?:[-*+]|\d+[.)])\s*(?:\*\*)?Device/i.test(line.trim()))violations++;continue;}devicesScanned++;const device=mm[1];const os=mm[2];const result=mm[3].toLowerCase();if(iosDeviceRe.test(device)||iosOsRe.test(os))hasIos=true;if(androidDeviceRe.test(device)||androidOsRe.test(os))hasAndroid=true;if(result!=="pass")violations++;}if(!hasIos)violations++;if(!hasAndroid)violations++;console.log(JSON.stringify({violations,devicesScanned}));'''
 parser: json
 failOn: 'violations > 0'
 remedy: >

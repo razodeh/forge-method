@@ -1965,6 +1965,53 @@ export const ERROR_CODES = {
     remedy:
       'Provide a new waiver with a later expiresAt, or resolve the underlying failing check instead.',
   },
+  // A gate document that cannot be read as written (`PLAN-M13.md` P41): an unknown key (a misspelled `checks:`
+  // would otherwise be an empty gate, which passes vacuously), a wrong-typed value, or no deterministic check
+  // at all (`15` §15.10 I4). Exit `usage`: the file is wrong, not the project's state.
+  'GATE-506': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Gate file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Fix the named key in the gate file (specs/10 §10.3 shows the gate document shape), then run ' +
+      '`forge workflow validate --all` to list every remaining problem.',
+  },
+  // `forge gate approve` on a gate whose deterministic checks do not all pass and that no valid, unexpired waiver
+  // covers (`10` §10.3 rule 1). Exit `gateFailed`, the code `forge gate check` uses for the same evaluation.
+  'GATE-507': {
+    severity: 'error',
+    exitCode: EXIT_CODES.gateFailed,
+    message: (d: { gateId: string; failing: string }) =>
+      `Gate ${show(d.gateId)} cannot be approved: ${show(d.failing)} failed and no valid, unexpired waiver covers it.`,
+    remedy:
+      'Fix the failing checks and re-run `forge gate check <gate>`, or record a waiver with `forge gate waive ' +
+      '<gate> --reason <text> --owner <name> --expires <iso-date>` and approve again.',
+  },
+  // `forge gate approve` by someone the gate's `approval:` block does not name, or a quorum this command cannot
+  // verify (`10` §10.3's `approval`, `05` §5.9's `gates.may_approve`).
+  'GATE-508': {
+    severity: 'error',
+    exitCode: EXIT_CODES.gateFailed,
+    message: (d: { gateId: string; approver: string; detail: string }) =>
+      `${show(d.approver)} may not approve gate ${show(d.gateId)}: ${show(d.detail)}.`,
+    remedy:
+      "Choose an approver the gate's `approval.roles` names to approve it, or change the gate's `approval` " +
+      'block where the specs allow it.',
+  },
+  // `forge gate waive` on a gate whose checks all pass: nothing to excuse, and a standing waiver would cover
+  // whatever fails later (`PLAN-M13.md` P41, `10` §10.3 rule 1).
+  'GATE-509': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { gateId: string }) =>
+      `Gate ${show(d.gateId)} has no failing deterministic check, so there is nothing to waive.`,
+    remedy:
+      'Run `forge gate check <gate>` to see which checks fail, and waive the gate only while one of them does.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

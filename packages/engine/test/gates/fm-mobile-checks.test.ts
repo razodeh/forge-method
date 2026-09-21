@@ -24,6 +24,9 @@ import { parse as parseYaml } from 'yaml';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { CheckRunner, DeterministicCheck, GateDefinition } from '../../src/gates/types.ts';
 
+/** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
+const like = (text: string): string => expect.stringContaining(text) as string;
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const checksDir = path.join(repoRoot, 'modules', 'fm-mobile', 'checks');
 
@@ -138,28 +141,69 @@ describe('checks/device-matrix.check.yaml — real command, real parser, real fa
     await writeDeviceMatrix(dir, '# Device matrix\n\nNo coverage section here.\n');
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, devicesScanned: 0 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 1,
+      devicesScanned: 0,
+      reason: like('no ## Coverage section'),
+    });
   });
 
-  it('passes vacuously (0 violations) against a project with no device-matrix.md file at all, rather than crashing', async () => {
+  // `PLAN-M13.md` P41: this used to assert a PASS ("passes vacuously ... rather than crashing").
+  it('FAILS, with a reason, against a project with no device-matrix.md file: no device tested is not a pass', async () => {
     const dir = await makeFixtureDir();
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
-    expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, devicesScanned: 0 });
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      violations: 1,
+      devicesScanned: 0,
+      reason: like('no docs/forge/kb/mobile/device-matrix.md found'),
+    });
   });
 
-  it('ignores a malformed bullet line (missing the Result field) rather than crashing or miscounting devicesScanned', async () => {
+  it('counts a malformed device bullet (missing the Result field) as a violation: a row this check cannot read must not be a row that cannot fail', async () => {
     const dir = await makeFixtureDir();
     await writeDeviceMatrix(
       dir,
-      '# Device matrix\n\n## Coverage\n\n- Device: iPhone 15 | OS: iOS 17 | Result: pass\n- Device: Pixel 8 | OS: Android 14\n',
+      '# Device matrix\n\n## Coverage\n\n- Device: iPhone 15 | OS: iOS 17 | Result: pass\n- Device: Pixel 8 | OS: Android 14 | Result: pass\n- Device: Galaxy S9 | OS: Android 10\n',
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
-    // Only the well-formed iOS row is recognised; the malformed line is silently ignored, so the
-    // matrix still has no recognised Android row and fails on that basis.
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, devicesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 1, devicesScanned: 2 });
   });
+
+  it.each([
+    '* Device: Galaxy S9 | OS: Android 10 | Result: fail',
+    '1. Device: Galaxy S9 | OS: Android 10 | Result: fail',
+    '- **Device:** Galaxy S9 | OS: Android 10 | Result: fail',
+  ])(
+    'reads or flags the differently-bulleted row %s (a failing device must not vanish because of its bullet)',
+    async (row) => {
+      const dir = await makeFixtureDir();
+      await writeDeviceMatrix(
+        dir,
+        `# Device matrix\n\n## Coverage\n\n- Device: iPhone 15 | OS: iOS 17 | Result: pass\n- Device: Pixel 8 | OS: Android 14 | Result: pass\n${row}\n`,
+      );
+      const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+      expect(result.passed).toBe(false);
+    },
+  );
+
+  it.each(['crashed', 'blocked', 'skipped', 'pass (flaky)', 'fail'])(
+    'a device whose Result is "%s" is not a pass',
+    async (word) => {
+      const dir = await makeFixtureDir();
+      await writeDeviceMatrix(
+        dir,
+        `# Device matrix\n\n## Coverage\n\n- Device: iPhone 15 | OS: iOS 17 | Result: pass\n- Device: Pixel 8 | OS: Android 14 | Result: ${word}\n`,
+      );
+      const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+      expect(result.passed).toBe(false);
+      expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+        violations: 1,
+        devicesScanned: 2,
+      });
+    },
+  );
 
   it('recognises a device/OS pairing case-insensitively and regardless of which field names the platform', async () => {
     const dir = await makeFixtureDir();

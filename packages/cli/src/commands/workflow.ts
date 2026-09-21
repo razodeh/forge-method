@@ -21,6 +21,7 @@ import {
 } from '@forge/core';
 import { listResolvableContentReferences, resolveContentReference } from '@forge/agents/prompt';
 import { artifactTypeById } from '@forge/schemas';
+import { validateGateDocument } from '@forge/engine/gates';
 import {
   parseWorkflow,
   validateStructure,
@@ -195,7 +196,12 @@ export interface GateValidationIssue {
     | 'missing-brief'
     | 'malformed-brief-reference'
     | 'unknown-brief'
-    | 'unknown-agent';
+    | 'unknown-agent'
+    // The strict gate-document validator's findings (`validateGateDocument`, `PLAN-M13.md` P41): the same ones
+    // `loadGateRegistry` refuses a gate for (`GATE-506`), reported here for every gate at once.
+    | 'unknown-gate-key'
+    | 'invalid-gate-value'
+    | 'no-deterministic-checks';
   readonly severity: 'error';
   readonly message: string;
   readonly checkId?: string | undefined;
@@ -282,6 +288,26 @@ export async function gateValidateAll(
       });
     } else {
       gateFileById.set(gateId, entry.name);
+    }
+
+    // The strict document validator `loadGateRegistry` refuses a gate with: an unknown key (a misspelled
+    // `checks:`), a wrong-typed value, a gate with no deterministic check, a duplicate deterministic check id.
+    // The advisory checks' own structure is reported below with its own codes, so those findings are skipped
+    // here (an unknown key inside an advisory check is not reported below, and is kept).
+    for (const problem of validateGateDocument(parsed).problems) {
+      if (problem.advisoryShape === true && problem.code !== 'unknown-key') continue;
+      report(gateId, {
+        code:
+          problem.code === 'unknown-key'
+            ? 'unknown-gate-key'
+            : problem.code === 'no-deterministic-checks'
+              ? 'no-deterministic-checks'
+              : problem.code === 'duplicate-check-id'
+                ? 'duplicate-check-id'
+                : 'invalid-gate-value',
+        severity: 'error',
+        message: `Gate file "${entry.name}" is invalid at "${problem.key}": ${problem.message}.`,
+      });
     }
 
     const checks = parsed['checks'];

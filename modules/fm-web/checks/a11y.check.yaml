@@ -24,18 +24,25 @@
 # inside `data-alt="..."`/`some-alt="..."` (the hyphen is a non-word character, which `\b` treats
 # exactly like real whitespace), so an `<img>` decorated only with a `data-alt`-shaped attribute and no
 # real `alt` was silently treated as accessible. HTML attributes are always whitespace-separated from
-# whatever precedes them, so `\salt\s*=`/`\slang\s*=` is both correct and still simple; the
+# whatever precedes them, so a leading `\s` (`\salt(?=[\s=\/>])`, which also accepts a bare boolean `alt`, the
+# valid way to mark a decorative image, and a `lang` regex that needs a non-blank value on the FIRST real `<html`
+# element, comments removed) is both correct and still simple; the
 # `data-alt="nope"` case is covered by a real regression fixture in
 # packages/engine/test/gates/fm-web-checks.test.ts.
+#
+# A missing `dist/`, or one with no built HTML pages, is a FAILURE, not a pass: the script prints `errors: 1` and
+# a `reason`, and `failOn` also reads `errors > 0` (`10` §10.3, `PLAN-M13.md` P35/P41: a check must positively
+# show success; a build nobody made has not been shown to be accessible or under budget). It used to treat a
+# missing directory as an empty list and pass.
 id: a11y:audit
 name: Accessibility audit
 description: >
   Scans every built HTML page under dist/ for the two most common, mechanically-detectable
   accessibility defects (an <img> with no alt text, an <html> tag with no lang attribute) and fails if
   any are found.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".html"))files.push(p);}return files;}let violations=0,filesScanned=0;for(const f of walk(dir)){filesScanned++;const html=fs.readFileSync(f,"utf8");for(const img of html.match(/<img\b[^>]*>/gi)||[]){if(!/\salt\s*=/i.test(img))violations++;}if(/<html\b[^>]*>/i.test(html)&&!/<html\b[^>]*\slang\s*=/i.test(html))violations++;}console.log(JSON.stringify({violations,filesScanned}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".html"))files.push(p);}return files;}let violations=0,filesScanned=0,errors=0,reason;if(!isDir(dir)){errors=1;reason="no dist/ directory found: build the app before this gate runs";}else{for(const f of walk(dir)){filesScanned++;const html=fs.readFileSync(f,"utf8");for(const img of html.match(/<img\b[^>]*>/gi)||[]){if(!/\salt(?=[\s=\/>])/i.test(img))violations++;}const htmlTag=/<html(?=[\s>\/])[^>]*>/i.exec(html.replace(/<!--[\s\S]*?-->/g,""));if(!htmlTag||!/\slang\s*=\s*(?:"\s*[^"\s][^"]*"|\x27\s*[^\x27\s][^\x27]*\x27|[^\s"\x27>][^\s">]*)/i.test(htmlTag[0]))violations++;}if(filesScanned===0){errors=1;reason="no built HTML pages found under dist/";}}const out={violations,filesScanned,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'violations > 0'
+failOn: 'violations > 0 || errors > 0'
 remedy: >
   Re-run the command above locally and read its printed counts, then open each built page under dist/
   named by a violation: add a real, descriptive alt attribute to every <img> that conveys content

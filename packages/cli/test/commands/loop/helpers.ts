@@ -63,7 +63,10 @@ export const DELIVER_STAGE_SOURCE = fixtureWorkflow('deliver-stage', 'engineer',
 
 const FIXTURE_GATE_YAML = `id: G-Always
 checks:
-  deterministic: []
+  deterministic:
+    - id: always-ok
+      run: "echo '{\\"ok\\":true}'"
+      failOn: "!ok"
   advisory: []
 openQuestionsPolicy: warn
 `;

@@ -8,15 +8,23 @@ import { ForgeError, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import {
   applyWaiver,
+  approveGate,
+  approverRefusal,
   buildGateReport,
   evaluateGate,
+  recordChecks,
+  type GateApprovalSummary,
+  type GateApprover,
   type GateDefinition,
+  type GateEvaluationResult,
   type GateReport,
   type Waiver,
 } from '@forge/engine/gates';
 import { GateNotFoundError, runShellCommand } from '@forge/engine/dispatch';
-import { appendEvent } from '@forge/telemetry/events';
+import { SECRET_PATTERNS } from '@forge/extensions/skills';
+import { appendEvent, readEvents } from '@forge/telemetry/events';
 
+import { sanitizeForTerminal } from '../../generated-header.ts';
 import { loadGateRegistry } from './gates.ts';
 
 export interface GateCommandContext {
@@ -25,6 +33,10 @@ export interface GateCommandContext {
   readonly checksRoot: string;
   readonly runId: string;
   readonly clock?: Clock;
+  /** The environment overlay a check command runs with: `PATH` with the launcher shim first, so a gate's
+   * `forge ...` check runs THIS `forge` (the one that is executing, wherever it was launched from) exactly as it
+   * does inside a run (`createGateEvaluator`'s `env`, `PLAN-M13.md` P12). Absent: the caller's own `PATH`. */
+  readonly commandEnv?: Readonly<Record<string, string>> | undefined;
 }
 
 export async function gateList(ctx: GateCommandContext): Promise<readonly GateDefinition[]> {
@@ -48,10 +60,107 @@ async function findGateOrThrow(ctx: GateCommandContext, gateId: string): Promise
  * which do). */
 export async function gateCheck(ctx: GateCommandContext, gateId: string): Promise<GateReport> {
   const definition = await findGateOrThrow(ctx, gateId);
-  const evaluated = await evaluateGate(definition, ctx.projectRoot, (check) =>
-    runShellCommand(check.run, ctx.projectRoot),
+  const evaluated = await evaluateFresh(ctx, definition);
+  // `10` §10.3 rule 1: a waiver "appears in every report until resolved". The report shows the newest waiver this
+  // run recorded that has not lapsed and that was granted for every check failing now (`passed` stays false: the
+  // checks still fail; `approved` says the waiver covers them).
+  const clock = ctx.clock ?? SYSTEM_CLOCK;
+  const now = Date.parse(clock.now());
+  const waiver = await coveringWaiver(ctx, gateId, evaluated, now);
+  return buildGateReport(
+    definition,
+    waiver === undefined ? evaluated : applyWaiver(evaluated, waiver, now),
   );
-  return buildGateReport(definition, evaluated);
+}
+
+/** The newest recorded waiver for `gateId` that has not lapsed and covers every check failing in `evaluated`. */
+async function coveringWaiver(
+  ctx: GateCommandContext,
+  gateId: string,
+  evaluated: GateEvaluationResult,
+  now: number,
+): Promise<Waiver | undefined> {
+  if (evaluated.passed) return undefined;
+  const failing = evaluated.checks.filter((check) => !check.passed).map((check) => check.checkId);
+  for (const recorded of await recordedWaivers(ctx, gateId)) {
+    if (!failing.every((id) => recorded.coveredCheckIds.includes(id))) continue;
+    try {
+      applyWaiver(evaluated, recorded.waiver, now);
+      return recorded.waiver;
+    } catch (error) {
+      if (!(
+        error instanceof ForgeError &&
+        (error.code === 'GATE-504' || error.code === 'GATE-505')
+      )) {
+        throw error;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** One evaluation of `definition` in the project, exactly as `check`, `approve` and `waive` each run it: the same
+ * `evaluateGate`, the same shell runner (which hands `stderr` to the audit trail). */
+function evaluateFresh(
+  ctx: GateCommandContext,
+  definition: GateDefinition,
+): Promise<GateEvaluationResult> {
+  return evaluateGate(definition, ctx.projectRoot, (check) =>
+    runShellCommand(check.run, ctx.projectRoot, ctx.commandEnv),
+  );
+}
+
+/** Human-mode `forge gate approve` line. The waiver's `owner` was typed by a person and read back from the event log,
+ * so it is terminal-sanitised like any other text a check or a file supplies. */
+export function formatGateApproval(gateId: string, summary: GateApprovalSummary): string {
+  const how =
+    summary.basis === 'waiver'
+      ? `waived ${String(summary.checksWaived)} failing check(s) under a waiver by ${sanitizeForTerminal(summary.waiver?.owner ?? 'unknown')}`
+      : `${String(summary.checksPassed)} checks passed`;
+  return `forge gate approve ${sanitizeForTerminal(gateId)}: recorded (${how}).`;
+}
+
+/** Human-mode `forge gate check`/`waive` output: the verdict, then for EVERY failing check its id, its exit code and
+ * why it failed, so a person is not sent to `--json` to learn what went wrong (the fail-closed `reason` of
+ * `PLAN-M13.md` P35, and the stderr the audit trail now keeps, `P41`). A check whose own `failOn` tripped has no
+ * `reason`: the finding is in its output, so the first line of that is shown instead. */
+export function formatGateReport(report: GateReport): string {
+  const lines = [`${sanitizeForTerminal(report.gateId)}: passed=${String(report.passed)}`];
+  // A check's output is untrusted text shown in a terminal or a CI log: whitespace collapsed (a pretty-printed JSON
+  // body is one line, not `{`), secret shapes redacted, escapes and control bytes stripped, then capped.
+  const oneLine = (text: string): string => {
+    // Stripped FIRST, then redacted: a secret split by an invisible control character would otherwise miss the
+    // pattern and then be reassembled by the strip.
+    let clean = sanitizeForTerminal(text);
+    for (const pattern of SECRET_PATTERNS) {
+      clean = clean.replace(
+        new RegExp(
+          pattern.source,
+          pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
+        ),
+        '[REDACTED]',
+      );
+    }
+    const flat = clean.replace(/\s+/g, ' ').trim();
+    return flat.length > 200 ? `${flat.slice(0, 200)}...` : flat;
+  };
+  for (const check of report.checks) {
+    if (check.passed) continue;
+    lines.push(
+      `  FAIL ${oneLine(check.checkId)} (exit ${String(check.exitCode)}): ${
+        check.reason === undefined
+          ? `its failOn matched; output: ${oneLine(check.stdout)}`
+          : oneLine(check.reason)
+      }`,
+    );
+    if (check.stderr !== undefined) lines.push(`       stderr: ${oneLine(check.stderr)}`);
+  }
+  if (report.waiver !== undefined) {
+    lines.push(
+      `  waived by ${oneLine(report.waiver.owner)} until ${oneLine(report.waiver.expiresAt)}: ${oneLine(report.waiver.reason)}`,
+    );
+  }
+  return lines.join('\n');
 }
 
 async function emitGateEvent(
@@ -61,20 +170,146 @@ async function emitGateEvent(
   payload: Readonly<Record<string, unknown>>,
 ): Promise<void> {
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-  await appendEvent(ctx.projectRoot, ctx.runId, {
-    type,
-    runId: ctx.runId,
-    ts: clock.now(),
-    payload: { gateId, ...payload },
+  // Secret shapes in a free-text `--reason`, a check's `reason` or its command line are redacted at write time, as
+  // every other event the engine appends is (`createTelemetryFacade`, `20` §20.10 S3).
+  await appendEvent(
+    ctx.projectRoot,
+    ctx.runId,
+    {
+      type,
+      runId: ctx.runId,
+      ts: clock.now(),
+      payload: { gateId, ...payload },
+    },
+    { valuePatterns: SECRET_PATTERNS },
+  );
+}
+
+/** Every waiver recorded for `gateId` in this run's event log, newest first, as the waivers `gate waive`
+ * validated when it recorded them. */
+interface RecordedWaiver {
+  readonly waiver: Waiver;
+  /** The checks that were failing when it was granted (empty for a waiver that recorded none). */
+  readonly coveredCheckIds: readonly string[];
+}
+
+async function recordedWaivers(
+  ctx: GateCommandContext,
+  gateId: string,
+): Promise<readonly RecordedWaiver[]> {
+  const waivers: RecordedWaiver[] = [];
+  for await (const event of readEvents(ctx.projectRoot, ctx.runId)) {
+    if (event.type !== 'GateWaived') continue;
+    const payload = event.payload;
+    if (typeof payload !== 'object' || payload === null) continue;
+    const {
+      gateId: waivedGate,
+      reason,
+      owner,
+      expiresAt,
+      evaluation,
+    } = payload as Record<string, unknown>;
+    if (
+      waivedGate === gateId &&
+      typeof reason === 'string' &&
+      typeof owner === 'string' &&
+      typeof expiresAt === 'string'
+    ) {
+      waivers.push({
+        waiver: { reason, owner, expiresAt },
+        coveredCheckIds: failingCheckIds(evaluation),
+      });
+    }
+  }
+  return waivers.reverse();
+}
+
+/** The ids of the checks a recorded `GateWaived` evaluation says were failing: what that waiver excused. */
+function failingCheckIds(evaluation: unknown): readonly string[] {
+  if (typeof evaluation !== 'object' || evaluation === null) return [];
+  const checks = (evaluation as { checks?: unknown }).checks;
+  if (!Array.isArray(checks)) return [];
+  return (checks as readonly unknown[]).flatMap((check) => {
+    if (typeof check !== 'object' || check === null) return [];
+    const { checkId, passed } = check as Record<string, unknown>;
+    return typeof checkId === 'string' && passed === false ? [checkId] : [];
   });
 }
 
+export interface ApproveOptions {
+  /** Who approves. `forge gate approve` is a person at a terminal, so the CLI passes nothing and this is
+   * `{ kind: 'human' }`: the CLI cannot tell an agent that ran the command from a person (`approve.ts` says why,
+   * and `SPEC-QUESTIONS.md` Q229 records it). A caller that CAN authenticate an agent passes it here, and the
+   * gate's `approval.roles`, `alwaysHuman` and the agent's `gates.may_approve` are enforced for it. */
+  readonly approver?: GateApprover;
+}
+
+/** `approve <id>`: evaluates the gate, refuses unless it may be approved, and only then records `GateApproved`
+ * with the evaluation as its audit trail (`10` §10.3 rules 1 and 4; `approveGate` has the reasoning).
+ *
+ * A failing gate is approved only under a waiver this run recorded for it (`forge gate waive`, which validated its
+ * reason, owner and expiry) that has not lapsed. Nothing is appended when the approval is refused: a refusal is
+ * an exit code and a typed error, not an event that could be replayed as an approval.
+ * @throws {ForgeError} `GATE-507` (checks failing, no valid waiver), `GATE-508` (approver not authorised),
+ * `RUN-050` (unknown gate). */
 export async function gateApprove(
   ctx: GateCommandContext,
   gateId: string,
   reason?: string,
-): Promise<void> {
-  await emitGateEvent(ctx, 'GateApproved', gateId, { reason });
+  options: ApproveOptions = {},
+): Promise<GateApprovalSummary> {
+  const definition = await findGateOrThrow(ctx, gateId);
+  const clock = ctx.clock ?? SYSTEM_CLOCK;
+  const approver = options.approver ?? { kind: 'human' };
+  // Who may approve is decided BEFORE any check command runs: an approver the gate does not name should not be able
+  // to make the project run its checks (`approveGate` decides it again for a caller that bypasses this).
+  const refusal = approverRefusal(definition, approver);
+  if (refusal !== undefined) {
+    throw new ForgeError('GATE-508', {
+      gateId,
+      approver: approver.kind === 'human' ? 'human' : `agent ${approver.agentId}`,
+      detail: refusal,
+    });
+  }
+  const evaluated = await evaluateFresh(ctx, definition);
+  // Sampled AFTER the checks ran (they have no time limit): a waiver that lapsed while they ran has lapsed.
+  const now = Date.parse(clock.now());
+
+  // A gate that passed needs no waiver, so the event log is only read when a check failed. Newest waiver first;
+  // one that lapsed or is malformed (`GATE-504`/`GATE-505`), or that excused other checks than the ones failing
+  // now (`GATE-507`), is skipped in favour of an older one that covers them, and with none left the approval is
+  // refused (`GATE-507`).
+  const waivers: readonly RecordedWaiver[] = evaluated.passed
+    ? []
+    : await recordedWaivers(ctx, gateId);
+  let summary: GateApprovalSummary | undefined;
+  for (const recorded of [...waivers, undefined]) {
+    try {
+      summary = approveGate({
+        definition,
+        evaluated,
+        waiver: recorded?.waiver,
+        waivedCheckIds: recorded?.coveredCheckIds,
+        approver,
+        now,
+      });
+      break;
+    } catch (error) {
+      const skippable =
+        recorded !== undefined &&
+        error instanceof ForgeError &&
+        (error.code === 'GATE-504' || error.code === 'GATE-505' || error.code === 'GATE-507');
+      if (!skippable) throw error;
+    }
+  }
+  if (summary === undefined) throw new ForgeError('GATE-507', { gateId, failing: 'the gate' });
+
+  await emitGateEvent(ctx, 'GateApproved', gateId, {
+    reason,
+    approver: summary.approver,
+    evaluation: summary,
+  });
+  return summary;
 }
 
 export async function gateReject(
@@ -102,17 +337,31 @@ export async function gateWaive(
 ): Promise<GateReport> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-
-  const evaluated = await evaluateGate(definition, ctx.projectRoot, (check) =>
-    runShellCommand(check.run, ctx.projectRoot),
-  );
+  // A waiver is what lets a failing gate be approved, so it is held to the gate's `approval` block like the
+  // approval itself (`approve.ts`): roles and quorum, before any check runs. Like `approve` it cannot tell an
+  // agent that runs the command from a person, and `--owner` is the person's own word (Q229).
+  const refusal = approverRefusal(definition, { kind: 'human' });
+  if (refusal !== undefined) {
+    throw new ForgeError('GATE-508', { gateId, approver: 'human', detail: refusal });
+  }
+  const evaluated = await evaluateFresh(ctx, definition);
   const waiver: Waiver = input;
+  // A waiver excuses failing checks. On a gate that passes there is nothing to excuse, and recording one anyway
+  // would be a standing waiver for whatever fails later (`10` §10.3 rule 1).
+  if (evaluated.passed) throw new ForgeError('GATE-509', { gateId });
   const waived = applyWaiver(evaluated, waiver, Date.parse(clock.now()));
 
+  // The waiver and what it waived: the checks that were failing when it was granted, with the digests of their
+  // output, so a later reader sees what was excused and not only that something was (`10` §10.3 rule 1: waivers
+  // "appear in every report until resolved").
   await emitGateEvent(ctx, 'GateWaived', gateId, {
     reason: input.reason,
     owner: input.owner,
     expiresAt: input.expiresAt,
+    evaluation: {
+      passed: evaluated.passed,
+      checks: recordChecks(evaluated, !evaluated.passed),
+    },
   });
 
   return buildGateReport(definition, waived);

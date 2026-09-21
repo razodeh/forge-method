@@ -5,7 +5,24 @@
  * @see specs/10 §10.3
  * @see PLAN-M5.md P14
  */
-export { evaluateGate } from './evaluate.ts';
+export {
+  approveGate,
+  approverRefusal,
+  recordChecks,
+  type ApprovedCheckRecord,
+  type ApproveGateInput,
+  type GateApprovalSummary,
+  type GateApprover,
+} from './approve.ts';
+export {
+  parseGateDocument,
+  suggestKey,
+  validateGateDocument,
+  type GateDocumentProblem,
+  type GateDocumentProblemCode,
+  type GateDocumentResult,
+} from './document.ts';
+export { evaluateGate, MAX_CHECK_STDERR_CHARS } from './evaluate.ts';
 export { buildGateReport } from './report.ts';
 export { applyWaiver, isApproved } from './waiver.ts';
 export type {
@@ -13,6 +30,7 @@ export type {
   CheckRunner,
   DeterministicCheck,
   DeterministicCheckResult,
+  GateApprovalPolicy,
   GateDefinition,
   GateEvaluationResult,
   GateReport,

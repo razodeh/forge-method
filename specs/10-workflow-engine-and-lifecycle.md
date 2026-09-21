@@ -247,6 +247,34 @@ onReject:
    command output — this is the audit trail.
 5. `G-Deliver` for a production environment is `alwaysHuman` by default and cannot be set otherwise
    without an explicit config flag plus a typed acknowledgement.
+6. `forge gate approve <id>` evaluates the gate exactly as `forge gate check` does and refuses (exit 3) unless every
+   deterministic check passed or a valid, unexpired waiver recorded for the gate covers it; it also refuses an
+   approver the gate's `approval` block does not name (`roles`, and a `quorum` above 1 it cannot verify). The
+   `GateApproved` event carries the evaluation (per-check verdicts and sha256 digests of each check's recorded
+   stdout and stderr, the waiver if one was used, the advisory checks as not run). A waiver excuses the checks that
+   were failing when it was granted: it does not cover a check that fails later, and a gate that passes cannot be
+   waived, and `forge gate waive` is held to the same `approval` block. The command is a person's: it cannot tell an
+   agent that runs it from one (and `--owner` is the person's own word), so `may_approve` and `alwaysHuman` bind an
+   approver a caller can identify (the engine), not a shell. `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
+   check, is a load error, never an empty gate that passes.
+
+**Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows
+success; anything the evaluator cannot read as success is a failure with a stated `reason`, and a failing check
+can only be waived (rule 1):
+- It exits `0` or `1` (`0` success, `1` failure; any other code means it did not reach a verdict, whatever it
+  printed) and prints one JSON object on stdout. A `forge` command exiting `1` is trusted for its verdict only
+  when that object is a versioned envelope (`{"v":1,...}`); any other program that exits `1` beside a clean body
+  is a contradiction and fails.
+- The object carries no failure marker: no `ok` other than `true`, no `success: false`, no top-level `error` other
+  than `null`, `false` or `""` (the `{"v":1,"ok":false,"error":{...}}` a refused command prints).
+- `failOn` reads at least one field, and every field it reads is present, non-null and of the type the comparison
+  needs (numbers or strings for `<` `>`, one primitive type for `==`/`in`, booleans for `!`/`&&`/`||`). A missing
+  field is not "no findings". A command whose input is missing (no `dist/`, no contracts, a failing `git diff`)
+  reports that as a failing count and a `reason`; it does not pass on "nothing found".
+- A check that is not applicable to a project is declared not applicable by the gate or the check
+  (`appliesTo`, the module that ships it), never by a command that prints a passing result for nothing.
+Every check's result records its stdout, its exit code and its stderr (stderr sanitised of secrets and control bytes,
+and capped) as the audit trail (rule 4); an approval or waiver event carries their digests.
 
 ### Gate catalogue
 

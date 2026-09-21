@@ -29,6 +29,9 @@ import { parse as parseYaml } from 'yaml';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { CheckRunner, DeterministicCheck, GateDefinition } from '../../src/gates/types.ts';
 
+/** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
+const like = (text: string): string => expect.stringContaining(text) as string;
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const checksDir = path.join(repoRoot, 'modules', 'fm-web', 'checks');
 
@@ -84,7 +87,7 @@ describe('checks/a11y.check.yaml — real command, real parser, real failOn', ()
   it('has the real DeterministicCheck shape plus a non-empty remedy (19 §19.6)', () => {
     expect(raw.id).toBe('a11y:audit');
     expect(raw.run.length).toBeGreaterThan(0);
-    expect(raw.failOn).toBe('violations > 0');
+    expect(raw.failOn).toBe('violations > 0 || errors > 0');
     expect(raw.remedy.trim().length).toBeGreaterThan(0);
   });
 
@@ -97,7 +100,11 @@ describe('checks/a11y.check.yaml — real command, real parser, real failOn', ()
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, filesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 0,
+      filesScanned: 1,
+      errors: 0,
+    });
   });
 
   it('fails against a fixture missing alt text and a lang attribute', async () => {
@@ -113,11 +120,74 @@ describe('checks/a11y.check.yaml — real command, real parser, real failOn', ()
     expect(parsed.violations).toBeGreaterThan(0);
   });
 
-  it('passes vacuously (0 violations) against a project with no dist/ directory yet, rather than crashing', async () => {
+  // `PLAN-M13.md` P41: this used to assert a PASS ("passes vacuously ... rather than crashing"). A gate that
+  // scans nothing has shown nothing (`10` §10.3 fails closed, P35), so a missing input is a failure with a
+  // reason, waivable by a person, never a silent pass.
+  it('FAILS, with a reason, against a project with no dist/ directory: nothing scanned is not a pass', async () => {
     const dir = await makeFixtureDir();
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      violations: 0,
+      filesScanned: 0,
+      errors: 1,
+      reason: like('no dist/ directory'),
+    });
+  });
+
+  it('FAILS against a dist/ directory that holds no HTML page at all', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'dist'), { recursive: true });
+    await writeFile(path.join(dir, 'dist', 'app.js'), 'x');
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      errors: 1,
+      reason: like('no built HTML pages'),
+    });
+  });
+
+  it('FAILS an empty page and a page with no <html> element: nothing there was shown to be accessible', async () => {
+    for (const html of ['', '<div><img src="a.png" alt="x"></div>']) {
+      const dir = await makeFixtureDir();
+      await mkdir(path.join(dir, 'dist'), { recursive: true });
+      await writeFile(path.join(dir, 'dist', 'index.html'), html);
+      const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+      expect(result.passed).toBe(false);
+      expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+        filesScanned: 1,
+        violations: 1,
+      });
+    }
+  });
+
+  it.each([
+    ['an empty lang', '<html lang=""><body></body></html>'],
+    [
+      'a bare <html> followed by a script that mentions <html lang=en>',
+      '<html><head><script>var t="<html lang=en>"</script></head></html>',
+    ],
+    [
+      'a bare <html> followed by a comment holding a lang tag',
+      '<html><!-- <html lang="en"> --></html>',
+    ],
+  ])('FAILS %s (the lang must be on the real <html> element and non-empty)', async (_l, html) => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'dist'), { recursive: true });
+    await writeFile(path.join(dir, 'dist', 'index.html'), html);
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+  });
+
+  it('accepts a boolean alt (an empty alt marks a decorative image, which is valid)', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'dist'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'dist', 'index.html'),
+      '<html lang="en"><img src="a.png" alt></html>',
+    );
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 0, filesScanned: 0 });
   });
 
   it('fails against a decoy fixture whose only "alt"/"lang"-shaped attributes are data-alt/data-lang, not the real attribute -- a real defect a critic round found and this pins: a bare \\b word-boundary regex treats the hyphen in "data-alt" exactly like real whitespace', async () => {
@@ -129,7 +199,11 @@ describe('checks/a11y.check.yaml — real command, real parser, real failOn', ()
     );
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ violations: 2, filesScanned: 1 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      violations: 2,
+      filesScanned: 1,
+      errors: 0,
+    });
   });
 });
 
@@ -139,7 +213,7 @@ describe('checks/bundle-size.check.yaml — real command, real parser, real fail
   it('has the real DeterministicCheck shape plus a non-empty remedy (19 §19.6)', () => {
     expect(raw.id).toBe('bundle:size');
     expect(raw.run.length).toBeGreaterThan(0);
-    expect(raw.failOn).toBe('bytes > budgetBytes');
+    expect(raw.failOn).toBe('bytes > budgetBytes || errors > 0');
     expect(raw.remedy.trim().length).toBeGreaterThan(0);
   });
 
@@ -149,7 +223,12 @@ describe('checks/bundle-size.check.yaml — real command, real parser, real fail
     await writeFile(path.join(dir, 'dist', 'app.js'), 'x'.repeat(1000));
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(true);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ bytes: 1000, budgetBytes: 250000 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      bytes: 1000,
+      budgetBytes: 250000,
+      filesFound: 1,
+      errors: 0,
+    });
   });
 
   it('fails when the built bundle exceeds budget, and ignores source maps', async () => {
@@ -159,6 +238,45 @@ describe('checks/bundle-size.check.yaml — real command, real parser, real fail
     await writeFile(path.join(dir, 'dist', 'app.js.map'), 'y'.repeat(9_000_000));
     const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
     expect(result.passed).toBe(false);
-    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({ bytes: 400_000, budgetBytes: 250_000 });
+    expect(JSON.parse(result.checks[0]!.stdout)).toEqual({
+      bytes: 400_000,
+      budgetBytes: 250_000,
+      filesFound: 1,
+      errors: 0,
+    });
+  });
+
+  it('FAILS, with a reason, when there is no dist/ directory (a bundle nobody built is not under budget)', async () => {
+    const dir = await makeFixtureDir();
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      bytes: 0,
+      filesFound: 0,
+      errors: 1,
+      reason: like('no dist/ directory'),
+    });
+  });
+
+  it('FAILS when dist/ holds only source maps (nothing that ships was measured)', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'dist'), { recursive: true });
+    await writeFile(path.join(dir, 'dist', 'app.js.map'), 'y');
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({ errors: 1, filesFound: 0 });
+  });
+
+  it('FAILS when every built file under dist/ is empty (zero bytes shipped is nothing measured)', async () => {
+    const dir = await makeFixtureDir();
+    await mkdir(path.join(dir, 'dist'), { recursive: true });
+    await writeFile(path.join(dir, 'dist', 'app.js'), '');
+    const result = await evaluateGate(oneCheckGate(toDeterministicCheck(raw)), dir, realRunner);
+    expect(result.passed).toBe(false);
+    expect(JSON.parse(result.checks[0]!.stdout)).toMatchObject({
+      filesFound: 1,
+      errors: 1,
+      reason: like('empty'),
+    });
   });
 });

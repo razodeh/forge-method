@@ -24,9 +24,9 @@
 # still does. See test/fm-data-checks.test.ts's own regression fixture (two pipelines, `orders` and
 # `orders-archive`, with only `orders-archive`'s own test file present).
 #
-# A project with no `docs/forge/kb/data/pipelines/` directory yet passes vacuously
-# (`{"violations": 0, "pipelinesScanned": 0}`), the identical convention `checks/lineage.check.yaml`
-# already establishes.
+# A project with no `docs/forge/kb/data/pipelines/` directory, or none with a pipeline document in it,
+# FAILS (`errors: 1` and a `reason`, `failOn` reads `errors > 0`), the identical rule
+# `checks/lineage.check.yaml` establishes: nothing scanned is nothing shown (`PLAN-M13.md` P41).
 #
 # A second critic round found the fixed-regex draft above still accepted a DIRECTORY whose name
 # happened to match the stem pattern (`fs.readdirSync(testsDir)` with no `withFileTypes`, then
@@ -41,9 +41,9 @@ name: Pipeline data quality test coverage
 description: >
   Scans docs/forge/kb/data/pipelines/*.md and fails if any pipeline doc has no matching, non-empty
   real test file under test/data-quality/ whose filename stem exactly matches the pipeline's basename.
-run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const pipelinesDir="docs/forge/kb/data/pipelines";const testsDir="test/data-quality";function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function escapeRegExp(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}let testEntries=[];try{testEntries=fs.readdirSync(testsDir,{withFileTypes:true});}catch(e){if(e.code!=="ENOENT")throw e;}const testFiles=testEntries.filter((e)=>e.isFile()).map((e)=>e.name);let violations=0,pipelinesScanned=0;for(const f of walk(pipelinesDir)){pipelinesScanned++;const base=path.basename(f,".md");const stemPattern=new RegExp("^"+escapeRegExp(base)+"\\.");const match=testFiles.find((name)=>stemPattern.test(name)&&fs.statSync(path.join(testsDir,name)).size>0);if(!match)violations++;}console.log(JSON.stringify({violations,pipelinesScanned}));'''
+run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const pipelinesDir="docs/forge/kb/data/pipelines";const testsDir="test/data-quality";function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function escapeRegExp(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}let testEntries=[];try{testEntries=fs.readdirSync(testsDir,{withFileTypes:true});}catch(e){if(e.code!=="ENOENT")throw e;}const testFiles=testEntries.filter((e)=>e.isFile()).map((e)=>e.name);let violations=0,pipelinesScanned=0,errors=0,reason;if(!isDir(pipelinesDir)){errors=1;reason="no docs/forge/kb/data/pipelines directory found: document each pipeline before this gate runs";}else{for(const f of walk(pipelinesDir)){pipelinesScanned++;const base=path.basename(f,".md");const stemPattern=new RegExp("^"+escapeRegExp(base)+"\\.");const match=testFiles.find((name)=>stemPattern.test(name)&&fs.statSync(path.join(testsDir,name)).size>0);if(!match)violations++;}if(pipelinesScanned===0){errors=1;reason="no pipeline documents (*.md) found under docs/forge/kb/data/pipelines";}}const out={violations,pipelinesScanned,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
-failOn: 'violations > 0'
+failOn: 'violations > 0 || errors > 0'
 remedy: >
   Re-run the command above locally and read its printed counts, then for each pipeline doc named by a
   violation, add a real, non-empty test file under test/data-quality/ whose filename starts with that

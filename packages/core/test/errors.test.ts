@@ -29,6 +29,12 @@ import {
  * adding a code without adding its keys fails, which is the point.
  */
 const SAMPLE_DETAILS = {
+  // `GATE-506`/`GATE-507`/`GATE-508` (`PLAN-M13.md` P41): an unreadable gate document; an approval refused
+  // because checks fail; an approver the gate does not name.
+  file: 'G-Verify.gate.yaml',
+  key: 'checks.deterministic',
+  failing: 'check test:run',
+  approver: 'human',
   // `RUN-082` (`PLAN-M13.md` P10): a stage id no Epic declares.
   stageId: 'mvp',
   // `VCS-010`/`BUD-003`/`RUN-085` (`PLAN-M13.md` P12): a dirty working tree; an admission refusal by a
