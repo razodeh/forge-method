@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=6997897e8549773e0dce5f76d0427f7d090a272a3a5f1d599cfd7d5fd89e598e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e24d35159208d0648b10fc44a2ad08a46da4aa398ca06060cb4bc849d26748ff — edits will be overwritten; use overrides/
 id: harden
 name: Harden
 version: 1.0.0
@@ -10,6 +10,8 @@ steps:
     agent: security
     brief: briefs/security-hardening-pass.md
     outputs: [{ type: Defect, cardinality: many }]
+    # A class of vulnerability the pass could not examine is recorded as an OpenQuestion (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: performance-pass
     kind: agent
@@ -17,10 +19,44 @@ steps:
     brief: briefs/performance-hardening-pass.md
     dependsOn: [security-pass]
     outputs: [{ type: Defect, cardinality: many }]
+    # An NFR the pass could not measure is recorded as an OpenQuestion (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
+
+  # `16` §16.6's own placement table, P8 Stabilization: `war-room` "on Sev1", `five-whys` "in RCA"
+  # (`PLAN-M10.md` P14).
+  #
+  # `war-room`'s own trigger is a real, evaluable expression (`@forge/methods`'s own
+  # `SESSION_TRIGGERS['war-room']`, `defect.severity == 'Sev1'`), carried on `when` for a future
+  # scheduler piece to evaluate (no per-step conditional-dispatch mechanism exists yet).
+  #
+  # `five-whys` is not one of `16` §16.2's own ten closed session types — it is an RCA *technique*, the
+  # identical relationship `--technique scamper` already has to `brainstorm` (`16` §16.6's own worked
+  # CLI example). `war-room`'s own purpose already names "RCA hand-off" as a real output, so `five-whys`
+  # is realized as a second, distinct `war-room` session (this workflow's own RCA-phase invocation, not
+  # the Sev1 live-response one above) with the technique folded into its own framed question — the exact
+  # same "technique folded into question text, no forced technique-selection mechanism" stance
+  # `forge session`'s own CLI already takes for `--technique` (`packages/cli/src/commands/loop/
+  # session.ts`). Recorded in `SPEC-QUESTIONS.md` Q165.
+  #
+  # Both are dependency-terminal (nothing depends on either) so neither can block `stable-gate` when its
+  # own trigger does not apply.
+  - id: war-room
+    kind: session
+    sessionType: war-room
+    dependsOn: [security-pass]
+    when: "defect.severity == 'Sev1'"
+    question: 'What is the live blocking failure, who owns which part of the response, and what is the mitigation timeline?'
+
+  - id: five-whys-rca
+    kind: session
+    sessionType: war-room
+    dependsOn: [performance-pass]
+    question: "Running a five-whys: why did this defect actually happen, one 'why' deeper each round, until we reach the real root cause?"
 
   - id: fix-findings
     # A single agent step handling every finding, not a "fanout over run.findings" -- compile.ts's own
-    # documented limitation (SPEC-QUESTIONS.md Q71/Q88) means no step outside a fanout can depend on
+    # documented limitation (SPEC-QUESTIONS.md Q71/Q88; only a `merge` step over the same collection can now
+    # name a fanout's per-item instances, Q211) means no other step outside a fanout can depend on
     # "all of that fanout's own instances": a fanout's own id is never added to compilePlan's own
     # resolvable groupIds set the way a parallel/sequence group's id is, so a downstream gate step has
     # no way to express "wait for every fix-findings item" if fix-findings were a fanout. Handling the
@@ -32,6 +68,9 @@ steps:
     brief: briefs/fix-defect.md
     dependsOn: [performance-pass]
     inputs: ['artifact:Defect(*)']
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The findings name no paths.
+    produces: ['**', '!@protected']
 
   - id: stable-gate
     kind: gate

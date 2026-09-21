@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=9d78dbcdcd9ff195c4af8f6eafc39f25f7a885b9b1f303bc7208505dd3b7e928 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=572812c7ca97a2ccad2ffdea2803e22220ffff63d14e52fa7069f123912115c6 — edits will be overwritten; use overrides/
 id: po
 name: Product Owner
 version: 1.0.0
@@ -27,14 +27,18 @@ inputs:
 outputs:
   - type: Story
     schema: story.schema.json
-    path: docs/forge/specs/stories/{id}.md
+    path: docs/forge/specs/stories/STORY-*.md
+    cardinality: many
+  - type: Epic
+    schema: epic.schema.json
+    path: docs/forge/specs/epics/EPIC-*.md
     cardinality: many
 kb_write:
   - product/backlog/**
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - ls*
     - rg*

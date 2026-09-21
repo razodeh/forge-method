@@ -105,8 +105,9 @@ const entries = Object.keys(PROMPT_INDEX)
   });
 
 describe('PROMPTS_B content', () => {
-  it('covers exactly the 32 keys of the 15 agents assigned to this batch, in the index', () => {
-    expect(entries).toHaveLength(32);
+  it('covers exactly the 33 keys of the 15 agents assigned to this batch, in the index', () => {
+    // 32 until `PLAN-M13.md` P18 restored `pm.write-prd` (`write-prd` moved to `pm`, `SPEC-QUESTIONS.md` Q220/Q224).
+    expect(entries).toHaveLength(33);
     expect(new Set(entries.map((entry) => entry.agentId)).size).toBe(15);
     for (const { key } of entries)
       expect(PROMPT_INDEX[key], key).toBe(`templates/prompts/${key}.md`);

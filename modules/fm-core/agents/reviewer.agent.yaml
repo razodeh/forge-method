@@ -23,10 +23,12 @@ inputs:
     - artifact: Story
   optional: []
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: ReviewReport
     schema: review-report.schema.json
-    path: docs/forge/sessions/reviews/{id}.md
+    path: docs/forge/sessions/reviews/REVIEW-*.md
     cardinality: many
 
 kb_write: []

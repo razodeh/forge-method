@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=ad1de0835fe68ffe3f74dc9c0aa6fd263c9e551bdc3840e99dd48042ef442280 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ad1de0835fe68ffe3f74dc9c0aa6fd263c9e551bdc3840e99dd48042ef442280 — edits will be overwritten; use overrides/
 id: RISK-001
 statement: '<what could go wrong>'
 likelihood: '<how likely this is, e.g. low, medium, high>'

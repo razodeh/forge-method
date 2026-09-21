@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=596bae2c9093914541b1419051d3daacc9df9b23f1d6876d68d254361d23bb35 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=12273cc8dfe31f22621bbaab6e75c94d1bfd71a200aefb54617d369122a339b0 — edits will be overwritten; use overrides/
 id: test-architect
 name: Test Architect
 version: 1.0.0
@@ -25,18 +25,15 @@ inputs:
   optional:
     - artifact: NFR
 outputs:
-  - type: TestStrategy
-    schema: test-strategy.schema.json
-    path: docs/forge/kb/engineering/test-strategy.md
-  - type: Task
-    schema: task.schema.json
-    path: docs/forge/specs/test-plan.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - engineering/testing/**
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - ls*
     - rg*
@@ -72,4 +69,4 @@ skills:
 prompt:
   system: prompts/test-architect.system.md
   briefs:
-    plan-testing: prompts/test-architect.plan-testing.md
+    write-test-plan: prompts/test-architect.write-test-plan.md

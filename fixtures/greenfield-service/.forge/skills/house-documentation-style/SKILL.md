@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=b685474c8789605f828f8d937a65657a30b5a8aa4b6274f51a823dce57b51102 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=b685474c8789605f828f8d937a65657a30b5a8aa4b6274f51a823dce57b51102 — edits will be overwritten; use overrides/
 id: house-documentation-style
 name: House documentation style
 version: 1.0.0

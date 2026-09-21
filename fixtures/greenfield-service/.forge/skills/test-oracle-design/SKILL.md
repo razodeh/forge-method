@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=1a6d900cefd0a2ae8871d2976a5b3ae4f38af0a17ba6a0d975383b13c667d938 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=1a6d900cefd0a2ae8871d2976a5b3ae4f38af0a17ba6a0d975383b13c667d938 — edits will be overwritten; use overrides/
 id: test-oracle-design
 name: Test oracle design
 version: 1.0.0

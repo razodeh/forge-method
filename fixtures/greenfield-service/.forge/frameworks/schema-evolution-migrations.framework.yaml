@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=ea9f1371154e767dab1c39a4517c47fe2c8f4e37174549064c6f2f0c72ce8ea3 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ea9f1371154e767dab1c39a4517c47fe2c8f4e37174549064c6f2f0c72ce8ea3 — edits will be overwritten; use overrides/
 id: schema-evolution-migrations
 name: Schema evolution and migrations
 owner_agent: data-architect

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=51d93e9f54d00e0c7ae1d89a3fed892a5a5e6c30257845f150d9fb72ec85b4c2 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=33e254b4aa5578f380de7f002b264f1dda6dea58d418a13a44ca5bdacd58f688 — edits will be overwritten; use overrides/
 id: integration-architect
 name: Integration Architect
 version: 1.0.0
@@ -6,7 +6,10 @@ tier: specialised
 mandate: >
   Owns external systems, protocols, contracts, idempotency, and failure-mode
   design for every cross-boundary interaction. Every interaction has a stated
-  delivery guarantee and a stated failure path, not just a happy path.
+  delivery guarantee and a stated failure path, not just a happy path, and every
+  public contract carries a real versioning strategy this module's own
+  api-versioning framework produces -- an InterfaceContract with no versioning
+  ADR behind it is treated as an incomplete contract, not a deferred decision.
 decisions_owned:
   - integration.protocol_selection
   - integration.contracts
@@ -27,18 +30,18 @@ inputs:
 outputs:
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
 kb_write: []
 kb_propose:
   - architecture/integration/**
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - ls*
     - rg*
@@ -69,4 +72,4 @@ skills:
 prompt:
   system: prompts/integration-architect.system.md
   briefs:
-    design-integration: prompts/integration-architect.design-integration.md
+    draft-contract: prompts/integration-architect.draft-contract.md

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=4c42d92c95acb68b5fc26385ad42ebcd76f420dc7860d18adff8b65cda3948ba — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=0da060673f0be6938cb76cb5fd6138eb3fd631ed83b7cc895ecac53911008a3f — edits will be overwritten; use overrides/
 id: define-product
 name: Product Definition
 version: 1.0.0
@@ -13,12 +13,36 @@ steps:
     brief: briefs/write-vision.md
     outputs: [{ type: Vision }]
 
+  # `16` §16.6's own placement table, P2 Product Definition: `brainstorm` on capabilities, before the
+  # capability-producing step; `story-refinement`, once candidate capabilities/stories exist to refine
+  # (`PLAN-M10.md` P14). Both unconditional.
+  - id: capability-brainstorm
+    kind: session
+    sessionType: brainstorm
+    dependsOn: [write-vision]
+    question: 'Given this vision, what capabilities could satisfy it — beyond the obvious first ideas?'
+
   - id: write-prd
     kind: agent
-    agent: po
+    # `pm`, not `po` (`05` §5.2: scope, priority and the PRD/capabilities are the product manager's; the
+    # product owner owns stories, `po.system.md` reserves scope to the PM). It was `po` only by accident of
+    # authorship (`PLAN-M13.md` P15, `SPEC-QUESTIONS.md` Q220).
+    agent: pm
     brief: briefs/write-prd.md
-    dependsOn: [write-vision]
+    dependsOn: [write-vision, capability-brainstorm]
     outputs: [{ type: Capability, cardinality: many }, { type: NFR, cardinality: many }]
+    # The capability index (the Capability and NFR files are the outputs), plus the Assumption and
+    # OpenQuestion registers the brief records unvalidated claims and blocking questions in (Q216).
+    produces:
+      - 'docs/forge/kb/product/capabilities.md'
+      - 'docs/forge/kb/assumptions.md'
+      - 'docs/forge/kb/open-questions.md'
+
+  - id: story-refinement
+    kind: session
+    sessionType: story-refinement
+    dependsOn: [write-prd]
+    question: 'Which of these candidate capabilities are ready to become well-formed stories, and what is missing from the ones that are not?'
 
   - id: write-ux-spec
     kind: agent
@@ -26,8 +50,10 @@ steps:
     brief: briefs/write-ux-spec.md
     dependsOn: [write-prd]
     outputs: [{ type: HandoffRecord, subtype: ux-spec }]
+    # The UX spec itself (the HandoffRecord only registers it), and the OpenQuestion register (Q216).
+    produces: ['docs/forge/kb/product/ux-spec.md', 'docs/forge/kb/open-questions.md']
 
   - id: product-gate
     kind: gate
     gate: G-Product
-    dependsOn: [write-ux-spec]
+    dependsOn: [write-ux-spec, story-refinement]

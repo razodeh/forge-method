@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=520a945e0deb83915b83b96959a5c57b95f2a7423c7e9db2afc68d93332b3c70 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=520a945e0deb83915b83b96959a5c57b95f2a7423c7e9db2afc68d93332b3c70 — edits will be overwritten; use overrides/
 id: build-artifact-strategy
 name: Build and artifact strategy
 owner_agent: platform

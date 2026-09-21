@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=377325967389b2d0d40d9ceb678ce4efa5bb2e7bf14feeb81751c213874377ab — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=377325967389b2d0d40d9ceb678ce4efa5bb2e7bf14feeb81751c213874377ab — edits will be overwritten; use overrides/
 id: threat-modelling-stride
 name: Threat modelling with STRIDE
 version: 1.0.0

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=1cd40ef3bc348df5bddd9f3db2d1fbae527211b8f5a81a37df00106628bb1cf7 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4cf298a3bab2face235133555c3393c8ce4fc9b4e3619c547b962c24cae05c0c — edits will be overwritten; use overrides/
 id: architect
 name: System Architect
 version: 1.2.0
@@ -29,21 +29,25 @@ inputs:
     - artifact: DomainModel
     - kb: architecture/*
 outputs:
-  - type: ArchitectureSpec
-    schema: architecture-spec.schema.json
-    path: docs/forge/kb/architecture/architecture-spec.md
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - architecture/**
   - decisions/**
@@ -52,7 +56,7 @@ kb_propose:
   - constraints/**
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - git log*
     - git diff*
@@ -94,8 +98,8 @@ skills:
 prompt:
   system: prompts/architect.system.md
   briefs:
-    design-system: prompts/architect.design-system.md
-    review-change: prompts/architect.review-change.md
+    select-architecture-style: prompts/architect.select-architecture-style.md
+    change-impact-analysis: prompts/architect.change-impact-analysis.md
 extends: base-engineer
 mcp:
   - server: acme-confluence
@@ -104,7 +108,7 @@ mcp:
       - get_page
 ceiling:
   tools:
-    write: false
+    write: true
     exec:
       - git *
       - ls*

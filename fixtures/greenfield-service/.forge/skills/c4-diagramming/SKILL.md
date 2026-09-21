@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=841e72b3805327866d23fcc572ec5435dcb03dcfe8334de056091c5cefcbff67 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=841e72b3805327866d23fcc572ec5435dcb03dcfe8334de056091c5cefcbff67 — edits will be overwritten; use overrides/
 id: c4-diagramming
 name: C4 diagramming
 version: 1.0.0

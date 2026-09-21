@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=7402f02cc66776bb77980b0dcb0dc9909078db550d2c903d53e2bc3a6ec6cc0b — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7402f02cc66776bb77980b0dcb0dc9909078db550d2c903d53e2bc3a6ec6cc0b — edits will be overwritten; use overrides/
 id: nodejs-typescript-conventions
 name: Node/TypeScript stack conventions
 version: 1.0.0

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=ffa2715293f3d70c2607ede395b6b1d0a93a81b179c711359ae136f8aa0be33e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ffa2715293f3d70c2607ede395b6b1d0a93a81b179c711359ae136f8aa0be33e — edits will be overwritten; use overrides/
 id: agent-executable-tests
 name: Making tests agent-executable
 owner_agent: test-architect

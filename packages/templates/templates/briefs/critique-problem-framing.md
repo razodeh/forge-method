@@ -4,10 +4,12 @@ you do not approve or reject the gate. A human decides.
 
 ### What you review
 
-The gate's evidence: the `Vision` and every `Assumption`, plus the success metrics the discovery
-workflow produced, the KB's `constraints/*` and any discovery session records in your context. Read
-them in full. If something you need is not in your context, request it (`FORGE_REQUEST_CONTEXT:`);
-never assume it exists.
+The gate's evidence: every `Assumption` and every `NFR` the discovery workflow recorded, plus the
+problem framing it wrote in the KB (`product/problem.md`, `product/users.md`, `product/scope.md`),
+the success metrics (`MET-###` entries in `product/metrics.md`, which are not NFRs), the KB's
+`constraints/*` and any discovery session records in your context. The `Vision` is written after
+this gate, so it may not exist yet; if it does, read it too. Read them in full. If something you
+need is not in your context, request it (`FORGE_REQUEST_CONTEXT:`); never assume it exists.
 
 ### Already checked mechanically, so do not redo it
 
@@ -19,11 +21,12 @@ find empty, say so.
 
 ### Criteria
 
-- **PF1 Problem, not solution.** The Vision's `problem` says who is hurt, what they do today, and
-  why that is costly, without presupposing an implementation. Fail when the problem statement is a
-  feature in disguise.
-- **PF2 Specific users.** `target_users` names segments with distinguishing traits and the situation
-  of use. Fail on "everyone", "users" or a segment with no source.
+- **PF1 Problem, not solution.** The problem statement (`product/problem.md`, or the Vision's
+  `problem` when a Vision exists) says who is hurt, what they do today, and why that is costly,
+  without presupposing an implementation. Fail when the problem statement is a feature in disguise.
+- **PF2 Specific users.** The users (the `persona:<slug>` entries of `product/users.md`, or the
+  Vision's `target_users`) name segments with distinguishing traits and the situation of use. Fail
+  on "everyone", "users" or a segment with no source.
 - **PF3 Falsifiable success.** Beyond the presence the mechanical check confirms, each success
   metric has a target with a stated basis and an `instrumentation` that could really measure it, and
   it moves only if the problem is actually solved. Fail on vanity metrics and on targets with no
@@ -31,8 +34,9 @@ find empty, say so.
 - **PF4 Honest assumptions.** Every claim about users or the market has a source or is an
   `Assumption` with confidence and `validate_by`. Fail when an assumption is stated as fact, or the
   riskiest load-bearing assumption has no cheap validation.
-- **PF5 Scope against constraints.** `non_goals` and scope are explicit, and no constraint (budget,
-  technology, regulatory, operational) is silently violated by the framing, including implicit ones.
+- **PF5 Scope against constraints.** Scope and non-goals (`product/scope.md`, or the Vision's
+  `non_goals`) are explicit, and no constraint (budget, technology, regulatory, operational) is
+  silently violated by the framing, including implicit ones.
 - **PF6 Alternatives.** If a brainstorm or discovery session record is in your context, more than
   one framing was considered and the choice of this one is explained. With no such record the
   criterion is `n/a`.

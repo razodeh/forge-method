@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=ff7fb40ddd21bf86c99ba130cc6d13a50a4933fa1a1d58c7278703d24a06cc34 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ff7fb40ddd21bf86c99ba130cc6d13a50a4933fa1a1d58c7278703d24a06cc34 — edits will be overwritten; use overrides/
 id: python-conventions
 name: Python stack conventions
 version: 1.0.0

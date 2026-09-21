@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=3823b107b096a82a56c7d9ef9f9a23372e67f68422623e7e65588ac0f162d423 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=6be738ea20242547e8d16129f657c07245b644dbe9e0866705a07a7627a9af30 — edits will be overwritten; use overrides/
 id: data-architect
 name: Data Architect
 version: 1.0.0
@@ -30,14 +30,15 @@ inputs:
 outputs:
   - type: DataModel
     schema: data-model.schema.json
-    path: docs/forge/kb/data/data-model.md
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/data/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
 kb_write:
   - data/**
@@ -45,7 +46,7 @@ kb_propose:
   - constraints/**
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - git log*
     - ls*
@@ -80,4 +81,4 @@ skills:
 prompt:
   system: prompts/data-architect.system.md
   briefs:
-    design-data-model: prompts/data-architect.design-data-model.md
+    model-data: prompts/data-architect.model-data.md

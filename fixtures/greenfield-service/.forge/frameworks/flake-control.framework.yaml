@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=63216dd0ed95fa42f70fc48558d019bf26cdd2d1b0a8e53b67052a1c31aa2d26 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=63216dd0ed95fa42f70fc48558d019bf26cdd2d1b0a8e53b67052a1c31aa2d26 — edits will be overwritten; use overrides/
 id: flake-control
 name: Flake control policy
 owner_agent: test-architect

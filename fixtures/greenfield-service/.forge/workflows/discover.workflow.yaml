@@ -1,16 +1,37 @@
-# forge:generated v=1 hash=e231381c746b32c85c11d375b09fed2b37a3532089786858e7d39ecfd6c07450 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8cfdf7f5f5f583129606717a79c129b50d09aa946f16b394ceb6f3a5f71e7ef8 — edits will be overwritten; use overrides/
 id: discover
 name: Discovery
 version: 1.0.0
 description: Frames the problem, users, competitive landscape, and success metrics (10 §10.2 P1).
 levels: [L2, L3, L4]
+# `16` §16.6's own placement table, P1 Discovery: `discovery-interview`, `brainstorm` on the problem
+# space — both unconditional, both feeding `frame-problem`'s own synthesis (`PLAN-M10.md` P14).
 steps:
+  - id: discovery-interview
+    kind: session
+    sessionType: discovery-interview
+    question: 'What do we not yet know about the target users, their domain, and this problem that a written problem statement would otherwise silently assume?'
+
+  - id: problem-brainstorm
+    kind: session
+    sessionType: brainstorm
+    dependsOn: [discovery-interview]
+    question: 'Before we commit to one framing, what is the widest real set of ways this problem could be framed and addressed?'
+
   - id: frame-problem
     kind: agent
     agent: analyst
     brief: briefs/frame-problem.md
+    dependsOn: [discovery-interview, problem-brainstorm]
     inputs: ['kb:constraints/**']
     outputs: [{ type: Assumption, cardinality: many }]
+    # The three `product/` KB entries the brief names, and the Risk and OpenQuestion registers it appends to (Q216).
+    produces:
+      - 'docs/forge/kb/product/problem.md'
+      - 'docs/forge/kb/product/users.md'
+      - 'docs/forge/kb/product/scope.md'
+      - 'docs/forge/kb/risks.md'
+      - 'docs/forge/kb/open-questions.md'
 
   - id: define-metrics
     kind: agent
@@ -18,6 +39,8 @@ steps:
     brief: briefs/define-success-metrics.md
     dependsOn: [frame-problem]
     outputs: [{ type: NFR, cardinality: many }]
+    # The metrics KB entry, and the Assumption register the brief records unvalidated targets in (Q216).
+    produces: ['docs/forge/kb/product/metrics.md', 'docs/forge/kb/assumptions.md']
 
   - id: problem-gate
     kind: gate

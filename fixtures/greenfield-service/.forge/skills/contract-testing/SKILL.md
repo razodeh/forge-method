@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=89bd9736ab4bf03db4855dd450365e0e8d227d92894ddaf7799ca6e861b5be07 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=89bd9736ab4bf03db4855dd450365e0e8d227d92894ddaf7799ca6e861b5be07 — edits will be overwritten; use overrides/
 id: contract-testing
 name: Contract testing
 version: 1.0.0

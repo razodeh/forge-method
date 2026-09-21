@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=8cae90a666fff46a5b665d79daed61ae7e43a4d18043222bfedf0fa1ebcfb974 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=50cc95b7ae1432102949dfc85a6ff87d4c3b5cfa045de22f033fa4d12e9cddd7 — edits will be overwritten; use overrides/
 id: domain-modeler
 name: Domain Modeler (DDD)
 version: 1.0.0
@@ -6,7 +6,11 @@ tier: specialised
 mandate: >
   Owns bounded contexts, ubiquitous language, aggregates, and the context map
   for a domain-driven design. Every aggregate has a stated transactional
-  boundary and a stated invariant it protects.
+  boundary and a stated invariant it protects, and every bounded context's own
+  external-facing operations are traceable to a real InterfaceContract this
+  module's own contract-test-cycle workflow can verify -- a context map with no
+  corresponding contract is exactly the "an interaction with no stated failure
+  path" gap integration-architect's own persona refuses to accept downstream.
 decisions_owned:
   - domain.bounded_contexts
   - domain.aggregates
@@ -28,7 +32,8 @@ inputs:
 outputs:
   - type: DataModel
     schema: data-model.schema.json
-    path: docs/forge/kb/architecture/domain-model.md
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
   - type: ContextMap
     schema: context-map.schema.json
     path: docs/forge/kb/architecture/context-map.md
@@ -58,6 +63,7 @@ parallel_safety:
 gates:
   produces_evidence_for:
     - G-Design
+    - G-Integration
   may_approve: []
 frameworks:
   - decomposition-boundaries
@@ -66,5 +72,3 @@ skills:
   - writing-an-adr
 prompt:
   system: prompts/domain-modeler.system.md
-  briefs:
-    model-domain: prompts/domain-modeler.model-domain.md

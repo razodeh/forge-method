@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=4bae1634e189b2bd0beaee8ad03c6a4dfb70b02b526d3221ae811ca427d15d55 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4bae1634e189b2bd0beaee8ad03c6a4dfb70b02b526d3221ae811ca427d15d55 — edits will be overwritten; use overrides/
 id: NFR-0001
 type: NFR
 schemaVersion: 1

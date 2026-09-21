@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=137ab33a2e6c423ccb717e47f431beea75458ba7fcd9f7bd0df29099b9b46b77 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=137ab33a2e6c423ccb717e47f431beea75458ba7fcd9f7bd0df29099b9b46b77 — edits will be overwritten; use overrides/
 id: build-toolchain
 name: Build system and toolchain selection
 owner_agent: platform

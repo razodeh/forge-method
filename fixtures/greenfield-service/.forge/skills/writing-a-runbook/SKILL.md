@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=70d57e61f0ac8879a4f48b3fa9273f45ac18347eb56ca44e82782826ae709fda — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=70d57e61f0ac8879a4f48b3fa9273f45ac18347eb56ca44e82782826ae709fda — edits will be overwritten; use overrides/
 id: writing-a-runbook
 name: Writing a runbook
 version: 1.0.0

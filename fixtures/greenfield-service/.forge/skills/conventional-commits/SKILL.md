@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=c17a7c6462e94820bf87939fd48ab131b55e77e5cd46e504a34fdf576ac72b3f — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=c17a7c6462e94820bf87939fd48ab131b55e77e5cd46e504a34fdf576ac72b3f — edits will be overwritten; use overrides/
 id: conventional-commits
 name: Conventional commits
 version: 1.0.0

@@ -8,7 +8,10 @@ not something you tune to fit your code.
   files: the tests were written by another session and are not yours to edit), `interfaces`, `data`
   and `context_refs`.
 - Every `InterfaceContract`. The ones the story lists are frozen: implement to them exactly, and
-  import generated types where the contract names a generator rather than re-declaring shapes.
+  import generated types where the contract names a generator rather than re-declaring shapes. A
+  story whose `interfaces` is empty may still consume a contract: each `Needs interface:` line in
+  its body names an operation, and the contract that covers it is one the freezing step wrote under
+  `docs/forge/specs/interfaces/`.
 - `kb:engineering/standards`: the coding standards, layout conventions and error-handling rules for
   this project.
 - The failing tests in the story's test paths, and the implementation plan from the earlier planning

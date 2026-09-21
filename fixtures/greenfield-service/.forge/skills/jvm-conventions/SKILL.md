@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=baae4dce1f59ff752388c79b6ac3ad8d72fe3507906abddf02ede4c91eedbe2d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=baae4dce1f59ff752388c79b6ac3ad8d72fe3507906abddf02ede4c91eedbe2d — edits will be overwritten; use overrides/
 id: jvm-conventions
 name: JVM (Java/Kotlin) stack conventions
 version: 1.0.0

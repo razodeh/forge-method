@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=548f9c855ace619a30d56c345d6e2f7aaa73c926932c28af21b3cedcd38bd3db — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=36402aa1992df60ad3e3bbcd0765230f1814ad11855772a25d8b8855d41c67ed — edits will be overwritten; use overrides/
 id: STORY-001
 type: Story
 schemaVersion: 1
@@ -14,7 +14,9 @@ epic: '<the parent Epic id>'
 capability: '<the parent Capability id>'
 storyType: feature
 size: S
-owner_role: '<the role that owns this story>'
+owner_role:
+  '<an implementation role that writes this story code (an agent that produces code, such as backend
+  or frontend; never a document-authoring or judging role: forge spec validate refuses it)>'
 depends_on: []
 blocked_by: []
 interfaces: []

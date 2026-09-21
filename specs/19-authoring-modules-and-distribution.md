@@ -172,6 +172,11 @@ It supports capability degradation simulation (turn off `mcp`, `skills`, `sessio
 the documented fallbacks), failure injection (rate limits, timeouts, malformed output, out-of-claim
 writes, injection attempts), and deterministic replay from recorded real runs.
 
+The fake adapter is strict by default: a session whose prompt is empty, a bare path, or lacks the nine
+blocks of `05` §5.3 (with the verbatim operating contract in block [1]) is refused
+(`STRICT_PROMPT_VIOLATION`), so a test cannot pass on a prompt no real agent could follow. Tests that
+hand-build requests pass `{ strict: false }`.
+
 ## 19.5 Packaging and distribution
 
 ### Overlay bundles

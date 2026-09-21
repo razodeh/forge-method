@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=1bd6029f8feb9041801dd7665230c56d455493dcadf5472e484342c0104edb5e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d22a04ab01ac001a8e67f8a1f3daae784064610de3d5754f43fe93d157cff66c — edits will be overwritten; use overrides/
 id: backend
 name: Backend Engineer
 version: 1.0.0
@@ -27,8 +27,11 @@ outputs:
     path: src/**
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write: []
 kb_propose:
   - engineering/standards.md

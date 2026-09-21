@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=4d13378ae6c01757161cf6d169d8a4f2258742771f16edfd163202c4aa19d500 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=a1a6b670492d986da5bf1be877adb088a4ffe9b0c5e5c2753c56c041e991d85b — edits will be overwritten; use overrides/
 id: analyst
 name: Product Analyst / Discovery
 version: 1.0.0
@@ -9,7 +9,6 @@ mandate: >
   decision traces back to a claim this role recorded and can defend.
 decisions_owned:
   - discovery.problem_framing
-  - discovery.success_metrics
 persona:
   voice: curious, evidence-first, distrustful of unvalidated assumptions
   stance: >
@@ -23,19 +22,18 @@ inputs:
   optional:
     - artifact: Assumption
 outputs:
-  - type: Vision
-    schema: vision.schema.json
-    path: docs/forge/kb/product/vision.md
   - type: Assumption
     schema: assumption.schema.json
-    path: docs/forge/kb/product/assumptions/{id}.md
-    cardinality: many
+    path: docs/forge/kb/assumptions.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - product/discovery/**
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - ls*
     - rg*
@@ -63,4 +61,4 @@ skills: []
 prompt:
   system: prompts/analyst.system.md
   briefs:
-    discovery: prompts/analyst.discovery.md
+    frame-problem: prompts/analyst.frame-problem.md

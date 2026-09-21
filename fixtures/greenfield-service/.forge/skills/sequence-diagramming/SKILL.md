@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=8587ffa706062c369e5931ba1a533ecd7d7c103377a03a117fc7ce0c286f7283 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8587ffa706062c369e5931ba1a533ecd7d7c103377a03a117fc7ce0c286f7283 — edits will be overwritten; use overrides/
 id: sequence-diagramming
 name: Sequence diagramming (failure paths, not just the happy path)
 version: 1.0.0

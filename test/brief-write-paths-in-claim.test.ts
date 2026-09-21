@@ -1070,8 +1070,9 @@ describe('every path a brief tells the agent to write lies in the step claim', (
         'docs/forge/plans/views/stages.mmd',
       ],
       'initialize-project:decide-repo-strategy': ['docs/forge/kb/delivery/repo-strategy.md'],
-      'deliver-stage:design-pipeline': ['docs/forge/kb/delivery/pipeline/x'],
-      'deliver-stage:design-deployment': ['docs/forge/kb/delivery/pipeline/x'],
+      // `08` §8.11.3's location, M13 P18 (Q224): the briefs used to say `delivery/pipeline/`.
+      'deliver-stage:design-pipeline': ['docs/forge/kb/delivery/views/pipeline.mmd'],
+      'deliver-stage:design-deployment': ['docs/forge/kb/delivery/views/deployment-x.mmd'],
       'fm-service/contract-test-cycle.workflow.yaml:draft-contract': [
         'docs/forge/specs/interfaces/orders-api.yaml',
       ],

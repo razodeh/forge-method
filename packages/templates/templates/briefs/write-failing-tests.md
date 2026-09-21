@@ -6,7 +6,8 @@ later, it is built against.
 ### Inputs
 
 - The `Story`: read every acceptance criterion (id, given/when/then, kind, and `nfr` where present),
-  `files_expected`, `interfaces` and the test ids in `tests`.
+  `files_expected`, `interfaces` (and, where it is empty, the `Needs interface:` lines in the body,
+  each covered by a contract under `docs/forge/specs/interfaces/`) and the test names in `tests`.
 - The `HandoffRecord` from the preceding planning step: the implementation plan (`step` names the
   plan step) in the single-story loop, or the stage's test plan (a table of acceptance criterion,
   story, test name, layer, oracle, data and command) in a stage run. The input is a bare
@@ -37,9 +38,10 @@ above), and nowhere else.
 - Name each test with the id of the acceptance criterion it proves, for example
   `AC-014-2 returns 422 for an empty invoice`, and add the framework's machine-readable annotation
   where one exists, so the harness can map results back. One test proves exactly one criterion; a
-  criterion may have several tests. Carry the allocated `TEST-###` id as well (in the annotation or
-  the test's own description) so the traceability matrix can bind the test to its criterion. Cover
-  the failure and edge criteria as thoroughly as the happy path.
+  criterion may have several tests. Use the test name the story binds to the criterion in its
+  `tests` field, which already begins with the criterion's id, so the traceability matrix can bind
+  the test to its criterion. Do not invent test ids of your own. Cover the failure and edge criteria
+  as thoroughly as the happy path.
 - Use the strongest oracle available for each criterion: a specified value worked out by hand from
   the criterion, then round-trip, metamorphic, property or differential checks. A smoke assertion is
   never enough for an acceptance criterion.

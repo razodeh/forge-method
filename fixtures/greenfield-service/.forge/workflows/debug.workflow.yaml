@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=a7347cf7350e1efce4934060b8f128bba2ae1ebf39900cca912e254ab1c109d6 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=cbea9335b7191799f17c41b04bfcb945f1b502fa34314a7a34ce3623a7f78b04 — edits will be overwritten; use overrides/
 id: debug
 name: Debug
 version: 1.0.0
@@ -19,6 +19,9 @@ steps:
     brief: briefs/run-rca-framework.md
     inputs: ['artifact:Defect({{defectId}})']
     outputs: [{ type: RCA }]
+    # The Defect's "Reproduction" section, which the brief has the step edit. The reproduction artifact itself (a test or a
+    # script) is put wherever the agent chooses: the brief names no location, so it is not claimed here (Q216).
+    produces: ['docs/forge/reports/defects/**']
     limits: { maxTurns: 45 }
 
   - id: fix
@@ -26,11 +29,19 @@ steps:
     agent: backend
     brief: briefs/fix-defect.md
     dependsOn: [run-rca]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
+    produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
+  # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs
+  # the project's test layers: the whole suite, including any regression test written in this loop, must be green.
+  # That is only part of 13 §13.2 step 8 PROVE: nothing here checks that the reproduction was promoted to a
+  # regression test named with the defect id, or that a race test fails on the old code. No command checks
+  # those yet (SPEC-QUESTIONS.md Q213).
   - id: prove-fix
     kind: command
-    run: 'forge story verify --json'
+    run: 'forge test run --json'
     dependsOn: [fix]
 
   - id: record

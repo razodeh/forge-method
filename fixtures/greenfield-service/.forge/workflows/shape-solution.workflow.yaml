@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=34d673d8ef2e77a24e7fd604a5509c0577eb110e2d0a2a532f7856c1eb3349d7 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=10f4e78d2a284057b63bbef6c4ee325617c5dd7625b7e26949ef186b020f2522 — edits will be overwritten; use overrides/
 id: shape-solution
 name: Solution Shaping
 version: 1.0.0
@@ -14,6 +14,10 @@ steps:
     brief: briefs/select-architecture-style.md
     inputs: ['artifact:Capability(*)', 'kb:constraints/**']
     outputs: [{ type: ADR, cardinality: many }]
+    # The architecture spec, NFR strategy, component inventory, views (with their `.mmd.yaml` Diagram
+    # sidecars) and one component-scoped KB entry per component (a file under `architecture/`, name left to
+    # the agent) are this step's to write beyond the ADRs, so it claims the architecture section (Q216).
+    produces: ['docs/forge/kb/architecture/**']
 
   - id: model-data
     kind: agent
@@ -21,6 +25,21 @@ steps:
     brief: briefs/model-data.md
     dependsOn: [select-architecture]
     outputs: [{ type: DataModel }]
+    # The five `data/` KB entries, the Assumption register (an estimate without a basis is stated as an assumption with
+    # `validate_by`), and the ER views the brief names, the state diagrams it asks for (`08`
+    # §8.11.3 puts them under `domain/views/`), and the storage ADR (Q216).
+    produces:
+      - 'docs/forge/kb/data/data-model.md'
+      - 'docs/forge/kb/data/access-patterns.md'
+      - 'docs/forge/kb/data/consistency.md'
+      - 'docs/forge/kb/data/migrations.md'
+      - 'docs/forge/kb/data/lifecycle.md'
+      - 'docs/forge/kb/assumptions.md'
+      - 'docs/forge/kb/data/views/*.mmd'
+      - 'docs/forge/kb/data/views/*.mmd.yaml'
+      - 'docs/forge/kb/domain/views/*.mmd'
+      - 'docs/forge/kb/domain/views/*.mmd.yaml'
+      - 'docs/forge/kb/decisions/ADR-*.md'
 
   - id: select-stack
     kind: agent
@@ -28,6 +47,11 @@ steps:
     brief: briefs/select-tech-stack.md
     dependsOn: [model-data]
     outputs: [{ type: ADR, cardinality: many }]
+    # The "Deployable units and runtimes" table lives in the architecture spec, and the library list and
+    # conventions are added to the engineering standards (Q216).
+    produces:
+      - 'docs/forge/kb/architecture/architecture-spec.md'
+      - 'docs/forge/kb/engineering/standards.md'
 
   - id: threat-model
     kind: agent
@@ -35,8 +59,45 @@ steps:
     brief: briefs/threat-model.md
     dependsOn: [select-stack]
     outputs: [{ type: HandoffRecord, subtype: threat-model }]
+    # The threat model and its data-flow view (the HandoffRecord only registers them), the Risk register,
+    # and the ADR the brief allows for a decision still open (Q216).
+    produces:
+      - 'docs/forge/kb/architecture/threat-model.md'
+      - 'docs/forge/kb/architecture/views/threat-model.mmd'
+      - 'docs/forge/kb/architecture/views/threat-model.mmd.yaml'
+      - 'docs/forge/kb/risks.md'
+      - 'docs/forge/kb/decisions/ADR-*.md'
+
+  # `16` §16.6's own placement table, P3 Solution Shaping (`PLAN-M10.md` P14):
+  #   - `tradeoff` "for contested ADRs" — after the ADR-producing steps, unconditional.
+  #   - `design-review` "before G-Design" — the one placement the table's own text explicitly says must
+  #     gate, so `design-gate` depends on it directly.
+  #   - `premortem` "at L3+" — a real, triggered condition (`@forge/methods`'s own
+  #     `SESSION_TRIGGERS.premortem`, `level == 'L3' || level == 'L4'`), carried on `when` for a future
+  #     scheduler piece to evaluate (no per-step conditional-inclusion mechanism exists yet — see
+  #     `SessionStep.when`'s own doc comment). Positioned as a dependency-terminal step (nothing depends
+  #     on it, including `design-gate`) precisely so it can never deadlock/block the gate at L2, where it
+  #     is not supposed to run at all.
+  - id: tradeoff-review
+    kind: session
+    sessionType: tradeoff
+    dependsOn: [select-stack]
+    question: 'Which of these ADR decisions has no clear winner, and how do the real options actually compare?'
+
+  - id: design-review
+    kind: session
+    sessionType: design-review
+    dependsOn: [threat-model, tradeoff-review]
+    question: 'Does this proposed design actually satisfy the requirements and hold up against the risks the threat model identified?'
+
+  - id: premortem
+    kind: session
+    sessionType: premortem
+    dependsOn: [design-review]
+    when: "level == 'L3' || level == 'L4'"
+    question: "It's six months after this design shipped and it failed — why?"
 
   - id: design-gate
     kind: gate
     gate: G-Design
-    dependsOn: [threat-model]
+    dependsOn: [design-review]

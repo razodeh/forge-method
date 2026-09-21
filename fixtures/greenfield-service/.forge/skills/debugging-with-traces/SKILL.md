@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=b3e2d14890b744c77ae6a0e88dbad6b8b13487d4d21dfa810bd609c15e933158 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=b3e2d14890b744c77ae6a0e88dbad6b8b13487d4d21dfa810bd609c15e933158 — edits will be overwritten; use overrides/
 id: debugging-with-traces
 name: Debugging with traces
 version: 1.0.0

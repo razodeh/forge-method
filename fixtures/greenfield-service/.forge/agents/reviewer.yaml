@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=8e8f8f51537c0bebfd3f9f2e7d618de2a87eb9ff98184ca13cecc0e74550855d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f4c254eb1f4f8ec9583659f3bbcccac37ef08aa7698dd112b26e09b9a56afbec — edits will be overwritten; use overrides/
 id: reviewer
 name: Code Reviewer
 version: 1.0.0
@@ -24,7 +24,7 @@ inputs:
 outputs:
   - type: ReviewReport
     schema: review-report.schema.json
-    path: docs/forge/sessions/reviews/{id}.md
+    path: docs/forge/sessions/reviews/REVIEW-*.md
     cardinality: many
 kb_write: []
 kb_propose: []

@@ -27,16 +27,15 @@ inputs:
   optional:
     - artifact: NFR
 
-# TestStrategy, not HandoffRecord (a fresh critic round flagged the original reuse of that ill-fitting
-# type -- HandoffRecord is a specific, rigid inter-agent artifact shape, 05 §5.6, not a stand-in for
-# "any markdown document").
+# The test plan and the strategy are documents (`specs/test-plan.md`, `kb/engineering/testing.md`, the steps'
+# `produces`); no registered type describes them, so the checkable product of `write-test-plan` and `verify-nfrs`
+# is the HandoffRecord entry that registers each (subtypes `test-plan`, `nfr-verification`).
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
-  - type: TestStrategy
-    schema: test-strategy.schema.json
-    path: docs/forge/kb/engineering/test-strategy.md
-  - type: Task
-    schema: task.schema.json
-    path: docs/forge/specs/test-plan.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - engineering/testing/**

@@ -14,8 +14,9 @@ capability must have a flow map and a state inventory before implementation star
 
 The UX spec, written as a KB entry in the `product` section (`product/ux-spec.md`,
 `type: knowledge`, with the KB entry body sections), and one `HandoffRecord` entry (subtype
-`ux-spec`, recorded as its `step` value because the entry has no `subtype` key; `from: ux`,
-`to: architect`, `step: write-ux-spec → product-gate`) that registers it.
+`ux-spec`; `from: ux`, `to: architect`, `step: write-ux-spec → product-gate`) that registers it. The
+entry has no `subtype` key, so the first string in `delivered` is `subtype: ux-spec`, the second is
+the spec's path.
 
 The spec contains:
 

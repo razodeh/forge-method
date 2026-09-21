@@ -24,8 +24,10 @@ approval:
   required: true
   roles: [human]
   quorum: 1
+# What the discover steps produce before this gate (`frame-problem` -> Assumption, `define-metrics` -> NFR). The
+# Vision is written by `define-product:write-vision`, after this gate, so it is not evidence here (M13 P18, E3).
 evidence:
-  - artifact: Vision
+  - artifact: NFR(*)
   - artifact: Assumption(*)
 onReject:
   action: replan

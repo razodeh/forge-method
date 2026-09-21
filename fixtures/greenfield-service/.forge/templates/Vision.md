@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=b4aa6b410634ccbcf9f4c3e64f579c8c53f7fd87c9f256a437d363cb99620db4 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=b4aa6b410634ccbcf9f4c3e64f579c8c53f7fd87c9f256a437d363cb99620db4 — edits will be overwritten; use overrides/
 id: VIS-001
 type: Vision
 schemaVersion: 1

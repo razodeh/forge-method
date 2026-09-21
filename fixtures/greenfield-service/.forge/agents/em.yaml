@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=63f89495a3d765612479fa1c4f302f75ddd445cdc985dd3b513c49f6191fb0db — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=799e59b5b2a74cd86afb86e4a151dd3eb94faaf46103612544a3522620b65f4d — edits will be overwritten; use overrides/
 id: em
 name: Engineering Manager / Delivery Lead
 version: 1.0.0
@@ -25,18 +25,20 @@ inputs:
 outputs:
   - type: Risk
     schema: risk.schema.json
-    path: docs/forge/kb/delivery/risks/{id}.md
-    cardinality: many
+    path: docs/forge/kb/risks.md
   - type: SessionRecord
     schema: session-record.schema.json
-    path: docs/forge/sessions/retros/{id}.md
+    path: docs/forge/sessions/SESSION-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - delivery/sequencing/**
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - git log*
     - ls*

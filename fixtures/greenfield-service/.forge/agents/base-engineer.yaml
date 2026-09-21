@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=78348a34376a6e5f197f373d1406383c14107bd1c405dc22fd1684446b4154b3 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7f93b676b550717bffffbae300fac3d484c42574a5833aa5c459c3098686e831 — edits will be overwritten; use overrides/
 id: base-engineer
 name: Base Engineer
 version: 1.0.0
@@ -29,8 +29,11 @@ outputs:
     path: src/**
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write: []
 kb_propose:
   - engineering/standards.md

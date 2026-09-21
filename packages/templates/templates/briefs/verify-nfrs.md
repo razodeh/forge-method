@@ -27,11 +27,13 @@ and the environment. A p50 does not verify a p95 target.
 
 ### Produce
 
-A `HandoffRecord` (the nfr-verification handoff) with `step` naming this step, and `to` set to the
-role that decides what to do with failures, which is the human approving `G-Verify`. Use the fields:
+A `HandoffRecord` (subtype `nfr-verification`) with `step: verify-nfrs`, and `to` set to the role
+that decides what to do with failures, which is the human approving `G-Verify`. The entry has no
+`subtype` key, so the first string in `delivered` is `subtype: nfr-verification` (`step` names this
+step, and the output check reads the subtype from the `delivered` line). Use the fields:
 
-- `delivered`: one entry per NFR: its id, target, outcome, and the report path and measured value
-  that support the outcome.
+- `delivered`: after the `subtype:` line, one entry per NFR: its id, target, outcome, and the report
+  path and measured value that support the outcome.
 - `open_questions`: every NFR that could not be verified in this environment and what would be
   needed to verify it, and every NFR whose target is not numeric and so cannot be verified as
   written.

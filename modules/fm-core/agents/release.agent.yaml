@@ -23,13 +23,12 @@ inputs:
     - kb: delivery/**
   optional: []
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
-  # ReleasePlan, matching 05 §5.2's own "Release plan, changelog" outputs column directly, not the
-  # ill-fitting HandoffRecord type a fresh critic round flagged here.
-  - type: ReleasePlan
-    schema: release-plan.schema.json
-    path: docs/forge/kb/delivery/release-notes/{id}.md
-    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - delivery/release/**

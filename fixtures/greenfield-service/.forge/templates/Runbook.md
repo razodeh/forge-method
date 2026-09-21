@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=8ed5429e5cc8b973e5dfe9bdb8f4bdace8bd4c9d3e94ce7487593fef31adefb8 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8ed5429e5cc8b973e5dfe9bdb8f4bdace8bd4c9d3e94ce7487593fef31adefb8 — edits will be overwritten; use overrides/
 id: RUN-001
 type: Runbook
 schemaVersion: 1

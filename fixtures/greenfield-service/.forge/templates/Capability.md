@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=afe60d3e4f80bed1480820898fa915f3a96658e97f642ad0a8dbbcb52a32fa81 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=afe60d3e4f80bed1480820898fa915f3a96658e97f642ad0a8dbbcb52a32fa81 — edits will be overwritten; use overrides/
 id: CAP-001
 type: Capability
 schemaVersion: 1

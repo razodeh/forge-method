@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=c7c826d300fc5b2781b9f2db0b682fd3d6ffb61ad050486c7c367b6a4d1ec469 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=c7c826d300fc5b2781b9f2db0b682fd3d6ffb61ad050486c7c367b6a4d1ec469 — edits will be overwritten; use overrides/
 id: RCA-001
 type: RCA
 schemaVersion: 1

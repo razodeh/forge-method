@@ -28,17 +28,20 @@ inputs:
   optional:
     - artifact: NFR
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: DataModel
     schema: data-model.schema.json
-    path: docs/forge/kb/data/data-model.md
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/data/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
 
 kb_write:

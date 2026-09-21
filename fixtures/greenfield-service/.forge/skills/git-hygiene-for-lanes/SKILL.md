@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=d222542f258396c4af912f36a3f31bf5527222743eda0720d113670363facaec — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d222542f258396c4af912f36a3f31bf5527222743eda0720d113670363facaec — edits will be overwritten; use overrides/
 id: git-hygiene-for-lanes
 name: Git hygiene for lanes
 version: 1.0.0

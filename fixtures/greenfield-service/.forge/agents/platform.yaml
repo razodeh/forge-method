@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=c21da3fc5b93bae4507e09bb438ef687004bf6ed55c6f88bc4f240c8af3e9dad — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7dc41efb850c6589d4bf930012824539ac99acecb232f07f383c3a399077836e — edits will be overwritten; use overrides/
 id: platform
 name: Platform / DevEx Engineer
 version: 1.0.0
@@ -27,21 +27,11 @@ inputs:
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
-  - type: RepoLayoutSpec
-    schema: repo-layout-spec.schema.json
-    path: docs/forge/kb/delivery/repo-strategy/repo-layout-spec.md
-  - type: BuildSpec
-    schema: build-spec.schema.json
-    path: docs/forge/kb/delivery/build/build-spec.md
-  - type: Scaffold
-    schema: scaffold.schema.json
-    path: scripts/scaffold/**
   - type: Environment
     schema: environment.schema.json
-    path: docs/forge/kb/delivery/environments/{id}.md
-    cardinality: many
+    path: docs/forge/kb/delivery/environments.md
 kb_write:
   - delivery/build/**
   - delivery/repo-strategy/**
@@ -87,4 +77,5 @@ skills:
 prompt:
   system: prompts/platform.system.md
   briefs:
-    initialize-project: prompts/platform.initialize-project.md
+    decide-repo-strategy: prompts/platform.decide-repo-strategy.md
+    scaffold-project: prompts/platform.scaffold-project.md

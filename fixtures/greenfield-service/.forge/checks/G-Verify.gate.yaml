@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=72ec500ba934926232fa60743e88b4c83686824eda9ee8db9e53cc2d6e97ebea — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=c72165eb9017001e3dba65765a71c39a95b486ba9b391d8cddc584ea15d98144 — edits will be overwritten; use overrides/
 id: G-Verify
 name: Verify gate
 phase: P7
@@ -21,6 +21,15 @@ checks:
     - id: test:typecheck
       run: 'forge test run --rule typecheck --json'
       failOn: 'errors > 0'
+    - id: test:oracle-lint
+      run: 'forge test run --rule oracle-lint --json'
+      failOn: 'errors > 0'
+    - id: coverage:ratchet
+      run: 'forge test coverage --rule ratchet --json'
+      failOn: 'regressions > 0'
+    - id: test:quarantine-cap
+      run: 'forge test flaky --json'
+      failOn: 'quarantined > 5'
   advisory:
     - id: verification-review
       agent: critic

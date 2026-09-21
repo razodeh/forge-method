@@ -35,12 +35,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionRequest } from '@forge/adapter-kit';
 import { ProjectPaths } from '@forge/core';
-import { executeStep, promptRecordDirName, type ExecuteStepContext } from '@forge/engine/dispatch';
+import {
+  executeStep,
+  outputGlob,
+  outputPathCoveredBy,
+  promptRecordDirName,
+  resolveStepClaim,
+  type ExecuteStepContext,
+} from '@forge/engine/dispatch';
 import { dispatchAgentStep } from '@forge/engine/interaction';
 import { compileRunPlan } from '@forge/engine/plan';
 import type { StepNode } from '@forge/engine/plan';
 import { parseWorkflow, type Workflow, type WorkflowStep } from '@forge/engine/workflow';
 import { configSchema, type ForgeConfig } from '@forge/schemas/config';
+import { artifactTypeById } from '@forge/schemas/registry';
 import { WORKFLOW_INDEX } from '@forge/templates';
 import {
   checkSessionRequestPrompt,
@@ -938,12 +946,75 @@ async function checkAgentStep(
   const blocks = blocksOf(request.systemPrompt.text);
   const raw = await readRawAgent(String(node.agent));
   const contract = blocks.get(5) ?? '';
-  for (const output of raw.outputs ?? []) {
-    if (!contract.includes(output.type) || !contract.includes(output.path)) {
+  // Block [5] states what the engine enforces for THIS step (`PLAN-M13.md` P18, Q224): the declared outputs, each at the
+  // registry path the output check looks in (with its subtype), and the step's own `produces` (positive entries as the
+  // claim, `!` entries as refusals, never as permissions). It lists nothing else: not the role's other outputs.
+  const declaredTypes = node.outputs.map((declared) => declared.type);
+  const lines = contract.split('\n').filter((line) => line.startsWith('- '));
+  const typedLines = lines.filter(
+    (line) =>
+      !line.startsWith('- Files: ') &&
+      !line.startsWith('- Never write ') &&
+      !line.startsWith('- This step declares no'),
+  );
+  const listedTypes = typedLines.map((line) => /^- (\w+):/.exec(line)?.[1] ?? '');
+  if (listedTypes.sort().join(',') !== [...declaredTypes].sort().join(',')) {
+    problems.push(
+      `${where}: block [5] lists ${listedTypes.join(', ') || 'no type'} but the step declares ${declaredTypes.join(', ') || 'none'}`,
+    );
+  }
+  const claim = resolveStepClaim(node, config.paths, 'strict');
+  for (const declared of node.outputs) {
+    const definition = artifactTypeById(declared.type);
+    if (definition === undefined) {
+      problems.push(`${where}: declares the unregistered output type ${declared.type}`);
+      continue;
+    }
+    const wantPath = outputGlob(definition.id, config.paths);
+    const line = typedLines.find((candidate) => candidate.startsWith(`- ${declared.type}: `));
+    // The line for a declared type states the path per line (not anywhere in the block), the subtype, and, for a
+    // Diagram, the sidecar the check demands.
+    if (line?.includes(`path \`${wantPath}\``) !== true) {
       problems.push(
-        `${where}: block [5] does not state the ${output.type} output at ${output.path}`,
+        `${where}: block [5] does not state the declared ${declared.type} output at the registry path ${wantPath}`,
       );
     }
+    if (
+      declared.subtype !== undefined &&
+      line?.includes(`(subtype: ${declared.subtype})`) !== true
+    ) {
+      problems.push(
+        `${where}: block [5] omits the subtype ${declared.subtype} of ${declared.type}`,
+      );
+    }
+    if (definition.id === 'Diagram' && line?.includes(`\`${wantPath}.yaml\``) !== true) {
+      problems.push(`${where}: block [5] omits the sidecar of the declared Diagram`);
+    }
+    if (!outputPathCoveredBy(definition.id, config.paths, claim.globs)) {
+      problems.push(`${where}: ${declared.type} at ${wantPath} is outside the step's claim`);
+    }
+  }
+  const positives = node.produces.map(String).filter((glob) => !glob.startsWith('!'));
+  const refusals = node.produces.map(String).filter((glob) => glob.startsWith('!'));
+  const filesLine = lines.find((line) => line.startsWith('- Files: '));
+  if (positives.length > 0) {
+    if (filesLine === undefined || positives.some((glob) => !filesLine.includes(`\`${glob}\``))) {
+      problems.push(`${where}: block [5] does not state the claim ${positives.join(', ')}`);
+    }
+  } else if (filesLine !== undefined) {
+    problems.push(`${where}: block [5] states a claim the step does not have`);
+  }
+  // A refusal is never rendered as a permission: no backticked `!...` anywhere in the block.
+  if (contract.includes('`!')) problems.push(`${where}: block [5] renders a "!" entry as a path`);
+  if (refusals.length > 0 && !lines.some((line) => line.startsWith('- Never write '))) {
+    problems.push(`${where}: block [5] omits the refusals ${refusals.join(', ')}`);
+  }
+  if (
+    declaredTypes.length === 0 &&
+    positives.length === 0 &&
+    !contract.includes('names no paths to write')
+  ) {
+    problems.push(`${where}: block [5] of a step with no outputs and no claim does not say so`);
   }
   if (!(blocks.get(3) ?? '').includes(config.project.name)) {
     problems.push(`${where}: block [3] does not name the project "${config.project.name}"`);

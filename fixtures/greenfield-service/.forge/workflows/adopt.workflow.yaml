@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=acbeb5cf1f66d7c50c39d6669d0e2a31f7855f0bb9f7852b42fda8d6570b0fdc — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8c8a73c756d125280ae411253809b901c6015e473f1e73fc2df0834a8942cc0a — edits will be overwritten; use overrides/
 id: adopt
 name: Adopt (Brownfield Ingestion)
 version: 1.0.0
@@ -15,6 +15,8 @@ steps:
     brief: briefs/reverse-derive-specs.md
     dependsOn: [inventory-codebase]
     outputs: [{ type: ADR, cardinality: many }, { type: DataModel }]
+    # "Anything you cannot evidence is an explicit open question" (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: gap-analysis
     kind: agent

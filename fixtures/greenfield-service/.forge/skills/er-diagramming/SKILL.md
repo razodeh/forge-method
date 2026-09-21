@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=3303f22538861b7523282c5d12a21634c9cd7e34fe8185ce4738b1ddb3b8bc40 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=3303f22538861b7523282c5d12a21634c9cd7e34fe8185ce4738b1ddb3b8bc40 — edits will be overwritten; use overrides/
 id: er-diagramming
 name: ER diagramming
 version: 1.0.0

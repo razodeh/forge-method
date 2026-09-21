@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=5fa71630ce35f00489c6208f5647097aa9aad1b080c9f9ad653504928f6fc26f — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=2a263f2a037923fc898139005cdb29bd209db416a17c9377e0e6f311aa165d0d — edits will be overwritten; use overrides/
 id: operate
 name: Operate
 version: 1.0.0
@@ -24,8 +24,24 @@ steps:
     brief: briefs/write-runbooks.md
     dependsOn: [define-slos]
     outputs: [{ type: Runbook, cardinality: many }]
+    # "Where you could not find [a tool], record an open question instead of inventing a[n action]" (Q216).
+    produces: ['docs/forge/kb/open-questions.md']
 
   - id: operate-gate
     kind: gate
     gate: G-Operate
     dependsOn: [write-runbooks]
+
+  # `16` §16.6's own placement table, P10 Operate & Learn: `retro` "at every stage boundary — not
+  # optional" (`PLAN-M10.md` P14). Unlike every other placement in this piece, this one is compile-time
+  # mandatory: `@forge/extensions/workflows`'s own `checkWorkflowStepRemoval` refuses a project overlay
+  # that names this step's own id in `$remove` (`mandatory-retro-step-removed`, identified by
+  # `sessionType: retro`, not by this specific id) — see that function's own doc comment and
+  # `SPEC-QUESTIONS.md` Q165 for the full reasoning. It consumes real event-log data (cost per story,
+  # gate failure rates, rework ratio, review findings by perspective, flake trends), so it depends on
+  # `operate-gate` (the stage's own last gate) rather than running any earlier.
+  - id: retro
+    kind: session
+    sessionType: retro
+    dependsOn: [operate-gate]
+    question: "What did this stage's own real data (cost, gate failures, rework, review findings, flake trends) actually teach us, and what should change?"

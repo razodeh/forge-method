@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=4c0ea8dd8b8372316b1e7d63bb470cb44bfd1d0bbad1e7145673375b60440dc4 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4c0ea8dd8b8372316b1e7d63bb470cb44bfd1d0bbad1e7145673375b60440dc4 — edits will be overwritten; use overrides/
 id: review-boundaries
 name: What review is not allowed to be
 owner_agent: reviewer

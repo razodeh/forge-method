@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=194dbc352c23d88fb7ef1d306fc7189fcd907263a9af8018aaeb710dce53d295 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=194dbc352c23d88fb7ef1d306fc7189fcd907263a9af8018aaeb710dce53d295 — edits will be overwritten; use overrides/
 id: state-diagramming
 name: State diagramming
 version: 1.0.0

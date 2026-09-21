@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=6874854b3abf7e8871dcbea5b42962cbbcf548c698fb3fca2eb6d0522d4265be — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=6874854b3abf7e8871dcbea5b42962cbbcf548c698fb3fca2eb6d0522d4265be — edits will be overwritten; use overrides/
 id: api-reference-writing
 name: API reference writing
 version: 1.0.0

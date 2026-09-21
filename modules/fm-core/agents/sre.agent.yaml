@@ -26,18 +26,33 @@ inputs:
   optional:
     - artifact: NFR
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: Runbook
     schema: runbook.schema.json
-    path: docs/forge/kb/ops/runbooks/{id}.md
+    path: docs/forge/kb/ops/runbooks/RUN-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
+  - type: NFR
+    schema: nfr.schema.json
+    path: docs/forge/specs/nfr/NFR-*.md
+    cardinality: many
+  - type: Defect
+    schema: defect.schema.json
+    path: docs/forge/reports/defects/DEF-*.md
     cardinality: many
 
 kb_write:
   - delivery/pipeline/**
+  # The pipeline and deployment-topology Diagrams live here (`08` §8.11.3), not under delivery/pipeline/ (M13 P18).
+  - delivery/views/**
   - ops/observability/**
 kb_propose: []
 
@@ -59,7 +74,12 @@ limits:
   max_cost_usd: 6.0
 
 parallel_safety:
-  file_ownership: ['docs/forge/kb/delivery/pipeline/**', 'docs/forge/kb/ops/observability/**']
+  file_ownership:
+    [
+      'docs/forge/kb/delivery/pipeline/**',
+      'docs/forge/kb/delivery/views/**',
+      'docs/forge/kb/ops/observability/**',
+    ]
   exclusive: true
 
 gates:

@@ -176,6 +176,13 @@ deferred** (`specs/07` §7.4). No such package exists, and none is planned. If y
 other CLI coding tool through FORGE, the generic declarative adapter above is the general mechanism
 for that — not a stopgap pending a codemachine-specific binding, but the actual, intended answer.
 
+## The fake adapter is strict
+
+`@forge/testkit`'s `FakePlatformAdapter` refuses, by default, a session whose prompt is empty, a
+bare path, or lacks the nine blocks of `05` §5.3 with the verbatim operating contract in block [1]
+(`STRICT_PROMPT_VIOLATION`). A module or adapter test that dispatches through the engine should stay
+strict; a test that hand-builds requests passes `{ strict: false }` (`HAND_BUILT_REQUESTS`).
+
 ## Selection, fallback and routing
 
 ```yaml

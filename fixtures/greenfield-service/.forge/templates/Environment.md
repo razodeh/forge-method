@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=8d6914a2e5707ec080eb03f66758044ffb576c8cfb28e4e9f4900dca38617f93 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8d6914a2e5707ec080eb03f66758044ffb576c8cfb28e4e9f4900dca38617f93 — edits will be overwritten; use overrides/
 id: ENV-001
 purpose: '<what this environment is for, e.g. staging, production>'
 url: '<how to reach it>'

@@ -26,10 +26,16 @@ inputs:
   optional:
     - artifact: NFR
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: Story
     schema: story.schema.json
-    path: docs/forge/specs/stories/{id}.md
+    path: docs/forge/specs/stories/STORY-*.md
+    cardinality: many
+  - type: Epic
+    schema: epic.schema.json
+    path: docs/forge/specs/epics/EPIC-*.md
     cardinality: many
 
 kb_write:

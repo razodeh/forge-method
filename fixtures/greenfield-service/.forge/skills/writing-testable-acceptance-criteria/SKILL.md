@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=2faf2853980146d1035af063a2c64ed6ca97674b58686cfb0b17ba1c0afc2513 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=2faf2853980146d1035af063a2c64ed6ca97674b58686cfb0b17ba1c0afc2513 — edits will be overwritten; use overrides/
 id: writing-testable-acceptance-criteria
 name: Writing testable acceptance criteria
 version: 1.0.0

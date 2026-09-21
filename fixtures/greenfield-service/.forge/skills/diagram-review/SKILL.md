@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=802e295111171751b7d30393b3ba5c9667ba9c9b76e34bf7cd1b583c03569112 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=802e295111171751b7d30393b3ba5c9667ba9c9b76e34bf7cd1b583c03569112 — edits will be overwritten; use overrides/
 id: diagram-review
 name: Diagram review
 version: 1.0.0

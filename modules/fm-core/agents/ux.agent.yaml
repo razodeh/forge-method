@@ -25,13 +25,15 @@ inputs:
   optional:
     - kb: product/discovery/**
 
-# UXSpec, not HandoffRecord (a fresh critic round flagged the original reuse of that ill-fitting type --
-# HandoffRecord is a specific inter-agent artifact, 05 §5.6, not a stand-in for "any markdown document").
+# The UX spec itself is a KB entry (`product/ux-spec.md`, the step's `produces`); no registered type describes it,
+# so the checkable product of `write-ux-spec` is the HandoffRecord entry that registers it (its brief makes the
+# first `delivered` string `subtype: ux-spec`).
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
-  - type: UXSpec
-    schema: ux-spec.schema.json
-    path: docs/forge/kb/design/ux-spec-{id}.md
-    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - design/**

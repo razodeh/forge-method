@@ -33,22 +33,27 @@ inputs:
   optional:
     - kb: engineering/standards.md
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: Code
     schema: code-change.schema.json
     path: 'src/**'
   - type: DataModel
     schema: data-model.schema.json
-    path: docs/forge/kb/data/warehouse/{name}.md
+    path: docs/forge/specs/data/DM-*.md
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/data/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 # The identical file_ownership/kb_write overlap reasoning fm-service's own domain-modeler.agent.yaml
 # already documents for architect's own exclusive architecture/** claim, applied here to

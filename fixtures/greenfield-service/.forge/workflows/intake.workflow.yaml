@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=f5b812dcc51699cb15fe11f50fa6d82dec72480038063790658973b21eda563b — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=531808c3dc012ca49572fffd2505aa8fd6769ad8364ebbe1e81e85526b0a2250 — edits will be overwritten; use overrides/
 id: intake
 name: Intake
 version: 1.0.0
@@ -34,6 +34,8 @@ steps:
     brief: briefs/seed-glossary.md
     dependsOn: [confirm-level]
     outputs: [{ type: Assumption, cardinality: many }]
+    # The brief's main deliverable is the glossary itself, a KB entry that is not a registry output (Q216).
+    produces: ['docs/forge/kb/glossary.md']
 
 onComplete:
   - kind: command

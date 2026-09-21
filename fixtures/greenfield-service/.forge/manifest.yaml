@@ -2,7 +2,7 @@ version: 1
 modules:
   - id: fm-core
     version: 0.0.0
-    checksum: 3e00afd92e753f8df9f12aa1b8051982715c39474bb9558fa74f469671571199
+    checksum: 21efdef3c293c8f047d8ec397a6566dedfec70061b35c79cf50dc41c445d649d
   - id: "@forge/templates"
     version: 0.0.0
-    checksum: 799dd60e5b55c2a8a595e6c364f620eb68d19eeb33bdb69fd07315d1591ecee3
+    checksum: f3e7f9e1cf1a8e790f8c5519cef90fc1f18a02c06e81f6a3f61eae09bc84e3a6

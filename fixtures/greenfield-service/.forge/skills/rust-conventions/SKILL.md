@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=d9c731830456d3346c0139fd3bcfb12392c44404c63bc7ca371b23ecb452bbc8 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d9c731830456d3346c0139fd3bcfb12392c44404c63bc7ca371b23ecb452bbc8 — edits will be overwritten; use overrides/
 id: rust-conventions
 name: Rust stack conventions
 version: 1.0.0

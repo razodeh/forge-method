@@ -24,9 +24,10 @@ stage, so the boundaries you draw here are the ones the whole delivery follows.
   reason.
 - A Mermaid view of the stages and their dependencies at `docs/forge/plans/views/stages.mmd` (a
   `gantt` or `flowchart`), with caption and alt text.
-- One `HandoffRecord` entry (subtype `stage-plan`, recorded as its `step` value because the entry
-  has no `subtype` key; `from: pm`, `to: em`, `step: decompose-stages → review-stages`) that
-  registers the plan. Put the stage plan path in `delivered`, your open questions in
+- One `HandoffRecord` entry (subtype `stage-plan`; `from: pm`, `to: em`,
+  `step: decompose-stages → review-stages`) that registers the plan. The entry has no `subtype` key,
+  so the first string in `delivered` is `subtype: stage-plan` (`step` names the next node and does
+  not carry the subtype) and the second is the stage plan path. Put your open questions in
   `open_questions`, and the sizing assumptions in `assumptions`.
 - Update each non-`wont` capability's `stage` field to the id of the stage that includes it, bump
   its `revision` and add a `changelog` entry. Leave `wont` capabilities as they are

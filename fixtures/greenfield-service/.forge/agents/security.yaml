@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=e3e965d4f79238b05b5315b51b9d826d9852cbcaebd7cddeffa331ce40bfe55d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e48df11f1eca3ef1f389d80ddffc2ddb022fe8d30724c26106584182566a093a — edits will be overwritten; use overrides/
 id: security
 name: Security Engineer (AppSec)
 version: 1.0.0
@@ -27,18 +27,22 @@ inputs:
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
-  - type: ThreatModel
-    schema: threat-model.schema.json
-    path: docs/forge/kb/security/threat-model.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
+  - type: Defect
+    schema: defect.schema.json
+    path: docs/forge/reports/defects/DEF-*.md
+    cardinality: many
 kb_write:
   - security/**
 kb_propose:
   - constraints/**
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - git log*
     - ls*

@@ -32,6 +32,18 @@ export interface StepContext {
   readonly declaredInputIds: readonly string[];
   readonly produces: readonly string[];
   readonly consumes: readonly string[];
+  /** The `outputs` the step declares: `type` and `subtype` as written, and `path`, the registry glob the engine's output
+   * check will look in (`outputGlob`, under the project's configured docs roots). When non-empty, block [5] of the
+   * compiled prompt lists exactly these, at that path, and not the role's whole `outputs[]`. */
+  readonly outputs?: readonly StepOutputContext[] | undefined;
+}
+
+export interface StepOutputContext {
+  readonly type: string;
+  readonly subtype?: string | undefined;
+  readonly path?: string | undefined;
+  /** The step's own `cardinality` for this output (the engine checks the step's, not the role's). */
+  readonly cardinality?: string | undefined;
 }
 
 export interface PackForStepOptions {

@@ -10,7 +10,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
+
+import { WORKFLOW_INDEX } from '@forge/templates';
 
 import { loadAgentDefinition } from '../../src/schema/load.ts';
 import { AgentRegistry } from '../../src/registry/registry.ts';
@@ -58,6 +61,65 @@ const A3_ROSTER_IDS = [
 ] as const;
 
 const BASE_DOCUMENT_IDS = ['base-engineer'] as const;
+
+/** The roles a story can name as its owner (`implement-story`'s run-time agent); pinned, see below. */
+const IMPLEMENTATION_ROLES = [
+  'backend',
+  'base-engineer',
+  'data-engineer',
+  'frontend',
+  'ml-engineer',
+  'mobile',
+] as const;
+
+/** The roles (A3, plus `base-engineer`, the shared base document of the implementation roles) whose shipped steps declare a `HandoffRecord` output: `test-architect` (`write-test-plan`,
+ * `verify-nfrs`), `sre` (`instrument-observability`), `release` (`prepare-store-submission`) and every implementation
+ * role (`implement-story:plan`). Pinned; see the test that uses it. */
+const HANDOFF_DECLARING_A3_ROLES: readonly string[] = [
+  'test-architect',
+  'sre',
+  'release',
+  ...IMPLEMENTATION_ROLES,
+];
+
+/** The agent ids of every shipped workflow step (built-in and module) that declares a `HandoffRecord` output, plus,
+ * for a step run by a run-time owner role, every agent that declares a `Code` output (a story owner). */
+function agentsDeclaringHandoffSteps(): readonly string[] {
+  const ids = new Set<string>();
+  const sources: string[] = Object.values(WORKFLOW_INDEX).map((relative) =>
+    readFileSync(path.join(repoRoot, 'packages', 'templates', relative), 'utf8'),
+  );
+  const modulesDir = path.join(repoRoot, 'modules');
+  for (const module of readdirSync(modulesDir)) {
+    const dir = path.join(modulesDir, module, 'workflows');
+    let files: string[];
+    try {
+      files = readdirSync(dir).filter((file) => file.endsWith('.workflow.yaml'));
+    } catch {
+      continue;
+    }
+    for (const file of files) sources.push(readFileSync(path.join(dir, file), 'utf8'));
+  }
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (typeof value !== 'object' || value === null) return;
+    const record = value as Record<string, unknown>;
+    const outputs = record['outputs'];
+    if (
+      typeof record['agent'] === 'string' &&
+      Array.isArray(outputs) &&
+      outputs.some((output) => (output as { type?: unknown } | null)?.type === 'HandoffRecord')
+    ) {
+      ids.add(record['agent']);
+    }
+    for (const child of Object.values(record)) walk(child);
+  };
+  for (const source of sources) walk(parseYaml(source));
+  return [...ids];
+}
 
 /** The real, complete 28-role `05` §5.2 roster, across all six subsections. */
 const FULL_ROSTER_IDS = [...A2_ROSTER_IDS, ...A3_ROSTER_IDS];
@@ -158,7 +220,17 @@ describe('A3: the seventeen Build / Quality & operations / Facilitation roster a
     // inter-agent-handoff shape (id/from/to/step/timestamp/delivered/...), which a test strategy doc,
     // a README, a cost model, a compliance matrix, release notes, or an objection list could never
     // honestly satisfy.
-    const HANDOFF_SHAPED_IDS = new Set(['orchestrator']);
+    //
+    // `PLAN-M13.md` P18 (`SPEC-QUESTIONS.md` Q224) narrowed this from "no other role" to "no role whose shipped
+    // steps do not declare one": P7's output check made a subtype-tagged `HandoffRecord` entry in
+    // `reports/handoffs.md` the checkable product of ten shipped steps (the entry REGISTERS the document the brief
+    // writes, `from`/`to`/`step`/`delivered` all real), and block [5] of a prompt is rendered from the agent's own
+    // `outputs`, so an agent whose step declares one must list it or its prompt never mentions the register. The
+    // premise is kept: a role that runs no such step still may not list one. The allowed roles are PINNED by hand
+    // (`HANDOFF_DECLARING_A3_ROLES`), and a second test asserts the pin equals the roles the shipped workflows
+    // give such a step, so a step that starts declaring `HandoffRecord` for another role is a deliberate edit here,
+    // not a silent grant.
+    const HANDOFF_SHAPED_IDS = new Set(['orchestrator', ...HANDOFF_DECLARING_A3_ROLES]);
     for (const id of A3_ROSTER_IDS) {
       if (HANDOFF_SHAPED_IDS.has(id)) continue;
       const agent = loadAgent(id);
@@ -171,6 +243,27 @@ describe('A3: the seventeen Build / Quality & operations / Facilitation roster a
     }
   });
 
+  it('the pinned HandoffRecord roles are exactly the A3 roles whose shipped steps declare one, and every pinned implementation role declares Code', () => {
+    const derived = new Set([
+      ...agentsDeclaringHandoffSteps().filter((id) => !id.includes('{{')),
+      // A `{{ownerRole}}` step (`implement-story:plan`) is run by whichever implementation role owns the story: the
+      // pin follows only if some shipped step with a run-time agent still declares one.
+      ...(agentsDeclaringHandoffSteps().some((id) => id.includes('{{'))
+        ? IMPLEMENTATION_ROLES
+        : []),
+    ]);
+    const a3 = new Set<string>(A3_ROSTER_IDS);
+    expect(new Set([...derived].filter((id) => a3.has(id)))).toEqual(
+      new Set(HANDOFF_DECLARING_A3_ROLES.filter((id) => a3.has(id))),
+    );
+    for (const id of IMPLEMENTATION_ROLES) {
+      expect(
+        loadAgent(id).outputs.map((output) => output.type),
+        `${id} is pinned as an implementation role but declares no Code output`,
+      ).toContain('Code');
+    }
+  });
+
   it('every cardinality: many output has a real templated path (a placeholder), so multiple instances cannot collide on one literal file', () => {
     for (const id of A3_ROSTER_IDS) {
       const agent = loadAgent(id);
@@ -179,7 +272,7 @@ describe('A3: the seventeen Build / Quality & operations / Facilitation roster a
         expect(
           output.path,
           `${id}'s "many"-cardinality output "${output.type}" has a non-templated path "${output.path}"`,
-        ).toMatch(/\{[a-zA-Z_]+\}|\*\*/);
+        ).toMatch(/\{[a-zA-Z_]+\}|\*\*|[^/]*\*[^/]*$/);
       }
     }
   });

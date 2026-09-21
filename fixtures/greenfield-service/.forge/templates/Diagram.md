@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=363e6ed68732f8b4e56135aadb4950404ac989d2054613fce0afee0791b1288d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=363e6ed68732f8b4e56135aadb4950404ac989d2054613fce0afee0791b1288d — edits will be overwritten; use overrides/
 id: DIAG-001
 type: Diagram
 schemaVersion: 1

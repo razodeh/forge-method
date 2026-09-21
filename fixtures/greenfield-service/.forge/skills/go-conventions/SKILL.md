@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=1108b6b1ebf561d4c1d29a118a19d397ebc433288de473633eeb8071f2379261 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=1108b6b1ebf561d4c1d29a118a19d397ebc433288de473633eeb8071f2379261 — edits will be overwritten; use overrides/
 id: go-conventions
 name: Go stack conventions
 version: 1.0.0

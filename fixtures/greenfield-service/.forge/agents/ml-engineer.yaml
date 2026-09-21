@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=c80bd04e75d6e0c81d6f1557da1db0210302a5aedb7f10ad25b85cfc1232a377 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=b1d57277f5983c935720c44ca1690544c4f323c1834029ce181340660aed0be6 — edits will be overwritten; use overrides/
 id: ml-engineer
 name: ML Engineer
 version: 1.0.0
@@ -28,8 +28,11 @@ outputs:
     path: src/**
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write: []
 kb_propose:
   - engineering/standards.md
@@ -66,5 +69,5 @@ skills:
 prompt:
   system: prompts/ml-engineer.system.md
   briefs:
-    integrate-model: prompts/ml-engineer.integrate-model.md
+    implement-story: prompts/ml-engineer.implement-story.md
 extends: base-engineer

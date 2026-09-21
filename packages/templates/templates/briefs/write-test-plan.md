@@ -17,11 +17,12 @@ follows and the stage-plan review, and the test author will implement from it.
 
 - The stage test plan in `docs/forge/specs/test-plan.md`, as one section headed with the stage id
   (for example `## Stage mvp`); keep the sections of earlier stages unchanged. Register it with one
-  `HandoffRecord` entry (subtype `test-plan`, recorded as its `step` value because the entry has no
-  `subtype` key; `from: test-architect`, `to: sdet`, `step: write-test-plan → derive-run-plan`). In
-  the record, `delivered` names the plan, `constraints_for_receiver` lists environment and data
-  requirements, and `acceptance_for_receiver` lists the checks the test author must meet, including
-  the non-AC tests below as required additional tests.
+  `HandoffRecord` entry (subtype `test-plan`; `from: test-architect`, `to: sdet`,
+  `step: write-test-plan → derive-run-plan`). The entry has no `subtype` key, so the first string in
+  `delivered` is `subtype: test-plan`, and the second names the plan. In the record,
+  `constraints_for_receiver` lists environment and data requirements, and `acceptance_for_receiver`
+  lists the checks the test author must meet, including the non-AC tests below as required
+  additional tests.
 - If the project has no test strategy yet, create the strategy document (`engineering/testing.md`, a
   KB entry): the pyramid shape and a budget for each layer, and which command runs each layer. Use
   the commands the scaffold provides (`test:unit`, `test:integration`, `test:contract`, `test:e2e`,

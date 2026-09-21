@@ -26,18 +26,20 @@ inputs:
   optional:
     - artifact: DataModel
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
-  # ThreatModel: named directly (10 §10.3's own G-Design evidence block already cites it, SPEC-QUESTIONS.md
-  # Q91) rather than reusing the ill-fitting HandoffRecord type a fresh critic round flagged here --
-  # HandoffRecord is a specific inter-agent artifact (05 §5.6: from/to/step/delivered/...), not a stand-in
-  # for "any markdown document."
-  - type: ThreatModel
-    schema: threat-model.schema.json
-    path: docs/forge/kb/security/threat-model.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
+  - type: Defect
+    schema: defect.schema.json
+    path: docs/forge/reports/defects/DEF-*.md
+    cardinality: many
 
 kb_write:
   - security/**

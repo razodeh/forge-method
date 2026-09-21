@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=aa4da9b87bb3fa68d4225cce5f275e27152ba9e66b9f7d84eb02d40250ef2a27 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=139a4c8ec6f5993915fb93a8b1d6637d7e2b6e701b496c33b0e573588c5a94fb — edits will be overwritten; use overrides/
 id: diagnostician
 name: Diagnostician (RCA)
 version: 1.0.0
@@ -22,7 +22,7 @@ inputs:
 outputs:
   - type: RCA
     schema: rca.schema.json
-    path: docs/forge/sessions/rca/{id}.md
+    path: docs/forge/sessions/rca/RCA-*.md
     cardinality: many
 kb_write: []
 kb_propose:

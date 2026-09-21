@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=39eb997225f16d776e68eccce46440a2bdb1df7caa89158f775be891803ab9b6 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=39eb997225f16d776e68eccce46440a2bdb1df7caa89158f775be891803ab9b6 — edits will be overwritten; use overrides/
 id: WAIVER-001
 reason: '<why this waiver is being granted>'
 owner: '<the role accountable for this waiver>'

@@ -46,12 +46,13 @@ Use this table to explain the cost of your proposal to the human.
 
 ### What to produce
 
-One `HandoffRecord` entry (subtype `level-proposal`, recorded as its `step` value because the entry
-has no `subtype` key) with `from: analyst`, `to: human`, `step: propose-level → confirm-level`. In
-`delivered`, the first string is the proposed level and the one-paragraph reasoning, followed by one
-string per signal in the form `signal: value (source)`. Every unknown signal goes in
-`open_questions`, and every signal you inferred rather than read goes in `assumptions` with its
-confidence and how to validate it.
+One `HandoffRecord` entry (subtype `level-proposal`) with `from: analyst`, `to: human`,
+`step: propose-level → confirm-level`. The entry has no `subtype` key, so the first string in
+`delivered` is `subtype: level-proposal`, which is how the output check and a reader recognise the
+record (`step` names the next node and does not carry the subtype). The second string is the
+proposed level and the one-paragraph reasoning, followed by one string per signal in the form
+`signal: value (source)`. Every unknown signal goes in `open_questions`, and every signal you
+inferred rather than read goes in `assumptions` with its confidence and how to validate it.
 
 ### Acceptance criteria
 

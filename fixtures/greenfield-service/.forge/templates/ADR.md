@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=d5b4866b4704edb96b60abe3f5b3900b44b4c25953206b89c43d661865b818c8 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d5b4866b4704edb96b60abe3f5b3900b44b4c25953206b89c43d661865b818c8 — edits will be overwritten; use overrides/
 id: ADR-0001
 type: ADR
 schemaVersion: 1

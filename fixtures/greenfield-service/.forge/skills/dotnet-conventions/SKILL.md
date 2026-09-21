@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=0a9bb964a5da396edb8f1f9fde7a5df1e707a38f768e933f46b27ec531c14909 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=0a9bb964a5da396edb8f1f9fde7a5df1e707a38f768e933f46b27ec531c14909 — edits will be overwritten; use overrides/
 id: dotnet-conventions
 name: .NET stack conventions
 version: 1.0.0

@@ -30,9 +30,9 @@ describe('loadAgentDefinition', () => {
     expect(agent.persona.voice).toContain('precise');
     expect(agent.inputs.required).toHaveLength(3);
     expect(agent.inputs.optional).toHaveLength(2);
-    expect(agent.outputs).toHaveLength(4);
+    expect(agent.outputs).toHaveLength(5);
     expect(agent.outputs.find((o) => o.type === 'ADR')?.cardinality).toBe('many');
-    expect(agent.outputs.find((o) => o.type === 'ArchitectureSpec')?.cardinality).toBeUndefined();
+    expect(agent.outputs.find((o) => o.type === 'HandoffRecord')?.cardinality).toBeUndefined();
     expect(agent.kb_write).toEqual(['architecture/**', 'decisions/**']);
     expect(agent.kb_propose).toEqual(['data/**', 'constraints/**']);
     expect(agent.tools.read).toBe(true);
@@ -111,7 +111,7 @@ describe('loadAgentDefinition', () => {
 
   it('rejects "reviewer" declaring an implementation-shaped output', () => {
     const source = ARCHITECT.replace('id: architect', 'id: reviewer').replace(
-      'type: ArchitectureSpec',
+      'type: ADR',
       'type: Code',
     );
     const result = loadAgentDefinition(source, 'reviewer.agent.yaml');
@@ -121,14 +121,14 @@ describe('loadAgentDefinition', () => {
   });
 
   it('does not flag a non-review role declaring an implementation-shaped output', () => {
-    const source = ARCHITECT.replace('type: ArchitectureSpec', 'type: Code');
+    const source = ARCHITECT.replace('type: ADR', 'type: Code');
     const result = loadAgentDefinition(source, 'architect.agent.yaml');
     expect(result.success).toBe(true);
   });
 
   it('does not flag "diagnostician" declaring a Code-typed output -- a failing test proving a bug is legitimately code-shaped (05 §5.2\'s own roster table: "RCA record, failing test, fix plan")', () => {
     const source = ARCHITECT.replace('id: architect', 'id: diagnostician').replace(
-      'type: ArchitectureSpec',
+      'type: ADR',
       'type: Code',
     );
     const result = loadAgentDefinition(source, 'diagnostician.agent.yaml');
@@ -137,7 +137,7 @@ describe('loadAgentDefinition', () => {
 
   it('does not flag "critic" declaring a Code-typed output -- 05 §5.2\'s own roster table lists its outputs as "Objection list with severity + test"', () => {
     const source = ARCHITECT.replace('id: architect', 'id: critic').replace(
-      'type: ArchitectureSpec',
+      'type: ADR',
       'type: Code',
     );
     const result = loadAgentDefinition(source, 'critic.agent.yaml');
@@ -146,7 +146,7 @@ describe('loadAgentDefinition', () => {
 
   it('does not flag "test-architect" declaring a Code-typed output', () => {
     const source = ARCHITECT.replace('id: architect', 'id: test-architect').replace(
-      'type: ArchitectureSpec',
+      'type: ADR',
       'type: Code',
     );
     const result = loadAgentDefinition(source, 'test-architect.agent.yaml');

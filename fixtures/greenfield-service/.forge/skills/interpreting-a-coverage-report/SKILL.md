@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=dca37ef90d06424fe5a9e13da0c12ac0e17521552a0b411b4411c36a4adc03fa — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=dca37ef90d06424fe5a9e13da0c12ac0e17521552a0b411b4411c36a4adc03fa — edits will be overwritten; use overrides/
 id: interpreting-a-coverage-report
 name: Interpreting a coverage report
 version: 1.0.0

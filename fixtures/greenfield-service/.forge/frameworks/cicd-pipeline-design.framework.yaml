@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=f31a14bfcf6e1d6d22d187c5fa06a95b1d927a2aa3a5874d26c71f320ee91dd3 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f31a14bfcf6e1d6d22d187c5fa06a95b1d927a2aa3a5874d26c71f320ee91dd3 — edits will be overwritten; use overrides/
 id: cicd-pipeline-design
 name: CI/CD pipeline design
 owner_agent: sre

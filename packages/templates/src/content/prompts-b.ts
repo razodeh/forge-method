@@ -21,6 +21,7 @@
  *   - platform.scaffold-project
  *   - pm.system
  *   - pm.write-vision
+ *   - pm.write-prd
  *   - pm.decompose-stages
  *   - po.system
  *   - po.write-stories
@@ -59,6 +60,7 @@ export const PROMPTS_B: Readonly<Record<string, string>> = {
   'platform.scaffold-project': 'templates/prompts/platform.scaffold-project.md',
   'pm.system': 'templates/prompts/pm.system.md',
   'pm.write-vision': 'templates/prompts/pm.write-vision.md',
+  'pm.write-prd': 'templates/prompts/pm.write-prd.md',
   'pm.decompose-stages': 'templates/prompts/pm.decompose-stages.md',
   'po.system': 'templates/prompts/po.system.md',
   'po.write-stories': 'templates/prompts/po.write-stories.md',

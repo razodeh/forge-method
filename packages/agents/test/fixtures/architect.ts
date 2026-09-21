@@ -35,21 +35,25 @@ inputs:
     - kb: architecture/*
 
 outputs:
-  - type: ArchitectureSpec
-    schema: architecture-spec.schema.json
-    path: docs/forge/kb/architecture/architecture-spec.md
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - architecture/**

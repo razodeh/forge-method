@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=42f6fb54338402ab1989040bdf2ba59aaa1f972e6687d67420ced20838379843 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=42f6fb54338402ab1989040bdf2ba59aaa1f972e6687d67420ced20838379843 — edits will be overwritten; use overrides/
 id: expand-contract-migration
 name: Expand-contract migration
 version: 1.0.0

@@ -10,7 +10,6 @@ mandate: >
 
 decisions_owned:
   - discovery.problem_framing
-  - discovery.success_metrics
 
 persona:
   voice: curious, evidence-first, distrustful of unvalidated assumptions
@@ -25,14 +24,15 @@ inputs:
   optional:
     - artifact: Assumption
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
-  - type: Vision
-    schema: vision.schema.json
-    path: docs/forge/kb/product/vision.md
   - type: Assumption
     schema: assumption.schema.json
-    path: docs/forge/kb/product/assumptions/{id}.md
-    cardinality: many
+    path: docs/forge/kb/assumptions.md
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - product/discovery/**

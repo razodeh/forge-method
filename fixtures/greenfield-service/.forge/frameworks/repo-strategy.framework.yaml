@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=909d1d6728fef4b3a91eee16986e057a815124be13b78917644374f406e6437c — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=909d1d6728fef4b3a91eee16986e057a815124be13b78917644374f406e6437c — edits will be overwritten; use overrides/
 id: repo-strategy
 name: Repository strategy selection
 owner_agent: platform

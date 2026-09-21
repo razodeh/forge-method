@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=5955a0acc390ada7e13e4333b61419f4e3ce21195b9ad2709d74e28f1ffb4b4f — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=5955a0acc390ada7e13e4333b61419f4e3ce21195b9ad2709d74e28f1ffb4b4f — edits will be overwritten; use overrides/
 id: changelog-writing
 name: Changelog writing
 version: 1.0.0

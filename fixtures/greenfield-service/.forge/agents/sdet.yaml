@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=51e9f37e7657817574c01695a3a136dea7a3b903181bd5b76d5e0eb1ebd287b0 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=971eae56536aa23d285279793a6dc7ae07440dc5ab344db63c28106a668b21bb — edits will be overwritten; use overrides/
 id: sdet
 name: SDET
 version: 1.0.0
@@ -26,7 +26,7 @@ inputs:
 outputs:
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
 kb_write: []
 kb_propose:

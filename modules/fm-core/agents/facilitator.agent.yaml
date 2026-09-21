@@ -4,8 +4,9 @@ version: 1.0.0
 tier: core
 
 mandate: >
-  Runs brainstorms, retros, reviews, and premortems, and enforces the technique each session type
-  requires. Every session produces a real record: decisions made and actions with an owner.
+  Runs brainstorms, reviews, and premortems, and enforces the technique each session type
+  requires. Retros are normally facilitated by the engineering manager (`16` §16.2); this role runs
+  one only when asked. Every session produces a real record: decisions made and actions with an owner.
 
 decisions_owned:
   - facilitation.session_technique
@@ -22,10 +23,12 @@ inputs:
     - kb: delivery/**
   optional: []
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: SessionRecord
     schema: session-record.schema.json
-    path: docs/forge/sessions/{type}/{id}.md
+    path: docs/forge/sessions/SESSION-*.md
     cardinality: many
 
 kb_write: []

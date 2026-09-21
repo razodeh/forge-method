@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=4961ce6e568237fd211dacda8400b0ccf127545079a2fe1be80122938601d65e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4961ce6e568237fd211dacda8400b0ccf127545079a2fe1be80122938601d65e — edits will be overwritten; use overrides/
 id: consistency-transaction-design
 name: Consistency, CAP and transaction design
 owner_agent: data-architect

@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=927115de0cb574ae2989da2e1367a56e86007459cd3f1c15dc55db818f43d252 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=927115de0cb574ae2989da2e1367a56e86007459cd3f1c15dc55db818f43d252 — edits will be overwritten; use overrides/
 id: mermaid-authoring
 name: Mermaid authoring
 version: 1.0.0

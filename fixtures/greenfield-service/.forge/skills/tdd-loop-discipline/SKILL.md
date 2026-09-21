@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=8df9fd9e01ca55523d8ed741d113d37a2cf7b28f33695fa11302b16127915875 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8df9fd9e01ca55523d8ed741d113d37a2cf7b28f33695fa11302b16127915875 — edits will be overwritten; use overrides/
 id: tdd-loop-discipline
 name: TDD loop discipline
 version: 1.0.0

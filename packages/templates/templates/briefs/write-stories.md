@@ -52,8 +52,9 @@ Ready on what you write.
 - `context_refs`, `interfaces`, `data`: only ids that exist. Put the ids of the NFRs and ADRs the
   story must respect in `context_refs`. If an interface the story needs does not exist yet, leave
   `interfaces` empty and add a line to the body in the form
-  `Needs interface: (operation), consumer (component)`, which the contract-freezing step reads. The
-  `interfaces` field is back-filled once contracts are frozen.
+  `Needs interface: (operation), consumer (component)`, which the contract-freezing step reads. That
+  step writes a contract for every such line and does not edit stories, so the `interfaces` field
+  stays empty and the steps that implement the story find the contract from the line.
 - `dod_profile`: a profile id from `engineering/dod-profiles.yaml`; the project's configured default
   (`quality.dodProfileDefault`) if you have no better fit.
 - Body: what the story delivers, from the user's point of view. For the first thin end-to-end slice

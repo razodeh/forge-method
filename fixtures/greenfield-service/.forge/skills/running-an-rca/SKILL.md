@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=5fe06582444f385f7d2cd0352c78f87e45d2e0f34d0056927da08667d2826e1a — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=5fe06582444f385f7d2cd0352c78f87e45d2e0f34d0056927da08667d2826e1a — edits will be overwritten; use overrides/
 id: running-an-rca
 name: Running an RCA
 version: 1.0.0

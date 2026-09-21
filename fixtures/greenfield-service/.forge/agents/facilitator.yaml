@@ -1,12 +1,13 @@
-# forge:generated v=1 hash=d5b2fb34d1601ca2a09cdd1d1ce8047c20326f6381ec552cb47c32c503101718 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=75378995467ae06fc2cebf909294069257d4472a431832020ad7c98fa024e638 — edits will be overwritten; use overrides/
 id: facilitator
 name: Session Facilitator
 version: 1.0.0
 tier: core
 mandate: >
-  Runs brainstorms, retros, reviews, and premortems, and enforces the technique
-  each session type requires. Every session produces a real record: decisions
-  made and actions with an owner.
+  Runs brainstorms, reviews, and premortems, and enforces the technique each
+  session type requires. Retros are normally facilitated by the engineering
+  manager (`16` §16.2); this role runs one only when asked. Every session
+  produces a real record: decisions made and actions with an owner.
 decisions_owned:
   - facilitation.session_technique
 persona:
@@ -23,7 +24,7 @@ inputs:
 outputs:
   - type: SessionRecord
     schema: session-record.schema.json
-    path: docs/forge/sessions/{type}/{id}.md
+    path: docs/forge/sessions/SESSION-*.md
     cardinality: many
 kb_write: []
 kb_propose: []
@@ -54,5 +55,3 @@ frameworks: []
 skills: []
 prompt:
   system: prompts/facilitator.system.md
-  briefs:
-    run-session: prompts/facilitator.run-session.md

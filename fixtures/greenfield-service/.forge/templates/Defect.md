@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=251ea2c299e61cc8a02c741f59f646b5d1a02426d20c39bbd169ff8efdafba19 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=251ea2c299e61cc8a02c741f59f646b5d1a02426d20c39bbd169ff8efdafba19 — edits will be overwritten; use overrides/
 id: DEF-001
 type: Defect
 schemaVersion: 1

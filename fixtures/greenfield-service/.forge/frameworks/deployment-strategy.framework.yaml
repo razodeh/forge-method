@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=c0cc7c69a2aca3a7feb3fbe3d2d3c62436ad49c1fe945688dc672f5aea30784c — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=c0cc7c69a2aca3a7feb3fbe3d2d3c62436ad49c1fe945688dc672f5aea30784c — edits will be overwritten; use overrides/
 id: deployment-strategy
 name: Deployment strategy
 owner_agent: sre

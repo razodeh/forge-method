@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=c0017f63fadd6e7c3bda9292a7000cd3a19a50b835ec522dd2bc0da1a1d77355 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=411e6e1b01dd4fcb639b92295fd5c5dbf754e46b1fae377b9a40f66d3c72c8e8 — edits will be overwritten; use overrides/
 id: quick-fix
 name: Quick Fix
 version: 1.0.0
@@ -14,23 +14,37 @@ steps:
     agent: diagnostician
     brief: briefs/reproduce-defect.md
     inputs: ['artifact:Defect({{defectId}})']
+    # The reproduction goes into the Defect record itself, and a reproduction script beside it, named after
+    # the defect id (Q216).
+    produces: ['docs/forge/reports/defects/**']
 
   - id: write-failing-test
     kind: agent
     agent: sdet
     brief: briefs/write-failing-tests.md
     dependsOn: [reproduce]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
+    produces: ['**', '!@protected']
 
   - id: fix
     kind: agent
     agent: backend
     brief: briefs/fix-defect.md
     dependsOn: [write-failing-test]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
+    produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
+  # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs
+  # the project's test layers: the whole suite, including the failing test written earlier in this loop, must be green.
+  # That is only part of 13 §13.2 step 8 PROVE: nothing here checks that the reproduction was promoted to a
+  # regression test named with the defect id, or that a race test fails on the old code. No command checks
+  # those yet (SPEC-QUESTIONS.md Q213).
   - id: verify
     kind: command
-    run: 'forge story verify --json'
+    run: 'forge test run --json'
     dependsOn: [fix]
 
   - id: commit

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=62b8fdfbcce06f8678f25e6aef7669285457897773a6a35dfb0bbd9d9d8b6c2e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=62b8fdfbcce06f8678f25e6aef7669285457897773a6a35dfb0bbd9d9d8b6c2e — edits will be overwritten; use overrides/
 id: vcs-conventions
 name: Version control conventions selection
 owner_agent: platform

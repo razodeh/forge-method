@@ -29,9 +29,10 @@ validation fails an ADR missing a required heading.
     migrate then smoke and end-to-end tests, the `G-Deliver` approval, progressive production
     deploy, post-deploy verification and soak, and automatic rollback on a service-level breach.
 - Adapt the graph to this project, and say which stage you dropped or added and why.
-- Diagram: draw the pipeline in the project's notation as a `Diagram` file under
-  `docs/forge/kb/delivery/pipeline/`, the area you own, with a caption. Reference it from the ADR's
-  `diagrams` and its `## Diagram` section. `G-Deliver` fails on a missing or stale pipeline diagram.
+- Diagram: draw the pipeline in the project's notation as a `Diagram` at
+  `docs/forge/kb/delivery/views/pipeline.mmd` (with its `pipeline.mmd.yaml` sidecar and a caption),
+  the location `08` §8.11.3 fixes and `G-Deliver` looks in. Reference it from the ADR's `diagrams`
+  and its `## Diagram` section. `G-Deliver` fails on a missing or stale pipeline diagram.
 
 ### Acceptance
 

@@ -99,22 +99,26 @@ inputs:
     - artifact: DomainModel
     - kb: architecture/*
 
-outputs:
-  - type: ArchitectureSpec
-    schema: architecture-spec.schema.json
-    path: docs/forge/kb/architecture/architecture-spec.md
+outputs:                           # registered types only; each path is the \`18\` §18.7 path, \`*\` for the id
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:                          # sections this agent may write without review
   - architecture/**
@@ -204,6 +208,17 @@ prompt:
     expect(omitDeliberateDifferences(shipped)).toEqual(
       omitDeliberateDifferences(workedResult.agent),
     );
+    // The example above is a copy of the fenced block in `05` §5.3; compare it with the spec's own text, so
+    // the spec and this test cannot drift apart (`PLAN-M13.md` P18, Q224: the spec's `outputs` were once
+    // unregistered types at paths `18` §18.7 does not have, while the shipped agent was edited).
+    const specText = readFileSync(path.join(repoRoot, 'specs', '05-agent-system.md'), 'utf8');
+    const section = specText.slice(specText.indexOf('## 5.3 Agent definition format'));
+    const fenced = /```yaml\n([\s\S]*?)\n```/.exec(section)?.[1];
+    expect(fenced, '05 §5.3 has no yaml block').toBeDefined();
+    const fromSpec = loadAgentDefinition(fenced ?? '', '05 §5.3');
+    if (!fromSpec.success)
+      throw new Error(`05 §5.3's example fails to load: ${JSON.stringify(fromSpec.issues)}`);
+    expect(fromSpec.agent).toEqual(workedResult.agent);
     expect(shipped.tools.write).toBe(true);
     expect(shipped.ceiling?.tools.write).toBe(true);
     expect(shipped.prompt.briefs).toEqual({

@@ -26,28 +26,20 @@ inputs:
   optional:
     - artifact: NFR
 
-# A fresh critic round found this piece's own first draft only covered "Dev env" (Environment, below)
-# of 05 §5.2's own four-item Outputs column ("Repo Layout Spec, Build Spec, Scaffold, Dev env") --
-# RepoLayoutSpec/BuildSpec/Scaffold added to match the remaining three, the same "one dedicated output
-# per table item" fidelity architect's own worked example already establishes.
+# 05 §5.2's Outputs column ("Repo Layout Spec, Build Spec, Scaffold, Dev env") names deliverables in prose. The
+# registry has no such types, so they are not `outputs[]` entries: `decide-repo-strategy`, `scaffold-project` and
+# `scaffold-ci` write those documents under their steps' `produces`, and the checkable products are the ADR and the
+# Environment register below.
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
-  - type: RepoLayoutSpec
-    schema: repo-layout-spec.schema.json
-    path: docs/forge/kb/delivery/repo-strategy/repo-layout-spec.md
-  - type: BuildSpec
-    schema: build-spec.schema.json
-    path: docs/forge/kb/delivery/build/build-spec.md
-  - type: Scaffold
-    schema: scaffold.schema.json
-    path: 'scripts/scaffold/**'
   - type: Environment
     schema: environment.schema.json
-    path: docs/forge/kb/delivery/environments/{id}.md
-    cardinality: many
+    path: docs/forge/kb/delivery/environments.md
 
 kb_write:
   - delivery/build/**

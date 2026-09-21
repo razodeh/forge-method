@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=ccd1f17e7da9a757f4ea168075b40398a0cc1952f0cb8194c6c0f042a4ca453f — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=dfd41e417ff11c850b00483c83156fe93e10ef90f852ce9e7d45cda9829c5e9d — edits will be overwritten; use overrides/
 id: techwriter
 name: Technical Writer
 version: 1.0.0
@@ -66,5 +66,3 @@ skills:
   - writing-a-runbook
 prompt:
   system: prompts/techwriter.system.md
-  briefs:
-    write-docs: prompts/techwriter.write-docs.md

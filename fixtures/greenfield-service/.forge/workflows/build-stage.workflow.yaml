@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=df3c6cf083d8a4ba4e4fafd88d80caf22044276d216b9706dfb7f1fcb38b615d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e8657ed633efb25252b3b7b16541fd39451c8ae5cc7b54db9b6e5c9a8f267165 — edits will be overwritten; use overrides/
 id: build-stage
 name: Implement a stage
 version: 1.0.0
@@ -6,7 +6,14 @@ description: Takes a planned stage to a verified, deployable state.
 levels: [L1, L2, L3, L4] # which scale levels this applies to
 requires:
   gates_passed: [G-Ready]
-  artifacts: [StagePlan]
+  # Not `[StagePlan]` (a real, previously-shipped defect: `10` §10.1's own illustrative worked
+  # example named a `StagePlan` artifact type that was never actually registered anywhere -- neither
+  # `18` §18.7 nor any agent ever produced one). `plan-stage.workflow.yaml`, the real workflow `forge
+  # plan stage <id>` dispatches, produces `Epic`+`Story`+`HandoffRecord(subtype: test-plan)`, and
+  # `G-Ready.gate.yaml`'s own real `evidence:` block already names exactly `Epic(*)`/`Story(*)` as
+  # what a ready stage plan actually is -- this line now matches that already-real, already-shipped
+  # convention instead of a phantom type nothing ever produced. See `SPEC-QUESTIONS.md`.
+  artifacts: [Epic, Story]
 inputs:
   - name: stageId
     type: string
@@ -21,20 +28,45 @@ steps:
     run: 'git switch -c {{vars.integration_branch}} || git switch {{vars.integration_branch}}'
     inline: true
 
+  # `dependsOn: [prepare]` is not in `10` §10.1's worked example, which leaves `prepare` (the step that creates
+  # the integration branch) with no dependent, so nothing ordered any other step after it: a merge, the
+  # verify gate and `deliver` could all be scheduled before the branch existed. Every later step already
+  # follows `freeze-contracts` (through `contracts-gate`, or the per-story chains), so one edge orders them
+  # all. See `SPEC-QUESTIONS.md` Q211.
   - id: freeze-contracts
     kind: agent
     agent: architect
+    dependsOn: [prepare]
     brief: briefs/freeze-contracts.md
-    inputs: ['artifact:StagePlan', 'kb:architecture/**', 'kb:data/**']
+    inputs: ['artifact:Epic(*)', 'artifact:Story(*)', 'kb:architecture/**', 'kb:data/**']
     outputs:
       - type: InterfaceContract
         cardinality: many
+    # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside its YAML
+    # record in the same directory (Q216).
+    produces:
+      - 'docs/forge/specs/interfaces/*.proto'
+      - 'docs/forge/specs/interfaces/*.graphql'
+      - 'docs/forge/specs/interfaces/*.ts'
     gateEvidence: [G-Design]
 
   - id: contracts-gate
     kind: gate
     gate: G-Design
     dependsOn: [freeze-contracts]
+
+  # `16` §16.6's own placement table, P6 Implementation: `standup` "on long runs (triggered by elapsed
+  # time or blocked-lane count)" (`PLAN-M10.md` P14) — a real, evaluable trigger (`@forge/methods`'s own
+  # `SESSION_TRIGGERS.standup`), carried on `when` for a future scheduler piece to evaluate (no per-step
+  # conditional-dispatch mechanism exists yet — see `SessionStep.when`'s own doc comment). Positioned as
+  # a dependency-terminal step (nothing in this workflow depends on it) so it can run alongside the long
+  # implementation fanout without ever blocking `deliver`/`verify`.
+  - id: standup
+    kind: session
+    sessionType: standup
+    dependsOn: [contracts-gate]
+    when: 'run.elapsedMs > 3600000 || run.blockedLaneCount >= 2'
+    question: 'What is blocking any active lane right now, and does anything need re-planning?'
 
   - id: generate-tests
     kind: fanout
@@ -45,7 +77,13 @@ steps:
       kind: agent
       agent: sdet
       brief: briefs/write-failing-tests.md
-      inputs: ['artifact:Story({{item.id}})', 'artifact:TestPlan']
+      # Not `artifact:TestPlan` (the identical `10` §10.1 illustrative-worked-example-vs-real-registry
+      # defect `requires.artifacts`/`freeze-contracts.inputs` above already had -- nothing anywhere in
+      # this codebase ever produces a `TestPlan` artifact; `plan-stage.workflow.yaml`'s own real
+      # `write-test-plan` step produces a `HandoffRecord(subtype: test-plan)` instead, the same
+      # already-established `artifact:HandoffRecord` (bare, no id filter) reference
+      # `implement-story.workflow.yaml`'s own `plan` step already uses for the identical type).
+      inputs: ['artifact:Story({{item.id}})', 'artifact:HandoffRecord']
       produces: ['{{item.test_paths}}']
       limits: { maxTurns: 25, maxCostUsd: 1.5 }
 
@@ -60,13 +98,20 @@ steps:
       brief: briefs/implement-story.md
       inputs:
         ['artifact:Story({{item.id}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
-      produces: '{{item.files_expected}}'
+      # The story's files, less its test files (M13 P36, 10 §10.6): `generate-tests` wrote them and the implementer may not edit them.
+      produces: ['{{item.files_expected}}', '!{{item.test_paths}}']
       retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
       onFailure: escalate
 
+  # Keyed by story id like `generate-tests`/`implement`, which `10` §10.1's own worked example omits here:
+  # `merge` below waits on `review:{{item.id}}`, and an un-keyed fanout compiles to positional ids
+  # (`review:0`), so that reference would dangle and `forge run build-stage` could not start. Keying is also
+  # what makes a resumed run and a re-planned stage agree on which review is whose (`06` §6.2 rule 1: "the
+  # item's ID in the step id"). See `SPEC-QUESTIONS.md` Q211.
   - id: review
     kind: fanout
     over: 'stage.stories'
+    itemKey: '{{item.id}}'
     dependsOn: ['implement:{{item.id}}']
     step:
       kind: agent
@@ -96,7 +141,13 @@ onFailure:
   default: block
   escalations:
     - when: 'failures.test-failure > 2'
-      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md }
+      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record and,
+      # if none exists for the failure, the Defect it names (Q216).
+      do:
+        kind: agent
+        agent: diagnostician
+        brief: briefs/rca.md
+        produces: ['docs/forge/sessions/rca/RCA-*.md', 'docs/forge/reports/defects/DEF-*.md']
 
 onComplete:
   - kind: agent

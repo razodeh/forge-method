@@ -11,13 +11,15 @@ exposes or consumes. Read the code in scope before writing anything.
 
 ### Produce
 
-A `HandoffRecord` (the refactor-invariants handoff) to the engineer who will do the refactor, with
-`step: state-invariants`, the id of this workflow step, which is how the next step finds it. Carry
-the content in its fields:
+A `HandoffRecord` (subtype `refactor-invariants`) to the engineer who will do the refactor, with
+`step: state-invariants`, the id of this workflow step, which is how the next step finds it. The
+entry has no `subtype` key, so the first string in `delivered` is `subtype: refactor-invariants`
+(the output check reads the subtype from that line, since `step` names this step). Carry the content
+in its fields:
 
-- `delivered`: the goal in one testable sentence (what will be different in the structure afterward
-  and how someone can tell), the scope as an explicit list of the files and modules that may change,
-  and a list of what is out of scope even though it is nearby.
+- `delivered`: after the `subtype:` line, the goal in one testable sentence (what will be different
+  in the structure afterward and how someone can tell), the scope as an explicit list of the files
+  and modules that may change, and a list of what is out of scope even though it is nearby.
 - `constraints_for_receiver`: the invariants, each stated so it can be checked. Cover, where they
   apply, the public signatures and contracts that must not change; observable behaviour, including
   error cases and side effects; data formats and persisted state; and performance bounds the code is

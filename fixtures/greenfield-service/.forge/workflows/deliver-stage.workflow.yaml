@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=3ae133aa1c7f1497c5ecf95e332b89823b82052a658680e274ab7da528e9938c — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e9f29fdf6967a267c4e48155ec7b4fd8dbd71815ad165804d90302c422e75d58 — edits will be overwritten; use overrides/
 id: deliver-stage
 name: Deliver Stage
 version: 1.0.0
@@ -10,6 +10,12 @@ steps:
     agent: sre
     brief: briefs/design-cicd-pipeline.md
     outputs: [{ type: ADR }]
+    # The pipeline Diagram, at `delivery/views/pipeline.mmd` where `08` §8.11.3 puts it and `G-Deliver` looks (Q216 found
+    # the brief and the `sre` ownership on `delivery/pipeline/`; M13 P18, Q224, follows the spec). A declared Diagram
+    # output would claim `*/views/*.mmd` too, but the brief names one exact place, so it is listed with its sidecar.
+    produces:
+      - 'docs/forge/kb/delivery/views/pipeline.mmd'
+      - 'docs/forge/kb/delivery/views/pipeline.mmd.yaml'
 
   - id: design-deployment
     kind: agent
@@ -17,20 +23,34 @@ steps:
     brief: briefs/design-deployment-strategy.md
     dependsOn: [design-pipeline]
     outputs: [{ type: ADR }]
+    # The deployment-topology Diagram, one per environment (`08` §8.11.3: `delivery/views/deployment-<env>.mmd`), with
+    # its sidecar (Q216, Q224).
+    produces:
+      - 'docs/forge/kb/delivery/views/deployment-*.mmd'
+      - 'docs/forge/kb/delivery/views/deployment-*.mmd.yaml'
 
+  # The three command steps below run the same commands the G-Deliver gate re-checks (checks/G-Deliver.gate.yaml:
+  # `deploy:dry-run`, `test:smoke`, `deploy:rollback-rehearsed`), so a failure shows up here before the gate.
+  # They are not `forge deploy <env>` (03 §3.2.5): that command IS this workflow, so a step calling it would
+  # start the workflow again. Promotion to a real environment is the project's pipeline's job ("the pipeline
+  # is the only path to production", 14 §14.3), designed by the two steps above; FORGE checks it, it does not
+  # push. `forge deploy` has no env-less form and no `--rollback-check` yet, and `test run --rule` has no
+  # `smoke`: those are the gaps pinned in test/command-steps.test.ts (P25 and P26 close them). Until they do,
+  # `forge run deliver-stage` stops at `deploy` with a usage error (exit 2) on every real run; it does not
+  # deploy, and it does not recurse.
   - id: deploy
     kind: command
-    run: 'forge deploy run --json'
+    run: 'forge deploy --dry-run --json'
     dependsOn: [design-deployment]
 
   - id: smoke-test
     kind: command
-    run: 'forge deploy smoke-test --json'
+    run: 'forge test run --rule smoke --json'
     dependsOn: [deploy]
 
   - id: rehearse-rollback
     kind: command
-    run: 'forge deploy rollback --dry-run --json'
+    run: 'forge deploy --rollback-check --json'
     dependsOn: [smoke-test]
 
   - id: deliver-gate

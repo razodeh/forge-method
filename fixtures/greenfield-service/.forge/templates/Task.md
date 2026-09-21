@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=ff05148679941e7f60126dea1c26a059d31bc489be845ab7ee602b3793c6abcb — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ff05148679941e7f60126dea1c26a059d31bc489be845ab7ee602b3793c6abcb — edits will be overwritten; use overrides/
 id: TASK-001
 type: Task
 schemaVersion: 1

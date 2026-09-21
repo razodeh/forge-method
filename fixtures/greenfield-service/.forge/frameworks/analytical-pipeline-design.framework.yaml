@@ -1,7 +1,19 @@
-# forge:generated v=1 hash=2e261cabc52bc190621ba2e3d169a6cf3794444fa694410fe2edf15a8ae2b97e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=b13613b752014cbd9a2c2ab9331c6f880a9ecde5348eb50d3f68bb175b720bf9 — edits will be overwritten; use overrides/
+# `owner_agent: data-engineer`, NOT `data-architect` -- corrected by `PLAN-M10.md` P5 (the `fm-data`
+# module). `19` §19.1's own shipped-modules table names F-DATA-8 (this framework) as `fm-data`'s own
+# contribution, alongside `data-engineer` (its own real, first agent), not `fm-core`'s
+# `data-architect`; this file's own `owner_agent` predates `fm-data` existing at all and was never
+# corrected once it shipped. This is the ONE real, live-loaded copy of this framework in the whole
+# codebase (`@forge/templates`' own `FRAMEWORK_INDEX`, read directly by `packages/cli/src/init/
+# content.ts` at real `forge init` time and by `packages/cli/src/commands/agent.ts`'s own
+# `agentValidateAll`) -- `modules/fm-data/module.yaml`'s own header comment explains why `fm-data`
+# fixes this file directly rather than shipping a second, never-loaded copy of its own (a critic round
+# on this piece's first draft confirmed the first draft did exactly that: a module-local duplicate
+# nothing in this codebase's own real init/validate path would ever actually read, which left F-DATA-8
+# "real" only in this piece's own isolated tests, not in a real `forge init`).
 id: analytical-pipeline-design
 name: Analytical and pipeline design
-owner_agent: data-architect
+owner_agent: data-engineer
 produces: { adr_category: data, kb_section: data/pipeline.md }
 inputs:
   required: [kb:constraints/**, artifact:NFR(*)]

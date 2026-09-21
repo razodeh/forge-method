@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=7fac772215fd33d3df573c9d91799920e0e58670b213b56d5a1181ec3f062a9a — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=47e8991fdc167bc243ab0bfc69e65dc8818fbdec145738f3a324b83babfc08e1 — edits will be overwritten; use overrides/
 id: G-Problem
 name: Problem gate
 phase: P1
@@ -25,8 +25,10 @@ approval:
   required: true
   roles: [human]
   quorum: 1
+# What the discover steps produce before this gate (`frame-problem` -> Assumption, `define-metrics` -> NFR). The
+# Vision is written by `define-product:write-vision`, after this gate, so it is not evidence here (M13 P18, E3).
 evidence:
-  - artifact: Vision
+  - artifact: NFR(*)
   - artifact: Assumption(*)
 onReject:
   action: replan

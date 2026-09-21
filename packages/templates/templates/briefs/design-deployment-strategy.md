@@ -35,9 +35,11 @@ each unit:
   the rollback rehearsal (`forge deploy --rollback-check`, then the staging rehearsal `G-Deliver`
   requires) must show for this strategy's trigger and path to count as executed rather than assumed.
 
-Diagram: draw the deployment topology in the project's notation as a `Diagram` file under
-`docs/forge/kb/delivery/pipeline/`, the area you own, with a caption. Reference it from the ADR's
-`diagrams` and its `## Diagram` section. `G-Deliver` fails on a missing or stale topology diagram.
+Diagram: draw the deployment topology in the project's notation as a `Diagram`, one per environment,
+at `docs/forge/kb/delivery/views/deployment-<env>.mmd` (each with its `deployment-<env>.mmd.yaml`
+sidecar and a caption), the location `08` §8.11.3 fixes and `G-Deliver` looks in. Reference it from
+the ADR's `diagrams` and its `## Diagram` section. `G-Deliver` fails on a missing or stale topology
+diagram.
 
 ### Acceptance
 

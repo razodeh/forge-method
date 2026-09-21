@@ -172,15 +172,54 @@ const READ_ONLY_OUTPUT_CONTRACT =
  * either. Rendered from the real data this type actually has rather than inventing a template field
  * neither the schema nor the spec's own canonical example ever defines -- see `SPEC-QUESTIONS.md` Q102.
  */
-function renderOutputContractBlock(agent: AgentDefinition): string {
-  return agent.outputs
-    .map(
-      (output) =>
-        `- ${output.type}: schema \`${output.schema}\`, path \`${output.path}\`${
-          output.cardinality !== undefined ? ` (cardinality: ${output.cardinality})` : ''
-        }`,
-    )
-    .join('\n');
+function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): string {
+  // What the block says must match what the engine enforces for THIS step (`PLAN-M13.md` P18, `SPEC-QUESTIONS.md`
+  // Q224): a step that declares `outputs` is checked against exactly those and confined to them plus its `produces`;
+  // a step that declares none is confined to its `produces` alone. The role's other outputs (what it writes in its other
+  // steps) are not listed: they would tell the session to write files this step's claim reverts. Every value here can
+  // come from a user-authored workflow, so each goes through `oneLine`.
+  const own = new Map(agent.outputs.map((output) => [output.type, output] as const));
+  const paths = (
+    globs: readonly string[],
+  ): { readonly allowed: readonly string[]; readonly refused: readonly string[] } => ({
+    allowed: globs.filter((glob) => !glob.startsWith('!')).map(oneLine),
+    refused: globs.filter((glob) => glob.startsWith('!')).map((glob) => oneLine(glob.slice(1))),
+  });
+  const quoted = (list: readonly string[]): string => list.map((path) => `\`${path}\``).join(', ');
+  const claim = paths(step.produces);
+  const claimLines: string[] = [];
+  if (claim.allowed.length > 0) {
+    claimLines.push(`- Files: only the paths in this step's claim: ${quoted(claim.allowed)}`);
+    if (claim.refused.length > 0) {
+      claimLines.push(`- Never write (outside this step's claim): ${quoted(claim.refused)}`);
+    }
+  }
+
+  const declared = step.outputs ?? [];
+  if (declared.length === 0) {
+    return claimLines.length > 0
+      ? claimLines.join('\n')
+      : '- This step declares no outputs and names no paths to write: make only the changes the task asks for, and write no artifact files.';
+  }
+  const lines = declared.map((wanted) => {
+    const type = oneLine(wanted.type);
+    const role = own.get(wanted.type);
+    const path = wanted.path === undefined ? role?.path : oneLine(wanted.path);
+    const schema = role === undefined ? '' : `schema \`${oneLine(role.schema)}\``;
+    const where = path === undefined ? '' : `path \`${path}\``;
+    const cardinality =
+      wanted.cardinality === undefined ? '' : ` (cardinality: ${oneLine(wanted.cardinality)})`;
+    const subtype = wanted.subtype === undefined ? '' : ` (subtype: ${oneLine(wanted.subtype)})`;
+    // A `Diagram` is not produced until its `<path>.yaml` sidecar is (`08` §8.11; the output check demands it).
+    const sidecar =
+      wanted.type === 'Diagram' && path !== undefined ? ` (and its sidecar \`${path}.yaml\`)` : '';
+    const head = [schema, where].filter((part) => part !== '').join(', ');
+    return head === ''
+      ? `- ${type}: declared by this step${subtype}`
+      : `- ${type}: ${head}${cardinality}${subtype}${sidecar}`;
+  });
+  // The step's own claim beyond its declared outputs (its `produces`) is enforced too, so it is stated too.
+  return [...lines, ...claimLines].join('\n');
 }
 
 function renderConstraintsBlock(constraints: PromptConstraints): string {
@@ -300,7 +339,7 @@ export function compilePrompt(
       content:
         options.readOnly === true
           ? READ_ONLY_OUTPUT_CONTRACT
-          : neutralizeBlockHeadings(renderOutputContractBlock(agent)),
+          : neutralizeBlockHeadings(renderOutputContractBlock(agent, step)),
     },
     { index: 6, name: 'Constraints', content: renderConstraintsBlock(constraints) },
     {

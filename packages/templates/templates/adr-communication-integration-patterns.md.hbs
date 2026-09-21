@@ -74,6 +74,14 @@ changelog:
 
 {{{context}}}
 
+## Options considered
+
+{{#if alternativesConsidered}}
+{{{alternativesConsidered}}}
+{{else}}
+None -- this framework had no eliminated or competing options to record.
+{{/if}}
+
 ## Decision
 
 We choose **{{{chosenOption}}}**.
@@ -96,14 +104,23 @@ directly. See "Decision" above for what was done.
 
 {{{killerRisk}}}
 
+## Diagram
+
+{{#each diagrams}}
+- {{{this}}}
+{{else}}
+None yet -- an ADR whose blast radius names more than one component, or whose category is
+architecture or data, must reference a diagram (08 §8.11.3) before it is accepted.
+{{/each}}
+
 ## Consequences
 
 {{{consequences}}}
 
-## Alternatives considered
+## Reversal plan
 
-{{#if alternativesConsidered}}
-{{{alternativesConsidered}}}
+{{#if reversalPlan}}
+{{{reversalPlan}}}
 {{else}}
-None -- this framework had no eliminated or competing options to record.
+Reversibility: {{{reversibility}}}. Revisit when: {{{revisitTrigger}}}.
 {{/if}}

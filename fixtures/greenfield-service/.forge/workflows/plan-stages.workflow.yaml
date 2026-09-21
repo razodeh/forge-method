@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=41b972ae2f01b4ee7f0f7e12b001712148be5853e7c8b84b0c0eec6458af133e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d6da9a607c40c481dd135e71b69a9e32338c4fa9b00fdea055b4611caf72f51b — edits will be overwritten; use overrides/
 id: plan-stages
 name: Stage Planning
 version: 1.0.0
@@ -14,9 +14,21 @@ steps:
     brief: briefs/decompose-stages.md
     inputs: ['artifact:Capability(*)']
     outputs: [{ type: HandoffRecord, subtype: stage-plan }]
+    # The stage plan and its view (the HandoffRecord only registers them), and the `stage` field of each
+    # Capability the brief has the step update (Q216).
+    produces:
+      - 'docs/forge/plans/stages.md'
+      - 'docs/forge/plans/views/stages.mmd'
+      - 'docs/forge/plans/views/stages.mmd.yaml'
+      - 'docs/forge/specs/capabilities/CAP-*.md'
 
   - id: review-stages
     kind: agent
     agent: em
     brief: briefs/review-stage-plan.md
     dependsOn: [decompose-stages]
+    # The verdict record is the one output every run of this step must produce (`PLAN-M13.md` P15): P7 checks it,
+    # so a session that writes nothing fails instead of "succeeding" (Q208 finding 4). The Risk entries are
+    # written only if the review finds a risk, so they are claimed (`produces`) but not required (Q216, Q220).
+    outputs: [{ type: HandoffRecord, subtype: stage-plan-review }]
+    produces: ['docs/forge/kb/risks.md']

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=b72cdf5add5badf4250fd3947904bd95f4bd23b4749a3031944789bb504158b2 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=9bffb8499481046b01e3033121f065b3e79d15cc651ff35a59d9027733a7acd3 — edits will be overwritten; use overrides/
 id: ux
 name: UX / Product Designer
 version: 1.0.0
@@ -24,16 +24,15 @@ inputs:
   optional:
     - kb: product/discovery/**
 outputs:
-  - type: UXSpec
-    schema: ux-spec.schema.json
-    path: docs/forge/kb/design/ux-spec-{id}.md
-    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - design/**
 kb_propose: []
 tools:
   read: true
-  write: false
+  write: true
   exec:
     - ls*
     - rg*
@@ -61,4 +60,4 @@ skills: []
 prompt:
   system: prompts/ux.system.md
   briefs:
-    design-flows: prompts/ux.design-flows.md
+    write-ux-spec: prompts/ux.write-ux-spec.md

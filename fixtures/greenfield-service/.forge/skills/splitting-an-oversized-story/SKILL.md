@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=36a0e7d4126d683b1ef584d44d79d9c46b40d563c4176dbcfc836adda136bb97 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=36a0e7d4126d683b1ef584d44d79d9c46b40d563c4176dbcfc836adda136bb97 — edits will be overwritten; use overrides/
 id: splitting-an-oversized-story
 name: Splitting an oversized story
 version: 1.0.0

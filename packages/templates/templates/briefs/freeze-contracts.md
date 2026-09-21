@@ -6,8 +6,11 @@ the `G-Design` gate that follows it, those contracts are frozen for the stage.
 ### Inputs
 
 - `Epic(*)` and `Story(*)` for this stage. For each story read `interfaces`, `data`,
-  `files_expected`, `depends_on` and every acceptance criterion. Two stories whose file claims or
-  acceptance criteria touch the same function, endpoint, event, table or config key share a seam.
+  `files_expected`, `depends_on`, every acceptance criterion, and the
+  `Needs interface: (operation), consumer (component)` lines in its body (`write-stories` writes one
+  for each interface the story consumes before any contract exists, and leaves `interfaces` empty).
+  Two stories whose file claims or acceptance criteria touch the same function, endpoint, event,
+  table or config key share a seam, and every `Needs interface:` line is a seam.
 - `kb:architecture/**`: the architecture spec. Component boundaries, patterns and integration styles
   are already decided there and in the ADRs; you record their concrete shape, you do not reopen
   them. Only the ADR index reaches your context by default, so request the full text of any ADR a
@@ -44,9 +47,14 @@ contract, so implementers import the generated types and never re-declare them.
 - Every `INT-###` listed in any story's `interfaces` resolves to a contract, either one you wrote or
   one that already exists from an earlier stage. Do not rewrite a contract from an earlier stage; if
   this stage needs it changed, raise `FORGE_REQUEST_CHANGE:`.
+- Every `Needs interface:` line of every story is covered by a contract whose title or operations
+  name it, so that an implementer who reads `docs/forge/specs/interfaces/` finds it (the implement,
+  plan and test steps do exactly that for a story whose `interfaces` is empty). Your closing message
+  lists, one line per story, the `INT-###` ids that cover its lines. You do not edit stories:
+  `interfaces` stays as `write-stories` left it.
 - Every seam you found is either covered by a contract or shown to be private to one story.
-- If a story consumes an interface it does not list, do not edit the story; raise
-  `FORGE_REQUEST_CHANGE:` naming the story and the missing `INT-###`.
+- If a story consumes an interface it does not list and has no `Needs interface:` line for, do not
+  edit the story; raise `FORGE_REQUEST_CHANGE:` naming the story and the missing `INT-###`.
 - Each contract is complete enough that two implementers working only from it would build compatible
   halves: no field, error case or ordering rule is left to be "decided during implementation".
 - Contracts agree with the ADRs and data model they cite. Where they cannot, stop and report the

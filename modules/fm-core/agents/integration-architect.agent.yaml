@@ -29,14 +29,16 @@ inputs:
   optional:
     - artifact: InterfaceContract
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
 
 # A fresh critic round found this piece's own first draft claimed `kb_write`/`exclusive: true`

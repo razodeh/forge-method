@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=4e4e1869f0639c6fab4aa54dedb371e2b70b56f1f2e2085fb722bd4ba70e8dc1 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4e4e1869f0639c6fab4aa54dedb371e2b70b56f1f2e2085fb722bd4ba70e8dc1 — edits will be overwritten; use overrides/
 id: coding-standards
 name: Coding standards and quality tooling selection
 owner_agent: platform

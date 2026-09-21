@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=5c7500b27bbb9abee40b7c0cd6d428ac470b9ad857ecedce18170d8c64e4b8f7 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7697224327727b98e3d1a0e1e8e7b76acd3e103eff36802a88d304fcf9b849ac — edits will be overwritten; use overrides/
 id: plan-stage
 name: Plan One Stage
 version: 1.0.0
@@ -14,6 +14,8 @@ steps:
     agent: po
     brief: briefs/write-epics.md
     outputs: [{ type: Epic, cardinality: many }]
+    # "Then add each new epic's id to its capability's `epics` list": the step edits Capability records (Q216).
+    produces: ['docs/forge/specs/capabilities/CAP-*.md']
 
   - id: write-stories
     kind: agent
@@ -21,17 +23,45 @@ steps:
     brief: briefs/write-stories.md
     dependsOn: [write-epics]
     outputs: [{ type: Story, cardinality: many }]
+    # "An update of each epic's `stories` list": the step edits Epic records (Q216).
+    produces: ['docs/forge/specs/epics/EPIC-*.md']
+
+  # `16` §16.6's own placement table, P5 Planning: `estimation`, `story-refinement` (`PLAN-M10.md`
+  # P14) — both unconditional, run in that order once stories exist, before the test plan is written
+  # against them.
+  - id: estimation
+    kind: session
+    sessionType: estimation
+    dependsOn: [write-stories]
+    question: 'How large is each story really, given what we now know, and in what order should they run?'
+
+  - id: story-refinement
+    kind: session
+    sessionType: story-refinement
+    dependsOn: [estimation]
+    question: 'Are these stories genuinely ready (DoR), or is something missing that will bite us mid-implementation?'
 
   - id: write-test-plan
     kind: agent
     agent: test-architect
     brief: briefs/write-test-plan.md
-    dependsOn: [write-stories]
+    dependsOn: [story-refinement]
     outputs: [{ type: HandoffRecord, subtype: test-plan }]
+    # The test plan itself (the HandoffRecord only registers it), and the test strategy the brief creates
+    # when the project has none (Q216).
+    produces:
+      - 'docs/forge/specs/test-plan.md'
+      - 'docs/forge/kb/engineering/testing.md'
+      - 'docs/forge/kb/open-questions.md'
 
+  # Read-only: it reads the stage's Epics and Stories and prints the plan, so it runs in the supervisor
+  # (`inline`) rather than in a lane worktree of its own: in the integration worktree, where the engine has
+  # already integrated every lane the agent steps above produced (`06` §6.4, `SPEC-QUESTIONS.md` Q221). The
+  # engine reverts and fails an inline step that changes that tree.
   - id: derive-run-plan
     kind: command
     run: 'forge plan run-plan {{stageId}} --json'
+    inline: true
     dependsOn: [write-test-plan]
 
   - id: ready-gate

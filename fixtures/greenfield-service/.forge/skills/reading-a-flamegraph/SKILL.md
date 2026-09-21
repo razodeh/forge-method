@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=f58db7fe4196d2fef76bd4c6e80eac85437fa7977465cfc29a970a737ba864d3 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f58db7fe4196d2fef76bd4c6e80eac85437fa7977465cfc29a970a737ba864d3 — edits will be overwritten; use overrides/
 id: reading-a-flamegraph
 name: Reading a flamegraph
 version: 1.0.0

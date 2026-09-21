@@ -27,11 +27,12 @@ inputs:
   optional:
     - artifact: HandoffRecord
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: HandoffRecord
     schema: handoff-record.schema.json
-    path: docs/forge/sessions/handoffs/{id}.md
-    cardinality: many
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - delivery/run-plans/**

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=e0d469c28311d6f767b844561031413172c79b63bbed582985cbe054b0709e30 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e0d469c28311d6f767b844561031413172c79b63bbed582985cbe054b0709e30 — edits will be overwritten; use overrides/
 id: G-Integration
 name: Integration gate
 # L4-only (10 §10.2's own level-mapping sentence: "L4 adds G-Integration ... in P3") -- see

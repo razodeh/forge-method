@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=4e8bb19417a1278c0cd764dd5ace421d3f908b9b23131888e6af0a5d4ba3ed7e — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4e8bb19417a1278c0cd764dd5ace421d3f908b9b23131888e6af0a5d4ba3ed7e — edits will be overwritten; use overrides/
 id: SESSION-001
 type: SessionRecord
 schemaVersion: 1

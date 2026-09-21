@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=968fd6b9c635b9d33245a18ba54f15f840ea1fedadd13e0996bb9aa248a206f9 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=968fd6b9c635b9d33245a18ba54f15f840ea1fedadd13e0996bb9aa248a206f9 — edits will be overwritten; use overrides/
 id: coverage-adequacy
 name: Coverage and adequacy policy
 owner_agent: test-architect

@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=8f664c8e81fbcb57d87c77a0fbd075f4d60c1d5622377ce192609a9b74c458a9 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8f664c8e81fbcb57d87c77a0fbd075f4d60c1d5622377ce192609a9b74c458a9 — edits will be overwritten; use overrides/
 id: property-based-testing
 name: Property-based testing
 version: 1.0.0

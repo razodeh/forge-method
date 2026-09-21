@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=349909467abf9e12c0704d4ff2e5d3f552338a8ea317a6b7aa122610fa295bbd — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=349909467abf9e12c0704d4ff2e5d3f552338a8ea317a6b7aa122610fa295bbd — edits will be overwritten; use overrides/
 id: writing-an-adr
 name: Writing an ADR
 version: 1.0.0

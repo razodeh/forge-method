@@ -37,34 +37,23 @@ inputs:
   optional:
     - kb: design/**
 
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
   - type: Code
     schema: code-change.schema.json
     path: 'src/**'
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
-  # New, real output this module adds beyond fm-core's own older copy: the offline-first pattern
-  # decision this module's own templates/offline-first-pattern.md.hbs renders -- reuses the existing,
-  # already-registered ADR type (@forge/schemas' own registry) rather than inventing a new schema, the
-  # identical "reuse an existing type, put structure in the body" choice modules/fm-service/module.yaml
-  # and modules/fm-data/module.yaml already make for their own OpenAPI/proto contracts and warehouse
-  # model respectively (see module.yaml's own header comment).
-  # `{seq}-{slug}` placeholder, matching every other real ADR-producing agent's own path shape
-  # (`modules/fm-core/agents/architect.agent.yaml`/`data-architect.agent.yaml`'s own
-  # `docs/forge/kb/decisions/ADR-{seq}-{slug}.md`) -- a critic round found the first draft's own path
-  # was a single fixed literal filename with no placeholder at all, which combined with
-  # `cardinality: many` meant a second offline-first decision would silently overwrite the first one
-  # on disk. No code path anywhere in this repository actually substitutes `{seq}`/`{slug}` into an
-  # agent's own `outputs[].path` field yet (confirmed: grepped `packages/` for it, zero hits) -- the
-  # identical "this predates real path-resolution wiring" disclosed gap this module's own header
-  # comment already names for `prompt.system`/`prompt.briefs`/`brief:` paths -- but the shape itself
-  # should already match every sibling ADR agent's own convention rather than deviate from it.
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/architecture/mobile/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 # The identical file_ownership/kb_write overlap reasoning fm-service's own domain-modeler.agent.yaml
 # already documents: `architect.agent.yaml`'s own exclusive claim over `architecture/**` cannot be

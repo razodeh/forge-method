@@ -1,5 +1,5 @@
 ---
-# forge:generated v=1 hash=6686d05544fa0fcc6e95e51e1837322b6c8cf3982310d94342bfb58b66cfad03 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=6686d05544fa0fcc6e95e51e1837322b6c8cf3982310d94342bfb58b66cfad03 — edits will be overwritten; use overrides/
 id: performance-benchmarking
 name: Performance benchmarking
 version: 1.0.0

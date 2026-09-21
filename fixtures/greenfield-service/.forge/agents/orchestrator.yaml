@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=f50739deedaa3043eb289b24f9459b092ef55b93bc83b8b6dd87f99cb80e15c4 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=9b091060c8ac89803ac8b382ee8e667c615353cc0a090a093999df13adc38c84 — edits will be overwritten; use overrides/
 id: orchestrator
 name: Delivery Orchestrator
 version: 1.0.0
@@ -27,8 +27,7 @@ inputs:
 outputs:
   - type: HandoffRecord
     schema: handoff-record.schema.json
-    path: docs/forge/sessions/handoffs/{id}.md
-    cardinality: many
+    path: docs/forge/reports/handoffs.md
 kb_write:
   - delivery/run-plans/**
 kb_propose: []
@@ -61,5 +60,3 @@ frameworks: []
 skills: []
 prompt:
   system: prompts/orchestrator.system.md
-  briefs:
-    schedule-run: prompts/orchestrator.schedule-run.md

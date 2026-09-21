@@ -15,9 +15,9 @@ prove it.
 
 - The threat model, written as a KB entry in the `architecture` section
   (`architecture/threat-model.md`, `type: knowledge`, with the KB entry body sections), and one
-  `HandoffRecord` entry (subtype `threat-model`, recorded as its `step` value because the entry has
-  no `subtype` key; `from: security`, `to: architect`, `step: threat-model → design-review`) that
-  registers it.
+  `HandoffRecord` entry (subtype `threat-model`; `from: security`, `to: architect`,
+  `step: threat-model → design-review`) that registers it. The entry has no `subtype` key, so the
+  first string in `delivered` is `subtype: threat-model`, the second is the model's path.
 - A trust-boundary data-flow diagram as a Mermaid `flowchart` with one subgraph per trust boundary
   (`architecture/views/threat-model.mmd`), registered as a `Diagram` with caption and alt text, and
   at most about 20 nodes and 30 edges (layer it if larger). Every internal node is a component from

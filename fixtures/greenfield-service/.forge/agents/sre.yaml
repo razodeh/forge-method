@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=9dbdbc2f943e555f1b7afd8e53bc73ec7bbd532ff150cc39cd0c34477465408a — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=06fee5f215fc91c84c9e66c85ca5396311f47aa4d2414c703c97cd7b06402e3c — edits will be overwritten; use overrides/
 id: sre
 name: SRE / DevOps
 version: 1.0.0
@@ -26,14 +26,26 @@ inputs:
 outputs:
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: Runbook
     schema: runbook.schema.json
-    path: docs/forge/kb/ops/runbooks/{id}.md
+    path: docs/forge/kb/ops/runbooks/RUN-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
+  - type: NFR
+    schema: nfr.schema.json
+    path: docs/forge/specs/nfr/NFR-*.md
+    cardinality: many
+  - type: Defect
+    schema: defect.schema.json
+    path: docs/forge/reports/defects/DEF-*.md
     cardinality: many
 kb_write:
   - delivery/pipeline/**
+  - delivery/views/**
   - ops/observability/**
 kb_propose: []
 tools:
@@ -58,6 +70,7 @@ limits:
 parallel_safety:
   file_ownership:
     - docs/forge/kb/delivery/pipeline/**
+    - docs/forge/kb/delivery/views/**
     - docs/forge/kb/ops/observability/**
   exclusive: true
 gates:
@@ -79,4 +92,5 @@ skills:
 prompt:
   system: prompts/sre.system.md
   briefs:
-    design-delivery: prompts/sre.design-delivery.md
+    design-cicd-pipeline: prompts/sre.design-cicd-pipeline.md
+    design-deployment-strategy: prompts/sre.design-deployment-strategy.md

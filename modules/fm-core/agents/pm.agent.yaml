@@ -11,6 +11,8 @@ decisions_owned:
   - product.scope
   - product.priority
   - product.stage_boundaries
+  # `discover:define-metrics` runs as pm (its `NFR` output is a pm type), so pm owns the metrics decision (M13 P18, B2).
+  - product.success_metrics
 
 persona:
   voice: decisive, tradeoff-literate, states what was cut and why
@@ -26,21 +28,27 @@ inputs:
   optional:
     - artifact: Assumption
 
-# A fresh critic round found this file's own first draft claimed kb_write/exclusive file_ownership over
-# product/prd/** with no PRD-typed output ever writing there -- the PRD is this role's own headline
-# artifact per both the mandate above and 05 §5.2's own Owns/Outputs columns, so the gap was a real one.
+# The PRD (05 §5.2's "PRD, Capability list") is the set of registered artifacts `write-prd` writes:
+# Capabilities and NFRs. There is no PRD-typed artifact in the 18 §18.7 registry, so none is declared
+# (block [5] would have told pm to write a document that no output check and no claim admits).
+# `write-vision` (Vision), `decompose-stages` and `propose-change` (HandoffRecord) are pm's other steps.
+# outputs[] are the 18 §18.7 registry paths, as the output check locates them (outputGlob); block [5] of the
+# prompt renders this list. test/agent-outputs-registry.test.ts fails on drift (M13 P18).
 outputs:
-  - type: PRD
-    schema: prd.schema.json
-    path: docs/forge/kb/product/prd.md
+  - type: Vision
+    schema: vision.schema.json
+    path: docs/forge/specs/vision.md
   - type: Capability
     schema: capability.schema.json
-    path: docs/forge/kb/product/capabilities/{id}.md
+    path: docs/forge/specs/capabilities/CAP-*.md
     cardinality: many
   - type: NFR
     schema: nfr.schema.json
-    path: docs/forge/kb/product/nfrs/{id}.md
+    path: docs/forge/specs/nfr/NFR-*.md
     cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:
   - product/prd/**
@@ -82,4 +90,5 @@ prompt:
   system: prompts/pm.system.md
   briefs:
     write-vision: prompts/pm.write-vision.md
+    write-prd: prompts/pm.write-prd.md
     decompose-stages: prompts/pm.decompose-stages.md

@@ -1,4 +1,4 @@
-# forge:generated v=1 hash=99d1d73248ee4f9d13dd0fbd1337f35214c244a319a892e5dfa10ad11fd026dc — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=c6e2ade002f3ee081ff1d796dab6c60b1ba4edccb004ed0f936b274ebde16ff7 — edits will be overwritten; use overrides/
 id: refactor
 name: Refactor
 version: 1.0.0
@@ -20,6 +20,9 @@ steps:
     agent: backend
     brief: briefs/refactor.md
     dependsOn: [state-invariants]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The goal names no paths.
+    produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
   - id: verify-invariants

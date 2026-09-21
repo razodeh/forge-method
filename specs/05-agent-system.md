@@ -74,6 +74,15 @@ Only roles that exist in a real software organisation. Marked **C**ore (always a
 | `facilitator` | Session Facilitator | C | Runs brainstorms, retros, reviews, premortems; enforces technique | Session record, decisions, actions |
 | `critic` | Adversarial Critic | C | Red-teams plans and designs; must produce falsifiable objections | Objection list with severity + test |
 
+The *Primary outputs* column names deliverables in prose. For every role that runs a shipped workflow step, an agent's machine-readable `outputs` (§5.3) lists
+only artifact types registered in `18` §18.7 (or its module's own), each at its registry path, plus `Code` for
+an implementation role; the engine renders a step's declared outputs at those paths into the prompt (block [5])
+and its output check demands the same types and paths. A role no workflow runs may name others. A deliverable
+that is a KB entry rather than a registered artifact (a UX spec, a threat model, a test strategy) is written
+under the step's `produces`, and the checkable product of its step is the artifact or `HandoffRecord` the step
+declares. `decisions_owned` follows the workflow step that takes the decision: `discover:define-metrics` runs as
+`pm`, so `product.success_metrics` is `pm`'s.
+
 **Roster rules (normative):**
 
 - `reviewer`, `critic`, `diagnostician`, and `test-architect` MUST never be the same session instance
@@ -120,22 +129,26 @@ inputs:
     - artifact: DomainModel
     - kb: architecture/*
 
-outputs:
-  - type: ArchitectureSpec
-    schema: architecture-spec.schema.json
-    path: docs/forge/kb/architecture/architecture-spec.md
+outputs:                           # registered types only; each path is the `18` §18.7 path, `*` for the id
   - type: ADR
     schema: adr.schema.json
-    path: docs/forge/kb/decisions/ADR-{seq}-{slug}.md
+    path: docs/forge/kb/decisions/ADR-*.md
     cardinality: many
   - type: InterfaceContract
     schema: interface-contract.schema.json
-    path: docs/forge/specs/interfaces/{name}.yaml
+    path: docs/forge/specs/interfaces/*.yaml
     cardinality: many
   - type: Diagram
     schema: diagram.schema.json
-    path: docs/forge/kb/architecture/views/{name}.mmd
+    path: docs/forge/kb/*/views/*.mmd
     cardinality: many
+  - type: DataModel
+    schema: data-model.schema.json
+    path: docs/forge/specs/data/DM-*.md
+    cardinality: many
+  - type: HandoffRecord
+    schema: handoff-record.schema.json
+    path: docs/forge/reports/handoffs.md
 
 kb_write:                          # sections this agent may write without review
   - architecture/**
