@@ -30,6 +30,11 @@ them (`FORGE_REQUEST_CONTEXT:`); if they still are not, use the stage boundary t
 `cost_usd` to 0, and say in Frame that 0 marks unavailable data, not a measured cost. If even those
 are unavailable, ask (`FORGE_ASK:`) rather than guess. Do not estimate any of them.
 
+Write `started` and `ended` as UTC datetimes with a trailing `Z` and no offset, in the shape
+`2026-01-15T10:00:00Z`: the record's schema rejects a local offset such as `-04:00` even though it
+is valid ISO 8601, and `created` and `updated` are plain dates (`2026-01-15`). `author` is your own
+agent id, not a role title you make up.
+
 - **Frame:** the stage, the period and the data you had.
 - **Diverge:** what the data shows, good and bad, each observation with the number and where it came
   from. Include the surprises: where cost, rework or failures concentrated.
