@@ -44,9 +44,12 @@ import type {
 import type { AgentDefinition } from '@forge/agents/schema';
 import {
   assembleAgentSession,
+  deriveTestExec,
+  grantWithTestExec,
   markRefusal,
   promptRecordDirName,
   readProjectAgent,
+  testLayersForBrief,
   type AssembledSession,
   type DocRoots,
 } from '@forge/engine/dispatch';
@@ -835,7 +838,18 @@ async function runDebugLoop(
   // Refuse before a Defect, a lane or a session exists when any phase cannot be assembled (unmapped tier,
   // missing role prompt or phase brief) or the fix cannot be applied (a diagnostician whose grant cannot
   // write): the loop would otherwise leave an open Defect behind and pay for a diagnosis it cannot act on.
-  const fixGrant = await preflightDebug(runCtx, agent);
+  const preflightGrant = await preflightDebug(runCtx, agent);
+  // REPRODUCE and PROVE run a command the model proposes; the project's own test commands for the layers a
+  // reproduction lives in are added to what the diagnostician may run, as exact commands and nowhere wider
+  // (`test-command-grant.ts`, `PLAN-M13.md` P23). The FIX session never gets them: it is tainted, so its grant has no exec.
+  const reproduceExec = deriveTestExec(
+    deps.config.execution.testCommands,
+    testLayersForBrief('debug-isolate'),
+  );
+  const fixGrant = grantWithTestExec(preflightGrant, reproduceExec);
+  // A diagnostician that may run no command is not offered, or trusted with, any: the note would tell the model a
+  // command will run and every proposal would be refused.
+  const runnable = fixGrant.exec === false ? [] : reproduceExec.patterns;
   const defect = await scaffold();
   const defectId = defect.get(['id']) as string;
 
@@ -883,6 +897,7 @@ async function runDebugLoop(
     // logged as a `PolicyViolation` and recorded in the RCA evidence; nothing is executed.
     runShell: createRcaShell({
       grant: fixGrant,
+      trustedCommands: runnable,
       root: lane.path,
       parentEnv: deps.env,
       onRefused: async (refusal) => {
@@ -905,6 +920,7 @@ async function runDebugLoop(
     // (`QUALITY-BAR.md` R10: no direct `Date.now()`/`crypto.randomUUID()` in production code).
     now: runCtx.now,
     cwd: lane.path,
+    runnableCommands: runnable,
   };
 
   let recorded = false;

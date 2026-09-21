@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=3c179ada9aea1bc8a7c2279e52fef6af58a337bd2782a1e38bb1d8bda794b54c — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=1ad1e427d29b33c2a3c46be42566c1a588f816a6415a43868a5b382239f827ee — edits will be overwritten; use overrides/ -->
 Fix the defect or defects assigned to this step with the smallest change that removes the cause. A
 reproduction (a failing test or command) and, where one exists, an `RCA` record come before you.
 They are your specification; the reproduction's job is to go from failing to passing.
@@ -18,9 +18,11 @@ A reproduction is any of: a failing test, a command or script, or, for a hardeni
 command, request or code location recorded in the Defect's `evidence`. If a defect has none of
 these, or its recorded reproduction ends in NEEDS-MORE-EVIDENCE (it was run and did not reproduce),
 stop on that defect and say so. Do not guess from the description. A reproduction recorded as
-"written, not run" is usable: work from it. If your grant does not let you run commands, you cannot
-confirm it fails or that it now passes: give the command and the expected output, mark it not run,
-and never write an unrun result as observed.
+"written, not run" is usable: work from it. Your constraints list the exact test commands you may
+run (the project's own): run one exactly as written, because a command with anything added or
+changed is refused, and a layer they report as having no runnable command cannot be run from here.
+If your grant does not let you run commands, you cannot confirm it fails or that it now passes: give
+the command and the expected output, mark it not run, and never write an unrun result as observed.
 
 ### Produce
 

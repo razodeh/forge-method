@@ -65,6 +65,13 @@ hosts, not by opening the network.
 - Commands that read as destructive but are legitimate in context (`docker rm`, `DROP TABLE` in a
   migration, `terraform destroy` against a preview env) route to the **destructive-operation flow**
   (§20.3) rather than being blanket-denied — blanket denial produces workarounds.
+- **Test commands.** A step that runs tests is granted, in addition to its agent's own patterns, the exact
+  command the project configured for each test layer the step's brief needs (`execution.testCommands`,
+  `13` F-TEST-1): exact strings, never a wildcard, and only a command that is one plain invocation (no
+  chaining, no `*`, no expansion). The configuration is the project's own and a step cannot write it
+  (§20.2), so this is not an escalation of the agent grant (`15` §15.3); a tainted or read-only step gets
+  none. Running a project's tests runs project code, so this is an exec grant in fact and `network: none`
+  is the only thing that limits what that code reaches (§20.10).
 
 ---
 

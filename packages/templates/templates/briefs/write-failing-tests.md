@@ -59,9 +59,12 @@ above), and nowhere else.
 - Each test fails today, and fails for the right reason: the behaviour under test is absent, shown
   by an assertion failure or an explicit not-implemented signal at the seam. A syntax error, wrong
   import path, missing fixture or misconfigured runner is not a red.
-- If you can run the tests, run them and record each failure message. If your grant does not allow
-  running, give the exact command and the exact failure message you expect from each test. Do not
-  report red on the strength of "obviously fails".
+- If you can run the tests, run them and record each failure message. Your constraints list the
+  exact test commands you may run (the project's own): run one exactly as written, because a command
+  with anything added or changed is refused, and a layer they report as having no runnable command
+  cannot be run from here. If your grant does not allow running, give the exact command and the
+  exact failure message you expect from each test. Do not report red on the strength of "obviously
+  fails".
 - If a criterion cannot be tested as written (ambiguous, or not observable), say which and why. Do
   not invent behaviour to make it testable.
 

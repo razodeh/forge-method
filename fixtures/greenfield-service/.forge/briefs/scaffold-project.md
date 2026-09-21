@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=936e6a7abe0d67142ff86756461cbe7d9edd407fef2cea314c05e2b09e955939 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=182c3d2a9ae43eb74094c2549b538de863dc43b216bcaee214d798a195ad120e — edits will be overwritten; use overrides/ -->
 Generate the real project scaffold from the repository, layout and stack decisions already made,
 ending in a smoke path that builds and tests from a clean clone. `G-Foundation` will check exactly
 this: a clean build, a reproducible install, a CI skeleton, and a working test command.
@@ -31,9 +31,13 @@ not add for that reason. Every KB document below is a KB entry in its section, e
   uses them. FORGE's own test runner reads its layer commands from `execution.testCommands` in
   `.forge/config.yaml` (layers unit, integration, contract, e2e, nfr, smoke, lint, typecheck;
   `smoke` is the small suite `G-Deliver` runs against a deployed environment, so map it only when
-  one exists), which you may not edit: end your closing message with that exact map and request the
-  change. Each mapped command must be a single test-runner invocation (chained shell commands are
-  refused), and a layer with no command is reported as unable to verify.
+  one exists), which you may not edit: end your closing message with that exact map, written as one
+  `forge config set execution.testCommands.<layer> "<command>"` line per layer so the human can
+  apply each with one command, and request the change (`forge doctor --rule test-command` fails
+  `G-Foundation` until the `unit` command is set). Each mapped command must be a single test-runner
+  invocation (chained shell commands, `*` wildcards and a leading `VAR=value` are refused), and a
+  layer with no command is reported as unable to verify. The agents that run tests are granted
+  exactly these commands and no others.
 - Reproducibility: the toolchain version pinned (`.nvmrc`, `.tool-versions` or the ecosystem's
   equivalent), the dependency lockfile committed, and installation from the lockfile alone.
 - The directory layout, chosen with the directory-layout method (feature or domain first by default

@@ -17,10 +17,13 @@ Follow the RCA loop in order and do not skip a phase.
 1. State the failure as "expected X, observed Y". If you cannot, the evidence is insufficient.
 2. Reproduce it deterministically with one command, at the lowest layer that shows it. Retry a
    failing test once in isolation to classify it: consistent failure is real, passing on retry is a
-   flake candidate and a different diagnosis. If your grant does not let you run commands, write the
-   reproduction and each experiment anyway (the exact command and the output you expect), mark them
-   "not run", reason by inspection of code, logs and history, and mark every conclusion reached that
-   way. Never write an unrun result as observed.
+   flake candidate and a different diagnosis. Your constraints list the exact test commands you may
+   run (the project's own): run one exactly as written, because a command with anything added or
+   changed is refused, and a layer they report as having no runnable command cannot be run from
+   here. If your grant does not let you run commands, write the reproduction and each experiment
+   anyway (the exact command and the output you expect), mark them "not run", reason by inspection
+   of code, logs and history, and mark every conclusion reached that way. Never write an unrun
+   result as observed.
 3. Isolate: narrow the input, the call path or the commit range until the smallest scope that still
    fails is known.
 4. Hypothesise at least three causes, each a falsifiable claim with the observation that would

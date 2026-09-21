@@ -222,12 +222,34 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
   return [...lines, ...claimLines].join('\n');
 }
 
+/** The test commands a step may run (`PromptConstraints.testCommands`), one per line, each in backticks: the exact string
+ * that runs, nothing appended. Empty when the step runs no tests. */
+function renderTestCommandLines(testCommands: PromptConstraints['testCommands']): string[] {
+  if (testCommands === undefined) return [];
+  const lines: string[] = [];
+  if (testCommands.granted.length > 0) {
+    lines.push(
+      '- test commands you may run (each is exact: run it as written, with nothing added or changed; a variant of one is refused):',
+      ...testCommands.granted.map(
+        (entry) => `  - ${oneLine(entry.layer)}: \`${oneLine(entry.command)}\``,
+      ),
+    );
+  }
+  if (testCommands.unavailable.length > 0) {
+    lines.push(
+      `- test layers this step needs with no runnable command (unset, or not one plain command): ${testCommands.unavailable.map(oneLine).join(', ')}; you cannot run them, so say they were not run`,
+    );
+  }
+  return lines;
+}
+
 function renderConstraintsBlock(constraints: PromptConstraints): string {
   const lines: string[] = [
     'Tool grants:',
     `- read: ${String(constraints.tools.read)}`,
     `- write: ${String(constraints.tools.write)}`,
     `- exec: ${constraints.tools.exec === undefined ? '(none)' : constraints.tools.exec.map(oneLine).join(', ')}`,
+    ...renderTestCommandLines(constraints.testCommands),
     `- network: ${String(constraints.tools.network)}`,
     `- git_commit: ${constraints.tools.git_commit}`,
     `- deploy: ${String(constraints.tools.deploy)}`,

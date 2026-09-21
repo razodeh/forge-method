@@ -33,8 +33,11 @@ can, and stop as soon as a test fails: undo that change rather than adjusting a 
   yours to change.
 - The diff is smaller in concept than before: fewer places to change for the same idea, not merely
   different code.
-- Name the commands that show the tests still pass. If your grant does not let you run them, say so
-  and give the command and the outcome you expect; never report a result you did not observe.
+- Name the commands that show the tests still pass. Your constraints list the exact test commands
+  you may run (the project's own): run one exactly as written, because a command with anything added
+  or changed is refused, and a layer they report as having no runnable command cannot be run from
+  here. If your grant does not let you run them, say so and give the command and the outcome you
+  expect; never report a result you did not observe.
 
 ### Do not
 

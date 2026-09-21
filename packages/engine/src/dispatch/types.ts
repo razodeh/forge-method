@@ -259,6 +259,9 @@ export interface PromptAssemblyContext {
   /** `05` §5.4 point 1's pinned-core items that come from config rather than the KB. */
   readonly pinnedCore: { readonly projectIdentity?: string; readonly level?: string };
   readonly styleProfile?: StyleProfile | undefined;
+  /** `.forge/config.yaml`'s `execution.testCommands`: the source of the exact exec patterns a step that runs tests is
+   * granted (`test-command-grant.ts`, `PLAN-M13.md` P23). Absent means none are configured: no derived grant. */
+  readonly testCommands?: Readonly<Partial<Record<string, string>>> | undefined;
 }
 
 /** One question an `elicit` step puts to the human (`PLAN-M13.md` P20). */

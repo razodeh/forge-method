@@ -1800,6 +1800,7 @@ async function runDoctorCommand(
           kbRoot: config.paths.kb,
           reportsRoot: config.paths.reports,
           env: realEnvSnapshot(),
+          testCommands: config.execution.testCommands,
         };
       },
       doctorRule,

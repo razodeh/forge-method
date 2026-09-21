@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=754b7c9eef0997a7a7e33a32f32713090b699e03f3466c1f36a906ded5fa5f90 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=d8c782430106f281ebd21ece55c659c724281594969ef6011970dc084453aecb — edits will be overwritten; use overrides/ -->
 The story's tests pass. Improve the structure of what you just wrote without changing what it does.
 This is the third step of red, green, refactor, and the rule that makes it safe is that behaviour is
 held fixed by the tests you were not allowed to touch.
@@ -34,8 +34,11 @@ can, and stop as soon as a test fails: undo that change rather than adjusting a 
   yours to change.
 - The diff is smaller in concept than before: fewer places to change for the same idea, not merely
   different code.
-- Name the commands that show the tests still pass. If your grant does not let you run them, say so
-  and give the command and the outcome you expect; never report a result you did not observe.
+- Name the commands that show the tests still pass. Your constraints list the exact test commands
+  you may run (the project's own): run one exactly as written, because a command with anything added
+  or changed is refused, and a layer they report as having no runnable command cannot be run from
+  here. If your grant does not let you run them, say so and give the command and the outcome you
+  expect; never report a result you did not observe.
 
 ### Do not
 

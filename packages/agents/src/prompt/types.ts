@@ -22,6 +22,18 @@ export type AutonomyLevel = 'supervised' | 'guided' | 'autonomous';
  */
 export interface PromptConstraints {
   readonly tools: AgentToolGrant;
+  /**
+   * The test commands this step may run (`PLAN-M13.md` P23): each an EXACT command derived from the project's
+   * `execution.testCommands`, listed one per line so a comma or a space inside one cannot blur two together, and
+   * `unavailable` names the layers the step needs that have no runnable command (unable to verify, never passing).
+   * Absent when the step runs no tests.
+   */
+  readonly testCommands?:
+    | {
+        readonly granted: readonly { readonly layer: string; readonly command: string }[];
+        readonly unavailable: readonly string[];
+      }
+    | undefined;
   readonly forbiddenActions: readonly string[];
   readonly budget: AgentLimits;
   readonly autonomy: AutonomyLevel;

@@ -40,9 +40,7 @@ const ENV = { ...process.env, ...ENV_OVERLAY };
 
 /** Command lines the CLI still rejects, and which piece implements each. When a piece wires one, this test fails
  * until the pin is removed: a pin that outlives its reason is as misleading as a missing command. */
-const PINNED_REJECTED: Readonly<Record<string, string>> = {
-  'forge doctor --rule test-command --json': 'PLAN-M13.md P23 (G-Foundation test:command)',
-};
+const PINNED_REJECTED: Readonly<Record<string, string>> = {};
 
 interface ShippedCheck {
   readonly source: string;

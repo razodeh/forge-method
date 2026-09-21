@@ -51,9 +51,11 @@ defect id. Do not put a reproduction only in your final message; the next sessio
 
 - Do not fix the defect, and do not change production code or existing tests to make it easier to
   reproduce.
-- Do not report a reproduction you did not run as observed. If your grant does not let you run
-  commands, still write the reproduction (the exact command or script and the output you expect),
-  record it in the Reproduction section as "written, not run", and say so in your summary. That is
-  not NEEDS-MORE-EVIDENCE: the next steps proceed on it, and the run's verification commands are
-  what confirm it.
+- Do not report a reproduction you did not run as observed. Your constraints list the exact test
+  commands you may run (the project's own): run one exactly as written, because a command with
+  anything added or changed is refused, and a layer they report as having no runnable command cannot
+  be run from here. If your grant does not let you run commands, still write the reproduction (the
+  exact command or script and the output you expect), record it in the Reproduction section as
+  "written, not run", and say so in your summary. That is not NEEDS-MORE-EVIDENCE: the next steps
+  proceed on it, and the run's verification commands are what confirm it.
 - Do not widen the defect. Note related problems you see, without expanding this one.

@@ -39,10 +39,7 @@ const CHECKS_DIR = fileURLToPath(new URL('../../../templates/templates/checks/',
 
 /** Gate command lines the CLI still rejects, and which piece implements each. When a piece wires one, this test
  * fails until the line is removed here: a pin that outlives its reason is as misleading as a missing command. */
-const PINNED_REJECTED: Readonly<Record<string, string>> = {
-  'forge doctor --rule test-command --json':
-    'PLAN-M13.md P23 (G-Foundation test:command: the rule that shows an unset execution.testCommands)',
-};
+const PINNED_REJECTED: Readonly<Record<string, string>> = {};
 
 const FAMILY = /^forge (doctor|kb lint|test)\b/;
 
@@ -131,6 +128,7 @@ describe('gate command lines in the doctor, kb lint and test families', () => {
     for (const known of [
       'forge doctor --rule clean-build --json',
       'forge doctor --rule skeleton-deployed --json',
+      'forge doctor --rule test-command --json',
       'forge doctor --rule secrets-resolved --json',
       'forge kb lint --json',
       'forge kb lint --rule adr-coverage --json',
@@ -200,6 +198,7 @@ describe('gate command lines in the doctor, kb lint and test families', () => {
       'doctor --rule ci-skeleton --json': 1,
       'doctor --rule secrets-resolved --json': 0,
       'doctor --rule skeleton-deployed --json': 1,
+      'doctor --rule test-command --json': 1,
       'kb lint --rule adr-coverage --json': 1,
       'kb lint --rule kb-synced --json': 1,
       'test run --rule smoke --json': 1,

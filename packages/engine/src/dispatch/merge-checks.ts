@@ -28,21 +28,15 @@
  * @see specs/06 §6.5
  * @see specs/13 §13.1
  */
+import { TEST_COMMAND_LAYERS, type TestCommandLayer } from './test-command-grant.ts';
 import type { MergeCheckCommand, StepFailureInfo } from './types.ts';
 
-/** The layers of `execution.testCommands` (`@forge/schemas` config), in the order a set runs them. */
-const LAYERS = [
-  'typecheck',
-  'lint',
-  'unit',
-  'integration',
-  'contract',
-  'e2e',
-  'nfr',
-  'smoke',
-] as const;
+/** The layers of `execution.testCommands` (`@forge/schemas` config): the one list, `test-command-grant.ts`'s, which the exec
+ * grant derivation (`PLAN-M13.md` P23) shares so the two cannot disagree about which keys are layers. A set's own order is
+ * in `CHECK_SETS`. */
+const LAYERS = TEST_COMMAND_LAYERS;
 
-export type CheckLayer = (typeof LAYERS)[number];
+export type CheckLayer = TestCommandLayer;
 
 /** The named sets and the layers each one runs, in run order (cheapest first, so a failure stops early). */
 export const CHECK_SETS = {

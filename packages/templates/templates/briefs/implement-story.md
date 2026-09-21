@@ -33,9 +33,11 @@ changed and why.
   behaviour.
 - The code meets the project's standards, including its lint and typecheck rules, and is complete:
   no stubbed paths or mocked business logic.
-- Name the commands that prove the story ready, so the verification step can run them. If your grant
-  does not let you run the tests, say so and give the command and the outcome you expect; never
-  report a result you did not observe.
+- Name the commands that prove the story ready, so the verification step can run them. Your
+  constraints list the exact test commands you may run (the project's own): run one exactly as
+  written, because a command with anything added or changed is refused, and a layer they report as
+  having no runnable command cannot be run from here. If your grant does not let you run the tests,
+  say so and give the command and the outcome you expect; never report a result you did not observe.
 
 ### If a test or contract looks wrong
 

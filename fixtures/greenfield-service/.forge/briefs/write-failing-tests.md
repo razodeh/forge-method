@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=6d3583bae5f73aff40145aacd45ba4e2f7969e0739226996855370b7fb710209 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=a7f30d74365948317eedc42bc924919c12265d5638fcdb1fadb360dfe56b2fac — edits will be overwritten; use overrides/ -->
 Write the tests that define "done" for one story before any of its implementation exists. You are a
 separate session from whoever implements it, and that separation is the point: the implementer will
 be forbidden to edit what you write here, so a weak or wrong test you leave behind is not fixed
@@ -60,9 +60,12 @@ above), and nowhere else.
 - Each test fails today, and fails for the right reason: the behaviour under test is absent, shown
   by an assertion failure or an explicit not-implemented signal at the seam. A syntax error, wrong
   import path, missing fixture or misconfigured runner is not a red.
-- If you can run the tests, run them and record each failure message. If your grant does not allow
-  running, give the exact command and the exact failure message you expect from each test. Do not
-  report red on the strength of "obviously fails".
+- If you can run the tests, run them and record each failure message. Your constraints list the
+  exact test commands you may run (the project's own): run one exactly as written, because a command
+  with anything added or changed is refused, and a layer they report as having no runnable command
+  cannot be run from here. If your grant does not allow running, give the exact command and the
+  exact failure message you expect from each test. Do not report red on the strength of "obviously
+  fails".
 - If a criterion cannot be tested as written (ambiguous, or not observable), say which and why. Do
   not invent behaviour to make it testable.
 

@@ -2,8 +2,8 @@
  * `forge doctor --rule <name>` — the deterministic environment checks the shipped gates name (`10` §10.3, `14`
  * §14.9): `clean-build`, `reproducible-install`, `ci-skeleton` (`G-Foundation`), `secrets-resolved` (`G-Deliver`)
  * and `skeleton-deployed` (`G-Foundation`, added by `PLAN-M13.md` P25 to close the spec-versus-gate gap of `11`
- * F-INIT-7 / `14` §14.9). `test-command` is also named by `G-Foundation` and is owned by P23; it is not accepted
- * here, and the coverage test pins that.
+ * F-INIT-7 / `14` §14.9) and `test-command` (`G-Foundation`, `PLAN-M13.md` P23: a usable single-command test command that
+ * resolves).
  *
  * Every rule is deterministic and reads project state only (committed files, project documents, the environment
  * snapshot it is handed): no build, no install, no network, no clock, no model. A rule that cannot read its input
@@ -23,6 +23,7 @@ import {
   reproducibleInstallViolations,
 } from './rules-foundation.ts';
 import { secretsResolvedViolations, skeletonDeployedViolations } from './rules-delivery.ts';
+import { testCommandViolations } from './rules-test-command.ts';
 
 export const DOCTOR_RULE_IDS = [
   'clean-build',
@@ -30,12 +31,13 @@ export const DOCTOR_RULE_IDS = [
   'ci-skeleton',
   'secrets-resolved',
   'skeleton-deployed',
+  'test-command',
 ] as const;
 
 export type DoctorRuleId = (typeof DOCTOR_RULE_IDS)[number];
 
-/** Narrows a `--rule` value to one this command implements; anything else (including `test-command`, which P23
- * owns) is refused with exit 2 so the gate coverage test can pin it. */
+/** Narrows a `--rule` value to one this command implements; anything else is refused with exit 2 so the gate coverage
+ * test can pin a name a shipped gate uses that the CLI does not know. */
 export function isDoctorRuleId(value: string | undefined): value is DoctorRuleId {
   return value !== undefined && (DOCTOR_RULE_IDS as readonly string[]).includes(value);
 }
@@ -62,6 +64,8 @@ export interface DoctorRuleContext {
   readonly reportsRoot: string;
   /** The environment snapshot the caller read once; rules never read `process.env`. */
   readonly env: Readonly<Record<string, string>>;
+  /** `execution.testCommands` (`test-command`). Absent is read as "none configured", which the rule reports. */
+  readonly testCommands?: Readonly<Partial<Record<string, string>>> | undefined;
 }
 
 /** More than this many violations are counted, not listed: `errors` (the number the gate reads) needs only to be
@@ -102,6 +106,8 @@ export async function doctorRule(
         return capped(rule, await secretsResolvedViolations(ctx));
       case 'skeleton-deployed':
         return capped(rule, await skeletonDeployedViolations(ctx));
+      case 'test-command':
+        return capped(rule, await testCommandViolations(ctx));
     }
   } catch (cause) {
     return {

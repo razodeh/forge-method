@@ -569,62 +569,297 @@ async function vetGlob(
 const BRACE_LIST = /\{[^}]*(,|\.\.)[^}]*\}/;
 
 /**
- * Whether `command`, proposed by a model, may run under `grant` with `root` (the lane worktree) as its cwd.
- * `undefined` means it may; otherwise the first refusal, in the order the module comment gives. Never throws.
+ * The syntax stage of the vet, on its own: length, the hard denylist (S2), the shell-operator veto and the quote-aware
+ * refusal of what a shell expands before the program starts. `undefined` when the command is one plain program with
+ * literal words. `vetProposedCommand` runs it first; `test-command-grant.ts` runs the same function over a configured
+ * test command, so a command FORGE derives an exec pattern from is exactly a command this vet would not refuse on
+ * syntax (a derived pattern that the vet then refused would grant nothing while the prompt said it did).
  */
-export async function vetProposedCommand(
-  command: string,
-  grant: Pick<ToolGrant, 'exec' | 'network' | 'allowlistHosts'>,
-  root: string,
-): Promise<CommandRefusal | undefined> {
-  if (command.trim() === '') return refuse('malformed', 'the command is empty');
+export function vetCommandSyntax(command: string): CommandRefusal | undefined {
+  return syntaxOf(command).refusal;
+}
+
+/** The words of a command that passes `vetCommandSyntax` (the first is the program), or `undefined` when it does not. */
+export function commandWords(command: string): readonly string[] | undefined {
+  return syntaxOf(command).words;
+}
+
+function syntaxOf(command: string):
+  | { readonly refusal: CommandRefusal; readonly words?: undefined; readonly globbed?: undefined }
+  | {
+      readonly refusal?: undefined;
+      readonly words: readonly string[];
+      readonly globbed: ReadonlySet<number>;
+    } {
+  if (command.trim() === '') return { refusal: refuse('malformed', 'the command is empty') };
   if (command.length > MAX_COMMAND_LENGTH) {
-    return refuse(
-      'malformed',
-      `the command is longer than ${String(MAX_COMMAND_LENGTH)} characters`,
-    );
+    return {
+      refusal: refuse(
+        'malformed',
+        `the command is longer than ${String(MAX_COMMAND_LENGTH)} characters`,
+      ),
+    };
   }
   if (isHardDenylisted(command)) {
-    return refuse('denylisted', 'the command is on the hard denylist (`20` §20.1)');
+    return { refusal: refuse('denylisted', 'the command is on the hard denylist (`20` §20.1)') };
   }
   if (SHELL_OPERATOR_PATTERN.test(command)) {
-    return refuse(
-      'shell-operator',
-      'the command chains, redirects or substitutes (one of ; & | ` < > $( or a newline)',
-    );
+    return {
+      refusal: refuse(
+        'shell-operator',
+        'the command chains, redirects or substitutes (one of ; & | ` < > $( or a newline)',
+      ),
+    };
   }
   const split = splitWords(command);
-  if ('refusal' in split) return split.refusal;
+  if ('refusal' in split) return { refusal: split.refusal };
   const { words, globbed } = split;
   const brace = words.find((word) => BRACE_LIST.test(word));
-  if (brace !== undefined)
-    return refuse('expansion', `"${brace}" is a brace list the shell expands`);
+  if (brace !== undefined) {
+    return { refusal: refuse('expansion', `"${brace}" is a brace list the shell expands`) };
+  }
+  return { words, globbed };
+}
 
-  if (!isExecAllowed({ read: true, write: false, exec: grant.exec, network: 'none' }, command)) {
+/** Options for `vetProposedCommand`. */
+export interface VetOptions {
+  /**
+   * Commands the PROJECT configured (`execution.testCommands`, derived into the grant by `test-command-grant.ts`),
+   * compared by exact string. Such a command skips two checks, both of which exist because the MODEL chooses the words:
+   * the package-manager test-verb rule (`pnpm typecheck` is the user's script; it is held instead to the configured
+   * rule, `vetConfiguredCommand`: no verb that fetches, publishes or changes dependencies) and path containment
+   * (`vitest --config ../vitest.config.ts`, `pytest /abs/tests`, `dotenv -e .env.test` name paths the user wrote; the
+   * model cannot change them, and a configured command holds no glob character). Everything else (denylist,
+   * operators, expansion, the grant, the network programs and hosts, git and dangerous arguments) still applies.
+   */
+  readonly trustedCommands?: readonly string[];
+}
+
+/** Verbs of a JavaScript package manager that fetch from a registry, run a downloaded program, publish, or change the
+ * project's dependencies or configuration (including the abbreviations npm accepts). `pnpm test`, `pnpm lint`,
+ * `pnpm run x` and `yarn jest` are scripts and binaries the project already has: not here. */
+const JS_MANAGER_BANNED_VERBS: ReadonlySet<string> = new Set([
+  'install',
+  'i',
+  'ins',
+  'inst',
+  'isntall',
+  'it',
+  'ci',
+  'install-test',
+  'install-ci-test',
+  'add',
+  'remove',
+  'rm',
+  'uninstall',
+  'un',
+  'update',
+  'up',
+  'upgrade',
+  'publish',
+  'unpublish',
+  'dlx',
+  'x',
+  'create',
+  'init',
+  'link',
+  'unlink',
+  'login',
+  'logout',
+  'adduser',
+  'deploy',
+  'rebuild',
+  'fetch',
+  'download',
+  'config',
+  'set',
+  'cache',
+  'plugin',
+  'dedupe',
+  'audit',
+  'prune',
+  'patch',
+  'patch-commit',
+  'self-update',
+  'store',
+  'setup',
+  'env',
+]);
+
+/** JavaScript package managers, and the ones whose `exec` can fetch what it runs. */
+const JS_MANAGERS: ReadonlySet<string> = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+const JS_MANAGERS_THAT_FETCH_ON_EXEC: ReadonlySet<string> = new Set(['npm', 'bun']);
+
+/** Other ecosystems' verbs a configured test command may not use, by program. A test runs the project's tests; it does not
+ * install dependencies, publish, or push. */
+const OTHER_BANNED_VERBS: Readonly<Record<string, ReadonlySet<string>>> = {
+  pip: new Set(['install', 'download', 'uninstall', 'wheel', 'config']),
+  pip3: new Set(['install', 'download', 'uninstall', 'wheel', 'config']),
+  cargo: new Set([
+    'install',
+    'publish',
+    'add',
+    'remove',
+    'login',
+    'yank',
+    'owner',
+    'new',
+    'init',
+    'fetch',
+    'vendor',
+    'generate-lockfile',
+    'update',
+  ]),
+  poetry: new Set(['install', 'add', 'remove', 'update', 'publish', 'lock']),
+  uv: new Set(['add', 'remove', 'sync', 'pip', 'lock', 'tool']),
+  bundle: new Set(['install', 'add', 'update']),
+  bundler: new Set(['install', 'add', 'update']),
+  gem: new Set(['install', 'uninstall', 'push']),
+  composer: new Set(['install', 'require', 'update', 'remove']),
+  go: new Set(['get', 'install']),
+  deno: new Set(['install', 'add']),
+  dotnet: new Set(['nuget', 'publish', 'tool']),
+  mvn: new Set(['deploy']),
+  gradle: new Set(['publish']),
+  gradlew: new Set(['publish']),
+};
+
+/** Programs that run whatever they are given, or change files or the cluster: not a test command. */
+const NOT_A_TEST_PROGRAMS: ReadonlySet<string> = new Set([
+  'rm',
+  'rmdir',
+  'chmod',
+  'chown',
+  'mv',
+  'tee',
+  'dd',
+  'kubectl',
+  'terraform',
+  'gh',
+  'sudo',
+  'doas',
+]);
+
+/** Programs that run another program: the grant would name the wrapper and not what runs. */
+const WRAPPER_PROGRAMS: ReadonlySet<string> = new Set([
+  'env',
+  'command',
+  'exec',
+  'time',
+  'nohup',
+  'xargs',
+  'timeout',
+  'nice',
+  'ionice',
+  'busybox',
+]);
+
+/** Programs that fetch and run a package by name: never a configured test command. */
+const PACKAGE_RUNNERS: ReadonlySet<string> = new Set(['npx', 'pnpx', 'bunx']);
+
+const SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish']);
+
+/** Flags of the package managers above that take a value, so the word after one is not the verb (`pnpm --filter config test`). */
+const VALUE_FLAGS: ReadonlySet<string> = new Set([
+  '--filter',
+  '-F',
+  '--dir',
+  '-C',
+  '--cwd',
+  '--prefix',
+  '--workspace',
+  '-w',
+  '--config',
+  '--registry',
+]);
+
+/** The subcommand of a package-manager or build-tool command line: the first word that is not a flag or a flag's value. */
+function verbOf(args: readonly string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (VALUE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    return arg;
+  }
+  return undefined;
+}
+
+/** A program's name as a lookup key: its basename, lower-cased, without a Windows executable extension (`NPM.CMD` is `npm`). */
+function programKey(first: string): string {
+  return path.posix
+    .basename(first)
+    .toLowerCase()
+    .replace(/\.(exe|cmd|bat|com|ps1)$/, '');
+}
+
+/** What is wrong with a CONFIGURED test command's program and verb, or `undefined`. */
+function configuredProgramRefusal(
+  first: string,
+  args: readonly string[],
+): CommandRefusal | undefined {
+  const program = programKey(first);
+  if (WRAPPER_PROGRAMS.has(program)) {
     return refuse(
-      'not-in-grant',
-      grant.exec === false || grant.exec.length === 0
-        ? 'the agent’s tool grant allows no commands'
-        : `the command matches none of the agent’s exec patterns (${grant.exec.join(', ')})`,
+      'dangerous-argument',
+      `${program} runs another program, so the grant would not say what runs`,
     );
   }
+  if (NOT_A_TEST_PROGRAMS.has(program)) {
+    return refuse(
+      'dangerous-argument',
+      `${program} changes files or the environment and is not a test runner`,
+    );
+  }
+  if (PACKAGE_RUNNERS.has(program)) {
+    return refuse('network', `${program} fetches a package by name and runs it`);
+  }
+  if (SHELLS.has(program) && args.some((arg) => /^-[a-z]*c[a-z]*$/.test(arg))) {
+    return refuse(
+      'dangerous-argument',
+      `${program} -c runs a command string, so the grant would not say what runs`,
+    );
+  }
+  if (
+    program === 'find' &&
+    args.some((arg) => ['-exec', '-execdir', '-ok', '-okdir', '-delete'].includes(arg))
+  ) {
+    return refuse('dangerous-argument', 'find -exec/-delete runs or removes what it finds');
+  }
+  const banned = JS_MANAGERS.has(program) ? JS_MANAGER_BANNED_VERBS : OTHER_BANNED_VERBS[program];
+  if (banned === undefined) return undefined;
+  const verb = verbOf(args);
+  if (verb === undefined) {
+    return refuse(
+      'network',
+      `${program} with no subcommand does something other than run a test (yarn alone installs)`,
+    );
+  }
+  if (banned.has(verb) || (JS_MANAGERS_THAT_FETCH_ON_EXEC.has(program) && verb === 'exec')) {
+    return refuse(
+      'network',
+      `${program} ${verb} fetches, publishes or changes dependencies, which a test command never does`,
+    );
+  }
+  return undefined;
+}
 
+/**
+ * The network, package-manager, git and argument stages of the vet, on the words of a command that already passed the
+ * syntax stage. `packageRule` says who chose the words: `model` (a proposed command: only a test verb, as the first
+ * argument, without `network: full`) or `configured` (the project's own test command: any script, but never a verb that
+ * fetches, publishes or changes dependencies, and never a package runner, whatever the network policy).
+ */
+function vetNetworkAndArguments(
+  words: readonly string[],
+  grant: Pick<ToolGrant, 'network' | 'allowlistHosts'>,
+  packageRule: 'model' | 'configured',
+): CommandRefusal | undefined {
   const first = words[0];
   if (first === undefined) return refuse('malformed', 'the command is empty');
-  // `ls=1 node -e ...` matches the pattern `ls*` as a string, but the shell reads `ls=1` as an assignment and runs
-  // the next word: what the pattern authorised is not what would run.
-  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {
-    return refuse('shell-operator', `"${first}" is a variable assignment, not the program`);
-  }
-  // A prefix pattern (`cat*`) also matches `catdoc`, `lsof`: the first word must be the program the pattern names.
-  const programs = (grant.exec === false ? [] : grant.exec)
-    .filter((pattern) =>
-      isExecAllowed({ read: true, write: false, exec: [pattern], network: 'none' }, command),
-    )
-    .map((pattern) => pattern.split(/[\s*]/, 1)[0] ?? '');
-  if (!programs.some((name) => name === '' || name === first)) {
-    return refuse('not-in-grant', `"${first}" is not the program any matching exec pattern names`);
-  }
   const program = path.posix.basename(first);
   const args = words.slice(1);
 
@@ -635,7 +870,7 @@ export async function vetProposedCommand(
         `${program} uses the network and the grant’s network is ${grant.network}`,
       );
     }
-    if (PACKAGE_MANAGERS.has(program)) {
+    if (PACKAGE_MANAGERS.has(program) && packageRule === 'model') {
       const verb = args[0];
       if (
         verb === undefined ||
@@ -649,6 +884,10 @@ export async function vetProposedCommand(
         );
       }
     }
+  }
+  if (packageRule === 'configured') {
+    const refusal = configuredProgramRefusal(first, args);
+    if (refusal !== undefined) return refusal;
   }
   for (const word of words) {
     for (const url of word.matchAll(URL_IN_WORD)) {
@@ -681,7 +920,66 @@ export async function vetProposedCommand(
   }
   const dangerous = dangerousArgument(program, args);
   if (dangerous !== undefined) return refuse('dangerous-argument', dangerous);
+  return undefined;
+}
 
+/**
+ * Whether `command`, configured by the project as a test command, is one FORGE would run for a model under
+ * `network: none`: the syntax stage and the network, package-manager, git and argument stages of the vet, with a
+ * configured command's package rule. `test-command-grant.ts` asks this before deriving a pattern, so a command the vet
+ * would refuse for a model (`curl ...`, `git push`, `pnpm install`) is never granted, listed in block [6], or passed by
+ * the doctor.
+ */
+export function vetConfiguredCommand(command: string): CommandRefusal | undefined {
+  const syntax = syntaxOf(command);
+  if (syntax.refusal !== undefined) return syntax.refusal;
+  return vetNetworkAndArguments(syntax.words, { network: 'none' }, 'configured');
+}
+
+/**
+ * Whether `command`, proposed by a model, may run under `grant` with `root` (the lane worktree) as its cwd.
+ * `undefined` means it may; otherwise the first refusal, in the order the module comment gives. Never throws.
+ */
+export async function vetProposedCommand(
+  command: string,
+  grant: Pick<ToolGrant, 'exec' | 'network' | 'allowlistHosts'>,
+  root: string,
+  options: VetOptions = {},
+): Promise<CommandRefusal | undefined> {
+  const syntax = syntaxOf(command);
+  if (syntax.refusal !== undefined) return syntax.refusal;
+  const { words, globbed } = syntax;
+
+  if (!isExecAllowed({ read: true, write: false, exec: grant.exec, network: 'none' }, command)) {
+    return refuse(
+      'not-in-grant',
+      grant.exec === false || grant.exec.length === 0
+        ? 'the agent’s tool grant allows no commands'
+        : `the command matches none of the agent’s exec patterns (${grant.exec.join(', ')})`,
+    );
+  }
+
+  const first = words[0];
+  if (first === undefined) return refuse('malformed', 'the command is empty');
+  // `ls=1 node -e ...` matches the pattern `ls*` as a string, but the shell reads `ls=1` as an assignment and runs
+  // the next word: what the pattern authorised is not what would run.
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {
+    return refuse('shell-operator', `"${first}" is a variable assignment, not the program`);
+  }
+  // A prefix pattern (`cat*`) also matches `catdoc`, `lsof`: the first word must be the program the pattern names.
+  const programs = (grant.exec === false ? [] : grant.exec)
+    .filter((pattern) =>
+      isExecAllowed({ read: true, write: false, exec: [pattern], network: 'none' }, command),
+    )
+    .map((pattern) => pattern.split(/[\s*]/, 1)[0] ?? '');
+  if (!programs.some((name) => name === '' || name === first)) {
+    return refuse('not-in-grant', `"${first}" is not the program any matching exec pattern names`);
+  }
+  const trusted = options.trustedCommands?.includes(command) === true;
+  const stages = vetNetworkAndArguments(words, grant, trusted ? 'configured' : 'model');
+  if (stages !== undefined) return stages;
+
+  if (trusted) return undefined;
   let realRoot = root;
   try {
     realRoot = await realpath(root);

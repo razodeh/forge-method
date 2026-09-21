@@ -25,6 +25,10 @@ import type { RunRcaShell } from './types.ts';
 export interface RcaShellOptions {
   /** The grant a proposed command is held to: the agent's own resolved `tools` (its `exec` patterns and `network`). */
   readonly grant: Pick<ToolGrant, 'exec' | 'network' | 'allowlistHosts'>;
+  /** The exact commands the project configured for its test layers and `grant.exec` already holds
+   * (`test-command-grant.ts`, `PLAN-M13.md` P23): a proposed command equal to one of them is the user's own command, so
+   * it skips the package-manager verb rule and nothing else. */
+  readonly trustedCommands?: readonly string[];
   /** The lane worktree: the only directory a proposed command may name. */
   readonly root: string;
   /** Called for every refused proposed command, before it is returned (a caller emits a `PolicyViolation`). */
@@ -52,7 +56,11 @@ export function createRcaShell(options: RcaShellOptions): RunRcaShell {
     if (origin === 'engine') {
       return runConfinedCommand(command, cwd, { limits: engineLimits, parentEnv });
     }
-    const refusal = await vetProposedCommand(command, options.grant, options.root);
+    const refusal = await vetProposedCommand(command, options.grant, options.root, {
+      ...(options.trustedCommands === undefined
+        ? {}
+        : { trustedCommands: options.trustedCommands }),
+    });
     if (refusal !== undefined) {
       await options.onRefused?.({ command, reason: refusal.reason, detail: refusal.detail });
       const message = new ForgeError('RUN-095', {
@@ -67,8 +75,11 @@ export function createRcaShell(options: RcaShellOptions): RunRcaShell {
         refusal: { ...refusal, code: 'RUN-095', message },
       };
     }
+    // A configured test command is a whole test layer, which takes as long as the layer's own budget (`13` F-TEST-1, up to
+    // five minutes for integration): it gets the engine's limits, not the two minutes a model's ad-hoc reproduction gets.
+    const trusted = options.trustedCommands?.includes(command) === true;
     return runConfinedCommand(command, cwd, {
-      limits: proposedLimits,
+      limits: trusted ? engineLimits : proposedLimits,
       extraEnv: PROPOSED_ENV_FIXED,
       parentEnv,
     });

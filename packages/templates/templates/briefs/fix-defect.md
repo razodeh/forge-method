@@ -17,9 +17,11 @@ A reproduction is any of: a failing test, a command or script, or, for a hardeni
 command, request or code location recorded in the Defect's `evidence`. If a defect has none of
 these, or its recorded reproduction ends in NEEDS-MORE-EVIDENCE (it was run and did not reproduce),
 stop on that defect and say so. Do not guess from the description. A reproduction recorded as
-"written, not run" is usable: work from it. If your grant does not let you run commands, you cannot
-confirm it fails or that it now passes: give the command and the expected output, mark it not run,
-and never write an unrun result as observed.
+"written, not run" is usable: work from it. Your constraints list the exact test commands you may
+run (the project's own): run one exactly as written, because a command with anything added or
+changed is refused, and a layer they report as having no runnable command cannot be run from here.
+If your grant does not let you run commands, you cannot confirm it fails or that it now passes: give
+the command and the expected output, mark it not run, and never write an unrun result as observed.
 
 ### Produce
 

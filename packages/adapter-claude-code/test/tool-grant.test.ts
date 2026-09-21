@@ -149,6 +149,33 @@ describe('mapToolGrantToAllowedTools', () => {
     ]);
   });
 
+  it('an exact test command (PLAN-M13.md P23) maps to one verbatim rule: spaces, quotes, colons and a script path survive, and nothing is appended', () => {
+    const commands = [
+      'pnpm test',
+      'pnpm run test:unit',
+      "pytest -q 'tests/unit'",
+      './scripts/test.sh --fast',
+    ];
+    expect(mapToolGrantToAllowedTools(grant({ exec: commands }))).toEqual(
+      commands.map((command) => `Bash(${command})`),
+    );
+  });
+
+  it('an exact test command carries no wildcard the adapter could widen: the rule is the command and only the command', () => {
+    const rules = mapToolGrantToAllowedTools(grant({ exec: ['pnpm test'] }));
+    expect(rules).toEqual(['Bash(pnpm test)']);
+    for (const rule of rules) expect(rule).not.toContain('*');
+  });
+
+  it('a test command with a paren or comma is dropped whole, never rewritten: its rule would either widen or close the wrapper early', () => {
+    // `node -e "process.exit(1)"` cannot be expressed as a Claude Code Bash rule without an escape the adapter refuses to
+    // invent (`safeBashRule`); the session simply cannot run it, and the loop that runs it for the model (`forge debug`) can.
+    expect(mapToolGrantToAllowedTools(grant({ exec: ['node -e "process.exit(1)"'] }))).toEqual([]);
+    expect(mapToolGrantToAllowedTools(grant({ exec: ['pnpm test', 'go test -run A,B'] }))).toEqual([
+      'Bash(pnpm test)',
+    ]);
+  });
+
   it('exec:false denies all exec capability regardless of an adversarially-crafted extra field -- extra is a deliberate, separate escape hatch, not something exec:false gates', () => {
     // 07 §7.2's own "MUST fail closed" mandate is about the *exec* field's own denial being total;
     // `extra` is a documented, verbatim-passthrough escape hatch for tool names the four-field grant

@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=2b8ade13989e046e40dd5b68d92f4a7bcd112ff2971d60c2b07284a2f7c71675 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=01b8e16023f660fda89b142fb72c434293e5f1f4495db74d9236f921467a1454 — edits will be overwritten; use overrides/ -->
 Change the structure of the code to meet the stated goal while every invariant holds. The earlier
 step wrote down what must not change; the test run after you decides whether it did not.
 
@@ -17,8 +17,11 @@ The refactored code, inside the scope the handoff lists.
   behaviour, then refactor. New test files may sit outside the scope list, and you must list each
   one. If you can run them, confirm they pass against the unchanged code before you refactor; if you
   cannot, say so and give the command.
-- Change in small steps and keep the guarding tests green between them if you can run them. Prefer
-  mechanical, reversible moves (extract, inline, rename, move) over rewrites.
+- Change in small steps and keep the guarding tests green between them if you can run them. Your
+  constraints list the exact test commands you may run (the project's own): run one exactly as
+  written, because a command with anything added or changed is refused, and a layer they report as
+  having no runnable command cannot be run from here. Prefer mechanical, reversible moves (extract,
+  inline, rename, move) over rewrites.
 - If a step breaks a test, undo that step and find a smaller one.
 - Where the handoff named a differential check, run it on the same inputs before and after.
 

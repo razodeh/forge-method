@@ -115,6 +115,11 @@ export interface RcaLoopDeps {
   readonly clock: Clock;
   readonly now: () => number;
   readonly cwd: string;
+  /** The project's own test commands FORGE will run exactly as written for a proposed reproduction (`execution.testCommands`,
+   * derived into the shell's grant, `PLAN-M13.md` P23). REPRODUCE's instructions name them, because the phase's session is
+   * read-only and cannot look them up: "an existing failing test" (`13` §13.2 step 2's first preference) is only proposable
+   * if the model knows the command that runs it. Absent or empty: the instructions say nothing about any. */
+  readonly runnableCommands?: readonly string[] | undefined;
 }
 
 /** One hypothesis, settled one way or the other — `rcaSchema`'s own `hypotheses[]` shape, verbatim

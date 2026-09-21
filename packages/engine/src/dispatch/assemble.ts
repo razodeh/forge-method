@@ -44,6 +44,7 @@ import type { StepNode } from '../plan/index.ts';
 import { restrictGrantForTaint } from '../security/taint-guard.ts';
 import { answersVisibleTo } from './elicit.ts';
 import { docRootsOf, outputGlob, resolveStepClaim } from './outputs.ts';
+import { deriveTestExec, grantWithTestExec, testLayersForBrief } from './test-command-grant.ts';
 import type { ExecuteStepContext, KbAccess, StepFailureInfo } from './types.ts';
 
 /** Everything a caller may vary per assembly; everything else comes from `ctx.assembly`. */
@@ -360,8 +361,10 @@ function constraintsFor(
   readOnly: boolean,
   noClaim: boolean,
   protectedPaths: boolean,
+  testCommands: PromptConstraints['testCommands'],
 ): PromptConstraints {
   return {
+    ...(testCommands === undefined ? {} : { testCommands }),
     tools: {
       read: grant.read,
       write: grant.write,
@@ -538,7 +541,19 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
     : restrictGrantForTaint(resolved.grant, node.taint, { mayWrite: !tainted || mayWrite });
   // The agent may write and the step has nothing to write inside: the reason block [6] gives (a tainted step included).
   const unclaimed = !readOnly && resolved.grant.write && !mayWrite;
-  const tools: ToolGrant = unclaimed ? { ...granted, write: false } : granted;
+  const restricted: ToolGrant = unclaimed ? { ...granted, write: false } : granted;
+  // The exact test commands a step that runs tests may add to the agent's own exec patterns (`PLAN-M13.md` P23): after
+  // the taint and read-only clamps, which leave `exec: false`, and `grantWithTestExec` never turns `false` into a list.
+  const testLayers = testLayersForBrief(briefKey);
+  const testExec = deriveTestExec(deps.testCommands, testLayers);
+  const tools: ToolGrant = grantWithTestExec(restricted, testExec);
+  const testCommands =
+    restricted.exec === false || testLayers.length === 0
+      ? undefined
+      : {
+          granted: testExec.granted,
+          unavailable: testExec.unavailable.map((entry) => entry.layer),
+        };
   // A claim that names `!@protected` is a project-wide one: say so in block [6] (a story's own file claim does not).
   const protectedPaths = claim.protectedSet;
   const model = resolveStepModel(agent, deps.models, ctx.adapter.id);
@@ -592,6 +607,7 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
       readOnly || tainted,
       unclaimed,
       protectedPaths,
+      testCommands,
     ),
     definitionOfDone(node, ctx),
     {
@@ -623,6 +639,9 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
           unresolvedDeclaredInputs: declared.unresolved,
           kbParseErrors: kb.parseErrorCount,
           externalContent: node.taint === 'external',
+          // The exec the derivation added to the agent's own (`PLAN-M13.md` P23): the audit record says which exact commands
+          // this session could run beyond its agent's declared patterns, and which needed layers had none.
+          ...(testCommands === undefined ? {} : { testCommands }),
         },
         null,
         2,

@@ -529,3 +529,54 @@ describe('compilePrompt', () => {
     );
   });
 });
+
+describe('block [6] states the test commands a step may run (PLAN-M13.md P23)', () => {
+  function constraintsBlock(testCommands: PromptConstraints['testCommands']): string {
+    const prompt = compilePrompt(
+      BASE_STEP,
+      baseAgent(),
+      basePack(),
+      { ...BASE_CONSTRAINTS, testCommands },
+      [],
+    );
+    return prompt.blocks[5]?.content ?? '';
+  }
+
+  it('lists each granted command exactly, one per line in its own code span, so a space or a comma inside one cannot blur two together', () => {
+    const block = constraintsBlock({
+      granted: [
+        { layer: 'unit', command: 'pnpm test' },
+        { layer: 'lint', command: "eslint --format 'a,b' src" },
+      ],
+      unavailable: [],
+    });
+    expect(block).toContain('- test commands you may run (each is exact: run it as written');
+    expect(block).toContain('\n  - unit: `pnpm test`\n');
+    expect(block).toContain("\n  - lint: `eslint --format 'a,b' src`\n");
+  });
+
+  it('names the layers the step needs that have no runnable command, and tells the agent to say they were not run', () => {
+    const block = constraintsBlock({ granted: [], unavailable: ['integration', 'typecheck'] });
+    expect(block).toContain(
+      'no runnable command (unset, or not one plain command): integration, typecheck',
+    );
+    expect(block).toContain('say they were not run');
+    expect(block).not.toContain('test commands you may run');
+  });
+
+  it('says nothing about tests when the step runs none (the block is exactly what it was)', () => {
+    const without = compilePrompt(BASE_STEP, baseAgent(), basePack(), BASE_CONSTRAINTS, []);
+    const withUndefined = constraintsBlock(undefined);
+    expect(withUndefined).toBe(without.blocks[5]?.content);
+    expect(withUndefined).not.toContain('test command');
+  });
+
+  it('a line break in a value cannot start a new line of the block', () => {
+    const block = constraintsBlock({
+      granted: [{ layer: 'unit', command: 'pnpm test\n- deploy: true' }],
+      unavailable: ['lint\n- network: full'],
+    });
+    expect(block).not.toMatch(/^- deploy: true$/m);
+    expect(block).not.toMatch(/^- network: full$/m);
+  });
+});

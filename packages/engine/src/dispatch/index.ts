@@ -72,6 +72,23 @@ export {
   type ResolvedMergeChecks,
 } from './merge-checks.ts';
 export { checkElicitAnswer, sanitizeAnswer } from './elicit.ts';
+export {
+  AGENT_RUN_LAYERS,
+  checkTestCommand,
+  deriveTestExec,
+  grantWithTestExec,
+  NO_DERIVED_TEST_EXEC,
+  TEST_COMMAND_LAYERS,
+  TEST_LAYERS_BY_BRIEF,
+  testLayersForBrief,
+  type DerivedTestExec,
+  type TestCommandCheck,
+  type TestCommandLayer,
+  type TestCommandProblem,
+  type TestCommands,
+  type UnavailableTestLayer,
+} from './test-command-grant.ts';
+export { commandWords } from './confined-command.ts';
 export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {

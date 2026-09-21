@@ -18,6 +18,12 @@ import {
   type ConfigKeyPath,
   type ForgeConfig,
 } from '@forge/schemas/config';
+import {
+  AGENT_RUN_LAYERS,
+  checkTestCommand,
+  TEST_COMMAND_LAYERS,
+  type TestCommandLayer,
+} from '@forge/engine/dispatch';
 import * as YAML from 'yaml';
 
 export interface ConfigCommandContext {
@@ -84,10 +90,50 @@ function setByPath(config: ForgeConfig, path: string, value: unknown): ForgeConf
   return clone as unknown as ForgeConfig;
 }
 
+const TEST_COMMAND_KEY_PREFIX = 'execution.testCommands.';
+
+/** The layer of an `execution.testCommands.<layer>` key, or `undefined` for any other key. `execution.testCommands` is one
+ * leaf (a record whose keys are data, `configLeafPaths`), so without this a single layer could only be set by replacing
+ * the whole map with a YAML flow mapping, which drops every other layer (`PLAN-M13.md` P23). */
+function testCommandLayerOf(key: string): TestCommandLayer | undefined {
+  if (!key.startsWith(TEST_COMMAND_KEY_PREFIX)) return undefined;
+  const layer = key.slice(TEST_COMMAND_KEY_PREFIX.length);
+  return TEST_COMMAND_LAYERS.find((candidate) => candidate === layer);
+}
+
 function assertRealKey(key: string): void {
-  if (!REAL_KEYS.has(key)) {
+  if (!REAL_KEYS.has(key) && testCommandLayerOf(key) === undefined) {
     throw new ForgeError('USR-002', { flag: 'key', value: key });
   }
+}
+
+/** The command `set` stores for a layer: the value as written (never YAML-parsed: `pnpm run test:unit` and
+ * `node -e "x"` are strings, but `true`, `123` and `a: b` would parse into other types), trimmed. The layers whose command
+ * becomes an exec grant (`AGENT_RUN_LAYERS`) must be one plain command (`checkTestCommand`); the others only one line, since
+ * a gate may run them chained (`SPEC-QUESTIONS.md` Q219). A refusal is `ENV-006`, the code a gate check with no usable
+ * command reports, so the remedy is the one the gate would print. */
+function testCommandValue(layer: TestCommandLayer, key: string, rawValue: string): string {
+  if (AGENT_RUN_LAYERS.includes(layer)) {
+    const checked = checkTestCommand(rawValue);
+    if (!checked.ok) {
+      throw new ForgeError('ENV-006', {
+        field: key,
+        reason: `${checked.detail}. ${checked.remedy}`,
+      });
+    }
+    return checked.command;
+  }
+  const command = rawValue.trim();
+  if (command === '' || /[\n\r\0]/.test(command)) {
+    throw new ForgeError('ENV-006', {
+      field: key,
+      reason:
+        command === ''
+          ? 'the command is empty'
+          : 'the command spans more than one line; chain steps with "&&" on one line or put them in a script',
+    });
+  }
+  return command;
 }
 
 /** `get <key>` — the real, currently-effective value at a real dot-path. */
@@ -108,15 +154,20 @@ export async function configSet(
 ): Promise<ForgeConfig> {
   assertRealKey(key);
   const config = await readConfig(ctx.paths);
+  const layer = testCommandLayerOf(key);
   let parsedValue: unknown;
-  try {
-    parsedValue = YAML.parse(rawValue);
-  } catch {
-    // A critic round caught this call unguarded: a genuinely malformed raw value (not just one that
-    // parses but fails schema revalidation, already handled below) threw a raw `YAMLParseError`
-    // straight out of this function instead of the same real, actionable `USR-002` every other
-    // malformed-CLI-value case in this module already raises.
-    throw new ForgeError('USR-002', { flag: 'value', value: rawValue });
+  if (layer === undefined) {
+    try {
+      parsedValue = YAML.parse(rawValue);
+    } catch {
+      // A critic round caught this call unguarded: a genuinely malformed raw value (not just one that
+      // parses but fails schema revalidation, already handled below) threw a raw `YAMLParseError`
+      // straight out of this function instead of the same real, actionable `USR-002` every other
+      // malformed-CLI-value case in this module already raises.
+      throw new ForgeError('USR-002', { flag: 'value', value: rawValue });
+    }
+  } else {
+    parsedValue = testCommandValue(layer, key, rawValue);
   }
   const updated = setByPath(config, key, parsedValue);
   const result = configSchema.safeParse(updated);
@@ -155,7 +206,8 @@ export async function configExplain(
 ): Promise<ConfigExplanation> {
   assertRealKey(key);
   const config = await readConfig(ctx.paths);
-  const doc = CONFIG_KEY_DOCS[key as ConfigKeyPath];
+  const docKey = testCommandLayerOf(key) === undefined ? key : 'execution.testCommands';
+  const doc = CONFIG_KEY_DOCS[docKey as ConfigKeyPath];
   return { key: key as ConfigKeyPath, value: getByPath(config, key), doc };
 }
 

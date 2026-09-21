@@ -245,5 +245,6 @@ export function createPromptAssemblyContext(
     templatesPackageRoot: input.templatesPackageRoot,
     pinnedCore: { projectIdentity: config.project.name, level: config.project.level },
     styleProfile: input.styleProfile,
+    testCommands: config.execution.testCommands,
   };
 }
