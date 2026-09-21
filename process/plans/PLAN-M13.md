@@ -326,6 +326,8 @@ implement the missing commands; keep G-Foundation's deployed skeleton via a Waiv
 | P39 Conflict resolution and re-sync (deferred, disclose) | default `conflictPolicy: agent` has no resolver wired, so two lanes touching one file fail at integration; the integration branch is never re-synced with `main`; inline `forge kb sync` writes the index under the worktree | Q221 (a)-(r) |
 | P40 OS-level confinement (deferred, disclose) | PROVE runs FIX-written code with the network open and the real `HOME`; `forge kb verify` and `forge adopt` verification run untrusted-source commands with the full environment; `15` §15.5.4 (a tainted step writes an ADR without human confirmation) is unenforced | Q222 §8 |
 
+**Proposed M13 boundary (orchestrator's recommendation, 2026-09-20).** M13 closes when: P0-P28, P35, P36, P38, P41, P20, P18, P26 and P23 are landed and verified; a second live run (P9-2, `retro`) has been made; one full unscoped suite is green apart from the accepted flakes; and every `## M13 P<n>` log entry exists. Everything else in this section that is not in that list (P29, P30, P31, P32, P33, P34, P37, P39, P40, and the P9-3 `plan-stage` live run) becomes the **M14 backlog**, each already scoped above with its evidence. The owner can widen or narrow this.
+
 Also carried from P13 (Q211): spec `10` §10.1's worked example does not compile as written (amend with `itemKey` on
 `review`, `dependsOn: [prepare]` on `freeze-contracts`, and a sentence that a merge's `dependsOn` resolves per
 item); `fixtures/greenfield-service/.forge/workflows/build-stage.workflow.yaml` is a stale hash-headed snapshot
