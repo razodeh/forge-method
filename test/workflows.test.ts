@@ -185,7 +185,7 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // (protobuf, GraphQL SDL, TypeScript types) beside the YAML record, only the YAML is a declared output, and under `strict`
   // the source would be reverted (Q216). The worked example below carries the same three globs, and the same
   // `produces` on the `onFailure` escalation's `rca` step (an RCA record, and the Defect it names).
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211) and freeze-contracts' produces (Q216)", () => {
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211) and freeze-contracts' produces (Q216) and implement's `!{{item.test_paths}}` exclusion (Q225)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -256,7 +256,7 @@ steps:
       agent: "{{item.owner_role}}"
       brief: briefs/implement-story.md
       inputs: [ "artifact:Story({{item.id}})", artifact:InterfaceContract(*), kb:engineering/standards ]
-      produces: "{{item.files_expected}}"
+      produces: [ "{{item.files_expected}}", "!{{item.test_paths}}" ]
       retry: { maxAttempts: 3, retryOn: [ transient, test-failure, validation ] }
       onFailure: escalate
 
