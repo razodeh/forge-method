@@ -1656,10 +1656,6 @@ async function runDoctorCommand(
   if (positionals.length > 0) {
     throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
   }
-  const config = await readConfig(paths);
-  const env = realEnvSnapshot();
-  const adapter = await buildAdapterForDiagnostics(config, env);
-  const report = await runDoctor({
   const doctorRule = values.get('--rule');
   if (doctorRule !== undefined) {
     if (
@@ -1689,6 +1685,10 @@ async function runDoctorCommand(
       console,
     );
   }
+  const config = await readConfig(paths);
+  const env = realEnvSnapshot();
+  const adapter = await buildAdapterForDiagnostics(config, env);
+  const report = await runDoctor({
     paths,
     projectRoot,
     config,
@@ -1911,18 +1911,14 @@ async function buildKbContext(paths: ProjectPaths): Promise<KbCommandContext> {
 }
 
 const KB_GRAPH_FLAGS = { '--hops': true } as const;
+const KB_LINT_FLAGS = { '--rule': true } as const;
 
 async function runKbCommand(
   paths: ProjectPaths,
   sub: string | undefined,
-const KB_LINT_FLAGS = { '--rule': true } as const;
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
-  const ctx = await buildKbContext(paths);
-
-  if (sub === 'list') {
-    assertNoArgs(rest);
   if (sub === 'lint') {
     const { values: lintValues, positionals: lintPositionals } = parseCommandFlags(
       rest,
@@ -1977,6 +1973,10 @@ const KB_LINT_FLAGS = { '--rule': true } as const;
     );
     return errors > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
   }
+  const ctx = await buildKbContext(paths);
+
+  if (sub === 'list') {
+    assertNoArgs(rest);
     // Every field printed below (`title` especially) is real, project-authored KB free text a
     // hostile or careless committer fully controls — sanitized once, here, before either renderer
     // sees it (`sanitizeDeep`'s own doc comment has the fuller reasoning, a fresh critic-round finding).
@@ -3300,10 +3300,6 @@ async function main(): Promise<number> {
   }
   if (command === 'test' && sub === 'run') {
     const rawRule = findRawTestRuleFlag(rest);
-    if (rawRule !== undefined && !isTestRuleId(rawRule)) {
-      console.error(
-        `forge: "test run --rule" needs a real rule (one of: ${[...TEST_RULE_IDS, ...TEST_LAYER_RULES].join(', ')}); ` +
-          `got ${JSON.stringify(rawRule)}.`,
     // `--rule=smoke` matches no `--rule` token, so it would silently run the whole default test suite instead.
     if (rest.some((token) => token.startsWith('--rule='))) {
       console.error('forge: "test run" takes `--rule <name>` (a space, not `=`).');
@@ -3324,6 +3320,10 @@ async function main(): Promise<number> {
         console,
       );
     }
+    if (rawRule !== undefined && !isTestRuleId(rawRule)) {
+      console.error(
+        `forge: "test run --rule" needs a real rule (one of: ${[...TEST_RULE_IDS, ...TEST_LAYER_RULES].join(', ')}); ` +
+          `got ${JSON.stringify(rawRule)}.`,
       );
       return 2;
     }
