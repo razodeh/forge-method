@@ -118,10 +118,20 @@ import {
   diagramValidate,
   type DiagramCommandContext,
 } from './commands/diagram.ts';
+import { deployDryRunCheck, deployRollbackCheck } from './commands/deploy-evidence.ts';
+import {
+  DIAGRAM_GATES,
+  diagramDriftCheck,
+  diagramValidateGate,
+  type DiagramGate,
+  type DiagramGateContext,
+} from './commands/diagram-gate.ts';
+import { MAX_LISTED_VIOLATIONS, runGateCheck } from './commands/gate-check-output.ts';
+import { specInterfacesCheck } from './commands/spec/interfaces.ts';
 import { runDoctor } from './commands/doctor/index.ts';
 import { runDoctorRuleCommand } from './commands/doctor/rule-command.ts';
 import { runKbLintRuleCommand } from './commands/kb-rule-command.ts';
-import { describeRefusal } from './commands/output-port.ts';
+import { describeRefusal, printable } from './commands/output-port.ts';
 import {
   exportHtml,
   exportMarkdownBundle,
@@ -1248,14 +1258,30 @@ async function runSpecValidateRule(
   const ctx = { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT, agentsRoot: AGENTS_ROOT };
   const result = await specValidateRule(ctx, rule);
   if (json) {
+    // `errors` is the full count; the list is capped (a hostile declaration can hold thousands of items).
     console.log(
-      JSON.stringify({ v: 1, errors: result.violations.length, violations: result.violations }),
+      JSON.stringify({
+        v: 1,
+        errors: result.violations.length,
+        violations: result.violations.slice(0, MAX_LISTED_VIOLATIONS),
+        ...(result.violations.length > MAX_LISTED_VIOLATIONS ? { truncated: true } : {}),
+      }),
     );
   } else if (result.violations.length === 0) {
     console.log(`forge spec validate --rule ${rule}: no real violations.`);
   } else {
-    for (const violation of result.violations) {
-      console.error(`${violation.subject}: ${violation.message}`);
+    // Text from project files reaches the terminal here: control and format characters are replaced first.
+    for (const violation of result.violations.slice(0, MAX_LISTED_VIOLATIONS)) {
+      console.error(
+        printable(
+          `${violation.subject}: ${violation.message}${violation.remedy === undefined ? '' : ` ${violation.remedy}`}`,
+        ),
+      );
+    }
+    if (result.violations.length > MAX_LISTED_VIOLATIONS) {
+      console.error(
+        `${String(result.violations.length)} violations in all; only the first ${String(MAX_LISTED_VIOLATIONS)} are listed.`,
+      );
     }
   }
   return result.violations.length > 0 ? 1 : 0;
@@ -2185,7 +2211,16 @@ async function runKbCommand(
 
 // --- `forge spec <sub>` (`03` §3.2.2) -------------------------------------------------------------
 
-const SPEC_SUBCOMMANDS = ['list', 'show', 'validate', 'trace', 'matrix', 'orphans', 'new'] as const;
+const SPEC_SUBCOMMANDS = [
+  'list',
+  'show',
+  'validate',
+  'trace',
+  'matrix',
+  'orphans',
+  'new',
+  'interfaces',
+] as const;
 
 function buildSpecContext(paths: ProjectPaths): SpecCommandContext {
   return { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT, agentsRoot: AGENTS_ROOT };
@@ -2288,6 +2323,34 @@ async function runSpecCommand(
     const matrix = await specMatrix(ctx);
     console.log(json ? JSON.stringify({ v: 1, ...matrix }) : JSON.stringify(matrix, null, 2));
     return EXIT_CODES.success;
+  }
+  if (sub === 'interfaces') {
+    // `G-Design`'s `interfaces:frozen` check (`06` §6.6 rule 5, `PLAN-M13.md` P26): the one form there is.
+    const { flags, positionals } = parseCommandFlags(rest, { '--check-frozen': false });
+    if (!flags.has('--check-frozen') || positionals.length > 0) {
+      console.error(
+        'forge: "spec interfaces" needs a real --check-frozen (and takes no other argument).',
+      );
+      return EXIT_CODES.usage;
+    }
+    return runGateCheck(
+      {
+        command: 'forge spec interfaces --check-frozen',
+        refusalFields: { undefined_refs: 1 },
+        json,
+        out: console,
+      },
+      // Roots from the configuration, like the diagram and deploy checks: a project with `paths.specs` moved must be
+      // read where its stories are, and an unreadable config is a failing verdict.
+      async () => {
+        const config = await readConfig(paths);
+        return specInterfacesCheck({
+          ...ctx,
+          specsRoot: config.paths.specs,
+          kbRoot: config.paths.kb,
+        });
+      },
+    );
   }
   if (sub === 'orphans') {
     assertNoArgs(rest);
@@ -2460,6 +2523,25 @@ function buildDiagramContext(paths: ProjectPaths): DiagramCommandContext {
 
 const DIAGRAM_RENDER_FLAGS = { '--open': false } as const;
 const DIAGRAM_INPUT_FLAGS = { '--input': true } as const;
+const DIAGRAM_VALIDATE_FLAGS = { '--gate': true } as const;
+const DIAGRAM_GENERATE_FLAGS = { '--input': true, '--all': false, '--check': false } as const;
+
+/** What the two gate-shaped diagram checks (`PLAN-M13.md` P26) read from the configuration. Built inside
+ * `runGateCheck`'s thunk, so a project whose config cannot be read is a failing verdict, not a refusal. */
+async function buildDiagramGateContext(paths: ProjectPaths): Promise<DiagramGateContext> {
+  const config = await readConfig(paths);
+  return {
+    paths,
+    kbRoot: config.paths.kb,
+    specsRoot: config.paths.specs,
+    level: config.project.level,
+    diagrams: {
+      complexity: config.diagrams.complexity,
+      requireCaptions: config.diagrams.requireCaptions,
+      driftPolicy: config.diagrams.driftPolicy,
+    },
+  };
+}
 
 async function runDiagramCommand(
   paths: ProjectPaths,
@@ -2494,7 +2576,26 @@ async function runDiagramCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'validate') {
-    const { positionals } = parseCommandFlags(rest, {});
+    const { values, positionals } = parseCommandFlags(rest, DIAGRAM_VALIDATE_FLAGS);
+    const gate = values.get('--gate');
+    if (gate !== undefined) {
+      // `G-Design`/`G-Deliver`'s `diagram:validate` check (`08` §8.11.7, `PLAN-M13.md` P26).
+      if (positionals.length > 0 || !(DIAGRAM_GATES as readonly string[]).includes(gate)) {
+        console.error(
+          `forge: "diagram validate --gate" needs a real gate (one of ${DIAGRAM_GATES.join('|')}) and takes no <id>; got ${JSON.stringify(gate)}.`,
+        );
+        return EXIT_CODES.usage;
+      }
+      return runGateCheck(
+        {
+          command: `forge diagram validate --gate ${gate}`,
+          refusalFields: {},
+          json,
+          out: console,
+        },
+        async () => diagramValidateGate(await buildDiagramGateContext(paths), gate as DiagramGate),
+      );
+    }
     const [id] = positionals;
     if (id === undefined || positionals.length > 1) {
       console.error('forge: "diagram validate" needs a real <id>.');
@@ -2526,7 +2627,30 @@ async function runDiagramCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'generate') {
-    const { values, positionals } = parseCommandFlags(rest, DIAGRAM_INPUT_FLAGS);
+    const { flags, values, positionals } = parseCommandFlags(rest, DIAGRAM_GENERATE_FLAGS);
+    if (flags.has('--all') || flags.has('--check')) {
+      // `G-Design`/`G-Deliver`'s `diagram:drift` check (`08` §8.11.6, `PLAN-M13.md` P26): read-only, so both flags.
+      if (
+        !flags.has('--all') ||
+        !flags.has('--check') ||
+        positionals.length > 0 ||
+        values.has('--input')
+      ) {
+        console.error(
+          'forge: "diagram generate --all" is the drift check and needs a real --check (it takes no <generator> and no --input).',
+        );
+        return EXIT_CODES.usage;
+      }
+      return runGateCheck(
+        {
+          command: 'forge diagram generate --all --check',
+          refusalFields: { drifted: 1 },
+          json,
+          out: console,
+        },
+        async () => diagramDriftCheck(await buildDiagramGateContext(paths)),
+      );
+    }
     const [generatorName] = positionals;
     if (generatorName === undefined || positionals.length > 1) {
       console.error('forge: "diagram generate" needs a real <generator>.');
@@ -3043,7 +3167,7 @@ async function runStoryCommand(
   return rendering.exitCode;
 }
 
-const DEPLOY_FLAGS = { '--confirm': true } as const;
+const DEPLOY_FLAGS = { '--confirm': true, '--rollback-check': false } as const;
 
 async function runDeployCommand(
   paths: ProjectPaths,
@@ -3052,8 +3176,50 @@ async function runDeployCommand(
   dryRun: boolean,
   json: boolean,
 ): Promise<number> {
-  const { values, positionals } = parseCommandFlags(args, DEPLOY_FLAGS);
+  const { values, flags, positionals } = parseCommandFlags(args, DEPLOY_FLAGS);
   const [env] = positionals;
+  if (env === undefined && (dryRun || flags.has('--rollback-check'))) {
+    // `G-Deliver`'s `deploy:dry-run` and `deploy:rollback-rehearsed` checks (`14` §14.9, `PLAN-M13.md` P26): the
+    // env-less forms judge the recorded delivery evidence and never deploy anything (FORGE has no deploy executor).
+    if (dryRun === flags.has('--rollback-check') || values.has('--confirm')) {
+      console.error(
+        'forge: "deploy" needs a real <env>, or exactly one of --dry-run and --rollback-check (and no --confirm) for the gate checks.',
+      );
+      return EXIT_CODES.usage;
+    }
+    const rollback = flags.has('--rollback-check');
+    return runGateCheck(
+      {
+        command: `forge deploy ${rollback ? '--rollback-check' : '--dry-run'}`,
+        refusalFields: {},
+        json,
+        out: console,
+      },
+      async () => {
+        const config = await readConfig(paths);
+        const context = {
+          paths,
+          projectRoot,
+          kbRoot: config.paths.kb,
+          reportsRoot: config.paths.reports,
+          documentRoots: [
+            config.paths.kb,
+            config.paths.specs,
+            config.paths.plans,
+            config.paths.sessions,
+            config.paths.reports,
+          ],
+        };
+        return rollback ? deployRollbackCheck(context) : deployDryRunCheck(context);
+      },
+    );
+  }
+  if (flags.has('--rollback-check')) {
+    console.error(
+      'forge: "deploy --rollback-check" needs a real form: it is a check over recorded evidence and takes no <env>.',
+    );
+    return EXIT_CODES.usage;
+  }
   if (env === undefined || positionals.length > 1) {
     console.error('forge: "deploy" needs a real <env>.');
     return EXIT_CODES.usage;

@@ -42,16 +42,6 @@ const ENV = { ...process.env, ...ENV_OVERLAY };
  * until the pin is removed: a pin that outlives its reason is as misleading as a missing command. */
 const PINNED_REJECTED: Readonly<Record<string, string>> = {
   'forge doctor --rule test-command --json': 'PLAN-M13.md P23 (G-Foundation test:command)',
-  'forge spec validate --rule version-skew --json': 'PLAN-M13.md P26 (G-Integration)',
-  'forge spec validate --rule migration-order-violations --json': 'PLAN-M13.md P26 (G-Integration)',
-  'forge spec validate --rule slo-observability-coverage --json': 'PLAN-M13.md P26 (G-Operate)',
-  'forge spec validate --rule runbook-coverage --json': 'PLAN-M13.md P26 (G-Operate)',
-  'forge spec interfaces --check-frozen --json': 'PLAN-M13.md P26 (G-Design)',
-  'forge diagram validate --gate G-Design --json': 'PLAN-M13.md P26 (G-Design)',
-  'forge diagram validate --gate G-Deliver --json': 'PLAN-M13.md P26 (G-Deliver)',
-  'forge diagram generate --all --check --json': 'PLAN-M13.md P26 (G-Design, G-Deliver)',
-  'forge deploy --dry-run --json': 'PLAN-M13.md P26 (G-Deliver)',
-  'forge deploy --rollback-check --json': 'PLAN-M13.md P26 (G-Deliver)',
 };
 
 interface ShippedCheck {

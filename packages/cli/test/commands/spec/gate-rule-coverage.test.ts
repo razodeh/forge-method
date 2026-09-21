@@ -7,17 +7,17 @@
  * here from the real gate YAML files, not from a hand-kept list, and each name is run through the real
  * CLI in a temp project.
  *
- * **Scope, exactly.** This covers the `spec validate` command family only. Deterministic checks in other
- * families (`doctor --rule`, `kb lint --rule`, `test ...`, `diagram ...`, `deploy ...`, `spec interfaces
- * --check-frozen`) are still rejected by the CLI, and `G-Design`, `G-Foundation`, `G-Deliver`, `G-Verify`
- * and `G-Integration` still hold such checks; `PLAN-M13.md` P25 and P26 own them. The test below fails on
- * any `spec validate` run string in a form it does not understand, so a gate cannot use a new spelling
- * (`--rule=x`, `--json --rule x`) and slip past the derivation.
+ * **Scope, exactly.** This covers the `spec validate` command family only; the other families have their own
+ * siblings (`gate-family-coverage.test.ts`: `doctor`, `kb lint`, `test`; `gate-p26-coverage.test.ts`: `spec
+ * interfaces`, `diagram`, `deploy`). The test below fails on any `spec validate` run string in a form it does not
+ * understand, so a gate cannot use a new spelling (`--rule=x`, `--json --rule x`) and slip past the derivation.
  *
  * P11 counted ten `--rule` names on `spec validate` that the CLI rejected before P24: the six implemented
  * by P24 (`metrics-defined`, `user-identified`, `scope-contradicts-constraints`, `capability-acceptance`,
- * `nfr-numeric`, `blocking-open-questions`) and the four `G-Integration`/`G-Operate` ones `PLAN-M13.md` P26
- * owns. Those four are pinned below so this test states, rather than hides, what is still missing.
+ * `nfr-numeric`, `blocking-open-questions`) and the four `G-Integration`/`G-Operate` ones (`version-skew`,
+ * `migration-order-violations`, `slo-observability-coverage`, `runbook-coverage`) implemented by `PLAN-M13.md`
+ * P26 (Q228). Nothing is pinned any more; the mechanism stays so a future gate name that is not implemented fails
+ * here until it is.
  *
  * @see specs/10 §10.3
  * @see PLAN-M13.md P24, P26
@@ -43,12 +43,7 @@ const CHECKS_DIR = fileURLToPath(
 /** Names a gate uses that the CLI still rejects, and which piece will implement each. When a piece
  * implements one, this test fails until the name is removed here: a pin that outlives its reason is as
  * misleading as a missing rule. */
-const PINNED_UNIMPLEMENTED: Readonly<Record<string, string>> = {
-  'version-skew': 'PLAN-M13.md P26 (G-Integration)',
-  'migration-order-violations': 'PLAN-M13.md P26 (G-Integration)',
-  'slo-observability-coverage': 'PLAN-M13.md P26 (G-Operate)',
-  'runbook-coverage': 'PLAN-M13.md P26 (G-Operate)',
-};
+const PINNED_UNIMPLEMENTED: Readonly<Record<string, string>> = {};
 
 interface GateCheck {
   readonly gate: string;
@@ -200,6 +195,33 @@ describe('the real CLI accepts exactly the gate rule names it implements', () =>
     for (const [name, status] of Object.entries(expected)) {
       const outcome = outcomes.find((candidate) => candidate.name === name);
       expect(outcome?.status, name).toBe(status);
+    }
+  }, 240_000);
+  it('the four P26 rules fail an empty project (nothing declared, nothing identified), each violation with a remedy', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-gate-rules-'));
+    dirs.push(dir);
+    const names = [
+      'version-skew',
+      'migration-order-violations',
+      'slo-observability-coverage',
+      'runbook-coverage',
+    ];
+    const outcomes = await inBatches(names, (name) =>
+      forge(['-C', dir, 'spec', 'validate', '--rule', name, '--json'], dir).then((outcome) => ({
+        name,
+        ...outcome,
+      })),
+    );
+    for (const outcome of outcomes) {
+      expect(outcome.status, outcome.name).toBe(1);
+      const envelope = JSON.parse(outcome.stdout) as {
+        errors: number;
+        violations: { subject: string; message: string; remedy?: string }[];
+      };
+      expect(envelope.errors, outcome.name).toBeGreaterThan(0);
+      for (const violation of envelope.violations) {
+        expect(violation.remedy, `${outcome.name}: ${violation.message}`).toBeTruthy();
+      }
     }
   }, 240_000);
 });

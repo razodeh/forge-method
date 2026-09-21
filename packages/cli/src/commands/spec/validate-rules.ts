@@ -43,6 +43,8 @@ import {
   validateScopeContradictsConstraints,
   validateUserIdentified,
 } from './gate-rules.ts';
+import { validateMigrationOrder, validateVersionSkew } from './integration-rules.ts';
+import { validateRunbookCoverage, validateSloObservabilityCoverage } from './ops-rules.ts';
 
 /** The one real, runtime-checkable list a caller (`bin.ts`) validates an arbitrary `--rule` string
  * against — `ValidateRuleId` is derived from it, not a hand-kept parallel union, so the two can never
@@ -62,6 +64,12 @@ export const VALIDATE_RULE_IDS = [
   'capability-acceptance',
   'nfr-numeric',
   'blocking-open-questions',
+  // `PLAN-M13.md` P26: the four `G-Integration` and `G-Operate` checks (Q228). Implemented in `./integration-rules.ts`
+  // and `./ops-rules.ts`.
+  'version-skew',
+  'migration-order-violations',
+  'slo-observability-coverage',
+  'runbook-coverage',
 ] as const;
 
 /** One of the deterministic checks the shipped gates name as a real `forge spec validate --rule <name>`
@@ -76,6 +84,9 @@ export type ValidateRuleId = (typeof VALIDATE_RULE_IDS)[number];
 export interface RuleViolation {
   readonly subject: string;
   readonly message: string;
+  /** The action that clears it, starting with an imperative verb. Set by the rules of `PLAN-M13.md` P26; the older
+   * rules carry the fix in `message`. */
+  readonly remedy?: string;
 }
 
 /** `specValidateRule`'s own return value. `violations` is the full list — every real caller (a test,
@@ -613,6 +624,14 @@ export async function specValidateRule(
       return validateNfrNumeric(ctx);
     case 'blocking-open-questions':
       return validateBlockingOpenQuestions(ctx);
+    case 'version-skew':
+      return validateVersionSkew(ctx);
+    case 'migration-order-violations':
+      return validateMigrationOrder(ctx);
+    case 'slo-observability-coverage':
+      return validateSloObservabilityCoverage(ctx);
+    case 'runbook-coverage':
+      return validateRunbookCoverage(ctx);
     default: {
       const unreachable: never = rule;
       throw new ForgeError('USR-003', { feature: `spec validate --rule ${String(unreachable)}` });

@@ -74,10 +74,6 @@ const KNOWN_UNACCEPTED: Readonly<Record<string, string>> = {
     'Q213 / Q202 finding 8: `03` defines no `forge migrate` command and `10` §10.5 gives `migrate` no cut-over step (D7, an L3+ product decision). Deferred by `P11-TRIAGE.md` §5.',
   'forge spec re-derive --json':
     'Q213: `03` §3.2.2 lists `list|show|validate|trace|matrix|orphans|new` for `forge spec`; `09` §9.7 says only that affected tests are re-derived after a spec change, with no command that does it. Deferred by `P11-TRIAGE.md` §5.',
-  'forge deploy --dry-run --json':
-    'Q213: the shipped G-Deliver gate (`deploy:dry-run`) names this env-less form and `forge deploy` still needs an `<env>`. Wired by P26.',
-  'forge deploy --rollback-check --json':
-    'Q213: the shipped G-Deliver gate (`deploy:rollback-rehearsed`) names `--rollback-check`, which `forge deploy` does not have. Wired by P26.',
 };
 
 interface CommandStep {
@@ -302,6 +298,8 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge nonsense verify',
       'forge kb synk',
       'forge deploy staging --no-such-flag',
+      'forge deploy staging --rollback-check',
+      'forge deploy --dry-run --rollback-check',
       'forge story verify',
       'forge spec re-derive --json',
     ]) {
@@ -311,6 +309,8 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge kb sync',
       'forge spec matrix --json',
       'forge story verify STORY-1',
+      'forge deploy --dry-run --json',
+      'forge deploy --rollback-check --json',
     ]) {
       expect((await ask(good)).classification, good).toBe('accepted');
     }

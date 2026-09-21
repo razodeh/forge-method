@@ -46,15 +46,15 @@ export async function secretsResolvedViolations(
 
 /** An environment whose `purpose` says it is the development environment. Word-bounded, so `device` and `devops`
  * do not match; the local one the scaffold records ("Local development") matches too and is excluded by its URL. */
-const DEVELOPMENT_PURPOSE = /\b(dev|development)\b/i;
+export const DEVELOPMENT_PURPOSE = /\b(dev|development)\b/i;
 
 /** A purpose that also names another environment ("Production (never dev)") is not the development environment. */
-const OTHER_ENVIRONMENT_PURPOSE = /\b(prod|production|staging|stage|preview|uat)\b/i;
+export const OTHER_ENVIRONMENT_PURPOSE = /\b(prod|production|staging|stage|preview|uat)\b/i;
 
-const ENVIRONMENTS_FILE = 'delivery/environments.md';
+export const ENVIRONMENTS_FILE = 'delivery/environments.md';
 
 /** A deployment record is a few hundred bytes; this is a ceiling, not a target. */
-const MAX_EVIDENCE_BYTES = 1024 * 1024;
+export const MAX_EVIDENCE_BYTES = 1024 * 1024;
 
 /** The IPv4 address an IPv4-mapped or IPv4-compatible IPv6 host (`::ffff:7f00:1`, `::ffff:127.0.0.1`, `::7f00:1`) stands for, so the local-address
  * test below cannot be dodged by spelling. */
@@ -98,7 +98,7 @@ function hostOf(url: URL): string {
 }
 
 /** The URL of a real, reachable-in-principle deployed environment, or a reason it is not one. */
-function deployedUrl(url: string): { readonly host: string } | { readonly reason: string } {
+export function deployedUrl(url: string): { readonly host: string } | { readonly reason: string } {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -117,7 +117,7 @@ function deployedUrl(url: string): { readonly host: string } | { readonly reason
   return { host };
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
+export function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
@@ -125,7 +125,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 /** An ISO-8601 instant WITH a zone (`Z` or an offset). A timestamp with none is read in the local zone by
  * `Date.parse`, so the verdict of comparing two of them would depend on the machine's `TZ` (R10). */
-function parsesAsInstant(value: unknown): boolean {
+export function parsesAsInstant(value: unknown): boolean {
   return (
     typeof value === 'string' &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/.test(value) &&
@@ -137,7 +137,7 @@ function parsesAsInstant(value: unknown): boolean {
  * and must not touch the network. */
 const GIT_ENV = { GIT_NO_LAZY_FETCH: '1' } as const;
 
-async function commitExists(projectRoot: string, sha: string): Promise<boolean> {
+export async function commitExists(projectRoot: string, sha: string): Promise<boolean> {
   const result = await execa('git', ['cat-file', '-e', `${sha}^{commit}`], {
     cwd: projectRoot,
     reject: false,
@@ -148,7 +148,7 @@ async function commitExists(projectRoot: string, sha: string): Promise<boolean> 
 
 /** Whether `sha` is in the history of the checked-out commit: a deployment of a commit that is not part of this
  * project's history says nothing about it. */
-async function isAncestorOfHead(projectRoot: string, sha: string): Promise<boolean> {
+export async function isAncestorOfHead(projectRoot: string, sha: string): Promise<boolean> {
   const result = await execa('git', ['merge-base', '--is-ancestor', sha, 'HEAD'], {
     cwd: projectRoot,
     reject: false,

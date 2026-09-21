@@ -33,10 +33,11 @@ steps:
   # They are not `forge deploy <env>` (03 §3.2.5): that command IS this workflow, so a step calling it would
   # start the workflow again. Promotion to a real environment is the project's pipeline's job ("the pipeline
   # is the only path to production", 14 §14.3), designed by the two steps above; FORGE checks it, it does not
-  # push. `forge deploy` has no env-less form and no `--rollback-check` yet, and `test run --rule` has no
-  # `smoke`: those are the gaps pinned in test/command-steps.test.ts (P25 and P26 close them). Until they do,
-  # `forge run deliver-stage` stops at `deploy` with a usage error (exit 2) on every real run; it does not
-  # deploy, and it does not recurse.
+  # push. `forge deploy --dry-run` and `forge deploy --rollback-check` (M13 P26, Q228) are those two checks: they read
+  # the dry-run and rollback-rehearsal records the pipeline commits under `docs/forge/reports/deployments/`, and
+  # `forge test run --rule smoke` (P25) runs `execution.testCommands.smoke`. None of them deploys, and none recurses. A
+  # project whose pipeline has not recorded them yet fails the step (exit 1), so a run stops there until the records
+  # exist or a Waiver covers G-Deliver.
   - id: deploy
     kind: command
     run: 'forge deploy --dry-run --json'
