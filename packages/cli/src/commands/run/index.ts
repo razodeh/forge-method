@@ -7,6 +7,8 @@
 export {
   buildRunEngineContext,
   ensureIntegrationWorktree,
+  integrationBranchFor,
+  integrationBranchOfRun,
   isTargetRegisteredWorktree,
   type BuildRunContextInput,
 } from './context.ts';

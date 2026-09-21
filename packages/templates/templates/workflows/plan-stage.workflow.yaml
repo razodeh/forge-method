@@ -53,10 +53,10 @@ steps:
       - 'docs/forge/kb/engineering/testing.md'
       - 'docs/forge/kb/open-questions.md'
 
-  # Read-only: it reads the stage's Epics and Stories and prints the plan, so it runs in the supervisor at
-  # the project root (`inline`) rather than in a lane worktree of its own, branched from `main`. Whether the
-  # documents the agent steps above wrote are visible at the project root at this point of a live run is
-  # not established by any test; `PLAN-M13.md` P9's live run confirms it (`SPEC-QUESTIONS.md`, M13 P10).
+  # Read-only: it reads the stage's Epics and Stories and prints the plan, so it runs in the supervisor
+  # (`inline`) rather than in a lane worktree of its own: in the integration worktree, where the engine has
+  # already integrated every lane the agent steps above produced (`06` §6.4, `SPEC-QUESTIONS.md` Q221). The
+  # engine reverts and fails an inline step that changes that tree.
   - id: derive-run-plan
     kind: command
     run: 'forge plan run-plan {{stageId}} --json'

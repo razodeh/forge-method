@@ -21,6 +21,8 @@ import { existsSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+import { execa } from 'execa';
+
 import {
   clearStaleRepoLocks,
   laneBranchName,
@@ -357,6 +359,34 @@ async function repopulateLaneRegistry(
   return staleLaneIds;
 }
 
+/** A process killed inside `git rebase` (the merge queue rebases a lane onto the integration head before it merges
+ * it, `PLAN-M13.md` P19: every lane is now integrated, not only those a `merge` step names) leaves the lane
+ * worktree mid-rebase with a detached HEAD. Git then lists it with no branch, so the orphan-branch reclaim below
+ * would take the lane's branch for an orphan and try to delete a branch that is checked out, and the lane could
+ * never be integrated. Each of this run's lanes that still has a worktree is taken out of any rebase first: the
+ * lane returns to its branch with its commits, and the merge queue starts its rebase again. */
+async function abortInterruptedRebases(
+  ctx: ResumeContext,
+  runId: string,
+  runState: RunState,
+): Promise<void> {
+  const projectRoot = await realpath(ctx.projectRoot);
+  for (const laneId of runState.laneStatuses.keys()) {
+    const lanePath = laneWorktreePath(projectRoot, laneId);
+    if (!laneId.startsWith(`${runId}-`) || !existsSync(lanePath)) continue;
+    for (const dir of ['rebase-merge', 'rebase-apply']) {
+      const gitPath = await execa('git', ['rev-parse', '--git-path', dir], {
+        cwd: lanePath,
+        reject: false,
+      });
+      if (gitPath.exitCode === 0 && existsSync(path.resolve(lanePath, gitPath.stdout.trim()))) {
+        await execa('git', ['rebase', '--abort'], { cwd: lanePath, reject: false });
+        break;
+      }
+    }
+  }
+}
+
 export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunState> {
   // Swept once, first, before anything else in this function (or anything it calls) ever touches git
   // state for this run again: a real crash (`06` §6.10, this milestone's own E3 crash-resume test) can
@@ -372,6 +402,7 @@ export async function resumeRun(runId: string, ctx: ResumeContext): Promise<RunS
   await clearStaleRepoLocks(ctx.projectRoot);
 
   const runState = await reconstructRunState(readEvents(ctx.projectRoot, runId));
+  await abortInterruptedRebases(ctx, runId, runState);
   await reclaimOrphanedWorktrees(ctx, runId, runState);
   await reclaimOrphanedLaneBranches(ctx, runId);
   await reclaimOrphanedWorktreeDirectories(ctx, runId);

@@ -89,6 +89,9 @@ export async function resumeWorkflow(
       agentsRoot: deps.agentsRoot,
       clock,
       commandEnv: shim?.commandEnv,
+      // The integration branch the run started on (`forge run --stage`): its lanes and merges are there.
+      expressionContext: manifest.expressionContext,
+      lanesFromIntegration: true,
     });
     // `resumeRun`'s own `ResumeContext` needs the compiled plan's real `StepNode`s (keyed by id) to
     // turn a bare, resumed `stepId` back into something re-dispatchable — re-compiled fresh from the

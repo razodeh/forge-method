@@ -10,12 +10,13 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
-import { access, realpath } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { access, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError, SYSTEM_CLOCK, renderCause, type Clock } from '@forge/core';
-import { pathExists, type AbsolutePath, type ProjectPaths } from '@forge/core/fs';
+import { pathExists, readTextFile, type AbsolutePath, type ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import {
   createGateEvaluator,
@@ -48,6 +49,78 @@ export interface BuildRunContextInput {
   /** Environment overlay for every command step, gate check and merge check the run spawns: a `PATH` whose
    * first entry holds a `forge` that re-launches this CLI (`launcher-shim.ts`). Absent: nothing is added. */
   readonly commandEnv?: Readonly<Record<string, string>> | undefined;
+  /** The run's expression context (its inputs), which names the integration branch: see `integrationBranchFor`.
+   * Absent for a command that is not a workflow run. */
+  readonly expressionContext?: unknown;
+  /** Whether lanes branch from the integration branch (a workflow run: `runWorkflow`, `resumeWorkflow`, whose
+   * engine integrates each lane into it, `PLAN-M13.md` P19) or from the trunk. `forge review`, `debug`,
+   * `session` and `panel` build a context too, integrate nothing, and want the code as it is on `main`, not on
+   * an integration branch that only moves when a run lands lanes: they leave this off. */
+  readonly lanesFromIntegration?: boolean;
+}
+
+/** The trunk the integration branch is first created from (never an integration branch itself). */
+const TRUNK = 'main';
+
+/** A branch name that is safe to hand to git as a ref: letters, digits, `_`, `-`, `.` and `/` between such
+ * components, no `..`, no leading or trailing dot or slash, no `.lock`, at most 200 characters. */
+function isSafeBranchName(name: string): boolean {
+  if (name.length === 0 || name.length > 200 || name.includes('..') || name.endsWith('.lock')) {
+    return false;
+  }
+  return /^[A-Za-z0-9](?:[A-Za-z0-9_-]|\.(?=[A-Za-z0-9_-])|\/(?=[A-Za-z0-9]))*$/.test(name);
+}
+
+/** A stage id that is safe as one component of a branch name (`isSafeBranchName`, no `/`), at most 64 chars. */
+function isSafeStageId(stageId: string): boolean {
+  return stageId.length <= 64 && !stageId.includes('/') && isSafeBranchName(stageId);
+}
+
+function contextField(expressionContext: unknown, name: string): unknown {
+  if (typeof expressionContext !== 'object' || expressionContext === null) return undefined;
+  return (expressionContext as Readonly<Record<string, unknown>>)[name];
+}
+
+/** The `stageId` an expression context (a run's inputs) carries, if it is a string. */
+export function stageIdOfContext(expressionContext: unknown): string | undefined {
+  const stageId = contextField(expressionContext, 'stageId');
+  return typeof stageId === 'string' ? stageId : undefined;
+}
+
+/**
+ * The integration branch of a run (`18` §18.3 `execution.integrationBranch`, `06` §6.5): the configured template
+ * with `{stage}` replaced by the run's `stageId` when that is a safe identifier, else `current`. The config is the
+ * one source of truth, so every workflow of a project integrates into the same branch: a stage workflow's own
+ * `vars.integration_branch` (`build-stage`'s `prepare` step switches to it) matches with the default template and
+ * a project that customises the template has to customise that var too, or `prepare` changes the integration
+ * worktree's branch and the engine refuses it, naming the change. A value that is not a safe identifier never
+ * reaches git.
+ */
+export function integrationBranchFor(config: ForgeConfig, expressionContext?: unknown): string {
+  const stageId = stageIdOfContext(expressionContext);
+  const stage = stageId !== undefined && isSafeStageId(stageId) ? stageId : 'current';
+  return config.execution.integrationBranch.replace('{stage}', stage);
+}
+
+/** The integration branch a recorded run used, from its manifest (`forge run` writes `expressionContext` there),
+ * so `forge merge` lands a ready lane where the run integrated. A run with no manifest (started by something
+ * other than `forge run`) uses the default; a manifest that cannot be read is `RUN-054`, not a guess: merging
+ * into the wrong branch would go unnoticed. */
+export async function integrationBranchOfRun(
+  paths: ProjectPaths,
+  config: ForgeConfig,
+  runId: string,
+): Promise<string> {
+  const manifestPath = paths.resolveState(`runs/${runId}/manifest.json`);
+  if (!(await pathExists(manifestPath))) return integrationBranchFor(config);
+  try {
+    const manifest = JSON.parse(await readTextFile(manifestPath)) as {
+      readonly expressionContext?: unknown;
+    };
+    return integrationBranchFor(config, manifest.expressionContext);
+  } catch (cause) {
+    throw new ForgeError('RUN-054', { runId }, { cause });
+  }
 }
 
 /** `ExecuteStepContext.tools`, which no production code reads any more: every session (agent steps,
@@ -189,11 +262,24 @@ export async function ensureIntegrationWorktree(
   projectRoot: string,
   integrationBranch: string,
   base: string,
+  options: { readonly graceMs?: number } = {},
 ): Promise<string> {
   const target = paths.resolveState(
     `worktrees/integration-${integrationBranch.replace(/\//g, '-')}`,
   );
-  if (await pathExists(target)) return target;
+  if (await pathExists(target)) {
+    // A `git worktree add` a killed process started keeps running (killing the parent does not kill git) and
+    // finishes a moment later; a healthy tree is what a resume finds if it looks again. Only a tree that stays
+    // unusable for the grace period is a crash's leftover.
+    if (await becomesUsable(projectRoot, target, options.graceMs ?? UNUSABLE_GRACE_MS)) {
+      await repairInterruptedIntegrationWorktree(target, integrationBranch);
+      return target;
+    }
+    // A crash inside `git worktree add` (a run killed while its context was being built) leaves a directory and
+    // a registration git marks `locked initializing`, with no checkout behind them. Nothing used to read that
+    // tree; now every inline step, gate check and merge does, so it is discarded and made again.
+    await discardBrokenWorktree(projectRoot, target);
+  }
 
   const branchListing = await runGitOrThrow(['branch', '--list', integrationBranch], projectRoot);
   const branchExists = branchListing.trim() !== '';
@@ -215,6 +301,101 @@ export async function ensureIntegrationWorktree(
   } catch (error) {
     return recoverFromWorktreeAddFailure(projectRoot, target, args, error);
   }
+}
+
+/** Whether `target` is a checkout of its own that git can work in: its top level is `target` itself (a
+ * directory a killed `worktree add` never finished, with no `.git` file, would otherwise resolve to the
+ * project's own repository one level up and read as healthy), `HEAD` resolves there, and git lists it as a
+ * registered worktree. */
+async function isUsableWorktree(projectRoot: string, target: string): Promise<boolean> {
+  const top = await execa('git', ['rev-parse', '--show-toplevel'], { cwd: target, reject: false });
+  if (top.exitCode !== 0) return false;
+  const [resolvedTop, resolvedTarget] = await Promise.all([
+    realpath(top.stdout.trim()).catch(() => top.stdout.trim()),
+    realpath(target).catch(() => target),
+  ]);
+  if (resolvedTop !== resolvedTarget) return false;
+  const head = await execa('git', ['rev-parse', '--verify', 'HEAD'], {
+    cwd: target,
+    reject: false,
+  });
+  if (head.exitCode !== 0) return false;
+  // `git worktree add` holds a `locked` note (`initializing`) in the worktree's admin directory until its
+  // checkout is done: a tree with one is being made (or was, when the process died), not ready to use, and
+  // touching it now would make the still-running `git` fail and delete it.
+  const adminDir = await execa('git', ['rev-parse', '--absolute-git-dir'], {
+    cwd: target,
+    reject: false,
+  });
+  if (adminDir.exitCode !== 0 || existsSync(path.join(adminDir.stdout.trim(), 'locked'))) {
+    return false;
+  }
+  return isTargetRegisteredWorktree(projectRoot, target);
+}
+
+/** How long a directory that is not (yet) a usable worktree is given to become one before it is discarded. */
+const UNUSABLE_GRACE_MS = 4000;
+
+async function becomesUsable(
+  projectRoot: string,
+  target: string,
+  graceMs: number,
+): Promise<boolean> {
+  // Counted in polling steps, not read off a clock (R10): `graceMs / POLL_MS` attempts.
+  const attempts = Math.ceil(graceMs / POLL_MS);
+  for (let attempt = 0; ; attempt += 1) {
+    if (await isUsableWorktree(projectRoot, target)) return true;
+    if (attempt >= attempts) return false;
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+}
+
+const POLL_MS = 100;
+
+/** Puts a usable integration worktree back on its branch and out of a merge a killed process left half done:
+ * the merge queue lands lanes in it and an inline step is undone in it, and a process killed in the middle of
+ * either leaves the tree on another branch (a step's `git switch`) or in `MERGE_HEAD` state. Merges land on
+ * whatever the worktree has checked out, so leaving it on the wrong branch would integrate into the wrong one. */
+async function repairInterruptedIntegrationWorktree(
+  target: string,
+  integrationBranch: string,
+): Promise<void> {
+  const mergeInProgress = await execa('git', ['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], {
+    cwd: target,
+    reject: false,
+  });
+  if (mergeInProgress.exitCode === 0) {
+    await execa('git', ['merge', '--abort'], { cwd: target, reject: false });
+  }
+  const branch = await execa('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+    cwd: target,
+    reject: false,
+  });
+  if (branch.exitCode !== 0 || branch.stdout.trim() !== integrationBranch) {
+    // Retried: a `git worktree add` a killed process started may still be finishing its own checkout here.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await runGitOrThrow(['checkout', '--force', integrationBranch], target);
+        break;
+      } catch (error) {
+        if (attempt >= 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+  }
+}
+
+/** Removes a half-made integration worktree: git's own removal first (twice-forced: it is `locked`; git refuses
+ * it when the admin directory is as incomplete as a killed `worktree add` leaves it, holding only `gitdir` and
+ * `locked`), then the directory, an unlock and a prune for whatever git could not take away. Failures are not
+ * fatal here: the `worktree add` that follows either succeeds or reports the real problem. */
+async function discardBrokenWorktree(projectRoot: string, target: string): Promise<void> {
+  const git = (args: readonly string[]) =>
+    execa('git', [...args], { cwd: projectRoot, reject: false });
+  await git(['worktree', 'remove', '--force', '--force', target]);
+  await rm(target, { recursive: true, force: true });
+  await git(['worktree', 'unlock', target]);
+  await git(['worktree', 'prune']);
 }
 
 /**
@@ -270,13 +451,15 @@ export async function buildRunEngineContext(
 ): Promise<RunEngineContext> {
   const clock = input.clock ?? SYSTEM_CLOCK;
   const now = () => Date.parse(clock.now());
-  const integrationBase = 'main';
-  const integrationBranch = input.config.execution.integrationBranch.replace('{stage}', 'current');
+  // The integration branch starts from the trunk the first time it is created; after that it is the
+  // branch every lane branches from (`06` §6.4: "branched from the integration branch") and the one the
+  // engine integrates lanes into, so a later step sees an earlier step's work (`PLAN-M13.md` P19, Q221).
+  const integrationBranch = integrationBranchFor(input.config, input.expressionContext);
   const integrationPath = await ensureIntegrationWorktree(
     input.paths,
     input.projectRoot,
     integrationBranch,
-    integrationBase,
+    TRUNK,
   );
   const gateRegistry = await loadGateRegistry(input.paths, input.checksRoot);
   const model = await resolveModel(input.adapter);
@@ -291,8 +474,9 @@ export async function buildRunEngineContext(
     commandEnv: input.commandEnv,
     runId: input.runId,
     projectRoot: input.projectRoot,
-    integrationBase,
+    integrationBase: input.lanesFromIntegration === true ? integrationBranch : TRUNK,
     integrationPath,
+    conflictPolicy: input.config.execution.conflictPolicy,
     model,
     tools: DEFAULT_TOOLS,
     assembly: createPromptAssemblyContext({

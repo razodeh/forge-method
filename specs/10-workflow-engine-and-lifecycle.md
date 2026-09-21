@@ -131,7 +131,7 @@ onComplete:
 | kind | Semantics |
 |---|---|
 | `agent` | Instantiate an agent session in a lane (or inline for read-only steps) |
-| `command` | Run a shell command; `inline: true` runs in the supervisor, else in a lane |
+| `command` | Run a shell command; `inline: true` runs in the supervisor (in the integration worktree), else in a lane |
 | `gate` | Evaluate a gate; may block for human approval |
 | `elicit` | Ask the human structured questions; blocks |
 | `session` | Run a facilitated session (see `16`) |

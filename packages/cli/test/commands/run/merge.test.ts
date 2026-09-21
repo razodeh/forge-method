@@ -1,11 +1,16 @@
 /**
- * `forge merge` — real `mergeLane`/`mergeAllReady` against a real lane a merge-less fixture run left
- * `'ready'` (real worktree, real branch), driving `@forge/vcs`'s own real merge queue — not a mocked
- * `MergeQueueFacade`.
+ * `forge merge` — real `mergeLane`/`mergeAllReady` against a real lane a fixture run left `'ready'` (real
+ * worktree, real branch), driving `@forge/vcs`'s own real merge queue — not a mocked `MergeQueueFacade`.
+ *
+ * A run no longer leaves a lane ready just because its workflow has no `merge` step: the engine integrates such
+ * a lane itself (`PLAN-M13.md` P19, `06` §6.4 rule 4). What leaves one is a lane that did NOT land: here, a
+ * `merge` step whose pre-merge check failed, the case `forge merge` exists for (the user fixes the cause and
+ * lands the lane by hand).
  *
  * @see specs/03 §3.2.4
  */
-import { readFile } from 'node:fs/promises';
+import { execa } from 'execa';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,6 +27,8 @@ import { runWorkflow } from '../../../src/commands/run/run.ts';
 import {
   FIXTURE_ITEM_ID,
   FIXTURE_WORKFLOW_ID,
+  FIXTURE_WORKFLOW_WITH_MERGE_SOURCE,
+  WORKFLOWS_ROOT,
   cleanupAll,
   createTestProject,
   fixtureExpressionContext,
@@ -32,7 +39,18 @@ import {
 afterEach(cleanupAll);
 
 async function readyLaneProject(runId: string): Promise<{ project: TestProject; laneId: string }> {
-  const project = await createTestProject();
+  const project = await createTestProject({ variant: 'merge' });
+  // The merge's pre-merge check fails, so the lane is left `ready` for `forge merge` to land.
+  await writeFile(
+    path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+    FIXTURE_WORKFLOW_WITH_MERGE_SOURCE.replace(
+      'policy: { conflict: abort }',
+      'policy: { conflict: abort, preChecks: "false" }',
+    ),
+  );
+  await execa('git', ['commit', '--quiet', '-am', 'a merge whose pre-merge check fails'], {
+    cwd: project.dir,
+  });
   await runWorkflow(testRunDeps(project), {
     workflowId: FIXTURE_WORKFLOW_ID,
     expressionContext: fixtureExpressionContext(),

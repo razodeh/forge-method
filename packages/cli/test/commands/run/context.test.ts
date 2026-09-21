@@ -7,7 +7,8 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P15
  */
-import { mkdir, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -17,7 +18,10 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import {
   buildRunEngineContext,
   ensureIntegrationWorktree,
+  integrationBranchFor,
+  integrationBranchOfRun,
   isTargetRegisteredWorktree,
+  stageIdOfContext,
 } from '../../../src/commands/run/context.ts';
 import {
   AGENTS_ROOT,
@@ -30,6 +34,10 @@ import {
 } from './helpers.ts';
 
 afterEach(cleanupAll);
+
+async function currentBranch(cwd: string): Promise<string> {
+  return (await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })).stdout.trim();
+}
 
 describe('ensureIntegrationWorktree', () => {
   it('creates a real new branch and worktree from base when the branch does not exist yet', async () => {
@@ -104,6 +112,115 @@ describe('ensureIntegrationWorktree', () => {
     expect(stdout).toContain(target);
   });
 
+  it('discards and remakes a worktree a crashed `git worktree add` left half-made (locked, HEAD unset), instead of returning it', async () => {
+    const project = await createTestProject();
+    const target = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    // What a killed `git worktree add` leaves: the checkout directory holds only its `.git` file, and the admin
+    // directory only `gitdir` and a `locked` note saying `initializing`.
+    const admin = (await execa('git', ['rev-parse', '--git-dir'], { cwd: target })).stdout.trim();
+    for (const entry of await readdir(target)) {
+      if (entry !== '.git') await rm(path.join(target, entry), { recursive: true, force: true });
+    }
+    for (const entry of await readdir(admin)) {
+      if (entry !== 'gitdir') await rm(path.join(admin, entry), { recursive: true, force: true });
+    }
+    await writeFile(path.join(admin, 'locked'), 'initializing');
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd: target }),
+    ).rejects.toThrow();
+
+    const repaired = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+      { graceMs: 0 },
+    );
+
+    expect(repaired).toBe(target);
+    expect(await currentBranch(repaired)).toBe('forge/integration/current');
+    expect((await execa('git', ['status', '--porcelain'], { cwd: repaired })).stdout).toBe('');
+  });
+
+  it("remakes a target directory that exists with no worktree in it at all (git would read the project's own repository through it)", async () => {
+    const project = await createTestProject();
+    const target = project.paths.resolveState('worktrees/integration-forge-integration-current');
+    await mkdir(target, { recursive: true });
+
+    const made = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+      { graceMs: 0 },
+    );
+
+    expect(made).toBe(target);
+    expect(await currentBranch(made)).toBe('forge/integration/current');
+    expect(await isTargetRegisteredWorktree(project.dir, made)).toBe(true);
+  });
+
+  it('puts a worktree a killed process left on another branch back on the integration branch, and does not discard it', async () => {
+    const project = await createTestProject();
+    const target = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    // A killed inline step's `git switch -c`, and a file it had written: the tree is healthy, just elsewhere.
+    await execa('git', ['switch', '-c', 'elsewhere'], { cwd: target });
+    await writeFile(path.join(target, 'left-over.txt'), 'x\n');
+
+    const again = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+
+    expect(again).toBe(target);
+    expect(await currentBranch(again)).toBe('forge/integration/current');
+    // Not discarded: a healthy worktree is repaired in place, its files are not thrown away with it.
+    expect(existsSync(path.join(again, 'left-over.txt'))).toBe(true);
+  });
+
+  it('aborts a merge a killed process left half done in the integration worktree', async () => {
+    const project = await createTestProject();
+    const target = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await execa('git', ['branch', 'side', 'main'], { cwd: project.dir });
+    await execa('git', ['checkout', '--quiet', 'side'], { cwd: target });
+    await writeFile(path.join(target, 'side.txt'), 's\n');
+    await execa('git', ['add', 'side.txt'], { cwd: target });
+    await execa('git', ['commit', '--quiet', '-m', 'side'], { cwd: target });
+    await execa('git', ['checkout', '--quiet', 'forge/integration/current'], { cwd: target });
+    await execa('git', ['merge', '--no-ff', '--no-commit', 'side'], { cwd: target });
+    expect(
+      (await execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: target })).exitCode,
+    ).toBe(0);
+
+    await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: target }),
+    ).rejects.toThrow();
+  });
+
   it('is idempotent: a second call against an already-checked-out path is a real no-op', async () => {
     const project = await createTestProject();
     const first = await ensureIntegrationWorktree(
@@ -141,6 +258,7 @@ describe('ensureIntegrationWorktree', () => {
       project.dir,
       'forge/integration/current',
       'main',
+      { graceMs: 0 },
     );
     expect(repaired).toBe(first);
     expect(await isTargetRegisteredWorktree(project.dir, repaired)).toBe(true);
@@ -200,7 +318,11 @@ describe('buildRunEngineContext', () => {
 
     expect(ctx.runId).toBe('run-1');
     expect(ctx.projectRoot).toBe(project.dir);
+    // A context for something that is not a workflow run (`forge review`, `debug`, `session`, `panel`) keeps
+    // branching its lanes from the trunk: the integration branch only moves when a run lands lanes.
     expect(ctx.integrationBase).toBe('main');
+    expect(await currentBranch(ctx.integrationPath)).toBe('forge/integration/current');
+    expect(ctx.conflictPolicy).toBe(project.config.execution.conflictPolicy);
     // A real, adapter-reported model id — never the bare tier label ('balanced') a stale version of
     // this code once hardcoded.
     expect(ctx.model).toBe(FAKE_MODEL_ID);
@@ -392,5 +514,109 @@ describe('buildRunEngineContext', () => {
         agentsRoot: AGENTS_ROOT,
       }),
     ).rejects.toMatchObject({ code: 'RUN-052' });
+  });
+});
+
+describe('the integration branch of a run (PLAN-M13.md P19)', () => {
+  it('a workflow run branches its lanes from the integration branch, not from main', async () => {
+    const project = await createTestProject();
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-lanes',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+      lanesFromIntegration: true,
+    });
+    expect(ctx.integrationBase).toBe('forge/integration/current');
+    expect(ctx.integrationBase).toBe(
+      project.config.execution.integrationBranch.replace('{stage}', 'current'),
+    );
+    expect(await currentBranch(ctx.integrationPath)).toBe(ctx.integrationBase);
+  });
+
+  it('is the configured name with {stage} replaced by the run\'s stage, or "current" without one', async () => {
+    const project = await createTestProject();
+    expect(integrationBranchFor(project.config)).toBe('forge/integration/current');
+    expect(integrationBranchFor(project.config, {})).toBe('forge/integration/current');
+    expect(integrationBranchFor(project.config, { stageId: 'mvp' })).toBe('forge/integration/mvp');
+    expect(integrationBranchFor(project.config, { stageId: 'S1.2_b-3' })).toBe(
+      'forge/integration/S1.2_b-3',
+    );
+  });
+
+  it.each(['', '../x', 'a/b', 'a b', '-x', 'x..y', '.hidden', 'a.', 'a\nb', 'a;b', 'x'.repeat(65)])(
+    'never lets the stage id %j reach a git ref: the run uses "current"',
+    async (stageId) => {
+      const project = await createTestProject();
+      expect(integrationBranchFor(project.config, { stageId })).toBe('forge/integration/current');
+    },
+  );
+
+  it('the configured template is the one source: a workflow var naming another branch does not move the run', async () => {
+    const project = await createTestProject();
+    const custom = {
+      ...project.config,
+      execution: { ...project.config.execution, integrationBranch: 'integ/{stage}' },
+    };
+    const context = { stageId: 'P3', vars: { integration_branch: 'forge/integration/P3' } };
+    expect(integrationBranchFor(custom, context)).toBe('integ/P3');
+    expect(integrationBranchFor(project.config, context)).toBe('forge/integration/P3');
+    expect(integrationBranchFor(project.config, { vars: { integration_branch: 'main' } })).toBe(
+      'forge/integration/current',
+    );
+  });
+
+  it('reads the stage from an expression context, and the integration branch of a recorded run from its manifest', async () => {
+    expect(stageIdOfContext({ stageId: 'mvp' })).toBe('mvp');
+    expect(stageIdOfContext({ stageId: 3 })).toBeUndefined();
+    expect(stageIdOfContext(null)).toBeUndefined();
+    expect(stageIdOfContext('mvp')).toBeUndefined();
+
+    const project = await createTestProject();
+    // No manifest (a run something other than `forge run` started): the default.
+    expect(await integrationBranchOfRun(project.paths, project.config, 'no-such-run')).toBe(
+      'forge/integration/current',
+    );
+    const dir = project.paths.resolveState('runs/run-a');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify({ workflowId: 'w', expressionContext: { stageId: 'mvp' } }),
+    );
+    expect(await integrationBranchOfRun(project.paths, project.config, 'run-a')).toBe(
+      'forge/integration/mvp',
+    );
+  });
+
+  it('refuses a manifest it cannot read (RUN-054) instead of merging into the wrong branch', async () => {
+    const project = await createTestProject();
+    const broken = project.paths.resolveState('runs/run-b');
+    await mkdir(broken, { recursive: true });
+    await writeFile(path.join(broken, 'manifest.json'), '{ not json');
+    await expect(
+      integrationBranchOfRun(project.paths, project.config, 'run-b'),
+    ).rejects.toMatchObject({
+      code: 'RUN-054',
+    });
+  });
+
+  it("a run with a stage branches its lanes from, and integrates into, that stage's integration branch", async () => {
+    const project = await createTestProject();
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-stage',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+      expressionContext: { stageId: 'mvp' },
+      lanesFromIntegration: true,
+    });
+    expect(ctx.integrationBase).toBe('forge/integration/mvp');
+    expect(await currentBranch(ctx.integrationPath)).toBe('forge/integration/mvp');
   });
 });

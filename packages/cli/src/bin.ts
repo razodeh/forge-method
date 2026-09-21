@@ -217,6 +217,7 @@ import {
   gateList,
   gateReject,
   gateWaive,
+  integrationBranchOfRun,
   mergeAbort,
   mergeAllReady,
   mergeLane,
@@ -1086,7 +1087,8 @@ async function runMergeCommand(
 
   const config = await readConfig(paths);
   const runId = await resolveDispatchRunId(paths, values.get('--run'));
-  const integrationBranch = config.execution.integrationBranch.replace('{stage}', 'current');
+  // The integration branch the run used (a `--stage` run has its own): its ready lanes are merged there.
+  const integrationBranch = await integrationBranchOfRun(paths, config, runId);
   const integrationPath = await ensureIntegrationWorktree(
     paths,
     projectRoot,

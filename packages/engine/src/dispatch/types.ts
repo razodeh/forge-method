@@ -32,7 +32,7 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import type { ForgeEvent, EventType } from '@forge/telemetry/events';
 
 import type { GateDefinition, GateReport } from '../gates/index.ts';
-import type { StepNodeKind } from '../plan/index.ts';
+import type { StepNode, StepNodeKind } from '../plan/index.ts';
 
 /** `@forge/vcs`'s own `LaneHandle` (`lanes.ts`), re-declared structurally rather than imported: this
  * module's own public surface should not force every consumer of `@forge/engine/dispatch` to also resolve
@@ -179,6 +179,19 @@ export interface MergeCandidateChecks {
 
 export interface MergeQueueFacade {
   process(candidate: MergeCandidateLike, checks: MergeCandidateChecks): Promise<MergeOutcome>;
+  /** Whether everything on `handle`'s branch is already in the integration branch (`git merge-base
+   * --is-ancestor`): a lane whose step changed nothing (its branch is still at its base), or one a crash left
+   * merged but not yet removed (`PLAN-M13.md` P19). Such a lane has nothing to land, and merging it again would
+   * only report a second "merge" of work already there. Optional so a hand-built facade need not implement it;
+   * absent, every lane is offered to `process`, which is idempotent for an already-merged branch too (git
+   * reports "already up to date"), just noisier in the event log. Serialised with `process`. */
+  isIntegrated?(handle: LaneHandle): Promise<boolean>;
+  /** Runs `operation` while nothing else touches the integration worktree: it waits for every queued merge
+   * and holds the queue until it settles (`PLAN-M13.md` P19). An inline `command` step runs inside it, because
+   * it runs in that worktree and its changes are undone afterwards; a concurrent merge would be undone with
+   * them. Must not call `process` (it would wait for itself). Optional for a hand-built facade; absent, the
+   * operation just runs. */
+  exclusive?<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 /** One open view of a project's Knowledge Body for one context-pack build (`05` §5.4): the parsed tree
@@ -247,7 +260,9 @@ export interface ExecuteStepContext {
   readonly runId: string;
   /** The real, on-disk repository root — `createLaneWorktree`'s own `cwd`. */
   readonly projectRoot: string;
-  /** The ref lanes branch from, e.g. `"main"` or `"forge/integration/P3"` (`06` §6.4). */
+  /** The ref lanes branch from, e.g. `"main"` or `"forge/integration/P3"` (`06` §6.4). A run that integrates
+   * lanes (`runEngine`) passes the integration branch itself, the one `integrationPath` has checked out: a lane
+   * based on any other ref never sees what earlier lanes integrated (`PLAN-M13.md` P19). */
   readonly integrationBase: string;
   /** An existing worktree already checked out on `integrationBase` — `@forge/vcs`'s own
    * `processMergeCandidate` requires a caller-maintained one; creating/maintaining it across a whole run
@@ -283,8 +298,15 @@ export interface ExecuteStepContext {
    * it to the merge queue is a dedicated `merge`-kind step's own job, `10` §10.1's own "merge-queue
    * processing for a *set* of lanes" wording taken literally (one `merge` step can process several
    * predecessor lanes at once, not necessarily a fixed 1:1 pairing with the step that produced each). A
-   * caller constructs one empty `Map` per run and reuses it across every `executeStep` call in that run. */
+   * caller constructs one empty `Map` per run and reuses it across every `executeStep` call in that run.
+   * A lane no `merge` step lands is not left here: `runEngine` integrates it between scheduling ticks and
+   * removes it (`PLAN-M13.md` P19, `integrate.ts`). */
   readonly laneRegistry: Map<string, LaneHandle>;
+  /** The run's compiled plan, keyed by `StepNode.id`, set by `runEngine` once it has compiled the workflow
+   * (`PLAN-M13.md` P19). `runMergeStep` reads it to find the lanes a `merge` lands: the steps in its dependency
+   * closure (`mergeLandingScope`), not merely its direct predecessors. Absent (a handler driven on its own with
+   * hand-built nodes), a merge lands the lanes of its direct `dependsOn` predecessors, as it did before. */
+  readonly stepGraph?: ReadonlyMap<string, StepNode> | undefined;
   /** A `gate`-kind step names only a bare id (`StepNode.gate`) — this is the registry `GateEvaluator`
    * itself is built from (`createGateEvaluator`), listed here too since a caller constructing `ctx` is
    * exactly where a real gate catalogue (or a test's own fixture gate) is assembled. Not read by

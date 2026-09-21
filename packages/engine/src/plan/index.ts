@@ -18,6 +18,7 @@ export {
   globsOverlap,
   insertContractDependencies,
 } from './dependencies.ts';
+export { mergeLandingScope, stepsLandedByMerges, upstreamOf } from './merge-scope.ts';
 export { compileRunPlan } from './run-plan.ts';
 export {
   MAX_REPORTED_OVERLAPS,

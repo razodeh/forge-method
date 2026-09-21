@@ -67,11 +67,13 @@ describe('runStatus', () => {
 });
 
 describe('runLanes', () => {
-  it('reports the real lane left ready by a merge-less fixture run, with its true origin', async () => {
+  it('reports the lane of a merge-less fixture run as integrated by the engine, with its true origin', async () => {
+    // No `merge` step lands this lane, so the engine integrated it when its step succeeded (`PLAN-M13.md` P19,
+    // `06` §6.4 rule 4): it is no longer left `ready` (that was the lane-visibility bug this used to assert).
     const project = await runFixture('run-lanes', { variant: 'default' });
     const lanes = await runLanes(project.paths, project.dir, 'run-lanes');
     expect(lanes).toHaveLength(1);
-    expect(lanes[0]?.status).toBe('ready');
+    expect(lanes[0]?.status).toBe('removed');
     expect(lanes[0]?.stepId).toBe(FIXTURE_STEP_IMPLEMENT_ID);
     expect(lanes[0]?.baseSha).toBeDefined();
   });

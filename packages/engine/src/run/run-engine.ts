@@ -20,6 +20,7 @@
  */
 import { ForgeError } from '@forge/core/errors';
 import { readEvents } from '@forge/telemetry/events';
+import { TelemetryError } from '@forge/telemetry/errors';
 import { checkBudget } from '@forge/telemetry/ledger';
 
 import type { ExpressionContext } from '../expr/index.ts';
@@ -31,8 +32,9 @@ import {
 } from '../budget/index.ts';
 import type { BudgetState } from '../budget/types.ts';
 import { executeStep } from '../dispatch/execute.ts';
-import type { ExecuteStepContext, StepOutcome } from '../dispatch/types.ts';
-import { compileRunPlan, type StepNode } from '../plan/index.ts';
+import { integrateLane, type ConflictPolicy } from '../dispatch/integrate.ts';
+import type { ExecuteStepContext, StepFailureInfo, StepOutcome } from '../dispatch/types.ts';
+import { compileRunPlan, stepsLandedByMerges, type StepNode } from '../plan/index.ts';
 import { reconstructRunState } from '../resume/reconstruct.ts';
 import type { RunState, StepReconstructedStatus } from '../resume/types.ts';
 import { Scheduler } from '../scheduler/scheduler.ts';
@@ -63,6 +65,12 @@ export interface RunEngineContext extends ExecuteStepContext {
    * one layer down — this field is where a real caller (`@forge/cli`'s own `buildRunEngineContext`,
    * from `.forge/config.yaml`'s own real `budget` block) now supplies one for the first time. */
   readonly budget?: BudgetConfig;
+  /** How the engine resolves a conflict when it integrates a lane no `merge` step lands (`PLAN-M13.md` P19):
+   * `.forge/config.yaml`'s `execution.conflictPolicy` (`18` §18.3). Omitted, `'abort'`: a conflicting lane
+   * fails its step and is kept for inspection (`'agent'` and `'human'` need a resolver on the merge queue,
+   * `createMergeQueueFacade`'s second argument; without one they fail the same way, as data). Explicit `merge`
+   * steps keep their own declared `policy.conflict`. */
+  readonly conflictPolicy?: ConflictPolicy;
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {
@@ -147,8 +155,10 @@ async function driveToCompletion(
   ctx: RunEngineContext,
   refreshBudget?: () => Promise<void>,
 ): Promise<void> {
+  const landedByMerges = stepsLandedByMerges(nodes);
   for (;;) {
     if (refreshBudget !== undefined) await refreshBudget();
+    await integrateSucceededLanes(nodes, scheduler, ctx, landedByMerges);
     const admitted = scheduler.next();
     if (admitted.length === 0) return;
 
@@ -168,6 +178,50 @@ async function driveToCompletion(
       if (outcome.status === 'succeeded') scheduler.markSucceeded(node.id);
       else scheduler.markFailed(node.id);
     });
+  }
+}
+
+/**
+ * `06` §6.4 rule 4, owner decision Q3 (`PLAN-M13.md` P19, `SPEC-QUESTIONS.md` Q221): a lane whose step
+ * succeeded and which no `merge` step lands is integrated into the integration branch before the next tick
+ * admits anything, so later lanes branch from a tip that holds it and gates and inline steps read it.
+ *
+ * Done between ticks, in plan order, never inside a step: a tick drains completely before the next starts, so
+ * the lanes of one tick integrate one at a time in a fixed order (whichever session happened to finish first
+ * does not decide who merges first, and so who conflicts), and a resumed run integrates the lanes its
+ * predecessor finished but did not get to (`resumeRun` re-registers every `ready` lane) before it schedules
+ * anything. A lane a `merge` step lands is left for that step (review before merge). A step whose lane cannot
+ * be integrated is failed: it is `failed` in the scheduler, so its dependents never run, and a `StepFailed`
+ * event follows its `StepSucceeded` (the last terminal event wins on resume).
+ */
+async function integrateSucceededLanes(
+  nodes: readonly StepNode[],
+  scheduler: Scheduler,
+  ctx: RunEngineContext,
+  landedByMerges: ReadonlySet<string>,
+): Promise<void> {
+  const conflictPolicy = ctx.conflictPolicy ?? 'abort';
+  for (const node of nodes) {
+    if (landedByMerges.has(node.id) || scheduler.status(node.id) !== 'succeeded') continue;
+    const lane = ctx.laneRegistry.get(node.id);
+    if (lane === undefined) continue;
+    let failure: StepFailureInfo | undefined;
+    try {
+      failure = await integrateLane(ctx, node.id, lane, conflictPolicy);
+    } catch (cause) {
+      // The event log failing to write is the run's problem, not this lane's (`executeStep` treats it alike).
+      if (cause instanceof TelemetryError) {
+        throw new ForgeError(
+          'RUN-038',
+          { stepId: node.id, telemetryCode: cause.code, telemetryMessage: cause.message },
+          { cause },
+        );
+      }
+      throw cause;
+    }
+    if (failure === undefined) continue;
+    scheduler.markFailed(node.id);
+    await ctx.telemetry.emit({ type: 'StepFailed', stepId: node.id, payload: failure });
   }
 }
 
@@ -320,7 +374,13 @@ export async function runEngine(
     seedScheduler(scheduler, nodes, resumeFrom);
   }
 
-  await driveToCompletion(nodes, scheduler, ctx, refreshBudget);
+  // `runMergeStep` finds the lanes a merge lands in the compiled plan (`ExecuteStepContext.stepGraph`); the copy
+  // shares every field, including the lane registry, with the caller's context.
+  const runCtx: RunEngineContext = {
+    ...ctx,
+    stepGraph: new Map(nodes.map((node) => [node.id, node] as const)),
+  };
+  await driveToCompletion(nodes, scheduler, runCtx, refreshBudget);
 
   if (allSucceeded(nodes, scheduler)) {
     await ctx.telemetry.emit({ type: 'RunCompleted' });

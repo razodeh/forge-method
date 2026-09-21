@@ -201,6 +201,8 @@ export async function runWorkflow(
       agentsRoot: deps.agentsRoot,
       clock,
       commandEnv: shim?.commandEnv,
+      expressionContext: options.expressionContext,
+      lanesFromIntegration: true,
     });
     const runState = await runEngine(workflowSource, options.expressionContext, ctx);
     return { kind: 'run', runId, runState };

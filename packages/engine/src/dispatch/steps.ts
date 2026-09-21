@@ -23,7 +23,7 @@
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
 
-import type { StepNode } from '../plan/index.ts';
+import { mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import {
   promptRecordDirName,
@@ -34,9 +34,12 @@ import {
   type AssembledSession,
 } from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
+import { contentLanded, landLane } from './integrate.ts';
+import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
 import { docRootsOf, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { runShellCommand } from './shell.ts';
+import { runVcsStep } from './vcs-step.ts';
 import type {
   ExecuteStepContext,
   LaneHandle,
@@ -79,43 +82,6 @@ function failed(
   failure: StepFailureInfo,
 ): StepOutcome {
   return { stepId, status: 'failed', startedAt, finishedAt, detail, failure };
-}
-
-/** `VcsError` cannot itself become a `ForgeError` (`vcs ← schemas` only, no `core` edge — its own doc
- * comment names `@forge/engine` as the one place that wraps it) — caught here, at the one place every lane-
- * lifecycle operation in this module goes through, rather than at each of the half-dozen call sites that
- * could throw one. Returns the *data* shape a handler folds into its own `StepOutcome`, not a thrown
- * `ForgeError` itself: a lane failing to create, or a commit failing, is a normal runtime outcome a
- * scheduler should be able to see and (per `06` §6.8, P16) potentially retry, not a reason to crash the
- * whole dispatch pipeline. */
-async function runVcsStep<T>(
-  stepId: string,
-  operation: () => Promise<T>,
-): Promise<
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly failure: StepFailureInfo }
-> {
-  try {
-    return { ok: true, value: await operation() };
-  } catch (cause) {
-    const vcsCode = isErrorWithCode(cause) ? cause.code : 'UNKNOWN';
-    const vcsMessage = cause instanceof Error ? cause.message : String(cause);
-    // Wrapped so a caller inspecting `failure.code`/`.message` sees the real underlying VcsError's own
-    // values, not this ForgeError's own generic RUN-037 message — the ForgeError itself (with its own
-    // registered remedy) is retained on `failure.cause`, so nothing is lost for a reader who does want
-    // it, only not surfaced as the primary failure text here.
-    const forgeError = new ForgeError('RUN-037', { stepId, vcsCode, vcsMessage }, { cause });
-    return {
-      ok: false,
-      failure: { source: 'vcs', code: vcsCode, message: vcsMessage, cause: forgeError },
-    };
-  }
-}
-
-function isErrorWithCode(value: unknown): value is { readonly code: string } {
-  return (
-    typeof value === 'object' && value !== null && 'code' in value && typeof value.code === 'string'
-  );
 }
 
 /** `06` §6.4 step 3's own commit — built here on the session's behalf, not left to the agent's own tool
@@ -189,8 +155,11 @@ export async function runLaneLifecycle(
     if (!baseShaResult.ok)
       return failed(node.id, startedAt, ctx.now(), emptyDetail, baseShaResult.failure);
 
+    // From the sha just resolved, not from the branch name again: the integration branch moves during a run
+    // (lanes are integrated into it, `PLAN-M13.md` P19), and a lane created from a tip newer than the `baseSha`
+    // its claim is enforced against would show other lanes' files as its own out-of-claim writes.
     const laneResult = await runVcsStep(node.id, () =>
-      ctx.vcs.createLane(node.id, ctx.integrationBase),
+      ctx.vcs.createLane(node.id, baseShaResult.value),
     );
     if (!laneResult.ok)
       return failed(node.id, startedAt, ctx.now(), emptyDetail, laneResult.failure);
@@ -668,14 +637,58 @@ export async function runCommandStep(
   const commandEnv = ctx.commandEnv;
 
   if (node.laneAffinity === 'inline') {
-    const { exitCode, stdout, stderr } = await runShellCommand(run, ctx.projectRoot, commandEnv);
+    // Runs in the integration worktree, not the project root (`PLAN-M13.md` P19, Q221): an inline step has no
+    // lane, so it runs against the integrated state of the run, the tree a gate reads and a merge writes, and
+    // sees what earlier lanes produced. The tree belongs to the merge queue, so the step may not change it: what
+    // it touched is reverted and the step fails (`inline-tree.ts`).
+    const inlineCwd = ctx.integrationPath;
+    // Snapshot, run and restore are one window in the merge queue (`MergeQueueFacade.exclusive`): a merge, a
+    // session's decide-merge or another inline step landing in the same tick would otherwise be undone by the
+    // restore, or blamed for its files.
+    const exclusive = ctx.mergeQueue.exclusive?.bind(ctx.mergeQueue) ?? ((work) => work());
+    const inline = await exclusive(async () => {
+      const before = await runVcsStep(node.id, () => snapshotIntegrationTree(inlineCwd));
+      if (!before.ok) return { kind: 'unsnapshotted' as const, failure: before.failure };
+      const result = await runShellCommand(run, inlineCwd, commandEnv);
+      const restored = await runVcsStep(node.id, () =>
+        restoreIntegrationTree(inlineCwd, before.value),
+      );
+      return { kind: 'ran' as const, result, restored };
+    });
+    if (inline.kind === 'unsnapshotted') {
+      return failed(
+        node.id,
+        startedAt,
+        ctx.now(),
+        { kind: 'command', exitCode: -1, stdout: '', stderr: '' },
+        inline.failure,
+      );
+    }
+    const { exitCode, stdout, stderr } = inline.result;
     const detail: StepOutcomeDetail = { kind: 'command', exitCode, stdout, stderr };
+    const reverted = inline.restored;
+    if (!reverted.ok) return failed(node.id, startedAt, ctx.now(), detail, reverted.failure);
     const finishedAt = ctx.now();
+    const changes = reverted.value.length > 0 ? reverted.value.join('; ') : undefined;
     if (exitCode !== 0) {
       return failed(node.id, startedAt, finishedAt, detail, {
         source: 'command',
         code: String(exitCode),
-        message: stderr || stdout,
+        message:
+          (stderr || stdout) +
+          (changes === undefined
+            ? ''
+            : ` (The step also changed the integration worktree: ${changes}; reverted.)`),
+      });
+    }
+    if (changes !== undefined) {
+      return failed(node.id, startedAt, finishedAt, detail, {
+        source: 'command',
+        code: 'INLINE-CHANGED-INTEGRATION-TREE',
+        message:
+          `Inline step ${node.id} changed the integration worktree (${changes}); the changes were ` +
+          'reverted. An inline step runs against the integrated tree and must leave it as it found it: ' +
+          'a step that writes files belongs in a lane (drop "inline: true").',
       });
     }
     return succeeded(node.id, startedAt, finishedAt, detail);
@@ -792,7 +805,13 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
   const conflictPolicy = node.mergePolicy.conflict;
   const mergePolicy = node.mergePolicy;
 
-  const predecessorLanes = node.dependsOn
+  // The lanes this merge lands (`PLAN-M13.md` P19, Q221): with the run's compiled plan at hand, the lanes of
+  // every step in the merge's dependency closure (`mergeLandingScope`), dependencies first, so a `build-stage`
+  // merge over the per-story reviews lands the `implement` lanes those reviews approved, not just the review
+  // lanes. A merge driven with no plan (a handler run on its own) lands its direct predecessors' lanes.
+  const landingIds =
+    ctx.stepGraph === undefined ? node.dependsOn : mergeLandingScope(ctx.stepGraph, node.id);
+  const predecessorLanes = landingIds
     .map((predecessorId) => ({ predecessorId, lane: ctx.laneRegistry.get(predecessorId) }))
     .filter(
       (entry): entry is { readonly predecessorId: string; readonly lane: LaneHandle } =>
@@ -805,87 +824,41 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
   // more useful signal to surface as the step's own primary failure reason -- `detail.merges` still
   // carries every lane's own real outcome for a reader who wants the full picture, not just the first.
   let anyFailed: StepFailureInfo | undefined;
+  // The lanes are claimed up front: taken out of the registry in the same synchronous step that chose them, so
+  // a second merge in the same tick whose landing scope shares one (two merges over disjoint reviews that both
+  // build on one upstream lane) cannot land it again. A lane that did not land goes back in the registry.
+  for (const { predecessorId } of predecessorLanes) ctx.laneRegistry.delete(predecessorId);
+  const notLanded = new Set<string>();
   for (const { predecessorId, lane } of predecessorLanes) {
-    await ctx.telemetry.emit({ type: 'MergeQueued', stepId: node.id, laneId: lane.laneId });
-    // `18` §18.4's own Merge event row names five types; only four have an explicit firing point in
-    // `06` §6.5's own numbered steps (`MergeCompleted`/`MergeReverted` at step 6, `MergeQueued` and
-    // `MergeConflict` inferred from steps 1-2). `MergeStarted` is spec-silent on exactly when — read
-    // here as "the queue has now actually begun working the candidate," distinct from "was handed to
-    // the queue," per `CLAUDE.md`'s rule for spec silence (`SPEC-QUESTIONS.md` Q77). A `pre-check-failed`
-    // outcome (`06` §6.5 step 3) gets no further dedicated event of its own beyond this: the vocabulary
-    // has no sixth name for it, and the real signal is the step's own `StepOutcome{status:'failed'}`,
-    // the same place every other handler in this module surfaces a failure that is not one of its own
-    // already-registered event types.
-    await ctx.telemetry.emit({ type: 'MergeStarted', stepId: node.id, laneId: lane.laneId });
-    // `ctx.mergeQueue.process` can throw a real VcsError -- e.g. `@forge/vcs`'s own
-    // `processMergeCandidate` refuses a non-`'abort'` conflictPolicy with no `conflictResolver`
-    // configured, which is every real `'agent'`/`'human'` policy for now, since M5's own scope builds
-    // no resolver at all (`Q77`). Wrapped through `runVcsStep` like every other `ctx.vcs`/`ctx.mergeQueue`
-    // call in this module, so that gap surfaces as ordinary failed-outcome data, not an uncaught
-    // exception escaping this step (this file's own header contract).
-    const mergeResult = await runVcsStep(node.id, () =>
-      ctx.mergeQueue.process(
-        {
-          handle: lane,
-          stepId: predecessorId,
-          runId: ctx.runId,
-          declaredClaim: [],
-          conflictPolicy,
-        },
-        { preCheck: mergePolicy.preChecks, postCheck: mergePolicy.postChecks },
-      ),
-    );
-    if (!mergeResult.ok) {
-      anyFailed ??= mergeResult.failure;
+    // A lane whose own dependency did not land is not landed either: its work builds on a lane that is not in
+    // the integration branch (a review report for code that is not there). Independent lanes carry on.
+    const blockedBy =
+      ctx.stepGraph === undefined
+        ? undefined
+        : [...upstreamOf(ctx.stepGraph, predecessorId)].find((id) => notLanded.has(id));
+    if (blockedBy !== undefined) {
+      notLanded.add(predecessorId);
+      ctx.laneRegistry.set(predecessorId, lane);
+      anyFailed ??= {
+        source: 'merge',
+        code: 'MERGE-DEPENDENCY-NOT-LANDED',
+        message: `Lane ${lane.laneId} was not merged: the lane of ${blockedBy}, which it builds on, did not land.`,
+      };
       continue;
     }
-    const merge = mergeResult.value;
-    merges.push({ stepId: predecessorId, outcome: merge });
-
-    if (merge.kind === 'clean' || merge.kind === 'conflict-resolved') {
-      await ctx.telemetry.emit({
-        type: 'MergeCompleted',
-        stepId: node.id,
-        laneId: lane.laneId,
-        payload: { mergeCommitSha: merge.mergeCommitSha },
-      });
-      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
-      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
-      ctx.laneRegistry.delete(predecessorId);
-    } else if (merge.kind === 'post-check-failed-reverted') {
-      await ctx.telemetry.emit({
-        type: 'MergeReverted',
-        stepId: node.id,
-        laneId: lane.laneId,
-        payload: { revertCommitSha: merge.revertCommitSha },
-      });
-      anyFailed ??= {
-        source: 'merge',
-        // A structured code, not just a message: P16's own classifyFailure (PLAN-M5.md P16) needs to
-        // tell this apart from the other two merge failure modes below without sniffing message text,
-        // this codebase's own established preference (GateNotFoundError's own doc comment names the
-        // same reasoning for a different case).
-        code: 'MERGE-POST-CHECK-FAILED',
-        message: `Post-merge check failed for lane ${lane.laneId}: ${merge.checkResult.summary || '(no output)'}`,
-      };
-    } else if (merge.kind === 'conflict-unresolved') {
-      await ctx.telemetry.emit({
-        type: 'MergeConflict',
-        stepId: node.id,
-        laneId: lane.laneId,
-        payload: { reason: merge.reason },
-      });
-      anyFailed ??= {
-        source: 'merge',
-        code: 'MERGE-CONFLICT-UNRESOLVED',
-        message: `Unresolved merge conflict for lane ${lane.laneId} (${merge.reason}).`,
-      };
-    } else {
-      anyFailed ??= {
-        source: 'merge',
-        code: 'MERGE-PRE-CHECK-FAILED',
-        message: `Pre-merge check failed for lane ${lane.laneId}: ${merge.checkResult.summary || '(no output)'}`,
-      };
+    const landed = await landLane(ctx, {
+      eventStepId: node.id,
+      laneStepId: predecessorId,
+      lane,
+      conflictPolicy,
+      checks: { preCheck: mergePolicy.preChecks, postCheck: mergePolicy.postChecks },
+    });
+    if (landed.outcome !== undefined)
+      merges.push({ stepId: predecessorId, outcome: landed.outcome });
+    if (landed.failure !== undefined) anyFailed ??= landed.failure;
+    if (!contentLanded(landed.outcome)) {
+      notLanded.add(predecessorId);
+      ctx.laneRegistry.set(predecessorId, lane);
     }
   }
 

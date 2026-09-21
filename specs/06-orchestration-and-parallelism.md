@@ -32,7 +32,7 @@ interface StepNode {
   dependsOn: string[];              // step ids
   produces: ResourceClaim[];        // file globs written
   consumes: ResourceClaim[];        // file globs read (advisory)
-  laneAffinity?: 'exclusive' | 'shared' | 'inline';   // inline = run in supervisor, no worktree
+  laneAffinity?: 'exclusive' | 'shared' | 'inline';   // inline = run in supervisor (in the integration worktree), no lane
   retry: RetryPolicy;
   limits: { maxTurns: number; wallClockMs: number; maxCostUsd: number };
   autonomy?: AutonomyLevel;         // step-level override
@@ -95,6 +95,14 @@ Lane lifecycle:
   it is one of the step's declared `outputs` or lies in its `produces` (§6.7); any other KB change
   from a lane goes through the KB proposal channel, applied by the supervisor on the integration
   branch (this prevents KB merge conflicts entirely).
+- A lane whose step succeeded and which no `merge` step lands is enqueued in the merge queue by the engine
+  as soon as the step succeeds (between scheduling ticks, in plan order), and lanes are created from the
+  integration branch tip, so a later step, an inline step and a gate see it. A `merge` step lands the lanes
+  of the steps in its dependency closure (not only its direct predecessors), stopping at a `gate` or another
+  `merge`, which are integration checkpoints (a step upstream of a checkpoint is integrated before it, so
+  what a gate reads is there); it batches and orders them and is never bypassed. A lane no `merge` lands has
+  no pre- or post-merge check set of its own (§6.5 steps 3 and 5 are those a `merge` step declares). An inline
+  step runs in the integration worktree, serialised with the merge queue, and must leave it unchanged.
 - `.gitignore` MUST exclude `.forge/state/`. Worktrees live there, so they never self-reference.
 - Non-git projects: FORGE requires git. `init` offers to `git init`. If refused, parallelism is
   disabled and lanes degrade to sequential in-place execution with a loud warning.

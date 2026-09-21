@@ -8,6 +8,9 @@
  *
  * @see PLAN-M5.md P15
  */
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 import { execa } from 'execa';
 import { appendEvent, type NewForgeEvent } from '@forge/telemetry/events';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
@@ -19,6 +22,7 @@ import {
   processMergeCandidate,
   removeLaneWorktree,
   resolveRevision,
+  VcsError,
   wrapGitFailure,
   type LaneHandle as VcsLaneHandle,
   type MergeCandidate,
@@ -314,6 +318,27 @@ function enqueueForIntegrationPath<T>(
   return result;
 }
 
+/** Aborts a `git rebase` or `git merge` left in progress in `cwd` (a killed process). A no-op when none is. */
+async function abortInterruptedGitOperation(cwd: string, kind: 'rebase' | 'merge'): Promise<void> {
+  if (kind === 'merge') {
+    const head = await execa('git', ['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], {
+      cwd,
+      reject: false,
+    });
+    if (head.exitCode === 0) await execa('git', ['merge', '--abort'], { cwd, reject: false });
+    return;
+  }
+  for (const dir of ['rebase-merge', 'rebase-apply']) {
+    const gitPath = await execa('git', ['rev-parse', '--git-path', dir], { cwd, reject: false });
+    if (gitPath.exitCode !== 0) continue;
+    const resolved = path.resolve(cwd, gitPath.stdout.trim());
+    if (existsSync(resolved)) {
+      await execa('git', ['rebase', '--abort'], { cwd, reject: false });
+      return;
+    }
+  }
+}
+
 export function createMergeQueueFacade(
   integrationPath: string,
   conflictResolver: MergeConflictResolver | undefined,
@@ -322,14 +347,39 @@ export function createMergeQueueFacade(
   const env = options.env;
   return {
     async process(candidate, checks) {
-      return enqueueForIntegrationPath(integrationPath, () =>
-        processMergeCandidate(asVcsMergeCandidate(candidate), {
+      return enqueueForIntegrationPath(integrationPath, async () => {
+        // A process killed inside a rebase (in the lane) or a merge (in the integration worktree) leaves that
+        // git operation half done; a resumed run's second attempt would fail on it forever. Abandoned first.
+        await abortInterruptedGitOperation(candidate.handle.path, 'rebase');
+        await abortInterruptedGitOperation(integrationPath, 'merge');
+        return processMergeCandidate(asVcsMergeCandidate(candidate), {
           ...omitUndefinedValues({ conflictResolver }),
           integrationPath,
           preChecks: toPreMergeCheck(checks.preCheck, env),
           postChecks: toPostMergeCheck(checks.postCheck, env),
-        }),
-      );
+        });
+      });
+    },
+    exclusive(operation) {
+      return enqueueForIntegrationPath(integrationPath, operation);
+    },
+    async isIntegrated(handle) {
+      // `merge-base --is-ancestor` exits 0 (an ancestor), 1 (not) and >1 for a real failure, which must not
+      // read as "not integrated" (that would offer the lane to a merge that then fails the same way, but
+      // with a less useful message) or as integrated (that would drop a lane's work): it throws.
+      return enqueueForIntegrationPath(integrationPath, async () => {
+        const result = await execa('git', ['merge-base', '--is-ancestor', handle.branch, 'HEAD'], {
+          cwd: integrationPath,
+          reject: false,
+        });
+        if (result.exitCode === 0) return true;
+        if (result.exitCode === 1) return false;
+        throw new VcsError({
+          code: 'VCS-GIT-OPERATION-FAILED',
+          message: `checking whether lane branch "${handle.branch}" is already in the integration worktree at "${integrationPath}" failed: ${result.stderr}`,
+          remedy: 'Inspect the integration worktree and the lane branch directly with git.',
+        });
+      });
     },
   };
 }
