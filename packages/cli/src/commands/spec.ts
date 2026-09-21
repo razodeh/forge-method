@@ -16,6 +16,7 @@ import { parseKbTree } from '@forge/kb/schema';
 import { renderArtifactPath } from '@forge/schemas/registry';
 import type { ArtifactTypeId } from '@forge/schemas';
 
+import { ownerRoleProblem, readImplementationRoles } from './implementation-roles.ts';
 import { getSharedIdAllocator, listSpecArtifacts, readArtifactTemplate } from './shared.ts';
 
 export interface SpecCommandContext {
@@ -29,6 +30,10 @@ export interface SpecCommandContext {
   readonly reportsRoot?: string;
   readonly sessionsRoot?: string;
   readonly clock?: Clock;
+  /** Project-relative directory of materialised agents (`.forge/agents`). When present, `validate` and the
+   * `definition-of-ready` rule refuse a Story whose `owner_role` is not an implementation role (`PLAN-M13.md` P36);
+   * absent (or a project with no agents), owners are not judged. */
+  readonly agentsRoot?: string;
 }
 
 /** Every real document `forge spec trace/matrix/orphans` needs `SpecGraph` built from — `docs/forge/
@@ -93,11 +98,20 @@ export async function specValidate(ctx: SpecCommandContext): Promise<{
   readonly cycles: readonly { readonly path: readonly string[] }[];
 }> {
   const docs = await listSpecArtifacts(ctx.paths, ctx.specsRoot);
+  const roles =
+    ctx.agentsRoot === undefined
+      ? undefined
+      : await readImplementationRoles(ctx.paths, ctx.agentsRoot);
   const documents = docs.map((doc) => {
     const outcome = validateArtifact(doc);
-    return outcome.valid
-      ? { path: doc.path, valid: true, errors: [] }
-      : { path: doc.path, valid: false, errors: outcome.errors.map((error) => error.message) };
+    const errors = outcome.valid ? [] : outcome.errors.map((error) => error.message);
+    // A Story's owner runs its implement-story steps with write access to its source (`PLAN-M13.md` P36).
+    const front = doc.frontMatter as Readonly<Record<string, unknown>>;
+    if (front['type'] === 'Story' && typeof front['owner_role'] === 'string') {
+      const problem = ownerRoleProblem(front['owner_role'], roles);
+      if (problem !== undefined) errors.push(problem);
+    }
+    return { path: doc.path, valid: errors.length === 0, errors };
   });
 
   const graphDocs = await loadGraphDocs(ctx);

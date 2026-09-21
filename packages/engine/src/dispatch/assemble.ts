@@ -64,9 +64,10 @@ export interface AssembleInput {
   readonly briefKey?: string | undefined;
   /** Participant sessions read the primary author's lane and never write (`dispatch-agent-step.ts`). */
   readonly readOnly?: boolean | undefined;
-  /** For a `taint: 'external'` node with no claim of its own (`produces`, declared outputs): the caller confines the
-   * session's writes itself, so the tainted grant keeps `write` (`forge debug`'s FIX scans its diff). Without it a
-   * tainted step keeps write access only when its `StepNode` claim is non-empty (`restrictGrantForTaint`). */
+  /** For a node with no claim of its own (`produces`, declared outputs): the caller confines the session's writes
+   * itself, so the session keeps the agent's `write` (`forge debug`'s FIX scans its diff against an exclusion set).
+   * Without it a step keeps write access only when its `StepNode` claim is non-empty (`PLAN-M13.md` P36, and for a
+   * tainted step `restrictGrantForTaint`). */
   readonly callerConfinesWrites?: boolean | undefined;
 }
 
@@ -291,9 +292,29 @@ function synthesizedBrief(node: StepNode): string {
   ].join('\n');
 }
 
-function forbiddenActionsFor(grant: ToolGrant, deploys: boolean): readonly string[] {
+/** Block [6]'s reason for a withheld `write` that the agent's own grant would have allowed (`PLAN-M13.md` P36). */
+export const NO_CLAIM_WRITE_NOTE = 'no write: this step declares no outputs or produces';
+
+/** Block [6]'s statement of what a project-wide claim excludes (`PLAN-M13.md` P36): the agent is told before it works, not
+ * left to lose a file to a revert it was never warned of. */
+export const PROTECTED_WRITE_NOTE =
+  'writing to a protected path (any such write is reverted): `.git/`, `.forge/`, `.env` files, CI and hook configuration, package manifests and test-runner configuration, credentials, editor and agent-tool configuration, and the project document roots';
+
+function forbiddenActionsFor(
+  grant: ToolGrant,
+  deploys: boolean,
+  noClaim: boolean,
+  protectedPaths: boolean,
+): readonly string[] {
   const actions: string[] = [];
-  if (!grant.write) actions.push('writing or modifying files');
+  if (protectedPaths && grant.write) actions.push(PROTECTED_WRITE_NOTE);
+  if (!grant.write) {
+    actions.push(
+      noClaim
+        ? `writing or modifying files (${NO_CLAIM_WRITE_NOTE})`
+        : 'writing or modifying files',
+    );
+  }
   if (grant.exec === false) actions.push('running shell commands');
   else actions.push('running shell commands that do not match a granted pattern');
   if (grant.network === 'none') actions.push('network access');
@@ -309,6 +330,8 @@ function constraintsFor(
   node: StepNode,
   autonomy: PromptConstraints['autonomy'],
   readOnly: boolean,
+  noClaim: boolean,
+  protectedPaths: boolean,
 ): PromptConstraints {
   return {
     tools: {
@@ -321,7 +344,12 @@ function constraintsFor(
       git_commit: readOnly ? 'none' : agent.tools.git_commit,
       deploy: readOnly ? false : agent.tools.deploy,
     },
-    forbiddenActions: forbiddenActionsFor(grant, !readOnly && agent.tools.deploy),
+    forbiddenActions: forbiddenActionsFor(
+      grant,
+      !readOnly && agent.tools.deploy,
+      noClaim,
+      protectedPaths,
+    ),
     // The limits the session request actually enforces, not the agent's own declared defaults.
     budget: {
       max_turns: node.limits.maxTurns,
@@ -470,14 +498,21 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
   // A tainted step (`20` §20.5 point 3: its context holds another session's output or other untrusted text)
   // keeps `read`, loses exec, network and the adapter's extra tools, and keeps `write` only when it has a claim
   // to write inside (`PLAN-M13.md` P28): capability restriction is the control, not detection.
-  const tools: ToolGrant = readOnly
+  //
+  // An EMPTY claim means no write (`PLAN-M13.md` P36, `06` §6.7, `20` §20.1): the effective `write` is the agent's own
+  // grant AND the step's claim (`produces` plus declared outputs) being non-empty. A step with nothing to write inside
+  // used to keep the agent's `write: true` and, under `guided`'s `warn`, write anywhere with nothing reverted. The one
+  // exception is a caller that confines writes itself (`forge debug`'s FIX scans its diff against an exclusion set).
+  const claim = resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy);
+  const mayWrite = input.callerConfinesWrites === true || claim.globs.length > 0;
+  const granted: ToolGrant = readOnly
     ? { read: resolved.grant.read, write: false, exec: false, network: 'none' }
-    : restrictGrantForTaint(resolved.grant, node.taint, {
-        mayWrite:
-          input.callerConfinesWrites === true ||
-          !tainted ||
-          resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy).globs.length > 0,
-      });
+    : restrictGrantForTaint(resolved.grant, node.taint, { mayWrite: !tainted || mayWrite });
+  // The agent may write and the step has nothing to write inside: the reason block [6] gives (a tainted step included).
+  const unclaimed = !readOnly && resolved.grant.write && !mayWrite;
+  const tools: ToolGrant = unclaimed ? { ...granted, write: false } : granted;
+  // A claim that names `!@protected` is a project-wide one: say so in block [6] (a story's own file claim does not).
+  const protectedPaths = claim.protectedSet;
   const model = resolveStepModel(agent, deps.models, ctx.adapter.id);
 
   const kb = await deps.openKb();
@@ -513,7 +548,15 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
     },
     agent,
     pack,
-    constraintsFor(tools, agent, node, deps.autonomy, readOnly || tainted),
+    constraintsFor(
+      tools,
+      agent,
+      node,
+      deps.autonomy,
+      readOnly || tainted,
+      unclaimed,
+      protectedPaths,
+    ),
     definitionOfDone(node, ctx),
     {
       styleProfile: deps.styleProfile,

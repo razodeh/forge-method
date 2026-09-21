@@ -176,7 +176,11 @@ export async function createTestProject(
 
   // Real agent, role prompt and brief for the one `agent` step: prompt assembly loads all three (a step
   // naming one that does not exist is a typed failure, never a raw-path prompt -- `PLAN-M13.md` P5).
-  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true });
+  // Implementation roles (they declare a `Code` output): a Story's `owner_role` must be one (`PLAN-M13.md` P36), and
+  // the tests that build a run context name `backend` and `frontend` as owners.
+  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true, code: true });
+  await writeFixtureAgent(dir, 'backend', 'Backend', { write: true, code: true });
+  await writeFixtureAgent(dir, 'frontend', 'Frontend', { write: true, code: true });
   await mkdir(path.join(dir, '.forge', 'briefs'), { recursive: true });
   await writeFile(
     path.join(dir, '.forge', 'briefs', 'implement.md'),

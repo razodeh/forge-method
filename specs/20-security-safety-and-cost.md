@@ -38,7 +38,7 @@ action is denied rather than allowed (`07` §7.2).
 | Class | Sub-capabilities | Default |
 |---|---|---|
 | `read` | repo files, KB, specs | granted to all agents |
-| `write` | file creation/modification within the step's claim | implementation roles. Authoring roles hold the grant on the agent (it is not per step); a step of theirs that declares `outputs` has a claim of those outputs plus its `produces` (the documents its brief names), enforced `strict` at every autonomy level (`06` §6.7), while a step that declares none takes the autonomy-default claim policy. `reviewer` and `critic` never receive it; the engine writes the review report (`05` §5.7). |
+| `write` | file creation/modification within the step's claim | implementation roles. Authoring roles hold the grant on the agent (it is not per step); a step of theirs that declares `outputs` has a claim of those outputs plus its `produces` (the documents its brief names), enforced `strict` at every autonomy level (`06` §6.7), while a step that declares neither outputs nor `produces` has an empty claim and is given no `write` at all (`06` §6.7). `reviewer` and `critic` never receive it; the engine writes the review report (`05` §5.7). |
 | `exec` | shell commands matching an allowlist pattern | narrow per role |
 | `network` | `none` / `allowlist` / `full` | `none` by default |
 | `git` | `none` / `docs-only` / `lane` / `full` | `lane` for implementers |

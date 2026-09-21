@@ -19,6 +19,9 @@ steps:
     agent: backend
     brief: briefs/refactor.md
     dependsOn: [state-invariants]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The goal names no paths.
+    produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
   - id: verify-invariants

@@ -67,6 +67,9 @@ steps:
     brief: briefs/fix-defect.md
     dependsOn: [performance-pass]
     inputs: ['artifact:Defect(*)']
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The findings name no paths.
+    produces: ['**', '!@protected']
 
   - id: stable-gate
     kind: gate

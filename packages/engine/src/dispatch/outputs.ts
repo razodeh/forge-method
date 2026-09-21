@@ -77,6 +77,7 @@ import { escape as escapeGlob, minimatch } from 'minimatch';
 import type { z } from 'zod';
 
 import type { StepNode } from '../plan/index.ts';
+import { NEVER_WRITABLE_GLOBS, protectedFixGlobs } from '../rca/fix-scan.ts';
 import type {
   DocRoots,
   ExecuteStepContext,
@@ -198,7 +199,13 @@ export function outputClaimGlobs(outputs: StepNode['outputs'], roots: DocRoots):
 
 /** What `runLaneLifecycle` hands `enforceClaim` for one step. */
 export interface StepClaim {
+  /** The paths the step may write. EMPTY means the step may write nothing: the session gets no `write` grant
+   * (`assemble.ts`, `PLAN-M13.md` P36) and, if it writes anyway, every path is out of claim. */
   readonly globs: readonly string[];
+  /** Paths inside `globs` the step still may not write (`resolveStepClaim`): subtracted, never unioned. */
+  readonly exclude: readonly string[];
+  /** The claim names the protected set (`!@protected`): a project-wide claim, less what such a step may never write. */
+  readonly protectedSet: boolean;
   readonly policy: 'strict' | 'warn';
 }
 
@@ -219,13 +226,57 @@ export function resolveStepClaim(
   // A tainted step (`20` §20.5 point 3) is held to its claim at every autonomy level: `warn` would keep what it wrote
   // outside it (`PLAN-M13.md` P28).
   const policy = node.taint === 'external' ? 'strict' : defaultPolicy;
+  const own = splitClaim(node.produces, roots);
+  const protectedSet = node.produces.includes(PROTECTED_CLAIM_EXCLUSION);
   if (node.kind !== 'agent' || node.outputs.length === 0) {
-    return { globs: node.produces, policy };
+    // An agent step with an EMPTY claim is granted no write (`assemble.ts`); whatever it changes anyway got past that
+    // grant, so it is reverted at every autonomy level, not kept and flagged under `warn` (`PLAN-M13.md` P36).
+    const bypass = node.kind === 'agent' && own.globs.length === 0;
+    return {
+      globs: own.globs,
+      exclude: [...floorFor(node), ...own.excluded],
+      protectedSet,
+      policy: bypass ? 'strict' : policy,
+    };
   }
   return {
-    globs: [...new Set([...node.produces, ...outputClaimGlobs(node.outputs, roots)])],
+    globs: [...new Set([...own.globs, ...outputClaimGlobs(node.outputs, roots)])],
+    exclude: [...floorFor(node), ...own.excluded],
+    protectedSet,
     policy: 'strict',
   };
+}
+
+/** The reserved `produces` exclusion that names the protected set (`protectedFixGlobs`): `!@protected`. */
+export const PROTECTED_CLAIM_EXCLUSION = '!@protected';
+
+/**
+ * A `produces` list split into the paths a step may write and the paths it may not (`PLAN-M13.md` P36, `06` §6.7). An entry
+ * that starts `!` is an exclusion: `!<glob>` removes matching paths from the claim, and the reserved `!@protected`
+ * removes FORGE's protected set (`protectedFixGlobs`: CI and hook configuration, package manifests and test-runner config,
+ * credentials and `.env*`, editor and agent-tool config, the project's document roots), the very list a `forge debug` FIX
+ * is held to, so what a fix may not touch and what a project-wide step may not touch cannot drift. Exclusions are never
+ * part of `globs`: `enforceClaim` reads its globs as a union, where a `!` entry would widen the claim instead.
+ */
+function splitClaim(
+  produces: readonly string[],
+  roots: DocRoots,
+): { readonly globs: readonly string[]; readonly excluded: readonly string[] } {
+  const globs: string[] = [];
+  const excluded: string[] = [];
+  for (const entry of produces) {
+    if (entry === PROTECTED_CLAIM_EXCLUSION) excluded.push(...protectedFixGlobs(roots));
+    else if (entry.startsWith('!')) excluded.push(entry.slice(1));
+    else globs.push(entry);
+  }
+  return { globs, excluded };
+}
+
+/** What an agent step's claim never reaches, whatever it says: `NEVER_WRITABLE_GLOBS` (`.git`, `.forge`, `.env`), so a
+ * story's `files_expected` or a `produces` that names them does not make them writable (`20` §20.2 point 2, §20.5 point 5).
+ * Only for an `agent` step: a `command` step's claim is not enforced against a session. */
+function floorFor(node: Pick<StepNode, 'kind'>): readonly string[] {
+  return node.kind === 'agent' ? NEVER_WRITABLE_GLOBS : [];
 }
 
 /** The DSL's `subtype` spelled as the artifact's own field value, where the two differ. */

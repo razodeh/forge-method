@@ -71,7 +71,12 @@ openQuestionsPolicy: warn
 export function agentYaml(
   id: string,
   name: string,
-  options: { readonly write?: boolean; readonly exec?: readonly string[] } = {},
+  options: {
+    readonly write?: boolean;
+    readonly exec?: readonly string[];
+    /** An implementation role: declares a `Code` output (`isImplementationAgent`, `PLAN-M13.md` P36). */
+    readonly code?: boolean;
+  } = {},
 ): string {
   return `id: ${id}
 name: ${name}
@@ -87,7 +92,7 @@ inputs:
   required: []
   optional: []
 outputs:
-  - type: X
+  - type: ${options.code === true ? 'Code' : 'X'}
     schema: x.schema.json
     path: x.md
 kb_write: []
@@ -124,7 +129,11 @@ export async function writeFixtureAgent(
   dir: string,
   id: string,
   name: string,
-  options: { readonly write?: boolean; readonly exec?: readonly string[] } = {},
+  options: {
+    readonly write?: boolean;
+    readonly exec?: readonly string[];
+    readonly code?: boolean;
+  } = {},
 ): Promise<void> {
   await mkdir(path.join(dir, AGENTS_ROOT), { recursive: true });
   await writeFile(path.join(dir, AGENTS_ROOT, `${id}.yaml`), agentYaml(id, name, options));
@@ -194,7 +203,11 @@ export async function createTestProject(): Promise<TestProject> {
   await writeFixtureAgent(dir, 'reviewer', 'Code Reviewer');
   await writeFixtureAgent(dir, 'architect', 'Architect');
   await writeFixtureAgent(dir, 'security', 'Security');
-  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true });
+  // The fixture story's owner and the owners other tests name are implementation roles (they declare a `Code`
+  // output): a Story's `owner_role` must be one (`PLAN-M13.md` P36).
+  await writeFixtureAgent(dir, 'engineer', 'Engineer', { write: true, code: true });
+  await writeFixtureAgent(dir, 'backend', 'Backend', { write: true, code: true });
+  await writeFixtureAgent(dir, 'frontend', 'Frontend', { write: true, code: true });
   // The session commands' synthetic facilitator loads this role prompt (`session.ts`'s `facilitatorAgent`).
   await writeFile(
     path.join(dir, '.forge', 'prompts', 'facilitator.system.md'),

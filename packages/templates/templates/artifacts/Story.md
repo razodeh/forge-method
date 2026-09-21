@@ -13,7 +13,9 @@ epic: '<the parent Epic id>'
 capability: '<the parent Capability id>'
 storyType: feature
 size: S
-owner_role: '<the implementation role that writes this story code>'
+owner_role:
+  '<an implementation role that writes this story code (an agent that produces code, such as backend
+  or frontend; never a document-authoring or judging role: forge spec validate refuses it)>'
 depends_on: []
 blocked_by: []
 interfaces: []

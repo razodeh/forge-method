@@ -141,6 +141,7 @@ steps:
     agent: sdet
     brief: briefs/write-tests.md
     dependsOn: [review]
+    produces: ['tests/**']
     gateEvidence: [G-Assembly]
   - id: verify
     kind: gate

@@ -90,7 +90,12 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
       id: 'kb-lint',
       promise: checkKbLint({ paths, kbRoot, specsRoot, level: config.project.level }),
     },
-    { id: 'spec-graph', promise: checkSpecGraph({ paths, specsRoot, kbRoot }) },
+    {
+      id: 'spec-graph',
+      // `agentsRoot`: `forge spec validate` also refuses a Story whose owner is not an implementation role (`PLAN-M13.md` P36), and
+      // this check reports what that command reports.
+      promise: checkSpecGraph({ paths, specsRoot, kbRoot, agentsRoot: '.forge/agents' }),
+    },
     { id: 'stale-lock', promise: checkStaleLock(paths) },
     { id: 'orphaned-worktrees', promise: checkOrphanedWorktrees(projectRoot) },
     { id: 'dangling-lane-branches', promise: checkDanglingLaneBranches(projectRoot) },

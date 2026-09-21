@@ -141,7 +141,7 @@ function toResourceClaims(
  * whole-entry placeholder that evaluates to an array of strings is therefore spliced in as that many
  * claims; anything else (a scalar, a placeholder embedded in longer text, an unresolved path) goes through
  * `safeResolveTemplate` exactly as before, so every existing error path is unchanged. */
-const WHOLE_PLACEHOLDER = /^\{\{([^{}]*)\}\}$/;
+const WHOLE_PLACEHOLDER = /^(!?)\{\{([^{}]*)\}\}$/;
 
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
@@ -153,7 +153,8 @@ function resolveClaimEntry(
   issues: CompileIssue[],
   stepId: string,
 ): readonly string[] {
-  const inner = WHOLE_PLACEHOLDER.exec(glob.trim())?.[1];
+  const whole = WHOLE_PLACEHOLDER.exec(glob.trim());
+  const inner = whole?.[2];
   if (inner !== undefined) {
     const parsed = parseExpression(inner);
     if (parsed.success) {
@@ -164,7 +165,8 @@ function resolveClaimEntry(
         // Not swallowed: the ordinary path below re-evaluates the same text and reports it as an issue.
         if (!(cause instanceof ForgeError)) throw cause;
       }
-      if (isStringArray(value)) return value;
+      // `!{{run.testPaths}}` (`PLAN-M13.md` P36): an exclusion entry (`06` §6.7) spliced from a list, each path negated.
+      if (isStringArray(value)) return whole?.[1] === '!' ? value.map((path) => `!${path}`) : value;
     }
   }
   return [safeResolveTemplate(glob, context, issues, stepId)];

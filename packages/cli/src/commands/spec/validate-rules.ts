@@ -32,6 +32,7 @@ import {
   type Story,
 } from '@forge/schemas';
 
+import { ownerRoleProblem, readImplementationRoles } from '../implementation-roles.ts';
 import { listSpecArtifacts } from '../shared.ts';
 import { loadGraphDocs, type SpecCommandContext } from '../spec.ts';
 import {
@@ -521,6 +522,18 @@ async function validateDefinitionOfReady(ctx: SpecCommandContext): Promise<RuleV
   const errors: RuleViolation[] = [];
 
   if (readyStories.length === 0) return ruleResult('definition-of-ready', errors);
+
+  // A ready story is about to be built: its owner must be a role that writes code (`PLAN-M13.md` P36, `09` §9.3).
+  const roles =
+    ctx.agentsRoot === undefined
+      ? undefined
+      : await readImplementationRoles(ctx.paths, ctx.agentsRoot);
+  for (const story of readyStories) {
+    const problem = ownerRoleProblem(story.owner_role, roles);
+    if (problem !== undefined) {
+      errors.push({ subject: story.id, message: `story ${story.id}: ${problem}` });
+    }
+  }
 
   const profileResult = await loadProjectDodProfiles(ctx);
   if (!profileResult.success) {

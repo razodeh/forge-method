@@ -193,7 +193,7 @@ export async function runLaneLifecycle(
     // and a step that declares outputs is `strict` at every autonomy level (`resolveStepClaim`).
     const claim = resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy);
     const enforceResult = await runVcsStep(node.id, () =>
-      ctx.vcs.enforceClaim(lane, baseSha, claim.globs, claim.policy),
+      ctx.vcs.enforceClaim(lane, baseSha, claim.globs, claim.policy, claim.exclude),
     );
     if (!enforceResult.ok)
       return failed(node.id, startedAt, ctx.now(), work.detail, enforceResult.failure);

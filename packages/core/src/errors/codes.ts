@@ -1221,6 +1221,46 @@ export const ERROR_CODES = {
     remedy:
       'Fix the change so it touches ordinary source and test files only: not `.git/`, `.forge/`, `.env*`, secret files, CI or hook configuration, the project’s document roots, or a symlink, and it must not add a secret. Then run `forge debug` again, or make the change by hand.',
   },
+  'RUN-101': {
+    // `PLAN-M13.md` P20: an `elicit` step needs a human's answer and the run has no way to get it. A failed step, never
+    // a silent default, and never a wait with nobody there.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; question: string; reason: string }) =>
+      `Step ${show(d.stepId)} asks question ${show(d.question)} and no answer was given: ${show(d.reason)}`,
+    remedy:
+      'Run the workflow in a terminal so it can ask, or supply the answers in a file: `forge run <workflow> --answers /tmp/answers.json` (or `forge resume --answers /tmp/answers.json`), a JSON or YAML object of question name to answer. Keep the file outside the project: an untracked file inside it makes the next run refuse (`VCS-DIRTY-TREE`). The step is asked again from its first question.',
+  },
+  'RUN-102': {
+    // `PLAN-M13.md` P20: an answer that breaks its question's own rules (blank, longer than the cap, not one of the listed choices).
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; question: string; reason: string }) =>
+      `The answer to question ${show(d.question)} of step ${show(d.stepId)} was refused: ${show(d.reason)}`,
+    remedy:
+      'Provide an answer that is not blank, is at most 4000 characters, contains no credential or secret, and, when the question lists choices, is exactly one of them; then run again (`forge resume --answers <file>` continues the run).',
+  },
+  'RUN-103': {
+    // `PLAN-M13.md` P20: the `--answers` file itself.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; reason: string }) =>
+      `The answers file ${show(d.path)} cannot be used: ${show(d.reason)}`,
+    remedy:
+      'Pass a JSON or YAML file holding one object whose keys are question names and whose values are the answers as text (quote a number or true/false so it keeps its exact spelling), for example {"ideaSummary": "A booking app", "greenfield": "greenfield"}.',
+  },
+  'RUN-097': {
+    // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an
+    // authoring or judging role, or one the project does not have). `implement-story` runs its plan, implementation,
+    // refactor and documentation steps as that owner with its own write grant, so the owner must be an implementation role.
+    // `RUN-091` is the narrower refusal for the two roles whose separation `10` §10.6 enforces (`sdet`, `reviewer`).
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { storyId: string; detail: string }) =>
+      `Story ${show(d.storyId)} cannot be implemented: ${show(d.detail)}`,
+    remedy:
+      'Set the story’s `owner_role` to an implementation role (an agent that declares a `Code` output, such as `backend` or `frontend`; `forge agent list` shows the roster) in its Story document, then run the workflow again. `forge spec validate` reports the same problem for every story.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

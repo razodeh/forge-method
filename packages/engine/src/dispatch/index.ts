@@ -57,6 +57,7 @@ export {
   outputClaimGlobs,
   outputGlob,
   outputPathCoveredBy,
+  PROTECTED_CLAIM_EXCLUSION,
   resolveStepClaim,
   verifyDeclaredOutputs,
   type OutputCheckInput,

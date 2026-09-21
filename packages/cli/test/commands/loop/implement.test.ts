@@ -80,7 +80,7 @@ epic: EPIC-001
 capability: CAP-001
 storyType: feature
 size: S
-owner_role: sre
+owner_role: frontend
 depends_on: []
 blocked_by: []
 interfaces: []
@@ -99,7 +99,7 @@ dod_profile: default
       host: 'test-host',
     });
     if (result.kind !== 'dry-run' || !result.plan.success) throw new Error('unreachable');
-    expect(result.plan.nodes[0]?.agent).toBe('sre');
+    expect(result.plan.nodes[0]?.agent).toBe('frontend');
   });
 
   it('throws SPEC-025 when a real Story artifact has no real, valid owner_role', async () => {

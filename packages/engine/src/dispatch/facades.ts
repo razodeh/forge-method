@@ -139,8 +139,8 @@ export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
       });
       return result.exitCode === 0 && !result.failed ? result.stdout : undefined;
     },
-    async enforceClaim(handle, baseSha, declaredGlobs, policy) {
-      return enforceClaim(asVcsLaneHandle(handle), baseSha, declaredGlobs, policy);
+    async enforceClaim(handle, baseSha, declaredGlobs, policy, excludedGlobs) {
+      return enforceClaim(asVcsLaneHandle(handle), baseSha, declaredGlobs, policy, excludedGlobs);
     },
   };
 }

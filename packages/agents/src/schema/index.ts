@@ -1,4 +1,4 @@
-export { loadAgentDefinition, readAgentDefinition } from './load.ts';
+export { isImplementationAgent, loadAgentDefinition, readAgentDefinition } from './load.ts';
 export { agentDefinitionSchema } from './schema.ts';
 export type {
   AgentCeiling,

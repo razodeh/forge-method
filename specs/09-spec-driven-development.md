@@ -149,6 +149,10 @@ dod_profile: backend-default
 5. All `context_refs` resolve; no open `OQ-###` blocks it.
 6. Size ≤ M, or it is split.
 7. It names its NFR obligations explicitly (or declares `nfr: none` deliberately).
+8. `owner_role` names an implementation role: an agent of the project's roster that produces code (declares a
+   `Code` output). The `implement-story` steps run as the owner with that agent's write grant, so a
+   document-authoring or judging role (`analyst`, `pm`, `security`, `reviewer`, `sdet`) may not own a story;
+   `forge spec validate` reports it for a story at any status and `G-Ready` for a ready one.
 
 ### Task (`TASK-###`)
 Optional decomposition inside a story when a story needs multiple agent steps

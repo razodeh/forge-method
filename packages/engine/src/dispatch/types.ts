@@ -91,6 +91,8 @@ export interface VcsFacade {
     baseSha: string,
     declaredGlobs: readonly string[],
     policy: 'strict' | 'warn',
+    /** Paths no glob of `declaredGlobs` may reach (`resolveStepClaim`'s `exclude`, `PLAN-M13.md` P36). */
+    excludedGlobs?: readonly string[],
   ): Promise<{ readonly outOfClaim: readonly string[]; readonly reverted: readonly string[] }>;
 }
 

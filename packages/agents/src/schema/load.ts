@@ -73,7 +73,19 @@ function checkArchitectNeverApproves(agent: AgentDefinition): readonly AgentIssu
  * roster-table output ("Review report, blocking findings") never plausibly includes implementation
  * code itself. */
 const REVIEW_SHAPED_ROLES = new Set(['reviewer']);
-const IMPLEMENTATION_OUTPUT_TYPES = new Set(['Code', 'Component']);
+const IMPLEMENTATION_OUTPUT_TYPES: ReadonlySet<string> = new Set(['Code', 'Component']);
+
+/**
+ * Whether `agent` is an implementation role: one that declares an output that is source code (`Code`, `Component`)
+ * rather than a document, report or record (`PLAN-M13.md` P36). The only roles a Story's `owner_role` may name:
+ * `implement-story`'s `plan`/`green`/`refactor`/`document` steps run as `{{ownerRole}}` with the agent's own write
+ * grant, so an owner that authors documents (`analyst`, `pm`, `security`, ...) or judges work (`reviewer`, `sdet`)
+ * would write a story's source. Derived from the definitions, never a hard-coded list: a project's own implementer
+ * (a `mobile` role, a custom `rust-engineer`) counts the moment it declares a `Code` output.
+ */
+export function isImplementationAgent(agent: Pick<AgentDefinition, 'outputs'>): boolean {
+  return agent.outputs.some((output) => IMPLEMENTATION_OUTPUT_TYPES.has(output.type));
+}
 
 function checkReviewRoleShape(agent: AgentDefinition): readonly AgentIssue[] {
   if (!REVIEW_SHAPED_ROLES.has(agent.id)) return [];

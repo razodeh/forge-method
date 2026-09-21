@@ -27,7 +27,7 @@ credentials on someone else's machine), files the project's own tooling executes
  * @see specs/20 §20.2
  */
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
-import { minimatch } from 'minimatch';
+import { escape as escapeGlob, minimatch } from 'minimatch';
 
 import type { DocRoots } from '../dispatch/types.ts';
 
@@ -53,13 +53,25 @@ export interface FixScanViolation {
   readonly detail: string;
 }
 
-const PROTECTED_GLOBS: readonly string[] = [
+/** The paths no agent step's claim may reach, whatever the claim says (`PLAN-M13.md` P36, `20` §20.2 point 2 deny list,
+ * `20` §20.5 point 5): the repository's own internals, FORGE's config and state, and secrets files. A story's
+ * `files_expected` or a workflow's `produces` names paths a model or a person wrote; none of them can make these
+ * writable. Also the head of the protected set below, so the two never disagree. `.env.example`, `.env.sample` and
+ * `.env.template` stay writable here (a scaffold step writes one); the protected set below refuses every `.env.*`. */
+export const NEVER_WRITABLE_GLOBS: readonly string[] = [
   '.git',
+  '**/.git',
   '.git/**',
   '**/.git/**',
+  '.forge',
   '.forge/**',
-  '**/node_modules/**',
   '**/.env',
+  '**/.env.!(example|sample|template)',
+];
+
+const PROTECTED_GLOBS: readonly string[] = [
+  ...NEVER_WRITABLE_GLOBS,
+  '**/node_modules/**',
   '**/.env.*',
   '**/.aws/**',
   '**/.ssh/**',
@@ -130,6 +142,9 @@ const EXTRA_SECRET_PATTERNS: readonly RegExp[] = [
 export function protectedFixGlobs(roots: DocRoots): readonly string[] {
   const rootGlobs = [roots.kb, roots.specs, roots.sessions, roots.reports]
     .map((root) => root.replace(/^\.\//, '').replace(/\/+$/, ''))
+    // A configured root that opens with `!` or `#` is a literal path, never a negation or a comment (`outputClaimGlobs` escapes it too).
+    // A root with glob characters (`docs/[kb]`, `a{b}`) is a literal path: escaped as `outputClaimGlobs` escapes it.
+    .map((root) => escapeGlob(root, { magicalBraces: true }).replace(/^[!#]/, '\\$&'))
     .filter((root) => root !== '' && !root.startsWith('..'))
     .flatMap((root) => [root, `${root}/**`]);
   return [...PROTECTED_GLOBS, ...rootGlobs];

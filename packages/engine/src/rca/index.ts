@@ -15,6 +15,7 @@ export {
   WALL_CLOCK_MS,
 } from './bounds.ts';
 export {
+  NEVER_WRITABLE_GLOBS,
   protectedFixGlobs,
   scanFixDiff,
   type FixChange,

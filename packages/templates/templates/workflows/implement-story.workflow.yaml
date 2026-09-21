@@ -44,7 +44,9 @@ steps:
     dependsOn: [red]
     inputs:
       ['artifact:Story({{storyId}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
-    produces: '{{run.filesExpected}}'
+    # The story's files, less its test files: `red` wrote them and the implementer is not to edit them (10 §10.6, "enforced
+    # by claim"; `files_expected` lists the test globs too, `run.testPaths` is the subset that is tests).
+    produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
     onFailure: escalate
 
@@ -54,6 +56,9 @@ steps:
     brief: briefs/refactor-story.md
     dependsOn: [green]
     inputs: ['diff:lane']
+    # The story's own file claim, as `green`'s (P36): the brief refactors "your own change, still inside the story's file claim",
+    # and says test files are not the refactorer's to change.
+    produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
 
   - id: self-verify
     kind: command
@@ -77,6 +82,9 @@ steps:
     brief: briefs/document-story.md
     dependsOn: [review]
     inputs: ['diff:lane']
+    # The story's own file claim, less its tests (P36): the brief has documentation files go "where the project's standards put
+    # them", says a home outside `files_expected` is a `FORGE_REQUEST_CHANGE`, not a write, and says not to change tests.
+    produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
 
   - id: commit
     kind: checkpoint

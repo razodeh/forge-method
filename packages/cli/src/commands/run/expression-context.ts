@@ -51,6 +51,7 @@ import {
   referencedRunInputs,
   shellFacingInputs,
 } from './inputs.ts';
+import { ownerRoleProblem, readImplementationRoles } from '../implementation-roles.ts';
 import { planStageForRun } from './run-plan.ts';
 import { readStoryRunInputs } from './story-inputs.ts';
 import { readWorkflowSource, type RunDeps } from './run.ts';
@@ -207,7 +208,12 @@ export async function buildRunExpressionContext(
 
   if (readsStage && stageId !== undefined) {
     const plan = await planStageForRun(
-      { paths: deps.paths, workflowsRoot: deps.workflowsRoot, specsRoot },
+      {
+        paths: deps.paths,
+        workflowsRoot: deps.workflowsRoot,
+        specsRoot,
+        agentsRoot: deps.agentsRoot,
+      },
       stageId,
       workflow,
       { ...inputValues, ...(runValues === undefined ? {} : { run: runValues }), vars },
@@ -259,7 +265,12 @@ export async function buildRunExpressionContext(
   if (Object.keys(vars).length > 0) root['vars'] = vars;
 
   const context: RunExpressionContext = root;
-  assertPlannable(workflow, workflowId, context);
+  const ownerForRoles = context['ownerRole'];
+  const roles =
+    typeof ownerForRoles === 'string'
+      ? await readImplementationRoles(deps.paths, deps.agentsRoot)
+      : undefined;
+  assertPlannable(workflow, workflowId, context, roles, values.get('storyId'));
   return { context, warnings };
 }
 
@@ -309,11 +320,14 @@ function alias(
  * naming those placeholders. Any other compile failure is left alone: the run's own `RUN-045` (or `--dry-run`'s
  * printed issues) reports it, as before, since a broken workflow is not a missing input. A workflow that does
  * compile is checked for `10` §10.6's separations: a story owned by `sdet` or `reviewer` would run its tests, or
- * its review, and its implementation under one role (`RUN-091`; the stage plan says the same for `build-stage`). */
+ * its review, and its implementation under one role (`RUN-091`; the stage plan says the same for `build-stage`), and
+ * that the owner is an implementation role at all (`RUN-097`, `PLAN-M13.md` P36). */
 function assertPlannable(
   workflow: Workflow,
   workflowId: string,
   context: RunExpressionContext,
+  implementationRoles: readonly string[] | undefined,
+  storyId: unknown,
 ): void {
   const compiled = compileRunPlan(workflow, context);
   if (!compiled.success) {
@@ -326,15 +340,24 @@ function assertPlannable(
   const owner = context['ownerRole'];
   if (typeof owner !== 'string') return;
   const role = owner.trim().toLowerCase();
-  if (!SEPARATED_ROLES.has(role)) return;
-  const running = compiled.nodes.filter(
-    (node) => node.kind === 'agent' && String(node.agent).trim().toLowerCase() === role,
-  );
-  if (running.length >= 2) {
-    throw new ForgeError('RUN-091', {
-      workflowId,
-      role: owner,
-      steps: running.map((node) => node.id).join(', '),
+  if (SEPARATED_ROLES.has(role)) {
+    const running = compiled.nodes.filter(
+      (node) => node.kind === 'agent' && String(node.agent).trim().toLowerCase() === role,
+    );
+    if (running.length >= 2) {
+      throw new ForgeError('RUN-091', {
+        workflowId,
+        role: owner,
+        steps: running.map((node) => node.id).join(', '),
+      });
+    }
+  }
+  // Every owner must be an implementation role (`PLAN-M13.md` P36): the steps that run as it write the story's source.
+  const problem = ownerRoleProblem(owner, implementationRoles);
+  if (problem !== undefined) {
+    throw new ForgeError('RUN-097', {
+      storyId: oneLine(typeof storyId === 'string' ? storyId : workflowId),
+      detail: oneLine(problem),
     });
   }
 }

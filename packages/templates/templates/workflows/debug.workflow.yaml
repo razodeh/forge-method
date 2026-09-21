@@ -28,6 +28,9 @@ steps:
     agent: backend
     brief: briefs/fix-defect.md
     dependsOn: [run-rca]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
+    produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
 
   # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs

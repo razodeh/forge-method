@@ -21,6 +21,9 @@ steps:
     agent: backend
     brief: briefs/migration-expand.md
     dependsOn: [plan-migration]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
+    produces: ['**', '!@protected']
 
   - id: migrate-data
     kind: command
@@ -32,6 +35,9 @@ steps:
     agent: backend
     brief: briefs/migration-contract.md
     dependsOn: [migrate-data]
+    # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
+    # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
+    produces: ['**', '!@protected']
 
   - id: verify-migration
     kind: command

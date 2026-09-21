@@ -97,7 +97,8 @@ steps:
       brief: briefs/implement-story.md
       inputs:
         ['artifact:Story({{item.id}})', 'artifact:InterfaceContract(*)', 'kb:engineering/standards']
-      produces: '{{item.files_expected}}'
+      # The story's files, less its test files (M13 P36, 10 §10.6): `generate-tests` wrote them and the implementer may not edit them.
+      produces: ['{{item.files_expected}}', '!{{item.test_paths}}']
       retry: { maxAttempts: 3, retryOn: [transient, test-failure, validation] }
       onFailure: escalate
 

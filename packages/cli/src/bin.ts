@@ -1144,7 +1144,7 @@ async function runSpecValidateRule(
   rule: ValidateRuleId,
   json: boolean,
 ): Promise<number> {
-  const ctx = { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+  const ctx = { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT, agentsRoot: AGENTS_ROOT };
   const result = await specValidateRule(ctx, rule);
   if (json) {
     console.log(
@@ -2087,7 +2087,7 @@ const KB_LINT_FLAGS = { '--rule': true } as const;
 const SPEC_SUBCOMMANDS = ['list', 'show', 'validate', 'trace', 'matrix', 'orphans', 'new'] as const;
 
 function buildSpecContext(paths: ProjectPaths): SpecCommandContext {
-  return { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+  return { paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT, agentsRoot: AGENTS_ROOT };
 }
 
 /** `spec validate` with no real `--rule` — `03` §3.2.2's own bare form, distinct from `spec validate
@@ -2785,7 +2785,7 @@ async function runRunPlanCommand(
     return EXIT_CODES.usage;
   }
   const report = await planRunPlan(
-    { paths, workflowsRoot: WORKFLOWS_ROOT, specsRoot: SPECS_ROOT },
+    { paths, workflowsRoot: WORKFLOWS_ROOT, specsRoot: SPECS_ROOT, agentsRoot: AGENTS_ROOT },
     stageId,
   );
   console.log(json ? runPlanJson(report) : formatRunPlan(report));

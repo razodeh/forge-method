@@ -71,7 +71,13 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { ProjectPaths } from '@forge/core';
-import { docRootsOf, outputClaimGlobs, outputGlob, resolveStepClaim } from '@forge/engine/dispatch';
+import {
+  PROTECTED_CLAIM_EXCLUSION,
+  docRootsOf,
+  outputClaimGlobs,
+  outputGlob,
+  resolveStepClaim,
+} from '@forge/engine/dispatch';
 import type { DocRoots } from '@forge/engine/dispatch';
 import { compileRunPlan } from '@forge/engine/plan';
 import type { StepNode } from '@forge/engine/plan';
@@ -526,8 +532,15 @@ async function briefOf(node: Pick<StepNode, 'brief'>): Promise<string> {
 }
 
 /** `enforceClaim`'s own matcher (`packages/vcs/src/claims.ts`, `matchesAnyGlob`). */
-function inClaim(file: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => minimatch(file, glob, { dot: true }));
+function inClaim(
+  file: string,
+  globs: readonly string[],
+  excluded: readonly string[] = [],
+): boolean {
+  return (
+    globs.some((glob) => minimatch(file, glob, { dot: true })) &&
+    !excluded.some((glob) => minimatch(file, glob, { dot: true }))
+  );
 }
 
 /**
@@ -535,9 +548,15 @@ function inClaim(file: string, globs: readonly string[]): boolean {
  * (the extractor's probe for a directory or a glob member): the claim covers it when it covers a typical
  * member, an extensionless file, a `.md`, a `.yaml` or a `.mmd`. A claim of one exact file does not.
  */
-function claimCovers(file: string, globs: readonly string[]): boolean {
-  if (!file.endsWith('/x')) return inClaim(file, globs);
-  return ['', '.md', '.yaml', '.mmd'].some((extension) => inClaim(`${file}${extension}`, globs));
+function claimCovers(
+  file: string,
+  globs: readonly string[],
+  excluded: readonly string[] = [],
+): boolean {
+  if (!file.endsWith('/x')) return inClaim(file, globs, excluded);
+  return ['', '.md', '.yaml', '.mmd'].some((extension) =>
+    inClaim(`${file}${extension}`, globs, excluded),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -983,7 +1002,7 @@ describe('every path a brief tells the agent to write lies in the step claim', (
     const problems: string[] = [];
     const seenExempt = new Set<(typeof EXEMPT)[number]>();
     for (const { key, node } of steps) {
-      const claim = resolveStepClaim(node, ROOTS, 'strict').globs;
+      const { globs: claim, exclude } = resolveStepClaim(node, ROOTS, 'strict');
       const brief = await briefOf(node);
       const refs: { raw: string; resolved: string; sentence: string }[] = [
         ...extractWritePaths(brief),
@@ -1001,7 +1020,7 @@ describe('every path a brief tells the agent to write lies in the step claim', (
         }
       }
       for (const ref of refs) {
-        const covered = claimCovers(ref.resolved, claim);
+        const covered = claimCovers(ref.resolved, claim, exclude);
         const exempt = EXEMPT.find(
           (entry) =>
             entry.step === key && entry.path === ref.resolved && entry.sentence.test(ref.sentence),
@@ -1069,25 +1088,14 @@ describe('every path a brief tells the agent to write lies in the step claim', (
 });
 
 /**
- * Agent steps whose claim is EMPTY (no `outputs`, no `produces`), pinned so the gap stays visible. The test
- * above can say nothing about them (their briefs name no path the extractor reads), yet under `strict` an
- * empty claim reverts everything the step writes. All nine write code, tests or documents the story or the
- * defect determines at run time; `P11-TRIAGE.md` A3 defers them (P14, Q212), noting that
- * `implement-story:refactor` and `implement-story:document` could use `{{run.filesExpected}}` and the
- * defect-driven ones cannot. Removing an entry means the step gained a claim; an unlisted empty-claim step is
- * a new gap. This pin records the state, it does not bless it: `SPEC-QUESTIONS.md` Q216 lists them as open.
+ * Agent steps whose claim is EMPTY (no `outputs`, no `produces`). None is allowed any more (`PLAN-M13.md` P36,
+ * `SPEC-QUESTIONS.md` Q216 and the P36 entry): an agent session's `write` grant is the agent's own AND a non-empty claim
+ * (`assembleAgentSession`), so an empty-claim step cannot write at all, and the nine steps that legitimately write code, tests or
+ * documents (`debug:fix`, `harden:fix-findings`, `implement-story:{document,refactor}`, `migrate:{expand,contract}`,
+ * `quick-fix:{write-failing-test,fix}`, `refactor:refactor-code`) now declare a claim. An empty-claim step appearing here is a
+ * step whose brief tells it to write nothing (a read-only critic), and would have to be added with a reason.
  */
-const KNOWN_EMPTY_CLAIM: readonly string[] = [
-  'debug:fix',
-  'harden:fix-findings',
-  'implement-story:document',
-  'implement-story:refactor',
-  'migrate:contract',
-  'migrate:expand',
-  'quick-fix:fix',
-  'quick-fix:write-failing-test',
-  'refactor:refactor-code',
-];
+const KNOWN_EMPTY_CLAIM: readonly string[] = [];
 
 describe('steps with no claim at all', () => {
   it('are exactly the pinned set', () => {
@@ -1146,9 +1154,11 @@ describe('claim hygiene', () => {
     const problems: string[] = [];
     for (const { key, node } of steps) {
       for (const glob of node.produces) {
-        if (/^[!#]/.test(glob)) {
+        // `!<glob>` is an exclusion (`resolveStepClaim` moves it out of the claim globs, `06` §6.7); `#` is still a comment.
+        if (glob === PROTECTED_CLAIM_EXCLUSION || glob.startsWith('!')) continue;
+        if (glob.startsWith('#')) {
           problems.push(
-            `${key}: produces "${glob}" starts with "!" or "#": the claim matcher reads it as negation or a comment`,
+            `${key}: produces "${glob}" starts with "#": the claim matcher reads it as a comment`,
           );
           continue;
         }
@@ -1157,6 +1167,8 @@ describe('claim hygiene', () => {
           continue;
         }
         if (BROAD_PRODUCES_ALLOWED[`${key}|${glob}`] !== undefined) continue;
+        // A project-wide claim is fine when the step also excludes the protected set (`!@protected`, P36).
+        if (node.produces.includes(PROTECTED_CLAIM_EXCLUSION)) continue;
         const broad = isBroadProduces(glob);
         if (broad) {
           problems.push(

@@ -104,6 +104,14 @@ function matchesAnyGlob(file: string, globs: readonly string[]): boolean {
   return globs.some((glob) => minimatch(file, glob, { dot: true }));
 }
 
+/** A file is inside a claim when a claim glob matches it and no `excluded` glob does (`PLAN-M13.md` P36). The exclusion
+ * is a second list rather than `!`-prefixed entries in the claim because this matcher reads a claim as a UNION of
+ * its globs: `['**', '!.forge/**']` would still match `.forge/config.yaml` through `**`, and a lone `!x` matches
+ * everything but `x`. A list that only subtracts is the one shape that cannot be mistaken for the other. */
+function inClaim(file: string, globs: readonly string[], excluded: readonly string[]): boolean {
+  return matchesAnyGlob(file, globs) && !matchesAnyGlob(file, excluded);
+}
+
 /** Whether `file` existed at `revision` at all — decides which of `enforceClaim`'s two revert operations
  * applies to it. Any `cat-file -e` failure is treated as "does not exist": `revision` here is always
  * already a resolved sha (never caller-supplied text directly) and `file` is sourced from `diffLaneChanges`,
@@ -128,9 +136,10 @@ async function existsAtRevision(cwd: string, revision: string, file: string): Pr
 export interface ClaimEnforcementResult {
   /** Every changed path (see `diffLaneChanges`) outside `declaredGlobs`. */
   readonly outOfClaim: readonly string[];
-  /** Paths actually reverted to their pre-lane state — always empty for `warn`; equal to `outOfClaim`
-   * for `strict`. Recorded explicitly rather than left for a caller to re-derive from `outOfClaim` plus
-   * the policy it passed in, since this result is what the audit trail (`20` §20.9) ultimately keeps. */
+  /** Paths actually reverted to their pre-lane state — equal to `outOfClaim` for `strict`; for `warn` only the
+   * paths matching an excluded glob (empty when none is given). Recorded explicitly rather than left for a caller to
+   * re-derive from `outOfClaim` plus the policy it passed in, since this result is what the audit trail (`20` §20.9)
+   * ultimately keeps. */
   readonly reverted: readonly string[];
 }
 
@@ -141,18 +150,30 @@ export interface ClaimEnforcementResult {
  * Reverting never fails "the step" directly: nothing in this package knows what a step or failing one
  * structurally means (`SPEC-QUESTIONS.md` Q62's own forward-dependency precedent — that decision belongs
  * to `@forge/engine`, a caller this piece cannot reach). This function's job ends at giving that caller
- * the structured facts — what was out of claim, what was actually reverted — needed to make it. */
+ * the structured facts — what was out of claim, what was actually reverted — needed to make it.
+ *
+ * `excludedGlobs` (`PLAN-M13.md` P36) are paths no claim glob may reach, however broad: a file matching any is out
+ * of claim even when `declaredGlobs` also matches it, and is reverted under `warn` as well as `strict` (a denial, not a
+ * policy question). The rest of the out-of-claim set follows `policy`. */
 export async function enforceClaim(
   handle: LaneHandle,
   baseSha: string,
   declaredGlobs: readonly string[],
   policy: 'strict' | 'warn',
+  excludedGlobs: readonly string[] = [],
 ): Promise<ClaimEnforcementResult> {
   const resolvedBase = await resolveRevision(handle.path, baseSha);
   const changed = await diffLaneChanges(handle, resolvedBase);
-  const outOfClaim = changed.filter((file) => !matchesAnyGlob(file, declaredGlobs));
+  const outOfClaim = changed.filter((file) => !inClaim(file, declaredGlobs, excludedGlobs));
 
-  if (policy === 'warn' || outOfClaim.length === 0) {
+  // An excluded path is a denial, not a claim question: it is reverted under `warn` too (`PLAN-M13.md` P36, `20` §20.2
+  // point 2). `warn` exists to keep out-of-claim work for a person to review; no review makes `.git`, `.forge`, a `.env` file
+  // or CI configuration something a lane may carry into the merge.
+  const revertable =
+    policy === 'strict'
+      ? outOfClaim
+      : outOfClaim.filter((file) => matchesAnyGlob(file, excludedGlobs));
+  if (revertable.length === 0) {
     return { outOfClaim, reverted: [] };
   }
 
@@ -164,7 +185,7 @@ export async function enforceClaim(
   // which files still need attention rather than leaving that to be rediscovered by a fresh diff.
   const reverted: string[] = [];
   const failures: { readonly file: string; readonly cause: unknown }[] = [];
-  for (const file of outOfClaim) {
+  for (const file of revertable) {
     try {
       if (await existsAtRevision(handle.path, resolvedBase, file)) {
         await wrapGitFailure(

@@ -33,6 +33,7 @@ import {
   verifyDeclaredOutputs,
 } from '../../src/dispatch/outputs.ts';
 import { runLaneLifecycle } from '../../src/dispatch/steps.ts';
+import { NEVER_WRITABLE_GLOBS } from '../../src/rca/fix-scan.ts';
 import type {
   DocRoots,
   ExecuteStepContext,
@@ -274,26 +275,19 @@ describe('a step that declares outputs: its own output is inside its claim', () 
   });
 });
 
-describe('a step that declares neither outputs nor produces: the policy is unchanged', () => {
-  it('strict default reverts everything the session wrote (as before)', async () => {
-    const { outcome, committed, events } = await run({
-      writes: [{ relativePath: STRAY, content: 'x\n' }],
-      claimPolicy: 'strict',
+describe('a step that declares neither outputs nor produces: no write grant (P36), so the policy has nothing to enforce', () => {
+  for (const claimPolicy of ['strict', 'warn'] as const) {
+    it(`under ${claimPolicy}: the session is refused the write, nothing is committed and nothing needs reverting`, async () => {
+      const { outcome, committed, events } = await run({
+        writes: [{ relativePath: STRAY, content: 'x\n' }],
+        claimPolicy,
+      });
+      expect(outcome.status).toBe('succeeded');
+      expect(committed).not.toContain(STRAY);
+      expect(revertCommits(events)).toBe(0);
+      expect(violations(events)).toEqual([]);
     });
-    expect(outcome.status).toBe('succeeded');
-    expect(committed).not.toContain(STRAY);
-    expect(revertCommits(events)).toBe(1);
-  });
-
-  it('warn default reverts nothing (as before)', async () => {
-    const { outcome, committed, events } = await run({
-      writes: [{ relativePath: STRAY, content: 'x\n' }],
-      claimPolicy: 'warn',
-    });
-    expect(outcome.status).toBe('succeeded');
-    expect(committed).toContain(STRAY);
-    expect(revertCommits(events)).toBe(0);
-  });
+  }
 
   it('a step with only `produces` keeps the default policy: warn keeps an out-of-claim write, strict reverts it', async () => {
     const warn = await run({
@@ -314,6 +308,8 @@ describe('a step that declares neither outputs nor produces: the policy is uncha
     const none = node({ id: 'wf:a', kind: 'agent', produces: ['src/**'] });
     expect(resolveStepClaim(none, DEFAULT_ROOTS, 'warn')).toEqual({
       globs: ['src/**'],
+      exclude: NEVER_WRITABLE_GLOBS,
+      protectedSet: false,
       policy: 'warn',
     });
     expect(resolveStepClaim(none, DEFAULT_ROOTS, 'strict').policy).toBe('strict');
@@ -326,6 +322,8 @@ describe('a step that declares neither outputs nor produces: the policy is uncha
     });
     expect(resolveStepClaim(command, DEFAULT_ROOTS, 'warn')).toEqual({
       globs: ['src/**'],
+      exclude: [],
+      protectedSet: false,
       policy: 'warn',
     });
   });
@@ -548,8 +546,9 @@ describe('an out-of-claim write leaves a trace: a PolicyViolation event (06 §6.
     expect(violations(events)).toEqual([]);
   });
 
-  it('under warn (a step with no outputs) the write is kept and still flagged, with nothing reverted', async () => {
+  it('under warn (a step with only produces) the write is kept and still flagged, with nothing reverted', async () => {
     const { events, committed } = await run({
+      produces: ['docs/**'],
       writes: [{ relativePath: STRAY, content: 'x\n' }],
       claimPolicy: 'warn',
     });

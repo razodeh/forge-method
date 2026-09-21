@@ -32,6 +32,7 @@ import { parseWorkflow, type Workflow } from '@forge/engine/workflow';
 import { epicSchema, storySchema } from '@forge/schemas';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
+import { ownerRoleProblem, readImplementationRoles } from '../implementation-roles.ts';
 import { listSpecArtifacts } from '../shared.ts';
 
 /** The workflow whose fanouts define a stage's run plan (`06` §6.2's own worked example is this workflow). */
@@ -43,6 +44,9 @@ export interface RunPlanContext {
   readonly workflowsRoot: string;
   /** Project-relative directory of Epic/Story documents (`docs/forge/specs`). */
   readonly specsRoot: string;
+  /** Project-relative directory of materialised agents (`.forge/agents`). When present, a story whose `owner_role` is
+   * not an implementation role is an error finding (`PLAN-M13.md` P36); absent, owners are not judged. */
+  readonly agentsRoot?: string | undefined;
 }
 
 export type StageRunPlanReport = StageRunPlan;
@@ -138,6 +142,10 @@ function compileStageReport(
  */
 export async function readStageStories(ctx: RunPlanContext, stageId: string): Promise<StageInputs> {
   const docs = await listSpecArtifacts(ctx.paths, ctx.specsRoot);
+  const implementationRoles =
+    ctx.agentsRoot === undefined
+      ? undefined
+      : await readImplementationRoles(ctx.paths, ctx.agentsRoot);
 
   // Everything below reads raw front matter first, so a document that fails its schema is reported rather
   // than dropped, and nothing depends on the order files were walked in (the inputs are grouped by id, and
@@ -285,6 +293,16 @@ export async function readStageStories(ctx: RunPlanContext, stageId: string): Pr
         code: 'story-not-listed',
         severity: 'warning',
         message: `${story.id} names ${story.epic}, but that Epic's stories list does not include it.`,
+        subjects: [story.id],
+      });
+    }
+    // A story an authoring or judging role owns would have that role write its source (`PLAN-M13.md` P36).
+    const ownerProblem = ownerRoleProblem(story.owner_role, implementationRoles);
+    if (ownerProblem !== undefined) {
+      inputFindings.push({
+        code: 'owner-role-not-implementation',
+        severity: 'error',
+        message: `Story ${story.id}: ${ownerProblem}`,
         subjects: [story.id],
       });
     }

@@ -248,6 +248,60 @@ describe('enforceClaim', () => {
     );
   });
 
+  it('excluded globs are subtracted from the claim, never unioned (PLAN-M13.md P36): a broad glob cannot reach an excluded path', async () => {
+    const { baseSha, handle } = await setupLaneWithInClaimBaseline();
+    await mkdir(path.join(handle.path, '.github', 'workflows'), { recursive: true });
+    await writeFile(path.join(handle.path, '.github', 'workflows', 'ci.yml'), 'on: push');
+    await writeFile(path.join(handle.path, '.env'), 'TOKEN=x');
+    await writeFile(path.join(handle.path, 'src', 'ok.ts'), 'fine');
+    await commitAll(handle.path, 'lane work');
+
+    const result = await enforceClaim(handle, baseSha, ['**'], 'strict', [
+      '**/.github/**',
+      '**/.env',
+    ]);
+
+    expect(result.outOfClaim).toEqual(['.env', '.github/workflows/ci.yml']);
+    expect(result.reverted).toEqual(['.env', '.github/workflows/ci.yml']);
+    await expect(access(path.join(handle.path, '.env'))).rejects.toThrow();
+    await expect(readFile(path.join(handle.path, 'src', 'ok.ts'), 'utf8')).resolves.toBe('fine');
+  });
+
+  it('warn: an excluded path is reverted (a denial), an ordinary out-of-claim path is only reported; a modified tracked file is restored', async () => {
+    const cwd = await createTempRepo();
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
+    await writeFile(path.join(cwd, '.npmrc'), 'registry=https://example.test/');
+    const baseSha = await commitAll(cwd, 'seed');
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, '.npmrc'), 'registry=https://evil.test/');
+    await writeFile(path.join(handle.path, 'notes.md'), 'out of claim, not excluded');
+    await commitAll(handle.path, 'lane work');
+
+    const result = await enforceClaim(handle, baseSha, ['src/**'], 'warn', ['**/.npmrc']);
+
+    expect(result.outOfClaim).toEqual(['.npmrc', 'notes.md']);
+    expect(result.reverted).toEqual(['.npmrc']);
+    await expect(readFile(path.join(handle.path, '.npmrc'), 'utf8')).resolves.toBe(
+      'registry=https://example.test/',
+    );
+    await expect(readFile(path.join(handle.path, 'notes.md'), 'utf8')).resolves.toBe(
+      'out of claim, not excluded',
+    );
+  });
+
+  it('a `!` entry inside the claim globs still reads as a union member (the reason exclusions are a separate list)', async () => {
+    const { baseSha, handle } = await setupLaneWithInClaimBaseline();
+    await writeFile(path.join(handle.path, '.env'), 'TOKEN=x');
+    await commitAll(handle.path, 'lane work');
+    const result = await enforceClaim(handle, baseSha, ['**', '!.env'], 'warn');
+    expect(result.outOfClaim).toEqual([]);
+  });
+
   it('strict: removes a brand new out-of-claim file entirely, since it has no prior state to check out', async () => {
     const { baseSha, handle } = await setupLaneWithInClaimBaseline();
     await mkdir(path.join(handle.path, 'docs'), { recursive: true });

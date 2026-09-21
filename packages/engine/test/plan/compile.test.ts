@@ -702,6 +702,31 @@ describe('compilePlan — produces/inputs template resolution against a resolvab
     expect(nodes[0]?.produces).toEqual(['test/s1.test.ts']);
     expect(nodes[0]?.inputs).toEqual(['artifact:Story(s1)']);
   });
+
+  it('a `!` in front of a whole-entry placeholder splices an EXCLUSION per listed path (M13 P36, 06 6.7)', () => {
+    const context: ExpressionContext = {
+      run: { filesExpected: ['src/s1.ts', 'test/s1.test.ts'], testPaths: ['test/s1.test.ts'] },
+    };
+    const step: AgentStep = {
+      kind: 'agent',
+      id: 'refactor',
+      agent: 'backend',
+      produces: ['{{run.filesExpected}}', '!{{run.testPaths}}'],
+    };
+    const nodes = expectOk(compilePlan(workflow([step]), context));
+    expect(nodes[0]?.produces).toEqual(['src/s1.ts', 'test/s1.test.ts', '!test/s1.test.ts']);
+    // an empty list contributes nothing; a scalar is a single negated path
+    const empty = expectOk(
+      compilePlan(workflow([step]), { run: { filesExpected: ['src/s1.ts'], testPaths: [] } }),
+    );
+    expect(empty[0]?.produces).toEqual(['src/s1.ts']);
+    const scalar = expectOk(
+      compilePlan(workflow([step]), {
+        run: { filesExpected: 'src/s1.ts', testPaths: 'test/s1.test.ts' },
+      }),
+    );
+    expect(scalar[0]?.produces).toEqual(['src/s1.ts', '!test/s1.test.ts']);
+  });
 });
 
 describe('compilePlan — fanout "over" errors', () => {

@@ -168,6 +168,19 @@ This is the single highest-leverage difference between FORGE and naive parallel 
   - An `agent` step that declares `outputs` is always `strict`, whatever the autonomy level: its claim is
     `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; it
     reverts only what is neither. `warn` remains the `guided` default for steps that declare none.
+- **An empty claim means no write.** An `agent` step that declares neither `outputs` nor `produces` is given no
+  `write` grant, whatever its agent's definition says: the effective `write` is the agent's grant AND a
+  non-empty claim (`20` §20.1), and block [6] of its prompt says so. The one exception is a caller that confines
+  a session's writes itself (`forge debug`'s FIX scans its diff against the protected set). A `produces` entry
+  that starts with `!` is an exclusion, not a glob: it removes the paths it matches from the claim (subtracted,
+  never unioned), and the reserved entry `!@protected` removes the protected set (`20` §20.2: CI and hook
+  configuration, package manifests and test-runner configuration, credentials and `.env*`, editor and agent-tool
+  configuration, the project's document roots). A step that writes "the project" wherever a defect or a
+  migration leads declares `produces: ['**', '!@protected']`. Whatever a claim says, an `agent` step's claim
+  never reaches `.git/`, `.forge/` or a `.env` file, and a path a claim excludes is reverted under `warn`
+  as well as `strict`. The withheld grant is the first control, not the only one: an agent's `exec`
+  allowlist can still change files, so whatever an empty-claim step changes is reverted under `warn` as well as
+  `strict` (it got past the grant), and claim enforcement (this section) is the second control.
 - Shared files that are unavoidably touched by many lanes (lockfiles, DI registries, route tables,
   i18n catalogs, `CHANGELOG`) are declared in config as `sharedMutablePaths` with a strategy:
   `serialize` (claim exclusively for the duration), `regenerate` (a post-merge command rebuilds it),
