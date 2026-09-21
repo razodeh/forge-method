@@ -81,6 +81,18 @@ right.
     the edit to what the piece's brief authorises. `05` §5.5's operating-contract text is compared
     word for word by a test and is given to every agent: do not reword it.
 
+14. **Verify the COMMIT, not the working tree.** Several pieces committed only their own hunks of
+    shared files (`bin.ts`, `steps.ts`, `assemble.ts`, ...). Their working tree, which also held
+    other agents' uncommitted edits, still typechecked and passed, while the commit itself did not:
+    P25's commit left `packages/cli/src/bin.ts` with 18 syntax errors that nothing caught until HEAD
+    was checked out clean. Before you report, and again after any commit that isolated hunks:
+    `git worktree add <scratch>/wt-<piece> HEAD` (scratch dir, never inside the repo),
+    `pnpm install --offline --frozen-lockfile` there (about 5 seconds), then run `pnpm typecheck`
+    and your piece's key tests IN THAT WORKTREE. If it fails, fix the commit (rebuild the hunks; add
+    a follow-up commit if needed). Remove the worktree afterwards
+    (`git worktree remove --force <path>`). Prefer building hand-isolated hunks by editing the clean
+    worktree file and committing there, rather than `git apply --unidiff-zero` against a dirty tree.
+
 ## Failure handling
 
 14. If macOS returns `Operation not permitted` on the project directory, stop and report exactly
