@@ -309,7 +309,8 @@ describe('every shipped check fails closed or gives a real verdict', () => {
   }, 120_000);
 
   /** Lines that give a real verdict even under the perturbation, because they do not read what was perturbed:
-   * `spec validate` and `test coverage --rule acceptance-criteria` read spec documents, not `.forge/config.yaml`;
+   * `spec validate` and `test coverage --rule acceptance-criteria` read spec documents, not
+   * `.forge/config.yaml`;
    * these commands (and `test flaky`, `test run --rule oracle-lint`) also ignore a flag they do not know rather
    * than refusing it. They pass only by printing a real, non-refusal `{v:1}` verdict; everything else must fail. */
   const IGNORES_CONFIG = (line: string): boolean =>

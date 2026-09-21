@@ -48,7 +48,10 @@ describe('runDoctor({ rebuildIndex: true })', () => {
 
     await mkdir(path.join(project.dir, '.forge/state'), { recursive: true });
     // A genuinely corrupted index — neither a real sqlite database nor valid JSON.
-    await writeFile(path.join(project.dir, '.forge/state/index.db'), 'not a real sqlite file at all');
+    await writeFile(
+      path.join(project.dir, '.forge/state/index.db'),
+      'not a real sqlite file at all',
+    );
     await writeFile(path.join(project.dir, '.forge/state/index.json'), '{not valid json either');
 
     const report = await runDoctor({

@@ -22,14 +22,14 @@ export { mergeLandingScope, stepsLandedByMerges, upstreamOf } from './merge-scop
 export { compileRunPlan } from './run-plan.ts';
 export {
   MAX_REPORTED_OVERLAPS,
-  compileStageRunPlan,
   SEPARATED_ROLES,
   buildStageRunContext,
-  type OutsideStageStatus,
+  compileStageRunPlan,
   orderedStageStories,
   resolveWorkflowVars,
   workflowReadsStageCollections,
   type StageRunContext,
+  type OutsideStageStatus,
   type StageFindingSeverity,
   type StageRunPlan,
   type StageRunPlanFinding,

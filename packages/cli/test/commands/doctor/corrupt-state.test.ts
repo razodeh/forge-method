@@ -161,9 +161,10 @@ describe('corrupt-state/ (21 E10)', () => {
       'diagrams',
       'secret-references',
     ]) {
-      expect(after.checks.find((c) => c.id === id)?.ok, `${id} should be ok after restoration`).toBe(
-        true,
-      );
+      expect(
+        after.checks.find((c) => c.id === id)?.ok,
+        `${id} should be ok after restoration`,
+      ).toBe(true);
     }
     // `dangling-lane-branches` is the one deliberate exception: `--fix` never auto-deletes a lane
     // branch (real, possibly-unmerged commits — see `fix.ts`'s own doc comment), so the orphaned
