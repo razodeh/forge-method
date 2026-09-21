@@ -173,12 +173,39 @@ onReject:
   });
 });
 
+/** A well-formed output for every field any shipped `failOn` reads, at its passing value. `evaluateGate` fails
+ * closed (M13 P35): an empty `{}` is no longer a stand-in for "passed", because a check that cannot show the field
+ * it reads has not passed. */
+const PASSING_OUTPUT = JSON.stringify({
+  v: 1,
+  errors: 0,
+  failed: 0,
+  flaky: 0,
+  quarantined: 0,
+  drifted: 0,
+  undefined_refs: 0,
+  regressions: 0,
+  coverage: 100,
+});
+/** The same fields, every one at a value that trips its `failOn`. */
+const FAILING_OUTPUT = JSON.stringify({
+  v: 1,
+  errors: 1,
+  failed: 1,
+  flaky: 1,
+  quarantined: 99,
+  drifted: 1,
+  undefined_refs: 1,
+  regressions: 1,
+  coverage: 0,
+});
+
 describe('every gate round-trips through the real evaluateGate (M5 P14)', () => {
   it.each(ALL_GATE_IDS)(
     '%s: evaluateGate reports passed=true when every check is scripted to pass',
     async (id) => {
       const definition = toGateDefinition(readGateFile(id));
-      const runner: CheckRunner = () => Promise.resolve({ stdout: '{}', exitCode: 0 });
+      const runner: CheckRunner = () => Promise.resolve({ stdout: PASSING_OUTPUT, exitCode: 0 });
       const result = await evaluateGate(definition, '/fixture', runner);
       expect(result.passed).toBe(true);
       expect(result.checks).toHaveLength(definition.checks.deterministic.length);
@@ -193,16 +220,14 @@ describe('every gate round-trips through the real evaluateGate (M5 P14)', () => 
       const runner: CheckRunner = (check) =>
         Promise.resolve(
           check.id === firstCheckId
-            ? {
-                stdout:
-                  '{"errors":1,"failed":1,"flaky":1,"drifted":1,"undefined_refs":1,"coverage":0}',
-                exitCode: 1,
-              }
-            : { stdout: '{}', exitCode: 0 },
+            ? { stdout: FAILING_OUTPUT, exitCode: 1 }
+            : { stdout: PASSING_OUTPUT, exitCode: 0 },
         );
       const result = await evaluateGate(definition, '/fixture', runner);
       expect(result.passed).toBe(false);
       expect(result.checks.find((c) => c.checkId === firstCheckId)?.passed).toBe(false);
+      // ...because its failOn fired on well-formed data, not because the output was refused or incomplete.
+      expect(result.checks.find((c) => c.checkId === firstCheckId)?.reason).toBeUndefined();
     },
   );
 });

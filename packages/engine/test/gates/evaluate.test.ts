@@ -144,12 +144,14 @@ describe('evaluateGate', () => {
     }
   });
 
-  it('never lets a nonzero exit code alone fail a check whose failOn does not trigger', async () => {
+  it('fails a check whose command exited non-zero even when its output does not trip failOn (P35: a gate fails closed; this test used to pin the opposite)', async () => {
     const g = gate({ id: 'G-Test', checks: { deterministic: [check({ id: 'a' })], advisory: [] } });
     const runner = stubRunner({ a: { stdout: '{"errors":0}', exitCode: 17 } });
     const result = await evaluateGate(g, '/repo', runner);
-    expect(result.passed).toBe(true);
-    expect(result.checks[0]?.passed).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.checks[0]?.passed).toBe(false);
+    expect(result.checks[0]?.exitCode).toBe(17);
+    expect(result.checks[0]?.reason).toContain('17');
   });
 
   it('never lets a zero (successful) exit code alone save a check whose failOn does trigger', async () => {

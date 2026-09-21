@@ -10,9 +10,10 @@
  * rejected line is not pinned, fails when a pinned line starts being accepted (delete the pin in the commit that
  * wires it), and fails when a pin outlives its gate check.
  *
- * Every accepted line must also print a `{v:1}` envelope carrying, as a number, the field its `failOn` reads. A
- * gate evaluates an absent field as "not failing" (`@forge/engine/gates`), so an envelope without `errors` makes a
- * check that can never fail: `forge kb lint --json` printed `{v, findings}` for G-Design's `errors > 0` until P25.
+ * Every accepted line must also print a `{v:1}` envelope carrying, as a number, the field its `failOn` reads. Before
+ * P35 a gate evaluated an absent field as "not failing", so an envelope without `errors` made a check that could never
+ * fail (`forge kb lint --json` printed `{v, findings}` for G-Design's `errors > 0` until P25); it now fails the check
+ * (`gate-fail-closed.test.ts`), and this test keeps the commands from depending on that.
  *
  * Scope, exactly: the `doctor`, `kb lint` and `test` families. `diagram`, `deploy` and `spec interfaces` (P26) are
  * not derived here; `spec validate` is covered by its own sibling test.
@@ -276,7 +277,7 @@ describe('gate command lines in the doctor, kb lint and test families', () => {
     }
   }, 300_000);
 
-  it('the same holds through the real gate evaluator, which ignores the exit code', async () => {
+  it('the same holds through the real gate evaluator', async () => {
     const dir = await emptyProject();
     await writeFile(path.join(dir, '.forge/config.yaml'), 'not: [valid');
     const runner: CheckRunner = async (check, cwd) => {

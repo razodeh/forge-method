@@ -2093,7 +2093,7 @@ function buildSpecContext(paths: ProjectPaths): SpecCommandContext {
 /** `spec validate` with no real `--rule` — `03` §3.2.2's own bare form, distinct from `spec validate
  * --rule <name>` above (`PLAN-M8.md` P2's own narrow gate-shelled wiring, unchanged by this piece):
  * the full `18` §18.6 two-phase document check plus `09` §9.4's graph-level required-edge/cycle
- * checks, never invoked by any real gate YAML today. */
+ * checks. G-Design's `spec:validate` check runs it with `--json` and reads `errors` (P35). */
 async function runSpecValidateCommand(
   paths: ProjectPaths,
   rest: readonly string[],
@@ -2107,7 +2107,16 @@ async function runSpecValidateCommand(
     result.missingRequiredEdges.length > 0 ||
     result.cycles.length > 0;
   if (json) {
-    console.log(JSON.stringify({ v: 1, ...result }));
+    // `errors` is the field G-Design's `spec:validate` check reads (`failOn: 'errors > 0'`): one per document
+    // error, per missing required edge and per cycle. Without it the check read an absent field (P35).
+    const errors =
+      result.documents.reduce(
+        (sum, doc) => sum + (doc.valid ? 0 : Math.max(1, doc.errors.length)),
+        0,
+      ) +
+      result.missingRequiredEdges.length +
+      result.cycles.length;
+    console.log(JSON.stringify({ v: 1, ...result, errors }));
   } else if (!hasProblems) {
     console.log('forge spec validate: no real problems.');
   } else {

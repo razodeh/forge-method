@@ -22,7 +22,7 @@ export function isTestLayerRule(value: string | undefined): value is TestLayerRu
 }
 
 /** `loadTestCommands` reads the project's configuration. It is a thunk because an invalid config is a failing verdict
- * here, not a refusal that escapes with no `failed` field (which a gate reads as "not failing"): an empty string for
+ * here, not a refusal that escapes with no `failed` field (which a gate now fails closed on, without saying why): an empty string for
  * `execution.testCommands.smoke` is `CFG-001` from the schema, the most natural way to write "unset". */
 export async function runTestLayerCommand(
   projectRoot: string,

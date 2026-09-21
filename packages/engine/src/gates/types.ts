@@ -26,13 +26,11 @@
  * exactly like an explicit `forge-json`/`json`, and any other value is refused rather than silently
  * JSON-parsed anyway (see `evaluate.ts`'s own reasoning).
  *
- * `failOn` referencing a field genuinely absent from the parsed output (a typo in the check's own config,
- * say) is not detected or reported as an error here — it silently evaluates to "not failing," inherited
- * directly, unmodified, from `@forge/engine/expr`'s own already-established, documented `resolvePath`
- * contract (a missing path resolves to plain `undefined`, `10` §10.1, P9): a critic round confirmed this
- * empirically and correctly identified it as that module's own deliberate design, not a bug introduced
- * here — this piece has no basis of its own for treating the identical value differently depending on
- * which piece produced it. */
+ * `failOn` referencing a field the parsed output does not have (a typo in the check's own config, a renamed
+ * field, or a refusal envelope where a verdict was expected) FAILS the check (`evaluate.ts`, `PLAN-M13.md`
+ * P35): a gate fails closed, so a check that cannot positively show success has failed. This is a gate rule
+ * only; `@forge/engine/expr`'s own `resolvePath` still reads a missing path as `undefined` (`10` §10.1, P9),
+ * which is right for a workflow `when:` and is left alone. */
 export interface DeterministicCheck {
   readonly id: string;
   readonly run: string;
@@ -94,8 +92,10 @@ export type CheckRunner = (
  * own audit trail (rule 4: "the exact command output") can show every check that ran, not only the ones
  * that failed. `reason` is populated only when `passed` is `false` for a reason *other than* `failOn`
  * itself genuinely evaluating true against cleanly-parsed output — an unparseable `stdout`, an unsupported
- * `parser`, an invalid `failOn` expression, or the check runner itself throwing all conservatively fail the
- * check (never silently pass it, never crash the whole gate evaluation) and say why in plain text. */
+ * `parser`, an invalid `failOn` expression, the check runner itself throwing, a refusal in the output
+ * (`ok: false` or a top-level `error`), a path `failOn` reads that is missing or of the wrong type, or a
+ * non-zero exit beside a `failOn` that did not trigger, all conservatively fail the check (never silently
+ * pass it, never crash the whole gate evaluation) and say why in plain text. */
 export interface DeterministicCheckResult {
   readonly checkId: string;
   readonly run: string;

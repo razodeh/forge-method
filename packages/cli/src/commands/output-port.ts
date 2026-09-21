@@ -15,9 +15,9 @@ export function printable(text: string): string {
 }
 
 /** Why a gate rule could not run at all (an invalid `.forge/config.yaml`, a corrupt document it had to read), as text
- * a violation can carry. A gate reads the rule's envelope and ignores the exit code, and a refusal printed by the
- * top-level handler has no `errors` or `failed` field, which a gate reads as "not failing". So every gate rule command
- * catches whatever stops it and turns it into one failing verdict instead of letting it escape.
+ * a violation can carry. A gate reads the rule's envelope, and a refusal printed by the top-level handler has no
+ * `errors` or `failed` field (before P35 a gate read that as "not failing"; it now fails the check, but with a generic reason). So
+ * every gate rule command still catches whatever stops it and turns it into one failing verdict that says why.
  *
  * `ForgeError` (and the other coded errors) carry a `remedy`; anything else gets the generic one. */
 export function describeRefusal(error: unknown): {
