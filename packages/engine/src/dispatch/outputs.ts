@@ -212,12 +212,15 @@ export interface StepClaim {
  * nothing would confine a declared output the shell never writes).
  */
 export function resolveStepClaim(
-  node: Pick<StepNode, 'kind' | 'outputs' | 'produces'>,
+  node: Pick<StepNode, 'kind' | 'outputs' | 'produces'> & { readonly taint?: StepNode['taint'] },
   roots: DocRoots,
   defaultPolicy: 'strict' | 'warn',
 ): StepClaim {
+  // A tainted step (`20` §20.5 point 3) is held to its claim at every autonomy level: `warn` would keep what it wrote
+  // outside it (`PLAN-M13.md` P28).
+  const policy = node.taint === 'external' ? 'strict' : defaultPolicy;
   if (node.kind !== 'agent' || node.outputs.length === 0) {
-    return { globs: node.produces, policy: defaultPolicy };
+    return { globs: node.produces, policy };
   }
   return {
     globs: [...new Set([...node.produces, ...outputClaimGlobs(node.outputs, roots)])],

@@ -1,0 +1,127 @@
+/**
+ * `createRcaShell`, the `runShell` `forge debug` gives the RCA loop (`PLAN-M13.md` P28, `SPEC-QUESTIONS.md` Q222):
+ * a proposed command is vetted against the agent's grant and run confined; an engine command is run confined without
+ * the vet; a refusal is a typed result (`RUN-095`), not an exception and not an execution.
+ */
+import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createRcaShell } from '../../src/rca/shell.ts';
+
+const dirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+async function lane(): Promise<string> {
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'forge-rca-shell-')));
+  dirs.push(dir);
+  return dir;
+}
+
+const GRANT = {
+  exec: ['git *', 'ls*', 'cat*', 'sleep*', 'yes*', 'env', 'true', 'sh *'],
+  network: 'none',
+} as const;
+
+describe('createRcaShell', () => {
+  it('a refused proposed command comes back as a typed result: exit 126, no output, RUN-095, its reason; and the callback sees it', async () => {
+    const root = await lane();
+    const seen: { command: string; reason: string }[] = [];
+    const runShell = createRcaShell({
+      grant: GRANT,
+      root,
+      parentEnv: process.env,
+      onRefused: (refusal) => {
+        seen.push({ command: refusal.command, reason: refusal.reason });
+      },
+    });
+    const canary = path.join(root, 'canary');
+    const result = await runShell(`cat a; touch ${canary}`, root, 'proposed');
+    expect(result.exitCode).toBe(126);
+    expect(result.stdout).toBe('');
+    expect(result.refusal).toMatchObject({ code: 'RUN-095', reason: 'shell-operator' });
+    expect(result.refusal?.message).toContain('refused and not run');
+    expect(seen).toEqual([{ command: `cat a; touch ${canary}`, reason: 'shell-operator' }]);
+    await expect(stat(canary)).rejects.toThrow();
+  });
+
+  it('an allowed proposed command runs in the lane and reports its own exit code', async () => {
+    const root = await lane();
+    await writeFile(path.join(root, 'a.txt'), 'hello\n');
+    const runShell = createRcaShell({ grant: GRANT, root, parentEnv: process.env });
+    expect(await runShell('cat a.txt', root, 'proposed')).toEqual({
+      stdout: 'hello',
+      stderr: '',
+      exitCode: 0,
+    });
+    expect((await runShell('cat missing.txt', root, 'proposed')).exitCode).toBe(1);
+  });
+
+  it('an engine command is not vetted (it may chain: it is FORGE’s own text) but is still scrubbed', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: { exec: false, network: 'none' },
+      root,
+      parentEnv: { PATH: process.env['PATH'], ANTHROPIC_API_KEY: 'canary-key', TZ: 'UTC' },
+    });
+    const result = await runShell('echo a && env', root, 'engine');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('a\n');
+    expect(result.stdout).toContain('TZ=UTC');
+    expect(result.stdout).not.toContain('canary-key');
+    expect(result.refusal).toBeUndefined();
+  });
+
+  it('a proposed command is scrubbed too, and git inside it reads neither the user’s nor the system’s config', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: GRANT,
+      root,
+      parentEnv: { PATH: process.env['PATH'], GITHUB_TOKEN: 'canary-token' },
+    });
+    const result = await runShell('env', root, 'proposed');
+    expect(result.stdout).not.toContain('canary-token');
+    expect(result.stdout).toContain('GIT_CONFIG_GLOBAL=/dev/null');
+  });
+
+  it('a proposed command that outlives its limit is killed and reported, not left running', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: GRANT,
+      root,
+      parentEnv: process.env,
+      proposedLimits: { timeoutMs: 300, maxOutputBytes: 10_000 },
+    });
+    const started = Date.now();
+    const result = await runShell('sleep 30', root, 'proposed');
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it('a proposed command that writes more than the output cap is stopped and reported', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: GRANT,
+      root,
+      parentEnv: process.env,
+      proposedLimits: { timeoutMs: 20_000, maxOutputBytes: 500 },
+    });
+    const result = await runShell('yes', root, 'proposed');
+    expect(result.outputLimitExceeded).toBe(true);
+    expect(result.stdout.length).toBeLessThanOrEqual(500);
+  });
+
+  it('the default limits are finite (a proposed command can never run unbounded)', async () => {
+    const { PROPOSED_COMMAND_LIMITS, ENGINE_COMMAND_LIMITS } =
+      await import('../../src/dispatch/confined-command.ts');
+    for (const limits of [PROPOSED_COMMAND_LIMITS, ENGINE_COMMAND_LIMITS]) {
+      expect(Number.isFinite(limits.timeoutMs) && limits.timeoutMs > 0).toBe(true);
+      expect(Number.isFinite(limits.maxOutputBytes) && limits.maxOutputBytes > 0).toBe(true);
+    }
+    expect(PROPOSED_COMMAND_LIMITS.timeoutMs).toBeLessThanOrEqual(ENGINE_COMMAND_LIMITS.timeoutMs);
+  });
+});

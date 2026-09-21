@@ -40,6 +40,8 @@ import type { AgentDefinition } from '@forge/agents/schema';
 import { slugifyStepId } from '@forge/vcs';
 
 import type { StepNode } from '../plan/index.ts';
+import { restrictGrantForTaint } from '../security/taint-guard.ts';
+import { docRootsOf, resolveStepClaim } from './outputs.ts';
 import type { ExecuteStepContext, KbAccess, StepFailureInfo } from './types.ts';
 
 /** Everything a caller may vary per assembly; everything else comes from `ctx.assembly`. */
@@ -62,6 +64,10 @@ export interface AssembleInput {
   readonly briefKey?: string | undefined;
   /** Participant sessions read the primary author's lane and never write (`dispatch-agent-step.ts`). */
   readonly readOnly?: boolean | undefined;
+  /** For a `taint: 'external'` node with no claim of its own (`produces`, declared outputs): the caller confines the
+   * session's writes itself, so the tainted grant keeps `write` (`forge debug`'s FIX scans its diff). Without it a
+   * tainted step keeps write access only when its `StepNode` claim is non-empty (`restrictGrantForTaint`). */
+  readonly callerConfinesWrites?: boolean | undefined;
 }
 
 export interface AssembledSession {
@@ -310,7 +316,8 @@ function constraintsFor(
       write: grant.write,
       exec: grant.exec === false ? undefined : grant.exec,
       network: grant.network,
-      // A read-only session neither commits nor deploys whatever its agent's own declaration says.
+      // A read-only session (or a tainted one, `restrictGrantForTaint`) neither commits nor deploys whatever its
+      // agent's own declaration says.
       git_commit: readOnly ? 'none' : agent.tools.git_commit,
       deploy: readOnly ? false : agent.tools.deploy,
     },
@@ -455,12 +462,22 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
     now: deps.escalations.length === 0 ? 0 : ctx.now(),
   });
   const readOnly = input.readOnly === true;
+  const tainted = node.taint === 'external';
   // A read-only session (interaction participants, adopt analysis) runs in the real tree, not a lane, and
   // may be handed hostile input: it keeps the agent's `read` and nothing else -- no write, no exec (a
   // permitted `git`/`rg` still has flags that write or execute), no network.
+  //
+  // A tainted step (`20` §20.5 point 3: its context holds another session's output or other untrusted text)
+  // keeps `read`, loses exec, network and the adapter's extra tools, and keeps `write` only when it has a claim
+  // to write inside (`PLAN-M13.md` P28): capability restriction is the control, not detection.
   const tools: ToolGrant = readOnly
     ? { read: resolved.grant.read, write: false, exec: false, network: 'none' }
-    : resolved.grant;
+    : restrictGrantForTaint(resolved.grant, node.taint, {
+        mayWrite:
+          input.callerConfinesWrites === true ||
+          !tainted ||
+          resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy).globs.length > 0,
+      });
   const model = resolveStepModel(agent, deps.models, ctx.adapter.id);
 
   const kb = await deps.openKb();
@@ -496,7 +513,7 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
     },
     agent,
     pack,
-    constraintsFor(tools, agent, node, deps.autonomy, readOnly),
+    constraintsFor(tools, agent, node, deps.autonomy, readOnly || tainted),
     definitionOfDone(node, ctx),
     {
       styleProfile: deps.styleProfile,

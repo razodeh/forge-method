@@ -8,7 +8,7 @@
 import type { SessionResult } from '@forge/adapter-kit';
 import type { Clock } from '@forge/core';
 
-import type { ShellCommandResult } from '../dispatch/index.ts';
+import type { CommandRefusal, ConfinedCommandResult } from '../dispatch/confined-command.ts';
 
 /** `13` §13.2 step 1's own worked field list — the parts of a real `Defect` artifact (`@forge/schemas`)
  * `runRcaLoop` actually needs. Not the full `Defect` type itself: the loop only ever *reads* these
@@ -63,10 +63,42 @@ export interface RcaUntrustedInput {
  * every `request.untrusted` input to the model as fenced data, since the instruction text points at them. */
 export type RunRcaSession = (request: RcaSessionRequest) => Promise<SessionResult>;
 
-/** `RcaLoopDeps.runShell`'s own real type — one real shell command, run against `cwd`, returning the
- * tool's own real exit code/stdout/stderr (`ShellCommandResult`, `@forge/engine/dispatch`'s own
- * `runShellCommand`). REPRODUCE/FIX/PROVE are this loop's only real callers. */
-export type RunRcaShell = (command: string, cwd: string) => Promise<ShellCommandResult>;
+/** Where a command's text came from. `proposed`: a model wrote it (a reproduction command); it must pass the agent's
+ * tool grant before it runs (`PLAN-M13.md` P28, `20` §20.1). `engine`: FORGE wrote it (`forge test run`, the revert
+ * check that wraps an already-vetted proposed command); it is not vetted, but it still runs in the scrubbed
+ * environment. */
+export type RcaCommandOrigin = 'proposed' | 'engine';
+
+/** A proposed command that was not run, typed: `RUN-095` and the reason category (`CommandRefusal`). */
+export interface RcaCommandRefusal extends CommandRefusal {
+  readonly code: 'RUN-095';
+  /** `ForgeError`'s rendered message for the code, the text a human reads. */
+  readonly message: string;
+}
+
+/** What `RunRcaShell` returns: the exit code and output of a command that ran, or, when `refusal` is set, the
+ * record that it did not (exit code `126`, empty output, nothing executed). A caller must check `refusal` before it
+ * reads `exitCode`: a refused command's non-zero exit is not a failing reproduction. `timedOut` and
+ * `outputLimitExceeded` mean the command was killed by a limit: its exit code says nothing about the defect either. */
+export type RcaShellResult = ConfinedCommandResult & { readonly refusal?: RcaCommandRefusal };
+
+/** `RcaLoopDeps.runShell`'s own real type: one shell command, run against `cwd`. `origin` says who wrote it, and a
+ * real implementation must refuse a `proposed` command that does not pass the agent's grant (`RcaShellResult`).
+ * REPRODUCE/FIX/PROVE are this loop's only real callers. */
+export type RunRcaShell = (
+  command: string,
+  cwd: string,
+  origin: RcaCommandOrigin,
+) => Promise<RcaShellResult>;
+
+/** One proposed command that was refused, kept in the evidence so a human sees what the model tried. */
+export interface RcaRefusedCommand {
+  readonly phase: 'reproduce' | 'prove';
+  readonly command: string;
+  readonly code: 'RUN-095';
+  readonly reason: CommandRefusal['reason'];
+  readonly detail: string;
+}
 
 /** `runRcaLoop`'s own real dependencies — every one injected so the loop stays unit-testable against
  * a fake, per `PLAN-M8.md` P8's own Surface text. `cwd` is the real project root every `runShell`
@@ -127,6 +159,8 @@ export interface RcaEvidenceBundle {
   readonly hypotheses: readonly RcaHypothesis[];
   readonly causalChain: readonly string[];
   readonly fixAttempts: readonly string[];
+  /** Present only when a proposed command was refused (`PLAN-M13.md` P28). */
+  readonly refusedCommands?: readonly RcaRefusedCommand[];
 }
 
 /** `runRcaLoop`'s own real return value — a discriminated union, per `PLAN-M8.md` P8's own Surface
@@ -135,10 +169,17 @@ export interface RcaEvidenceBundle {
  * outcome (write an `RCA-###` artifact, surface an instrumentation plan, page a human); this function
  * only ever reports what happened. */
 export type RcaLoopResult =
-  | { readonly outcome: 'recorded'; readonly record: RcaRecordDraft }
+  | {
+      readonly outcome: 'recorded';
+      readonly record: RcaRecordDraft;
+      /** Present only when a proposed command was refused on the way (`PLAN-M13.md` P28); not part of the RCA document. */
+      readonly refusedCommands?: readonly RcaRefusedCommand[];
+    }
   | {
       readonly outcome: 'needs-more-evidence';
       readonly instrumentationPlan: readonly string[];
+      /** Present only when a proposed command was refused (`PLAN-M13.md` P28). */
+      readonly refusedCommands?: readonly RcaRefusedCommand[];
     }
   | {
       readonly outcome: 'escalated';

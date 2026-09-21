@@ -71,7 +71,7 @@ openQuestionsPolicy: warn
 export function agentYaml(
   id: string,
   name: string,
-  options: { readonly write?: boolean } = {},
+  options: { readonly write?: boolean; readonly exec?: readonly string[] } = {},
 ): string {
   return `id: ${id}
 name: ${name}
@@ -95,7 +95,7 @@ kb_propose: []
 tools:
   read: true
   write: ${options.write === true ? 'true' : 'false'}
-  exec: []
+  exec: ${JSON.stringify(options.exec ?? [])}
   network: false
   git_commit: none
   deploy: false
@@ -124,7 +124,7 @@ export async function writeFixtureAgent(
   dir: string,
   id: string,
   name: string,
-  options: { readonly write?: boolean } = {},
+  options: { readonly write?: boolean; readonly exec?: readonly string[] } = {},
 ): Promise<void> {
   await mkdir(path.join(dir, AGENTS_ROOT), { recursive: true });
   await writeFile(path.join(dir, AGENTS_ROOT, `${id}.yaml`), agentYaml(id, name, options));

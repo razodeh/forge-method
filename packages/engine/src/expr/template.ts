@@ -46,10 +46,84 @@ function isSubstitutable(value: unknown): value is string | number | boolean {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
+/** Which quotes the literal text of a template has open at some point: where a substituted value lands decides how it
+ * must be escaped. */
+export type ShellQuoteContext = 'none' | 'single' | 'double';
+
+/** Optional second argument of `resolveTemplate`. `escapeValue` is applied to every substituted value, with the
+ * quote context the placeholder sits in; absent, values are substituted as they are (a branch name, a path, a brief).
+ * `compile.ts` passes `shellQuoteValue` for a `command` step's `run`, the only place a substituted value becomes
+ * shell text (`PLAN-M13.md` P28). */
+export interface ResolveTemplateOptions {
+  readonly escapeValue?: (value: string, quoteContext: ShellQuoteContext) => string;
+}
+
+/** `value` as one shell word for the quote context it is substituted into, so it can only ever be data: a run input
+ * or a story field holding `$(...)`, backticks, `;`, `&&`, a newline, quotes or spaces stays text. Unquoted, a plain
+ * token (letters, digits and `_@%+=:,./-`) is left as it is, so every shipped command keeps its exact text; anything
+ * else is wrapped in single quotes. Inside single quotes only `'` can end the quote, inside double quotes only
+ * `\`, `"`, `$` and a backtick mean anything, so a value substituted into a template that already quotes its
+ * placeholder (`'{{x}}'`, `"{{x}}"`) is escaped for that quote rather than wrapped in a second one. Pure. */
+export function shellQuoteValue(value: string, quoteContext: ShellQuoteContext): string {
+  if (quoteContext === 'single') return value.replaceAll("'", "'\\''");
+  if (quoteContext === 'double') return value.replace(/[\\"$`]/g, '\\$&');
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** Where the literal text of a template has got to, as a POSIX shell reads it. `unsafe` is set (and stays set) by a
+ * construct whose contents this scanner does not model: command substitution (`$(`, a backtick), a here-document
+ * (`<<`), ANSI-C quoting (`$'`), `${`, or a comment (`#` starting a word). A value substituted after one cannot be
+ * shown to be data, so it is refused instead of guessed at (`CFG-015`). */
+interface QuoteState {
+  quote: ShellQuoteContext;
+  escaped: boolean;
+  unsafe: boolean;
+  /** Inside a `#` comment: nothing in it is shell text, and it ends at the newline (a value substituted here would
+   * be swallowed, which is a wrong command, not an injection, so it is refused too). */
+  comment: boolean;
+  prev: string;
+}
+
+/** The state after one more literal character of the template: a backslash escapes the next character outside single
+ * quotes, `'` and `"` open and close their quotes. */
+function advanceQuoteState(state: QuoteState, char: string): void {
+  const previous = state.prev;
+  state.prev = char;
+  if (state.comment) {
+    if (char === '\n') state.comment = false;
+    return;
+  }
+  if (state.escaped) {
+    state.escaped = false;
+    return;
+  }
+  if (state.quote === 'single') {
+    if (char === "'") state.quote = 'none';
+    return;
+  }
+  if (char === '`' || (previous === '$' && (char === '(' || char === '{'))) state.unsafe = true;
+  if (char === '\\') {
+    state.escaped = true;
+    return;
+  }
+  if (state.quote === 'double') {
+    if (char === '"') state.quote = 'none';
+    return;
+  }
+  if (char === '<' && previous === '<') state.unsafe = true;
+  if (char === '#' && (previous === '' || /[\s;&|(]/.test(previous))) state.comment = true;
+  if (char === "'") {
+    if (previous === '$') state.unsafe = true;
+    state.quote = 'single';
+  } else if (char === '"') state.quote = 'double';
+}
+
 function resolvePlaceholder(
   template: string,
   placeholder: string,
   context: ExpressionContext,
+  escape: ((value: string) => string) | undefined,
 ): string {
   const parsed = parseExpression(placeholder);
   if (!parsed.success) {
@@ -59,12 +133,28 @@ function resolvePlaceholder(
   if (!isSubstitutable(value)) {
     throw new ForgeError('CFG-015', { template, placeholder });
   }
-  return String(value);
+  const text = String(value);
+  // A NUL cannot be part of a shell word: the word would silently end there.
+  if (escape !== undefined && text.includes('\0')) {
+    throw new ForgeError('CFG-015', { template, placeholder });
+  }
+  return escape === undefined ? text : escape(text);
 }
 
-export function resolveTemplate(template: string, context: ExpressionContext): string {
+export function resolveTemplate(
+  template: string,
+  context: ExpressionContext,
+  options: ResolveTemplateOptions = {},
+): string {
   let result = '';
   let i = 0;
+  const quoteState: QuoteState = {
+    quote: 'none',
+    escaped: false,
+    unsafe: false,
+    comment: false,
+    prev: '',
+  };
 
   while (i < template.length) {
     const char = template[i];
@@ -110,10 +200,26 @@ export function resolveTemplate(template: string, context: ExpressionContext): s
           parseError: 'Missing closing "}}".',
         });
       }
-      result += resolvePlaceholder(template, placeholder, context);
+      const escapeValue = options.escapeValue;
+      // After `$(`, a backtick, `<<`, `$'`, `${`, inside a comment, right after a literal backslash (it would consume
+      // the first character the quoting adds) or a literal `$`, a value cannot be shown to be data (`QuoteState`).
+      if (
+        escapeValue !== undefined &&
+        (quoteState.unsafe || quoteState.comment || quoteState.escaped || quoteState.prev === '$')
+      ) {
+        throw new ForgeError('CFG-015', { template, placeholder });
+      }
+      result += resolvePlaceholder(
+        template,
+        placeholder,
+        context,
+        escapeValue === undefined ? undefined : (text) => escapeValue(text, quoteState.quote),
+      );
+      quoteState.prev = 'x'; // a substituted value is data, whatever it ends with
       continue;
     }
     result += char;
+    if (options.escapeValue !== undefined) advanceQuoteState(quoteState, char);
     i += 1;
   }
 

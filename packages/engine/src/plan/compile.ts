@@ -28,7 +28,13 @@
  */
 import { ForgeError } from '@forge/core/errors';
 
-import { evaluate, parseExpression, resolveTemplate } from '../expr/index.ts';
+import {
+  evaluate,
+  parseExpression,
+  resolveTemplate,
+  shellQuoteValue,
+  type ResolveTemplateOptions,
+} from '../expr/index.ts';
 import type { ExpressionContext } from '../expr/index.ts';
 import type { AgentStep, FanoutStep, Workflow, WorkflowStep } from '../workflow/index.ts';
 import {
@@ -104,9 +110,10 @@ function safeResolveTemplate(
   context: ExpressionContext,
   issues: CompileIssue[],
   stepId: string,
+  options?: ResolveTemplateOptions,
 ): string {
   try {
-    return resolveTemplate(template, context);
+    return resolveTemplate(template, context, options);
   } catch (cause) {
     if (cause instanceof ForgeError) {
       issues.push(issue('template-resolution-failed', cause.message, stepId));
@@ -539,7 +546,11 @@ function buildLeafNode(
       : { perspectives: agentStep.perspectives }),
     run:
       step.kind === 'command'
-        ? safeResolveTemplate(step.run, context, issues, compiledId)
+        ? // A `command` step's `run` is shell text: every substituted value (a run input, a story or epic field, a
+          // fanout item) is quoted so it can only be data, never code (`PLAN-M13.md` P28, `20` §20.5).
+          safeResolveTemplate(step.run, context, issues, compiledId, {
+            escapeValue: shellQuoteValue,
+          })
         : undefined,
     gate: step.kind === 'gate' ? step.gate : undefined,
     workflow: step.kind === 'subworkflow' ? step.workflow : undefined,

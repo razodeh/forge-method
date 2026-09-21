@@ -30,6 +30,8 @@ import type {
   RcaLoopDeps,
   RcaLoopResult,
   RcaRecordDraft,
+  RcaRefusedCommand,
+  RcaShellResult,
   RunRcaSession,
 } from './types.ts';
 
@@ -128,6 +130,9 @@ function booleanField(value: unknown, key: string): boolean {
 interface LoopState {
   readonly timeline: Record<string, string>[];
   readonly reproductionAttempts: string[];
+  readonly refusedCommands: RcaRefusedCommand[];
+  /** Indexes into `reproductionAttempts` of the attempts that never reached a verdict (refused, or killed by a limit). */
+  readonly unusableAttempts: Map<number, string>;
   readonly fixAttempts: string[];
   readonly fixHashes: Set<string>;
   reproductionCommand: string | undefined;
@@ -146,7 +151,18 @@ function evidenceBundle(defect: DefectContext, state: LoopState): RcaEvidenceBun
     hypotheses: state.hypotheses,
     causalChain: state.causalChain,
     fixAttempts: state.fixAttempts,
+    ...(state.refusedCommands.length > 0 ? { refusedCommands: state.refusedCommands } : {}),
   };
+}
+
+/** A proposed command that did not run to a verdict on the defect: refused by the tool grant (`RUN-095`), or killed by
+ * a limit (`timedOut`, `outputLimitExceeded`). Its exit code (`126`, or the kill's) is not a failing reproduction and
+ * must not be read as one. */
+function inconclusive(result: RcaShellResult): string | undefined {
+  if (result.refusal !== undefined) return `refused (${result.refusal.reason})`;
+  if (result.timedOut === true) return 'killed: it outlived its time limit';
+  if (result.outputLimitExceeded === true) return 'killed: it wrote more than its output limit';
+  return undefined;
 }
 
 const RACE_KEYWORDS = /\brace\b|\brace condition\b|\bracy\b|\bTOCTOU\b/i;
@@ -249,6 +265,8 @@ export async function runRcaLoop(
   const state: LoopState = {
     timeline: [{ intake: deps.clock.now() }],
     reproductionAttempts: [],
+    refusedCommands: [],
+    unusableAttempts: new Map(),
     fixAttempts: [],
     fixHashes: new Set(),
     reproductionCommand: undefined,
@@ -307,8 +325,25 @@ export async function runRcaLoop(
       state.reproductionAttempts.push('(no command proposed)');
       continue;
     }
-    state.reproductionAttempts.push(command);
-    const result = await deps.runShell(command, deps.cwd);
+    const result = await deps.runShell(command, deps.cwd, 'proposed');
+    const unusable = inconclusive(result);
+    if (unusable !== undefined) {
+      state.unusableAttempts.set(
+        state.reproductionAttempts.length,
+        result.refusal?.reason ?? 'limit',
+      );
+    }
+    state.reproductionAttempts.push(unusable === undefined ? command : `${command} [${unusable}]`);
+    if (result.refusal !== undefined) {
+      state.refusedCommands.push({
+        phase: 'reproduce',
+        command,
+        code: result.refusal.code,
+        reason: result.refusal.reason,
+        detail: result.refusal.detail,
+      });
+    }
+    if (unusable !== undefined) continue;
     if (result.exitCode !== 0) {
       reproduced = true;
       state.reproductionCommand = command;
@@ -324,9 +359,16 @@ export async function runRcaLoop(
       instrumentationPlan:
         state.reproductionAttempts.length > 0
           ? [
-              ...state.reproductionAttempts.map(
-                (attempt) =>
-                  `"${attempt}" did not reproduce the defect — add instrumentation around it.`,
+              ...state.reproductionAttempts.map((attempt, index) =>
+                state.unusableAttempts.has(index)
+                  ? `"${attempt}" was not run to a verdict — ${
+                      state.unusableAttempts.get(index) === 'not-in-grant'
+                        ? "propose a command the agent's tool grant allows, or widen `tools.exec` deliberately"
+                        : state.unusableAttempts.get(index) === 'limit'
+                          ? 'propose a command that finishes within its time and output limits'
+                          : 'propose a command without the refused construct (no chaining, expansion, network, path outside the project, secret file or non-read-only git)'
+                    }.`
+                  : `"${attempt}" did not reproduce the defect — add instrumentation around it.`,
               ),
               ...knownEvidencePlan,
             ]
@@ -334,6 +376,7 @@ export async function runRcaLoop(
               'no candidate reproduction command was ever proposed — add logging near the reported symptom.',
               ...knownEvidencePlan,
             ],
+      ...(state.refusedCommands.length > 0 ? { refusedCommands: state.refusedCommands } : {}),
     };
   }
   state.timeline.push({ reproduced: deps.clock.now() });
@@ -471,6 +514,13 @@ export async function runRcaLoop(
       const structured = structuredOrUndefined(fixSession);
       const diff = stringField(structured, 'diff');
       const description = stringField(structured, 'description') ?? rootCause;
+      // The caller's own scan refused the attempt's diff (a protected path, a symlink, a secret: `RUN-096`). It never
+      // reaches PROVE, so nothing in it is executed, and the refusal stays in the evidence.
+      const refusedDiff = stringField(structured, 'refusedDiff');
+      if (refusedDiff !== undefined) {
+        state.fixAttempts.push(`refused (${refusedDiff}): ${description}`);
+        continue;
+      }
       if (diff === undefined) {
         state.fixAttempts.push('(no diff proposed)');
         continue;
@@ -503,9 +553,24 @@ export async function runRcaLoop(
       const reproveResult =
         state.reproductionCommand === undefined
           ? undefined
-          : await deps.runShell(state.reproductionCommand, deps.cwd);
-      const layerResult = await deps.runShell('forge test run', deps.cwd);
-      const proved = (reproveResult?.exitCode ?? 1) === 0 && layerResult.exitCode === 0;
+          : await deps.runShell(state.reproductionCommand, deps.cwd, 'proposed');
+      if (reproveResult?.refusal !== undefined && state.reproductionCommand !== undefined) {
+        state.refusedCommands.push({
+          phase: 'prove',
+          command: state.reproductionCommand,
+          code: reproveResult.refusal.code,
+          reason: reproveResult.refusal.reason,
+          detail: reproveResult.refusal.detail,
+        });
+      }
+      const layerResult = await deps.runShell('forge test run', deps.cwd, 'engine');
+      const proved =
+        reproveResult !== undefined &&
+        inconclusive(reproveResult) === undefined &&
+        reproveResult.exitCode === 0 &&
+        layerResult.exitCode === 0 &&
+        layerResult.timedOut !== true &&
+        layerResult.outputLimitExceeded !== true;
       if (!proved) continue;
 
       if (
@@ -515,7 +580,7 @@ export async function runRcaLoop(
         const revertCheck =
           state.reproductionCommand === undefined
             ? undefined
-            : await deps.runShell(revertCheckScript(state.reproductionCommand), deps.cwd);
+            : await deps.runShell(revertCheckScript(state.reproductionCommand), deps.cwd, 'engine');
         // `2` = the check itself could not run (no git repo, no parent commit) — inconclusive, trust
         // the reproduction/layer proof already gathered rather than treat an environment limitation
         // as a pass or a fail (`revertCheckScript`'s own doc comment has the fuller reasoning). `0` =
@@ -575,7 +640,11 @@ export async function runRcaLoop(
       kb_writes: stringArrayField(preventStructured, 'kbWrites'),
       time_to_diagnose_min: Math.max(0, (state.diagnosedAtMs - startMs) / 60_000),
     };
-    return { outcome: 'recorded', record };
+    return {
+      outcome: 'recorded',
+      record,
+      ...(state.refusedCommands.length > 0 ? { refusedCommands: state.refusedCommands } : {}),
+    };
   }
 
   return {

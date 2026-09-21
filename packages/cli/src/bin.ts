@@ -517,6 +517,7 @@ async function buildLoopDepsForProject(
     adapter: await buildAdapterForConfig(config, env),
     checksRoot: CHECKS_ROOT,
     agentsRoot: AGENTS_ROOT,
+    env,
   };
 }
 

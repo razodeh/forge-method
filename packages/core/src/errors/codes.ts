@@ -1199,6 +1199,28 @@ export const ERROR_CODES = {
     remedy:
       'Resolve what blocks the story (its `blocked_by` entries), or choose a story that is not delivered, then run the workflow again.',
   },
+  'RUN-095': {
+    // `PLAN-M13.md` P28, `20` §20.1 (exec allowlist, hard denylist, `network: none`), `20` §20.10 S2/S4: a shell command a
+    // model proposed (`forge debug`'s REPRODUCE/PROVE reproduction) did not pass the diagnostician's resolved tool
+    // grant, so it was not run. Never thrown out of the loop: it is recorded in the RCA evidence as a refused command.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { phase: string; reason: string; detail: string }) =>
+      `A command proposed during ${show(d.phase)} was refused and not run (${show(d.reason)}): ${show(d.detail)}`,
+    remedy:
+      'Edit the proposed command to one the agent’s `tools.exec` patterns allow, without chaining (`;`, `&&`, `|`, redirection), expansion (`$VAR`, `$(...)`, backticks, `~`, globs that reach secrets), a path outside the project, a network call, a secret file or a git subcommand that is not read-only. Only a refusal for `not-in-grant` (or `network`, when the grant’s `network` is `full`) can be lifted by editing the diagnostician’s `tools.exec` in `.forge/agents/diagnostician.yaml`; FORGE never widens it for you.',
+  },
+  'RUN-096': {
+    // `PLAN-M13.md` P28, `20` §20.2 (deny list, claim enforcement), `20` §20.4 (pre-commit secret scan), `20` §20.5 point 5
+    // (output scanning): the diff a `forge debug` FIX attempt produced touched a protected path, added a symlink or
+    // contained a secret-shaped value, so the attempt was refused before PROVE ran or anything was committed.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { phase: string; reason: string; detail: string }) =>
+      `The ${show(d.phase)} diff was refused and not committed (${show(d.reason)}): ${show(d.detail)}`,
+    remedy:
+      'Fix the change so it touches ordinary source and test files only: not `.git/`, `.forge/`, `.env*`, secret files, CI or hook configuration, the project’s document roots, or a symlink, and it must not add a secret. Then run `forge debug` again, or make the change by hand.',
+  },
   'CFG-005': {
     // `PLAN-M1.md` P12: `ArtifactDocument.parse` refuses a file with no front matter at all, rather
     // than treating it as a document with empty front matter — every registered artifact type

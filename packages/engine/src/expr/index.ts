@@ -7,7 +7,12 @@
  */
 export { evaluate } from './evaluate.ts';
 export { parseExpression } from './parse.ts';
-export { resolveTemplate } from './template.ts';
+export {
+  resolveTemplate,
+  shellQuoteValue,
+  type ResolveTemplateOptions,
+  type ShellQuoteContext,
+} from './template.ts';
 export {
   type ComparisonExpr,
   type ComparisonOperator,

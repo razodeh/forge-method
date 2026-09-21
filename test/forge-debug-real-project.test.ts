@@ -92,8 +92,11 @@ describe('forge debug against a real `forge init` project', () => {
   it('assembles every RCA and FIX session from the shipped diagnostician, and the strict adapter refuses none', async () => {
     // REPRODUCE proposes a failing command; three hypotheses; one survives; five whys satisfied; then FIX
     // writes nothing on every attempt, so the run escalates having exercised every phase up to FIX.
+    // A command the shipped diagnostician's own exec patterns allow (`cat*`) and that fails: a proposed command runs
+    // only if the agent's grant lists it (`PLAN-M13.md` P28), so the bare `false` this scenario used to propose is
+    // now refused.
     adapter.script((r) => text(r).includes('REPRODUCE attempt'), {
-      structured: { command: 'false' },
+      structured: { command: 'cat does-not-exist.txt' },
     });
     adapter.script((r) => text(r).includes('ISOLATE for'), { structured: { scope: 'src/' } });
     adapter.script((r) => text(r).includes('HYPOTHESISE for'), {
@@ -121,6 +124,7 @@ describe('forge debug against a real `forge init` project', () => {
         adapter,
         checksRoot: '.forge/checks',
         agentsRoot: '.forge/agents',
+        env: process.env,
       },
       'the invoice total is wrong',
     );
@@ -154,10 +158,16 @@ describe('forge debug against a real `forge init` project', () => {
     for (const request of readOnly) {
       expect(request.tools).toMatchObject({ write: false, exec: false, network: 'none' });
     }
-    // FIX gets the shipped diagnostician's own resolved grant: exactly its declared write and exec patterns.
+    // FIX gets the shipped diagnostician's own resolved write grant, clamped for taint: its context carries the root
+    // cause (model output, `taint: external`), so it keeps write (its diff is scanned) and loses exec and network
+    // (`PLAN-M13.md` P28, `20` §20.5 point 3). The declared exec patterns still bound the commands FORGE runs for it.
+    expect(agentYaml.tools.exec.length).toBeGreaterThan(0);
     for (const request of fixes) {
-      expect(request.tools.write).toBe(agentYaml.tools.write);
-      expect(request.tools.exec).toEqual(agentYaml.tools.exec);
+      expect(request.tools).toMatchObject({
+        write: agentYaml.tools.write,
+        exec: false,
+        network: 'none',
+      });
     }
   }, 120_000);
 });

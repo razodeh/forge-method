@@ -14,14 +14,27 @@ export {
   MIN_HYPOTHESES,
   WALL_CLOCK_MS,
 } from './bounds.ts';
+export {
+  protectedFixGlobs,
+  scanFixDiff,
+  type FixChange,
+  type FixScanRule,
+  type FixScanViolation,
+} from './fix-scan.ts';
+export { scrubbedEnvironment } from '../dispatch/confined-command.ts';
 export { runRcaLoop } from './loop.ts';
+export { createRcaShell, type RcaShellOptions } from './shell.ts';
 export type {
   DefectContext,
+  RcaCommandOrigin,
+  RcaCommandRefusal,
   RcaEvidenceBundle,
   RcaHypothesis,
   RcaLoopDeps,
   RcaLoopResult,
   RcaRecordDraft,
+  RcaRefusedCommand,
+  RcaShellResult,
   RcaSessionRequest,
   RcaUntrustedInput,
   RunRcaSession,

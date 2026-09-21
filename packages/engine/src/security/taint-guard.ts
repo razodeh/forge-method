@@ -68,6 +68,7 @@
  * @see PLAN-M11.md P9
  * @see PLAN-M11.md P10
  */
+import type { ToolGrant } from '@forge/adapter-kit';
 
 /** The one taint value `20` §20.5 point 3 / `15` §15.5.4 ever name — a plain optional literal on
  * `StepNode`/callers here, not a wider enum a future taint kind would need to be added to in lockstep
@@ -135,4 +136,32 @@ export function assertProductionTargetAllowed(
     };
   }
   return ALLOWED;
+}
+
+/** What a tainted step's session is allowed to do (`PLAN-M13.md` P28, `SPEC-QUESTIONS.md` Q222). */
+export interface TaintedGrantOptions {
+  /** Whether the step has somewhere it may write: a claim (`produces`, a declared output) or a caller that confines
+   * writes itself (`forge debug`'s FIX scan). A tainted step with none keeps no write access at all. */
+  readonly mayWrite: boolean;
+}
+
+/**
+ * `20` §20.5 points 3 and 4 ("capability restriction is the control", "a tainted step has no dangerous
+ * capabilities to abuse"): the grant a tainted step's session actually gets. `read` stays (a step must read its
+ * inputs). `exec` is removed entirely (a permitted `git` or `rg` still has flags that write or execute, so a
+ * narrower list is not enough), `network` is `none` with its host list dropped, and the adapter-specific `extra`
+ * tools (an MCP server's, the escape hatch `07` §7.2 names) are dropped. `write` survives only when the step has a
+ * claim to write inside (`mayWrite`): the claim itself is enforced after the session (`06` §6.7), so a tainted
+ * step that needs to write a document can, and one that only reports keeps no write access it did not need.
+ * Untainted steps get their grant back unchanged.
+ *
+ * Pure and idempotent; it never widens a grant.
+ */
+export function restrictGrantForTaint(
+  grant: ToolGrant,
+  taint: StepTaint,
+  options: TaintedGrantOptions,
+): ToolGrant {
+  if (taint !== 'external') return grant;
+  return { read: grant.read, write: grant.write && options.mayWrite, exec: false, network: 'none' };
 }

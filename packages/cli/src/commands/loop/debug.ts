@@ -30,7 +30,6 @@
  */
 import path from 'node:path';
 
-import { execa } from 'execa';
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
 import { ForgeError, SYSTEM_CLOCK, writeFileAtomic, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
@@ -40,6 +39,7 @@ import type {
   SessionLimits,
   SessionRequest,
   SessionResult,
+  ToolGrant,
 } from '@forge/adapter-kit/types';
 import type { AgentDefinition } from '@forge/agents/schema';
 import {
@@ -47,17 +47,21 @@ import {
   markRefusal,
   promptRecordDirName,
   readProjectAgent,
-  runShellCommand,
   type AssembledSession,
+  type DocRoots,
 } from '@forge/engine/dispatch';
 import { toAgentId, type StepNode } from '@forge/engine/plan';
 import type { RunEngineContext } from '@forge/engine/run';
 import {
+  createRcaShell,
   runRcaLoop,
+  scanFixDiff,
   type DefectContext,
+  type FixScanViolation,
   type RcaEvidenceBundle,
   type RcaLoopDeps,
   type RcaRecordDraft,
+  type RcaRefusedCommand,
   type RcaSessionRequest,
   type RcaUntrustedInput,
 } from '@forge/engine/rca';
@@ -65,16 +69,14 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import { renderArtifactPath } from '@forge/schemas/registry';
 import { readEvents } from '@forge/telemetry/events';
 import {
-  commitInLane,
   createLaneWorktree,
   formatCommitMessage,
   removeLaneWorktree,
-  resetLaneWorktree,
   resolveRevision,
-  type LaneHandle,
 } from '@forge/vcs';
 
 import { AD_HOC_LIMITS, buildAdHocStepNode } from './ad-hoc-step.ts';
+import { collectLaneChanges, createLaneGuard, type LaneGuard } from './lane-guard.ts';
 import { buildRunEngineContext } from '../run/context.ts';
 import { getSharedIdAllocator, readArtifactTemplate } from '../shared.ts';
 
@@ -155,6 +157,9 @@ export interface DebugDeps {
   readonly adapter: PlatformAdapter;
   readonly checksRoot: string;
   readonly agentsRoot: string;
+  /** The process environment, read once by the composition root (`bin.ts`, R10). Everything `forge debug` runs for a
+   * model is started with a scrubbed copy of it (`createRcaShell`); nothing else reads it. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 export interface DebugOptions {
@@ -169,11 +174,19 @@ export interface DebugOptions {
  * ("the CLI layer decides what to *do* with each outcome... this function only ever reports what
  * happened"). */
 export type DebugResult =
-  | { readonly outcome: 'recorded'; readonly defectId: string; readonly rcaId: string }
+  | {
+      readonly outcome: 'recorded';
+      readonly defectId: string;
+      readonly rcaId: string;
+      /** Present only when a command the model proposed was refused (`RUN-095`, `PLAN-M13.md` P28). */
+      readonly refusedCommands?: readonly RcaRefusedCommand[];
+    }
   | {
       readonly outcome: 'needs-more-evidence';
       readonly defectId: string;
       readonly instrumentationPlan: readonly string[];
+      /** Present only when a command the model proposed was refused (`RUN-095`, `PLAN-M13.md` P28). */
+      readonly refusedCommands?: readonly RcaRefusedCommand[];
     }
   | {
       readonly outcome: 'escalated';
@@ -268,12 +281,14 @@ async function assembleDebugSession(
   request: RcaSessionRequest,
   sessionCounter: SessionCounter,
   readOnly: boolean,
+  preflight = false,
 ): Promise<AssembledSession> {
   const base = buildAdHocStepNode(`debug:${request.phase}`, agent.id, request.prompt);
-  const node: StepNode =
-    request.untrusted === undefined || request.untrusted.length === 0
-      ? base
-      : { ...base, taint: 'external' };
+  // Tainted when the phase carries untrusted data (`20` §20.5 point 3), and the FIX phase ALWAYS is: it acts on a root
+  // cause a model wrote, and its grant must not depend on whether the loop happened to attach data to the request. The
+  // preflight is the one exception: it exists to read the diagnostician's own resolved grant (`preflightDebug`).
+  const tainted = !preflight && ((request.untrusted?.length ?? 0) > 0 || !readOnly);
+  const node: StepNode = tainted ? { ...base, taint: 'external' } : base;
   const sequence = sessionCounter.next;
   sessionCounter.next += 1;
   return assembleAgentSession({
@@ -285,6 +300,10 @@ async function assembleDebugSession(
     // `15` §15.3's `prompt.briefs.<key>`: an agent may attach its own guidance to one phase.
     briefKey: `debug-${request.phase}`,
     readOnly,
+    // The FIX phase carries the root cause (untrusted), so it is `taint: 'external'` and would lose write access
+    // for want of a claim. `runFixSession` confines what it writes itself: the diff is scanned before PROVE and again
+    // before the commit (`scanLaneDiff`), which is the claim (`PLAN-M13.md` P28).
+    callerConfinesWrites: !readOnly,
   });
 }
 
@@ -390,9 +409,11 @@ async function prepareDebugSession(
 /** `resetLaneWorktree` before a session: a lane that cannot be reset (corrupt, deleted, disk full) is an
  * environment fault found before anything is dispatched, so it is a marked refusal that ends the loop with
  * its own typed error instead of five failed REPRODUCE attempts and a `needs-more-evidence` plan. */
-async function resetLaneBeforeSession(lane: LaneHandle, baseSha: string): Promise<void> {
+async function resetLaneBeforeSession(guard: LaneGuard, baseSha: string): Promise<void> {
   try {
-    await resetLaneWorktree(lane, baseSha);
+    // The lane's `.git` pointer first (a session may have replaced it, `lane-guard.ts`), then the reset, then ignored
+    // files too: `resetLaneWorktree`'s `git clean -fd` leaves them, and they would carry into the next attempt.
+    await guard.reset(baseSha);
   } catch (cause) {
     throw markRefusal(cause);
   }
@@ -416,7 +437,11 @@ function isReadOnlyPhase(phase: RcaSessionRequest['phase']): boolean {
   return phase !== 'fix';
 }
 
-async function preflightDebug(ctx: RunEngineContext, agent: AgentDefinition): Promise<void> {
+/** Assembles every phase once, and returns the FIX phase's grant: the diagnostician's own resolved grant, unclamped
+ * because the preflight request carries no untrusted data (so it is not tainted). It is the authority a command the
+ * model proposes is held to (`createRcaShell`): what the agent could run itself, not what a tainted session may. */
+async function preflightDebug(ctx: RunEngineContext, agent: AgentDefinition): Promise<ToolGrant> {
+  let fixGrant: ToolGrant | undefined;
   for (const phase of DEBUG_PHASES) {
     const readOnly = isReadOnlyPhase(phase);
     const assembled = await assembleDebugSession(
@@ -425,16 +450,22 @@ async function preflightDebug(ctx: RunEngineContext, agent: AgentDefinition): Pr
       { phase, prompt: 'Preflight: check that this phase can be assembled.' },
       { next: 0 },
       readOnly,
+      true,
     );
-    if (!readOnly) requireFixGrant(assembled);
+    if (!readOnly) {
+      requireFixGrant(assembled);
+      fixGrant = assembled.tools;
+    }
   }
+  if (fixGrant === undefined) throw new Error('forge debug: no FIX phase was assembled.');
+  return fixGrant;
 }
 
 // --- real session wiring: read-only for every phase but FIX -----------------------------------------
 
 async function runReadOnlySession(
   ctx: RunEngineContext,
-  lane: LaneHandle,
+  guard: LaneGuard,
   baseSha: string,
   agent: AgentDefinition,
   request: RcaSessionRequest,
@@ -450,7 +481,7 @@ async function runReadOnlySession(
   // unconditionally here too — the identical harmless-no-op-when-already-clean call `runFixSession`
   // already makes — is what actually guarantees every phase but an in-progress FIX attempt's own
   // PROVE check always sees a real, pristine lane.
-  await resetLaneBeforeSession(lane, baseSha);
+  await resetLaneBeforeSession(guard, baseSha);
   const { assembled, prompt } = await prepareDebugSession(
     ctx,
     agent,
@@ -463,7 +494,7 @@ async function runReadOnlySession(
   const sessionRequest: SessionRequest = {
     runId: ctx.runId,
     stepId,
-    cwd: lane.path,
+    cwd: guard.lane.path,
     systemPrompt: assembled.systemPrompt,
     prompt,
     model: assembled.model,
@@ -510,10 +541,51 @@ async function runReadOnlySession(
  * text outright as "corrupt patch," confirmed directly against the real fix-tracking round-trip this
  * function's own result now has to survive that `realDiff`'s original, `commitInLane`-only caller never
  * needed to. A no-op when the diff is empty (nothing to terminate). */
-async function realDiff(cwd: string, baseSha: string): Promise<string> {
-  await runShellCommand('git add -A', cwd);
-  const result = await runShellCommand(`git diff --no-color ${baseSha}`, cwd);
-  return result.stdout === '' ? '' : `${result.stdout}\n`;
+async function realDiff(guard: LaneGuard, baseSha: string): Promise<string> {
+  // Guarded argv git (`lane-guard.ts`), `--no-ext-diff --no-textconv`, and `--binary` so a binary change survives the
+  // `git apply` before the commit instead of failing after PROVE.
+  await guard.restore();
+  await guard.git(['add', '-A']);
+  const stdout = await guard.git([
+    'diff',
+    '--no-color',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--binary',
+    baseSha,
+  ]);
+  return stdout === '' ? '' : `${stdout}\n`;
+}
+
+/** The FIX claim's scan (`scanFixDiff`, `PLAN-M13.md` P28) over what the lane holds against `baseSha`: ordinary source
+ * and test files, not the protected set, no symlink or submodule, no secret-shaped value, no ignored file. Empty when
+ * it is inside the claim. `pointerIntact` is false when the session had replaced the lane's `.git` pointer. */
+async function scanLaneDiff(
+  guard: LaneGuard,
+  baseSha: string,
+  docRoots: DocRoots,
+  pointerIntact = true,
+): Promise<readonly FixScanViolation[]> {
+  const { changes, ignored } = await collectLaneChanges(guard, baseSha);
+  const violations = [...scanFixDiff({ changes, ignored, docRoots })];
+  if (!pointerIntact) {
+    violations.unshift({
+      rule: 'protected-path',
+      path: '.git',
+      detail: 'the session replaced the lane’s git pointer',
+    });
+  }
+  return violations;
+}
+
+/** One line for the evidence and the event: the rule, and up to three paths. Never a secret value (`scanFixDiff`
+ * does not quote one). */
+function summariseViolations(violations: readonly FixScanViolation[]): string {
+  const shown = violations
+    .slice(0, 3)
+    .map((violation) => `${violation.rule}: ${violation.path} (${violation.detail})`);
+  const more = violations.length > 3 ? `; and ${String(violations.length - 3)} more` : '';
+  return `${shown.join('; ')}${more}`;
 }
 
 /** Applies `diff` (a real, unified-diff-format `git diff` result — `realDiff`'s own output) to a lane
@@ -530,8 +602,9 @@ async function realDiff(cwd: string, baseSha: string): Promise<string> {
  * the real commit, never before PROVE itself runs — is what makes the final commit contain exactly, and
  * only, the real code change PROVE already verified, discarding every real side effect PROVE's own
  * verification step left behind. */
-async function applyDiff(lane: LaneHandle, diff: string): Promise<void> {
-  await execa('git', ['apply'], { cwd: lane.path, input: diff });
+async function applyDiff(guard: LaneGuard, diff: string): Promise<void> {
+  await guard.restore();
+  await guard.git(['apply'], { input: diff });
 }
 
 /** The most recent real, non-empty diff a FIX attempt produced — mutated by `runFixSession`, read
@@ -562,14 +635,16 @@ interface FixState {
  * attempt's own diff is never still the *most recent* one by the time the loop actually stops). */
 async function runFixSession(
   ctx: RunEngineContext,
-  lane: LaneHandle,
+  guard: LaneGuard,
   baseSha: string,
   fixState: FixState,
   agent: AgentDefinition,
   request: RcaSessionRequest,
   sessionCounter: SessionCounter,
+  docRoots: DocRoots,
 ): Promise<SessionResult> {
-  await resetLaneBeforeSession(lane, baseSha);
+  await resetLaneBeforeSession(guard, baseSha);
+  guard.takeTamper(); // a change PROVE's code made in the previous attempt is not this session's
 
   const { assembled, prompt } = await prepareDebugSession(
     ctx,
@@ -583,7 +658,7 @@ async function runFixSession(
   const sessionRequest: SessionRequest = {
     runId: ctx.runId,
     stepId,
-    cwd: lane.path,
+    cwd: guard.lane.path,
     systemPrompt: assembled.systemPrompt,
     prompt,
     model: assembled.model,
@@ -611,28 +686,60 @@ async function runFixSession(
   });
 
   if (!session.ok) return session;
-  const diff = await realDiff(lane.path, baseSha);
+  // Before any git runs in the lane: the session may have replaced its `.git` pointer (`lane-guard.ts`).
+  await guard.restore();
+  const pointerIntact = !guard.takeTamper();
+  const diff = await realDiff(guard, baseSha);
   if (diff.trim() === '') return { ...session, structured: undefined };
-  fixState.lastDiff = diff;
   const reported =
     typeof session.structured === 'object' && session.structured !== null
       ? (session.structured as Readonly<Record<string, unknown>>)
       : {};
+  // The FIX claim (`scanFixDiff`): a diff outside it is refused here, before PROVE runs the project's tests against
+  // it and before it can be committed. Not tracked in `fixState`, so it can never be the diff that gets committed.
+  const violations = await scanLaneDiff(guard, baseSha, docRoots, pointerIntact);
+  if (violations.length > 0) {
+    const summary = summariseViolations(violations);
+    const refusal = new ForgeError('RUN-096', {
+      phase: 'FIX',
+      reason: violations[0]?.rule ?? 'protected-path',
+      detail: summary,
+    });
+    await ctx.telemetry.emit({
+      type: 'PolicyViolation',
+      stepId,
+      payload: {
+        kind: 'fix-diff-refused',
+        code: 'RUN-096',
+        totalViolations: violations.length,
+        violations: violations.slice(0, 20).map((violation) => ({
+          rule: violation.rule,
+          path: violation.path.slice(0, 300),
+        })),
+      },
+    });
+    return {
+      ...session,
+      structured: { ...reported, diff: undefined, refusedDiff: `${refusal.code}: ${summary}` },
+    };
+  }
+  fixState.lastDiff = diff;
   return { ...session, structured: { ...reported, diff } };
 }
 
 function buildRunSession(
   ctx: RunEngineContext,
-  lane: LaneHandle,
+  guard: LaneGuard,
   baseSha: string,
   fixState: FixState,
   agent: AgentDefinition,
+  docRoots: DocRoots,
 ): RcaLoopDeps['runSession'] {
   const sessionCounter: SessionCounter = { next: 1 };
   return (request) =>
     request.phase === 'fix'
-      ? runFixSession(ctx, lane, baseSha, fixState, agent, request, sessionCounter)
-      : runReadOnlySession(ctx, lane, baseSha, agent, request, sessionCounter);
+      ? runFixSession(ctx, guard, baseSha, fixState, agent, request, sessionCounter, docRoots)
+      : runReadOnlySession(ctx, guard, baseSha, agent, request, sessionCounter);
 }
 
 // --- RECORD (13 §13.2 step 10) and closing the source Defect -----------------------------------------
@@ -728,7 +835,7 @@ async function runDebugLoop(
   // Refuse before a Defect, a lane or a session exists when any phase cannot be assembled (unmapped tier,
   // missing role prompt or phase brief) or the fix cannot be applied (a diagnostician whose grant cannot
   // write): the loop would otherwise leave an open Defect behind and pay for a diagnosis it cannot act on.
-  await preflightDebug(runCtx, agent);
+  const fixGrant = await preflightDebug(runCtx, agent);
   const defect = await scaffold();
   const defectId = defect.get(['id']) as string;
 
@@ -738,6 +845,8 @@ async function runDebugLoop(
     stepId: DEBUG_LANE_STEP_ID,
     integrationBase: runCtx.integrationBase,
   });
+  // Every git call FORGE makes in the lane goes through the guard (`lane-guard.ts`): the FIX session can write there.
+  const guard = await createLaneGuard(lane, deps.env);
 
   // `evidence` defaults to `[]` and `expected` defaults to the `Defect.md` template's own placeholder
   // text unless a caller already set them — a bare symptom string (`debugSymptom`) or a failed step's
@@ -760,10 +869,36 @@ async function runDebugLoop(
     evidence: defect.get(['evidence']) as readonly string[],
   };
 
+  const docRoots: DocRoots = {
+    kb: deps.config.paths.kb,
+    specs: deps.config.paths.specs,
+    sessions: deps.config.paths.sessions,
+    reports: deps.config.paths.reports,
+  };
   const fixState: FixState = { lastDiff: undefined };
   const loopDeps: RcaLoopDeps = {
-    runSession: buildRunSession(runCtx, lane, baseSha, fixState, agent),
-    runShell: (command, cwd) => runShellCommand(command, cwd),
+    runSession: buildRunSession(runCtx, guard, baseSha, fixState, agent, docRoots),
+    // A command the model proposes runs only if the diagnostician's own resolved grant allows it, in the lane, in a
+    // scrubbed environment, under a timeout and an output cap (`createRcaShell`, `PLAN-M13.md` P28). A refusal is
+    // logged as a `PolicyViolation` and recorded in the RCA evidence; nothing is executed.
+    runShell: createRcaShell({
+      grant: fixGrant,
+      root: lane.path,
+      parentEnv: deps.env,
+      onRefused: async (refusal) => {
+        await runCtx.telemetry.emit({
+          type: 'PolicyViolation',
+          stepId: 'debug:command',
+          payload: {
+            kind: 'proposed-command-refused',
+            code: 'RUN-095',
+            reason: refusal.reason,
+            detail: refusal.detail.slice(0, 300),
+            command: refusal.command.slice(0, 300),
+          },
+        });
+      },
+    }),
     clock,
     // `runCtx.now` is already a real, clock-derived epoch-millis source (`buildRunEngineContext`'s own
     // `Date.parse(clock.now())`) — reused rather than a second, independent `Date.now()` read
@@ -788,21 +923,40 @@ async function runDebugLoop(
           'forge debug: internal invariant violated — runRcaLoop reported "recorded" with no tracked fix diff.',
         );
       }
-      await resetLaneWorktree(lane, baseSha);
-      await applyDiff(lane, fixState.lastDiff);
+      await resetLaneBeforeSession(guard, baseSha);
+      await applyDiff(guard, fixState.lastDiff);
+      // The exact diff about to be committed is scanned once more (it was scanned when the attempt ran): a commit is
+      // the one thing that cannot be taken back, so it does not rest on an earlier check.
+      const finalViolations = await scanLaneDiff(guard, baseSha, docRoots);
+      if (finalViolations.length > 0) {
+        throw new ForgeError('RUN-096', {
+          phase: 'the commit',
+          reason: finalViolations[0]?.rule ?? 'protected-path',
+          detail: summariseViolations(finalViolations),
+        });
+      }
       const rcaId = await recordRca(deps, result.record, agent, clock);
-      await commitInLane(lane, {
-        message: formatCommitMessage({
+      // Committed through the guard (`LaneGuard.commit`): the index the scan just staged, hooks off, scrubbed
+      // environment. `commitInLane` re-stages everything with the parent environment and runs hooks.
+      await guard.commit(
+        formatCommitMessage({
           scope: defectId,
           subject: result.record.title,
           stepId: DEBUG_LANE_STEP_ID,
           runId,
           agentRole: DIAGNOSTICIAN_AGENT_ID,
         }),
-        sign: deps.config.vcs.signCommits,
-      });
+        deps.config.vcs.signCommits,
+      );
       await closeDefect(deps, defect, clock);
-      return { outcome: 'recorded', defectId, rcaId };
+      return {
+        outcome: 'recorded',
+        defectId,
+        rcaId,
+        ...(result.refusedCommands === undefined
+          ? {}
+          : { refusedCommands: result.refusedCommands }),
+      };
     }
 
     if (result.outcome === 'needs-more-evidence') {
@@ -810,6 +964,9 @@ async function runDebugLoop(
         outcome: 'needs-more-evidence',
         defectId,
         instrumentationPlan: result.instrumentationPlan,
+        ...(result.refusedCommands === undefined
+          ? {}
+          : { refusedCommands: result.refusedCommands }),
       };
     }
     return { outcome: 'escalated', defectId, reason: result.reason, evidence: result.evidence };
@@ -826,7 +983,9 @@ async function runDebugLoop(
     // any dangling fix attempt and remove the lane, following the same `retainLaneWorktrees` policy
     // every other engine step already honours for a failed step.
     if (!recorded) {
-      await resetLaneWorktree(lane, baseSha);
+      // Best effort: a lane that cannot be cleaned (a read-only directory the tests made) must not replace the
+      // outcome, or the error, this run is about to report, nor stop the lane from being removed.
+      await guard.reset(baseSha).catch(() => undefined);
       await removeLaneWorktree(deps.projectRoot, lane, { retain: runCtx.retainLaneWorktrees });
     }
   }
