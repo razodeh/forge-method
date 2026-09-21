@@ -132,7 +132,10 @@ function parseOverlayManifestDocument(raw: unknown, source: string): ParsedOverl
       !Array.isArray(requiresModulesRaw) ||
       !requiresModulesRaw.every((entry) => typeof entry === 'string')
     ) {
-      throw new ForgeError('CFG-046', { source, detail: '"requiresModules" must be an array of strings' });
+      throw new ForgeError('CFG-046', {
+        source,
+        detail: '"requiresModules" must be an array of strings',
+      });
     }
     requiresModules = requiresModulesRaw;
   }

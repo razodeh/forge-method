@@ -14,7 +14,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { compile, type CompileSources } from '@forge/extensions/compile';
 
 import { moduleAdd, readManifestDocument, type InstallOptions } from '../../src/commands/module.ts';
-import { overlayAdd, overlayExplain, type OverlayCommandContext } from '../../src/commands/overlay.ts';
+import {
+  overlayAdd,
+  overlayExplain,
+  type OverlayCommandContext,
+} from '../../src/commands/overlay.ts';
 import { cleanupAll, createTestProject, registerCleanup } from './upgrade/helpers.ts';
 
 afterEach(cleanupAll);
@@ -30,7 +34,8 @@ function nullWritable(): Writable {
 }
 
 function installOptions(overrides: Partial<InstallOptions> = {}): InstallOptions {
-  const consent = overrides.consent === undefined ? undefined : { output: nullWritable(), ...overrides.consent };
+  const consent =
+    overrides.consent === undefined ? undefined : { output: nullWritable(), ...overrides.consent };
   return {
     workDir: '',
     npmCwd: '',
@@ -54,7 +59,10 @@ interface OverlayBundleOverrides {
   readonly rogueSkillBody?: string;
 }
 
-async function writeOverlayBundle(dir: string, overrides: OverlayBundleOverrides = {}): Promise<void> {
+async function writeOverlayBundle(
+  dir: string,
+  overrides: OverlayBundleOverrides = {},
+): Promise<void> {
   await mkdir(dir, { recursive: true });
   await writeFile(
     path.join(dir, 'overlay.yaml'),
@@ -102,7 +110,9 @@ describe('overlayExplain', () => {
 });
 
 describe('overlayAdd', () => {
-  function ctxFor(project: { readonly paths: OverlayCommandContext['paths'] }): OverlayCommandContext {
+  function ctxFor(project: {
+    readonly paths: OverlayCommandContext['paths'];
+  }): OverlayCommandContext {
     return { paths: project.paths };
   }
 
