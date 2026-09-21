@@ -125,4 +125,8 @@ export interface DispatchAgentStepOptions {
    * not end ok. Off by default: `forge review` keeps running the rest and folds a failed one into an empty
    * (flagged) perspective. */
   readonly failFast?: boolean;
+  /** `swarm-review` only (`PLAN-M13.md` P38): the directory every perspective session runs in. Omitted, the
+   * project checkout (`ctx.projectRoot`), as before. A review step stacked on the lane it reviews passes that
+   * lane's worktree, so the perspectives read the change under review and not the checkout it has not reached. */
+  readonly cwd?: string;
 }

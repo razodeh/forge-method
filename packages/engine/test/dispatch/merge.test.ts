@@ -18,6 +18,7 @@ import { readEvents } from '@forge/telemetry/events';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
+import { integrateLane } from '../../src/dispatch/integrate.ts';
 import { createTestContext, node, readFileInRepo } from './helpers.ts';
 
 // Not in helpers.ts: node:os's tmpdir is R10-restricted in production code, and the test-file
@@ -29,6 +30,78 @@ async function createTempRepo(prefix: string): Promise<string> {
   await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
   return dir;
 }
+
+describe('runMergeStep — check sets (PLAN-M13.md P38)', () => {
+  it("names the layers of a set that had no configured command on the step's own outcome, not only in the event log", async () => {
+    const projectRoot = await createTempRepo('merge-skipped-layers');
+    const base = createTestContext({ projectRoot, runId: 'run-skipped' });
+    const ctx = { ...base, testCommands: { unit: 'true' } };
+    const producer = node({
+      id: 'wf:produce',
+      kind: 'command',
+      run: 'echo hi > out.txt',
+      produces: ['out.txt'],
+    });
+    expect((await executeStep(producer, ctx)).status).toBe('succeeded');
+
+    const outcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:produce'],
+        mergePolicy: { conflict: 'abort', preChecks: 'fast', postChecks: 'unit' },
+      }),
+      ctx,
+    );
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.detail.kind === 'merge' ? outcome.detail.skippedLayers : undefined).toEqual({
+      pre: ['typecheck', 'lint'],
+      post: [],
+    });
+  });
+});
+
+describe('runMergeStep — a set that cannot be resolved (PLAN-M13.md P38)', () => {
+  it('a merge driven on its own (no run-start preflight) fails typed before touching any lane, and an auto-integration does the same', async () => {
+    const projectRoot = await createTempRepo('merge-unconfigured');
+    const ctx = createTestContext({ projectRoot, runId: 'run-unconfigured' });
+    const producer = node({
+      id: 'wf:produce',
+      kind: 'command',
+      run: 'echo hi > out.txt',
+      produces: ['out.txt'],
+    });
+    expect((await executeStep(producer, ctx)).status).toBe('succeeded');
+
+    const outcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:produce'],
+        mergePolicy: { conflict: 'abort', preChecks: 'fast' },
+      }),
+      ctx,
+    );
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'merge', code: 'MERGE-CHECKS-UNCONFIGURED' });
+    expect(outcome.failure?.message).toContain('execution.testCommands.unit');
+    expect(ctx.laneRegistry.has('wf:produce')).toBe(true);
+
+    const lane = ctx.laneRegistry.get('wf:produce');
+    if (lane === undefined) throw new Error('no lane');
+    const integrated = await integrateLane(
+      { ...ctx, mergeChecks: { post: 'full' } },
+      'wf:produce',
+      lane,
+      'abort',
+    );
+    expect(integrated).toMatchObject({ code: 'MERGE-CHECKS-UNCONFIGURED' });
+    expect(integrated?.message).toContain('execution.mergeChecks.post');
+    expect(ctx.laneRegistry.has('wf:produce')).toBe(true);
+  });
+});
 
 describe('runMergeStep', () => {
   it('merges a single predecessor lane cleanly into the integration branch, removing the lane worktree afterward', async () => {

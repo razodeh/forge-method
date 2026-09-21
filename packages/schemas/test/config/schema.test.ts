@@ -182,6 +182,28 @@ describe('configSchema — execution.testCommands (PLAN-M8.md P3)', () => {
   });
 });
 
+describe('configSchema — execution.mergeChecks (PLAN-M13.md P38)', () => {
+  const withMergeChecks = (mergeChecks: unknown) => {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    return configSchema.safeParse({ ...config, execution: { ...config.execution, mergeChecks } });
+  };
+
+  it('is optional: a config written before it existed stays valid', () => {
+    expect(configSchema.safeParse(goldenConfig()).success).toBe(true);
+  });
+
+  it('accepts a pre and a post check, each a name or a command, either alone', () => {
+    expect(withMergeChecks({ pre: 'fast', post: 'full' }).success).toBe(true);
+    expect(withMergeChecks({ post: 'pnpm test' }).success).toBe(true);
+    expect(withMergeChecks({}).success).toBe(true);
+  });
+
+  it('rejects a key that is not pre or post, and an empty check', () => {
+    expect(withMergeChecks({ before: 'fast' }).success).toBe(false);
+    expect(withMergeChecks({ pre: '' }).success).toBe(false);
+  });
+});
+
 describe('configSchema — enum keys (PLAN-M1.md P8 Check)', () => {
   const enumCases: readonly [section: string, key: string, invalidValue: string][] = [
     ['project', 'level', 'L9'],

@@ -127,6 +127,13 @@ const TEST_LAYERS = [
 ] as const;
 const testCommandsSchema = z.record(z.enum(TEST_LAYERS), z.string().min(1));
 
+// `06` §6.5 steps 3 and 5 (`PLAN-M13.md` P38): the pre- and post-merge check set the engine runs around a lane it
+// integrates on its own (one no `merge` step lands, `06` §6.4). Same vocabulary as a merge step's `policy.preChecks`
+// / `postChecks` (`10` §10.1): a check-set NAME (`fast`, `full`, or one test layer such as `unit`, resolved against
+// `execution.testCommands`) or a literal shell command. A record like `testCommands` (the keys are `pre` and `post`,
+// each optional; absent means no check), so an unset default stays `{}` and a project opts in.
+const mergeChecksSchema = z.record(z.enum(['pre', 'post']), z.string().min(1));
+
 const executionSchema = z
   .object({
     concurrency: z.union([z.literal('auto'), z.number().int().positive()]),
@@ -139,6 +146,8 @@ const executionSchema = z
     conflictPolicy: z.enum(['agent', 'human', 'abort']),
     sharedMutablePaths: z.array(sharedMutablePathSchema),
     testCommands: testCommandsSchema,
+    // Optional, unlike `testCommands`: a `.forge/config.yaml` written before P38 has no such key and must stay valid.
+    mergeChecks: mergeChecksSchema.optional(),
   })
   .strict();
 

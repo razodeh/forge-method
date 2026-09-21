@@ -168,6 +168,70 @@ async function setupConflictingCandidate(): Promise<{
   return { cwd, integrationPath, candidate: baseCandidate(handle), preConflictIntegrationHead };
 }
 
+describe('processMergeCandidate — nothing left to merge', () => {
+  it('a lane whose every commit the rebase drops as already upstream reports already-integrated: no merge commit, no checks, integration untouched', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    const baseSha = await commitAll(cwd, 'seed');
+    const integrationPath = await createIntegrationWorktree(cwd, baseSha);
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'dup.txt'), 'same');
+    await commitAll(handle.path, 'lane work');
+    // The integration branch gains the same change by another route (a stacked lane's predecessor, rewritten by
+    // its own rebase, is exactly this): the lane's commit is an equivalent patch and the rebase drops it.
+    await writeFile(path.join(integrationPath, 'dup.txt'), 'same');
+    const integrationHead = await commitAll(integrationPath, 'the same change, landed elsewhere');
+    const calls: string[] = [];
+    const ok: CheckResult = { passed: true, summary: 'ok' };
+
+    const outcome = await processMergeCandidate(baseCandidate(handle), {
+      integrationPath,
+      preChecks: [trackingCheck(calls, 'pre', ok)],
+      postChecks: [trackingCheck(calls, 'post', ok)],
+    });
+
+    expect(outcome).toEqual({ kind: 'already-integrated' });
+    expect(calls).toEqual([]);
+    expect(await currentHead(integrationPath)).toBe(integrationHead);
+  });
+});
+
+describe('processMergeCandidate — a lane whose merge was reverted', () => {
+  it('is refused when offered again (VCS-LANE-REVERTED): its branch is an ancestor of integration but its content is not in it', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    const baseSha = await commitAll(cwd, 'seed');
+    const integrationPath = await createIntegrationWorktree(cwd, baseSha);
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'new.txt'), 'new');
+    await commitAll(handle.path, 'lane work');
+    const first = await processMergeCandidate(baseCandidate(handle), {
+      integrationPath,
+      preChecks: [],
+      postChecks: [failingCheck('the suite is red')],
+    });
+    expect(first.kind).toBe('post-check-failed-reverted');
+    const headAfterRevert = await currentHead(integrationPath);
+
+    const again = processMergeCandidate(baseCandidate(handle), {
+      integrationPath,
+      preChecks: [],
+      postChecks: [],
+    });
+
+    await expect(again).rejects.toMatchObject({ code: 'VCS-LANE-REVERTED' });
+    expect(await currentHead(integrationPath)).toBe(headAfterRevert);
+  });
+});
+
 describe('processMergeCandidate — conflict handling', () => {
   it('routes a real conflict through the resolver and merges once resolved', async () => {
     const { integrationPath, candidate } = await setupConflictingCandidate();

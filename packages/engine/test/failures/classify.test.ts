@@ -125,6 +125,23 @@ describe('classifyFailure', () => {
       },
     );
 
+    it.each(['MERGE-CHECKS-UNCONFIGURED', 'MERGE-CHECK-COMMAND-INVALID'])(
+      "%s (a merge check the project's configuration cannot supply) classifies as 'policy': a retry fails identically",
+      (code) => {
+        const result = classifyFailure(
+          outcome({ failure: { source: 'merge', code, message: 'x' } }),
+        );
+        expect(result).toBe('policy');
+      },
+    );
+
+    it("VCS-LANE-REVERTED (a lane whose merge was reverted, offered again) classifies as 'policy': a retry fails identically", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'vcs', code: 'VCS-LANE-REVERTED', message: 'x' } }),
+      );
+      expect(result).toBe('policy');
+    });
+
     it("an unrecognised merge code defaults to 'transient'", () => {
       const result = classifyFailure(outcome({ failure: { source: 'merge', message: 'x' } }));
       expect(result).toBe('transient');

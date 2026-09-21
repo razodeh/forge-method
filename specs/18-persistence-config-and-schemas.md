@@ -108,6 +108,8 @@ execution:
   sharedMutablePaths:
     - { glob: "pnpm-lock.yaml", strategy: regenerate, command: "pnpm install --lockfile-only" }
     - { glob: "CHANGELOG.md", strategy: append-only }
+  testCommands: { unit: "pnpm test", lint: "pnpm lint", typecheck: "pnpm typecheck" }   # one command per test layer (13 F-TEST-1)
+  mergeChecks: { pre: fast, post: full }   # optional: check sets around a lane the engine integrates itself (06 §6.5)
 
 budget:
   perRunUsd: 25

@@ -13,7 +13,9 @@ export {
   createTelemetryFacade,
   createVcsFacade,
   GateNotFoundError,
+  MERGE_CHECK_LIMITS,
   type CommandLauncherOptions,
+  type MergeQueueOptions,
 } from './facades.ts';
 export {
   runAgentStep,
@@ -63,6 +65,12 @@ export {
   type OutputCheckInput,
   type StepClaim,
 } from './outputs.ts';
+export {
+  CHECK_SETS,
+  isCheckSetName,
+  resolveMergeChecks,
+  type ResolvedMergeChecks,
+} from './merge-checks.ts';
 export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {
@@ -72,6 +80,7 @@ export type {
   KbAccess,
   LaneHandle,
   MergeCandidateChecks,
+  MergeCheckCommand,
   MergeCandidateLike,
   MergeOutcome,
   MergeQueueFacade,

@@ -71,6 +71,8 @@ function classifyAdapterFailure(failure: StepFailureInfo): FailureClass {
  * worth a third, narrower category for two codes this dispatcher has no test coverage exercising yet. */
 function classifyVcsFailure(failure: StepFailureInfo): FailureClass {
   if (failure.code === 'VCS-MISSING-CONFLICT-RESOLVER') return 'policy';
+  // A lane whose merge was reverted cannot be merged again in this run (`PLAN-M13.md` P38): a retry fails identically.
+  if (failure.code === 'VCS-LANE-REVERTED') return 'policy';
   if (failure.code?.startsWith('VCS-INVALID-') === true) return 'validation';
   return 'transient';
 }
@@ -86,6 +88,15 @@ function classifyMergeFailure(failure: StepFailureInfo): FailureClass {
   if (failure.code === 'MERGE-CONFLICT-UNRESOLVED') return 'conflict';
   if (failure.code === 'MERGE-PRE-CHECK-FAILED' || failure.code === 'MERGE-POST-CHECK-FAILED') {
     return 'test-failure';
+  }
+  // A merge check that cannot run because the project's configuration cannot supply it (`PLAN-M13.md` P38): the same
+  // step fails identically on every retry until a human sets `execution.testCommands`, so it is `policy`, not
+  // `transient`.
+  if (
+    failure.code === 'MERGE-CHECKS-UNCONFIGURED' ||
+    failure.code === 'MERGE-CHECK-COMMAND-INVALID'
+  ) {
+    return 'policy';
   }
   return 'transient';
 }

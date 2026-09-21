@@ -358,6 +358,43 @@ describe('buildRunEngineContext', () => {
     expect(ctx.limits.global).toBe(7);
   });
 
+  it("passes the project's test commands and merge checks to the engine: a merge check set resolves against them (M13 P38)", async () => {
+    const project = await createTestProject();
+    const configured = {
+      ...project.config,
+      execution: {
+        ...project.config.execution,
+        testCommands: { unit: 'pnpm test', lint: 'pnpm lint' },
+        mergeChecks: { pre: 'fast', post: 'full' },
+      },
+    };
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: configured,
+      runId: 'run-checks',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    expect(ctx.testCommands).toEqual({ unit: 'pnpm test', lint: 'pnpm lint' });
+    expect(ctx.mergeChecks).toEqual({ pre: 'fast', post: 'full' });
+
+    // Unset in the config (the default `{}`): no merge checks for a lane the engine integrates itself.
+    const plain = await createTestProject();
+    const plainCtx = await buildRunEngineContext({
+      paths: plain.paths,
+      projectRoot: plain.dir,
+      config: plain.config,
+      runId: 'run-plain',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    expect(plainCtx.mergeChecks).toEqual({});
+    expect(plainCtx.testCommands).toEqual({});
+  });
+
   it('derives retainLaneWorktrees from config, honouring "never" specifically', async () => {
     const project = await createTestProject();
     const neverRetain = {

@@ -477,6 +477,10 @@ export async function buildRunEngineContext(
     integrationBase: input.lanesFromIntegration === true ? integrationBranch : TRUNK,
     integrationPath,
     conflictPolicy: input.config.execution.conflictPolicy,
+    // A merge check that names a set (`preChecks: fast`, `10` §10.1) runs the commands of its test layers, and a
+    // lane the engine integrates on its own has the configured check set (`PLAN-M13.md` P38, `06` §6.5).
+    testCommands: input.config.execution.testCommands,
+    mergeChecks: input.config.execution.mergeChecks,
     model,
     tools: DEFAULT_TOOLS,
     assembly: createPromptAssemblyContext({

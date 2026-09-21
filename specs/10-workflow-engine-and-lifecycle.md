@@ -136,7 +136,7 @@ onComplete:
 | `elicit` | Ask the human structured questions; blocks |
 | `session` | Run a facilitated session (see `16`) |
 | `fanout` | Expand over a collection; each item becomes a node |
-| `merge` | Merge-queue processing for a set of lanes |
+| `merge` | Merge-queue processing for a set of lanes; `policy.preChecks`/`postChecks` name check sets (`fast`, `full`, or one test layer, run as `execution.testCommands`; see `06` §6.5) or give a shell command |
 | `subworkflow` | Invoke another workflow, sharing the run |
 | `checkpoint` | Force a commit + event-log flush; a safe resume point |
 | `parallel` / `sequence` | Explicit grouping when dependencies alone are insufficient |

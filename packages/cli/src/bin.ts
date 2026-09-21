@@ -1101,14 +1101,19 @@ async function runMergeCommand(
     const results = await mergeAllReady(ctx);
     console.log(json ? JSON.stringify({ v: 1, results }) : JSON.stringify(results, null, 2));
     const anyFailed = results.some(
-      (result) => result.outcome.kind !== 'clean' && result.outcome.kind !== 'conflict-resolved',
+      (result) =>
+        result.outcome.kind !== 'clean' &&
+        result.outcome.kind !== 'conflict-resolved' &&
+        result.outcome.kind !== 'already-integrated',
     );
     return anyFailed ? EXIT_CODES.failure : EXIT_CODES.success;
   }
   // `laneId` is real here: `all` is `false` and the guard above already refused the only other case.
   const outcome = await mergeLane(ctx, laneId ?? '');
   console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
-  return outcome.kind === 'clean' || outcome.kind === 'conflict-resolved'
+  return outcome.kind === 'clean' ||
+    outcome.kind === 'conflict-resolved' ||
+    outcome.kind === 'already-integrated'
     ? EXIT_CODES.success
     : EXIT_CODES.failure;
 }

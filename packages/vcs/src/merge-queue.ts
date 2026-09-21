@@ -122,6 +122,12 @@ export interface ProcessMergeCandidateOptions {
 
 export type MergeOutcome =
   | { readonly kind: 'clean'; readonly mergeCommitSha: string }
+  /** After the rebase there was nothing left to merge: every commit of the lane was already in the integration
+   * branch (dropped by the rebase as an equivalent patch, e.g. a lane stacked on another that landed and was
+   * itself rewritten by its own rebase, `PLAN-M13.md` P38). No merge commit was made and no check was run; the
+   * lane's content is in the integration branch. `git merge --no-ff` would report "Already up to date" and
+   * `HEAD` would be another lane's merge commit, which a failing post-merge check would then revert. */
+  | { readonly kind: 'already-integrated' }
   | { readonly kind: 'conflict-resolved'; readonly mergeCommitSha: string }
   | {
       readonly kind: 'conflict-unresolved';
@@ -394,6 +400,32 @@ export async function processMergeCandidate(
   // existed — validating it explicitly, not trusting the construction path, closes that.
   assertSingleLine('laneId', candidate.handle.laneId);
 
+  // A lane whose merge was reverted (a failing post-merge check) can never be merged again: the revert commit stays
+  // in the integration history, so a later `git merge` of the same branch is "Already up to date" (or brings only the
+  // commits made since, with the reverted changes still undone). Refused, not reported as integrated (`PLAN-M13.md`
+  // P38: the lane is an ancestor of HEAD all the same, and its content is not in it).
+  const priorRevert = await execa(
+    'git',
+    [
+      'log',
+      'HEAD',
+      '-1',
+      '--format=%H',
+      '--fixed-strings',
+      '--grep',
+      `Revert merge of lane ${candidate.handle.laneId} (`,
+    ],
+    { cwd: options.integrationPath, reject: false },
+  );
+  if (priorRevert.exitCode === 0 && priorRevert.stdout.trim() !== '') {
+    throw new VcsError({
+      code: 'VCS-LANE-REVERTED',
+      message: `lane "${candidate.handle.laneId}" was merged into the integration branch and reverted (commit ${priorRevert.stdout.trim()}) because its post-merge check failed, so its content is not in the branch and merging the same branch again cannot restore it.`,
+      remedy:
+        'Fix the cause and run again in a NEW run (a lane is named by its run and step, so this run cannot make a second lane for the step), or revert the revert commit in the integration worktree by hand after inspecting it.',
+    });
+  }
+
   const integrationHeadSha = await resolveRevision(options.integrationPath, 'HEAD');
   let rebaseState = await attemptRebase(candidate.handle.path, integrationHeadSha);
   let wasConflictResolved = false;
@@ -443,6 +475,21 @@ export async function processMergeCandidate(
     await stageResolution(candidate.handle.path);
     rebaseState = await continueRebase(candidate.handle.path);
     wasConflictResolved = true;
+  }
+
+  // Nothing left to merge (see `MergeOutcome`'s `already-integrated`): the rebase dropped every commit of the lane.
+  const covered = await execa(
+    'git',
+    ['merge-base', '--is-ancestor', candidate.handle.branch, 'HEAD'],
+    { cwd: options.integrationPath, reject: false },
+  );
+  if (covered.exitCode === 0) return { kind: 'already-integrated' };
+  if (covered.exitCode !== 1) {
+    throw new VcsError({
+      code: 'VCS-GIT-OPERATION-FAILED',
+      message: `checking whether lane branch "${candidate.handle.branch}" is already in the integration worktree at "${options.integrationPath}" failed: ${covered.stderr}`,
+      remedy: 'Inspect the integration worktree and the lane branch directly with git.',
+    });
   }
 
   const preCheckFailure = await runChecksUntilFailure(options.preChecks, candidate.handle.path);

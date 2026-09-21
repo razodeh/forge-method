@@ -9,9 +9,11 @@
  * the engine-written swarm-review report) over a real git repository laid out the way `forge run` lays one out,
  * and assert what is on the integration branch afterwards. Only the model sessions are faked.
  *
- * The run is driven node by node rather than through `runEngine` because the shipped workflow ends in a
- * `subworkflow` step (`deliver`) that the engine still refuses (`RUN-039`); the stages this exercises
- * (`generate-tests`, `implement`, `review`, `merge`) are the ones whose lanes are at issue.
+ * The first describe drives the nodes one by one rather than through `runEngine` because the shipped workflow ends in
+ * a `subworkflow` step (`deliver`) that the engine still refuses (`RUN-039`); the stages it exercises
+ * (`generate-tests`, `implement`, `review`, `merge`) are the ones whose lanes are at issue. The last two describes
+ * run the shipped `build-stage` and `implement-story` through `runEngine` with configured (fake, cheap,
+ * deterministic) test commands: the inner loop end to end (`PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226).
  *
  * Lives at the repository root for the same reason `test/build-stage-compiles.test.ts` does: it needs both
  * `@forge/engine` and `@forge/templates`.
@@ -49,6 +51,7 @@ import {
   type StepNode,
 } from '@forge/engine/plan';
 import { runEngine, type RunEngineContext } from '@forge/engine/run';
+import { readEvents } from '../packages/telemetry/src/events.ts';
 import { parseWorkflow } from '@forge/engine/workflow';
 import type { GateDefinition } from '@forge/engine/gates';
 import { WORKFLOW_INDEX } from '@forge/templates';
@@ -139,6 +142,14 @@ function assemblyFor(projectRoot: string): PromptAssemblyContext {
 
 const CLEAN = { findings: [], checked: ['read the diff'] };
 
+/** Every layer the shipped `fast` and `full` sets name, as a command that passes (`node -e`, cheap, deterministic). */
+const PASSING_COMMANDS: Readonly<Record<string, string>> = Object.fromEntries(
+  ['typecheck', 'lint', 'unit', 'integration', 'contract'].map((layer) => [
+    layer,
+    `node -e "process.exit(0)"`,
+  ]),
+);
+
 function adapterFor(
   stories: readonly StageStory[],
   onRequest?: (request: { readonly stepId: string; readonly cwd: string }) => void,
@@ -193,6 +204,9 @@ async function createFixture(
     readonly branch?: string;
     readonly adapter?: PlatformAdapter;
     readonly gateRegistry?: ReadonlyMap<string, GateDefinition>;
+    /** `execution.testCommands`; default: every layer of the shipped sets passes. */
+    readonly testCommands?: Readonly<Record<string, string>>;
+    readonly commandEnv?: Readonly<Record<string, string>>;
   } = {},
 ): Promise<Fixture> {
   const branch = options.branch ?? INTEGRATION_BRANCH;
@@ -218,7 +232,9 @@ async function createFixture(
     telemetry: createTelemetryFacade(projectRoot, runId, now),
     gates: createGateEvaluator(gateRegistry),
     gateRegistry,
-    mergeQueue: createMergeQueueFacade(integrationPath, undefined),
+    mergeQueue: createMergeQueueFacade(integrationPath, undefined, {
+      env: options.commandEnv,
+    }),
     runId,
     projectRoot,
     integrationBase: branch,
@@ -231,6 +247,8 @@ async function createFixture(
     signCommits: false,
     now,
     laneRegistry: new Map<string, LaneHandle>(),
+    testCommands: options.testCommands ?? PASSING_COMMANDS,
+    ...(options.commandEnv === undefined ? {} : { commandEnv: options.commandEnv }),
     ...(withGraph === undefined
       ? {}
       : { stepGraph: new Map(withGraph.map((node) => [node.id, node] as const)) }),
@@ -245,16 +263,9 @@ async function drive(
   include: (node: StepNode) => boolean,
   ctx: ExecuteStepContext,
 ): Promise<ReadonlyMap<string, 'succeeded' | 'failed'>> {
-  // The shipped merge declares `preChecks: fast` / `postChecks: full`, which the engine runs as shell commands
-  // (`fast: command not found`): a separate, pre-existing gap recorded in Q221, not what this test is about.
-  // The policy's checks are dropped and its conflict policy kept.
-  const wanted = nodes
-    .filter(include)
-    .map((node) =>
-      node.kind === 'merge' && node.mergePolicy !== undefined
-        ? { ...node, mergePolicy: { conflict: node.mergePolicy.conflict } }
-        : node,
-    );
+  // The shipped merge policy runs as shipped (`preChecks: fast` / `postChecks: full` resolve to the fixture's
+  // configured test commands, `PLAN-M13.md` P38): nothing is stripped.
+  const wanted = nodes.filter(include);
   const done = new Map<string, 'succeeded' | 'failed'>();
   while (done.size < wanted.length) {
     const ready = wanted.filter(
@@ -426,16 +437,13 @@ describe('the shipped build-stage through the engine (runEngine)', () => {
 
   it('integrates the contracts before the design gate, lands the story lanes at the merge, and runs prepare as a no-op on the stage branch', async () => {
     const workflow = shippedBuildStage();
+    // The shipped source, unmodified: its `preChecks: fast` / `postChecks: full` resolve to the configured test
+    // commands (they used to be run as shell commands, `fast: command not found`, and this test had to swap them).
     const source = readFileSync(
       path.join(repoRoot, 'packages', 'templates', WORKFLOW_INDEX['build-stage']),
       'utf8',
-    ).replace(
-      'policy: { conflict: agent, preChecks: fast, postChecks: full }',
-      'policy: { conflict: abort }',
     );
-    // The shipped `preChecks: fast` / `postChecks: full` are run as shell commands (Q221): swapped for the
-    // conflict policy alone; every other line of the workflow is the shipped one.
-    expect(source).toContain('policy: { conflict: abort }');
+    expect(source).toContain('policy: { conflict: agent, preChecks: fast, postChecks: full }');
 
     const probed = new Map<string, boolean>();
     const adapter = adapterFor(stories, (request) => {
@@ -483,5 +491,369 @@ describe('the shipped build-stage through the engine (runEngine)', () => {
     });
     expect(branch.stdout.trim()).toBe('forge/integration/mvp');
     expect(fixture.ctx.laneRegistry.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// The inner loops end to end (`PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226): the shipped workflows, unmodified,
+// through `runEngine`, with stacked lanes and the merge's own check sets.
+
+/** A test command that records where it ran and exits with `exitCode` (`node -e`, cheap and deterministic). */
+function recordingCommand(marker: string, label: string, exitCode = 0): string {
+  return `node -e 'require("fs").appendFileSync(${JSON.stringify(marker)}, "${label} " + process.cwd() + "\\n"); process.exit(${String(exitCode)})'`;
+}
+
+function markerLines(marker: string): readonly string[] {
+  return existsSync(marker)
+    ? readFileSync(marker, 'utf8')
+        .split('\n')
+        .filter((line) => line !== '')
+    : [];
+}
+
+async function eventsOf(projectRoot: string, runId: string) {
+  const events = [];
+  for await (const event of readEvents(projectRoot, runId)) events.push(event);
+  return events;
+}
+
+describe('the shipped build-stage inner loop, end to end (runEngine, stacked lanes, the merge checks as shipped)', () => {
+  const stories = [
+    story('STORY-001', [], ['src/story-001/**', 'tests/story-001/**']),
+    story('STORY-002', ['STORY-001'], ['src/story-002/**', 'tests/story-002/**']),
+  ];
+  const WATCHED = [
+    'tests/story-001/story-001.test.ts',
+    'src/story-001/story-001.ts',
+    'tests/story-002/story-002.test.ts',
+    'src/story-002/story-002.ts',
+    CONTRACT_PATH,
+  ];
+
+  interface Outcome {
+    readonly fixture: Fixture;
+    readonly seen: Map<string, readonly string[]>;
+    readonly marker: string;
+    readonly events: Awaited<ReturnType<typeof eventsOf>>;
+  }
+
+  async function runShipped(
+    testCommands: (marker: string) => Readonly<Record<string, string>>,
+  ): Promise<Outcome> {
+    const workflow = shippedBuildStage();
+    const source = readFileSync(
+      path.join(repoRoot, 'packages', 'templates', WORKFLOW_INDEX['build-stage']),
+      'utf8',
+    );
+    const seen = new Map<string, readonly string[]>();
+    const adapter = adapterFor(stories, (request) => {
+      seen.set(
+        request.stepId,
+        WATCHED.filter((file) => existsSync(path.join(request.cwd, file))),
+      );
+    });
+    adapter.script((request) => request.stepId === `${P}freeze-contracts`, {
+      text: ['froze the contracts'],
+      writeFiles: [{ relativePath: CONTRACT_PATH, content: CONTRACT }],
+    });
+    // `marker` lives in the temp dir that holds the project, outside every worktree.
+    const fixture = await createFixture(stories, undefined, {
+      branch: 'forge/integration/mvp',
+      adapter,
+      gateRegistry: trivialGates('G-Design', 'G-Verify'),
+      testCommands: {},
+    });
+    const marker = path.join(fixture.projectRoot, '.forge', 'state', 'checks.txt');
+    const ctx: RunEngineContext = {
+      ...fixture.ctx,
+      testCommands: testCommands(marker),
+      limits: { global: 100, perAgent: new Map(), perResourceClass: new Map() },
+      seed: 'seed',
+    };
+    // `standup` (a session step) and `deliver` (a subworkflow, which the engine refuses: RUN-039) end the workflow;
+    // everything before them is the part under test.
+    await runEngine(source, buildStageRunContext(workflow, 'mvp', stories), ctx).catch(
+      () => undefined,
+    );
+    return { fixture, seen, marker, events: await eventsOf(fixture.projectRoot, ctx.runId) };
+  }
+
+  const ALL_LAYERS = ['typecheck', 'lint', 'unit', 'integration', 'contract'] as const;
+  const recordingAll =
+    (exitCodes: Partial<Record<(typeof ALL_LAYERS)[number], number>> = {}) =>
+    (marker: string) =>
+      Object.fromEntries(
+        ALL_LAYERS.map((layer) => [layer, recordingCommand(marker, layer, exitCodes[layer] ?? 0)]),
+      );
+
+  it('each step sees the step before it (tests before implement, the dependency story before its dependent) before anything is merged', async () => {
+    const { seen, events } = await runShipped(recordingAll());
+
+    // `generate-tests` output is visible to `implement` (they are two lanes of one story, in one merge's scope).
+    expect(seen.get(`${P}implement:STORY-001`)).toEqual([
+      'tests/story-001/story-001.test.ts',
+      CONTRACT_PATH,
+    ]);
+    // The dependent story's chain starts from its dependency's integrated-to-be code, tests and all.
+    for (const step of ['generate-tests', 'implement']) {
+      const files = seen.get(`${P}${step}:STORY-002`) ?? [];
+      expect(files).toContain('src/story-001/story-001.ts');
+      expect(files).toContain('tests/story-001/story-001.test.ts');
+    }
+    expect(seen.get(`${P}implement:STORY-002`)).toContain('tests/story-002/story-002.test.ts');
+    // The review's perspective sessions read the reviewed lane, so the diff under review is there.
+    for (const perspective of ['design', 'security', 'testing', 'performance']) {
+      expect(seen.get(`${P}review:STORY-001:review:${perspective}`)).toContain(
+        'src/story-001/story-001.ts',
+      );
+      expect(seen.get(`${P}review:STORY-002:review:${perspective}`)).toContain(
+        'src/story-002/story-002.ts',
+      );
+    }
+    // Review-before-merge held: every lane of the stories reached the integration branch through the one merge step
+    // (the contract lane was integrated by the engine, before its gate, as before).
+    const merged = events.filter((event) => event.type === 'MergeCompleted');
+    expect(new Set(merged.map((event) => event.stepId))).toEqual(
+      new Set([`${P}freeze-contracts`, `${P}merge`]),
+    );
+    expect(merged.filter((event) => event.stepId === `${P}merge`)).toHaveLength(6);
+  });
+
+  it('the merge runs the shipped fast set before and the full set after every lane it lands, all pass, and the integration branch holds everything', async () => {
+    const { fixture, marker, events } = await runShipped(recordingAll());
+
+    const lines = markerLines(marker);
+    const inIntegration = (line: string): boolean =>
+      line.endsWith(path.join('worktrees', 'integration'));
+    const pre = lines.filter((line) => !inIntegration(line)).map((line) => line.split(' ')[0]);
+    const post = lines.filter(inIntegration).map((line) => line.split(' ')[0]);
+    // Six lanes: `fast` (typecheck, lint, unit) in each lane, `full` (fast + integration + contract) in the tree.
+    expect(pre).toEqual(Array.from({ length: 6 }, () => ['typecheck', 'lint', 'unit']).flat());
+    expect(post).toEqual(
+      Array.from({ length: 6 }, () => [
+        'typecheck',
+        'lint',
+        'unit',
+        'integration',
+        'contract',
+      ]).flat(),
+    );
+    expect(events.some((event) => event.type === 'MergeReverted')).toBe(false);
+    const files = await filesOnIntegration(fixture);
+    for (const file of [
+      'src/story-001/story-001.ts',
+      'src/story-002/story-002.ts',
+      'tests/story-001/story-001.test.ts',
+      'tests/story-002/story-002.test.ts',
+      CONTRACT_PATH,
+    ]) {
+      expect(files).toContain(file);
+    }
+    expect(files.filter((file) => /REVIEW-\d{3}\.md$/.test(file))).toHaveLength(2);
+    expect(fixture.ctx.laneRegistry.size).toBe(0);
+    // No `command not found` anywhere: the shipped names were resolved, not run.
+    expect(JSON.stringify(events)).not.toContain('command not found');
+  });
+
+  it('a failing pre-check blocks the landing with the typed reason and the configured command named; nothing of the stories reaches the branch', async () => {
+    const { fixture, events } = await runShipped(recordingAll({ unit: 1 }));
+
+    const failure = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === `${P}merge`,
+    )?.payload as { code?: string; message?: string } | undefined;
+    expect(failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
+    expect(failure?.message).toContain('execution.testCommands.unit');
+    const files = await filesOnIntegration(fixture);
+    expect(files).not.toContain('tests/story-001/story-001.test.ts');
+    expect(files).not.toContain('src/story-001/story-001.ts');
+    // The lanes are kept for inspection; the integration tree is clean.
+    expect(fixture.ctx.laneRegistry.size).toBeGreaterThan(0);
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: fixture.integrationPath })).stdout,
+    ).toBe('');
+  });
+
+  it('a failing post-check reverts the merge of the lane that broke it and lands nothing after it', async () => {
+    const { fixture, events } = await runShipped(recordingAll({ contract: 1 }));
+
+    const failure = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === `${P}merge`,
+    )?.payload as { code?: string; message?: string } | undefined;
+    expect(failure?.code).toBe('MERGE-POST-CHECK-FAILED');
+    expect(failure?.message).toContain('execution.testCommands.contract');
+    expect(events.filter((event) => event.type === 'MergeReverted')).toHaveLength(1);
+    const files = await filesOnIntegration(fixture);
+    // The first lane of the first story (its tests) was merged and reverted; nothing built on it landed.
+    expect(files).not.toContain('tests/story-001/story-001.test.ts');
+    expect(files).not.toContain('src/story-001/story-001.ts');
+  });
+
+  it('a project with no test commands configured is refused with the config keys named, before any story lane is built, never "command not found"', async () => {
+    const { fixture, events } = await runShipped(() => ({}));
+
+    // Refused at the start of the run, on the record, before any story lane is built and paid for.
+    const failure = events.find((event) => event.type === 'RunFailed')?.payload as
+      { reason?: string; message?: string } | undefined;
+    expect(failure?.reason).toBe('setup');
+    expect(failure?.message).toContain('execution.testCommands.unit');
+    expect(failure?.message).not.toContain('command not found');
+    expect(events.some((event) => event.type === 'LaneCreated')).toBe(false);
+    expect(await filesOnIntegration(fixture)).not.toContain('src/story-001/story-001.ts');
+  });
+});
+
+const HANDOFF_PATH = 'docs/forge/reports/handoffs.md';
+const HANDOFF = [
+  '---',
+  'type: HandoffRecord',
+  'handoffs:',
+  '  - id: HO-0001',
+  '    from: backend',
+  '    to: sdet',
+  '    step: plan',
+  "    timestamp: '2026-01-15T10:00:00Z'",
+  "    delivered: ['subtype: implementation-plan', 'src/story-001/story-001.ts: the implementation']",
+  '    open_questions: []',
+  '    assumptions: []',
+  '    constraints_for_receiver: []',
+  '    acceptance_for_receiver: []',
+  '---',
+  '',
+].join('\n');
+
+describe('the shipped implement-story inner loop, end to end (runEngine, stacked lanes, the merge checks as shipped)', () => {
+  const PS = 'implement-story:';
+  const WATCHED = [
+    HANDOFF_PATH,
+    'tests/story-001/story-001.test.ts',
+    'src/story-001/story-001.ts',
+    'src/story-001/README.md',
+  ];
+
+  async function runShipped(exitCodes: Partial<Record<string, number>> = {}) {
+    const workflowSource = readFileSync(
+      path.join(repoRoot, 'packages', 'templates', WORKFLOW_INDEX['implement-story']),
+      'utf8',
+    );
+    const fixture = await createFixture([], undefined, {
+      testCommands: {},
+      branch: 'forge/integration/story',
+    });
+    const marker = path.join(fixture.projectRoot, '.forge', 'state', 'checks.txt');
+    const verified = path.join(fixture.projectRoot, '.forge', 'state', 'verified.txt');
+    // `self-verify` is `forge story verify STORY-001 --json` in a lane: a fake `forge` that succeeds only where the
+    // code `green` wrote and the tests `red` wrote are in the tree it runs in.
+    const bin = await mkdtemp(path.join(tmpdir(), 'forge-fake-bin-'));
+    tempDirs.push(bin);
+    const script = [
+      '#!/bin/sh',
+      'test -f src/story-001/story-001.ts || { echo "the implementation is not in this tree" >&2; exit 3; }',
+      'test -f tests/story-001/story-001.test.ts || { echo "the tests are not in this tree" >&2; exit 4; }',
+      `echo "$PWD" >> ${JSON.stringify(verified)}`,
+      'exit 0',
+      '',
+    ].join('\n');
+    await writeFile(path.join(bin, 'forge'), script, { mode: 0o755 });
+    const seen = new Map<string, readonly string[]>();
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => {
+      seen.set(
+        request.stepId,
+        WATCHED.filter((file) => existsSync(path.join(request.cwd, file))),
+      );
+      return false;
+    }, {});
+    const write = (step: string, relativePath: string, content: string): void => {
+      adapter.script((request) => request.stepId === `${PS}${step}`, {
+        text: [`did ${step}`],
+        writeFiles: [{ relativePath, content }],
+      });
+    };
+    write('plan', HANDOFF_PATH, HANDOFF);
+    write('red', 'tests/story-001/story-001.test.ts', '// red\n');
+    write('green', 'src/story-001/story-001.ts', 'export const one = 1;\n');
+    write('refactor', 'src/story-001/story-001.ts', 'export const one = 1; // tidy\n');
+    write('document', 'src/story-001/README.md', '# story one\n');
+    adapter.script((request) => /^implement-story:review:review:[a-z]+$/.test(request.stepId), {
+      text: ['reviewed'],
+      structured: CLEAN,
+    });
+    const layers = ['typecheck', 'lint', 'unit', 'integration', 'contract'];
+    const ctx: RunEngineContext = {
+      ...fixture.ctx,
+      adapter,
+      commandEnv: { PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}` },
+      mergeQueue: createMergeQueueFacade(fixture.integrationPath, undefined, {
+        env: { PATH: `${bin}${path.delimiter}${process.env['PATH'] ?? ''}` },
+      }),
+      testCommands: Object.fromEntries(
+        layers.map((layer) => [layer, recordingCommand(marker, layer, exitCodes[layer] ?? 0)]),
+      ),
+      limits: { global: 100, perAgent: new Map(), perResourceClass: new Map() },
+      seed: 'seed',
+    };
+    // The run inputs `forge run implement-story --input storyId=... --input ownerRole=...` puts at the top of the
+    // context (`expression-context.ts`), and the story's claim as `run`.
+    const context: Record<string, unknown> = {
+      storyId: 'STORY-001',
+      ownerRole: 'backend',
+      run: {
+        filesExpected: ['src/story-001/**', 'tests/story-001/**'],
+        testPaths: ['tests/story-001/**'],
+      },
+    };
+    const state = await runEngine(workflowSource, context, ctx);
+    return {
+      fixture,
+      state,
+      seen,
+      marker,
+      verified,
+      events: await eventsOf(fixture.projectRoot, ctx.runId),
+    };
+  }
+
+  it('the plan is visible to red, the tests to green, the code to refactor, self-verify, the review and document, all before the merge; the merge then lands the story with its checks', async () => {
+    const { fixture, state, seen, marker, verified, events } = await runShipped();
+
+    expect(state.runStatus).toBe('completed');
+    expect(seen.get(`${PS}plan`)).toEqual([]);
+    expect(seen.get(`${PS}red`)).toEqual([HANDOFF_PATH]);
+    expect(seen.get(`${PS}green`)).toEqual([HANDOFF_PATH, 'tests/story-001/story-001.test.ts']);
+    expect(seen.get(`${PS}refactor`)).toContain('src/story-001/story-001.ts');
+    // `self-verify` (a command in a lane) ran where green's code and red's tests are: its fake `forge` says so.
+    expect(markerLines(verified)).toHaveLength(1);
+    for (const perspective of ['design', 'security', 'testing', 'performance']) {
+      expect(seen.get(`${PS}review:review:${perspective}`)).toContain('src/story-001/story-001.ts');
+    }
+    expect(seen.get(`${PS}document`)).toContain('src/story-001/story-001.ts');
+    // Review-before-merge: every landing belongs to the one merge step.
+    const merged = events.filter((event) => event.type === 'MergeCompleted');
+    expect(new Set(merged.map((event) => event.stepId))).toEqual(new Set([`${PS}merge`]));
+    // Six lanes changed something (plan, red, green, refactor, review, document); self-verify changed nothing.
+    expect(merged).toHaveLength(6);
+    const lines = markerLines(marker);
+    expect(
+      lines.filter((line) => !line.endsWith(path.join('worktrees', 'integration'))),
+    ).toHaveLength(18);
+    expect(
+      lines.filter((line) => line.endsWith(path.join('worktrees', 'integration'))),
+    ).toHaveLength(30);
+    const files = await filesOnIntegration(fixture);
+    for (const file of WATCHED) expect(files).toContain(file);
+    expect(files.filter((file) => /REVIEW-\d{3}\.md$/.test(file))).toHaveLength(1);
+    expect(fixture.ctx.laneRegistry.size).toBe(0);
+    expect(JSON.stringify(events)).not.toContain('command not found');
+  });
+
+  it('a failing pre-check stops the merge with the typed reason: nothing of the story is integrated', async () => {
+    const { fixture, events } = await runShipped({ lint: 1 });
+
+    const failure = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === `${PS}merge`,
+    )?.payload as { code?: string; message?: string } | undefined;
+    expect(failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
+    expect(failure?.message).toContain('execution.testCommands.lint');
+    expect(await filesOnIntegration(fixture)).not.toContain(HANDOFF_PATH);
   });
 });

@@ -255,7 +255,8 @@ export interface ReviewReportInput {
   /** The reviewing agent's id: what the document's `author` records. */
   readonly agentId: string;
   readonly reviews: readonly PerspectiveReview[];
-  /** The revision of the project checkout the perspectives read (they run in it, not in a lane). */
+  /** The revision the perspectives read: the head of the lane under review when the step is stacked on it
+   * (they run in that lane's worktree), else the project checkout's `HEAD`. */
   readonly reviewedRevision: string;
   /** The commit the step's own lane branched from. */
   readonly laneBase: string;
@@ -321,7 +322,7 @@ export function buildReviewReport(input: ReviewReportInput): ReviewReportContent
     `- Verdict: **${verdict}**`,
     ...provenanceLines(input.stepId, input.runId),
     `- Reviewer: ${code(input.agentId)}`,
-    `- Reviewed revision: ${code(input.reviewedRevision)} (the checkout the perspectives read; a change that lives only on a lane not yet merged into it was outside what they saw)`,
+    `- Reviewed revision: ${code(input.reviewedRevision)} (the tree the perspectives read: the reviewed lane's head when this step is stacked on it, else the project checkout)`,
     `- Lane base: ${code(input.laneBase)}`,
     `- Perspectives: ${perspectives.map((p) => `${p.name} (${p.verdict})`).join(', ')}`,
     `- Findings after merging identical summaries: ${counts}`,

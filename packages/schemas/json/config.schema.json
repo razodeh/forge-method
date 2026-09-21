@@ -171,6 +171,19 @@
           "minLength": 1,
           "type": "string"
         },
+        "mergeChecks": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "pre",
+              "post"
+            ]
+          },
+          "type": "object"
+        },
         "retainLaneWorktrees": {
           "enum": [
             "never",

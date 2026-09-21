@@ -1328,3 +1328,134 @@ describe('crash and resume: never a second REVIEW-NNN for one step', () => {
     expect(await resumeSwarmReviewStep(reviewNode(), ctx, lane, baseSha)).toBeUndefined();
   });
 });
+
+describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P38, Q217 known limitation)', () => {
+  const IMPL = 'wf:implement';
+  const REVIEW = 'wf:review';
+
+  function implementNode(): StepNode {
+    return node({
+      id: IMPL,
+      kind: 'command',
+      run: 'mkdir -p src && echo green > src/a.txt',
+      produces: ['src/**'],
+    });
+  }
+
+  /** implement -> review -> merge: the review is in the merge's landing scope, so it stacks on the implement lane. */
+  function graphOf(): ReadonlyMap<string, StepNode> {
+    const review = reviewNode(REVIEW, { dependsOn: [IMPL] });
+    const merge = node({
+      id: 'wf:merge',
+      kind: 'merge',
+      dependsOn: [REVIEW],
+      mergePolicy: { conflict: 'abort' },
+    });
+    return new Map([implementNode(), review, merge].map((entry) => [entry.id, entry] as const));
+  }
+
+  it("every perspective session runs in the implement lane's worktree, so it sees the diff under review, read-only as before", async () => {
+    const projectRoot = await createTempRepo('stacked-cwd');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, REVIEW, cleanPerspectives());
+    const requests = requestsOf(adapter);
+    const stepGraph = graphOf();
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+      integrationBase: 'main',
+    });
+    const withGraph = { ...ctx, stepGraph };
+
+    expect((await executeStep(implementNode(), withGraph)).status).toBe('succeeded');
+    const implementLane = withGraph.laneRegistry.get(IMPL);
+    if (implementLane === undefined) throw new Error('the implement step left no lane');
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, withGraph);
+
+    expect(outcome.status).toBe('succeeded');
+    const perspectiveRequests = requests.filter((request) =>
+      request.stepId.startsWith(`${REVIEW}:`),
+    );
+    expect(perspectiveRequests).toHaveLength(PERSPECTIVES.length);
+    for (const request of perspectiveRequests) {
+      // The change under review is there (it is on the implement lane and nowhere else yet) ...
+      expect(request.cwd).toBe(implementLane.path);
+      expect(await readdir(path.join(request.cwd, 'src'))).toContain('a.txt');
+      // ... the grant is the reviewer's own, read-only ...
+      expect(request.tools.write).toBe(false);
+    }
+    // ... and the project checkout, which the sessions used to read, does not hold it.
+    await expect(readdir(path.join(projectRoot, 'src'))).rejects.toThrow();
+    // The report says what was read: the implement lane's head, which is also the review lane's base.
+    const implementHead = (
+      await execa('git', ['rev-parse', implementLane.branch], { cwd: projectRoot })
+    ).stdout;
+    const reviewLane = withGraph.laneRegistry.get(REVIEW);
+    const text = await showOnBranch(
+      projectRoot,
+      reviewLane?.branch ?? '',
+      `${REVIEWS_DIR}/REVIEW-001.md`,
+    );
+    expect(text).toContain(`- Reviewed revision: \` ${implementHead} \``);
+    expect(text).toContain(`- Lane base: \` ${implementHead} \``);
+    // The implement lane was not touched by the review.
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: implementLane.path })).stdout,
+    ).toBe('');
+  });
+
+  it('a perspective that changes the lane under review fails the step: nothing is recorded, no review lane exists, and the message names the lane', async () => {
+    const projectRoot = await createTempRepo('stacked-mutates');
+    const fake = new FakePlatformAdapter();
+    // A misbehaving adapter (the fake enforces the read-only grant, so it is the adapter that writes): the security
+    // perspective's session leaves a file in the directory it was given.
+    const adapter = fake;
+    const original = fake.startSession.bind(fake);
+    fake.startSession = async (request) => {
+      if (request.stepId === `${REVIEW}:review:security`) {
+        await mkdir(path.join(request.cwd, 'src'), { recursive: true });
+        await writeFile(path.join(request.cwd, 'src', 'planted.txt'), 'backdoor\n');
+      }
+      return original(request);
+    };
+    scriptPerspectives(adapter, REVIEW, cleanPerspectives());
+    const stepGraph = graphOf();
+    const base = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+      integrationBase: 'main',
+    });
+    const ctx = { ...base, stepGraph };
+    expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
+    const implementLane = ctx.laneRegistry.get(IMPL);
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.message).toContain('changed the lane under review');
+    expect(failure.message).toContain(implementLane?.path ?? 'missing');
+    expect(ctx.laneRegistry.has(REVIEW)).toBe(false);
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).not.toContain('ArtifactCreated');
+  });
+
+  it('a review with no unmerged predecessor keeps reading the project checkout, as before', async () => {
+    const projectRoot = await createTempRepo('unstacked-cwd');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, REVIEW, cleanPerspectives());
+    const requests = requestsOf(adapter);
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+
+    expect((await executeStep(reviewNode(REVIEW), ctx)).status).toBe('succeeded');
+
+    for (const request of requests.filter((entry) => entry.stepId.startsWith(`${REVIEW}:`))) {
+      expect(request.cwd).toBe(projectRoot);
+    }
+  });
+});

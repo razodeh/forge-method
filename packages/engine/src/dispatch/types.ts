@@ -57,6 +57,11 @@ export interface VcsFacade {
   removeLane(handle: LaneHandle, retain: boolean): Promise<void>;
   commit(handle: LaneHandle, message: string, sign: boolean): Promise<{ readonly sha: string }>;
   resolveRevision(ref: string): Promise<string>;
+  /** Whether `ancestor` is reachable from (or equal to) `descendant` (`git merge-base --is-ancestor`), both
+   * resolvable revisions of the project's repository. Used to tell a lane that already contains another (a
+   * stacked chain, `PLAN-M13.md` P38) from an unrelated one. Optional so a hand-built facade need not implement
+   * it; absent, two lanes are never known to be related. */
+  isAncestor?(ancestor: string, descendant: string): Promise<boolean>;
   /** Whether `handle`'s own worktree differs from `baseSha` at all — a `command`-kind step's own work
    * callback (`steps.ts`) has no cheaper, already-computed signal the way an agent session's own
    * `SessionResult.changedFiles` is: an arbitrary shell command's stdout/exit code say nothing about
@@ -156,6 +161,8 @@ export interface MergeCandidateLike {
  * gives. */
 export type MergeOutcome =
   | { readonly kind: 'clean'; readonly mergeCommitSha: string }
+  /** Nothing was left to merge after the rebase: the lane's content is already in the integration branch. */
+  | { readonly kind: 'already-integrated' }
   | { readonly kind: 'conflict-resolved'; readonly mergeCommitSha: string }
   | {
       readonly kind: 'conflict-unresolved';
@@ -177,6 +184,17 @@ export type MergeOutcome =
 export interface MergeCandidateChecks {
   readonly preCheck?: string | undefined;
   readonly postCheck?: string | undefined;
+  /** The commands a check-set name resolved to (`merge-checks.ts`), run in order and stopping at the first
+   * failure, instead of `preCheck`/`postCheck`'s one literal command each. When present they win. */
+  readonly preCommands?: readonly MergeCheckCommand[] | undefined;
+  readonly postCommands?: readonly MergeCheckCommand[] | undefined;
+}
+
+/** One command a check set resolved to (`06` §6.5 steps 3 and 5). `label` names the config key it came from
+ * (absent for a literal command); a failing check's summary carries it so a reader knows which layer failed. */
+export interface MergeCheckCommand {
+  readonly command: string;
+  readonly label?: string | undefined;
 }
 
 export interface MergeQueueFacade {
@@ -342,6 +360,16 @@ export interface ExecuteStepContext {
    * docs but built a context without this fails loudly (a declared output is "not found") rather than
    * passing. */
   readonly docRoots?: DocRoots | undefined;
+  /** The project's `execution.testCommands` (`18` §18.3): the command of each test layer. A merge check that
+   * names a set (`preChecks: fast`, `10` §10.1) runs the commands of its layers (`merge-checks.ts`, `PLAN-M13.md`
+   * P38). Omitted, no layer has a command, so a named set is refused (`MERGE-CHECKS-UNCONFIGURED`), never run
+   * as a shell command. */
+  readonly testCommands?: Readonly<Partial<Record<string, string>>> | undefined;
+  /** `execution.mergeChecks` (`18` §18.3): the check set the engine runs before and after it integrates a lane
+   * that no `merge` step lands (`06` §6.4 rule 4), same vocabulary as a merge policy's `preChecks`/`postChecks`.
+   * Omitted, such a lane is integrated with no checks (`PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226). */
+  readonly mergeChecks?:
+    { readonly pre?: string | undefined; readonly post?: string | undefined } | undefined;
 }
 
 /** The four `paths` config keys an artifact path template's first segment names (`18` §18.7): `specs/...`,
@@ -427,8 +455,18 @@ export type StepOutcomeDetail =
        * (`runMergeStep`'s own "succeeds vacuously" case) — an honest empty list, not a fabricated
        * placeholder outcome for a merge that never actually happened. */
       readonly merges: readonly { readonly stepId: string; readonly outcome: MergeOutcome }[];
+      /** Layers of a named check set (`fast`, `full`) that had no configured `execution.testCommands` entry and so
+       * were not run (`PLAN-M13.md` P38): present only when some were skipped, so a merge that verified less than
+       * its set names says so in its outcome, not only in the event log. */
+      readonly skippedLayers?: {
+        readonly pre: readonly string[];
+        readonly post: readonly string[];
+      };
     }
   | { readonly kind: 'checkpoint' }
+  /** `elicit`: the names of the questions that were answered (their values live in the event log and in
+   * `ExecuteStepContext.answers`, never in an outcome that is printed). */
+  | { readonly kind: 'elicit'; readonly answered: readonly string[] }
   | { readonly kind: 'unsupported'; readonly stepKind: StepNodeKind };
 
 /** `PLAN-M5.md`'s own Surface text: "the raw result P16 (failure classification) and P12 (re-scheduling)

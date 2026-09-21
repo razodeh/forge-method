@@ -726,6 +726,13 @@ async function mergeDecideLane(
       ctx.laneRegistry.delete(laneId);
       return undefined;
     }
+    if (outcome.kind === 'already-integrated') {
+      // Nothing was left to merge (its content is already in the integration branch): only the lane is removed.
+      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
+      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
+      ctx.laneRegistry.delete(laneId);
+      return undefined;
+    }
     // Every other outcome (a real conflict aborted, or a pre/post-check failure -- neither policy nor
     // checks this module configures) retains the lane rather than losing it -- discoverable by the
     // next run's own orphan-reclaim (`@forge/engine/resume`'s own `reclaimOrphanedWorktrees`), the

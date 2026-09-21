@@ -97,12 +97,22 @@ Lane lifecycle:
   branch (this prevents KB merge conflicts entirely).
 - A lane whose step succeeded and which no `merge` step lands is enqueued in the merge queue by the engine
   as soon as the step succeeds (between scheduling ticks, in plan order), and lanes are created from the
-  integration branch tip, so a later step, an inline step and a gate see it. A `merge` step lands the lanes
+  integration branch tip (a stacked lane excepted, below), so a later step, an inline step and a gate see it. A `merge` step lands the lanes
   of the steps in its dependency closure (not only its direct predecessors), stopping at a `gate` or another
   `merge`, which are integration checkpoints (a step upstream of a checkpoint is integrated before it, so
-  what a gate reads is there); it batches and orders them and is never bypassed. A lane no `merge` lands has
-  no pre- or post-merge check set of its own (§6.5 steps 3 and 5 are those a `merge` step declares). An inline
-  step runs in the integration worktree, serialised with the merge queue, and must leave it unchanged.
+  what a gate reads is there); it batches and orders them and is never bypassed. A lane no `merge` lands is
+  checked by the run's `execution.mergeChecks` (§6.5 steps 3 and 5; each optional, none configured means none
+  run). An inline step runs in the integration worktree, serialised with the merge queue, and must leave it
+  unchanged.
+- A lane a `merge` lands is not integrated before that merge, so a step that builds on one is **stacked**: when
+  exactly one of a step's dependencies has a lane that is still waiting for the same `merge` (a dependency whose
+  lane is contained in another such lane's adds nothing), the step's lane is created from that lane's head, not
+  from the integration tip, and the step starts from the predecessor's committed output. The merge lands the
+  lanes in dependency order; the successor's lane holds the predecessor's commits, so once the predecessor has
+  landed the successor's rebase replays only its own. A step that depends on several such lanes none of which
+  contains the others branches from the integration tip and does not see them (`LaneCreated` lists them as
+  `unstackedPredecessors`). The base is recorded as the lane's `baseSha`, which resume restores. A `swarm-review`
+  step stacked on the lane it reviews runs its perspective sessions in that lane's worktree.
 - `.gitignore` MUST exclude `.forge/state/`. Worktrees live there, so they never self-reference.
 - Non-git projects: FORGE requires git. `init` offers to `git init`. If refused, parallelism is
   disabled and lanes degrade to sequential in-place execution with a loud warning.
@@ -127,6 +137,14 @@ Per candidate:
    Failure → automatic revert of the merge, lane marked `failed-integration`, and a
    `diagnostician` step is scheduled with the failure evidence.
 6. Emit `MergeCompleted`/`MergeReverted` events.
+
+A merge policy's `preChecks`/`postChecks` (and `execution.mergeChecks`) name a check set, not a command: `fast`
+is the `typecheck`, `lint` and `unit` layers, `full` adds `integration` and `contract` (`e2e`, `nfr` and `smoke`
+need a deployed environment and belong to the gates), and a single layer name is that layer alone; each layer
+runs `execution.testCommands.<layer>` (`13` F-TEST-1) with a timeout and an output cap. Any other value is a shell
+command. A layer with no command is skipped and recorded on `MergeStarted`; a set none of whose layers has one
+refuses the merge before anything is landed (`MERGE-CHECKS-UNCONFIGURED`, naming the config keys), because
+a check that cannot run has not passed.
 
 **Speculation is out of scope for v1** (no optimistic parallel merges). Correctness over throughput.
 

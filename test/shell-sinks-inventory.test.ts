@@ -70,9 +70,12 @@ const INVENTORY: Readonly<Record<string, Sink>> = {
   'packages/engine/src/dispatch/facades.ts': {
     source:
       'gate `check.run` (gate YAML in `.forge/checks`, module or overlay authored) and a merge policy’s pre/post checks ' +
-      '(workflow YAML)',
+      '(workflow YAML), which are either a literal command or, for a check-set name (`fast`, `full`, `unit`, ...), the ' +
+      '`execution.testCommands.<layer>` commands of its layers (P38, `merge-checks.ts`), and `execution.mergeChecks`',
     checks:
-      'no interpolation of run inputs or model text; parent environment plus `commandEnv`; author-trusted',
+      'no interpolation of run inputs or model text; parent environment plus `commandEnv`; author-trusted. A merge check ' +
+      'runs with a timeout and an output cap (`MERGE_CHECK_LIMITS`, P38) and a configured layer command is refused when it ' +
+      'holds a line break or NUL',
     status: 'trusted',
   },
   'packages/cli/src/commands/run/gate-commands.ts': {

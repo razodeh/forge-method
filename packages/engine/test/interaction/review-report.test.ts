@@ -142,7 +142,7 @@ describe('the document', () => {
   it('states what the perspectives read: the checkout revision and the lane base', () => {
     const { text } = file([review('design')]);
     expect(text).toContain(
-      `- Reviewed revision: \` ${'a'.repeat(40)} \` (the checkout the perspectives read;`,
+      `- Reviewed revision: \` ${'a'.repeat(40)} \` (the tree the perspectives read:`,
     );
     expect(text).toContain(`- Lane base: \` ${'b'.repeat(40)} \``);
   });

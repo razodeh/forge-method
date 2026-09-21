@@ -38,7 +38,8 @@ export type RunFailureReason =
   | 'step-failed'
   /** Steps never ran and nothing above explains it (concurrency 0, a caller's own `canAdmit`). */
   | 'no-admissible-step'
-  /** The run could not be set up (a step's agent file could not be read to resolve its cost ceiling). */
+  /** The run could not be set up (a step's agent file could not be read to resolve its cost ceiling, or a merge check
+   * names a set the project's `execution.testCommands` cannot supply, `PLAN-M13.md` P38). */
   | 'setup'
   /** Nothing failed or is pending, yet not every step succeeded (a skipped step). */
   | 'incomplete';

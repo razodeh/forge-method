@@ -163,3 +163,13 @@ describe('claimsMayOverlap — soundness over generated claims', () => {
     }
   });
 });
+
+describe('globsOverlap — an exclusion (`!glob`) claims nothing (PLAN-M13.md P38)', () => {
+  it('never overlaps anything, so a step that excludes its test paths is not serialised against every other step', () => {
+    expect(globsOverlap('!tests/a/**', 'tests/b/**')).toBe(false);
+    expect(globsOverlap('tests/b/**', '!tests/a/**')).toBe(false);
+    expect(globsOverlap('!tests/a/**', '!tests/a/**')).toBe(false);
+    // Real claims still overlap as before.
+    expect(globsOverlap('tests/a/**', 'tests/a/x.ts')).toBe(true);
+  });
+});

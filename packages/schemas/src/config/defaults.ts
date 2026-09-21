@@ -50,6 +50,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     conflictPolicy: 'agent',
     sharedMutablePaths: [],
     testCommands: {},
+    mergeChecks: {},
   },
   budget: {
     perRunUsd: 25,

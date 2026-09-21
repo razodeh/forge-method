@@ -99,3 +99,40 @@ export function stepsLandedByMerges(nodes: readonly StepNode[]): ReadonlySet<str
   }
   return landed;
 }
+
+const scopeCache = new WeakMap<
+  ReadonlyMap<string, StepNode>,
+  ReadonlyMap<string, ReadonlySet<string>>
+>();
+
+/** The landing scope of every merge node of `nodes`, by merge id (cached per plan: it is read once per step). */
+function scopesByMerge(
+  nodes: ReadonlyMap<string, StepNode>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const cached = scopeCache.get(nodes);
+  if (cached !== undefined) return cached;
+  const scopes = new Map<string, ReadonlySet<string>>();
+  for (const [id, node] of nodes) {
+    if (node.kind === 'merge') scopes.set(id, new Set(mergeLandingScope(nodes, id)));
+  }
+  scopeCache.set(nodes, scopes);
+  return scopes;
+}
+
+/**
+ * Whether the lanes of steps `a` and `b` are landed by one and the same `merge` step (`PLAN-M13.md` P38, Q226).
+ * A lane is stacked on its predecessor's lane only then: what a merge lands is reviewed as one body of work,
+ * so the successor may build on the predecessor's unmerged commits and the merge lands them in dependency
+ * order. A predecessor in no merge's scope was (or will be) integrated by the engine, and a successor branches
+ * from the integration tip like any other lane.
+ */
+export function sharesMergeScope(
+  nodes: ReadonlyMap<string, StepNode>,
+  a: string,
+  b: string,
+): boolean {
+  for (const scope of scopesByMerge(nodes).values()) {
+    if (scope.has(a) && scope.has(b)) return true;
+  }
+  return false;
+}

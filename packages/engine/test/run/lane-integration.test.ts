@@ -420,7 +420,7 @@ describe('conflicting lanes follow the configured policy', () => {
 });
 
 describe('an explicit merge step is untouched', () => {
-  it('a lane a merge step lands is NOT integrated early: review does not see implement, the merge lands both', async () => {
+  it('a lane a merge step lands is NOT integrated early (review is stacked on the implement lane, and sees it), and the merge lands both', async () => {
     const project = await createProject('explicit-merge');
     const { adapter, seen } = scriptedAdapter(
       {
@@ -444,8 +444,10 @@ describe('an explicit merge step is untouched', () => {
     const state = await runEngine(source, {}, contextFor(project, { adapter }));
 
     expect(state.runStatus).toBe('completed');
-    // Review-before-merge: nothing of `implement` reached integration before the merge step.
-    expect(seen.get('em:review')).toEqual([]);
+    // Review-before-merge: nothing of `implement` reached the integration branch before the merge step (every merge
+    // event below belongs to it). `review` still sees the implement lane's output: its lane is stacked on it
+    // (`PLAN-M13.md` P38, `stacked-lanes.test.ts`), which is what lets a review read the change under review.
+    expect(seen.get('em:review')).toEqual(['impl.txt']);
     // The merge landed the work it merges (the implement lane too), not only its direct predecessor's.
     expect(await git(project.integrationPath, 'show', 'HEAD:impl.txt')).toBe('impl');
     expect(await git(project.integrationPath, 'show', 'HEAD:review.txt')).toBe('review');
@@ -509,8 +511,9 @@ describe('an explicit merge step is untouched', () => {
     expect(state.runStatus).toBe('completed');
     // `design` integrated before the gate (the gate reads the integrated tree) and before `build` branched.
     expect(seen.get('gc:build')).toEqual(['contract.txt']);
-    // `build` sits between the gate and the merge: it waits for the merge, so `later` does not see it.
-    expect(seen.get('gc:later')).toEqual(['contract.txt']);
+    // `build` sits between the gate and the merge: it waits for the merge and is not integrated early, but `later`
+    // is stacked on its lane (`PLAN-M13.md` P38), so it sees it all the same.
+    expect(seen.get('gc:later')).toEqual(['contract.txt', 'build.txt']);
     expect(await mergedStepOrder(project)).toEqual(['gc:design', 'gc:build', 'gc:later']);
     const events = await eventsOf(project, 'run-lane');
     const owners = events

@@ -9,7 +9,11 @@
  *
  * 1. One read-only session per perspective (`dispatchAgentStep`'s `swarm-review`: the P5 participant sessions,
  *    each with the reviewer's role block and `prompt.briefs.swarm-review`). Nothing is written and no lane
- *    exists yet, so a refused or failed perspective leaves no worktree behind and no partial report.
+ *    of the review's own exists yet, so a refused or failed perspective leaves no worktree behind and no partial
+ *    report. The sessions run in the worktree of the lane the review is stacked on when there is one (`lane-base.ts`,
+ *    `PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226: the diff under review is on that lane, not in the project
+ *    checkout), else in the project checkout; a session that leaves a change in a lane it reviews fails the step
+ *    (the lane is one a merge will land).
  * 2. Only if every perspective session ended ok, the engine creates the step's lane through the same
  *    `runLaneLifecycle` every agent step uses (`LaneCreated`, commit on the lane branch, claim enforcement,
  *    then the P7 output check, then `LaneReady`), writes `REVIEW-NNN.md` into it and commits it. The reviewer
@@ -51,6 +55,7 @@ import { TelemetryError } from '@forge/telemetry/errors';
 
 import { isAssemblyRefusal, markRefusal, refusalFailure } from '../dispatch/assemble.ts';
 import { docRootsOf, documentProblems, outputPathFor } from '../dispatch/outputs.ts';
+import { resolveLaneBase } from '../dispatch/lane-base.ts';
 import { runLaneLifecycle, sanitizeUsageNumber } from '../dispatch/steps.ts';
 import type {
   ExecuteStepContext,
@@ -292,8 +297,9 @@ async function writeReport(
     runId: ctx.runId,
     agentId,
     reviews,
-    // What the perspectives actually read: the project's own checkout (`runParticipantSession`'s `cwd`), so a
-    // reader can tell a verdict on that tree from one on a change that is still on an unmerged lane.
+    // What the perspectives actually read: the reviewed lane's head when the step is stacked on it, else the
+    // project's own checkout (`runParticipantSession`'s `cwd`), so a reader can tell a verdict on that tree from
+    // one on a change that is still on an unmerged lane.
     reviewedRevision,
     laneBase: baseSha,
   });
@@ -341,10 +347,18 @@ export async function runSwarmReviewStep(
     return failed(node, startedAt, ctx.now(), emptyDetail, noPerspectives(node));
   }
 
-  // What the perspectives are about to read: the project checkout as of now, before any session runs.
+  // What the perspectives are about to read (`PLAN-M13.md` P38, Q226). A review stacked on the lane it reviews (its
+  // predecessor's unmerged lane in the same merge, `lane-base.ts`) reads THAT lane's worktree, so the diff under
+  // review is there; otherwise the project checkout as of now, as before. Either way it is resolved before any
+  // session runs, and no lane of the review's own exists yet (a refused or failed perspective leaves none behind).
+  const base = await resolveLaneBase(node, ctx);
+  if (!base.ok) return failed(node, startedAt, ctx.now(), emptyDetail, base.failure);
+  const reviewedLane =
+    base.value.stackedOn === undefined ? undefined : ctx.laneRegistry.get(base.value.stackedOn);
   let reviewedRevision: string;
   try {
-    reviewedRevision = await ctx.vcs.resolveRevision('HEAD');
+    reviewedRevision =
+      reviewedLane === undefined ? await ctx.vcs.resolveRevision('HEAD') : base.value.sha;
   } catch (cause) {
     return failed(node, startedAt, ctx.now(), emptyDetail, {
       source: 'vcs',
@@ -377,6 +391,7 @@ export async function runSwarmReviewStep(
       failFast: true,
       // Recorded as each session ends: a later perspective that throws must not lose what was already spent.
       onParticipant: (participant) => recordUsage(node, ctx, model, participant),
+      ...(reviewedLane === undefined ? {} : { cwd: reviewedLane.path }),
     });
   } catch (cause) {
     // The event log failing (a usage record the hook could not append) is `executeStep`'s to report (`RUN-038`).
@@ -398,6 +413,24 @@ export async function runSwarmReviewStep(
     });
   }
 
+  // The perspectives are read-only, but they ran inside a lane a merge will land: a change left in it would be
+  // carried into the integration branch under the implementer's step, unreviewed. Checked before anything is
+  // recorded, and failed closed.
+  if (reviewedLane !== undefined) {
+    const dirtied = await ctx.vcs.hasChanges(reviewedLane, base.value.sha).catch(() => true);
+    if (dirtied) {
+      return failed(
+        node,
+        startedAt,
+        ctx.now(),
+        emptyDetail,
+        outputFailure(
+          node,
+          `a review perspective changed the lane under review (${reviewedLane.path}); the perspectives are read-only, so nothing was recorded and the lane needs inspecting before it is merged`,
+        ),
+      );
+    }
+  }
   const participants = interaction.participants ?? [];
   // `dispatchAgentStep` builds this outcome from the first perspective's session.
   const detail = interaction.outcome.detail;

@@ -41,6 +41,8 @@ export interface ParticipantSessionOptions {
   /** The interaction mode this turn belongs to (`swarm-review`, `panel`, ...): the key the dispatching
    * agent's `prompt.briefs.<mode>` is looked up by (`15` §15.3). */
   readonly briefKey?: string | undefined;
+  /** Where the session runs; default the project checkout (`ctx.projectRoot`, never a lane of its own). */
+  readonly cwd?: string | undefined;
 }
 
 /**
@@ -69,7 +71,7 @@ export async function runParticipantSession(
   prompt: string,
   options: ParticipantSessionOptions = {},
 ): Promise<SessionResult> {
-  const { outputSchema, untrustedInput, briefKey } = options;
+  const { outputSchema, untrustedInput, briefKey, cwd } = options;
   // `PLAN-M13.md` P5 (D9): the turn's task text plays block [4] of the same nine-block prompt an agent
   // step gets, so a participant session carries its agent's role block, the operating contract and
   // resolved constraints instead of a bare prompt with an empty system prompt. Read-only: participants
@@ -89,7 +91,7 @@ export async function runParticipantSession(
   const request: SessionRequest = {
     runId: ctx.runId,
     stepId: assembled.stepKey,
-    cwd: ctx.projectRoot,
+    cwd: cwd ?? ctx.projectRoot,
     systemPrompt: assembled.systemPrompt,
     prompt:
       untrustedInput === undefined ? assembled.prompt : `${assembled.prompt}\n\n${untrustedInput}`,
@@ -568,6 +570,7 @@ async function dispatchSwarmReview(
       `${node.brief ?? ''}\n\nReview the change from the "${perspective}" perspective. ${perspectiveAsks(perspective)} Report real findings, each with a severity of "blocking", "major", or "minor", plus what you actually checked — an empty findings list with nothing checked reads as "never looked," not "looked and found nothing."${structuredOutput ? '' : PROSE_OUTPUT_CONTRACT}`,
       {
         briefKey: 'swarm-review',
+        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(structuredOutput ? { outputSchema: SWARM_REVIEW_OUTPUT_SCHEMA } : {}),
       },
     );

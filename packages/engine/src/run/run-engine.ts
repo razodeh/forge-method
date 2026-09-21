@@ -32,7 +32,7 @@ import {
 } from '../budget/index.ts';
 import type { BudgetState } from '../budget/types.ts';
 import { executeStep } from '../dispatch/execute.ts';
-import { integrateLane, type ConflictPolicy } from '../dispatch/integrate.ts';
+import { integrateLane, resolveLaneChecks, type ConflictPolicy } from '../dispatch/integrate.ts';
 import type { ExecuteStepContext, StepFailureInfo, StepOutcome } from '../dispatch/types.ts';
 import { compileRunPlan, stepsLandedByMerges, type StepNode } from '../plan/index.ts';
 import { reconstructRunState } from '../resume/reconstruct.ts';
@@ -225,6 +225,57 @@ async function integrateSucceededLanes(
   }
 }
 
+/** The first merge check (of a `merge` step's policy or `execution.mergeChecks`) that cannot be resolved against the
+ * run's `execution.testCommands`, with its message; `undefined` when every one can. */
+function preflightMergeChecks(
+  nodes: readonly StepNode[],
+  ctx: RunEngineContext,
+  resumeFrom: RunState | undefined,
+): string | undefined {
+  // A step a resumed run has already finished is not run again, so what it would have resolved no longer matters
+  // (`execution.testCommands` may have been edited since).
+  const pending = (node: StepNode): boolean =>
+    resumeFrom?.stepStatuses.get(node.id) !== 'succeeded';
+  // `execution.mergeChecks` matters only for a step with a lane that no `merge` step lands (`integrateLane`).
+  const landedByMerges = stepsLandedByMerges(nodes);
+  const hasLanes = nodes.some(
+    (node) =>
+      (node.kind === 'agent' || node.kind === 'command') &&
+      node.laneAffinity !== 'inline' &&
+      !landedByMerges.has(node.id) &&
+      pending(node),
+  );
+  const declared = [
+    ...(ctx.mergeChecks === undefined || !hasLanes
+      ? []
+      : [
+          {
+            pre: ctx.mergeChecks.pre,
+            post: ctx.mergeChecks.post,
+            preSource: 'execution.mergeChecks.pre',
+            postSource: 'execution.mergeChecks.post',
+          },
+        ]),
+    ...nodes.flatMap((node) =>
+      node.kind === 'merge' && node.mergePolicy !== undefined && pending(node)
+        ? [
+            {
+              pre: node.mergePolicy.preChecks,
+              post: node.mergePolicy.postChecks,
+              preSource: `the merge policy preChecks of ${node.id}`,
+              postSource: `the merge policy postChecks of ${node.id}`,
+            },
+          ]
+        : [],
+    ),
+  ];
+  for (const entry of declared) {
+    const resolved = resolveLaneChecks(ctx, entry);
+    if (!resolved.ok) return resolved.failure.message;
+  }
+  return undefined;
+}
+
 function allSucceeded(nodes: readonly StepNode[], scheduler: Scheduler): boolean {
   return nodes.every((node) => scheduler.status(node.id) === 'succeeded');
 }
@@ -269,6 +320,27 @@ export async function runEngine(
     const record: RunFailureRecord = {
       reason: 'setup',
       message: `the per-step cost ceilings could not be resolved: ${message}`,
+      failedSteps: [],
+      failedTotal: 0,
+      unfinished: [],
+      unfinishedTotal: 0,
+    };
+    await ctx.telemetry.emit({ type: 'RunFailed', payload: record });
+    return reconstructRunState(readEvents(ctx.projectRoot, ctx.runId));
+  }
+
+  // The merge check sets are resolved once here too (`PLAN-M13.md` P38): a `merge` policy or `execution.mergeChecks`
+  // that names a set the project's `execution.testCommands` cannot supply would otherwise be found only at the merge,
+  // after every story lane has been built and paid for. The run fails on the record before anything is dispatched.
+  const checkRefusal = preflightMergeChecks(nodes, ctx, resumeFrom);
+  if (checkRefusal !== undefined) {
+    if (resumeFrom === undefined) {
+      await ctx.telemetry.emit({ type: 'RunPlanned', payload: { planRef: parsed.workflow.id } });
+      await ctx.telemetry.emit({ type: 'RunStarted' });
+    }
+    const record: RunFailureRecord = {
+      reason: 'setup',
+      message: `the merge checks cannot run, so nothing was dispatched: ${checkRefusal}`,
       failedSteps: [],
       failedTotal: 0,
       unfinished: [],

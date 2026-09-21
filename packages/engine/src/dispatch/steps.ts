@@ -34,8 +34,9 @@ import {
   type AssembledSession,
 } from './assemble.ts';
 import { GateNotFoundError } from './facades.ts';
-import { contentLanded, landLane } from './integrate.ts';
+import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
+import { resolveLaneBase } from './lane-base.ts';
 import { docRootsOf, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { runShellCommand } from './shell.ts';
@@ -109,6 +110,41 @@ function buildCommitMessage(node: StepNode, ctx: ExecuteStepContext, subject: st
 /** Bound on the paths a `PolicyViolation` event lists (the totals are always recorded). */
 const MAX_VIOLATION_PATHS_LOGGED = 50;
 
+/**
+ * `06` §6.4 lifecycle step 1: creates the step's lane and records `LaneCreated` with the base it was created from.
+ * The base is the sha of the lane's predecessor when the step builds on an unmerged lane of the same merge
+ * (`lane-base.ts`, `PLAN-M13.md` P38: a stacked lane), else the integration tip. It is resolved to a sha once and
+ * the lane is created FROM THAT SHA, not from the branch name again: the integration branch moves during a run
+ * (lanes are integrated into it, `PLAN-M13.md` P19), and a lane created from a tip newer than the `baseSha` its
+ * claim is enforced against would show other lanes' files as its own out-of-claim writes. Shared by
+ * `runLaneLifecycle` and by a step that needs its lane before its work starts (`swarm-review`).
+ */
+export async function createLaneForStep(
+  node: StepNode,
+  ctx: ExecuteStepContext,
+): Promise<
+  | { readonly ok: true; readonly lane: LaneHandle; readonly baseSha: string }
+  | { readonly ok: false; readonly failure: StepFailureInfo }
+> {
+  const base = await resolveLaneBase(node, ctx);
+  if (!base.ok) return base;
+  const { sha, stackedOn, unstackedPredecessors } = base.value;
+  const laneResult = await runVcsStep(node.id, () => ctx.vcs.createLane(node.id, sha));
+  if (!laneResult.ok) return laneResult;
+  const lane = laneResult.value;
+  await ctx.telemetry.emit({
+    type: 'LaneCreated',
+    stepId: node.id,
+    laneId: lane.laneId,
+    payload: {
+      baseSha: sha,
+      ...(stackedOn === undefined ? {} : { stackedOn }),
+      ...(unstackedPredecessors === undefined ? {} : { unstackedPredecessors }),
+    },
+  });
+  return { ok: true, lane, baseSha: sha };
+}
+
 /** `06` §6.4's own lane lifecycle, steps 1-3 plus claim enforcement (`Q62`'s own sixth note: enforcement
  * runs once a lane's session ends, before handing the lane to the merge queue — a later, separate
  * `merge`-kind step's own job, `ExecuteStepContext.laneRegistry`'s own doc comment has the fuller
@@ -149,28 +185,10 @@ export async function runLaneLifecycle(
   let lane: LaneHandle;
   let baseSha: string;
   if (existing === undefined) {
-    const baseShaResult = await runVcsStep(node.id, () =>
-      ctx.vcs.resolveRevision(ctx.integrationBase),
-    );
-    if (!baseShaResult.ok)
-      return failed(node.id, startedAt, ctx.now(), emptyDetail, baseShaResult.failure);
-
-    // From the sha just resolved, not from the branch name again: the integration branch moves during a run
-    // (lanes are integrated into it, `PLAN-M13.md` P19), and a lane created from a tip newer than the `baseSha`
-    // its claim is enforced against would show other lanes' files as its own out-of-claim writes.
-    const laneResult = await runVcsStep(node.id, () =>
-      ctx.vcs.createLane(node.id, baseShaResult.value),
-    );
-    if (!laneResult.ok)
-      return failed(node.id, startedAt, ctx.now(), emptyDetail, laneResult.failure);
-    lane = laneResult.value;
-    baseSha = baseShaResult.value;
-    await ctx.telemetry.emit({
-      type: 'LaneCreated',
-      stepId: node.id,
-      laneId: lane.laneId,
-      payload: { baseSha },
-    });
+    const created = await createLaneForStep(node, ctx);
+    if (!created.ok) return failed(node.id, startedAt, ctx.now(), emptyDetail, created.failure);
+    lane = created.lane;
+    baseSha = created.baseSha;
   } else {
     lane = existing.lane;
     baseSha = existing.baseSha;
@@ -805,6 +823,25 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
   const conflictPolicy = node.mergePolicy.conflict;
   const mergePolicy = node.mergePolicy;
 
+  // The declared checks, resolved once before any lane is touched (`PLAN-M13.md` P38): `preChecks: fast` names a
+  // set of test layers (`execution.testCommands`), not a shell command. One that cannot be resolved fails the step
+  // as data, with the config key named, and every lane stays where it was.
+  const resolvedChecks = resolveLaneChecks(ctx, {
+    pre: mergePolicy.preChecks,
+    post: mergePolicy.postChecks,
+    preSource: `the merge policy preChecks of ${node.id}`,
+    postSource: `the merge policy postChecks of ${node.id}`,
+  });
+  if (!resolvedChecks.ok) {
+    return failed(
+      node.id,
+      startedAt,
+      ctx.now(),
+      { kind: 'merge', merges: [] },
+      resolvedChecks.failure,
+    );
+  }
+
   // The lanes this merge lands (`PLAN-M13.md` P19, Q221): with the run's compiled plan at hand, the lanes of
   // every step in the merge's dependency closure (`mergeLandingScope`), dependencies first, so a `build-stage`
   // merge over the per-story reviews lands the `implement` lanes those reviews approved, not just the review
@@ -851,19 +888,25 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       laneStepId: predecessorId,
       lane,
       conflictPolicy,
-      checks: { preCheck: mergePolicy.preChecks, postCheck: mergePolicy.postChecks },
+      checks: resolvedChecks.value.checks,
+      skippedLayers: resolvedChecks.value.skipped,
     });
     if (landed.outcome !== undefined)
       merges.push({ stepId: predecessorId, outcome: landed.outcome });
     if (landed.failure !== undefined) anyFailed ??= landed.failure;
-    if (!contentLanded(landed.outcome)) {
+    if (!contentLanded(landed.outcome) && landed.alreadyIntegrated !== true) {
       notLanded.add(predecessorId);
       ctx.laneRegistry.set(predecessorId, lane);
     }
   }
 
   const finishedAt = ctx.now();
-  const detail: StepOutcomeDetail = { kind: 'merge', merges };
+  const { skipped } = resolvedChecks.value;
+  const detail: StepOutcomeDetail = {
+    kind: 'merge',
+    merges,
+    ...(skipped.pre.length + skipped.post.length === 0 ? {} : { skippedLayers: skipped }),
+  };
   if (anyFailed !== undefined) return failed(node.id, startedAt, finishedAt, detail, anyFailed);
   return succeeded(node.id, startedAt, finishedAt, detail);
 }

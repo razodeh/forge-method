@@ -122,6 +122,11 @@ function countOpenBrackets(value: string): number {
 }
 
 export function globsOverlap(a: string, b: string): boolean {
+  // A `!`-prefixed entry is an exclusion (`06` §6.7, `produces: ['{{item.files_expected}}', '!{{item.test_paths}}']`, P36):
+  // it claims nothing, so it overlaps nothing. `minimatch` reads `!x` as "everything but x", which would make every
+  // step with an exclusion overlap every other step (and the shipped `build-stage` a dependency cycle for any two
+  // stories with test paths, `PLAN-M13.md` P38).
+  if (a.startsWith('!') || b.startsWith('!')) return false;
   if (a === b) return true;
   if (a.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK || b.length > MAX_GLOB_LENGTH_FOR_OVERLAP_CHECK)
     return false;
