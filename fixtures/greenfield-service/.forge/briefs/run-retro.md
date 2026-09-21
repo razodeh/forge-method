@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=b86d5bfc921d1091bbb8dfa40e3f1e5513bdbb615bd9e29ac8a0eb0705667f7b — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=7866bd1b306189c61d875b026bc91e16230164b2f6a60846002d11bfb09d6552 — edits will be overwritten; use overrides/ -->
 The stage is over. This retrospective is the only mechanism by which the process improves itself,
 and it must end in changes with owners, not observations. You have real data; use it instead of
 recollection.
@@ -30,6 +30,11 @@ who actually took part; if that is you alone, set `no_disagreement_observed: tru
 them (`FORGE_REQUEST_CONTEXT:`); if they still are not, use the stage boundary timestamps and set
 `cost_usd` to 0, and say in Frame that 0 marks unavailable data, not a measured cost. If even those
 are unavailable, ask (`FORGE_ASK:`) rather than guess. Do not estimate any of them.
+
+Write `started` and `ended` as UTC datetimes with a trailing `Z` and no offset, in the shape
+`2026-01-15T10:00:00Z`: the record's schema rejects a local offset such as `-04:00` even though it
+is valid ISO 8601, and `created` and `updated` are plain dates (`2026-01-15`). `author` is your own
+agent id, not a role title you make up.
 
 - **Frame:** the stage, the period and the data you had.
 - **Diverge:** what the data shows, good and bad, each observation with the number and where it came

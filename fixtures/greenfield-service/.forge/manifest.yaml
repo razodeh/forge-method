@@ -5,4 +5,4 @@ modules:
     checksum: 21efdef3c293c8f047d8ec397a6566dedfec70061b35c79cf50dc41c445d649d
   - id: "@forge/templates"
     version: 0.0.0
-    checksum: f3e7f9e1cf1a8e790f8c5519cef90fc1f18a02c06e81f6a3f61eae09bc84e3a6
+    checksum: b8e3396ed674e2eda422faaa155febfa2957860837bd56425223b29f184404fa
