@@ -146,7 +146,7 @@ kb_propose:                        # sections it may only propose changes to
 
 tools:
   read: true
-  write: false                     # architects don't write source code
+  write: true                      # architects don't write source code; the engine confines every step that declares outputs to them
   exec: [ "git log*", "git diff*", "ls*", "rg*", "cat*", "tree*" ]
   network: false
   git_commit: docs-only            # none | docs-only | lane | full
@@ -187,7 +187,7 @@ mcp:                               # external reach: per-server, per-tool grants
 
 ceiling:                           # the maximum an overlay may widen `tools` to (see 15 §15.3.2)
   tools:
-    write: false
+    write: true
     exec: [ "git *", "ls*", "rg*", "cat*", "tree*" ]
     network: none
     deploy: false
@@ -195,8 +195,8 @@ ceiling:                           # the maximum an overlay may widen `tools` to
 prompt:
   system: prompts/architect.system.md
   briefs:
-    design-system: prompts/architect.design-system.md
-    review-change: prompts/architect.review-change.md
+    select-architecture-style: prompts/architect.select-architecture-style.md
+    change-impact-analysis: prompts/architect.change-impact-analysis.md
 ```
 
 ### Prompt compilation

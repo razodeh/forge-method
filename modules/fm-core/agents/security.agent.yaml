@@ -46,7 +46,7 @@ kb_propose:
 
 tools:
   read: true
-  write: false
+  write: true
   exec: ['git log*', 'ls*', 'rg*', 'cat*']
   network: false
   git_commit: docs-only

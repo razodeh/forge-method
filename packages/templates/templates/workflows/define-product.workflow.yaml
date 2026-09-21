@@ -23,7 +23,10 @@ steps:
 
   - id: write-prd
     kind: agent
-    agent: po
+    # `pm`, not `po` (`05` §5.2: scope, priority and the PRD/capabilities are the product manager's; the
+    # product owner owns stories, `po.system.md` reserves scope to the PM). It was `po` only by accident of
+    # authorship (`PLAN-M13.md` P15, `SPEC-QUESTIONS.md` Q220).
+    agent: pm
     brief: briefs/write-prd.md
     dependsOn: [write-vision, capability-brainstorm]
     outputs: [{ type: Capability, cardinality: many }, { type: NFR, cardinality: many }]

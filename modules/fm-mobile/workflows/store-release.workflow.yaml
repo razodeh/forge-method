@@ -104,6 +104,10 @@ steps:
     dependsOn: [store-readiness-gate]
     brief: briefs/prepare-store-submission.md
     inputs: ['kb:delivery/**']
+    # The record itself is `produces` (no registered artifact type describes a store submission); the
+    # `HandoffRecord` that registers it is the declared output, so P7 checks the step wrote something and a
+    # session that writes nothing fails instead of "succeeding" (`PLAN-M13.md` P15, Q208 finding 4).
+    outputs: [{ type: HandoffRecord, subtype: store-submission-record }]
     produces: 'docs/forge/kb/delivery/release/store-submission-{{buildTarget}}.md'
     limits: { maxTurns: 20, maxCostUsd: 2.0 }
     retry: { maxAttempts: 2, retryOn: [transient, validation] }

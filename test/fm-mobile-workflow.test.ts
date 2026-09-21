@@ -122,6 +122,29 @@ function fixtureAdapter(): PlatformAdapter {
         relativePath: `docs/forge/kb/delivery/release/store-submission-${BUILD_TARGET}.md`,
         content: `# Store submission for ${BUILD_TARGET}\n`,
       },
+      // The step declares `outputs: [HandoffRecord(store-submission)]` (`PLAN-M13.md` P15): the register entry
+      // that registers the record is what the output contract check (P7) requires, so a session that wrote
+      // only the record would now fail the step.
+      {
+        relativePath: 'docs/forge/reports/handoffs.md',
+        content: [
+          '---',
+          'type: HandoffRecord',
+          'handoffs:',
+          '  - id: HO-0001',
+          '    from: release',
+          '    to: human',
+          '    step: prepare-store-submission -> merge-submission',
+          "    timestamp: '2026-01-15T10:00:00Z'",
+          `    delivered: ['subtype: store-submission-record', 'docs/forge/kb/delivery/release/store-submission-${BUILD_TARGET}.md']`,
+          '    open_questions: []',
+          '    assumptions: []',
+          '    constraints_for_receiver: []',
+          '    acceptance_for_receiver: []',
+          '---',
+          '',
+        ].join('\n'),
+      },
     ],
   });
   return adapter;

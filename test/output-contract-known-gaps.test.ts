@@ -5,19 +5,20 @@
  * rather than listed by hand.
  *
  * Why it exists. The output contract check fails an agent step whose declared outputs are not produced.
- * Shipped workflows assign file-producing steps to agents whose own grant forbids writing files
+ * Shipped workflows used to assign file-producing steps to agents whose own grant forbade writing files
  * (`em`, `analyst`, `pm`, `po`, `architect`, `reviewer`, `security`, `test-architect`, `ux`,
- * `data-architect`, `integration-architect`): those steps cannot succeed until `PLAN-M13.md` P11 (an owner
- * decision: give the roles a write grant, or move the outputs to roles that have one) resolves each. The
- * check is deliberately not exempted for them and does not consult this inventory; this test only makes the
- * size of the gap visible and makes changing it deliberate. When P11 fixes some steps this goes red: lower
- * the pinned counts and delete the fixed rows in the same commit.
+ * `data-architect`, `integration-architect`), and 28 steps could not succeed. The check is deliberately not
+ * exempted for any step and does not consult this inventory; this test makes the size of the gap visible
+ * and makes changing it deliberate.
  *
  * One class: `no-write-grant`, the agent's `tools.write` is `false`, so its session cannot write a file at
- * all (the live case: `retro:run-retro`). P15 flips those grants.
+ * all (the live case: `retro:run-retro`). `PLAN-M13.md` P15 (`SPEC-QUESTIONS.md` Q220, owner decision
+ * 2026-09-20) flipped the grant of every AUTHORING role, confined by the P14 claim, and reassigned
+ * `define-product:write-prd` from `po` to `pm` (`05` §5.2), so the inventory is now EMPTY (28 -> 0 with P17):
+ * an entry may only be added back by a deliberate decision, and this file then fails until it is named.
  *
- * `PLAN-M13.md` P17 (`SPEC-QUESTIONS.md` Q217) removed the two `swarm-review` reviewer steps
- * (`build-stage:review`, `implement-story:review`) from it, and they are NOT exempt: the `reviewer` stays
+ * `PLAN-M13.md` P17 (`SPEC-QUESTIONS.md` Q217) took the two `swarm-review` reviewer steps
+ * (`build-stage:review`, `implement-story:review`) out of it, and they are NOT exempt: the `reviewer` stays
  * `write: false` (separation of duties), a `mode: swarm-review` step now runs one read-only session per
  * perspective and the ENGINE writes and validates the `ReviewReport` in the step's own lane, after which the
  * output contract check runs on that lane like on any agent step. They are pinned below as
@@ -29,8 +30,10 @@
  * step's claim is now its `produces` globs plus the registry paths of its declared `outputs`, and
  * `file_ownership` is enforced nowhere at run time (only `forge agent validate`'s overlap check reads it), so
  * an agent whose ownership omits the output path was never blocked by that, and under `strict` claim
- * enforcement the output is no longer reverted either. The 9 steps are pinned below as
- * `OWNERSHIP_ONLY_STEPS`; their outputs are asserted to lie inside their claim (definition level here;
+ * enforcement the output is no longer reverted either. The steps are pinned below as
+ * `OWNERSHIP_ONLY_STEPS` (9 when P14 landed; 32 once P15 let their agents write, because the P15 roles own
+ * a narrower territory than the registry paths their steps declare: the same fact, now for the steps that
+ * used to be blocked earlier); their outputs are asserted to lie inside their claim (definition level here;
  * concrete registry paths of every type through the real claim matcher in
  * `packages/engine/test/dispatch/output-claim.test.ts`). That is all "not a gap" means: the output survives
  * claim enforcement. Documents their briefs name beyond the output (`decide-repo-strategy`'s
@@ -48,8 +51,8 @@
  *
  * @see specs/05 §5.5
  * @see specs/18 §18.7
- * @see PLAN-M13.md P7, P11
- * @see SPEC-QUESTIONS.md Q208, Q209
+ * @see PLAN-M13.md P7, P11, P15
+ * @see SPEC-QUESTIONS.md Q208, Q209, Q220
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -73,41 +76,16 @@ type GapClass = 'no-write-grant';
 
 /**
  * The inventory. Keys are `<workflow>:<step id>`, with the module workflows prefixed `<module>/<file>:`.
- * Each entry is a step whose agent cannot write; deleting one here without fixing the agent makes this test
- * fail, and so does fixing one without deleting it.
+ * Each entry would be a step whose agent cannot write. It is empty (P15 with P17): the authoring roles hold
+ * `tools.write: true` (confined by the P14 claim), `reviewer` steps are engine-written, and the reverse
+ * also holds, a step added here without an agent that cannot write it fails the first test below.
  */
-const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {
-  'intake:propose-level': 'no-write-grant',
-  'intake:seed-glossary': 'no-write-grant',
-  'discover:frame-problem': 'no-write-grant',
-  'discover:define-metrics': 'no-write-grant',
-  'define-product:write-vision': 'no-write-grant',
-  'define-product:write-prd': 'no-write-grant',
-  'define-product:write-ux-spec': 'no-write-grant',
-  'shape-solution:select-architecture': 'no-write-grant',
-  'shape-solution:model-data': 'no-write-grant',
-  'shape-solution:select-stack': 'no-write-grant',
-  'shape-solution:threat-model': 'no-write-grant',
-  'plan-stages:decompose-stages': 'no-write-grant',
-  'plan-stage:write-epics': 'no-write-grant',
-  'plan-stage:write-stories': 'no-write-grant',
-  'plan-stage:write-test-plan': 'no-write-grant',
-  'build-stage:freeze-contracts': 'no-write-grant',
-  'verify-stage:verify-nfrs': 'no-write-grant',
-  'harden:security-pass': 'no-write-grant',
-  'refactor:state-invariants': 'no-write-grant',
-  'adopt:reverse-derive-specs': 'no-write-grant',
-  'adopt:gap-analysis': 'no-write-grant',
-  'migrate:plan-migration': 'no-write-grant',
-  'retro:run-retro': 'no-write-grant',
-  'replan:propose-change': 'no-write-grant',
-  'replan:impact-analysis': 'no-write-grant',
-  'fm-service/contract-test-cycle.workflow.yaml:draft-contract': 'no-write-grant',
-};
+const KNOWN_GAPS: Readonly<Record<string, GapClass>> = {};
 
-/** Pinned on purpose, in addition to the table: lowering it is the deliberate act P15 performs (P17 took it
- * from 28 to 26: the two reviewer steps below). */
-const PINNED_TOTAL = 26;
+/** Pinned on purpose, in addition to the table: P17 took it from 28 to 26 (the two reviewer steps) and P15's
+ * grants from 26 to 0; any step that cannot write its declared outputs from now on is a deliberate, recorded
+ * exception, not a silent one. */
+const PINNED_TOTAL = 0;
 
 /**
  * The steps whose agent cannot write but whose declared outputs the engine writes itself (`PLAN-M13.md` P17): a
@@ -120,10 +98,15 @@ const ENGINE_WRITTEN_STEPS: readonly string[] = ['build-stage:review', 'implemen
 const ENGINE_WRITTEN_TYPES: ReadonlySet<string> = new Set(['ReviewReport']);
 
 /**
- * The steps that used to be the `no-write-scope` class (P7 to P13: 9): their agent can write but its
- * `file_ownership` does not cover the declared output's registry path. Not gaps since P14: the step's claim
- * covers the output, and ownership is not enforced at run time. Kept as an explicit list so the recomputed
- * definition-level fact is visible and any new such step is noticed.
+ * The steps whose agent can write but whose `file_ownership` does not cover a declared output's registry path:
+ * the retired `no-write-scope` class. Not gaps since P14: the step's claim covers the output, and ownership is
+ * not enforced at run time. Kept as an explicit list so the recomputed definition-level fact is visible and any
+ * new such step is noticed. It is a ratchet, not a fact about the roles: a piece that changes an agent's
+ * `file_ownership` or a step's outputs (P18 aligns both) changes it and updates it deliberately. The first nine are the class as P7 to P13 measured it; the rest are the steps
+ * that P15's grants made writable (their roles own a narrower territory than the registry paths of what the
+ * steps declare, e.g. a `HandoffRecord` in `reports/handoffs.md` for an agent that owns only its own KB
+ * section), plus `plan-stages:review-stages` and `store-release:prepare-store-submission`, which P15 gave
+ * `outputs` and which are therefore checked for the first time.
  */
 const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'initialize-project:decide-repo-strategy',
@@ -135,6 +118,29 @@ const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'operate:define-slos',
   'operate:write-runbooks',
   'fm-mobile/store-release.workflow.yaml:prepare-release-build',
+  'adopt:gap-analysis',
+  'adopt:reverse-derive-specs',
+  'define-product:write-prd',
+  'define-product:write-ux-spec',
+  'define-product:write-vision',
+  'discover:define-metrics',
+  'discover:frame-problem',
+  'fm-mobile/store-release.workflow.yaml:prepare-store-submission',
+  'fm-service/contract-test-cycle.workflow.yaml:draft-contract',
+  'harden:security-pass',
+  'intake:propose-level',
+  'intake:seed-glossary',
+  'plan-stage:write-epics',
+  'plan-stage:write-test-plan',
+  'plan-stages:decompose-stages',
+  'plan-stages:review-stages',
+  'refactor:state-invariants',
+  'replan:impact-analysis',
+  'replan:propose-change',
+  'retro:run-retro',
+  'shape-solution:model-data',
+  'shape-solution:threat-model',
+  'verify-stage:verify-nfrs',
 ];
 
 /** Steps whose agent is a run-time template: cannot be classified from the workflow alone. */
@@ -261,7 +267,7 @@ describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () =
     }
   });
 
-  it('recomputes the retired no-write-scope class from the real definitions: the same 9 steps, none of them a gap', () => {
+  it('recomputes the retired no-write-scope class from the real definitions: exactly the pinned steps, none of them a gap', () => {
     expect([...ownershipOnly].sort()).toEqual([...OWNERSHIP_ONLY_STEPS].sort());
     for (const key of ownershipOnly) expect(derived.has(key), `${key} is a gap`).toBe(false);
   });
@@ -290,8 +296,39 @@ describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () =
     }
   });
 
-  it('includes the step the live smoke run found (retro:run-retro, Q208 finding 4)', () => {
-    expect(derived.get('retro:run-retro')).toBe('no-write-grant');
+  it('the step the live smoke run found (retro:run-retro, Q208 finding 4) is no longer a gap: its agent writes and the output is checked', () => {
+    expect(derived.has('retro:run-retro')).toBe(false);
+    const retro = declared.find((step) => step.key === 'retro:run-retro');
+    expect(retro?.agent).toBe('em');
+    expect(retro?.outputTypes).toEqual(['SessionRecord']);
+    expect(resolveExtends('em', registry).tools.write).toBe(true);
+  });
+
+  it('write-prd runs as pm, the role 05 §5.2 gives the PRD and the capabilities, and pm declares both of its output types', () => {
+    const step = declared.find((entry) => entry.key === 'define-product:write-prd');
+    expect(step?.agent).toBe('pm');
+    const pmOutputs = resolveExtends('pm', registry).outputs.map((output) => output.type);
+    for (const type of step?.outputTypes ?? []) expect(pmOutputs, type).toContain(type);
+  });
+
+  it('P15 gave outputs to the two steps that declared none, so P7 now covers them (Q208 finding 4 was still live for both)', () => {
+    for (const key of [
+      'plan-stages:review-stages',
+      'fm-mobile/store-release.workflow.yaml:prepare-store-submission',
+    ]) {
+      const step = declared.find((entry) => entry.key === key);
+      expect(step, `${key} declares no outputs`).toBeDefined();
+      expect(step?.outputTypes).toEqual(['HandoffRecord']);
+    }
+  });
+
+  it('every agent step that declares outputs is assigned to a role that can write them or whose report the engine writes (the inventory is empty)', () => {
+    expect(derived.size).toBe(0);
+    for (const step of declared) {
+      if (step.agent.includes('{{')) continue;
+      const writes = resolveExtends(step.agent, registry).tools.write;
+      expect(writes || engineWritten.includes(step.key), `${step.key} (${step.agent})`).toBe(true);
+    }
   });
 
   it('lists steps with a run-time agent apart, so they are not silently uncounted', () => {

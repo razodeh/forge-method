@@ -36,7 +36,7 @@ describe('loadAgentDefinition', () => {
     expect(agent.kb_write).toEqual(['architecture/**', 'decisions/**']);
     expect(agent.kb_propose).toEqual(['data/**', 'constraints/**']);
     expect(agent.tools.read).toBe(true);
-    expect(agent.tools.write).toBe(false);
+    expect(agent.tools.write).toBe(true);
     expect(agent.tools.network).toBe(false);
     expect(agent.tools.git_commit).toBe('docs-only');
     expect(agent.model).toEqual({ tier: 'max', thinking: 'high' });
@@ -48,9 +48,11 @@ describe('loadAgentDefinition', () => {
     expect(agent.skills).toHaveLength(5);
     expect(agent.mcp).toEqual([{ server: 'acme-confluence', tools: ['search', 'get_page'] }]);
     expect(agent.ceiling?.tools.network).toBe('none');
-    expect(agent.ceiling?.tools.write).toBe(false);
+    expect(agent.ceiling?.tools.write).toBe(true);
     expect(agent.prompt.system).toBe('prompts/architect.system.md');
-    expect(agent.prompt.briefs?.['design-system']).toBe('prompts/architect.design-system.md');
+    expect(agent.prompt.briefs?.['select-architecture-style']).toBe(
+      'prompts/architect.select-architecture-style.md',
+    );
   });
 
   it('rejects a genuine YAML syntax error as a real issue, not a thrown error', () => {

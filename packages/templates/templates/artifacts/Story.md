@@ -13,7 +13,7 @@ epic: '<the parent Epic id>'
 capability: '<the parent Capability id>'
 storyType: feature
 size: S
-owner_role: '<the role that owns this story>'
+owner_role: '<the implementation role that writes this story code>'
 depends_on: []
 blocked_by: []
 interfaces: []

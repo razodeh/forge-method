@@ -40,7 +40,7 @@ kb_propose: []
 
 tools:
   read: true
-  write: false
+  write: true
   exec: ['ls*', 'rg*', 'cat*']
   network: false
   git_commit: 'none'

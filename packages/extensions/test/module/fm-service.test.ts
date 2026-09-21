@@ -43,8 +43,10 @@ describe('fm-service/module.yaml — real, shipped content', () => {
       network: 'none',
       deploy: false,
     });
+    // `write: true` since `PLAN-M13.md` P15 (`SPEC-QUESTIONS.md` Q220): the contract author writes its declared
+    // `InterfaceContract` outputs, confined to that claim; the ceiling equals the grant, as for every agent.
     expect(definition.ceilings['integration-architect']).toEqual({
-      write: false,
+      write: true,
       exec: ['ls*', 'rg*', 'cat*'],
       network: 'none',
       deploy: false,

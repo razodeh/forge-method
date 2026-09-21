@@ -125,7 +125,7 @@ kb_propose:                        # sections it may only propose changes to
 
 tools:
   read: true
-  write: false                     # architects don't write source code
+  write: true                      # architects don't write source code; the engine confines every step that declares outputs to them
   exec: [ "git log*", "git diff*", "ls*", "rg*", "cat*", "tree*" ]
   network: false
   git_commit: docs-only            # none | docs-only | lane | full
@@ -166,7 +166,7 @@ mcp:                               # external reach: per-server, per-tool grants
 
 ceiling:                           # the maximum an overlay may widen \`tools\` to (see 15 §15.3.2)
   tools:
-    write: false
+    write: true
     exec: [ "git *", "ls*", "rg*", "cat*", "tree*" ]
     network: none
     deploy: false
@@ -174,8 +174,8 @@ ceiling:                           # the maximum an overlay may widen \`tools\` 
 prompt:
   system: prompts/architect.system.md
   briefs:
-    design-system: prompts/architect.design-system.md
-    review-change: prompts/architect.review-change.md
+    select-architecture-style: prompts/architect.select-architecture-style.md
+    change-impact-analysis: prompts/architect.change-impact-analysis.md
 `;
     const workedResult = loadAgentDefinition(worked, '(worked example)');
     if (!workedResult.success)
@@ -190,23 +190,22 @@ prompt:
     // T3/T5 existed, not a byte-for-byte content contract for those two fields specifically. Every
     // other field is asserted equal.
     //
-    // `prompt.briefs`' *keys* differ deliberately too (`PLAN-M13.md` P3c, `SPEC-QUESTIONS.md` Q205):
-    // the worked example's `design-system`/`review-change` are illustrative names that match no workflow
-    // step brief, so `assembleAgentSession` could never attach them (`15` §15.3 keys a specialisation by
-    // the step brief's basename). The shipped agent uses the real ones, pinned below; every shipped key
-    // is proven attachable by `packages/agents/test/prompt/brief-keys-attachable.test.ts`. `prompt.system`
-    // is still asserted equal.
+    // `prompt.briefs` is compared too: `PLAN-M13.md` P3c had to exclude its keys (the spec's illustrative
+    // `design-system`/`review-change` matched no workflow step brief, so `assembleAgentSession` could never
+    // attach them, `SPEC-QUESTIONS.md` Q205), and P15 (Q220) changed the spec example to the two keys the
+    // shipped agent really has (`select-architecture-style`, `change-impact-analysis`), so the exclusion is
+    // gone and the example is once more a byte-for-byte contract for `write`, the ceiling and the briefs.
+    // `write: true` and `ceiling.tools.write: true` are part of it: architects write documents, not source,
+    // and the engine confines every step that declares outputs to them (`06` §6.7).
     function omitDeliberateDifferences(agent: AgentDefinition): Record<string, unknown> {
       const excluded = new Set(['frameworks', 'skills']);
-      return Object.fromEntries(
-        Object.entries(agent)
-          .filter(([key]) => !excluded.has(key))
-          .map(([key, value]) => [key, key === 'prompt' ? { system: agent.prompt.system } : value]),
-      );
+      return Object.fromEntries(Object.entries(agent).filter(([key]) => !excluded.has(key)));
     }
     expect(omitDeliberateDifferences(shipped)).toEqual(
       omitDeliberateDifferences(workedResult.agent),
     );
+    expect(shipped.tools.write).toBe(true);
+    expect(shipped.ceiling?.tools.write).toBe(true);
     expect(shipped.prompt.briefs).toEqual({
       'select-architecture-style': 'prompts/architect.select-architecture-style.md',
       'change-impact-analysis': 'prompts/architect.change-impact-analysis.md',

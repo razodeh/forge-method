@@ -1,4 +1,5 @@
-/** `05` §5.3's own worked example, transcribed verbatim. */
+/** `05` §5.3's own worked example, transcribed verbatim (as amended by `PLAN-M13.md` P15: `write: true`, the
+ * ceiling and the two real brief keys). */
 export const ARCHITECT = `
 id: architect
 name: System Architect
@@ -59,7 +60,7 @@ kb_propose:
 
 tools:
   read: true
-  write: false
+  write: true
   exec: [ "git log*", "git diff*", "ls*", "rg*", "cat*", "tree*" ]
   network: false
   git_commit: docs-only
@@ -100,7 +101,7 @@ mcp:
 
 ceiling:
   tools:
-    write: false
+    write: true
     exec: [ "git *", "ls*", "rg*", "cat*", "tree*" ]
     network: none
     deploy: false
@@ -108,6 +109,6 @@ ceiling:
 prompt:
   system: prompts/architect.system.md
   briefs:
-    design-system: prompts/architect.design-system.md
-    review-change: prompts/architect.review-change.md
+    select-architecture-style: prompts/architect.select-architecture-style.md
+    change-impact-analysis: prompts/architect.change-impact-analysis.md
 `;

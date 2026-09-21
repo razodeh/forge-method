@@ -103,8 +103,7 @@ levels: [L1, L2, L3, L4]
 # agent's own unrelated base `tools:` schema uses for the same concept.
 ceilings:
   domain-modeler: { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
-  integration-architect:
-    { write: false, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
+  integration-architect: { write: true, exec: ['ls*', 'rg*', 'cat*'], network: none, deploy: false }
 
 provides:
   # The two real, authoritative agents this module ships -- see the header comment above.

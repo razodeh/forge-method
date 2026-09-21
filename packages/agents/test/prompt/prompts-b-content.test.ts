@@ -210,7 +210,10 @@ describe('PROMPTS_B content', () => {
   });
 
   it('keeps the read-only critics and the orchestrator from taking over the work they judge or route', () => {
-    for (const agentId of ['reviewer', 'security', 'orchestrator']) {
+    // `security` left this list in `PLAN-M13.md` P15 (`SPEC-QUESTIONS.md` Q220): it authors a threat model and
+    // defect records, so it holds `tools.write` (confined to its declared outputs); the check that its prompt
+    // tells it to patch nothing follows below. `reviewer` and `orchestrator` stay read-only.
+    for (const agentId of ['reviewer', 'orchestrator']) {
       const agent = loadAgent(agentId);
       expect(agent.tools.write, `${agentId} is read-only`).toBe(false);
       const text = readPrompt(`${agentId}.system`);
@@ -218,6 +221,29 @@ describe('PROMPTS_B content', () => {
     }
     expect(norm(readPrompt('reviewer.system'))).toMatch(/you do not fix/i);
     expect(norm(readPrompt('orchestrator.system'))).toMatch(/you do not produce the work/i);
+  });
+
+  it('tells a role that now holds a write grant what it may write, and never that it is read-only (P15)', () => {
+    // A prompt that says "you are read-only" to an agent whose grant says write contradicts itself inside
+    // one session; each authoring role's system prompt is checked against the grant it is really given.
+    for (const agentId of [
+      'analyst',
+      'pm',
+      'po',
+      'ux',
+      'architect',
+      'data-architect',
+      'integration-architect',
+      'security',
+      'test-architect',
+      'em',
+      'release',
+    ]) {
+      expect(loadAgent(agentId).tools.write, `${agentId} writes`).toBe(true);
+      expect(readPrompt(`${agentId}.system`), agentId).not.toMatch(/\bread-only\b/i);
+    }
+    expect(norm(readPrompt('security.system'))).toMatch(/you do not patch anything/i);
+    expect(norm(readPrompt('security.system'))).toMatch(/only the documents your step declares/i);
   });
 
   it('is not a byte-identical (or whitespace-identical) copy of any other file in PROMPT_INDEX', () => {

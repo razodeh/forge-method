@@ -26,5 +26,8 @@ steps:
     agent: em
     brief: briefs/review-stage-plan.md
     dependsOn: [decompose-stages]
-    # Declares no `outputs` yet (P15 adds them): until then its Risk entries and verdict record are its claim (Q216).
-    produces: ['docs/forge/kb/risks.md', 'docs/forge/reports/handoffs.md']
+    # The verdict record is the one output every run of this step must produce (`PLAN-M13.md` P15): P7 checks it,
+    # so a session that writes nothing fails instead of "succeeding" (Q208 finding 4). The Risk entries are
+    # written only if the review finds a risk, so they are claimed (`produces`) but not required (Q216, Q220).
+    outputs: [{ type: HandoffRecord, subtype: stage-plan-review }]
+    produces: ['docs/forge/kb/risks.md']

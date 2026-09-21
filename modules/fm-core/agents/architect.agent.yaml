@@ -57,7 +57,9 @@ kb_propose:
 
 tools:
   read: true
-  write: false
+  # Architects write documents (ADRs, contracts, diagrams), never source code: the engine confines every step that
+  # declares outputs to them and reverts the rest (`06` §6.7, `05` §5.3). A step that declares none is not confined.
+  write: true
   exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*', 'tree*']
   network: false
   git_commit: docs-only
@@ -103,7 +105,7 @@ mcp:
 
 ceiling:
   tools:
-    write: false
+    write: true
     exec: ['git *', 'ls*', 'rg*', 'cat*', 'tree*']
     network: none
     deploy: false

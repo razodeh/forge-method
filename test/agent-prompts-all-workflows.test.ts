@@ -131,7 +131,16 @@ let adapter: FakePlatformAdapter;
 let ctx: ExecuteStepContext;
 const requests: SessionRequest[] = [];
 /** The grant each dispatched agent step carried, to show the grant is not uniformly empty. */
-const grants: { agentId: string; write: boolean; exec: boolean }[] = [];
+const grants: {
+  agentId: string;
+  write: boolean;
+  exec: boolean;
+  execPatterns: string;
+}[] = [];
+/** Interaction-mode participant sessions checked read-only below (`PLAN-M13.md` P15: the ordinary agent steps
+ * no longer include a read-only one, every role that authors a document writes, so the read-only side of the
+ * grant is what these prove). */
+let readOnlyParticipants = 0;
 let shipped: readonly ShippedWorkflow[] = [];
 
 async function listWorkflowFiles(dir: string): Promise<readonly string[]> {
@@ -812,6 +821,8 @@ describe('every agent and session step of every shipped workflow is dispatched w
             problems.push(...(await checkAnyRequest(request, `${where} (mode ${mode})`)));
             if (request.tools.write || request.tools.exec !== false) {
               problems.push(`${where} [${request.stepId}]: ${mode} participant is not read-only`);
+            } else {
+              readOnlyParticipants += 1;
             }
           }
         }
@@ -824,10 +835,15 @@ describe('every agent and session step of every shipped workflow is dispatched w
     expect(dispatched).toBeGreaterThanOrEqual(agentSteps + sessionSteps);
     // The tier map is really consulted: agents on different tiers reach different models.
     expect(modelsUsed.size).toBeGreaterThan(1);
-    // ...and so is the grant: some agents write, some may exec, and they are not all identical.
+    // ...and so is the grant: some agents write, some may exec, and they are not all identical. Since P15 every
+    // agent that runs an ordinary step holds `write` (the roles that only judge, `reviewer` and `critic`, run
+    // no ordinary step: the engine writes the review report), so the read-only side is proven by the
+    // participant sessions, which each carried a grant with neither `write` nor `exec`, and the ordinary
+    // agents' grants are told apart by their exec allowlists.
     expect(grants.some((grant) => grant.write)).toBe(true);
-    expect(grants.some((grant) => !grant.write)).toBe(true);
     expect(grants.some((grant) => grant.exec)).toBe(true);
+    expect(readOnlyParticipants).toBeGreaterThan(0);
+    expect(new Set(grants.map((grant) => grant.execPatterns)).size).toBeGreaterThan(1);
     expect(adapter.strictViolations).toEqual([]);
   }, 600_000);
 });
@@ -862,7 +878,12 @@ async function checkAgentStep(
         `${where}: ${agent.id}'s request grant ${JSON.stringify(got)} is not its declared ${JSON.stringify(want)}`,
       );
     }
-    grants.push({ agentId: agent.id, write: got.write, exec: got.exec !== false });
+    grants.push({
+      agentId: agent.id,
+      write: got.write,
+      exec: got.exec !== false,
+      execPatterns: JSON.stringify(got.exec),
+    });
     problems.push(...(await agentPromptProblems(request, raw, agent.id, where)));
     const expected = tierModel(raw.model.tier);
     if (request.model !== expected) {

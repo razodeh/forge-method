@@ -33,10 +33,13 @@ states must not pass through you unnoticed.
 
 - A `Risk` entry (in `kb/risks.md`) for each sequencing, capacity or dependency risk you found, with
   likelihood, impact, mitigation and owner.
-- One `HandoffRecord` entry (`from: em`, `to: pm`, `step: review-stages → plan-stage`) that records
-  the verdict. The first string in `delivered` is `verdict: pass` or `verdict: changes-required`,
+- One `HandoffRecord` entry in the handoff register `docs/forge/reports/handoffs.md` (subtype
+  `stage-plan-review`, `from: em`, `to: pm`, `step: review-stages → plan-stage`) that records the
+  verdict. There is no `subtype` key, so the first string in `delivered` is
+  `subtype: stage-plan-review`, the second is `verdict: pass` or `verdict: changes-required`,
   followed by one line per check with its result and evidence. Each required change goes in
   `constraints_for_receiver`, ordered by severity, and unresolved questions go in `open_questions`.
+  Add your own entry and leave every other entry in the register as it is.
 - Your closing message repeats the verdict and the required changes. Nothing after this step reads
   the verdict automatically, so on `changes-required` say so plainly and ask the human to send the
   plan back to `decompose-stages` before stage planning starts.

@@ -13,7 +13,12 @@ device matrix at `docs/forge/kb/mobile/device-matrix.md`, and the `G-Deliver` re
 ### Produce
 
 One Markdown document at `docs/forge/kb/delivery/release/store-submission-<buildTarget>.md`, in the
-release area you own, and no other file. Include:
+release area you own, and one `HandoffRecord` entry that registers it in the handoff register
+`docs/forge/reports/handoffs.md` (leave every other entry as it is); no other document. The entry
+has subtype `store-submission-record`, `from: release`, `to: human`,
+`step: prepare-store-submission → merge-submission`. There is no `subtype` key, so the first string
+in `delivered` is `subtype: store-submission-record`, the second is the record's path, and every
+open item that blocks submission goes in `open_questions`. Include in the document:
 
 - Identity: app name, bundle or package id, version, build number, target platforms and minimum OS
   versions. Copy them from the build record; do not compute or guess them.

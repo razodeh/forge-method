@@ -29,7 +29,10 @@ Ready on what you write.
   it enables.
 - `size`: S or M. A story you cannot make M or smaller is split, not sized L. An L story may exist
   only as a draft awaiting a split.
-- `owner_role`: an agent role that exists in this project.
+- `owner_role`: an implementation role that exists in this project and writes the story's code (for
+  example `backend`, `frontend`, `data-engineer`, `mobile`). Never a role that writes documents or
+  judges work (`architect`, `pm`, `po`, `security`, `reviewer`, ...): the story's steps give the
+  owner write access to source files.
 - `depends_on` and `blocked_by`: story ids, with `depends_on` forming no cycle. `blocked_by` is
   empty unless something outside the stage blocks it.
 - `acceptance`: Given/When/Then criteria with ids `AC-###-#` (the story number, then a sequence),
