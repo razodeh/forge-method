@@ -182,6 +182,36 @@ describe('configSchema — execution.testCommands (PLAN-M8.md P3)', () => {
   });
 });
 
+describe('configSchema — execution.testRoots (PLAN-M14.md P5)', () => {
+  const withTestRoots = (testRoots: unknown) => {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    return configSchema.safeParse({ ...config, execution: { ...config.execution, testRoots } });
+  };
+
+  it('is optional: a config written before it existed stays valid', () => {
+    expect(configSchema.safeParse(goldenConfig()).success).toBe(true);
+  });
+
+  it('accepts a list of project-relative directories', () => {
+    expect(withTestRoots(['tests', 'test/integration', 'e2e']).success).toBe(true);
+  });
+
+  it('accepts an empty list', () => {
+    expect(withTestRoots([]).success).toBe(true);
+  });
+
+  it('rejects an empty-string entry', () => {
+    const result = withTestRoots(['tests', '']);
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues[0]?.path).toEqual(['execution', 'testRoots', 1]);
+  });
+
+  it('rejects a non-array value', () => {
+    expect(withTestRoots('tests').success).toBe(false);
+  });
+});
+
 describe('configSchema — execution.mergeChecks (PLAN-M13.md P38)', () => {
   const withMergeChecks = (mergeChecks: unknown) => {
     const config = goldenConfig() as { execution: Record<string, unknown> };

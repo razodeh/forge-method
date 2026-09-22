@@ -79,6 +79,33 @@ describe('configGet / configSet', () => {
   });
 });
 
+describe('execution.testRoots (PLAN-M14.md P5)', () => {
+  it('is unset by default', async () => {
+    const project = await createTestProject();
+    const value = await configGet({ paths: project.paths }, 'execution.testRoots');
+    expect(value).toBeUndefined();
+  });
+
+  it('round-trips a list of directories through set/get/explain', async () => {
+    const project = await createTestProject();
+    await configSet({ paths: project.paths }, 'execution.testRoots', '[tests, test/integration]');
+    const value = await configGet({ paths: project.paths }, 'execution.testRoots');
+    expect(value).toEqual(['tests', 'test/integration']);
+    const explanation = await configExplain({ paths: project.paths }, 'execution.testRoots');
+    expect(explanation.value).toEqual(['tests', 'test/integration']);
+    expect(explanation.doc.length).toBeGreaterThan(0);
+  });
+
+  it('refuses an empty-string entry, without writing it', async () => {
+    const project = await createTestProject();
+    await expect(
+      configSet({ paths: project.paths }, 'execution.testRoots', '[tests, ""]'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    const value = await configGet({ paths: project.paths }, 'execution.testRoots');
+    expect(value).toBeUndefined();
+  });
+});
+
 describe('configList', () => {
   it('lists every real leaf key with its own real, current value', async () => {
     const project = await createTestProject();

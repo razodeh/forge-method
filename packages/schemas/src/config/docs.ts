@@ -41,6 +41,7 @@ export type ConfigKeyPath =
   | 'execution.conflictPolicy'
   | 'execution.sharedMutablePaths'
   | 'execution.testCommands'
+  | 'execution.testRoots'
   | 'execution.mergeChecks'
   | 'budget.perRunUsd'
   | 'budget.perStepUsdDefault'
@@ -141,6 +142,8 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
     'Paths multiple lanes may touch, and how conflicts on them resolve.',
   'execution.testCommands':
     'The real shell command for each test layer (unit/integration/contract/e2e/nfr/smoke/lint/typecheck) — a layer with no command reports as unable to verify, never as passing. Set one layer with `forge config set execution.testCommands.<layer> "<command>"`. Also a permission: a step that runs tests (its brief names the layers) is granted exactly the unit/integration/lint/typecheck commands set here, as exact strings and never a wildcard, in addition to its agent\'s own exec patterns, so each must be one plain command (no chaining, no *).',
+  'execution.testRoots':
+    'Project-relative directories a REPRODUCE/PROVE test-path argument must sit under (`<configured test command> <path>`, never a wildcard grant): unset falls back to the built-in rule (a tests/, __tests__/ or e2e/ directory, or a .test./.spec./_test file name).',
   'execution.mergeChecks':
     'Check sets the engine runs around a lane it integrates itself (one no merge step lands): pre (in the lane, before it lands) and post (in the integration worktree, after; a failure reverts the merge). A name ("fast", "full", or one test layer such as "unit", run as its execution.testCommands) or a shell command. Unset: no checks.',
   'budget.perRunUsd': 'Maximum spend, in USD, for one run.',

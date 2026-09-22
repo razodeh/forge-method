@@ -146,6 +146,10 @@ const executionSchema = z
     conflictPolicy: z.enum(['agent', 'human', 'abort']),
     sharedMutablePaths: z.array(sharedMutablePathSchema),
     testCommands: testCommandsSchema,
+    // Optional, unlike `testCommands`: a `.forge/config.yaml` written before P23 has no such key, and `undefined`
+    // is its own meaningful value — "use the built-in rule" (`isTestPath`, `engine/dispatch/test-path.ts`) — not
+    // a default to fill in (`PLAN-M14.md` P5, `SPEC-QUESTIONS.md` Q230's `{path}` follow-up).
+    testRoots: z.array(z.string().min(1)).optional(),
     // Optional, unlike `testCommands`: a `.forge/config.yaml` written before P38 has no such key and must stay valid.
     mergeChecks: mergeChecksSchema.optional(),
   })

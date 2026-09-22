@@ -124,6 +124,10 @@ const REASON_TO_PROBLEM: Readonly<Record<CommandRefusalReason, TestCommandProble
   'not-in-grant': 'malformed',
   'path-escape': 'malformed',
   'secret-path': 'malformed',
+  // Not produced for a configured command either: `vetConfiguredCommand` never runs the trusted-path
+  // expansion (`test-path.ts`'s `expandTrustedInvocation`, only `vetProposedCommand` calls it). Named so
+  // the map stays total (`PLAN-M14.md` P5 added `CommandRefusalReason`'s `'test-path'` member).
+  'test-path': 'malformed',
 };
 
 /** Whitespace other than a plain space, and every control, format (zero-width, bidi, soft hyphen, byte-order mark, tag),

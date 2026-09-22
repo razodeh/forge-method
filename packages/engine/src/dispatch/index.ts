@@ -89,6 +89,15 @@ export {
   type UnavailableTestLayer,
 } from './test-command-grant.ts';
 export { commandWords } from './confined-command.ts';
+export {
+  expandTrustedInvocation,
+  isTestPath,
+  validateTestPath,
+  type TestPathCheck,
+  type TestPathProblem,
+  type TestPathValidationOptions,
+  type TrustedInvocationMatch,
+} from './test-path.ts';
 export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {

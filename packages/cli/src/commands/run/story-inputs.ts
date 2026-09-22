@@ -7,9 +7,9 @@
  * @see specs/09 §9.3
  */
 import { ForgeError } from '@forge/core/errors';
+import { isTestPath } from '@forge/engine/dispatch';
 
 import { listSpecArtifacts } from '../shared.ts';
-import { isTestPath } from './run-plan.ts';
 import type { RunDeps } from './run.ts';
 
 export interface StoryRunInputs {

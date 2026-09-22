@@ -50,6 +50,9 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     conflictPolicy: 'agent',
     sharedMutablePaths: [],
     testCommands: {},
+    // No default (`PLAN-M14.md` P5): unset is its own meaningful value, "use the built-in test-path rule"
+    // (`isTestPath`), not a default list of directories to fill in.
+    testRoots: undefined,
     mergeChecks: {},
   },
   budget: {

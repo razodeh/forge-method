@@ -48,6 +48,8 @@ import {
 import { execa } from 'execa';
 import { minimatch } from 'minimatch';
 
+import { expandTrustedInvocation } from './test-path.ts';
+
 /** The variables a confined child inherits, and no others. A build or a test needs a `PATH`, a home directory, a
  * locale, a terminal type, a time zone and a temp directory; nothing here can carry a credential. Everything else
  * in the parent environment is dropped, which is the point: `ANTHROPIC_API_KEY`, `AWS_*`, `GITHUB_TOKEN`,
@@ -114,7 +116,8 @@ export type CommandRefusalReason =
   | 'network'
   | 'path-escape'
   | 'secret-path'
-  | 'dangerous-argument';
+  | 'dangerous-argument'
+  | 'test-path';
 
 /** Why a proposed command was not run: the category (for a test or a filter) and one line naming the word that did
  * it (for a human). `detail` quotes only what the command itself said. */
@@ -631,8 +634,17 @@ export interface VetOptions {
    * (`vitest --config ../vitest.config.ts`, `pytest /abs/tests`, `dotenv -e .env.test` name paths the user wrote; the
    * model cannot change them, and a configured command holds no glob character). Everything else (denylist,
    * operators, expansion, the grant, the network programs and hosts, git and dangerous arguments) still applies.
+   *
+   * The same list also drives `expandTrustedInvocation` (`test-path.ts`, `PLAN-M14.md` P5): a proposal whose words
+   * are one of these, verbatim, followed by one validated test path (and, for a recognised runner, its own `-t`/
+   * `-g`/`-k` filter token) is trusted the identical way, so REPRODUCE/PROVE can run one file instead of the whole
+   * layer without the grant itself ever widening (`SPEC-QUESTIONS.md` Q230's "whole-layer reproduction" gap).
    */
   readonly trustedCommands?: readonly string[];
+  /** `execution.testRoots`, passed straight to `validateTestPath`'s matching rule for the `<trusted> <path>`
+   * extension above. `undefined` (the project has not configured the key) falls back to `isTestPath`'s own
+   * built-in rule. */
+  readonly testRoots?: readonly string[] | undefined;
 }
 
 /** Verbs of a JavaScript package manager that fetch from a registry, run a downloaded program, publish, or change the
@@ -950,7 +962,33 @@ export async function vetProposedCommand(
   if (syntax.refusal !== undefined) return syntax.refusal;
   const { words, globbed } = syntax;
 
-  if (!isExecAllowed({ read: true, write: false, exec: grant.exec, network: 'none' }, command)) {
+  // A word-for-word `<configured trusted command> <validated test path> [-t/-g/-k <token>]`
+  // (`test-path.ts`, `PLAN-M14.md` P5), tried right after the syntax stage and before the grant check: the
+  // extended words are never literally a member of `grant.exec` (a derived test-command pattern is an exact
+  // string with no trailing path, `test-command-grant.ts`), so this has to run before `isExecAllowed` would
+  // otherwise refuse it as `not-in-grant`. A shape this does not recognise (an unmatched prefix, two extra
+  // words, an unsupported or wrong flag) reports `{ matched: false }` and falls through to the ordinary
+  // checks below unchanged, which refuse it there — this never bypasses `isHardDenylisted` or
+  // `SHELL_OPERATOR_PATTERN` (both already ran, above, over the whole raw string) and never treats an
+  // unexpanded placeholder such as literal `{path}` as a real path (`validateTestPath` refuses its `{`/`}`
+  // characters outright).
+  const trustedInvocation = await expandTrustedInvocation(words, options.trustedCommands ?? [], {
+    root,
+    testRoots: options.testRoots,
+  });
+  if (trustedInvocation.matched && !trustedInvocation.ok) {
+    return refuse('test-path', trustedInvocation.detail);
+  }
+  // Only a grant that itself permits running commands may be widened by a validated path: a caller that
+  // (by mistake) supplies `trustedCommands` alongside a tainted or read-only `grant.exec: false` gets no
+  // bypass here — the ordinary `isExecAllowed` check just below still refuses it. (`trustedInvocation.ok`
+  // is not re-checked: the early return above already ruled out `matched && !ok`.)
+  const trustedByPath = trustedInvocation.matched && grant.exec !== false;
+
+  if (
+    !trustedByPath &&
+    !isExecAllowed({ read: true, write: false, exec: grant.exec, network: 'none' }, command)
+  ) {
     return refuse(
       'not-in-grant',
       grant.exec === false || grant.exec.length === 0
@@ -967,15 +1005,22 @@ export async function vetProposedCommand(
     return refuse('shell-operator', `"${first}" is a variable assignment, not the program`);
   }
   // A prefix pattern (`cat*`) also matches `catdoc`, `lsof`: the first word must be the program the pattern names.
-  const programs = (grant.exec === false ? [] : grant.exec)
-    .filter((pattern) =>
-      isExecAllowed({ read: true, write: false, exec: [pattern], network: 'none' }, command),
-    )
-    .map((pattern) => pattern.split(/[\s*]/, 1)[0] ?? '');
-  if (!programs.some((name) => name === '' || name === first)) {
-    return refuse('not-in-grant', `"${first}" is not the program any matching exec pattern names`);
+  // Skipped for a trusted-by-path match: its words are a configured command's own, never matched against `grant.exec`
+  // (the same trust the bare exact-string case below already extends to `options.trustedCommands`).
+  if (!trustedByPath) {
+    const programs = (grant.exec === false ? [] : grant.exec)
+      .filter((pattern) =>
+        isExecAllowed({ read: true, write: false, exec: [pattern], network: 'none' }, command),
+      )
+      .map((pattern) => pattern.split(/[\s*]/, 1)[0] ?? '');
+    if (!programs.some((name) => name === '' || name === first)) {
+      return refuse(
+        'not-in-grant',
+        `"${first}" is not the program any matching exec pattern names`,
+      );
+    }
   }
-  const trusted = options.trustedCommands?.includes(command) === true;
+  const trusted = trustedByPath || options.trustedCommands?.includes(command) === true;
   const stages = vetNetworkAndArguments(words, grant, trusted ? 'configured' : 'model');
   if (stages !== undefined) return stages;
 

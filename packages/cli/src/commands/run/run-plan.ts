@@ -20,6 +20,7 @@
  */
 import { ForgeError } from '@forge/core';
 import { pathExists, readTextFile, type ProjectPaths } from '@forge/core/fs';
+import { isTestPath } from '@forge/engine/dispatch';
 import {
   compileStageRunPlan,
   type OutsideStageStatus,
@@ -50,15 +51,6 @@ export interface RunPlanContext {
 }
 
 export type StageRunPlanReport = StageRunPlan;
-
-/** A `files_expected` entry is a test path when it is under a conventional test directory or names a test
- * file. `09` §9.3 gives no separate field, and `10` §10.1's `generate-tests` step needs one; the heuristic is
- * deliberately narrow and only decides which of the story's own claims the test-writing step also claims. */
-const TEST_PATH = /(^|\/)(tests?|__tests__|e2e)(\/|$)|\.(test|spec)\.[cm]?[jt]sx?$|_test\.[a-z]+$/;
-
-export function isTestPath(glob: string): boolean {
-  return TEST_PATH.test(glob);
-}
 
 function compareIds(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;

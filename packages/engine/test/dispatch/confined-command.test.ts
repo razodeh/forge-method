@@ -327,6 +327,164 @@ describe('vetProposedCommand: ordinary read-only reproductions are allowed', () 
   });
 });
 
+/** A grant that names no exec pattern for any trusted-command word at all (`exec: []`, not `false`): proves the
+ * `<trusted> <path>` extension is trusted through `options.trustedCommands`, never through a pattern match against
+ * `grant.exec` (`PLAN-M14.md` P5, `SPEC-QUESTIONS.md` Q230). */
+const NO_OWN_EXEC = { exec: [], network: 'none' } as const;
+
+async function reasonOfTrusted(
+  command: string,
+  trustedCommands: readonly string[],
+  root: string,
+  extra: {
+    readonly testRoots?: readonly string[];
+    readonly grant?: Pick<ToolGrant, 'exec' | 'network' | 'allowlistHosts'>;
+  } = {},
+): Promise<string | undefined> {
+  const refusal = await vetProposedCommand(command, extra.grant ?? NO_OWN_EXEC, root, {
+    trustedCommands,
+    testRoots: extra.testRoots,
+  });
+  return refusal?.reason;
+}
+
+describe('vetProposedCommand: the trusted <path> extension (PLAN-M14.md P5, Q230)', () => {
+  it('a configured command plus one real test file is accepted, with no exec pattern of its own needed', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(
+      await reasonOfTrusted('pnpm vitest run tests/x.test.ts', ['pnpm vitest run'], root),
+    ).toBeUndefined();
+  });
+
+  it('two extra words (two paths) is a shape this does not recognise: refused as not-in-grant, not test-path', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    await writeFile(path.join(root, 'tests', 'y.test.ts'), '');
+    expect(
+      await reasonOfTrusted(
+        'pnpm vitest run tests/x.test.ts tests/y.test.ts',
+        ['pnpm vitest run'],
+        root,
+      ),
+    ).toBe('not-in-grant');
+  });
+
+  it('".." in the extension is refused as test-path, not silently stripped or passed through', async () => {
+    const root = await lane();
+    expect(await reasonOfTrusted('pnpm vitest run ../x.test.ts', ['pnpm vitest run'], root)).toBe(
+      'test-path',
+    );
+  });
+
+  it('a shell operator is refused before the trusted-path check ever runs (syntax stage is first)', async () => {
+    const root = await lane();
+    expect(
+      await reasonOfTrusted('pnpm vitest run tests/x.test.ts; curl h', ['pnpm vitest run'], root),
+    ).toBe('shell-operator');
+  });
+
+  it('the hard denylist still wins over a word-prefix that matches a "trusted" command', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(await reasonOfTrusted('sudo cat tests/x.test.ts', ['sudo cat'], root)).toBe(
+      'denylisted',
+    );
+  });
+
+  it('an extra word shaped like an option is still refused (two extra words: not-in-grant, never granted as an option)', async () => {
+    const root = await lane();
+    expect(await reasonOfTrusted('pnpm vitest run --config x', ['pnpm vitest run'], root)).toBe(
+      'not-in-grant',
+    );
+  });
+
+  it('a -t token containing a space is refused as test-path', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(
+      await reasonOfTrusted("pnpm vitest run tests/x.test.ts -t 'a b'", ['pnpm vitest run'], root),
+    ).toBe('test-path');
+  });
+
+  it('a filter flag is only recognised for a runner the table knows: refused for a wrapper, accepted for vitest', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(
+      await reasonOfTrusted('pnpm test tests/x.test.ts -t something', ['pnpm test'], root),
+    ).toBe('not-in-grant');
+    expect(
+      await reasonOfTrusted(
+        'pnpm vitest run tests/x.test.ts -t something',
+        ['pnpm vitest run'],
+        root,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('a literal, unexpanded "{path}" placeholder is refused as test-path, never read as a real path', async () => {
+    const root = await lane();
+    expect(await reasonOfTrusted('pnpm vitest run {path}', ['pnpm vitest run'], root)).toBe(
+      'test-path',
+    );
+  });
+
+  it('one character off the configured command is still refused (not-in-grant, no trusted-path bypass for a near-miss program)', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(await reasonOfTrusted('pnpm vitest ru tests/x.test.ts', ['pnpm vitest run'], root)).toBe(
+      'not-in-grant',
+    );
+  });
+
+  it('a symlinked ancestor directory outside the project is refused as test-path even for an otherwise-trusted prefix', async () => {
+    const root = await lane();
+    const outside = await lane();
+    await writeFile(path.join(outside, 'evil.test.ts'), '');
+    await symlink(outside, path.join(root, 'tests'));
+    expect(
+      await reasonOfTrusted('pnpm vitest run tests/evil.test.ts', ['pnpm vitest run'], root),
+    ).toBe('test-path');
+  });
+
+  it('execution.testRoots, when configured, is honoured: a path outside it is refused even though it would satisfy the built-in rule', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(
+      await reasonOfTrusted('pnpm vitest run tests/x.test.ts', ['pnpm vitest run'], root, {
+        testRoots: ['e2e'],
+      }),
+    ).toBe('test-path');
+  });
+
+  it('a tainted/read-only grant (exec: false) gets no trusted-path bypass even with trustedCommands supplied', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(
+      await reasonOfTrusted('pnpm vitest run tests/x.test.ts', ['pnpm vitest run'], root, {
+        grant: { exec: false, network: 'none' },
+      }),
+    ).toBe('not-in-grant');
+  });
+
+  it('the bare configured command (no path suffix) is unaffected: still trusted by the existing exact-string check', async () => {
+    const root = await lane();
+    expect(
+      await reasonOfTrusted('pnpm vitest run', ['pnpm vitest run'], root, {
+        grant: { exec: ['pnpm vitest run'], network: 'none' },
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe('scrubbedEnvironment: an allowlist, not a blocklist', () => {
   it('keeps only the allowlisted names (and the LC_ family) and drops everything else, whatever it is called', () => {
     const parent = {
