@@ -14553,3 +14553,90 @@ piece's own scope). `FILTER_TOKEN`'s wider-than-needed charset (inert today). Th
 (`feat`, `fix`, `test`, `docs`) instead of the standing two — disclosed above and in `SPEC-QUESTIONS.md`
 Q235, forced by a genuine post-commit blocking finding on a shared branch another piece had already built
 on top of.
+
+## M14 P2 — Non-inline command steps declare what they write (`engine/workflow/{schema,types,validate}.ts`,
+`engine/plan/compile.ts`; `templates/workflows/{adopt,debug,migrate,quick-fix,refactor,verify-stage}.
+workflow.yaml`; `test/{command-steps-in-claim (new),non-forge-steps (new),command-steps}.ts`;
+`engine/test/{plan/compile,workflow/validate,dispatch/command}.test.ts`; `06` §6.2/§6.7)
+
+**Piece.** `resolveStepClaim` already gave a `command` step `globs: produces` and the run's default claim
+policy (`Q212`); an undeclared write is reverted under `strict` today and will fail the step outright once
+P3 lands. The plan's own enumeration named 14 shipped non-inline `command` steps and flagged only one,
+`adopt:inventory-codebase`, as known to write, explicitly leaving the rest to this piece to determine by
+reading the real command each one runs. The DSL itself turned out to have no way to say it at all —
+`commandStepSchema`/`CommandStep` only ever let an `agent` step author `produces`, confirmed by trying it
+(`parseWorkflow` rejected `produces:` on a `command` step as an unrecognised key) — even though `06` §6.2's
+own `StepNode` interface lists `produces` as shared by every kind. Closed with the minimal mirror of what
+`agentStepSchema` already has, plus the matching read in `compile.ts` and the matching check in
+`validate.ts`. Six of the 14 steps (`adopt:inventory-codebase`, `debug:prove-fix`, `migrate:verify-
+migration`, `quick-fix:verify`, `refactor:verify-invariants`, `verify-stage:run-tests`) genuinely write a
+tracked file and gained `produces`; five of those six (the bare `forge test run --json` steps) were not the
+one the plan flagged — a real gap beyond the plan's own provisional list, found by reading `loop/test/
+run.ts` rather than trusting it. New `test/command-steps-in-claim.test.ts` drives each step's real, compiled
+`produces` through `runLaneLifecycle` directly (a real git lane, the real `resolveStepClaim`/`enforceClaim`)
+with a stand-in write for the command's own documented behaviour, since three of the fourteen commands are
+not wired into `bin.ts` at all yet and cannot be shelled for real.
+
+**Round 1 (fresh): 0 blocking, 0 major, 4 minor.** Re-derived the write/no-write call for all 14 steps from
+source independently (twice) and found no false negative. Re-parsed every shipped workflow file
+independently and got exactly the same 14. Reconstructed the pre-commit state in a worktree and ran the new
+guard against it: 12 of 32 cases genuinely failed, exactly the six steps the produces additions cover — real
+red-before-green, not merely the commit's own built-in mutation tests taken on faith. Two minor findings
+fixed: `validate.test.ts`'s `checkProducesGlobs` extension and `compile.test.ts`'s `produces`-on-`command`
+compile path both had no direct unit test, only the root integration test's narrow literal-path cases —
+both given real, named cases. Two minor findings disclosed: a `produces` declared on an `inline: true`
+command step is currently inert and untested (fixing it would need a new inline-step validation rule the
+plan's own scope does not authorise); a forward-looking note that `adopt()`'s fuller pipeline also writes
+`survey.json` beside `inventory.json`, relevant only once a later piece wires the subcommand.
+
+**Round 2 (fresh): 0 blocking, 0 major, 2 new minor.** Re-derived the enumeration and all 14 write/no-write
+calls again from scratch; same result. Found the test file's own header self-contradicted about how many of
+the 14 commands are currently CLI-unwired (one passage said two, a separate list implied a different two,
+neither counting all three correctly) — fixed by rewriting it into one consistent section. Found the new
+compile-time "inline command step may declare produces" test honestly deferred proving the inline execution
+path ignores it to `@forge/engine/dispatch`'s own suite — but nothing there tested it either, so the fact was
+true only by reading `steps.ts`, never by regression test. Fixed with a new `command.test.ts` case proving
+it directly: a declared `produces` grants an inline step no exception.
+
+**Round 3 (fresh, final): PASS — 0 blocking, 0 major, 0 minor.** Re-verified the full 14-step determination
+from scratch a third time (same result), confirmed the rewritten prose is now internally consistent and
+matches `KNOWN_UNACCEPTED` exactly, confirmed the new inline-produces test is grounded in real `steps.ts`
+behaviour and would fail on a real regression, found no loose end from either prior round's fixes. Three
+rounds is the limit; round 3 found nothing new.
+
+**What the critics caught that I missed:** five more steps beyond the plan's own provisional list actually
+write a tracked file (the `forge test run --json` steps' unconditional `test-results.json` write); two new
+schema/compile branches this piece itself opened had no direct unit test, only an indirect integration-test
+proof; a self-contradiction in my own prose about how many of the 14 commands are currently unwired; a
+proof-by-comment ("this is someone else's concern") that nobody had actually gone and made someone else's
+test suite prove.
+
+**Mutation evidence.** Strip `produces` from `adopt:inventory-codebase`'s real compiled node: reverted under
+strict, flagged under warn (both asserted directly on `enforceClaim`'s own return value, run live). Strip it
+from `debug:prove-fix`: both report files revert under strict (run live). Reconstruct the pre-commit
+engine/schema/YAML state in a worktree: 12 of 32 guard cases fail (run live). Remove the new inline-produces
+test's own assertion on the failure code: would no longer distinguish "produces honoured" from "produces
+ignored" on the inline path (reasoned against `steps.ts`'s own single `if`, not run).
+
+**Commits (three, not two — disclosed, `SPEC-QUESTIONS.md` Q236).** The standing two-commit convention
+assumes no critic round forces a real change after the first commit lands; a shared trunk with several
+concurrent M14 pieces committing every few minutes broke that assumption twice here — once when a formatting
+fix's own `git commit --amend` landed inside a concurrent piece's commit instead (recovered with `git reset
+--soft` back to that commit's own original content, verified identical by diff, before committing the fix
+properly and separately), once when round 2 forced a real second fix commit. The same shape `Q235` already
+established as the accepted pattern for this exact situation.
+
+**Verification.** Scoped: `packages/engine/test/dispatch`, `packages/engine/test/plan/compile.test.ts`,
+`packages/engine/test/workflow/validate.test.ts`, root `test/{command-steps,command-steps-in-claim,
+workflows,build-stage-compiles,agent-prompts-all-workflows}.test.ts` — 930 tests, all green. `pnpm typecheck`
+(21/21), `pnpm run boundaries`, `pnpm lint` all clean. Re-verified in a clean `git worktree` after each
+commit that changed the shipped diff, per rule 14/15.
+
+**Left open.** `adopt inventory`'s claim covers only `reports/adoption/inventory.json`; if a later piece
+wires the subcommand by reusing `adopt()`'s combined pipeline rather than `writeInventoryReport` in
+isolation, `survey.json` will need a second `produces` entry. `commandStepSchema` still accepts (now tested,
+not rejected) a `produces` an inline step's own execution path never reads. The scheduler's resource-claim
+interval map and the context-pack path filter still read `node.produces` exactly as before — command steps
+populating that field does not change their own, separately-disclosed limitations (`Q212`). `migrate:
+migrate-data`/`replan:re-derive` still have nothing to declare until a later piece wires and implements the
+underlying command.
