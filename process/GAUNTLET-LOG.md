@@ -14482,3 +14482,74 @@ worktree` of the final commit per rule 15.
 test, not merely asserted) — a fence for an honest session, not a security boundary. `ResumeRequest` carries
 no `env` field (above, `Q234`). P15 (gate-approve refusal under a marked shell) and P44a/b build on this
 piece; nothing else known left open.
+
+## M14 P5 — `execution.testRoots`, one `isTestPath` in the engine, a validated `<trusted> <path> [-t <token>]` form (`engine/dispatch/{test-path (new),test-command-grant,confined-command,index}.ts`; `cli/commands/run/{run-plan,story-inputs}.ts`; `schemas/config/{schema,docs,defaults}.ts`; `20` §20.1, §20.2, `18` §18.3, `13` §13.1 F-TEST-1 rule 4)
+
+**Piece.** New `dispatch/test-path.ts` owns `isTestPath` (moved verbatim from `run-plan.ts`),
+`validateTestPath` (one plain token, no `..`, project-relative, an existing regular non-symlink file,
+`realpath` inside root even under a symlinked ancestor directory, matching a new optional
+`execution.testRoots` or the built-in rule), and `expandTrustedInvocation` (the fixed runner table:
+`vitest`/`jest` → `-t`, `mocha` → `-g`, `pytest` → `-k`). `confined-command.ts`'s `vetProposedCommand` runs
+the match after `syntaxOf` and before the grant check, returning a new `CommandRefusalReason` `'test-path'`
+for a matched-but-invalid shape. `Q230`'s "whole-layer reproduction" gap (REPRODUCE/PROVE can only ever run
+a project's WHOLE test layer, since the grant is an exact string) is the problem this exists to fix — this
+piece builds the validator only.
+
+**Round 1 (fresh): 1 blocking, 2 major, 2 minor.** Blocking, real, empirically reproduced (not just argued
+from the diff): the first commit's own doc comments and the plan brief's "Discloses" line both claimed
+"nothing consumes this yet" — false. `vetProposedCommand` called the new check unconditionally whenever
+`trustedCommands` was non-empty, and `forge debug`'s RCA loop (pre-existing, unmodified, wired since P23)
+already supplies a non-empty one for REPRODUCE/PROVE, so the new acceptance form was live in production the
+moment the commit landed, with zero test coverage at that layer. The critic proved it by running a proposed
+`<configured command> <file>` through the real, unmodified `createRcaShell`: refused before the change,
+accepted (and actually executed) after. Fixed: a new `VetOptions.allowTrustedPathExtension` boolean gates
+the check, unset by every real caller. Major: `execution.testRoots` unwired to `forge debug` even were the
+gate open (moot once the gate landed — nothing to wire yet); once `testRoots` IS configured, matching drops
+the filename-shape heuristic entirely, accepting any real file under the listed directory — judged an
+adequate, disclosed trade-off (the config key is protected, project-only, and every file still passes full
+containment; the filename heuristic was never the real security boundary), not a defect, with a dedicated
+test added. Minor: a fabricated `Q234` cross-reference in the first commit's message (this piece's real
+number, `Q235`, was not yet known at commit time and a concurrent piece claimed `Q234` first — disclosed,
+not silently left); `FILTER_TOKEN`'s doc comment overclaimed "never a path" when its charset permits `/`
+and `.` — corrected to disclose rather than overclaim.
+
+**Round 2 (fresh, on both commits together): 0 new blocking/major — the loop stopped here.** Went beyond
+static reading: reverted the round-1 fix's production code in an isolated worktree, reran the new tests
+against the vulnerable version, and confirmed 3 of them fail exactly where they should (including the new
+real-`createRcaShell` integration test), proving the tests are load-bearing rather than decorative. Every
+one of round 1's five items was independently re-derived from the current code (not the round-1 summary)
+and confirmed: the gate defaults off with no other call site reaching it, ordering is still denylist →
+shell-operator → trusted-path → grant check, the `Q234` citation does not recur in any committed code, the
+`FILTER_TOKEN` doc comment now matches the regex, and `REASON_TO_PROBLEM['test-path']` is genuinely
+unreachable via `vetConfiguredCommand`. Two new minor items, both fail-closed in direction: no direct test
+for `execution.testRoots: []`  (added, no production change); the ~20 "opted-in" tests currently exercise
+an API surface with zero live callers, judged acceptable given P5/P24's explicit split but flagged for
+whoever builds P24 to re-run this same revert-and-A/B proof once the flag is actually flipped on.
+
+**What the critics caught that I missed:** that placing the new check inside `vetProposedCommand` — exactly
+where the plan's own line numbers said to — activates it for every EXISTING caller of that function that
+already supplies `trustedCommands`, not only future ones; that a brief's "nothing consumes it yet" has to be
+verified against the real call graph (`grep`, then read the actual files), not restated from the plan text
+into a new doc comment; that a directory-only match once a permission-shaped config key is set is worth an
+explicit trade-off record even when it is not a defect; that reverting a fix and rerunning its own tests is
+a stronger falsifiability proof than reading the diff, and is cheap enough to do twice.
+
+**Mutation evidence.** The round-1 gate revert, run live in an isolated worktree (not simulated): 3 tests
+fail, including the real-`createRcaShell` case. Realpath-ancestor-symlink check removed: the symlinked-root
+row fails. `testRoots` check removed: the outside-root row fails. Denylist/shell-operator ordering: made
+structurally impossible to reverse without moving the new check above `syntaxOf` textually — confirmed by
+reading the function, not by a live mutation.
+
+**Verification.** Scoped: `packages/engine/test/dispatch/{test-path,confined-command,test-command-grant,
+test-command-dispatch}.test.ts`, `packages/engine/test/rca/trusted-path-extension-gate.test.ts`,
+`test/test-command-grant-adapter.test.ts`, `test/determinism.test.ts`, `packages/schemas/test/config/
+{schema,docs,walk}.test.ts`, `packages/cli/test/commands/{config,config-test-commands}.test.ts` — 626
+tests, all green. `pnpm typecheck` (21/21), `pnpm run boundaries`, `pnpm lint` all clean. Re-verified in a
+clean `git worktree` of the final commit three times (once per commit that changed production code) per
+rule 15.
+
+**Left open.** `execution.testRoots` and `allowTrustedPathExtension` are unconsumed until P24/P26 (this
+piece's own scope). `FILTER_TOKEN`'s wider-than-needed charset (inert today). The four-commit shape
+(`feat`, `fix`, `test`, `docs`) instead of the standing two — disclosed above and in `SPEC-QUESTIONS.md`
+Q235, forced by a genuine post-commit blocking finding on a shared branch another piece had already built
+on top of.

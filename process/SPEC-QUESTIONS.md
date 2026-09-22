@@ -19497,3 +19497,151 @@ environment and deliberately never see the marker (proven, not merely asserted, 
 new case); a fence for an honest session, not a security boundary (`env -u FORGE_RUN_ID` defeats it; real
 OS-level confinement is deferred). `ResumeRequest` carries no `env` field (above). P15 (gate-approve
 refusal under a marked shell) and P44a/b build on this piece; nothing else known left open.
+
+## Q235 — M14 P5: `execution.testRoots`, one `isTestPath` in the engine, a validated `<trusted> <path>
+[-t <token>]` form — the validator, the opt-in gate a first critic round forced, and what P24/P26 must do
+
+**Piece.** `PLAN-M14.md` P5, the security-sensitive piece of wave 1 (`Q230`'s "whole-layer reproduction"
+problem: an exact `execution.testCommands` grant lets REPRODUCE/PROVE run only a whole test layer, because
+a model cannot add a `-t` filter or a file argument to an exact pattern — any unrelated red test
+"reproduces" the defect, and a pre-existing failure blocks PROVE forever; `Q230`'s own "Left open" section
+names the fix: "a follow-up could grant a command with a named placeholder for one path"). New
+`packages/engine/src/dispatch/test-path.ts`: `isTestPath` (moved verbatim from
+`packages/cli/src/commands/run/run-plan.ts:57-61`; the CLI now imports it from `@forge/engine/dispatch`,
+and `story-inputs.ts` no longer imports it from `run-plan.ts` — both import the engine directly),
+`validateTestPath(path, {root, testRoots})` (one token `[A-Za-z0-9_./@-]+`, no leading `-`, no `..`,
+project-relative, an existing regular file that is never itself a symlink, `realpath` inside `root` even
+under a symlinked ancestor directory, matching a configured `execution.testRoots` entry or, unconfigured,
+`isTestPath`'s own rule), and `expandTrustedInvocation` (the fixed runner table: `vitest`/`jest` → `-t`,
+`mocha` → `-g`, `pytest` → `-k`; a wrapper such as `pnpm test` gets the bare path only; word-splitting back
+to exactly the trusted words plus a path, or plus a flag and a token). New optional `execution.testRoots:
+string[]` (`.min(1)` entries; no default — `undefined` means "use the built-in rule", a real, distinct
+value from an unset key elsewhere, `schema.ts`/`docs.ts`/`defaults.ts`; `forge config get/set/explain`
+handle it for free, being an ordinary array leaf like `execution.sharedMutablePaths`). `confined-command.ts`'s
+`vetProposedCommand` runs the trusted-invocation match right after the syntax stage (the hard denylist,
+`SHELL_OPERATOR_PATTERN`, the quote-aware expansion refusal — all inside `syntaxOf`) and before the grant
+check (`isExecAllowed`), because the extended words are never literally a member of `grant.exec` (a
+derived test-command pattern is an exact string with no trailing path); a matched-but-invalid shape
+refuses with a new `CommandRefusalReason` `'test-path'`.
+
+**Decisions**
+
+1. **The opt-in gate (`VetOptions.allowTrustedPathExtension`), added after a critic round proved the first
+   commit's own safety claim false.** The first commit's doc comments and `PLAN-M14.md` P5's own
+   "Discloses" line both said "nothing runs the form yet (P24, P26)". A fresh critic round traced the real
+   call graph and found this false: `vetProposedCommand` ran `expandTrustedInvocation` unconditionally
+   whenever `options.trustedCommands` was non-empty, and `forge debug`'s RCA loop (`rca/shell.ts`'s
+   `createRcaShell`, unmodified by this piece, wired since `Q230`/P23) already builds a non-empty
+   `trustedCommands` for `debug-isolate`'s REPRODUCE/PROVE phase from `execution.testCommands` — which
+   `forge doctor --rule test-command`'s `G-Foundation` check requires be set for `unit` on essentially every
+   real project. So the `<trusted> <path>` acceptance shape was live in the real RCA loop the instant the
+   first commit landed, with zero test coverage at that layer and in direct contradiction of this piece's
+   own brief ("do not wire it into the RCA loop... here"). The critic confirmed this empirically: a
+   proposed `<configured command> <real file>` command, through the real, unmodified `createRcaShell`, went
+   from refused (`not-in-grant`) before the piece to accepted (and actually executed as a subprocess) after
+   it. Fixed: `VetOptions` gained `allowTrustedPathExtension?: boolean`; `expandTrustedInvocation` now runs
+   only when it is `true`. No existing caller sets it (`grep -rn "allowTrustedPathExtension"` finds it set
+   to `true` nowhere outside this piece's own tests), so `forge debug` is provably unaffected — reconfirmed
+   in a second critic round by reverting the fix in an isolated worktree and rerunning the new tests against
+   the vulnerable code: they fail exactly where they should, both at the `vetProposedCommand` unit level and
+   through the real `createRcaShell` (new `packages/engine/test/rca/trusted-path-extension-gate.test.ts`).
+   **This means P24/P26 (whichever wires REPRODUCE/PROVE to actually propose this form) must explicitly set
+   `allowTrustedPathExtension: true` and wire `execution.testRoots` through** (`RcaShellOptions` has no
+   `testRoots` field today, and `debug.ts` never reads `deps.config.execution.testRoots` — both correctly
+   absent while the gate is off, both P24/P26's job). The second critic round's own recommendation, recorded
+   here for whoever builds that piece: re-run the identical revert-and-A/B-test proof against the real
+   caller once the flag is flipped, since "nothing consumes it yet" already went stale once in this piece.
+2. **A configured `execution.testRoots` entry is a directory allowlist, not a filename allowlist, once
+   set.** `validateTestPath` falls back to `isTestPath`'s filename-shape heuristic only when `testRoots` is
+   `undefined`; once configured, matching is purely `underTestRoot`'s segment-boundary directory
+   containment — every real, non-symlink, in-project file under a listed root is accepted, not only one
+   whose name also looks test-shaped. A critic round flagged this as a widening (a custom-named test
+   directory's helpers and fixtures become nameable where the unconfigured default would refuse them by
+   filename). Judged, not fixed: `execution.testRoots` is a protected, project-only config key at the same
+   trust tier as `execution.testCommands` (`20` §20.2, a step cannot write it), every candidate still passes
+   full containment/symlink/realpath/regular-file checks regardless, and a test runner executes whatever
+   file it is given regardless of that file's name — the filename heuristic was never the real security
+   boundary; project-root containment plus the project's own directory choice is. Disclosed in
+   `underTestRoot`'s own doc comment, with a dedicated test (`test-path.test.ts`, `'a configured testRoots
+   entry is a DIRECTORY allowlist, not a filename allowlist'`) proving the direction that matters: a
+   non-test-named file under a custom root is accepted where the unconfigured default refuses it.
+3. **`FILTER_TOKEN`'s charset is wider than "never a path" would require** (`[A-Za-z0-9_][A-Za-z0-9_.:@/-]
+   {0,119}` permits `/` and repeated `.`). Currently inert — none of the four `RUNNER_FILTER_FLAGS` entries
+   (`vitest`/`jest`/`mocha`/`pytest`) reads its filter value as a filesystem path — but the regex does not
+   itself enforce that property. Disclosed in the constant's own doc comment rather than narrowed, since
+   narrowing risks refusing a legitimate test-name filter (a parametrized id, a nested describe path) with
+   no present exploit to justify it; a future runner-table entry whose filter flag DOES take a path must not
+   reuse this token class unchanged.
+4. **`checkTestCommand`/`vetConfiguredCommand` are unchanged**, as the brief required: `test-command-grant.ts`'s
+   `REASON_TO_PROBLEM` map gained a `'test-path'` entry only because `CommandRefusalReason` is now a
+   superset and the map is total — confirmed genuinely unreachable via `vetConfiguredCommand` (which never
+   calls `expandTrustedInvocation`) by both critic rounds, independently, by reading the call graph rather
+   than trusting the comment.
+
+**Tests.** New `packages/engine/test/dispatch/test-path.test.ts` (45): the validator matrix (`..`,
+absolute, leading `-`, a space, quotes, `$x`, a glob, NUL, a directory, missing, a symlink as the leaf in
+and out, a symlinked ancestor in and out, `testRoots` outside/inside with a segment boundary, `testRoots:
+[]` refuses everything, the directory-not-filename property for a custom root); default `testRoots`
+reproduces `isTestPath`; `git grep` parity that `packages/cli/src` no longer defines `TEST_PATH`;
+`expandTrustedInvocation`'s own shape matching (the runner table, the longest-prefix rule, the
+leading-`-` short-circuit). New matrix in `confined-command.test.ts`: the gate itself (no
+`allowTrustedPathExtension` → `not-in-grant`, unaffected by `trustedCommands` alone; explicit `false`
+identical to unset), then, opted in: `<trusted> <path>` accepted with no exec pattern of its own; two
+paths and an option-shaped extra word refused as `not-in-grant` (the shape is not recognised, not
+"recognised and rejected"); `..` and a symlinked ancestor refused as `test-path`; a shell operator and the
+hard denylist still win, tried first; a `-t` token with a space and a literal unexpanded `{path}`
+placeholder refused as `test-path`; `-t` recognised for `vitest`, refused for a wrapper (`pnpm test`); one
+character off the configured command still `not-in-grant`; a tainted (`exec: false`) grant gets no bypass
+even with `trustedCommands` supplied; the bare configured command is unaffected. New
+`packages/engine/test/rca/trusted-path-extension-gate.test.ts` (2): through the real, unmodified
+`createRcaShell`, built the exact way `debug.ts` calls it, a `<trusted> <path>` proposal is still
+`not-in-grant` and the bare configured command still runs. Config tests (`schema.test.ts`, CLI
+`config.test.ts`): `execution.testRoots` optional/list/empty-array/empty-entry-refused, get/set/explain
+round-trip.
+
+**Critic rounds (fresh subagent each, given the diff and specs, not the rationale).** Round 1 (on the
+first commit alone): 1 blocking, 2 major, 2 minor. Blocking — decision 1 above (the false "nothing consumes
+it yet" claim, empirically reproduced against the real, unmodified `createRcaShell`): fixed with the opt-in
+gate. Major — decision 2 above (`testRoots` unwired to `forge debug`, and directory-only matching once
+configured): the first is resolved by construction once the gate landed (nothing to wire yet); the second
+judged and disclosed, not fixed, with a new test (both above). Minor — a fabricated `Q234` cross-reference
+in the first commit's own message (this piece's actual number turned out to be `Q235`; no such reference
+was ever committed into code, only into a commit message that cannot be safely rewritten once a concurrent
+piece had already committed on top of it in the shared tree — disclosed here rather than hidden); `FILTER_TOKEN`'s
+doc comment corrected (decision 3). Round 2 (on both commits together, the combined diff): 0 new
+blocking/major. Independently re-derived every claim from round 1's fix from the code itself, then went
+further and A/B-tested it directly — reverted the fix's production code in an isolated worktree, reran the
+new tests against the vulnerable version, and confirmed exactly 3 of them fail (proving the tests are
+load-bearing, not decorative), including through the real `createRcaShell`. Two minor, both fail-closed in
+direction: no direct test for `execution.testRoots: []` (added); the "opted-in" test suite currently
+exercises an API surface with zero live callers (judged acceptable given the P5/P24 split, flagged for
+whoever reviews P24 to re-run the same revert-and-A/B proof this round did). Three rounds is the limit;
+round 2 found nothing new of substance, so the loop stopped there.
+
+**Mutation evidence.** Live, not simulated: reverting the opt-in gate's production code (restoring
+unconditional `expandTrustedInvocation`) in an isolated worktree while keeping this piece's own new tests
+made 3 of them fail, including the real-`createRcaShell` integration test — the identical proof a mutation
+test gives, run against the actual vulnerable commit rather than a hypothetical. Realpath check removed:
+the symlinked-ancestor rows fail. `testRoots` check removed: the outside-root row fails. Trusted match
+moved before `syntaxOf`: the shell-operator/denylist-first rows would fail (not run live; the code's own
+structure makes this ordering impossible to get backwards without moving the call above `syntaxOf`
+textually, which round 2 independently confirmed by reading the function top to bottom).
+
+**Commits (four, not two — disclosed).** `6f96bff` (`feat(engine,cli,schemas)`, the validator and schema
+key), `a00784f` (`fix(engine)`, the critic-round-1 gate fix — a genuine, necessary correction after commit,
+kept as a separate commit rather than an amend/rewrite because a concurrent M14 piece had already committed
+on top of `6f96bff` in the shared tree by the time the finding landed), `6c8b96e` (`test(engine)`, the
+critic-round-2 `testRoots: []` test), and this docs commit. The standing two-commit convention assumes no
+critic round forces a real production-code change after the first commit; this piece's own security
+sensitivity made that assumption false, and splitting the fix into its own commit (rather than rewriting
+`6f96bff`) is what rule 14/15's "verify the COMMIT, not the working tree" and the shared-tree discipline
+both require once another agent has built on top.
+
+**Left open.** `execution.testRoots` and `allowTrustedPathExtension` are both unconsumed by any real caller
+until P24/P26 (this piece's own explicit scope: the validator only). Whoever builds P24/P26 should re-run
+this piece's own revert-and-A/B-test proof against the real `createRcaShell`/`debug.ts` call path once the
+flag is flipped on, not merely trust that flipping a boolean is safe by inspection. `FILTER_TOKEN`'s wider-
+than-"never a path" charset (decision 3) is inert today; the runner table growing to include a filter flag
+that takes a path is the trigger to revisit it. `testRoots`'s directory-only matching (decision 2) is a
+judged, disclosed trade-off, not something left broken — recorded here so a future reviewer does not
+re-open it as a surprise.
