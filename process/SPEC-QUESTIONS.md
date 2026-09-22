@@ -19077,3 +19077,43 @@ Files: `packages/engine/src/{plan/dependencies.ts (the exclusion overlap fix),di
 **Process finding made during this run.** Building the clean checkout for this run showed that `main`'s HEAD did not build: P25's commit `7a0ac5b` left `packages/cli/src/bin.ts` with 18 syntax errors (four hand-isolated hunks spliced into the wrong places), invisible to every scoped test and typecheck run on the shared working tree. Repaired in `a144033`; rule 15 in `process/plans/M13-AGENT-NOTES.md` now requires each piece to typecheck and test its own commit in a clean worktree. The final full suite for M13 is run on a clean checkout for the same reason.
 
 **Not proven / next.** `plan-stage` at L1 (P9-3) needs a story-backed stage and gates; it stays in the M14 backlog per the plan's proposed boundary.
+
+
+## Q232 — M13 close-out: the owner decisions M13 left open, decided (delegated to the orchestrator, 2026-09-21)
+
+**Context.** M13 closed at `617e549` (two live runs; `retro` completes end to end; full suite on a clean checkout green apart from load flakes). Its pieces recorded 21 decisions as "owner call" across Q212-Q231. The owner delegated them ("decide for me based on your most educated analysis and understanding of FORGE"). Each decision below names its source entry, the choice, and why; the reasoning follows FORGE's own principles (`docs/method-guide.md`, `15`: the user owns flavour, FORGE owns rigour; `10` §10.3 and `20`: fail closed; `05` §5.5: separation of duties; `18` §18.4: everything auditable). M14 builds them (`PLAN-M14.md`); none is built here.
+
+**Enforcement and claims**
+1. **An out-of-claim write under `strict` FAILS the step** (Q212, Q216, P31). `06` §6.7 says so; the code only reverts. With P16 every brief-named path is in the claim, so a violation now means a brief gap or a misbehaving session, and both must be red, not a `PolicyViolation` event nobody reads. `warn` stays the `guided` default for a step that declares neither `outputs` nor `produces`. Consequence: the P16 brief-write-path test becomes mandatory for any new brief.
+2. **Lanes write their declared KB outputs as files; `KbWriter`'s guarantees become checks** (Q212, `02` §2.5 / `08` §8.6 vs `06` §6.4). An agent writes files, not API calls, so "every KB write goes through `KbWriter`" cannot bind a lane. Reconcile: a declared KB output is written on the lane and the output contract enforces what `KbWriter` guaranteed (a registry-allocated id with no collision, mandatory `sources`, deprecate-not-delete: P14 already refuses removals). Undeclared KB changes keep going through the proposal channel. Amend `02` §2.5 and `08` §8.6 to say so.
+3. **`docs/forge/<section>/` prefixes in `produces` and briefs follow the configured roots by engine expansion** (Q216), not by templating the YAML: `resolveStepClaim` already receives the roots; one place, and workflow YAML stays authorable. Briefs may use the short form the agent already resolves.
+4. **`prepare-release-build` claims a configured list of app paths** (Q216): a config key the brief and the claim both read; until set, the step refuses with a remedy rather than guessing.
+5. **RCA reproductions live under a defect-scoped test glob** (Q216) that the `rca`/`reproduce-defect` claims include and the briefs name.
+6. **A write-capable agent step with an empty claim is a validation finding** (Q225): error in `forge workflow validate --all`, warning in `doctor` for user workflows; the silent no-op stays impossible by construction (P36) and becomes visible before a run.
+
+**Reviews, gates and approval**
+7. **A `ReviewReport` verdict binds** (Q217, P32): `blocked` fails the review step (the implementer's loop retries), `incomplete` blocks the merge with a remedy, `concerns` proceeds and is recorded on the merge. Mechanism: a `verdict` front-matter field the engine writes and the merge step reads; no new gate check. A review that cannot stop a merge is theatre, which contradicts `05` §5.5.
+8. **`pm`/`po` keep `may_approve` for the product gates** (Q220, P37): `05` §5.2 forbids them only the engineering gates, and the product roles are the accountable ones. The real separation-of-duties invariant, enforced in P41's agent-approver seam: an agent never approves a gate that a step run by that same agent produced evidence for in the same run.
+9. **An agent-run `forge gate approve`/`waive` is refused** (Q229 2a): the engine marks every session it spawns (an environment marker the launcher shim already has a place for), and the CLI refuses approval/waiver under that marker unless the gate's `approval.roles` names agents and the agent's `may_approve` lists the gate. Cheap, and it closes the shell hole the seam left.
+10. **Waivers: default expiry cap 90 days (configurable), `--owner` must be a non-empty identifier** (Q229). An unbounded waiver is a silent policy change.
+11. **The five `spec validate` rules keep failing an empty project** (Q214), and **`skeleton:deployed` keeps its Waiver cost and its self-attested record** (Q219): a gate on a project with no evidence has nothing to pass on; the Waiver is the recorded, expiring, honest way through. M14 may read CI evidence for the deployment record later.
+12. **The deliver-stage deploy strings stay as P22 chose** (Q213): env-less `forge deploy --dry-run` / `--rollback-check` over recorded evidence; `14` §14.3 gives FORGE no deploy executor and `forge deploy <env>` is the deliver-stage run itself.
+
+**Definition of done and self-verify**
+13. **The DoD profile splits into `verify` (run at step 6, self-verify) and `done` (run at commit, after review)** (Q213, P30): the example list conflates two moments. Amend `09` §9.8; `forge story verify` runs `verify`, the merge/commit path runs `done`.
+
+**Tests, exec and taint**
+14. **Test commands stay exact strings, plus one validated `{path}` placeholder** (Q230): REPRODUCE/PROVE may run `<configured command> {path}` where `{path}` must be an existing project-relative test file under the configured test roots (and `-t <plain token>` where the runner takes it), so a defect's own test runs, not the whole layer. The diagnostician's own patterns are not widened (Q222 D2).
+15. **Plan compilation taints steps** (Q230, Q222): a step is `taint: external` when any input is an MCP/fetch source or a KB entry carrying external provenance; until provenance exists on KB entries, `adopt` and `migrate` steps whose inputs are the scanned codebase are tainted. Restores `20` §20.5 to workflow steps, not only `forge debug`.
+16. **The `exit 1 beside a v:1 envelope` trust stays** (Q223). Changing shipped commands' exit codes would change what a human sees; the residual is recorded.
+
+**Lanes and merges**
+17. **A step with several unmerged predecessors is built on a synthetic in-lane merge of their heads** (Q226 a): merged in plan order onto the new lane base; a conflict is the typed failure the conflict policy defines. Failing the step would make every story with two dependencies unbuildable.
+18. **The `agent` conflict policy gets its resolver** (Q221/Q226 b, P39): rebase first; a residual conflict opens a resolution session for the lane's own agent with a claim of exactly the conflicting files, then re-verifies the merge checks. **The integration branch is fast-forwarded to `main` at run start** and the run refuses if they have diverged (a typed failure naming the two tips).
+19. **A merge with no configured test layers stays refused**, and **`fast` = typecheck, lint, unit; `full` adds integration and contract** (Q226). `scaffold-project` sets the layers (P23's `config set` route); a merge that verifies nothing is not a merge.
+
+**Intake and agents**
+20. **`forge config set --commit`, used by `intake:record-level`** (Q227): the user ran the workflow whose declared effect is recording the level, so committing that one file with a FORGE-authored message is the workflow's act, not the engine committing user work. `forge run` keeps refusing any other dirty tree.
+21. **Loader-level agent output validation, and `forge upgrade` warns about stale materialised agents** (Q224, P45): a `forge agent validate` rule (a registered type must carry the registry schema and a path ending in the registry tail); `upgrade` compares the materialised copy's hash header to the shipped one and says which are stale.
+
+**Spec text to amend (mechanical, one piece):** `15` §15.3.2 (a derived test-command grant is outside the ceiling by design; `doctor` lists it), `03` §3.2.4 (`--input` row; `forge run build-stage --stage mvp`, matching the workflow id), `03` §3.2.4 and `10` §10.1 (`--answers <file>`; the `elicit` `choices` field, text proposed in Q227), `09` §9.8 (13), `02` §2.5 / `08` §8.6 (2), `06` §6.7 (1).
