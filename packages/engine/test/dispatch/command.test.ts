@@ -69,6 +69,28 @@ describe('runCommandStep', () => {
     expect(outcome.failure?.code).toBe('3');
   });
 
+  // `PLAN-M14.md` P2 let a `command` step author `produces` for the first time; this proves the inline
+  // path -- which never has a lane, and so never reaches `resolveStepClaim`/`enforceClaim` at all --
+  // grants a declared `produces` no exception. Without this, "the inline execution path never reads
+  // produces" was true only by reading `steps.ts`, not by a regression test.
+  it("an inline command step's own declared produces grants no exception: a matching write is still reverted and the step still fails", async () => {
+    const projectRoot = await createTempRepo('command-inline-produces');
+    const ctx = createTestContext({ projectRoot });
+    const stepNode = node({
+      id: 'wf:lint',
+      kind: 'command',
+      run: 'echo bad > allowed.txt',
+      laneAffinity: 'inline',
+      produces: ['allowed.txt'],
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('INLINE-CHANGED-INTEGRATION-TREE');
+    await expect(readFileInRepo(projectRoot, 'allowed.txt')).rejects.toThrow();
+  });
+
   it('a non-inline command step creates a real lane, runs the command there, and commits its own changes', async () => {
     const projectRoot = await createTempRepo('command-lane');
     const ctx = createTestContext({ projectRoot });

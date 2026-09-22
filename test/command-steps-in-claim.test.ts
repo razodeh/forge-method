@@ -14,6 +14,18 @@
  * `NON_FORGE_STEPS` (shared with that file; every one of which is `inline: true`, confirmed here rather
  * than assumed, so the two files' claims about the same workflows cannot quietly diverge).
  *
+ * **Unwired today.** Three of the fourteen commands (`forge adopt inventory`, `forge migrate run`,
+ * `forge spec re-derive`) are not wired into `bin.ts` at all yet — each is rejected by the real CLI
+ * (`test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED`, Q213). That is why the write determination
+ * below is by reading source, not by running the command: shelling any of the three for real would
+ * only ever prove "the CLI refuses an unrecognised command," never exercise claim enforcement. The
+ * three are not equivalent, though: `forge adopt inventory` has a real, named handler function
+ * (`writeInventoryReport`, called by `adopt()`'s own full pipeline, `adopt.ts:413`) this piece can
+ * read and declare a claim for now, correct today and already in place for whenever a later piece
+ * wires the subcommand; `forge migrate run` and `forge spec re-derive` have no handler anywhere in
+ * this codebase to read at all (`03` defines no `forge migrate` command; `09` §9.7 names no command
+ * that re-derives specs) — nothing to declare until a later piece both wires and implements them.
+ *
  * **What each step writes**, determined by reading the real command it runs:
  * - `adopt:inventory-codebase` (`forge adopt inventory --json`) — `writeInventoryReport`
  *   (`packages/cli/src/commands/adopt.ts:226-231`) writes `reports/adoption/inventory.json`
@@ -34,27 +46,26 @@
  *   comment: "leaves the project's `test-results.json` and `flaky.json` alone (`persistState: false`...)".
  *   Writes nothing; no `produces`.
  * - `migrate:migrate-data` (`forge migrate run --phase expand --json`) and `replan:re-derive`'s approved
- *   branch (`forge spec re-derive --json`) — both unwired into `bin.ts` today (`test/command-steps.test.ts`'s
- *   own `KNOWN_UNACCEPTED`, Q213): refused before either could write anything. No `produces` until a later
- *   piece wires the command; this file's own enumeration test would need updating then too.
+ *   branch (`forge spec re-derive --json`) — unwired and unimplemented (see "Unwired today" above):
+ *   refused before either could write anything. No `produces` until a later piece wires and implements
+ *   the command; this file's own enumeration test would need updating then too.
  * - `verify-stage:check-coverage` (`forge test coverage --json`, no `--rule`) — `runDefaultCoverage`
  *   (`coverage.ts`) only reads `coverage-summary.json`; the ratchet baseline is written only by
  *   `--rule ratchet`, which this step never passes. Read-only; no `produces`.
  * - `verify-stage:verify-traceability` (`forge spec matrix --json`) — `specMatrix` (`spec.ts`) builds and
  *   returns a `SpecGraph`; no write anywhere in the call chain. Read-only; no `produces`.
  *
- * **Why a stand-in write, not a real subprocess.** Two of the fourteen commands (`forge adopt inventory`,
- * `forge migrate run`) are not wired into `bin.ts` at all yet (Q213); shelling them for real would only
- * ever prove "the CLI refuses an unrecognised command," never exercise claim enforcement. Every step here
- * is therefore driven through `runLaneLifecycle` (`@forge/engine/dispatch`) directly — the same real git
- * lane, the same real `resolveStepClaim`/`enforceClaim` `packages/engine/test/dispatch/{command,
- * output-claim}.test.ts` already use — with a `runWork` callback that writes exactly the path(s) the
- * command's own source documents, standing in for the real shell invocation. This proves the one thing in
- * this piece's scope: the *declared claim* covers the *documented write*, independent of whether the
- * command is wired. `enforceClaim`'s own return value (`outOfClaim`/`reverted`), not the durable event
- * log, is what each test reads — a thin `VcsFacade` wrapper around the real one records it (the root
- * `test/` tree has no dependency on `@forge/telemetry` to read events back with, and does not need one:
- * `outOfClaim`/`reverted` are the exact values `runLaneLifecycle` derives the `PolicyViolation` event from).
+ * **Why a stand-in write, not a real subprocess** (beyond the three unwired commands above, which could
+ * not run for real at all): every step here is driven through `runLaneLifecycle` (`@forge/engine/dispatch`)
+ * directly — the same real git lane, the same real `resolveStepClaim`/`enforceClaim`
+ * `packages/engine/test/dispatch/{command,output-claim}.test.ts` already use — with a `runWork` callback
+ * that writes exactly the path(s) the command's own source documents, standing in for the real shell
+ * invocation. This proves the one thing in this piece's scope: the *declared claim* covers the
+ * *documented write*, independent of whether the command is wired. `enforceClaim`'s own return value
+ * (`outOfClaim`/`reverted`), not the durable event log, is what each test reads — a thin `VcsFacade`
+ * wrapper around the real one records it (the root `test/` tree has no dependency on `@forge/telemetry`
+ * to read events back with, and does not need one: `outOfClaim`/`reverted` are the exact values
+ * `runLaneLifecycle` derives the `PolicyViolation` event from).
  *
  * Lives at the repository root for the reason `test/command-steps.test.ts`/`test/workflows.test.ts`
  * already give: it needs both `@forge/engine` and `@forge/templates`, and `02` §2.2 lets neither import
