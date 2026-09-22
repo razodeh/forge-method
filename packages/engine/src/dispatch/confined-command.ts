@@ -635,15 +635,28 @@ export interface VetOptions {
    * model cannot change them, and a configured command holds no glob character). Everything else (denylist,
    * operators, expansion, the grant, the network programs and hosts, git and dangerous arguments) still applies.
    *
-   * The same list also drives `expandTrustedInvocation` (`test-path.ts`, `PLAN-M14.md` P5): a proposal whose words
-   * are one of these, verbatim, followed by one validated test path (and, for a recognised runner, its own `-t`/
-   * `-g`/`-k` filter token) is trusted the identical way, so REPRODUCE/PROVE can run one file instead of the whole
-   * layer without the grant itself ever widening (`SPEC-QUESTIONS.md` Q230's "whole-layer reproduction" gap).
+   * When `allowTrustedPathExtension` is also `true`, the same list drives `expandTrustedInvocation`
+   * (`test-path.ts`, `PLAN-M14.md` P5) too: a proposal whose words are one of these, verbatim, followed by one
+   * validated test path (and, for a recognised runner, its own `-t`/`-g`/`-k` filter token) is trusted the
+   * identical way, so REPRODUCE/PROVE can run one file instead of the whole layer without the grant itself ever
+   * widening (`SPEC-QUESTIONS.md` Q230's "whole-layer reproduction" gap).
    */
   readonly trustedCommands?: readonly string[];
+  /**
+   * Explicit opt-in for the `<trusted> <path> [-t/-g/-k <token>]` extension above: `expandTrustedInvocation`
+   * runs only when this is `true`. Unset (or `false`) leaves `vetProposedCommand` exactly as it behaved before
+   * `test-path.ts` existed, even when `trustedCommands` is non-empty — `forge debug`'s RCA loop
+   * (`rca/shell.ts`'s `createRcaShell`, unmodified by this piece) already supplies a non-empty
+   * `trustedCommands` for `debug-isolate`'s REPRODUCE/PROVE phase, so leaving the extension gated by default is
+   * what makes "this piece builds the validator only, nothing consumes it yet" actually true rather than an
+   * accidental live widening the moment this file changed. A later piece flips this on where it has done its
+   * own work (prompt text that tells the model the form exists, `testRoots` wired to that caller's config)
+   * (`PLAN-M14.md` P24/P26).
+   */
+  readonly allowTrustedPathExtension?: boolean;
   /** `execution.testRoots`, passed straight to `validateTestPath`'s matching rule for the `<trusted> <path>`
-   * extension above. `undefined` (the project has not configured the key) falls back to `isTestPath`'s own
-   * built-in rule. */
+   * extension above (only consulted when `allowTrustedPathExtension` is `true`). `undefined` (the project has
+   * not configured the key) falls back to `isTestPath`'s own built-in rule. */
   readonly testRoots?: readonly string[] | undefined;
 }
 
@@ -971,11 +984,16 @@ export async function vetProposedCommand(
   // checks below unchanged, which refuse it there — this never bypasses `isHardDenylisted` or
   // `SHELL_OPERATOR_PATTERN` (both already ran, above, over the whole raw string) and never treats an
   // unexpanded placeholder such as literal `{path}` as a real path (`validateTestPath` refuses its `{`/`}`
-  // characters outright).
-  const trustedInvocation = await expandTrustedInvocation(words, options.trustedCommands ?? [], {
-    root,
-    testRoots: options.testRoots,
-  });
+  // characters outright). Gated by `options.allowTrustedPathExtension`: `expandTrustedInvocation` is skipped
+  // (reported as `{ matched: false }`, identical to "no shape recognised") for every EXISTING caller that
+  // supplies `trustedCommands` without this new flag — `forge debug`'s RCA loop already does, since P23 — so
+  // this piece changes no live behaviour until a caller deliberately turns it on.
+  const trustedInvocation = options.allowTrustedPathExtension
+    ? await expandTrustedInvocation(words, options.trustedCommands ?? [], {
+        root,
+        testRoots: options.testRoots,
+      })
+    : ({ matched: false } as const);
   if (trustedInvocation.matched && !trustedInvocation.ok) {
     return refuse('test-path', trustedInvocation.detail);
   }

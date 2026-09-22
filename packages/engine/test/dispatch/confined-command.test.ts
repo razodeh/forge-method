@@ -332,6 +332,9 @@ describe('vetProposedCommand: ordinary read-only reproductions are allowed', () 
  * `grant.exec` (`PLAN-M14.md` P5, `SPEC-QUESTIONS.md` Q230). */
 const NO_OWN_EXEC = { exec: [], network: 'none' } as const;
 
+/** Every call below opts in with `allowTrustedPathExtension: true` — standing in for a FUTURE caller that has
+ * deliberately turned the extension on (P24/P26). The gate's own default-off behaviour, which is what keeps
+ * `forge debug`'s EXISTING RCA-loop caller unaffected by this file, has its own describe block below. */
 async function reasonOfTrusted(
   command: string,
   trustedCommands: readonly string[],
@@ -344,11 +347,38 @@ async function reasonOfTrusted(
   const refusal = await vetProposedCommand(command, extra.grant ?? NO_OWN_EXEC, root, {
     trustedCommands,
     testRoots: extra.testRoots,
+    allowTrustedPathExtension: true,
   });
   return refusal?.reason;
 }
 
-describe('vetProposedCommand: the trusted <path> extension (PLAN-M14.md P5, Q230)', () => {
+describe('vetProposedCommand: allowTrustedPathExtension gates the extension off by default (PLAN-M14.md P5)', () => {
+  it('trustedCommands alone, with no allowTrustedPathExtension, behaves exactly as it did before test-path.ts existed: refused as not-in-grant, never test-path', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    const refusal = await vetProposedCommand(
+      'pnpm vitest run tests/x.test.ts',
+      NO_OWN_EXEC,
+      root,
+      { trustedCommands: ['pnpm vitest run'] }, // no allowTrustedPathExtension
+    );
+    expect(refusal?.reason).toBe('not-in-grant');
+  });
+
+  it('allowTrustedPathExtension: false is identical to leaving it unset', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    const refusal = await vetProposedCommand('pnpm vitest run tests/x.test.ts', NO_OWN_EXEC, root, {
+      trustedCommands: ['pnpm vitest run'],
+      allowTrustedPathExtension: false,
+    });
+    expect(refusal?.reason).toBe('not-in-grant');
+  });
+});
+
+describe('vetProposedCommand: the trusted <path> extension, opted in (PLAN-M14.md P5, Q230)', () => {
   it('a configured command plus one real test file is accepted, with no exec pattern of its own needed', async () => {
     const root = await lane();
     await mkdir(path.join(root, 'tests'));

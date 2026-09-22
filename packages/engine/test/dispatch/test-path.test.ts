@@ -185,6 +185,21 @@ describe('validateTestPath: the validator matrix', () => {
     await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
     expect(await problemOf('tests/x.test.ts', root, ['e2e'])).toBe('outside-test-roots');
   });
+
+  it('a configured testRoots entry is a DIRECTORY allowlist, not a filename allowlist: a real file under it with no test-shaped name is accepted once configured, refused by the unconfigured default', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'spec'));
+    await writeFile(path.join(root, 'spec', 'helper.ts'), '');
+    // Unconfigured: "spec" is not in the built-in rule's directory alternation, and the filename does not
+    // match ".test."/".spec."/"_test" either, so the default rule refuses it.
+    expect(await problemOf('spec/helper.ts', root)).toBe('outside-test-roots');
+    // Configured to "spec": accepted purely by directory containment — the filename is not re-checked
+    // against the built-in rule. A deliberate, disclosed design property (see the piece's own
+    // SPEC-QUESTIONS.md record): the boundary is the project's own execution.testRoots value, not the
+    // file's own name.
+    const checked = await validateTestPath('spec/helper.ts', { root, testRoots: ['spec'] });
+    expect(checked.ok, JSON.stringify(checked)).toBe(true);
+  });
 });
 
 describe('validateTestPath: default (unconfigured) testRoots reproduces isTestPath', () => {

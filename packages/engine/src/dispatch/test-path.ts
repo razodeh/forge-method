@@ -22,10 +22,13 @@
  *   of already-configured test commands and a fixed runner table (`vitest`/`jest` take `-t`, `mocha`
  *   `-g`, `pytest` `-k`; a wrapper such as `pnpm test` gets the bare path only).
  *
- * This piece builds the validator only. Nothing calls `expandTrustedInvocation` outside its own tests and
- * `confined-command.ts`'s `vetProposedCommand` (which runs it as one more check in its existing pipeline,
- * after the syntax stage and before the grant check — see that module's own comment); no RCA loop, no
- * `forge story verify`, and no prompt text offers this form to a model yet.
+ * This piece builds the validator only. `confined-command.ts`'s `vetProposedCommand` calls
+ * `expandTrustedInvocation` as one more check in its existing pipeline (after the syntax stage, before the
+ * grant check — see that module's own comment), but only when its caller passes `VetOptions.
+ * allowTrustedPathExtension: true` — unset for every EXISTING caller, so `forge debug`'s RCA loop
+ * (`rca/shell.ts`'s `createRcaShell`, which already supplies a non-empty `trustedCommands` for
+ * `debug-isolate`'s REPRODUCE/PROVE since P23) is completely unaffected by this file's existence. No RCA
+ * loop, no `forge story verify`, and no prompt text offers this form to a model, or turns the flag on, yet.
  *
  * @see specs/20 §20.1
  * @see specs/18 §18.3
@@ -79,7 +82,15 @@ function within(root: string, candidate: string): boolean {
 /** Whether `relPath` (already `..`-free and project-relative) sits under `testRoot`, at a segment
  * boundary: a configured root of `tests` never matches `tests-extra/x.test.ts` (`PLAN-M14.md` P6 makes
  * the identical point for `produces` roots: never `docs/forge/kbx` for a root of `docs/forge/kb`). A
- * leading `./` or a trailing `/` on the configured root is tolerated. */
+ * leading `./` or a trailing `/` on the configured root is tolerated.
+ *
+ * A deliberate, disclosed design property: once `execution.testRoots` is configured, matching is
+ * DIRECTORY-scoped only — every real, non-symlink file under a listed root is accepted, not only one whose
+ * NAME also looks test-shaped (`isTestPath`'s filename heuristic, the fallback for an unconfigured project,
+ * is not additionally applied on top of a configured root). This is what lets a project whose test
+ * directory does not follow the built-in naming convention (e.g. `spec/`) use the extension at all; the
+ * boundary is `execution.testRoots` itself, a protected config key set only by the project (`20` §20.2),
+ * the same trust level as `execution.testCommands`. */
 function underTestRoot(relPath: string, testRoot: string): boolean {
   const normalizedRoot = testRoot.replace(/^\.\/+/, '').replace(/\/+$/, '');
   if (normalizedRoot === '' || normalizedRoot === '.') return true;
@@ -178,8 +189,12 @@ const RUNNER_FILTER_FLAGS: Readonly<Record<string, '-t' | '-g' | '-k'>> = {
   pytest: '-k',
 };
 
-/** `-t`/`-g`/`-k`'s own value: one token a shell never treats specially and a runner reads as a literal
- * test-name filter, never a second flag or a path. */
+/** `-t`/`-g`/`-k`'s own value: one token a shell never treats specially and never a second flag (no leading
+ * `-`, no space, no `;&|$()<>` etc.). It still permits `/` and repeated `.` — harmless for the four
+ * `RUNNER_FILTER_FLAGS` entries today, none of which reads its filter value as a filesystem path — but a
+ * future runner added to that table whose filter flag DOES take a path must not reuse this token class
+ * unchanged; this regex does not itself enforce "never a path" the way `PATH_TOKEN` plus the `..`/absolute
+ * checks in `validateTestPath` do. */
 const FILTER_TOKEN = /^[A-Za-z0-9_][A-Za-z0-9_.:@/-]{0,119}$/;
 
 function runnerFlagFor(trustedWords: readonly string[]): '-t' | '-g' | '-k' | undefined {
