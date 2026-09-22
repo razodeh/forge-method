@@ -19409,3 +19409,91 @@ still saying `done`) until P3, P8-P11, P25, P41 land; `15` §15.3.2's existing l
 in `forge doctor` still has no doctor code reading `security.toolCeilingEscalations` (grep empty) — not
 this piece's. The `05` roster-row question above is new: not decided by `Q232`, and `PLAN-M14.md`'s own
 citation gap should be corrected before a later piece revisits it.
+
+## Q234 — M14 P4: the FORGE run/step/agent marker — composed only from `ctx`, a real gap the first critic
+round found in `forge resume`'s own launcher shim (fixed), and the one deliberate exclusion left standing
+
+**Piece.** New `packages/core/src/session-marker.ts` exports `FORGE_RUN_ID`/`FORGE_STEP_ID`/`FORGE_AGENT_ID`
+(names only, never a value) — `Q232` decision 9's shell fence: the engine marks every session/command it
+spawns so a later piece (`gate approve`/`waive` refusal, `10` §10.3 rule 6, amended in P15) can tell an
+engine-spawned shell from a person's own real one. Every `SessionRequest` the engine builds carries it,
+composed only from `ctx.runId`/`node.id`/the resolved `AgentDefinition.id`, never `process.env` (R10):
+`buildSessionRequest` (`dispatch/steps.ts`), `runParticipantSession` (`interaction/dispatch-agent-step.ts`
+— the participant's own resolved agent, not `node.agent`, the step's primary author), and `forge debug`'s
+two sites (`loop/debug.ts`'s `runReadOnlySession`/`runFixSession`). Run-spawned commands carry
+`FORGE_RUN_ID`/`FORGE_STEP_ID`: `commandEnvFor` (`run/launcher-shim.ts`) takes an optional run id and
+stamps it alongside `PATH`; `commandStepEnvironment` (`dispatch/elicit.ts`) stamps both directly from
+`ctx.runId`/`node.id`, independent of whether the launcher shim succeeded (best-effort, warn-and-continue,
+`createLauncherShimOrWarn`) — a `command` step's own env must never depend on that having worked. Neither
+real adapter's env-merge order changed (both already merged `req.env` last); a new
+`packages/adapter-kit/src/conformance/env-passthrough.ts` check (not one of `07` §7.6's fixed C1-C16)
+proves, against `@forge/adapter-generic`'s real, separately-spawned scripted-binary fixture, that a key set
+only on `SessionRequest.env` genuinely reaches the real subprocess.
+
+**Round 1 (fresh): 1 blocking, 1 major, 2 minor.** Blocking, real: `packages/cli/src/commands/run/resume.ts`
+was never updated to thread the run id into `createLauncherShimOrWarn` the way `run.ts` was — a *resumed*
+run's `ctx.commandEnv` therefore carried no `FORGE_RUN_ID` at all, so every gate check and merge check a
+resumed run evaluates after the crash/pause ran unmarked (`gate-commands.ts`/`facades.ts` both read
+`ctx.commandEnv` directly, with no per-step stamping fallback the way `commandStepEnvironment` has).
+`forge resume` is an ordinary path (crash recovery, `forge pause`), not an edge case, and the diff's own
+comment in `run.ts` claimed all three surfaces ("command steps, gate checks, merge checks") were covered
+when one was not for the resumed case. Fixed: `resume.ts` now passes `runId` too, with a comment stating
+why the resumed path cannot rely on it having been true before the crash. Major, real: no test anywhere
+proved gate-check/merge-check commands receive `FORGE_RUN_ID` through the real production wiring
+(`commandEnvFor` → `commandEnv` → `createGateEvaluator`/`createMergeQueueFacade`) for either a fresh or a
+resumed run — the existing `command-env.test.ts` gate/merge cases only prove `PATH` resolution against a
+hand-built env object, never the real function chain, which is exactly why the blocking gap shipped
+unnoticed. Fixed: two new tests (`run.test.ts`, `resume.test.ts`) build `deps.launcher` with the real
+`currentLauncher(process.env)`, run the fixture workflow's real gate step (its check writes
+`$FORGE_RUN_ID` to a marker file in `ctx.integrationPath` alongside its required JSON envelope) through
+the real `runWorkflow`/`resumeWorkflow`, and read the marker back — both were confirmed non-vacuous by
+mutation (temporarily reverting the one-line `resume.ts`/`run.ts` fixes made each new test fail with an
+empty marker; restored, both pass). Minor, disclosed rather than fixed: `packages/adapter-generic/test/
+fixtures/scripted-binary.ts`'s `envEcho` mechanism spawns a real grandchild `node -e` process to read its
+own inherited environment rather than reading `process.env` directly plus a narrow `eslint.config.js`
+carve-out (the `bin.ts`/`system-temp.ts` precedent) — more machinery than strictly necessary for an
+equally strong proof, kept as is rather than touching the shared lint config this late for a style-only
+win. Minor, disclosed: `ResumeRequest` (`@forge/adapter-kit`) has no `env` field, so a mid-run crash
+recovery of an *agent session itself* (`resumeSession`, as opposed to a whole workflow run) has no channel
+to carry the marker — pre-existing, out of this piece's Surface, and not the shell-confusion hazard the
+marker exists to close (no shell a human could run is involved on that path).
+
+**Round 2 (fresh): 0 blocking, 0 major.** A second, independent critic re-derived the whole diff from
+scratch (not merely re-reading round 1's fixes), falsified both round-1 fixes itself by temporarily
+reverting each one-line change and re-running the affected tests, confirmed `bin.ts`'s ad-hoc `forge gate
+check/approve/waive` shim still passes no run id (a human's own shell must never carry the marker — it does
+not), confirmed `CONFINED_ENV_ALLOWLIST` and both real adapters' env-merge order are untouched, and found
+nothing new. Also ran the full `packages/engine` (2256/2256) and `adapter-generic`/`adapter-kit`/`core`/
+`testkit` (1240 pass, 6 correctly skipped) suites as an unscoped-beyond-cost-cut extra check; all green.
+
+**Mutation evidence.** Remove the marker from `buildSessionRequest`: `agent.test.ts`'s marker cases and
+`test/agent-prompts-all-workflows.test.ts`'s per-request assertion fail. Remove it from
+`runParticipantSession`: `dispatch-agent-step.test.ts`/`swarm-review-step.test.ts`'s marker cases fail.
+Remove it from either `forge debug` site: `debug.test.ts`'s marker case fails. Remove `commandEnvFor`'s
+`runId` parameter: `launcher-shim.test.ts`'s new cases fail. Remove `commandStepEnvironment`'s direct
+stamping (rely on `ctx.commandEnv` alone): `command-env.test.ts`'s "even when the launcher shim never ran"
+case and `elicit.test.ts`'s matching case fail. Revert `resume.ts`'s one-line fix: `resume.test.ts`'s new
+case fails (verified live in both critic rounds, restored). Poison `CONFINED_ENV_ALLOWLIST`-scrubbed
+`parentEnv` with the marker's own keys before a proposed/engine RCA shell command: `rca/shell.test.ts`'s
+new non-leakage case fails if the scrub is ever removed (it holds structurally today since the allowlist
+never names them).
+
+**Verification (owner-approved cost cut; no full unscoped suite).** Scoped: `packages/engine/test/dispatch/
+{agent,command-env,elicit}.test.ts`, `packages/engine/test/interaction/{dispatch-agent-step,swarm-review-
+step}.test.ts`, `packages/engine/test/rca/shell.test.ts`, `packages/cli/test/commands/run/{launcher-shim,
+run,resume,gate-commands}.test.ts`, `packages/cli/test/commands/loop/{debug,debug-confinement}.test.ts`,
+`test/agent-prompts-all-workflows.test.ts`, `packages/adapter-generic/test/conformance/generic-adapter.
+conformance.test.ts`, `packages/adapter-generic/test/adapter.integration.test.ts`,
+`packages/adapter-kit/test/conformance/suite.test.ts`, `packages/testkit/test/fake-adapter.test.ts`,
+`packages/adapter-claude-code/test/adapter.test.ts` — all pass (`packages/cli/test/commands/run/
+resume.test.ts`'s own SIGKILL-timing case is a pre-documented load-sensitive flake, `M13-AGENT-NOTES.md`
+rule 3; failed once under heavy parallel load, passed cleanly in isolation every other time, main tree and
+clean worktree alike). `pnpm typecheck` (21/21), `pnpm run boundaries`, `pnpm lint` all clean. Re-verified
+in a clean `git worktree` of the final commit per rule 15 (typecheck, boundaries, lint and the scoped tests
+above).
+
+**Discloses.** `forge debug`'s REPRODUCE/PROVE children run through `createRcaShell`'s own scrubbed
+environment and deliberately never see the marker (proven, not merely asserted, by `rca/shell.test.ts`'s
+new case); a fence for an honest session, not a security boundary (`env -u FORGE_RUN_ID` defeats it; real
+OS-level confinement is deferred). `ResumeRequest` carries no `env` field (above). P15 (gate-approve
+refusal under a marked shell) and P44a/b build on this piece; nothing else known left open.
