@@ -44,6 +44,10 @@ export async function runDoctorRuleCommand(
           remedy: refusal.remedy,
         },
       ],
+      // `buildContext` failed before any rule ran, so `test-command`'s own `granted` derivation never ran either;
+      // `[]` here (not absent) keeps `DoctorRuleResult.granted`'s own invariant true even on this path ("`[]` when
+      // none", never merely omitted for `test-command`).
+      ...(rule === 'test-command' ? { granted: [] } : {}),
     };
   }
   if (json) {
@@ -53,6 +57,9 @@ export async function runDoctorRuleCommand(
         rule,
         errors: result.violations.length,
         violations: result.violations,
+        // `test-command` only (`DoctorRuleResult.granted`); `JSON.stringify` drops an `undefined` value, so every
+        // other rule's envelope is unchanged.
+        granted: result.granted,
       }),
     );
   } else if (result.violations.length === 0) {

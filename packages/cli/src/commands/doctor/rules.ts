@@ -23,7 +23,7 @@ import {
   reproducibleInstallViolations,
 } from './rules-foundation.ts';
 import { secretsResolvedViolations, skeletonDeployedViolations } from './rules-delivery.ts';
-import { testCommandViolations } from './rules-test-command.ts';
+import { testCommandViolations, type GrantedTestLayer } from './rules-test-command.ts';
 
 export const DOCTOR_RULE_IDS = [
   'clean-build',
@@ -53,6 +53,11 @@ export interface DoctorRuleViolation {
 export interface DoctorRuleResult {
   readonly rule: DoctorRuleId;
   readonly violations: readonly DoctorRuleViolation[];
+  /** `test-command` only: every configured `AGENT_RUN_LAYERS` layer whose command would be granted, verbatim, as
+   * SOME step's exec pattern — the project-wide ceiling, not any one step's own grant, which is narrower (scoped to
+   * its brief's own layers; see `rules-test-command.ts`'s doc comment) — `15` §15.3.2, `PLAN-M14.md` P1. `[]` when
+   * none, and a refused layer is absent, never listed as `granted`. Absent (not `[]`) for every other rule. */
+  readonly granted?: readonly GrantedTestLayer[];
 }
 
 export interface DoctorRuleContext {
@@ -106,8 +111,10 @@ export async function doctorRule(
         return capped(rule, await secretsResolvedViolations(ctx));
       case 'skeleton-deployed':
         return capped(rule, await skeletonDeployedViolations(ctx));
-      case 'test-command':
-        return capped(rule, await testCommandViolations(ctx));
+      case 'test-command': {
+        const outcome = await testCommandViolations(ctx);
+        return { ...capped(rule, outcome.violations), granted: outcome.granted };
+      }
     }
   } catch (cause) {
     return {

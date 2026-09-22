@@ -262,19 +262,24 @@ profiles:
       - story.files_expected.length > 0
       - check: spec:story-refs-resolve
       - check: spec:no-blocking-open-questions
-    done:
+    verify:
       - check: build:typecheck
       - check: build:lint
       - check: test:unit --scope story
       - check: test:integration --scope story
       - check: spec:ac-coverage --story
-      - check: review:blocking-findings == 0
       - check: security:secrets-scan
+    done:
+      - check: review:blocking-findings == 0
       - check: docs:public-api-documented
       - check: kb:no-new-contradictions
   frontend-default: { … }
   data-default:     { … includes data contract tests and migration dry-run … }
 ```
 
-Profiles are selected per story via `dod_profile`. A story cannot be marked `done` unless every
-`done` check passes — and the checks are commands, not opinions.
+Profiles are selected per story via `dod_profile`. `verify` and `done` are two moments, not one list:
+`verify` is what the story itself can already show — build, its own tests, its own coverage — and runs
+at the self-verify step of the loop (`10` §10.6 step 6, `forge story verify`); `done` is what only
+review and the merge can show — blocking findings resolved, docs written, no new KB contradiction —
+and runs at commit (`10` §10.6 step 9) and again in the merge queue. A story cannot be marked `done`
+unless every `verify` and `done` check passes — and the checks are commands, not opinions.

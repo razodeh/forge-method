@@ -121,7 +121,7 @@ FORGE v1.0 is done when all of the following hold:
 - **SC1** `npx forge-method init` on an empty directory, given a one-paragraph product idea, produces
   a complete Stage-1 (MVP) plan: Vision, PRD, NFRs, architecture ADR set, data model, repo/build
   strategy, test strategy, delivery plan, epics and stories — with a valid traceability matrix.
-- **SC2** `forge run build --stage mvp` executes that plan across ≥3 parallel lanes and produces a
+- **SC2** `forge run build-stage --stage mvp` executes that plan across ≥3 parallel lanes and produces a
   repository that builds, passes its own generated test suite, and starts, from a clean clone, on a
   machine that never ran FORGE.
 - **SC3** The same project resumed after `kill -9` mid-run continues without losing or duplicating

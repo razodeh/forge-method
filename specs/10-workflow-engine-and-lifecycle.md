@@ -133,7 +133,7 @@ onComplete:
 | `agent` | Instantiate an agent session in a lane (or inline for read-only steps) |
 | `command` | Run a shell command; `inline: true` runs in the supervisor (in the integration worktree), else in a lane |
 | `gate` | Evaluate a gate; may block for human approval |
-| `elicit` | Ask the human structured questions; blocks |
+| `elicit` | Ask the human structured questions (`questions[].name`/`prompt`/optional `choices`); blocks until answered. Answers are data bound to the step's dependants (never template input); recorded as `ElicitationRequested`/`ElicitationAnswered` events. No answer and no terminal to ask on fails the step (`RUN-101`); an answer that breaks the question's rules is refused (`RUN-102`). A question may `show` a register entry an earlier step produced (`show: {type, subtype}`); the engine reads it from the integrated tree and places its text before the question, as data. |
 | `session` | Run a facilitated session (see `16`) |
 | `fanout` | Expand over a collection; each item becomes a node |
 | `merge` | Merge-queue processing for a set of lanes; `policy.preChecks`/`postChecks` name check sets (`fast`, `full`, or one test layer, run as `execution.testCommands`; see `06` §6.5) or give a shell command |

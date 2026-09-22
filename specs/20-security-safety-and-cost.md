@@ -83,7 +83,9 @@ hosts, not by opening the network.
 2. **Deny list**, always: `.git/` internals, `.forge/state/`, `.env*`, `node_modules/`, any path
    matching the secret-file patterns, and anything in `.gitignore` unless explicitly claimed.
 3. **Claim enforcement.** Out-of-claim writes are reverted (`strict`) or flagged (`warn`) per
-   `06` §6.7.
+   `06` §6.7; under `strict` the step also fails. `guided`'s default is `warn`, but a step that declares
+   `outputs` is always `strict` whatever the autonomy level (`06` §6.7), so `guided` does not soften
+   enforcement of a declared output.
 4. **Git safety.** FORGE never force-pushes, never rewrites published history, never pushes to a
    remote unless `vcs.allowPush` is on and the branch matches an allowed pattern. Lane branches are
    namespaced `forge/<runId>/…` so they can never collide with human branches.

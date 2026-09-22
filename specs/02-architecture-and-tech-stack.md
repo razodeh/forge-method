@@ -155,8 +155,11 @@ Violations (e.g. `core` importing `engine`, or `tui` writing artifacts directly)
   writes are atomic (`write temp → fsync → rename`).
 - A cross-process **project lock** (`.forge/state/forge.lock`, PID + start time + hostname) prevents
   two FORGE supervisors operating on one project. Stale locks (dead PID) are reclaimed with a prompt.
-- KB writes are serialised through a single `KbWriter` with an in-memory queue; concurrent agent KB
-  proposals are applied as *patches* through the writer, never as raw file writes (see `08`).
+- KB writes are serialised through a single `KbWriter` with an in-memory queue; a KB change no lane
+  declares as its own step output is a *proposal*, applied as a patch through the writer (see `08`
+  §8.6). A lane's own declared KB output is the one exception: the agent writes it as a file on the
+  lane, and the output contract enforces the same guarantees directly — a registry-allocated id with no
+  collision, mandatory `sources`, deprecate-not-delete — instead of the writer applying a patch.
 
 ## 2.6 Error taxonomy
 

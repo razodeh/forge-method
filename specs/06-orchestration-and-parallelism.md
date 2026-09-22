@@ -184,8 +184,12 @@ This is the single highest-leverage difference between FORGE and naive parallel 
   - `strict` (default for `autonomous`): revert out-of-claim files, fail the step, log.
   - `warn` (default for `guided`): keep, but flag in the merge review and require approval.
   - An `agent` step that declares `outputs` is always `strict`, whatever the autonomy level: its claim is
-    `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; it
-    reverts only what is neither. `warn` remains the `guided` default for steps that declare none.
+    `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; an
+    out-of-claim write reverts the file, records a `PolicyViolation` event, and **fails the step**.
+    `warn` remains the `guided` default for a step that declares neither `outputs` nor `produces` (a
+    `command` step). An `agent` step with an empty claim (below) has no `write` grant at all and is
+    enforced `strict` too: whatever such a step writes is out-of-claim by definition, so it reverts and
+    fails the step the same way.
 - **An empty claim means no write.** An `agent` step that declares neither `outputs` nor `produces` is given no
   `write` grant, whatever its agent's definition says: the effective `write` is the agent's grant AND a
   non-empty claim (`20` §20.1), and block [6] of its prompt says so. The one exception is a caller that confines

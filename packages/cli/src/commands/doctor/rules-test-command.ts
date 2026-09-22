@@ -20,16 +20,33 @@
  * Every problem is a violation with a subject (the config key), a message and a remedy: the envelope `runDoctorRuleCommand`
  * prints carries `errors`, the field the gate's `failOn` reads, and a value it cannot read is a violation too, never a pass.
  *
+ * It also reports `granted`: every configured `AGENT_RUN_LAYERS` layer whose command passes `checkTestCommand`
+ * (`@forge/engine/dispatch` `deriveTestExec`, the same function a real step's exec grant is built from). This is the
+ * PROJECT-WIDE CEILING — every layer that could be derived into SOME step's exec grant — not any one step's actual
+ * grant, which is narrower: a real step is derived from `deriveTestExec(testCommands, testLayersForBrief(briefKey))`
+ * (`engine/dispatch/assemble.ts`, `cli/commands/loop/debug.ts`), scoped to only the layers ITS OWN brief needs (an
+ * `rca`/`debug-isolate`/`write-failing-tests` step gets `unit`/`integration` only, even when `lint`/`typecheck` are
+ * also `granted` here because some OTHER brief needs them). `15` §15.3.2 points here: the derived grant sits outside
+ * the tool ceiling by design, and the ceiling — what could ever be granted — is what this rule makes visible outside
+ * a run's own `context.json` (which records the exact layers ONE step actually got).
+ *
  * @see specs/10 §10.3
  * @see specs/13 §13.1 F-TEST-1
+ * @see specs/15 §15.3.2
  * @see PLAN-M13.md P23
- * @see SPEC-QUESTIONS.md Q230
+ * @see PLAN-M14.md P1
+ * @see SPEC-QUESTIONS.md Q230, Q232
  */
 import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 
-import { AGENT_RUN_LAYERS, checkTestCommand, commandWords } from '@forge/engine/dispatch';
+import {
+  AGENT_RUN_LAYERS,
+  checkTestCommand,
+  commandWords,
+  deriveTestExec,
+} from '@forge/engine/dispatch';
 
 import type { DoctorRuleContext, DoctorRuleViolation } from './rules.ts';
 
@@ -94,9 +111,20 @@ export async function programResolves(
   return false;
 }
 
+/** A configured test layer whose command would be granted, verbatim, as an exact exec pattern (`granted` above). */
+export interface GrantedTestLayer {
+  readonly layer: string;
+  readonly command: string;
+}
+
+export interface TestCommandRuleResult {
+  readonly violations: readonly DoctorRuleViolation[];
+  readonly granted: readonly GrantedTestLayer[];
+}
+
 export async function testCommandViolations(
   ctx: DoctorRuleContext,
-): Promise<readonly DoctorRuleViolation[]> {
+): Promise<TestCommandRuleResult> {
   const testCommands = ctx.testCommands ?? {};
   const violations: DoctorRuleViolation[] = [];
   for (const layer of AGENT_RUN_LAYERS) {
@@ -142,5 +170,12 @@ export async function testCommandViolations(
       );
     }
   }
-  return violations;
+  // The same function `assemble.ts`/`debug.ts` call for a real session grant (`deriveTestExec`), but over EVERY layer
+  // any shipped brief could need (`AGENT_RUN_LAYERS`), not one step's own `testLayersForBrief(briefKey)`: this is the
+  // ceiling every step's grant is drawn from, so it never claims a layer no step could ever be granted, and never
+  // omits one some step could be — but it is not any single step's own grant, which is a subset of this (see the
+  // doc comment above). Independent of the checks above: a granted command may still be reported as a violation (its
+  // program is missing, or it is a no-op), because the grant is exact-string only, not "it will work".
+  const granted = deriveTestExec(testCommands, AGENT_RUN_LAYERS).granted;
+  return { violations, granted };
 }

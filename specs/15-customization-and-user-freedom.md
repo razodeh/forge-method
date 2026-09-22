@@ -179,6 +179,14 @@ Escalations appear in `forge doctor`, in every gate report, and in the TUI heade
 Escalations that grant `write: true` to a review/critic role, or `deploy: true` to a non-ops role,
 are refused outright — those are the specific combinations that break the system's guarantees.
 
+A derived test-command grant (`execution.testCommands`, `20` §20.1) sits outside the ceiling by
+design and needs no escalation: it comes from the project's own configuration, which a step cannot
+write, not from widening an agent's ceiling, and a tainted or read-only step never receives it.
+`forge doctor --rule test-command --json` lists every configured layer that could be derived into a
+grant at all (`granted`): the project-wide ceiling a step's own brief draws from, not any one step's
+own grant, which is narrower (scoped to only the layers that step's brief needs — a run's own
+`context.json` records that). The ceiling is visible without reading any run's `context.json`.
+
 ### 15.3.3 Roster composition
 
 ```yaml
@@ -626,7 +634,7 @@ than just the rule:
 | I4 | A gate cannot be defined with zero deterministic checks | `GATE-502` |
 | I5 | `alwaysHuman` gates (production delivery, one-way-door ADRs) cannot be downgraded by overlay | `GATE-503` |
 | I6 | Traceability edges required by the spec graph cannot be disabled | `SPEC-501` |
-| I7 | Tool grants cannot exceed module ceilings without a recorded, expiring escalation | `SEC-501` |
+| I7 | Tool grants cannot exceed module ceilings without a recorded, expiring escalation (a derived test-command grant, `15` §15.3.2, is the one exception: it is not an escalation) | `SEC-501` |
 | I8 | Secrets cannot be placed in prompts, artifacts, skills, or the KB | `SEC-502` |
 | I9 | Skills and MCP results cannot alter the FORGE operating contract, tool grants, or autonomy | `SEC-503` |
 | I10 | Overlays cannot disable the event log, the cost ledger, or the audit trail | `CFG-503` |

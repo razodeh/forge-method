@@ -211,11 +211,16 @@ which knowledge actually drove which decision.
 
 ## 8.6 Writing to the KB
 
-Two paths:
+Three paths:
 
 - **Direct write** — agent owns the section (per `kb_write` in its definition) and autonomy allows.
   Still goes through `KbWriter`, which validates schema, checks contradictions, updates `updated`,
   and appends an event.
+- **Declared output** — a lane's `agent` step that declares a KB artifact type in its `outputs` (`06`
+  §6.7) writes that entry directly, as a file, on the lane: an agent writes files, not API calls, so
+  this is not a `KbWriter` call. The engine's output check (`18` §18.7) binds the file to the same
+  invariants below instead. Any other KB change the lane makes goes through the proposal channel, not
+  as a direct write, whatever the step's autonomy.
 - **Proposal** — everything else. `KbProposal` artifact with a diff, rationale, and target. Routed to
   the owning agent (auto-adjudicated at `autonomous` if the owner agrees) or the human.
 
@@ -226,6 +231,9 @@ Two paths:
 - Every write records `sources`. A write with no source is rejected.
 - Writes are serialised; concurrent proposals to the same entry are queued and the second is rebased
   onto the first (with a conflict escalation if the statement changed).
+
+These invariants bind every path: a direct write is checked by `KbWriter` itself, and a declared
+output is checked to the same rules by the output contract that verifies the lane instead.
 
 ## 8.7 Integrity: the KB linter
 

@@ -77,15 +77,15 @@ Global flags available on every command:
 | `forge plan delivery` | Environments, CI/CD, deploy strategy, rollback, observability. |
 | `forge plan stages` | Decompose into stages (MVP/milestones) with scope, exit criteria, sequencing. |
 | `forge plan stage <id>` | Epics + stories + tasks for one stage; produce the run plan DAG. |
-| `forge plan replan --from <event>` | Re-plan after a scope change, gate failure, or new constraint. |
+| `forge plan replan --from <event> [--answers <file>]` | Re-plan after a scope change, gate failure, or new constraint. |
 
 ### 3.2.4 Execution commands
 
 | Command | Description |
 |---|---|
-| `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>]` | Execute a workflow. |
-| `forge run build --stage mvp` | The main implementation loop. |
-| `forge resume [runId]` | Resume the last (or given) run. |
+| `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>] [--input <name>=<value>]... [--answers <file>]` | Execute a workflow. |
+| `forge run build-stage --stage mvp` | The main implementation loop. |
+| `forge resume [runId] [--answers <file>]` | Resume the last (or given) run. |
 | `forge pause` / `forge abort [runId]` | Control a running supervisor via the lock socket. |
 | `forge status` | Current state: stage, gates, lanes, spend, blockers. `--watch`. |
 | `forge lanes` | List lanes with branch, worktree, agent, step, status. |
@@ -93,12 +93,18 @@ Global flags available on every command:
 | `forge gate <sub>` | `list`, `check <gate>`, `approve <gate>`, `reject <gate> --reason`, `waive <gate> --reason --expires` |
 | `forge merge` | Drive the merge queue manually; `--lane`, `--all`, `--abort`. |
 
+`--input` supplies a declared workflow input (repeatable); `--stage` also supplies `stageId`, `--story`
+`storyId`. `--answers <file>` (also on `forge resume` and `forge plan replan`, §3.2.3) gives a JSON or
+YAML object of `elicit` question name to text answer, read before any question would otherwise be asked
+interactively (`10` §10.1); a question with no answer and no terminal to ask on fails its step
+(`RUN-101`).
+
 ### 3.2.5 Engineering-loop commands
 
 | Command | Description |
 |---|---|
 | `forge implement <storyId>` | Single-story loop (spec → tests → code → verify → review). |
-| `forge story verify <storyId>` | Evaluate the story's `done` DoD profile (`09` §9.8): the `self-verify` step of the loop (`10` §10.6). Exit 0 only if every check passes; a check that cannot be verified is not a pass. |
+| `forge story verify <storyId>` | Evaluate the story's `verify` DoD profile (`09` §9.8): the `self-verify` step of the loop (`10` §10.6). Exit 0 only if every check passes; a check that cannot be verified is not a pass. |
 | `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage` |
 | `forge debug <symptom\|--from-failure <runId>>` | Autonomous RCA loop (see `13`). |
 | `forge review [--diff <range>]` | Multi-perspective review (design/security/perf/testing). |
@@ -121,7 +127,7 @@ Global flags available on every command:
 | `forge module <sub>` | `list`, `add <name\|path\|url>`, `remove`, `update`, `info` |
 | `forge agent <sub>` | `list`, `show <id>`, `new`, `validate`, `compile` (emit platform-native assets) |
 | `forge workflow <sub>` | `list`, `show`, `validate`, `graph <id>` (Mermaid), `new` |
-| `forge config <sub>` | `get`, `set`, `list`, `explain <key>`, `edit` |
+| `forge config <sub>` | `get`, `set <key> <value> [--commit]` (`--commit` commits only `.forge/config.yaml`, with a FORGE-authored message), `list`, `explain <key>`, `edit` |
 | `forge cost [--run <id>] [--since <date>]` | Cost/token ledger reports. |
 | `forge export <target>` | `markdown-bundle`, `html`, `jira`, `linear`, `github-issues` (v1: first two + dry-run for the rest) |
 | `forge help [topic]` | Contextual, state-aware help: "you are here, these are your next moves." |
@@ -244,6 +250,9 @@ irreversible, and covered by a golden-file test with a real "before" fixture.
 | Quiet | `--quiet` | Errors + final summary only |
 
 `--json` output MUST be stable and versioned (`{"v":1,...}`) — it is the integration contract for CI.
+A refusal (a thrown `ForgeError`, `VcsError`, or another package's coded error) prints one stdout line
+`{"v":1,"ok":false,"error":{"code","message","remedy","exitCode"}}` under `--json`, for every command;
+stderr text and the exit code are unchanged, and a crash keeps its stack trace and prints no envelope.
 
 ## 3.6 Autonomy levels
 
