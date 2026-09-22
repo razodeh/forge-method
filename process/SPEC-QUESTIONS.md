@@ -19117,3 +19117,295 @@ Files: `packages/engine/src/{plan/dependencies.ts (the exclusion overlap fix),di
 21. **Loader-level agent output validation, and `forge upgrade` warns about stale materialised agents** (Q224, P45): a `forge agent validate` rule (a registered type must carry the registry schema and a path ending in the registry tail); `upgrade` compares the materialised copy's hash header to the shipped one and says which are stale.
 
 **Spec text to amend (mechanical, one piece):** `15` §15.3.2 (a derived test-command grant is outside the ceiling by design; `doctor` lists it), `03` §3.2.4 (`--input` row; `forge run build-stage --stage mvp`, matching the workflow id), `03` §3.2.4 and `10` §10.1 (`--answers <file>`; the `elicit` `choices` field, text proposed in Q227), `09` §9.8 (13), `02` §2.5 / `08` §8.6 (2), `06` §6.7 (1).
+
+## Q233 — M14 P1: the mechanical spec amendments Q232 lists, plus `doctor --rule test-command` `granted`
+
+**Context.** `PLAN-M14.md` P1, the first M14 piece: amend every spec sentence Q232's "Spec text to amend" list names, plus decisions 1, 2, 13 and 20, so the specs state what M14 builds (spec first, code follows). Spec-only except one minimal doctor code change (`granted`), covered by its own tests; no workflow, brief or engine business-logic code is touched, and `05` §5.3's fenced example / §5.5 (word-for-word tested by `operating-contract.test.ts`) are untouched.
+
+**Every changed spec passage (before / after).**
+
+1. **`06` §6.7 — an out-of-claim write under `strict` fails the step (Q232 decision 1, Q212).**
+   Before:
+   > - An `agent` step that declares `outputs` is always `strict`, whatever the autonomy level: its claim is
+   >   `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; it
+   >   reverts only what is neither. `warn` remains the `guided` default for steps that declare none.
+
+   After:
+   > - An `agent` step that declares `outputs` is always `strict`, whatever the autonomy level: its claim is
+   >   `produces` plus the outputs' `18` §18.7 paths, so `strict` never reverts a declared output; an
+   >   out-of-claim write reverts the file, records a `PolicyViolation` event, and **fails the step**.
+   >   `warn` remains the `guided` default for a step that declares neither `outputs` nor `produces` (a
+   >   `command` step). An `agent` step with an empty claim (below) has no `write` grant at all and is
+   >   enforced `strict` too: whatever such a step writes is out-of-claim by definition, so it reverts and
+   >   fails the step the same way.
+
+   The last sentence reconciles decision 1 with `06` §6.7's own pre-existing top-level `strict` bullet
+   ("revert out-of-claim files, fail the step, log.") and with `Q225` decision 1 (`resolveStepClaim`
+   already makes an empty-claim step `strict` at every autonomy level, M13 P36): the empty-claim case was
+   previously only implicit.
+
+2. **`02` §2.5 / `08` §8.6 — lanes write declared KB outputs as files; `KbWriter`'s guarantees become checks (Q232 decision 2, Q212).**
+
+   `02` §2.5 before:
+   > - KB writes are serialised through a single `KbWriter` with an in-memory queue; concurrent agent KB
+   >   proposals are applied as *patches* through the writer, never as raw file writes (see `08`).
+
+   `02` §2.5 after:
+   > - KB writes are serialised through a single `KbWriter` with an in-memory queue; a KB change no lane
+   >   declares as its own step output is a *proposal*, applied as a patch through the writer (see `08`
+   >   §8.6). A lane's own declared KB output is the one exception: the agent writes it as a file on the
+   >   lane, and the output contract enforces the same guarantees directly — a registry-allocated id with no
+   >   collision, mandatory `sources`, deprecate-not-delete — instead of the writer applying a patch.
+
+   `08` §8.6 before:
+   > Two paths:
+   >
+   > - **Direct write** — agent owns the section (per `kb_write` in its definition) and autonomy allows.
+   >   Still goes through `KbWriter`, which validates schema, checks contradictions, updates `updated`,
+   >   and appends an event.
+   > - **Proposal** — everything else. `KbProposal` artifact with a diff, rationale, and target. Routed to
+   >   the owning agent (auto-adjudicated at `autonomous` if the owner agrees) or the human.
+   >
+   > `KbWriter` invariants: [Schema-valid front matter or reject; ids allocated centrally, never reused;
+   > every write records `sources`; writes serialised, second proposal rebased onto the first.]
+
+   `08` §8.6 after (new **Declared output** bullet, and a closing sentence after the invariants list):
+   > Three paths:
+   >
+   > - **Direct write** — [unchanged]
+   > - **Declared output** — a lane's `agent` step that declares a KB artifact type in its `outputs` (`06`
+   >   §6.7) writes that entry directly, as a file, on the lane: an agent writes files, not API calls, so
+   >   this is not a `KbWriter` call. The engine's output check (`18` §18.7) binds the file to the same
+   >   invariants below instead. Any other KB change the lane makes goes through the proposal channel, not
+   >   as a direct write, whatever the step's autonomy.
+   > - **Proposal** — [unchanged]
+   >
+   > `KbWriter` invariants: [unchanged]
+   >
+   > These invariants bind every path: a direct write is checked by `KbWriter` itself, and a declared
+   > output is checked to the same rules by the output contract that verifies the lane instead.
+
+   P11 (a later M14 piece) pins these sentences against real output-check behaviour and adds the one
+   cross-reference to `06` §6.4 rule 1 (which already states the same rule from the lane side); not
+   duplicated here.
+
+3. **`09` §9.8 — the DoD `verify`/`done` split (Q232 decision 13, Q213), and the `03` §3.2.5 contradiction it would otherwise create.**
+   `09` §9.8 before (`backend-default`'s single `done` list conflated self-verify-time and post-review checks):
+   > ```yaml
+   >     done:
+   >       - check: build:typecheck
+   >       - check: build:lint
+   >       - check: test:unit --scope story
+   >       - check: test:integration --scope story
+   >       - check: spec:ac-coverage --story
+   >       - check: review:blocking-findings == 0
+   >       - check: security:secrets-scan
+   >       - check: docs:public-api-documented
+   >       - check: kb:no-new-contradictions
+   > ```
+   > Profiles are selected per story via `dod_profile`. A story cannot be marked `done` unless every
+   > `done` check passes — and the checks are commands, not opinions.
+
+   `09` §9.8 after:
+   > ```yaml
+   >     verify:
+   >       - check: build:typecheck
+   >       - check: build:lint
+   >       - check: test:unit --scope story
+   >       - check: test:integration --scope story
+   >       - check: spec:ac-coverage --story
+   >       - check: security:secrets-scan
+   >     done:
+   >       - check: review:blocking-findings == 0
+   >       - check: docs:public-api-documented
+   >       - check: kb:no-new-contradictions
+   > ```
+   > Profiles are selected per story via `dod_profile`. `verify` and `done` are two moments, not one list:
+   > `verify` is what the story itself can already show — build, its own tests, its own coverage — and runs
+   > at the self-verify step of the loop (`10` §10.6 step 6, `forge story verify`); `done` is what only
+   > review and the merge can show — blocking findings resolved, docs written, no new KB contradiction —
+   > and runs at commit (`10` §10.6 step 9) and again in the merge queue. A story cannot be marked `done`
+   > unless every `verify` and `done` check passes — and the checks are commands, not opinions.
+
+   **Found by the first critic round, fixed, not in `PLAN-M14.md`'s own line list:** `03` §3.2.5's
+   `forge story verify` row (added by M13 P22/Q213, untouched by `PLAN-M14.md`'s P1 line citations) said
+   `forge story verify` "Evaluate[s] the story's `done` DoD profile" — after the split above landed, that
+   directly contradicted `09` §9.8 (which now says self-verify runs `verify`, not `done`). Decision 13's
+   own text ("`forge story verify` runs `verify`, the merge/commit path runs `done`") is unambiguous, so
+   the row is corrected: before `` Evaluate the story's `done` DoD profile ``, after
+   `` Evaluate the story's `verify` DoD profile `` (one word). `packages/cli/src/bin.ts`'s own doc comment
+   for the command still says `done` (unchanged code; P25's, per the Discloses list below — the spec is
+   deliberately ahead of it here, same as the rest of decision 13).
+
+   Disclosed, not fixed: `09` §9.8's own "Stored in `docs/forge/kb/engineering/definition-of-done.md`"
+   still names a different location than the code's `engineering/dod-profiles.yaml` (`Q213`); the split
+   is spec-only until a later M14 piece builds `verify`/`done` into
+   `packages/methods/src/dod/schema.ts` (untouched here, `dodPhaseSchema` still models only `ready`/`done`)
+   and `forge story verify`'s own implementation.
+
+4. **`10` §10.1 — `--answers <file>` and the `elicit` `choices` field (Q232's spec-text list, Q227's proposed text).**
+   Before (Step-kinds table):
+   > | `elicit` | Ask the human structured questions; blocks |
+
+   After:
+   > | `elicit` | Ask the human structured questions (`questions[].name`/`prompt`/optional `choices`); blocks until answered. Answers are data bound to the step's dependants (never template input); recorded as `ElicitationRequested`/`ElicitationAnswered` events. No answer and no terminal to ask on fails the step (`RUN-101`); an answer that breaks the question's rules is refused (`RUN-102`). A question may `show` a register entry an earlier step produced (`show: {type, subtype}`); the engine reads it from the integrated tree and places its text before the question, as data. |
+
+5. **`03` §3.2.3/§3.2.4/§3.2.7/§3.5 — `--input`, `forge run build-stage --stage mvp`, `--answers`, `--commit`, the refusal envelope (Q218, Q227; same fix at `01` SC2).**
+
+   §3.2.3 `forge plan replan` row: before `` [--from <event>] `` only; after gains `` [--answers <file>] ``.
+
+   §3.2.4, before:
+   > | `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>]` | Execute a workflow. |
+   > | `forge run build --stage mvp` | The main implementation loop. |
+   > | `forge resume [runId]` | Resume the last (or given) run. |
+
+   After:
+   > | `forge run <workflow> [--stage <id>] [--epic <id>] [--story <id>] [--input <name>=<value>]... [--answers <file>]` | Execute a workflow. |
+   > | `forge run build-stage --stage mvp` | The main implementation loop. |
+   > | `forge resume [runId] [--answers <file>]` | Resume the last (or given) run. |
+   >
+   > `--input` supplies a declared workflow input (repeatable); `--stage` also supplies `stageId`, `--story`
+   > `storyId`. `--answers <file>` (also on `forge resume` and `forge plan replan`, §3.2.3) gives a JSON or
+   > YAML object of `elicit` question name to text answer, read before any question would otherwise be asked
+   > interactively (`10` §10.1); a question with no answer and no terminal to ask on fails its step
+   > (`RUN-101`).
+
+   §3.2.5, before/after: see item 3 above (the `forge story verify` row).
+
+   §3.2.7 `forge config` row, before: `` `get`, `set`, `list`, `explain <key>`, `edit` ``.
+   After: `` `get`, `set <key> <value> [--commit]` (`--commit` commits only `.forge/config.yaml`, with a FORGE-authored message), `list`, `explain <key>`, `edit` ``.
+
+   §3.5, before: `` `--json` output MUST be stable and versioned (`{"v":1,...}`) — it is the integration contract for CI. ``
+   After, gains: `` A refusal (a thrown `ForgeError`, `VcsError`, or another package's coded error) prints one stdout line `{"v":1,"ok":false,"error":{"code","message","remedy","exitCode"}}` under `--json`, for every command; stderr text and the exit code are unchanged, and a crash keeps its stack trace and prints no envelope. ``
+
+   `01` SC2, before: `` `forge run build --stage mvp` `` after: `` `forge run build-stage --stage mvp` ``.
+
+6. **`20` §20.2 rule 3 — `guided` = `warn` gains the output-declaring override (Q212 disclosed item).**
+   Before: `` 3. **Claim enforcement.** Out-of-claim writes are reverted (`strict`) or flagged (`warn`) per `06` §6.7. ``
+   After: `` 3. **Claim enforcement.** Out-of-claim writes are reverted (`strict`) or flagged (`warn`) per `06` §6.7; under `strict` the step also fails. `guided`'s default is `warn`, but a step that declares `outputs` is always `strict` whatever the autonomy level (`06` §6.7), so `guided` does not soften enforcement of a declared output. ``
+
+7. **`15` §15.3.2 / I7 — a derived test-command grant sits outside the ceiling by design; `doctor` lists it (Q230's "Left open" item, closed here).**
+   §15.3.2, after the escalation paragraph, gains:
+   > A derived test-command grant (`execution.testCommands`, `20` §20.1) sits outside the ceiling by
+   > design and needs no escalation: it comes from the project's own configuration, which a step cannot
+   > write, not from widening an agent's ceiling, and a tainted or read-only step never receives it.
+   > `forge doctor --rule test-command --json` lists every configured layer that could be derived into a
+   > grant at all (`granted`): the project-wide ceiling a step's own brief draws from, not any one step's
+   > own grant, which is narrower (scoped to only the layers that step's brief needs — a run's own
+   > `context.json` records that). The ceiling is visible without reading any run's `context.json`.
+
+   I7, before: `` | I7 | Tool grants cannot exceed module ceilings without a recorded, expiring escalation | `SEC-501` | ``
+   After: `` | I7 | Tool grants cannot exceed module ceilings without a recorded, expiring escalation (a derived test-command grant, `15` §15.3.2, is the one exception: it is not an escalation) | `SEC-501` | ``
+
+   **The precision matters (round 1 critic, major, fixed).** A first draft said "the grant every step
+   gets is visible" — false for roughly half the shipped briefs: `assemble.ts`/`debug.ts` derive a real
+   step's grant over `testLayersForBrief(briefKey)` (an `rca`/`debug-isolate`/`write-failing-tests` step
+   gets `unit`/`integration` only), while the doctor rule derives over the full `AGENT_RUN_LAYERS` — the
+   *ceiling* every brief draws from, not any one step's own (narrower) grant. The sentence above, the
+   three doctor files' doc comments, and a new test (below) all now say "ceiling", never "every step's
+   grant".
+
+**`specs/05` — deliberately NOT amended, despite `PLAN-M14.md`'s P1 mandate naming it (rows 29/30/74: analyst loses "success metrics", pm gains it, facilitator's retros are `em`'s).**
+
+Investigated (round 1 and round 2 critics, independently, both flagged it; round 2's is the fuller
+analysis). The edit is textually accurate against `Q224`'s own B2/B3 decisions
+(`discovery.success_metrics` moves from `analyst.decisions_owned` to `pm`'s; the `facilitator` mandate no
+longer claims retros, `16` §16.2: `em`). But `Q224` itself explicitly chose NOT to edit these rows over
+this exact discrepancy, and gave a permanent-sounding reason, not a TODO: "the rows are descriptive prose,
+`decisions_owned` is the routing key, and the new §5.2 paragraph below says the machine-readable
+definition follows the workflow step" — a paragraph written specifically so the rows would not need
+editing. `GAUNTLET-LOG.md`'s `## M13 P18` Round 3 lists "the roster rows" under a bare "Disclosed:" tag,
+structurally distinct from that same log's and other Q-entries' explicit, action-oriented "Left open
+(found here, not fixed; each a piece or an owner call)" sections (compare Q227's/Q220's lettered lists) —
+"Disclosed" here reads as "acknowledged transparently, no fix needed", not "an open item for a future
+piece". `PLAN-M14.md`'s P1 mandate paragraph cites a Q-number or decision number for every OTHER edit in
+the same paragraph (Q218/Q227, decision 2, decision 1, decision 13, decision 20); the `05` roster-row
+sentence is the only one with none, and it is not in `Q232`'s 21 decisions or its "Spec text to amend"
+list either. Verdict: making this edit would re-open a decision `Q232` never touched and `Q224` reasoned
+through the other way — left unmade. `specs/05-agent-system.md` is untouched by this commit. Flagged for
+the orchestrator: either `PLAN-M14.md`'s P1 mandate line should be corrected, or an explicit new owner
+decision (with a Q-number) should authorise the edit in a later piece.
+
+**Doctor code: `granted` field (`15` §15.3.2 made literally true).**
+
+`packages/cli/src/commands/doctor/rules-test-command.ts`: `testCommandViolations` now returns `{
+violations, granted }` instead of a bare array. `granted` is `deriveTestExec(testCommands,
+AGENT_RUN_LAYERS).granted` — the SAME function (`@forge/engine/dispatch` `deriveTestExec`) a real
+session's grant is built from (`packages/engine/src/dispatch/assemble.ts`,
+`packages/cli/src/commands/loop/debug.ts` both call it, over `testLayersForBrief(briefKey)`, not
+`AGENT_RUN_LAYERS`). This means doctor's `granted` is provably the project-wide *ceiling* — every layer
+some step's brief could ever need — never a claim the engine's own derivation disagrees with, but it is
+NOT any one step's own grant, which is a subset, scoped to that step's own brief. Every doc comment (the
+rule's own header, the inline comment at the `deriveTestExec` call, `DoctorRuleResult.granted`'s TSDoc,
+the test file's header) states this distinction explicitly, after round 1's overclaim was found and
+fixed. `DoctorRuleResult` (`rules.ts`) gains an OPTIONAL `granted?: readonly GrantedTestLayer[]` field
+(the type imported from `rules-test-command.ts`, not duplicated), set only for the `test-command` rule
+(every other rule's envelope is byte-identical: `JSON.stringify` drops the `undefined` value).
+`rule-command.ts`'s `--json` envelope always includes `granted` for `test-command`, on EVERY path,
+including a `buildContext()` failure (an unreadable `.forge/config.yaml`) before any rule check runs —
+`[]`, never merely absent, matching the field's own documented "`[]` when none" invariant exactly (round
+3 finding, fixed; the one pre-existing test on that path now asserts it).
+
+Verified real-CLI: an unconfigured project prints `granted: []`; after `forge config set
+execution.testCommands.unit "<command>"`, prints `granted: [{layer: "unit", command: "<command>"}]`; a
+sibling rule (`clean-build`) never carries a `granted` key at all, on either path.
+
+**Tests.** New `test/spec-cli-examples.test.ts` (16 tests): every literal `forge run <id>` in `03`
+§3.2.4 and `01` SC2 resolves to a real `WORKFLOW_INDEX` id (was red on `build` before this piece); the
+`forge run`/`resume`/`plan replan` rows carry `--input`/`--answers`; the `forge config` row carries
+`--commit`; one independently-deletable `it` per pinned sentence across 01/02/03/06/08/09/10/15/20 (no
+`05` pin — see above). New `packages/methods/test/dod/spec-block.test.ts` (5 tests): parses `09` §9.8's
+fenced YAML block directly (not through `loadDodProfile`, which still models only `ready`/`done` until a
+later piece), and asserts `backend-default` has exactly `ready`/`verify`/`done`, the six build/test ids
+only in `verify`, the three post-review ids only in `done`. Extended
+`packages/cli/test/commands/doctor/rules-test-command.test.ts` (+21 tests, 34 total): the `granted` field
+end to end, including a real-`deriveTestExec`-backed proof that a narrow brief's (`rca`'s) real grant is a
+strict subset of what doctor lists; scope-exclusion proven with syntactically VALID out-of-ceiling
+commands (`contract`/`e2e`/`nfr`/`smoke`), not merely syntactically-invalid ones (round 2 finding — the
+original fixture's `&&` chain would have been excluded by syntax alone, not by scope); iteration order
+proven independent of the config object's own key insertion order (round 3 finding); a no-op `unit`
+command (`true`) still `granted` but also a violation (round 3 finding — the documented contract had no
+test); the context-build-failure path. `a2-roster.test.ts` and `operating-contract.test.ts` (`05`
+§5.3/§5.5) are untouched and still green.
+
+**Three critic rounds, each fresh and context-free** (`GAUNTLET-LOG.md`, `## M14 P1`). Round 1: 0
+blocking, 1 major (the `15` §15.3.2 "every step's grant" overclaim), 4 minor (a dead `Q232 decision 14`
+citation, a duplicated inline type, the `--json`-only qualifier missing from the spec sentence, a test
+title implying more than it proved) — all fixed; round 1 also flagged the `05` roster-row edit as
+blocking, investigated in depth and, on the evidence, left unmade rather than fixed (see above). Round 2:
+1 blocking (`03` §3.2.5 vs. the new `09` §9.8 split — `forge story verify`'s row still said `done`), 1
+major (the `granted`-scope test's `smoke` fixture was excluded by syntax, not scope, so it would not have
+caught a mutation widening the derivation to every `TEST_COMMAND_LAYERS` layer), 1 major (the `05`
+roster-row edit, independently re-derived and confirmed as a real, if low-harm, governance gap — reverted)
+— all fixed or, for `05`, resolved by reverting. Round 3 (final): PASS, no blocking or major findings; 3
+minor (a `granted`-absent-on-context-failure doc-comment overclaim; five amended sentences with no
+dedicated pin; two constructible test blind spots — insertion-order and no-op-command coverage) — all
+fixed.
+
+**Mutation evidence.** Revert `build-stage` → `build` in either `01` or `03`: the matching
+`spec-cli-examples` case fails. Revert any pinned hunk: its own `it` fails (16 independent pins). Remove
+`granted` from `testCommandViolations`'s return or from `doctorRule`'s `test-command` case: 7 tests fail
+across the direct-function and real-CLI suites (verified live, then reverted). Derive `granted` from bare
+config presence instead of `deriveTestExec`/`checkTestCommand`: the "NOT granted (derivation, not
+presence)" case fails (verified live, then reverted). Widen the derivation from `AGENT_RUN_LAYERS` to the
+full `TEST_COMMAND_LAYERS`: the scope-exclusion case (now using syntactically valid commands) fails
+(verified live, then reverted). Move `review:blocking-findings == 0` into `verify`: `spec-block.test.ts`
+fails (the exact-array assertions on `verify`/`done`).
+
+**Verification (owner-approved cost cut; no full unscoped suite).**
+`packages/agents/test/{prompt,content}`, `packages/cli/test/commands/doctor`,
+`packages/cli/test/commands/config*`, `packages/methods/test/dod`, `test/spec-cli-examples.test.ts`,
+`test/agent-outputs-registry.test.ts`, `test/workspace-floor.test.ts` (1349 tests total, all pass);
+`pnpm typecheck` (21/21), `pnpm run boundaries`, `pnpm lint` (clean, zero warnings — the four
+previously-known prettier warnings from earlier M13 pieces are gone, not mine). Re-verified in a clean
+`git worktree` of the final commit per rule 15 (typecheck and the scoped tests above, reported alongside
+this entry).
+
+**Discloses (carried from `PLAN-M14.md` P1, not fixed here).** `09` §9.8's "Stored in
+`docs/forge/kb/engineering/definition-of-done.md`" vs. the code's `engineering/dod-profiles.yaml`
+(`Q213`) is left; `17` §17.4 / `04`'s "max 3 questions per modal" is left; the `show` sentence and
+decisions 1, 2, 13 are ahead of the code (including `bin.ts`'s own doc comment for `forge story verify`,
+still saying `done`) until P3, P8-P11, P25, P41 land; `15` §15.3.2's existing line that escalations appear
+in `forge doctor` still has no doctor code reading `security.toolCeilingEscalations` (grep empty) — not
+this piece's. The `05` roster-row question above is new: not decided by `Q232`, and `PLAN-M14.md`'s own
+citation gap should be corrected before a later piece revisits it.
