@@ -102,6 +102,10 @@ const commandStepSchema = z
     kind: z.literal('command'),
     run: nonBlank(),
     inline: z.boolean().optional(),
+    // `06` §6.2's canonical `StepNode` shape gives every kind its own `produces` (`PLAN-M14.md` P2):
+    // a non-inline command step that writes a tracked file in its lane declares it here, the identical
+    // shape (a bare string or an array) `agentStepSchema.produces` already accepts.
+    produces: z.union([nonBlank(), z.array(nonBlank())]).optional(),
   })
   .strict();
 

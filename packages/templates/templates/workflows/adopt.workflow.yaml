@@ -7,6 +7,9 @@ steps:
   - id: inventory-codebase
     kind: command
     run: 'forge adopt inventory --json'
+    # `forge adopt inventory` writes the INVENTORY phase's own report (`packages/cli/src/commands/adopt.ts`
+    # `writeInventoryReport`), the one tracked file this step's lane produces (`PLAN-M14.md` P2).
+    produces: ['reports/adoption/inventory.json']
 
   - id: reverse-derive-specs
     kind: agent

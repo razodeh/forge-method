@@ -91,6 +91,10 @@ export interface CommandStep extends WorkflowStepBase {
   readonly kind: 'command';
   readonly run: string;
   readonly inline?: boolean | undefined;
+  /** `06` §6.2's `StepNode.produces` is a shared field, not agent-only (`PLAN-M14.md` P2): a non-inline
+   * `command` step that writes a tracked file in its lane declares it here, so `resolveStepClaim`
+   * (`@forge/engine/dispatch`) has something other than an empty claim to hold the step's own session to. */
+  readonly produces?: string | readonly string[] | undefined;
 }
 
 export interface GateStep extends WorkflowStepBase {

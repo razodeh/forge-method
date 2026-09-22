@@ -13,7 +13,13 @@ import { describe, expect, it } from 'vitest';
 import type { ExpressionContext } from '../../src/expr/index.ts';
 import { compilePlan, compileStepId, expandFanout } from '../../src/plan/compile.ts';
 import type { CompileIssue, StepNode } from '../../src/plan/types.ts';
-import type { AgentStep, FanoutStep, Workflow, WorkflowStep } from '../../src/workflow/types.ts';
+import type {
+  AgentStep,
+  CommandStep,
+  FanoutStep,
+  Workflow,
+  WorkflowStep,
+} from '../../src/workflow/types.ts';
 
 function workflow(steps: readonly WorkflowStep[], overrides: Partial<Workflow> = {}): Workflow {
   return { id: 'w', name: 'W', version: '1.0.0', description: 'd', steps, ...overrides };
@@ -726,6 +732,51 @@ describe('compilePlan — produces/inputs template resolution against a resolvab
       }),
     );
     expect(scalar[0]?.produces).toEqual(['src/s1.ts', '!test/s1.test.ts']);
+  });
+
+  // `06` §6.2's `StepNode.produces` is shared by every kind; `agent` and `command` are the two that
+  // author it (`PLAN-M14.md` P2) -- a `command` step's own `produces` goes through the identical
+  // `toResourceClaims`/`resolveClaimEntry` derivation an `agent` step's already does above, literal
+  // strings, a whole-entry placeholder splice and a `!`-exclusion alike, never a second, narrower path.
+  it("a non-inline command step's own literal produces array compiles to the identical claim, unchanged", () => {
+    const step: CommandStep = {
+      kind: 'command',
+      id: 'run-tests',
+      run: 'forge test run --json',
+      produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json'],
+    };
+    const nodes = expectOk(compilePlan(workflow([step]), {}));
+    expect(nodes[0]?.produces).toEqual([
+      'docs/forge/reports/test-results.json',
+      'docs/forge/reports/flaky.json',
+    ]);
+  });
+
+  it("a command step's own produces resolves a whole-entry placeholder splice and a `!`-exclusion, exactly as an agent step's does", () => {
+    const context: ExpressionContext = {
+      run: { filesExpected: ['src/s1.ts', 'test/s1.test.ts'], testPaths: ['test/s1.test.ts'] },
+    };
+    const step: CommandStep = {
+      kind: 'command',
+      id: 'check',
+      run: 'forge check',
+      produces: ['{{run.filesExpected}}', '!{{run.testPaths}}'],
+    };
+    const nodes = expectOk(compilePlan(workflow([step]), context));
+    expect(nodes[0]?.produces).toEqual(['src/s1.ts', 'test/s1.test.ts', '!test/s1.test.ts']);
+  });
+
+  it('an inline command step may also declare produces (accepted at compile time; the inline execution path never reads it -- @forge/engine/dispatch\'s own concern, not this one\'s)', () => {
+    const step: CommandStep = {
+      kind: 'command',
+      id: 'c',
+      run: 'echo hi',
+      inline: true,
+      produces: ['x.txt'],
+    };
+    const nodes = expectOk(compilePlan(workflow([step]), {}));
+    expect(nodes[0]?.produces).toEqual(['x.txt']);
+    expect(nodes[0]?.laneAffinity).toBe('inline');
   });
 });
 

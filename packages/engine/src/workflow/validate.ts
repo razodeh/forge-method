@@ -332,7 +332,9 @@ function isWellFormedGlob(glob: string): boolean {
 function checkProducesGlobs(steps: readonly WorkflowStep[]): readonly ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   for (const step of steps) {
-    if (step.kind !== 'agent' || step.produces === undefined) continue;
+    // `06` §6.2's `StepNode.produces` is shared by every kind; `agent` and `command` are the two that
+    // author it (`PLAN-M14.md` P2) — both narrow to the same optional `string | readonly string[]` shape.
+    if ((step.kind !== 'agent' && step.kind !== 'command') || step.produces === undefined) continue;
     const globs = typeof step.produces === 'string' ? [step.produces] : step.produces;
     for (const glob of globs) {
       if (!isWellFormedGlob(glob)) {

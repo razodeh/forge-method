@@ -440,7 +440,35 @@ describe('validateStructure', () => {
       );
     });
 
-    it('does not check produces on a step kind that has no such field', () => {
+    it('does not check produces on a step kind with no such field at all (no produces to be absent)', () => {
+      const wf = workflow([{ id: 'a', kind: 'gate', gate: 'G-Always' }]);
+
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob'),
+      ).toEqual([]);
+    });
+
+    // `06` §6.2's `StepNode.produces` is shared by every kind; `agent` and `command` are the two that
+    // author it (`PLAN-M14.md` P2) -- both narrowed the same way here.
+    it('checks a command step\'s own produces glob too, not only an agent step\'s', () => {
+      const wf = workflow([{ id: 'a', kind: 'command', run: 'echo hi', produces: '' }]);
+
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'malformed-produces-glob', stepId: 'a' }),
+      );
+    });
+
+    it('does not flag a command step with a real, well-formed produces glob', () => {
+      const wf = workflow([
+        { id: 'a', kind: 'command', run: 'echo hi', produces: ['docs/forge/reports/x.json'] },
+      ]);
+
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'malformed-produces-glob'),
+      ).toEqual([]);
+    });
+
+    it('does not check produces on a command step with no produces field at all', () => {
       const wf = workflow([{ id: 'a', kind: 'command', run: 'echo hi' }]);
 
       expect(

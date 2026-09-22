@@ -507,6 +507,7 @@ function buildLeafNode(
   const issues: CompileIssue[] = [];
   const agentStep = step.kind === 'agent' ? step : undefined;
   const sessionStep = step.kind === 'session' ? step : undefined;
+  const commandStep = step.kind === 'command' ? step : undefined;
 
   // What a human answers is not known until the `elicit` step has run, and a plan is compiled before that: a
   // placeholder cannot carry it. A `command` step reads an answer from its environment instead, where it is data
@@ -539,7 +540,15 @@ function buildLeafNode(
     ),
     outputs: agentStep?.outputs ?? [],
     dependsOn,
-    produces: toResourceClaims(agentStep?.produces, context, issues, compiledId),
+    // `06` §6.2's `StepNode.produces` is shared by every kind; only `agent` and `command` steps author it
+    // today (`PLAN-M14.md` P2) — the two are mutually exclusive (`step.kind` narrows both to `undefined`
+    // together), so there is nothing to union.
+    produces: toResourceClaims(
+      agentStep?.produces ?? commandStep?.produces,
+      context,
+      issues,
+      compiledId,
+    ),
     consumes: [],
     laneAffinity: step.kind === 'command' && step.inline === true ? 'inline' : undefined,
     retry: compileRetry(agentStep, step.kind, issues, compiledId),

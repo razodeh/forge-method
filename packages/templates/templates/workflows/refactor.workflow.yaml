@@ -28,6 +28,10 @@ steps:
     kind: command
     run: 'forge test run --json'
     dependsOn: [refactor-code]
+    # `forge test run` (no `--rule`) owns `test-results.json` and, whenever a layer was configured and the
+    # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
+    # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
+    produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
 
   - id: commit
     kind: checkpoint

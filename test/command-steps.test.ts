@@ -56,6 +56,8 @@ import { parseWorkflow } from '@forge/engine/workflow';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { WORKFLOW_INDEX } from '@forge/templates';
 
+import { NON_FORGE_STEPS } from './non-forge-steps.ts';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const modulesDir = path.join(repoRoot, 'modules');
 const templatesRoot = path.join(repoRoot, 'packages', 'templates');
@@ -206,14 +208,6 @@ async function ask(command: string): Promise<Verdict> {
 
 const verdicts = new Map<string, Verdict>();
 for (const command of distinct) verdicts.set(command, await ask(command));
-
-/** Command steps that run no `forge` command at all. Pinned so a misspelt binary cannot pass unnoticed. */
-const NON_FORGE_STEPS: readonly string[] = [
-  'build-stage:prepare',
-  'intake:verify-constraints',
-  'fm-service/contract-test-cycle.workflow.yaml:run-contract-tests',
-  'fm-mobile/store-release.workflow.yaml:run-device-matrix-tests',
-];
 
 describe('shipped workflow command steps name commands the CLI accepts (P22 / Q213)', () => {
   it('finds every command step: the count equals an independent count of `kind: command` in the files', () => {
