@@ -369,6 +369,65 @@ FORGE_LIVE=1 pnpm test -- --grep "live"     # requires a real adapter credential
 
 ---
 
+## M14 — Honest workflows: enforcement, gates, lanes and the disclosed security gaps
+
+Post-v1.0. Not part of the original 12-milestone build plan — added once M13's two live runs
+(`SPEC-QUESTIONS.md` Q231) proved one workflow (`retro`) complete end to end on real Claude and, doing
+so, disclosed what a real run still lacks: an out-of-claim write is reverted but the step reports
+success (25 silent losses, Q216); a `ReviewReport` verdict stops nothing; a lane with two unmerged
+predecessors cannot be built; the shipped `agent` conflict policy has no resolver; `forge merge` and
+the DECIDE lane land with no checks; `forge gate approve` cannot tell an agent's shell from a
+person's; waivers never expire; `forge kb verify`, `forge adopt` and the RCA loop run untrusted-source
+commands with the full environment; gates, `elicit` and `session` steps have never run live. M13
+closed at `617e549` with 21 owner decisions open; they were delegated to the orchestrator and decided
+in Q232, which is binding for this milestone. See `process/plans/PLAN-M14.md` for the pieces.
+
+**Build:** the Q232 decisions — strict claim enforcement fails the step; declared KB outputs written
+on the lane with reserved ids, mandatory `sources` and deprecate-not-delete enforced by the output
+contract; `produces` prefixes following the configured docs roots; a `verdict` field on every
+`ReviewReport` that the swarm-review step and the merge step obey; an engine session marker the CLI
+refuses gate approval and waiver under, with the same-run separation-of-duties rule; waiver caps and
+identifier owners; `GateReport` artifacts and check files attached through `appliesTo`; the DoD
+`verify`/`done` split; a validated `{path}` test form for the RCA loop and `forge story verify`;
+compile-time taint from an authored field, declared external inputs and KB provenance; confined stored
+commands for `kb verify` and `adopt`; in-lane joins of several predecessors, the `agent` conflict
+resolver, run-start fast-forward of the integration branch, checks on every landing including
+`forge merge` and the DECIDE lane; `forge config set --commit`; loader-level agent output validation
+and `forge upgrade` staleness; the `FORGE_REQUEST_CONTEXT` expansion loop (M13 P8); a third live run
+(`plan-stage` at L1) exercising a gate and two session steps.
+
+**Do not build:** OS-level process confinement (a sandbox, namespaces or a container — the residual
+`20` §20.10 gaps stay disclosed); a deploy executor (`14` §14.3 gives FORGE none; records stay
+self-attested); a retry primitive for a `blocked` review (it escalates); a UI for any of this.
+
+**Acceptance**
+- An out-of-claim write under `strict` fails the step as a typed `claim` failure after the revert
+  commit and the `PolicyViolation` event; `warn` is byte-for-byte unchanged.
+- A declared KB output whose id collides, lacks `sources`, or removes a base entry fails the output
+  check; a KB output's id is reserved by the supervisor before prompt assembly.
+- A `blocked` review fails its step without retry; an `incomplete` review refuses the merge with a
+  remedy; a `concerns` review lands and is recorded in the merge commit's trailers.
+- `forge gate approve|waive` under the engine's session marker is refused unless the gate names agents
+  and the agent's `may_approve` lists it, and never for a gate that agent produced evidence for in the
+  same run; every CLI gate evaluation writes a `GateReport` its approval digests verify against.
+- A step with several unmerged predecessors sees all of them; a residual merge conflict under the
+  default policy is resolved by one confined session of the lane's own agent and the merge checks then
+  run; a run refuses to start when the integration branch and `main` have diverged; `forge merge` and
+  the DECIDE lane never land without the configured checks.
+- `forge kb verify`, `forge adopt` verification and the RCA loop refuse chained, inline-program or
+  network commands and run the rest with a scrubbed environment.
+- `forge run plan-stage --stage STAGE-1` at L1 completes live with G-Ready evaluated over at least one
+  `ready` story and both session steps decided by an agent owner.
+
+**Exit tests**
+```
+pnpm test                                   # everything, on a clean checkout of HEAD, apart from the measured load flakes
+pnpm test -- --grep "M14"
+FORGE_LIVE=1 pnpm test -- --grep "live"     # requires a real adapter credential; the plan-stage run is orchestrator-run
+```
+
+---
+
 ## 22.1 Cross-cutting rules for the whole build
 
 1. **No milestone is complete with a failing exit test, a skipped test, or a `TODO` in production
@@ -393,7 +452,7 @@ With more than one implementer or lane, the dependency graph permits:
 
 ```
 M1 ──┬── M2 ──┬── M3 ──┐
-     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12 ── M13
+     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12 ── M13 ── M14
      └── M4 ──┘        ┘                          └── M9 ──────────┘
 ```
 
@@ -401,4 +460,6 @@ M3 and M4 are independent of each other. M9 (TUI) can begin once M6 stabilises t
 model. Everything else is serial, and M5 is the bottleneck — resist the temptation to start M6's
 content authoring before the engine's resume guarantee is proven, because content written against an
 unstable engine gets rewritten. M13 is drawn serial after M12 because it was discovered after M12
-shipped, not because anything in M1–M12 structurally requires it first.
+shipped, not because anything in M1–M12 structurally requires it first. M14 is drawn serial after M13
+because every one of its pieces implements a decision that M13's live runs surfaced, not because
+anything in M13 structurally requires it first.
