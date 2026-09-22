@@ -169,6 +169,41 @@ describe('dispatchAgentStep -- participant sessions carry the real compiled prom
     ).rejects.toMatchObject({ code: 'RUN-078' });
     expect(started).toBe(0);
   });
+
+  it('every participant session carries the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4): FORGE_RUN_ID === ctx.runId, FORGE_STEP_ID === its own stepId, FORGE_AGENT_ID === the dispatching agent, for every perspective', async () => {
+    const projectRoot = await createTempRepo('participant-marker');
+    const requests: SessionRequest[] = [];
+    const adapter = new FakePlatformAdapter();
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      { text: ['x'], structured: { findings: [], checked: ['a'] } },
+    );
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-participant-marker' });
+    const stepNode = node({
+      id: 'wf:marked-review',
+      kind: 'agent',
+      agent: toAgentId('test-agent'),
+      brief: 'Review it.',
+    });
+
+    await dispatchAgentStep(stepNode, testAgent(), ctx, 'swarm-review', {
+      perspectives: ['design', 'security'],
+    });
+
+    expect(requests).toHaveLength(2);
+    for (const request of requests) {
+      expect(request.env['FORGE_RUN_ID']).toBe('run-participant-marker');
+      expect(request.env['FORGE_STEP_ID']).toBe(request.stepId);
+      expect(request.env['FORGE_AGENT_ID']).toBe('test-agent');
+    }
+    // Each perspective is its own session, with its own stepId -- the marker is not one shared value.
+    expect(new Set(requests.map((request) => request.env['FORGE_STEP_ID']))).toEqual(
+      new Set(requests.map((request) => request.stepId)),
+    );
+  });
 });
 
 describe('dispatchAgentStep', () => {

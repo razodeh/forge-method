@@ -60,6 +60,15 @@ export interface ConformanceSkillFixture {
   readonly expectedFragment: string;
 }
 
+/** `PLAN-M14.md` P4's own env-passthrough check (not one of `07` §7.6's own fixed C1-C16 -- an
+ * additional, disclosed check this milestone adds, over the same shared suite): the variable name and
+ * value the check sets on `SessionRequest.env` alone, never anywhere else, so a value the adapter's own
+ * output actually carries could only have come from there. Suite-owned constants (mirroring
+ * `CONFORMANCE_EXEC_ALLOWED_COMMAND` above), not caller-supplied: only the natural-language prompt that
+ * elicits an adapter into echoing it back is a fixture's own job (`ConformanceOptions.envProbePrompt`). */
+export const CONFORMANCE_ENV_PROBE_VAR = 'FORGE_PROBE';
+export const CONFORMANCE_ENV_PROBE_VALUE = 'forge-conformance-env-probe-9f3c2a';
+
 /** C13's own fixture. `@forge/adapter-kit`'s production code cannot read or write `process.env`, or
  * use `node:crypto` randomness, itself (both banned outright by this repo's own R10 lint rules, with
  * no per-package exemption — `SPEC-QUESTIONS.md` Q60's own addendum), so establishing "a secret exists
@@ -104,6 +113,15 @@ export interface ConformanceOptions {
   readonly secretProbe: ConformanceSecretProbeFixture;
   /** Elicits a session whose output contains a `FORGE_ASK`-shaped control token (C10). */
   readonly controlTokenPrompt: string;
+  /** `PLAN-M14.md` P4's own env-passthrough check (see `CONFORMANCE_ENV_PROBE_VAR`): elicits a session
+   * that prints the exact value of that env var and nothing else. Optional, and skipped, not failed,
+   * when absent -- unlike the capability-gated fields below, this is not gated on an adapter's own
+   * reported capability (every compliant adapter accepts `SessionRequest.env` unconditionally, so there
+   * is no flag to check), but a real, spawned subprocess is what the check proves reached, and
+   * `@forge/testkit`'s own `FakePlatformAdapter` is deliberately in-process with no runtime-input-driven
+   * scripting at all (`FakeSessionScript`'s own doc comment, Q61 point 2) -- structurally not this
+   * check's subject, not merely an adapter that forgot to wire a fixture. */
+  readonly envProbePrompt?: string;
   /** Only exercised if `capabilities().structuredOutput` (C8). */
   readonly structured?: ConformanceStructuredFixture;
   /** Only exercised if `capabilities().sessionResume` (C9). */

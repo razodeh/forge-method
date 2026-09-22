@@ -38,6 +38,7 @@
  * @see specs/07 §7.6
  * @see PLAN-M11.md P8
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -111,6 +112,23 @@ function writeLine(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+/** `"<name>=<value>"` for each of `names`, read from THIS process's own real, inherited environment --
+ * never `process.env` in this file's own source (`R10`; this file is a fixture, not the test harness
+ * itself, so the ordinary ambient-read ban applies to it exactly like production code). A real
+ * grandchild `node -e` process, spawned with no `env` override, inherits this process's own real
+ * environment by default (`child_process`'s ordinary behaviour) and reports it back over its own
+ * stdout; the string script text below is data to that grandchild, not a JS token this file's own AST
+ * exposes. `PLAN-M14.md` P4's own env-passthrough conformance check needs this: proving
+ * `SessionRequest.env` reaches a real, separately-spawned OS process (this one), not merely an
+ * in-process object a mocked spawn call captured. */
+function envEchoLines(names: readonly string[]): string[] {
+  const script =
+    `${JSON.stringify(names)}.forEach((n) => ` +
+    `process.stdout.write(n + '=' + (process.env[n] || '') + '\\n'));`;
+  const output = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  return output.split('\n').filter((line) => line !== '');
+}
+
 /** Resolves `relativePath` against `cwd`, or `undefined` if it would land outside `cwd` — by `..`
  * traversal, by itself naming an absolute path, or by `cwd` itself being absent/non-absolute. Mirrors
  * `@forge/testkit`'s own `resolveInsideCwd` (`fake-adapter.ts`) exactly, for the identical reason: a
@@ -154,6 +172,12 @@ function emitResponse(response: ScriptedBinaryResponse, cwd: string | undefined)
 
   for (const text of response.text ?? []) {
     writeLine(JSON.stringify({ type: 'message', role: 'assistant', content: text }));
+  }
+
+  if (response.envEcho !== undefined && response.envEcho.length > 0) {
+    for (const line of envEchoLines(response.envEcho)) {
+      writeLine(JSON.stringify({ type: 'message', role: 'assistant', content: line }));
+    }
   }
 
   for (const call of response.toolCalls ?? []) {

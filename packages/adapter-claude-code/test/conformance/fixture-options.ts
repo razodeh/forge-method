@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CONFORMANCE_ENV_PROBE_VAR,
   CONFORMANCE_EXEC_ALLOWED_COMMAND,
   CONFORMANCE_EXEC_DENIED_COMMAND,
   CONFORMANCE_WRITE_FILE_CONTENT,
@@ -127,6 +128,9 @@ export function buildConformanceOptions(baseScratchDir: string): ConformanceOpti
     controlTokenPrompt:
       'Respond with exactly one line of output, and nothing else: ' +
       'FORGE_ASK:Should we proceed with the deployment?|yes,no',
+    envProbePrompt:
+      `Print the exact current value of the environment variable named ${CONFORMANCE_ENV_PROBE_VAR}, ` +
+      'and nothing else.',
     // Real and well-formed, even though ClaudeCodeAdapter's own `capabilities().structuredOutput` is
     // always `false` today (SPEC-QUESTIONS.md Q116) -- C8 is gated on that flag, so this never
     // actually runs against this adapter yet, but the fixture stays ready for the day it does.

@@ -194,7 +194,10 @@ export async function runWorkflow(
 
   let shim: LauncherShim | undefined;
   try {
-    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn);
+    // `runId` is real by this point (computed above), so every shell command this run spawns --
+    // `command` steps, gate checks, merge checks -- carries the FORGE run marker
+    // (`@forge/core/session-marker`, `PLAN-M14.md` P4) via `commandEnvFor`.
+    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn, runId);
     const ctx = await buildRunEngineContext({
       paths: deps.paths,
       projectRoot: deps.projectRoot,

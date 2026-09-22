@@ -122,6 +122,42 @@ describe('a command step under the run launcher environment', () => {
       expect(outcome.detail.stdout).toBe(process.env['HOME'] ?? '');
     }
   });
+
+  it('carries the FORGE run/step marker (@forge/core/session-marker, PLAN-M14.md P4): FORGE_RUN_ID === ctx.runId, FORGE_STEP_ID === the step id', async () => {
+    const projectRoot = await tempRepo('marker');
+    const ctx = createTestContext({ projectRoot, runId: 'run-cmdenv-marker' });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:marker',
+        kind: 'command',
+        run: 'echo "$FORGE_RUN_ID:$FORGE_STEP_ID"',
+        laneAffinity: 'inline',
+      }),
+      ctx,
+    );
+    expect(outcome.status).toBe('succeeded');
+    if (outcome.detail.kind === 'command') {
+      expect(outcome.detail.stdout).toBe('run-cmdenv-marker:wf:marker');
+    }
+  });
+
+  it('carries the marker even when the launcher shim never ran (ctx.commandEnv undefined) -- the step stamps it itself, not merely inheriting it', async () => {
+    const projectRoot = await tempRepo('marker-no-shim');
+    const ctx = createTestContext({ projectRoot, runId: 'run-no-shim' });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:marker-no-shim',
+        kind: 'command',
+        run: 'echo "$FORGE_RUN_ID"',
+        laneAffinity: 'inline',
+      }),
+      { ...ctx, commandEnv: undefined },
+    );
+    expect(outcome.status).toBe('succeeded');
+    if (outcome.detail.kind === 'command') {
+      expect(outcome.detail.stdout).toBe('run-no-shim');
+    }
+  });
 });
 
 describe('gate checks and merge checks share the run environment', () => {

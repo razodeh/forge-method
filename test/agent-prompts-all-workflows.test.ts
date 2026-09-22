@@ -658,6 +658,22 @@ async function checkAnyRequest(request: SessionRequest, where: string): Promise<
         `models.tiers (ctx.model is "${ctx.model}")`,
     );
   }
+  // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4): every dispatched
+  // request -- an ordinary agent step, a session participant, a swarm-review perspective -- names its
+  // own run and step, and carries a real (non-empty) agent id.
+  if (request.env['FORGE_RUN_ID'] !== ctx.runId) {
+    problems.push(
+      `${where} [${request.stepId}]: env.FORGE_RUN_ID is "${String(request.env['FORGE_RUN_ID'])}", not ctx.runId "${ctx.runId}"`,
+    );
+  }
+  if (request.env['FORGE_STEP_ID'] !== request.stepId) {
+    problems.push(
+      `${where} [${request.stepId}]: env.FORGE_STEP_ID is "${String(request.env['FORGE_STEP_ID'])}", not this request's own stepId`,
+    );
+  }
+  if (request.env['FORGE_AGENT_ID'] === undefined || request.env['FORGE_AGENT_ID'] === '') {
+    problems.push(`${where} [${request.stepId}]: env.FORGE_AGENT_ID is missing or empty`);
+  }
   problems.push(...(await recordProblems(request, where)));
   return problems;
 }

@@ -29,7 +29,7 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 
-import { ForgeError, renderCause } from '@forge/core';
+import { FORGE_RUN_ID, ForgeError, renderCause } from '@forge/core';
 
 import { createSystemTempPath } from '../loop/test/system-temp.ts';
 
@@ -93,14 +93,21 @@ export function launcherScript(spec: LauncherSpec, platform: NodeJS.Platform): s
   return `#!/bin/sh\nexec ${words.map(shellQuote).join(' ')} "$@"\n`;
 }
 
-/** `PATH` with `binDir` first, everything else about the parent's `PATH` unchanged. On Windows the variable
+/** `PATH` with `binDir` first, everything else about the parent's `PATH` unchanged, plus the FORGE run
+ * marker (`@forge/core/session-marker`, `PLAN-M14.md` P4) when `runId` is given. On Windows the variable
  * is spelled `Path`; the spelling the parent environment already uses is reused, so no second, competing
  * entry is created. The value is an environment variable, never spliced into a shell string, so a directory
- * with spaces or quotes in its name needs no quoting. */
+ * with spaces or quotes in its name needs no quoting.
+ *
+ * `runId` is optional, and deliberately not threaded through every caller: `bin.ts`'s own ad-hoc `forge
+ * gate check/approve/waive` shim (run directly from a person's own shell, never by the engine) calls this
+ * with no run id, so its own commands never carry the marker -- a real human's own shell must never
+ * incidentally pick one up (`SPEC-QUESTIONS.md` Q232 decision 9). Only `run.ts`'s own real run passes one. */
 export function commandEnvFor(
   binDir: string,
   parentEnv: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
+  runId?: string,
 ): Readonly<Record<string, string>> {
   const key =
     platform === 'win32'
@@ -110,10 +117,11 @@ export function commandEnvFor(
   const delimiter = platform === 'win32' ? ';' : ':';
   // An empty or missing parent PATH would leave `sh` unable to find `git` or `node`: fall back to the usual
   // system directories on POSIX rather than to the launcher alone (Windows resolves system directories itself).
-  if (existing === undefined || existing === '') {
-    return { [key]: platform === 'win32' ? binDir : `${binDir}${delimiter}${DEFAULT_POSIX_PATH}` };
-  }
-  return { [key]: `${binDir}${delimiter}${existing}` };
+  const pathEnv =
+    existing === undefined || existing === ''
+      ? { [key]: platform === 'win32' ? binDir : `${binDir}${delimiter}${DEFAULT_POSIX_PATH}` }
+      : { [key]: `${binDir}${delimiter}${existing}` };
+  return runId === undefined ? pathEnv : { ...pathEnv, [FORGE_RUN_ID]: runId };
 }
 
 const DEFAULT_POSIX_PATH = '/usr/local/bin:/usr/bin:/bin';
@@ -135,6 +143,9 @@ export function removeLiveLauncherShims(): void {
 
 /** Creates the shim directory and its launcher.
  *
+ * `runId`, when given, is stamped into `commandEnv` as the FORGE run marker (`commandEnvFor`); omitted
+ * by a caller with no run of its own (`bin.ts`'s ad-hoc gate shim).
+ *
  * @throws {ForgeError} `RUN-086` when the directory or script cannot be created (disk full, unwritable temp
  * directory, a Windows path that cannot be quoted); nothing is left behind. Callers warn and carry on: only
  * command steps that call `forge` are affected. */
@@ -142,6 +153,7 @@ export async function createLauncherShim(
   spec: LauncherSpec,
   platform: NodeJS.Platform = process.platform,
   newDirPath: () => string = () => createSystemTempPath('forge-launcher'),
+  runId?: string,
 ): Promise<LauncherShim> {
   let binDir: string | undefined;
   try {
@@ -165,7 +177,7 @@ export async function createLauncherShim(
   const dir = binDir;
   return {
     binDir: dir,
-    commandEnv: commandEnvFor(dir, spec.env, platform),
+    commandEnv: commandEnvFor(dir, spec.env, platform, runId),
     cleanup: async () => {
       liveDirs.delete(dir);
       await rm(dir, { recursive: true, force: true }).catch(() => undefined);
@@ -173,14 +185,16 @@ export async function createLauncherShim(
   };
 }
 
-/** `createLauncherShim` for a run: a failure becomes a warning (`warn`) and `undefined`, never a refusal. */
+/** `createLauncherShim` for a run: a failure becomes a warning (`warn`) and `undefined`, never a refusal.
+ * `runId`, when given, is threaded straight through to `createLauncherShim` (and so to `commandEnvFor`). */
 export async function createLauncherShimOrWarn(
   spec: LauncherSpec | undefined,
   warn: ((message: string) => void) | undefined,
+  runId?: string,
 ): Promise<LauncherShim | undefined> {
   if (spec === undefined) return undefined;
   try {
-    return await createLauncherShim(spec);
+    return await createLauncherShim(spec, undefined, undefined, runId);
   } catch (error) {
     if (!(error instanceof ForgeError)) throw error;
     warn?.(`forge: warning: ${error.message} ${error.remedy}`);

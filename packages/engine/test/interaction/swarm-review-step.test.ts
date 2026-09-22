@@ -200,6 +200,31 @@ describe('a swarm-review step persists its ReviewReport through a lane, and the 
     expect((await ctx.assembly.loadAgent('reviewer')).tools.write).toBe(false);
   });
 
+  it('every perspective session carries the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4): FORGE_RUN_ID === the run, FORGE_STEP_ID === its own stepId, FORGE_AGENT_ID === the reviewing agent', async () => {
+    const projectRoot = await createTempRepo('marker');
+    const adapter = new FakePlatformAdapter();
+    const requests = requestsOf(adapter);
+    scriptPerspectives(adapter, 'wf:review', cleanPerspectives());
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-swarm-marker',
+      assembly: reviewerAssembly(projectRoot),
+    });
+
+    const outcome = await executeStep(reviewNode(), ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(requests).toHaveLength(PERSPECTIVES.length);
+    for (const request of requests) {
+      expect(request.env).toEqual({
+        FORGE_RUN_ID: 'run-swarm-marker',
+        FORGE_STEP_ID: request.stepId,
+        FORGE_AGENT_ID: 'reviewer',
+      });
+    }
+  });
+
   it('the step does not need to declare ReviewReport: the mode implies the output, and the check covers what the engine wrote', async () => {
     const projectRoot = await createTempRepo('implied');
     const adapter = new FakePlatformAdapter();

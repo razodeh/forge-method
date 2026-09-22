@@ -411,29 +411,49 @@ describe('what a later step may read (answers are data)', () => {
     [IDEA.id, { ideaSummary: 'an idea', greenfield: 'greenfield' }],
   ]);
 
-  it('a dependent command step gets FORGE_ANSWER_<name> and FORGE_PROJECT_ROOT on top of the launcher env', () => {
+  it('a dependent command step gets FORGE_ANSWER_<name>, FORGE_PROJECT_ROOT and the FORGE run/step marker on top of the launcher env', () => {
     const env = commandStepEnvironment(graph.get('intake:after')!, {
       answers,
       stepGraph: graph,
       projectRoot: '/the/project',
       commandEnv: { PATH: '/shim:/usr/bin' },
+      runId: 'run-elicit-env',
     });
     expect(env).toEqual({
       PATH: '/shim:/usr/bin',
       FORGE_PROJECT_ROOT: '/the/project',
+      FORGE_RUN_ID: 'run-elicit-env',
+      FORGE_STEP_ID: 'intake:after',
       FORGE_ANSWER_ideaSummary: 'an idea',
       FORGE_ANSWER_greenfield: 'greenfield',
     });
   });
 
-  it('a step that does not depend on the elicit step sees none of its answers', () => {
+  it('a step that does not depend on the elicit step sees none of its answers, but still gets the FORGE run/step marker', () => {
     const env = commandStepEnvironment(graph.get('intake:beside')!, {
       answers,
       stepGraph: graph,
       projectRoot: '/p',
       commandEnv: undefined,
+      runId: 'run-elicit-env',
     });
-    expect(Object.keys(env)).toEqual(['FORGE_PROJECT_ROOT']);
+    expect(Object.keys(env).sort()).toEqual([
+      'FORGE_PROJECT_ROOT',
+      'FORGE_RUN_ID',
+      'FORGE_STEP_ID',
+    ]);
+  });
+
+  it('carries the marker even when the launcher shim failed (commandEnv undefined) -- not merely inherited from it', () => {
+    const env = commandStepEnvironment(graph.get('intake:beside')!, {
+      answers,
+      stepGraph: graph,
+      projectRoot: '/p',
+      commandEnv: undefined,
+      runId: 'run-no-shim',
+    });
+    expect(env['FORGE_RUN_ID']).toBe('run-no-shim');
+    expect(env['FORGE_STEP_ID']).toBe('intake:beside');
   });
 
   it('an answer that looks like shell code reaches the command as text and is never run', async () => {

@@ -27,6 +27,7 @@
  * @see specs/18 §18.4
  * @see PLAN-M13.md P20
  */
+import { FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ForgeError } from '@forge/core/errors';
 import { readEvents } from '@forge/telemetry/events';
 
@@ -316,12 +317,27 @@ export function answersVisibleTo(
 /** `FORGE_ANSWER_<name>` for each answer `node` may read, plus `FORGE_PROJECT_ROOT`: the environment a `command`
  * step runs with on top of the launcher's (`ExecuteStepContext.commandEnv`). The project root is there because a
  * step runs in a lane or the integration worktree, and a command that must act on the project itself (recording
- * the level in `.forge/config.yaml`) names it with `forge -C "$FORGE_PROJECT_ROOT" ...`. */
+ * the level in `.forge/config.yaml`) names it with `forge -C "$FORGE_PROJECT_ROOT" ...`.
+ *
+ * Also stamps the FORGE run/step marker (`@forge/core/session-marker`, `PLAN-M14.md` P4,
+ * `SPEC-QUESTIONS.md` Q232 decision 9): `FORGE_RUN_ID`/`FORGE_STEP_ID` from `ctx.runId`/`node.id`, set
+ * here directly rather than trusted to already be in `ctx.commandEnv` -- `commandEnvFor` sets
+ * `FORGE_RUN_ID` too (for every shell command a run spawns, gate and merge checks included), but the
+ * launcher shim that builds `ctx.commandEnv` is best-effort (a disk-full/unwritable-temp-dir failure
+ * degrades to a warning, `createLauncherShimOrWarn`), so a `command` step's own env must not depend on
+ * it having succeeded. `[FORGE_RUN_ID]`/`[FORGE_STEP_ID]` are ordered after the `...ctx.commandEnv`
+ * spread so this function's own, always-correct values win over anything (stale or otherwise) already
+ * on it. */
 export function commandStepEnvironment(
   node: StepNode,
-  ctx: Pick<ExecuteStepContext, 'answers' | 'stepGraph' | 'projectRoot' | 'commandEnv'>,
+  ctx: Pick<ExecuteStepContext, 'answers' | 'stepGraph' | 'projectRoot' | 'commandEnv' | 'runId'>,
 ): Readonly<Record<string, string>> {
-  const env: Record<string, string> = { ...ctx.commandEnv, FORGE_PROJECT_ROOT: ctx.projectRoot };
+  const env: Record<string, string> = {
+    ...ctx.commandEnv,
+    FORGE_PROJECT_ROOT: ctx.projectRoot,
+    [FORGE_RUN_ID]: ctx.runId,
+    [FORGE_STEP_ID]: node.id,
+  };
   for (const [name, value] of Object.entries(answersVisibleTo(node, ctx))) {
     env[`${ANSWER_ENV_PREFIX}${name}`] = value;
   }

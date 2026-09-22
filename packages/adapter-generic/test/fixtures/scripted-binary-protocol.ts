@@ -46,6 +46,12 @@ export interface ScriptedBinaryResponse {
   /** One `message`-shaped NDJSON line per entry (`07` §7.5's own worked-example source vocabulary:
    * `{ type: "message", role: "assistant", content }`). */
   readonly text?: readonly string[];
+  /** One `message`-shaped NDJSON line per named variable, `"<name>=<value>"` (empty after `=` when the
+   * variable is unset) -- read from THIS PROCESS's own real, inherited environment via a real grandchild
+   * process (`envEchoLines`, `scripted-binary.ts`), never from a table author's say-so. `PLAN-M14.md`
+   * P4's own env-passthrough conformance check needs this: proving `SessionRequest.env` reaches a real,
+   * separately-spawned OS process, not merely an in-process object a mocked spawn call captured. */
+  readonly envEcho?: readonly string[];
   /** One `tool_call`-shaped NDJSON line per entry (`{ type: "tool_call", tool, args }`). */
   readonly toolCalls?: readonly ScriptedToolCall[];
   /** Actually written to disk under the invocation's own `--cwd`, and reported as a `tool_call`

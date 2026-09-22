@@ -12,13 +12,17 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { execa } from 'execa';
 import { pathExists, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
+import { currentLauncher } from '../../../src/commands/run/launcher-shim.ts';
 import { resumeWorkflow } from '../../../src/commands/run/resume.ts';
 import { runLanes } from '../../../src/commands/run/status.ts';
 import {
+  CHECKS_ROOT,
+  FIXTURE_GATE_ID,
   FIXTURE_ITEM_ID,
   FIXTURE_WORKFLOW_ID,
   WORKFLOWS_ROOT,
@@ -185,5 +189,48 @@ steps:
     // `runWorkflow` call already wrote that pointer before it was killed.
     const explicit = await resumeWorkflow(testRunDeps(project), { host: 'test-host' });
     expect(explicit.runId).toBe(runId);
+  }, 30_000);
+
+  it('a resumed run threads the real run id into the launcher shim, so a gate check it genuinely re-dispatches after the crash carries the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4) -- not merely a command step (which self-stamps regardless), but the gate-check path, which depends on this threading', async () => {
+    const project = await createTestProject({ variant: 'slow' });
+    const runId = 'run-crash-marker';
+
+    // The fixture gate's own check, extended (not replaced) to also record $FORGE_RUN_ID to a file in
+    // its own cwd (`ctx.integrationPath`, `runGateStep`'s own doc comment) -- the check still returns
+    // the required `{"ok":true}` JSON envelope on stdout, unaffected.
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${FIXTURE_GATE_ID}.gate.yaml`),
+      `id: ${FIXTURE_GATE_ID}\n` +
+        'name: Always-passing fixture gate\n' +
+        'phase: verify\n' +
+        'checks:\n' +
+        '  deterministic:\n' +
+        '    - id: always-ok\n' +
+        '      run: "printf \'%s\' \\"$FORGE_RUN_ID\\" > run-id-marker.txt && echo \'{\\"ok\\":true}\'"\n' +
+        '      failOn: "!ok"\n' +
+        '  advisory: []\n' +
+        'openQuestionsPolicy: warn\n',
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'gate check also records FORGE_RUN_ID'], {
+      cwd: project.dir,
+    });
+
+    await spawnAndKill(project.paths, project.dir, runId);
+
+    const deps = { ...testRunDeps(project), launcher: currentLauncher(process.env) };
+    const { runState } = await resumeWorkflow(deps, { runId, host: 'test-host' });
+    expect(runState.runStatus).toBe('completed');
+    expect(runState.unresolvedStepIds).toEqual([]);
+
+    const marker = await readFile(
+      path.join(
+        project.dir,
+        '.forge/state/worktrees/integration-forge-integration-current',
+        'run-id-marker.txt',
+      ),
+      'utf8',
+    );
+    expect(marker).toBe(runId);
   }, 30_000);
 });

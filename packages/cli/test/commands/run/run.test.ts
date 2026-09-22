@@ -14,8 +14,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { dryRunWorkflow, handleSigterm, runWorkflow } from '../../../src/commands/run/run.ts';
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
+import { currentLauncher } from '../../../src/commands/run/launcher-shim.ts';
 import { runLanes } from '../../../src/commands/run/status.ts';
 import {
+  CHECKS_ROOT,
+  FIXTURE_GATE_ID,
   FIXTURE_ITEM_ID,
   FIXTURE_STEP_IMPLEMENT_ID,
   FIXTURE_STEP_PREPARE_ID,
@@ -186,6 +189,50 @@ describe('runWorkflow', () => {
       cwd: project.dir,
     });
     expect(stdout).toContain('Merge lane');
+  });
+
+  it('a real gate check spawned by a fresh run carries the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4), through the real commandEnvFor -> commandEnv -> createGateEvaluator chain, not a hand-built env', async () => {
+    const project = await createTestProject();
+    // The fixture gate's own check, extended (not replaced) to also record $FORGE_RUN_ID to a file in
+    // its own cwd (`ctx.integrationPath`) -- still returns the required `{"ok":true}` JSON envelope.
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${FIXTURE_GATE_ID}.gate.yaml`),
+      `id: ${FIXTURE_GATE_ID}\n` +
+        'name: Always-passing fixture gate\n' +
+        'phase: verify\n' +
+        'checks:\n' +
+        '  deterministic:\n' +
+        '    - id: always-ok\n' +
+        '      run: "printf \'%s\' \\"$FORGE_RUN_ID\\" > run-id-marker.txt && echo \'{\\"ok\\":true}\'"\n' +
+        '      failOn: "!ok"\n' +
+        '  advisory: []\n' +
+        'openQuestionsPolicy: warn\n',
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'gate check also records FORGE_RUN_ID'], {
+      cwd: project.dir,
+    });
+
+    const deps = { ...testRunDeps(project), launcher: currentLauncher(process.env) };
+    const result = await runWorkflow(deps, {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-gate-marker',
+      host: 'test-host',
+    });
+    expect(result.kind).toBe('run');
+    if (result.kind !== 'run') throw new Error('unreachable');
+    expect(result.runState.runStatus).toBe('completed');
+
+    const marker = await readFile(
+      path.join(
+        project.dir,
+        '.forge/state/worktrees/integration-forge-integration-current',
+        'run-id-marker.txt',
+      ),
+      'utf8',
+    );
+    expect(marker).toBe('run-gate-marker');
   });
 
   it('derives a deterministic runId from the injected clock when none is given', async () => {

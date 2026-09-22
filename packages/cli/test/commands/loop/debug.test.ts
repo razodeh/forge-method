@@ -592,6 +592,22 @@ describe('forge debug sends every session through real prompt assembly (the stri
     }
   }, 60_000);
 
+  it('every RCA session (read-only phases and FIX) carries the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4): the same debug-<ts> run id on every request, its own stepId, and FORGE_AGENT_ID === diagnostician', async () => {
+    const { requests } = await recordedHappyRun();
+    const debugRequests = requests.filter((r) => r.stepId.startsWith('debug:'));
+    expect(debugRequests.length).toBeGreaterThan(8);
+    const runIds = new Set(debugRequests.map((r) => r.env['FORGE_RUN_ID']));
+    expect(runIds.size).toBe(1);
+    const [runId] = [...runIds];
+    expect(runId).toMatch(/^debug-\d+$/);
+    expect(runId).toBe(debugRequests[0]?.runId);
+    for (const request of debugRequests) {
+      expect(request.env['FORGE_RUN_ID']).toBe(request.runId);
+      expect(request.env['FORGE_STEP_ID']).toBe(request.stepId);
+      expect(request.env['FORGE_AGENT_ID']).toBe('diagnostician');
+    }
+  }, 60_000);
+
   it('model output reaches later sessions only inside the fenced user turn, never in the system prompt or the instruction text', async () => {
     const { requests } = await recordedHappyRun();
     const debugRequests = requests.filter((r) => r.stepId.startsWith('debug:'));

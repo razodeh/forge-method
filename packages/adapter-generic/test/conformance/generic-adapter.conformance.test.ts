@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  CONFORMANCE_ENV_PROBE_VAR,
   CONFORMANCE_EXEC_ALLOWED_COMMAND,
   CONFORMANCE_EXEC_DENIED_COMMAND,
   CONFORMANCE_WRITE_FILE_CONTENT,
@@ -57,6 +58,7 @@ const MANY_TURNS_PROMPT = 'conformance many turns';
 const EXEC_PROMPT = 'conformance exec';
 const CONTROL_TOKEN_PROMPT = 'conformance control token';
 const SECRET_PROBE_PROMPT = 'conformance secret probe';
+const ENV_PROBE_PROMPT = 'conformance env probe';
 const INVALID_MODEL = 'not-a-real-model';
 const VALID_MODEL = 'forge-fixture-model';
 const SECRET_VALUE = 'forge-conformance-secret-xyz';
@@ -120,6 +122,16 @@ function buildTable(): ScriptedBinaryTable {
         match: { promptContains: SECRET_PROBE_PROMPT },
         response: {
           text: ['no secrets observed here'],
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      },
+      // PLAN-M14.md P4's own env-passthrough check: echoes CONFORMANCE_ENV_PROBE_VAR's own real value,
+      // read from THIS real, separately-spawned scripted-binary.ts process's own inherited environment
+      // (`envEchoLines`), never from a value this table hard-codes.
+      {
+        match: { promptContains: ENV_PROBE_PROMPT },
+        response: {
+          envEcho: [CONFORMANCE_ENV_PROBE_VAR],
           usage: { inputTokens: 1, outputTokens: 1 },
         },
       },
@@ -222,6 +234,7 @@ const conformanceOptions: ConformanceOptions = {
   execPrompt: EXEC_PROMPT,
   secretProbe: { value: SECRET_VALUE, prompt: SECRET_PROBE_PROMPT },
   controlTokenPrompt: CONTROL_TOKEN_PROMPT,
+  envProbePrompt: ENV_PROBE_PROMPT,
 };
 
 beforeAll(async () => {

@@ -13,3 +13,4 @@ export * from './errors/index.ts';
 export * from './fs/index.ts';
 export * from './graph/index.ts';
 export * from './ids/index.ts';
+export * from './session-marker.ts';

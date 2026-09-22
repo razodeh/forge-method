@@ -20,6 +20,7 @@
  * @see SPEC-QUESTIONS.md Q62
  * @see PLAN-M5.md P15
  */
+import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
 
@@ -288,7 +289,9 @@ export async function runLaneLifecycle(
  * `PLAN-M13.md` P5): the compiled nine-block prompt is the effective system prompt (`05` §5.3), the user
  * prompt is a fixed kickoff line, and the model, thinking level and tool grant are the agent's own
  * resolved values -- none of `ctx.model`/`ctx.tools` (which serve only ad-hoc, non-agent-step sessions)
- * is read here. */
+ * is read here. `env` carries the FORGE run/step/agent marker (`@forge/core/session-marker`,
+ * `PLAN-M14.md` P4, `SPEC-QUESTIONS.md` Q232 decision 9): composed from `ctx.runId`, `node.id` and
+ * `assembled.agent.id` -- the agent this assembly actually resolved, never `process.env` (R10). */
 function buildSessionRequest(
   node: StepNode,
   ctx: ExecuteStepContext,
@@ -313,7 +316,11 @@ function buildSessionRequest(
       wallClockMs: node.limits.wallClockMs,
       maxCostUsd: node.limits.maxCostUsd,
     },
-    env: {},
+    env: {
+      [FORGE_RUN_ID]: ctx.runId,
+      [FORGE_STEP_ID]: node.id,
+      [FORGE_AGENT_ID]: assembled.agent.id,
+    },
     abortSignal,
   };
 }

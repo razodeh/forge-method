@@ -16,6 +16,7 @@ import type { PlatformAdapter } from '../types/adapter.ts';
 import { registerCapabilityGatedTests } from './capabilities.ts';
 import { registerControlAndAbortTests } from './control-and-abort.ts';
 import { createConformanceContext } from './context.ts';
+import { registerEnvPassthroughTests } from './env-passthrough.ts';
 import { registerFilesystemTests } from './filesystem.ts';
 import type { ConformanceOptions } from './fixtures.ts';
 import { registerSecretsTests } from './secrets.ts';
@@ -44,5 +45,8 @@ export function runAdapterConformanceSuite(
     registerControlAndAbortTests(context);
     registerSecretsTests(context);
     registerCapabilityGatedTests(context);
+    // Not one of 07 §7.6's own fixed C1-C16 (see env-passthrough.ts's own header); registered last so
+    // a caller reading test output in order sees the numbered suite complete before this addition.
+    registerEnvPassthroughTests(context);
   });
 }

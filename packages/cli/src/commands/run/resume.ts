@@ -78,7 +78,14 @@ export async function resumeWorkflow(
 
   let shim: LauncherShim | undefined;
   try {
-    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn);
+    // `runId` is real by this point (the resumed run's own id), so every shell command a resumed run
+    // spawns -- `command` steps, gate checks, merge checks -- carries the FORGE run marker
+    // (`@forge/core/session-marker`, `PLAN-M14.md` P4) via `commandEnvFor`, the same as a fresh run
+    // (`run.ts`'s own identical call). Gate/merge checks read `ctx.commandEnv` directly (`context.ts`'s
+    // own `createGateEvaluator`/`createMergeQueueFacade` calls) with no per-step stamping fallback of
+    // their own, so a resumed run must supply this here, not rely on it having been true before the
+    // crash/pause that made resuming necessary in the first place.
+    shim = await createLauncherShimOrWarn(deps.launcher, deps.warn, runId);
     const ctx = await buildRunEngineContext({
       paths: deps.paths,
       projectRoot: deps.projectRoot,

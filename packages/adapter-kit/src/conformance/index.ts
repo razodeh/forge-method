@@ -16,6 +16,8 @@ export {
   type ConformanceSecretProbeFixture,
   type ConformanceSkillFixture,
   type ConformanceStructuredFixture,
+  CONFORMANCE_ENV_PROBE_VALUE,
+  CONFORMANCE_ENV_PROBE_VAR,
   CONFORMANCE_EXEC_ALLOWED_COMMAND,
   CONFORMANCE_EXEC_CANARY_RELATIVE_PATH,
   CONFORMANCE_EXEC_DENIED_COMMAND,

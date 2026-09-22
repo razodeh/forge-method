@@ -244,6 +244,58 @@ describe('commandEnvFor', () => {
       Path: 'C:\\x;C:\\Windows',
     });
   });
+
+  it('carries no FORGE_RUN_ID marker when no run id is given (PATH only) -- the ad-hoc gate shim (bin.ts) case', () => {
+    expect(commandEnvFor('/tmp/x', { PATH: '/usr/bin:/bin' }, 'linux')).toEqual({
+      PATH: '/tmp/x:/usr/bin:/bin',
+    });
+  });
+
+  it('adds the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4) when a run id is given, alongside PATH, unchanged', () => {
+    expect(commandEnvFor('/tmp/x', { PATH: '/usr/bin:/bin' }, 'linux', 'run-shim-marker')).toEqual({
+      PATH: '/tmp/x:/usr/bin:/bin',
+      FORGE_RUN_ID: 'run-shim-marker',
+    });
+  });
+});
+
+describe('createLauncherShim / createLauncherShimOrWarn -- threading the run id into commandEnv', () => {
+  it('createLauncherShim with no run id produces a commandEnv with no FORGE_RUN_ID', async () => {
+    const dir = await scratch();
+    const shim = await createLauncherShim(spec(await echoEntry(dir)));
+    expect(shim.commandEnv['FORGE_RUN_ID']).toBeUndefined();
+    await shim.cleanup();
+  });
+
+  it('createLauncherShim given a run id stamps FORGE_RUN_ID onto commandEnv', async () => {
+    const dir = await scratch();
+    const shim = await createLauncherShim(
+      spec(await echoEntry(dir)),
+      process.platform,
+      undefined,
+      'run-create-shim',
+    );
+    expect(shim.commandEnv['FORGE_RUN_ID']).toBe('run-create-shim');
+    await shim.cleanup();
+  });
+
+  it('createLauncherShimOrWarn threads the run id through to commandEnv', async () => {
+    const dir = await scratch();
+    const shim = await createLauncherShimOrWarn(
+      spec(await echoEntry(dir)),
+      undefined,
+      'run-warn-shim',
+    );
+    expect(shim?.commandEnv['FORGE_RUN_ID']).toBe('run-warn-shim');
+    await shim?.cleanup();
+  });
+
+  it('createLauncherShimOrWarn with no run id (the bin.ts gate-shim call shape) carries none', async () => {
+    const dir = await scratch();
+    const shim = await createLauncherShimOrWarn(spec(await echoEntry(dir)), undefined);
+    expect(shim?.commandEnv['FORGE_RUN_ID']).toBeUndefined();
+    await shim?.cleanup();
+  });
 });
 
 describe('currentLauncher', () => {

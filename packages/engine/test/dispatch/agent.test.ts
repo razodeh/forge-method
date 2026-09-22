@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import type { SessionRequest } from '@forge/adapter-kit';
 import { ForgeError } from '@forge/core/errors';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
@@ -521,5 +522,68 @@ describe('runAgentStep', () => {
       cwd: path.join(worktreesDir, laneDir ?? ''),
     });
     expect(stdout).toContain('wf:implement');
+  });
+});
+
+describe('the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4)', () => {
+  it("every SessionRequest buildSessionRequest builds carries FORGE_RUN_ID === ctx.runId, FORGE_STEP_ID === node.id, FORGE_AGENT_ID === the assembled agent's own id", async () => {
+    const projectRoot = await createTempRepo('agent-marker');
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      { text: ['done'] },
+    );
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-marker-agent' });
+    const stepNode = node({
+      id: 'wf:marked',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'do work',
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.env).toEqual({
+      FORGE_RUN_ID: 'run-marker-agent',
+      FORGE_STEP_ID: 'wf:marked',
+      FORGE_AGENT_ID: 'engineer',
+    });
+  });
+
+  it('the marker is composed only from ctx/node/the assembled agent, never from an ambient FORGE_RUN_ID already in the test process env', async () => {
+    const previous = process.env['FORGE_RUN_ID'];
+    process.env['FORGE_RUN_ID'] = 'ambient-poison-run-id';
+    try {
+      const projectRoot = await createTempRepo('agent-marker-r10');
+      const adapter = new FakePlatformAdapter();
+      const requests: SessionRequest[] = [];
+      adapter.script(
+        (request) => {
+          requests.push(request);
+          return true;
+        },
+        { text: ['done'] },
+      );
+      const ctx = createTestContext({ projectRoot, adapter, runId: 'run-marker-real' });
+      const stepNode = node({
+        id: 'wf:marked',
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: 'do work',
+      });
+
+      await executeStep(stepNode, ctx);
+
+      expect(requests[0]?.env['FORGE_RUN_ID']).toBe('run-marker-real');
+    } finally {
+      if (previous === undefined) delete process.env['FORGE_RUN_ID'];
+      else process.env['FORGE_RUN_ID'] = previous;
+    }
   });
 });

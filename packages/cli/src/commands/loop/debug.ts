@@ -31,7 +31,15 @@
 import path from 'node:path';
 
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
-import { ForgeError, SYSTEM_CLOCK, writeFileAtomic, type Clock } from '@forge/core';
+import {
+  ForgeError,
+  FORGE_AGENT_ID,
+  FORGE_RUN_ID,
+  FORGE_STEP_ID,
+  SYSTEM_CLOCK,
+  writeFileAtomic,
+  type Clock,
+} from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import type {
@@ -505,7 +513,12 @@ async function runReadOnlySession(
     tools: assembled.tools,
     permissionMode: 'deny-unlisted',
     limits: SESSION_LIMITS,
-    env: {},
+    // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4): the
+    // diagnostician's every read-only phase session carries it, composed from `ctx`/`stepId`/`agent`,
+    // never `process.env` (R10). `rca/shell.ts`'s own `createRcaShell` -- what REPRODUCE/PROVE
+    // actually run a model-proposed command through -- is a separate mechanism with its own scrubbed
+    // environment and deliberately never sees this marker (`session-marker.ts`'s own doc comment).
+    env: { [FORGE_RUN_ID]: ctx.runId, [FORGE_STEP_ID]: stepId, [FORGE_AGENT_ID]: agent.id },
     // `exactOptionalPropertyTypes`: an explicit `outputSchema: undefined` is not the same as omitting
     // the key, so this only ever adds the key when a real schema exists for `request.phase`.
     ...(OUTPUT_SCHEMAS[request.phase] === undefined
@@ -669,7 +682,10 @@ async function runFixSession(
     tools: assembled.tools,
     permissionMode: 'accept-edits',
     limits: SESSION_LIMITS,
-    env: {},
+    // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4) -- see
+    // `runReadOnlySession`'s own identical comment; the FIX session itself is never tainted, but the
+    // shell command PROVE later runs through `createRcaShell` still never sees this marker.
+    env: { [FORGE_RUN_ID]: ctx.runId, [FORGE_STEP_ID]: stepId, [FORGE_AGENT_ID]: agent.id },
     outputSchema: FIX_OUTPUT_SCHEMA,
     abortSignal: abortController.signal,
   };

@@ -87,6 +87,31 @@ describe('createRcaShell', () => {
     expect(result.stdout).toContain('GIT_CONFIG_GLOBAL=/dev/null');
   });
 
+  it('the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4) never reaches a proposed or engine RCA shell command, even when it is already present in parentEnv -- a nested "forge debug" run inside a command step would otherwise inherit it via ExecuteStepContext.commandEnv (commandEnvFor/commandStepEnvironment)', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: GRANT,
+      root,
+      parentEnv: {
+        PATH: process.env['PATH'],
+        FORGE_RUN_ID: 'outer-run-id-should-never-leak',
+        FORGE_STEP_ID: 'outer-step-id-should-never-leak',
+        FORGE_AGENT_ID: 'outer-agent-id-should-never-leak',
+      },
+    });
+    const proposed = await runShell('env', root, 'proposed');
+    expect(proposed.stdout).not.toContain('FORGE_RUN_ID');
+    expect(proposed.stdout).not.toContain('FORGE_STEP_ID');
+    expect(proposed.stdout).not.toContain('FORGE_AGENT_ID');
+    expect(proposed.stdout).not.toContain('should-never-leak');
+
+    const engine = await runShell('echo a && env', root, 'engine');
+    expect(engine.stdout).not.toContain('FORGE_RUN_ID');
+    expect(engine.stdout).not.toContain('FORGE_STEP_ID');
+    expect(engine.stdout).not.toContain('FORGE_AGENT_ID');
+    expect(engine.stdout).not.toContain('should-never-leak');
+  });
+
   it('a proposed command that outlives its limit is killed and reported, not left running', async () => {
     const root = await lane();
     const runShell = createRcaShell({

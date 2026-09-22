@@ -11,6 +11,7 @@
  * @see SPEC-QUESTIONS.md Q104
  * @see PLAN-M6.md A6
  */
+import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ForgeError } from '@forge/core/errors';
 import type { SessionRequest, SessionResult } from '@forge/adapter-kit';
 import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
@@ -88,6 +89,10 @@ export async function runParticipantSession(
   });
   await assembled.persist();
   const abortController = new AbortController();
+  // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4): `agent.id` is
+  // this participant's own resolved agent, never `node.agent` (the step's primary author) and never
+  // `process.env` (R10) -- every participant this dispatch layer runs carries the marker, whichever
+  // interaction mode or perspective it is.
   const request: SessionRequest = {
     runId: ctx.runId,
     stepId: assembled.stepKey,
@@ -104,7 +109,11 @@ export async function runParticipantSession(
       wallClockMs: node.limits.wallClockMs,
       maxCostUsd: node.limits.maxCostUsd,
     },
-    env: {},
+    env: {
+      [FORGE_RUN_ID]: ctx.runId,
+      [FORGE_STEP_ID]: assembled.stepKey,
+      [FORGE_AGENT_ID]: agent.id,
+    },
     ...(outputSchema === undefined ? {} : { outputSchema }),
     abortSignal: abortController.signal,
   };
