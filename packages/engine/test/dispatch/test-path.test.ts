@@ -170,6 +170,13 @@ describe('validateTestPath: the validator matrix', () => {
     expect(await problemOf('tests-extra/x.test.ts', root, ['tests'])).toBe('outside-test-roots');
   });
 
+  it('testRoots explicitly set to an empty list accepts no path at all (fails closed, not open)', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    expect(await problemOf('tests/x.test.ts', root, [])).toBe('outside-test-roots');
+  });
+
   it('a real file under a configured testRoots entry is accepted', async () => {
     const root = await lane();
     await mkdir(path.join(root, 'tests'));
