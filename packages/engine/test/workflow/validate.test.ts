@@ -450,7 +450,7 @@ describe('validateStructure', () => {
 
     // `06` §6.2's `StepNode.produces` is shared by every kind; `agent` and `command` are the two that
     // author it (`PLAN-M14.md` P2) -- both narrowed the same way here.
-    it('checks a command step\'s own produces glob too, not only an agent step\'s', () => {
+    it("checks a command step's own produces glob too, not only an agent step's", () => {
       const wf = workflow([{ id: 'a', kind: 'command', run: 'echo hi', produces: '' }]);
 
       expect(validateStructure(wf)).toContainEqual(

@@ -766,7 +766,7 @@ describe('compilePlan — produces/inputs template resolution against a resolvab
     expect(nodes[0]?.produces).toEqual(['src/s1.ts', 'test/s1.test.ts', '!test/s1.test.ts']);
   });
 
-  it('an inline command step may also declare produces (accepted at compile time; the inline execution path never reads it -- @forge/engine/dispatch\'s own concern, not this one\'s)', () => {
+  it("an inline command step may also declare produces (accepted at compile time; the inline execution path never reads it -- @forge/engine/dispatch's own concern, not this one's)", () => {
     const step: CommandStep = {
       kind: 'command',
       id: 'c',
