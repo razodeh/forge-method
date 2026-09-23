@@ -13,9 +13,13 @@ steps:
     agent: diagnostician
     brief: briefs/reproduce-defect.md
     inputs: ['artifact:Defect({{defectId}})']
-    # The reproduction goes into the Defect record itself, and a reproduction script beside it, named after
-    # the defect id (Q216).
-    produces: ['docs/forge/reports/defects/**']
+    # The reproduction goes into the Defect record itself, and either a non-test script beside it under
+    # `docs/forge/reports/defects/`, named after the defect id, or a reproduction test under the same
+    # defect-scoped test glob `debug:run-rca` claims (`SPEC-QUESTIONS.md` Q232 decision 5, Q216).
+    produces:
+      - 'docs/forge/reports/defects/**'
+      - '**/*{{defectId}}*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'
+      - '**/{test,tests,__tests__,e2e}/**/*{{defectId}}*'
 
   - id: write-failing-test
     kind: agent

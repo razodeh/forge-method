@@ -18,9 +18,13 @@ steps:
     brief: briefs/run-rca-framework.md
     inputs: ['artifact:Defect({{defectId}})']
     outputs: [{ type: RCA }]
-    # The Defect's "Reproduction" section, which the brief has the step edit. The reproduction artifact itself (a test or a
-    # script) is put wherever the agent chooses: the brief names no location, so it is not claimed here (Q216).
-    produces: ['docs/forge/reports/defects/**']
+    # The Defect's "Reproduction" section, which the brief has the step edit, plus the reproduction artifact
+    # itself: the brief names a defect-scoped test glob, not a fixed path (`SPEC-QUESTIONS.md` Q232 decision 5,
+    # Q216), matching `isTestPath` (`@forge/engine/dispatch`)'s own extension list.
+    produces:
+      - 'docs/forge/reports/defects/**'
+      - '**/*{{defectId}}*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'
+      - '**/{test,tests,__tests__,e2e}/**/*{{defectId}}*'
     limits: { maxTurns: 45 }
 
   - id: fix

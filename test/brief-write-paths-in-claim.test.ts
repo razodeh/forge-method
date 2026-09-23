@@ -792,6 +792,28 @@ const IMPLIED_WRITES: readonly {
     why: 'the step edits the Defect record (its Reproduction section); no path is named',
   },
   {
+    // `SPEC-QUESTIONS.md` Q232 decision 5, Q216: the reproduction test's own location is left to the agent
+    // (a test directory, or a file named with the defect id), so no token names this exact representative
+    // path; the new `produces` globs (`M14 P13`) are what the claim actually checks.
+    step: 'debug:run-rca',
+    path: 'tests/regression/defect-1.test.ts',
+    anchor: /either\s+way\s+lies\s+inside\s+this\s+step's\s+own\s+claim/,
+    why: "the brief names no fixed path for the reproduction test, only that it sits under a test directory or is named with the defect id; `defect-1` is this file's own fixture `defectId`",
+  },
+  {
+    step: 'quick-fix:reproduce',
+    path: 'tests/regression/defect-1.test.ts',
+    anchor: /either\s+way\s+lies\s+inside\s+this\s+step's\s+own\s+claim/,
+    why: 'the same: reproduce-defect.md narrows its docs/forge/reports/defects/ location to a non-test script and sends a reproduction test to the new glob instead',
+  },
+  {
+    step: 'build-stage:onFailure[0]',
+    path: 'tests/regression/DEF-012.test.ts',
+    anchor:
+      /a\s+new,\s+minimal\s+reproduction\s+test\s+you\s+add\s+to\s+isolate\s+the\s+failure\s+is\s+not\s+an\s+edit/,
+    why: 'rca.md\'s own "Do not" bullet gains the new-reproduction-test exception (Q232 decision 5, Q216); the sentence sits in a `Do not` section the extractor never scans, and no `defectId` is available for an escalation, so this is only a representative instance of the `DEF-*` prefix the claim actually uses',
+  },
+  {
     step: 'shape-solution:select-architecture',
     path: 'docs/forge/kb/architecture/component-x.md',
     anchor: /one\s+active\s+KB\s+entry,\s+a\s+file\s+under\s+`architecture\/`/,
@@ -811,6 +833,24 @@ const BROAD_PRODUCES_ALLOWED: Readonly<Record<string, string>> = {
   // project-configured `{{config.paths.release}}` (`SPEC-QUESTIONS.md` Q216 / Q232 decision 4), which this
   // file's own `FIXTURE_CONTEXT.config.paths.release` resolves to `apps/mobile/**`/`app.json` — narrow by
   // `isBroadProduces`'s own rule, so no allowance is needed for either.
+  // `SPEC-QUESTIONS.md` Q232 decision 5, Q216 (`M14 P13`): a reproduction test's location is left to the
+  // agent (the brief names no fixed path), so the claim has to search the whole project tree for a file
+  // whose name carries the defect id, or that sits under any conventional test directory — the same shape
+  // `isTestPath` (`@forge/engine/dispatch`) already recognises. `debug:run-rca`/`quick-fix:reproduce` compile
+  // `{{defectId}}` to this file's own fixture value (`defect-1`); the escalation has no `defectId` to
+  // compile, so its own two globs use the literal `DEF-*` prefix instead.
+  'debug:run-rca|**/*defect-1*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}':
+    'the reproduction test is named with the defect id, anywhere in the project; its directory is not fixed',
+  'debug:run-rca|**/{test,tests,__tests__,e2e}/**/*defect-1*':
+    'the reproduction test instead sits under a conventional test directory, at any depth, still named with the defect id',
+  'quick-fix:reproduce|**/*defect-1*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}':
+    'the same as debug:run-rca: reproduce-defect.md sends a reproduction test to this glob instead of a fixed path',
+  'quick-fix:reproduce|**/{test,tests,__tests__,e2e}/**/*defect-1*':
+    'the same as debug:run-rca: a conventional test directory, at any depth',
+  'build-stage:onFailure[0]|**/*DEF-*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}':
+    'no defectId is compiled for an escalation, so DEF-* is a prefix over every defect id, not one instance',
+  'build-stage:onFailure[0]|**/{test,tests,__tests__,e2e}/**/*DEF-*':
+    'the same escalation prefix, for a reproduction test under a conventional test directory instead',
 };
 
 /**

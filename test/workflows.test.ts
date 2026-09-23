@@ -191,7 +191,11 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // (protobuf, GraphQL SDL, TypeScript types) beside the YAML record, only the YAML is a declared output, and under `strict`
   // the source would be reverted (Q216). The worked example below carries the same three globs, and the same
   // `produces` on the `onFailure` escalation's `rca` step (an RCA record, and the Defect it names).
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211) and freeze-contracts' produces (Q216) and implement's `!{{item.test_paths}}` exclusion (Q225)", () => {
+  // `PLAN-M14.md` P13 added two more `produces` entries to that same `rca` escalation step: a defect-scoped
+  // test glob for the reproduction test the brief now permits it to add (`SPEC-QUESTIONS.md` Q232 decision 5,
+  // Q216). No `defectId` is available for an escalation (`compilePlan` never compiles `onFailure`, so nothing
+  // ever resolves a template here), so `DEF-*` stands in as a prefix, not one narrowed to a single defect.
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216), implement's `!{{item.test_paths}}` exclusion (Q225) and the rca escalation's reproduction-test globs (M14 P13, Q216)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -299,7 +303,7 @@ onFailure:
   default: block
   escalations:
     - when: "failures.test-failure > 2"
-      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md, produces: [ "docs/forge/sessions/rca/RCA-*.md", "docs/forge/reports/defects/DEF-*.md" ] }
+      do: { kind: agent, agent: diagnostician, brief: briefs/rca.md, produces: [ "docs/forge/sessions/rca/RCA-*.md", "docs/forge/reports/defects/DEF-*.md", "**/*DEF-*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}", "**/{test,tests,__tests__,e2e}/**/*DEF-*" ] }
 
 onComplete:
   - kind: agent

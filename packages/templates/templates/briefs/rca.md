@@ -56,8 +56,10 @@ applying it:
 
 ### Do not
 
-- Do not edit production code, tests or contracts. A diagnosis that arrives with an edit has skipped
-  the proof.
+- Do not edit production code, existing tests or contracts. A diagnosis that arrives with an edit
+  has skipped the proof; a new, minimal reproduction test you add to isolate the failure is not an
+  edit — name it with the defect id so it lies inside this step's own claim, and never edit the
+  story's own tests.
 - Do not stop at the first hypothesis that fits, and do not name a cause you have not tried to
   refute.
 - Do not pad `root_cause` or `prevention` to make a record look complete; `G-Stable` treats an RCA

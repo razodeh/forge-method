@@ -140,13 +140,21 @@ onFailure:
   default: block
   escalations:
     - when: 'failures.test-failure > 2'
-      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record and,
-      # if none exists for the failure, the Defect it names (Q216).
+      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record,
+      # if none exists for the failure the Defect it names (Q216), and a reproduction test under the same
+      # defect-scoped test glob shape `debug:run-rca`/`quick-fix:reproduce` claim. No `defectId` is available
+      # at this point (an escalation, not a per-defect run), so `DEF-*` stands for any defect id: a
+      # prefix-scoped claim, not one narrowed to the failure this escalation actually ran for
+      # (`SPEC-QUESTIONS.md` Q232 decision 5, Q216).
       do:
         kind: agent
         agent: diagnostician
         brief: briefs/rca.md
-        produces: ['docs/forge/sessions/rca/RCA-*.md', 'docs/forge/reports/defects/DEF-*.md']
+        produces:
+          - 'docs/forge/sessions/rca/RCA-*.md'
+          - 'docs/forge/reports/defects/DEF-*.md'
+          - '**/*DEF-*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'
+          - '**/{test,tests,__tests__,e2e}/**/*DEF-*'
 
 onComplete:
   - kind: agent

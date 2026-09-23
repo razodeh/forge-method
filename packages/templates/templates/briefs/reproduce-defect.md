@@ -35,9 +35,11 @@ any supporting file in its `evidence`. Record:
 - the lowest layer at which it fails and the narrowest scope you found;
 - whether it fails every time, and the environment it was run in.
 
-If a command alone cannot express the reproduction, add a small script and list its path in
-`evidence`; put it under `docs/forge/reports/defects/` beside the Defect records, named after the
-defect id. Do not put a reproduction only in your final message; the next session cannot see it.
+If a command alone cannot express the reproduction, add a small artifact and list its path in
+`evidence`. A script goes under `docs/forge/reports/defects/` beside the Defect records, named after
+the defect id. A test goes under a `test`, `tests`, `__tests__` or `e2e` directory, or is simply
+named so the defect id appears in it — either way lies inside this step's own claim. Do not put a
+reproduction only in your final message; the next session cannot see it.
 
 ### Acceptance
 
