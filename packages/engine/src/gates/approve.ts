@@ -16,10 +16,15 @@
  *    here, and a quorum above 1 cannot be met, because this command records one approval and nothing that
  *    tells two approvers apart (refused, not assumed).
  *  - `05` §5.9 `gates.may_approve` (immutable, `15` §15.2) and `03` §3.6 (`alwaysHuman` gates are never
- *    approved by an agent). `may_approve` is read by no run-time code (`SPEC-QUESTIONS.md` Q220), and the CLI has
- *    no way to know which agent, if any, typed the command, so `forge gate approve` always passes `{ kind:
- *    'human' }`. The `agent` approver below is the seam a caller that DOES know (an engine-dispatched approval,
- *    a future authenticated channel) passes; it requires all three of: not `alwaysHuman`, the agent's role in
+ *    approved by an agent). `may_approve` was read by no run-time code through M13 (`SPEC-QUESTIONS.md`
+ *    Q220): the CLI had no way to know which agent, if any, typed the command, so `forge gate approve`
+ *    always passed `{ kind: 'human' }`. `PLAN-M14.md` P15 closes that: `gate-commands.ts`'s own
+ *    `resolveApprover` reads the real FORGE session marker (`@forge/core/session-marker`, `FORGE_RUN_ID`/
+ *    `FORGE_AGENT_ID`, an honest-session signal, not a security boundary — a hostile shell can still unset
+ *    or forge it) and, for an honest agent session naming this run, builds the `agent` approver below from
+ *    the project's own resolved roster. A caller that already knows who is approving (an engine-dispatched
+ *    approval, a future authenticated channel) still passes one directly and the marker is never consulted.
+ *    Either way, the `agent` approver requires all three of: not `alwaysHuman`, the agent's role in
  *    `approval.roles`, and the gate in the agent's `may_approve`. Which agents SHOULD hold `may_approve` for
  *    which gates (Q220: `pm`/`po` for the gates whose evidence they now write) is the owner's decision and is not
  *    made here: this reads the declared list and enforces it.
@@ -33,6 +38,7 @@
  * @see specs/05 §5.9
  * @see specs/03 §3.6
  * @see PLAN-M13.md P41
+ * @see PLAN-M14.md P15
  */
 import { createHash } from 'node:crypto';
 

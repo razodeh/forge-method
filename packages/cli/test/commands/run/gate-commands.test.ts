@@ -29,6 +29,7 @@ import {
   type GateCommandContext,
 } from '../../../src/commands/run/gate-commands.ts';
 import {
+  AGENTS_ROOT,
   CHECKS_ROOT,
   FIXTURE_GATE_ID,
   cleanupAll,
@@ -62,10 +63,85 @@ async function writeConfig(
 /** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
 const like = (text: string): string => expect.stringContaining(text) as string;
 
+/** `expect.objectContaining` is typed `any` too; the assertion is that a thrown error's `cause` is
+ * another `ForgeError` of the given `code` (`resolveApprover`'s own unknown-agent case, `PLAN-M14.md`
+ * P15), so say so. */
+const causedBy = (code: string): { readonly code: string } =>
+  expect.objectContaining({ code }) as { readonly code: string };
+
 afterEach(cleanupAll);
 
-function ctx(project: TestProject, runId = 'run-1'): GateCommandContext {
-  return { paths: project.paths, projectRoot: project.dir, checksRoot: CHECKS_ROOT, runId };
+function ctx(
+  project: TestProject,
+  runId = 'run-1',
+  marker?: GateCommandContext['marker'],
+): GateCommandContext {
+  return {
+    paths: project.paths,
+    projectRoot: project.dir,
+    checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
+    runId,
+    ...(marker === undefined ? {} : { marker }),
+  };
+}
+
+/** A minimal, real, schema-valid `.forge/agents/<id>.yaml` this file writes directly — not
+ * `writeFixtureAgent` (`commands/loop/helpers.ts`'s own fixture, always `may_approve: []`), since
+ * `resolveApprover`'s own real `readProjectAgent` call (`PLAN-M14.md` P15) needs a specific
+ * `gates.may_approve` per test. No prompt file is written: `readProjectAgent` only parses and validates
+ * the YAML (`readAgentDefinition`), never checks that `prompt.system` names a file that exists. */
+async function writeAgent(
+  project: TestProject,
+  id: string,
+  mayApprove: readonly string[] = [],
+): Promise<void> {
+  await mkdir(path.join(project.dir, AGENTS_ROOT), { recursive: true });
+  await writeFile(
+    path.join(project.dir, AGENTS_ROOT, `${id}.yaml`),
+    `id: ${id}
+name: ${id}
+version: 1.0.0
+tier: core
+mandate: Fixture mandate for ${id}.
+decisions_owned: []
+persona:
+  voice: terse
+  stance: pragmatic
+  disagreement_style: direct
+inputs:
+  required: []
+  optional: []
+outputs:
+  - type: X
+    schema: x.schema.json
+    path: x.md
+kb_write: []
+kb_propose: []
+tools:
+  read: true
+  write: false
+  exec: []
+  network: false
+  git_commit: none
+  deploy: false
+model:
+  tier: balanced
+  thinking: medium
+limits:
+  max_turns: 10
+  wall_clock_ms: 600000
+  max_cost_usd: 2.0
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+gates:
+  produces_evidence_for: []
+  may_approve: ${JSON.stringify(mayApprove)}
+prompt:
+  system: prompts/${id}.system.md
+`,
+  );
 }
 
 async function collectEvents(project: TestProject, runId: string) {
@@ -445,6 +521,205 @@ describe('gateApprove evaluates the gate (10 section 10.3 rule 1)', () => {
     const project = await createTestProject();
     await expect(gateApprove(ctx(project), 'G-No-Such-Gate')).rejects.toMatchObject({
       code: 'RUN-050',
+    });
+  });
+});
+
+// `PLAN-M14.md` P15, `SPEC-QUESTIONS.md` Q232 decision 9: `forge gate approve|waive` under the real
+// FORGE session marker (`@forge/core/session-marker`) is refused unless the gate names agents and
+// `may_approve` lists it -- `resolveApprover` (`gate-commands.ts`) reads `ctx.marker`.
+describe('the real FORGE session marker resolves who is approving/waiving (PLAN-M14.md P15)', () => {
+  const PASSING_ROLE_GATE = (id: string, approval: string): string =>
+    FAILING_GATE.replace('G-Fail', id).replace('errors\\":2', 'errors\\":0') +
+    `approval:\n${approval}\n`;
+
+  it('(a) a marker naming a real agent whose role the gate does not name (roles: [human]) is GATE-508, no event', async () => {
+    const project = await createTestProject();
+    await writeAgent(project, 'architect', []);
+    // `FIXTURE_GATE_ID` declares no `approval:` block at all -- the spec default `roles: [human]`.
+    await expect(
+      gateApprove(
+        ctx(project, 'run-1', { runId: 'run-1', stepId: 'design', agentId: 'architect' }),
+        FIXTURE_GATE_ID,
+      ),
+    ).rejects.toMatchObject({ code: 'GATE-508' });
+    expect(await collectEvents(project, 'run-1')).toEqual([]);
+  });
+
+  it('(b) a marker naming an agent the gate DOES name, whose own roster entry lists it in may_approve, is approved as that agent', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ag2', PASSING_ROLE_GATE('G-Ag2', '  roles: [human, sre]'));
+    await writeAgent(project, 'sre', ['G-Ag2']);
+    const summary = await gateApprove(
+      ctx(project, 'run-b', { runId: 'run-b', stepId: 'deploy', agentId: 'sre' }),
+      'G-Ag2',
+    );
+    expect(summary.approver).toBe('agent sre');
+    const [event] = await collectEvents(project, 'run-b');
+    expect(event).toMatchObject({ payload: { approver: 'agent sre' } });
+  });
+
+  it('(c) alwaysHuman still refuses a named agent under a real marker (GATE-508, details.approver names the agent) for BOTH approve and waive, 03 section 3.6', async () => {
+    const project = await createTestProject();
+    await writeGate(
+      project,
+      'G-Prod',
+      `${PASSING_ROLE_GATE('G-Prod', '  roles: [human, sre]')}autonomyOverride: alwaysHuman\n`,
+    );
+    // Not `architect`: `@forge/agents`'s own loader refuses ANY non-empty `may_approve` for that one id
+    // outright (`05` §5.2's own roster rule, load-time-checkable only for `architect` specifically) --
+    // orthogonal to this test, which is about `alwaysHuman` overriding an otherwise-valid `may_approve`.
+    await writeAgent(project, 'sre', ['G-Prod']);
+    const marker = { runId: 'run-c', stepId: 'ship', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-c', marker), 'G-Prod')).rejects.toMatchObject({
+      code: 'GATE-508',
+      details: { approver: 'agent sre' },
+    });
+    // `gateWaive`'s own identical `approver.kind === 'human' ? 'human' : \`agent ...\`` ternary
+    // (`resolveApprover`, `PLAN-M14.md` P15): resolveApprover refuses via `GATE-510`/`approverRefusal`
+    // long before any check runs (`G-Prod`'s own checks pass, exactly as `gateApprove`'s above never ran
+    // them either), so the identical marker and gate exercise `gateWaive`'s own agent branch too, not
+    // only `gateApprove`'s.
+    await expect(gateWaive(ctx(project, 'run-c', marker), 'G-Prod', WAIVER)).rejects.toMatchObject({
+      code: 'GATE-508',
+      details: { approver: 'agent sre' },
+    });
+  });
+
+  it("(d) a marker naming this run with NO agent id (a run's own command step) is GATE-510 for approve and waive; check still works; reject records the marker", async () => {
+    const project = await createTestProject();
+    const marker = { runId: 'run-1', stepId: 'deploy' };
+
+    await expect(gateApprove(ctx(project, 'run-1', marker), FIXTURE_GATE_ID)).rejects.toMatchObject(
+      { code: 'GATE-510' },
+    );
+    expect(await collectEvents(project, 'run-1')).toEqual([]);
+
+    // `resolveApprover` refuses before `evaluateFresh` ever runs (like `approve`'s own "before any check
+    // command runs"), so this fires the identical way regardless of whether the gate's own checks pass --
+    // the already-passing fixture gate is reused rather than a bespoke failing one.
+    await expect(
+      gateWaive(ctx(project, 'run-1', marker), FIXTURE_GATE_ID, WAIVER),
+    ).rejects.toMatchObject({ code: 'GATE-510' });
+    expect(await collectEvents(project, 'run-1')).toEqual([]);
+
+    // `check` never approves or waives anything -- unaffected by the marker.
+    const report = await gateCheck(ctx(project, 'run-1', marker), FIXTURE_GATE_ID);
+    expect(report.passed).toBe(true);
+
+    // `reject` still works, and records who: the marker itself, since there is no approver identity.
+    await gateReject(ctx(project, 'run-1', marker), FIXTURE_GATE_ID, 'not ready');
+    const events = await collectEvents(project, 'run-1');
+    const rejected = events.find((e) => e.type === 'GateRejected');
+    expect(rejected).toMatchObject({
+      type: 'GateRejected',
+      payload: { gateId: FIXTURE_GATE_ID, reason: 'not ready', approver: 'run run-1 step deploy' },
+    });
+  });
+
+  it('(e) a marker whose own runId does not match the resolved --run is discarded (byte-identical to no marker): even an agent that WOULD be approved under its own run is refused (GATE-508) as a human fallback the gate does not name', async () => {
+    const project = await createTestProject();
+    // Deliberately names ONLY the agent role (no `human`), with `may_approve` covering it: an agent
+    // marker for THIS run would be approved outright -- proving the mismatched marker below is genuinely
+    // discarded (not merely refused for an unrelated reason) requires an outcome that would otherwise
+    // differ, not just another route to the same GATE-508. Not `architect`: `@forge/agents`'s own loader
+    // refuses ANY non-empty `may_approve` for that one id outright (`05` §5.2's own roster rule).
+    await writeGate(
+      project,
+      'G-PlatformOnly',
+      PASSING_ROLE_GATE('G-PlatformOnly', '  roles: [platform]'),
+    );
+    await writeAgent(project, 'platform', ['G-PlatformOnly']);
+    await expect(
+      gateApprove(
+        ctx(project, 'run-real', {
+          runId: 'run-other',
+          stepId: 'design',
+          agentId: 'platform',
+        }),
+        'G-PlatformOnly',
+      ),
+    ).rejects.toMatchObject({ code: 'GATE-508' });
+  });
+
+  it('(f) a marker naming an agent id the project roster does not recognise is GATE-508 with a RUN-056 cause', async () => {
+    const project = await createTestProject();
+    await expect(
+      gateApprove(
+        ctx(project, 'run-1', { runId: 'run-1', stepId: 'design', agentId: 'ghost' }),
+        FIXTURE_GATE_ID,
+      ),
+    ).rejects.toMatchObject({
+      code: 'GATE-508',
+      cause: causedBy('RUN-056'),
+    });
+  });
+
+  it('a genuine I/O failure reading the marker-named agent (not a missing/malformed one) propagates UNWRAPPED, never misreported as GATE-508', async () => {
+    const project = await createTestProject();
+    // `readProjectAgent`'s own doc comment: only ENOENT/ENOTDIR (a genuinely missing agent) becomes
+    // `RUN-056`; every other I/O failure "propagates unchanged so it stays retryable". A directory
+    // squatting where the agent's own file must be reproduces exactly that: `readTextFile` throws a
+    // generic `RUN-034` (EISDIR), not `RUN-056` -- `resolveApprover` must rethrow it as-is, not rewrap it
+    // into a `GATE-508` "roster does not recognise" refusal, which would misreport a transient I/O defect
+    // as an authorisation decision.
+    await mkdir(path.join(project.dir, AGENTS_ROOT, 'dir-not-file.yaml'), { recursive: true });
+    await expect(
+      gateApprove(
+        ctx(project, 'run-1', { runId: 'run-1', stepId: 'design', agentId: 'dir-not-file' }),
+        FIXTURE_GATE_ID,
+      ),
+    ).rejects.toMatchObject({ code: 'RUN-034' });
+  });
+
+  it('(g) no marker at all: byte-identical to every gate command run before this piece (the whole surrounding suite already proves this; this is the explicit statement)', async () => {
+    const project = await createTestProject();
+    const summary = await gateApprove(ctx(project, 'run-g'), FIXTURE_GATE_ID, 'fine');
+    expect(summary.approver).toBe('human');
+    await gateReject(ctx(project, 'run-g2'), FIXTURE_GATE_ID, 'no');
+    const [rejected] = await collectEvents(project, 'run-g2');
+    expect(rejected?.payload).toEqual({ gateId: FIXTURE_GATE_ID, reason: 'no' });
+  });
+
+  it('gateReject records NO approver field for every marker shape besides a bare run-only marker -- an agent marker, a run id that does not match ctx.runId with an agent, and one without', async () => {
+    const project = await createTestProject();
+    await writeAgent(project, 'sre', []);
+
+    // A marker naming a real agent for THIS run: `gateReject` makes no authorisation decision at all
+    // (unlike `gateApprove`/`gateWaive`), so it must not look like one by recording who -- the identical
+    // "records nothing it did not actually decide" contract test (g) already proves for "no marker".
+    await gateReject(
+      ctx(project, 'run-agent', { runId: 'run-agent', stepId: 'ship', agentId: 'sre' }),
+      FIXTURE_GATE_ID,
+      'agent marker',
+    );
+    const [agentEvent] = await collectEvents(project, 'run-agent');
+    expect(agentEvent?.payload).toEqual({ gateId: FIXTURE_GATE_ID, reason: 'agent marker' });
+
+    // A marker whose own runId does not match ctx.runId, WITH an agent id: discarded exactly as
+    // `gateApprove`/`gateWaive` discard it (test (e)).
+    await gateReject(
+      ctx(project, 'run-real-1', { runId: 'run-other-1', stepId: 'design', agentId: 'sre' }),
+      FIXTURE_GATE_ID,
+      'mismatched run + agent',
+    );
+    const [mismatchAgentEvent] = await collectEvents(project, 'run-real-1');
+    expect(mismatchAgentEvent?.payload).toEqual({
+      gateId: FIXTURE_GATE_ID,
+      reason: 'mismatched run + agent',
+    });
+
+    // A marker whose own runId does not match ctx.runId, with NO agent id either (what would otherwise
+    // be a bare run-only marker, but for a DIFFERENT run): discarded the identical way.
+    await gateReject(
+      ctx(project, 'run-real-2', { runId: 'run-other-2', stepId: 'deploy' }),
+      FIXTURE_GATE_ID,
+      'mismatched run, no agent',
+    );
+    const [mismatchBareEvent] = await collectEvents(project, 'run-real-2');
+    expect(mismatchBareEvent?.payload).toEqual({
+      gateId: FIXTURE_GATE_ID,
+      reason: 'mismatched run, no agent',
     });
   });
 });

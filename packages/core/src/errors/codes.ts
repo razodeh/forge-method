@@ -2075,6 +2075,27 @@ export const ERROR_CODES = {
     remedy:
       'Run `forge gate check <gate>` to see which checks fail, and waive the gate only while one of them does.',
   },
+  // `forge gate approve`/`waive` under the real FORGE session marker (`@forge/core/session-marker`,
+  // `PLAN-M14.md` P4, amended by P15, `SPEC-QUESTIONS.md` Q232 decision 9): `FORGE_RUN_ID` names this
+  // run but `FORGE_AGENT_ID` is absent -- a run's own `command` step (`commandStepEnvironment` stamps
+  // the run/step marker on every shell command a run spawns, but only an `agent` step's own session also
+  // carries an agent id). There is no identity here for the gate's `approval.roles`/`gates.may_approve`
+  // to check, and it is not a person at a terminal either, so this refuses outright rather than falling
+  // through to `GATE-508`'s own roles/`may_approve` reasoning (which needs a `human` or a real agent id
+  // to evaluate against). `forge gate check` still evaluates the gate under this same marker (it
+  // approves nothing); `forge gate reject` still records under it, naming the run and step instead of an
+  // approver (rejecting needs no identity the spec holds accountable). Nothing is appended when this
+  // fires.
+  'GATE-510': {
+    severity: 'error',
+    exitCode: EXIT_CODES.gateFailed,
+    message: (d: { gateId: string; stepId: string }) =>
+      `Gate ${show(d.gateId)} cannot be approved or waived by run step ${show(d.stepId)}: a run's own ` +
+      `command step is not a person or an agent session, and names no one the gate's approval block can check.`,
+    remedy:
+      'Run `forge gate approve`/`waive` from a person at a terminal, or from an agent step whose own ' +
+      "session carries a real agent id -- never from a run's own command step.",
+  },
   // `forge gate waive` refusing an `--expires` later than its own grant plus `gates.waiverMaxDays` days
   // (default 90, `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10): an unbounded waiver is a
   // silent, permanent policy change dressed up as a temporary exception. Nothing is appended when this

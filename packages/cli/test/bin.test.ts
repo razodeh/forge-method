@@ -905,6 +905,34 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
     });
   });
 
+  it('REFUSES `forge gate approve <id>` under a real FORGE session marker (`@forge/core/session-marker`) naming an agent this project has no roster entry for: exit 3, {v:1, ok:false, error:{code:"GATE-508"}} (PLAN-M14.md P15)', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+    const lastRun = JSON.parse(
+      await readFile(path.join(dir, '.forge/state/last-run.json'), 'utf8'),
+    ) as { readonly runId: string };
+
+    // No `.forge/agents/ghost.yaml` exists in this fixture project at all: the marker names this real run
+    // (so it is not discarded) but an agent id the roster does not recognise.
+    const result = run(
+      ['gate', 'approve', RUN_GATE_ID, '--reason', 'looks fine', '--json', '-C', dir],
+      { FORGE_RUN_ID: lastRun.runId, FORGE_STEP_ID: 'design', FORGE_AGENT_ID: 'ghost' },
+    );
+
+    expect(result.status).toBe(3);
+    const envelope = JSON.parse(result.stdout) as {
+      readonly ok: boolean;
+      readonly error: { readonly code: string };
+    };
+    expect(envelope).toMatchObject({ v: 1, ok: false, error: { code: 'GATE-508' } });
+    // Exactly one `GateApproved` exists in the log -- the run's own in-run `verify` gate step, which
+    // auto-approves the always-passing fixture gate independently of this refused CLI command; the
+    // refused `forge gate approve` above appended no SECOND one of its own.
+    const events = run(['logs', '--json', '-C', dir]);
+    expect(events.stdout.match(/"type":"GateApproved"/g)).toHaveLength(1);
+  });
+
   it("runs a gate's `forge ...` check with the launcher shim first on PATH, so `gate check`/`approve` work when no `forge` is on PATH (a checkout launch); every shipped check is a forge command", async () => {
     const dir = await realRunProject();
     const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);

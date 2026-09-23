@@ -7,6 +7,7 @@
 import {
   ArtifactDocument,
   ForgeError,
+  isForgeError,
   listDirSorted,
   pathExists,
   readTextFile,
@@ -32,7 +33,12 @@ import {
   type GateReport,
   type Waiver,
 } from '@forge/engine/gates';
-import { documentProblems, GateNotFoundError, runShellCommand } from '@forge/engine/dispatch';
+import {
+  documentProblems,
+  GateNotFoundError,
+  readProjectAgent,
+  runShellCommand,
+} from '@forge/engine/dispatch';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
 import { definitionForType, renderArtifactPath } from '@forge/schemas';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
@@ -50,12 +56,26 @@ export interface GateCommandContext {
   readonly paths: ProjectPaths;
   readonly projectRoot: string;
   readonly checksRoot: string;
+  /** `<agentsRoot>/<id>.yaml` (`readProjectAgent`): only consulted when `marker` names an agent
+   * (`resolveApprover`, `PLAN-M14.md` P15). */
+  readonly agentsRoot: string;
   readonly runId: string;
   readonly clock?: Clock;
   /** The environment overlay a check command runs with: `PATH` with the launcher shim first, so a gate's
    * `forge ...` check runs THIS `forge` (the one that is executing, wherever it was launched from) exactly as it
    * does inside a run (`createGateEvaluator`'s `env`, `PLAN-M13.md` P12). Absent: the caller's own `PATH`. */
   readonly commandEnv?: Readonly<Record<string, string>> | undefined;
+  /** The real FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4/P15), read once by
+   * `bin.ts`'s own `realEnvSnapshot()` (R10: no ambient environment read happens in this file) and passed down
+   * here. Absent when `FORGE_RUN_ID` itself is unset: a real human's own shell never carries this marker, and
+   * every gate command behaves exactly as it did before this piece (`resolveApprover`'s own "byte-identical").
+   * `stepId`/`agentId` mirror `commandStepEnvironment`'s own real stamping: every run-spawned shell command
+   * carries `runId`/`stepId`; only an `agent` step's own session also carries `agentId`. */
+  readonly marker?: {
+    readonly runId: string;
+    readonly stepId?: string;
+    readonly agentId?: string;
+  };
 }
 
 export async function gateList(ctx: GateCommandContext): Promise<readonly GateDefinition[]> {
@@ -439,11 +459,72 @@ function failingCheckIds(evaluation: unknown): readonly string[] {
 }
 
 export interface ApproveOptions {
-  /** Who approves. `forge gate approve` is a person at a terminal, so the CLI passes nothing and this is
-   * `{ kind: 'human' }`: the CLI cannot tell an agent that ran the command from a person (`approve.ts` says why,
-   * and `SPEC-QUESTIONS.md` Q229 records it). A caller that CAN authenticate an agent passes it here, and the
-   * gate's `approval.roles`, `alwaysHuman` and the agent's `gates.may_approve` are enforced for it. */
+  /** Who approves, overriding `resolveApprover`'s own real session-marker resolution (`PLAN-M14.md` P15)
+   * entirely: a caller that already knows who is approving (an engine-dispatched approval, a future
+   * authenticated channel) passes it here and `ctx.marker` is never consulted. Absent (the CLI's own real
+   * call): resolved from the marker instead -- see `resolveApprover`. Either way the gate's
+   * `approval.roles`, `alwaysHuman` and (for an agent) `gates.may_approve` are enforced for it. */
   readonly approver?: GateApprover;
+}
+
+/** Who is approving/waiving `gateId` under `ctx`'s real session marker (`@forge/core/session-marker`,
+ * `PLAN-M14.md` P4, amended by P15): `10` §10.3 rule 6 no longer holds unconditionally that "the command
+ * is a person's: it cannot tell an agent that runs it from one" -- an honest agent session (`forge gate
+ * approve`/`waive` run from inside an `agent` step's own spawned shell, `commandStepEnvironment`/
+ * `dispatch-agent-step.ts`) carries `FORGE_AGENT_ID`, and a real human's own terminal never does (this is
+ * a cheap signal for an *honest* session, not a security boundary -- `session-marker.ts`'s own doc
+ * comment says so; a hostile shell can still unset or forge it).
+ *
+ * `explicit` (`ApproveOptions.approver`, the pre-existing programmatic seam) always wins: a caller that
+ * already knows who is approving does not need the marker second-guessed.
+ *
+ * Otherwise:
+ * - No marker, or a marker whose own `runId` does not match `ctx.runId` (the run this command actually
+ *   resolved, `resolveDispatchRunId`) -- discarded identically: `{ kind: 'human' }`, byte-identical to
+ *   every gate command run before this piece. A marker naming a DIFFERENT run cannot be trusted for this
+ *   one, so it is treated exactly as if it were never there.
+ * - A marker naming `ctx.runId` with no agent id: a run's OWN `command` step (every shell command a run
+ *   spawns carries `FORGE_RUN_ID`/`FORGE_STEP_ID`, `commandStepEnvironment`; only an `agent` step's own
+ *   session also carries `FORGE_AGENT_ID`) -- refused outright, `GATE-510`: there is no identity here for
+ *   `approval.roles`/`gates.may_approve` to check, and it is not a person at a terminal either.
+ * - A marker naming `ctx.runId` and an agent id: the agent's own resolved roster entry
+ *   (`readProjectAgent`) supplies `gates.may_approve`; `approverRefusal` decides from there exactly as for
+ *   a human (roles, `alwaysHuman`, `may_approve`), unchanged. An agent id the roster does not recognise is
+ *   `GATE-508`, carrying the underlying `RUN-056` as its cause: the marker names someone, but not someone
+ *   this project's roster can actually authorise.
+ * @throws {ForgeError} `GATE-510` for a bare run marker; `GATE-508` for an agent id the roster does not
+ * recognise. */
+async function resolveApprover(
+  ctx: GateCommandContext,
+  gateId: string,
+  explicit?: GateApprover,
+): Promise<GateApprover> {
+  if (explicit !== undefined) return explicit;
+  const marker = ctx.marker;
+  if (marker?.runId !== ctx.runId) return { kind: 'human' };
+  if (marker.agentId === undefined) {
+    throw new ForgeError('GATE-510', { gateId, stepId: marker.stepId ?? marker.runId });
+  }
+  try {
+    const agent = await readProjectAgent(ctx.paths, ctx.agentsRoot, marker.agentId);
+    return { kind: 'agent', agentId: marker.agentId, mayApprove: agent.gates.may_approve };
+  } catch (cause) {
+    // `readProjectAgent`'s own doc comment: only a genuinely absent/unparseable/mis-named agent is
+    // `RUN-056` -- any OTHER I/O failure (`EMFILE`, `EBUSY`) propagates unchanged so it stays retryable.
+    // Rewrapping THOSE into this `GATE-508` too would misreport a transient I/O hiccup as "this agent
+    // isn't on the roster," and defeat the very retryability `readProjectAgent` was built to preserve.
+    if (!(isForgeError(cause) && cause.code === 'RUN-056')) throw cause;
+    throw new ForgeError(
+      'GATE-508',
+      {
+        gateId,
+        approver: `agent ${marker.agentId}`,
+        detail:
+          "the session marker names an agent this project's roster does not recognise (RUN-056)",
+      },
+      { cause },
+    );
+  }
 }
 
 /** `approve <id>`: evaluates the gate, refuses unless it may be approved, and only then records `GateApproved`
@@ -462,9 +543,11 @@ export async function gateApprove(
 ): Promise<GateApprovalSummary & { readonly reportPath: string }> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-  const approver = options.approver ?? { kind: 'human' };
   // Who may approve is decided BEFORE any check command runs: an approver the gate does not name should not be able
-  // to make the project run its checks (`approveGate` decides it again for a caller that bypasses this).
+  // to make the project run its checks (`approveGate` decides it again for a caller that bypasses this). Includes
+  // resolving WHO that is, from the real session marker (`resolveApprover`, `PLAN-M14.md` P15) -- a bare run
+  // marker (a run's own command step) is refused here as `GATE-510`, before this either.
+  const approver = await resolveApprover(ctx, gateId, options.approver);
   const refusal = approverRefusal(definition, approver);
   if (refusal !== undefined) {
     throw new ForgeError('GATE-508', {
@@ -545,12 +628,28 @@ export async function gateApprove(
   return { ...summary, reportPath };
 }
 
+/** `reject <id>`: records `GateRejected`. Rejecting needs no identity the spec holds accountable (`10`
+ * §10.3 rule 6 is only about who may APPROVE), so this never refuses under the real session marker the
+ * way `gateApprove`/`gateWaive` do (`PLAN-M14.md` P15) -- but a run's own bare `command` step rejecting a
+ * gate (the marker `resolveApprover` itself refuses for approve/waive, `GATE-510`) is still worth naming
+ * in the audit trail, the identical reason `GateApproved`/`GateWaived` already carry an `approver`. Every
+ * other marker shape (none, an agent, a run id that does not match `ctx.runId`) is left unchanged: this
+ * command makes no authorisation check for them, so recording "human" or "agent X" here would look like
+ * one it never actually made. */
 export async function gateReject(
   ctx: GateCommandContext,
   gateId: string,
   reason: string,
 ): Promise<void> {
-  await emitGateEvent(ctx, 'GateRejected', gateId, { reason });
+  const marker = ctx.marker;
+  const bareRunMarker =
+    marker?.runId === ctx.runId && marker.agentId === undefined ? marker : undefined;
+  await emitGateEvent(ctx, 'GateRejected', gateId, {
+    reason,
+    ...(bareRunMarker === undefined
+      ? {}
+      : { approver: `run ${bareRunMarker.runId} step ${bareRunMarker.stepId ?? ''}`.trim() }),
+  });
 }
 
 export interface WaiveInput {
@@ -571,11 +670,18 @@ export async function gateWaive(
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   // A waiver is what lets a failing gate be approved, so it is held to the gate's `approval` block like the
-  // approval itself (`approve.ts`): roles and quorum, before any check runs. Like `approve` it cannot tell an
-  // agent that runs the command from a person, and `--owner` is the person's own word (Q229).
-  const refusal = approverRefusal(definition, { kind: 'human' });
+  // approval itself (`approve.ts`): roles and quorum, before any check runs. Like `approve`, who is waiving is
+  // resolved from the real session marker (`resolveApprover`, `PLAN-M14.md` P15) -- a bare run marker (a run's
+  // own command step) is refused here as `GATE-510`, before any check runs either. `--owner` remains the
+  // person's own word regardless of who is recorded as the approver (Q229).
+  const approver = await resolveApprover(ctx, gateId);
+  const refusal = approverRefusal(definition, approver);
   if (refusal !== undefined) {
-    throw new ForgeError('GATE-508', { gateId, approver: 'human', detail: refusal });
+    throw new ForgeError('GATE-508', {
+      gateId,
+      approver: approver.kind === 'human' ? 'human' : `agent ${approver.agentId}`,
+      detail: refusal,
+    });
   }
   const evaluated = await evaluateFresh(ctx, definition);
   const waiver: Waiver = input;

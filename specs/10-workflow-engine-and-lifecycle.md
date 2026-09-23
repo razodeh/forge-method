@@ -253,9 +253,13 @@ onReject:
    `GateApproved` event carries the evaluation (per-check verdicts and sha256 digests of each check's recorded
    stdout and stderr, the waiver if one was used, the advisory checks as not run). A waiver excuses the checks that
    were failing when it was granted: it does not cover a check that fails later, and a gate that passes cannot be
-   waived, and `forge gate waive` is held to the same `approval` block. The command is a person's: it cannot tell an
-   agent that runs it from one (and `--owner` is the person's own word), so `may_approve` and `alwaysHuman` bind an
-   approver a caller can identify (the engine), not a shell. `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
+   waived, and `forge gate waive` is held to the same `approval` block. Under the FORGE session marker (the run,
+   step and — where one exists — agent id every engine-spawned session and run-spawned shell command carries; an
+   honest-session signal, not a security boundary) the command tells an agent's own spawned session from a
+   person's own shell: with no marker, or one naming a different run than the one being approved, it is a person
+   (`human`), and `--owner` is the person's own word regardless; naming this run and an agent id, `may_approve`
+   and `alwaysHuman` bind that agent; naming this run with no agent id at all — a run's own `command` step, not a
+   session — it is refused outright. `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
    check, is a load error, never an empty gate that passes.
 
 **Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows

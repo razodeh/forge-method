@@ -7,15 +7,17 @@
  * @see PLAN-M5.md P20
  */
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
+import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { dryRunWorkflow, handleSigterm, runWorkflow } from '../../../src/commands/run/run.ts';
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
-import { currentLauncher } from '../../../src/commands/run/launcher-shim.ts';
+import { currentLauncher, type LauncherSpec } from '../../../src/commands/run/launcher-shim.ts';
 import { runLanes } from '../../../src/commands/run/status.ts';
 import {
   CHECKS_ROOT,
@@ -34,6 +36,23 @@ import {
 } from './helpers.ts';
 
 afterEach(cleanupAll);
+
+/** A real `LauncherSpec` naming the real `forge` entry point directly (`packages/cli/bin/forge.mjs`,
+ * the identical real file `bin.test.ts`'s own `LAUNCHER` constant spawns as a subprocess) -- unlike
+ * `currentLauncher(process.env)` (every other real-launcher test in this file), which replays THIS
+ * process's own `process.argv[1]`: correct when the calling process genuinely IS the `forge` CLI (a real
+ * `bin.test.ts` subprocess, or `bin.ts` itself creating a shim for a run it dispatches), but wrong here,
+ * where the calling process is a vitest worker -- replaying vitest's own worker entry point as "forge"
+ * spawns vitest's own worker bootstrap with `gate approve ...` as its argv, which throws immediately
+ * ("Expected worker to be run in node:child_process"). Only needed by the one test below that spawns a
+ * REAL nested `forge` subprocess from a `command` step's own `run:` text (every other real-launcher test
+ * in this file only runs `printf`/`echo`, which never resolves `forge` on `PATH` at all). */
+const REAL_FORGE_LAUNCHER: LauncherSpec = {
+  execPath: process.execPath,
+  execArgv: [],
+  entry: fileURLToPath(new URL('../../../bin/forge.mjs', import.meta.url)),
+  env: process.env,
+};
 
 describe('dryRunWorkflow', () => {
   it('plans and returns the real compiled plan without touching the filesystem or spawning a session', () => {
@@ -465,6 +484,89 @@ describe('runWorkflow', () => {
       'utf8',
     );
     expect(marker).toBe('run-gate-marker');
+  });
+
+  // `PLAN-M14.md` P15, `SPEC-QUESTIONS.md` Q232 decision 9: a run's own `command` step carries the FORGE
+  // session marker's `FORGE_RUN_ID`/`FORGE_STEP_ID` (`commandStepEnvironment`, P4) but never
+  // `FORGE_AGENT_ID` (only an `agent` step's own session does) -- so a real `forge gate approve` invoked
+  // FROM one, naming its own real run, is refused outright (`GATE-510`), never silently recorded as a
+  // human or an agent approval.
+  it("a `command` step running a real `forge gate approve --run <its own run>` is refused GATE-510 -- a run's own command step is not a person or an agent session (PLAN-M14.md P15)", async () => {
+    const project = await createTestProject();
+    const gateCommandWorkflowId = 'cli-fixture-gate-command';
+    const runId = 'run-p15-gate-cmd';
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${gateCommandWorkflowId}.workflow.yaml`),
+      `id: ${gateCommandWorkflowId}\n` +
+        'name: CLI fixture (a command step calling forge gate approve against its own run)\n' +
+        'version: 1.0.0\n' +
+        "description: PLAN-M14.md P15 -- a run's own bare command-step marker is refused (GATE-510).\n" +
+        '\n' +
+        'steps:\n' +
+        '  - id: self-approve\n' +
+        '    kind: command\n' +
+        `    run: "forge gate approve ${FIXTURE_GATE_ID} --json --run ${runId}"\n` +
+        '    inline: true\n',
+    );
+    // `bin.ts`'s own real CLI dispatcher (the nested `forge gate approve` this step's own `run:` text
+    // spawns) hard-codes its own gate registry root at `.forge/checks/`, distinct from this fixture
+    // project's own in-process `checksRoot` (`CHECKS_ROOT` here, `docs/forge/checks/`, `testRunDeps`'s
+    // own value the IN-PROCESS `runWorkflow`/its own `gate` steps use) -- the real nested subprocess
+    // needs its OWN copy of the fixture gate under the path it actually reads.
+    await mkdir(path.join(project.dir, '.forge/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/checks', `${FIXTURE_GATE_ID}.gate.yaml`),
+      `id: ${FIXTURE_GATE_ID}\n` +
+        'name: Always-passing fixture gate (real CLI copy)\n' +
+        'phase: verify\n' +
+        'checks:\n' +
+        '  deterministic:\n' +
+        '    - id: always-ok\n' +
+        '      run: "echo \'{\\"ok\\":true}\'"\n' +
+        '      failOn: "!ok"\n' +
+        '  advisory: []\n' +
+        'openQuestionsPolicy: warn\n',
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add gate-command fixture workflow'], {
+      cwd: project.dir,
+    });
+
+    // `REAL_FORGE_LAUNCHER`, not `currentLauncher(process.env)`: this step's own `run:` text genuinely
+    // invokes `forge` as a nested subprocess (unlike the P4 test above, which only runs `printf`/`echo`),
+    // and needs the shim to replay a real, working `forge` -- see `REAL_FORGE_LAUNCHER`'s own doc comment.
+    const deps = { ...testRunDeps(project), launcher: REAL_FORGE_LAUNCHER };
+    const result = await runWorkflow(deps, {
+      workflowId: gateCommandWorkflowId,
+      expressionContext: fixtureExpressionContext(),
+      runId,
+      host: 'test-host',
+    });
+
+    expect(result.kind).toBe('run');
+    if (result.kind !== 'run') throw new Error('unreachable');
+    expect(result.runState.runStatus).toBe('failed');
+    expect(result.runState.stepStatuses.get(`${gateCommandWorkflowId}:self-approve`)).toBe(
+      'failed',
+    );
+
+    // The failure is genuinely GATE-510, not merely "some failure": `bin.ts`'s own top-level catch
+    // prints `ForgeError.message` (never the bare code) to stderr, and `runCommandStep`'s own failure
+    // detail is `stderr || stdout` (`10` §10.1's own real command-step contract) -- stderr is non-empty
+    // here, so it wins, and it is this exact refusal's message text, unique to GATE-510 among every
+    // other gate refusal code (`GATE-507`/`508`/`509` each read entirely differently). A weaker
+    // assertion here (only "the step failed, no GateApproved was recorded") would not catch a regression
+    // that swapped this refusal for a different one.
+    const events: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) events.push(event);
+    const failed = events.find((event) => event.type === 'StepFailed');
+    expect((failed?.payload as { readonly message?: string } | undefined)?.message).toContain(
+      "a run's own command step is not a person or an agent session",
+    );
+
+    // No CLI-appended `GateApproved`: this fixture declares no `gate` step of its own, so any
+    // `GateApproved` in the log could only be the refused command's own -- there is none.
+    expect(events.some((event) => event.type === 'GateApproved')).toBe(false);
   });
 
   it('derives a deterministic runId from the injected clock when none is given', async () => {

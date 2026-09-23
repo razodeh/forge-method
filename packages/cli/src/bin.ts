@@ -79,7 +79,7 @@ import path from 'node:path';
 
 import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/registry';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
-import { SYSTEM_CLOCK } from '@forge/core';
+import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID, SYSTEM_CLOCK } from '@forge/core';
 import { EXIT_CODES, ForgeError, isForgeError } from '@forge/core/errors';
 import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { ExpressionContext } from '@forge/engine/expr';
@@ -1032,6 +1032,24 @@ async function resolveDispatchRunId(
   return runId;
 }
 
+/** The real FORGE session marker (`@forge/core/session-marker`, `PLAN-M14.md` P4/P15) for
+ * `GateCommandContext.marker` -- read here, once, from `realEnvSnapshot()` (this file's own one ambient
+ * environment read, `R10`), never re-read inline downstream (`gate-commands.ts`'s own `resolveApprover`
+ * only ever consults the already-resolved value this returns). Absent `FORGE_RUN_ID`: `undefined`, a real
+ * human's own shell never carries this marker, and `runGateSubcommand` behaves exactly as it did before
+ * this piece. */
+function gateCommandMarker(env: Readonly<Record<string, string>>): GateCommandContext['marker'] {
+  const runId = env[FORGE_RUN_ID];
+  if (runId === undefined) return undefined;
+  const stepId = env[FORGE_STEP_ID];
+  const agentId = env[FORGE_AGENT_ID];
+  return {
+    runId,
+    ...(stepId === undefined ? {} : { stepId }),
+    ...(agentId === undefined ? {} : { agentId }),
+  };
+}
+
 /** The real, exhaustive flag set each `gate` subcommand accepts — a plain `switch` (not a `Record`
  * lookup) so a missing/misspelled subcommand narrows to `undefined` without an unsafe index or a
  * non-null assertion at the call site. */
@@ -1101,7 +1119,13 @@ async function runGateSubcommand(
     if (positionals.length > 0) {
       throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
     }
-    const gates = await gateList({ paths, projectRoot, checksRoot: CHECKS_ROOT, runId: '' });
+    const gates = await gateList({
+      paths,
+      projectRoot,
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+      runId: '',
+    });
     console.log(
       json
         ? JSON.stringify({ v: 1, gates })
@@ -1116,12 +1140,15 @@ async function runGateSubcommand(
     return EXIT_CODES.usage;
   }
   const runId = await resolveDispatchRunId(paths, values.get('--run'));
+  const marker = gateCommandMarker(realEnvSnapshot());
   const ctx: GateCommandContext = {
     paths,
     projectRoot,
     checksRoot: CHECKS_ROOT,
+    agentsRoot: AGENTS_ROOT,
     runId,
     commandEnv,
+    ...(marker === undefined ? {} : { marker }),
   };
 
   if (sub === 'check') {
