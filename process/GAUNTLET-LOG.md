@@ -16052,14 +16052,30 @@ both resolved.**
 4. `M14-AGENT-NOTES.md` claimed Q251 held "the same table" — false; Q251 is prose-only. Fixed: Q251
    now states every listed file's isolated duration inline, and the false cross-reference is corrected.
 
+**Round 3 (fresh, context-free, scoped to the two round-2 commits, full repo access): 1 real finding,
+fixed; independently re-confirmed round 2's arithmetic and every cross-reference, nothing else found.**
+1. The mutation-evidence entry below said "39,340-68,056ms across five real runs," unreconciled with
+   the "three samples" language used everywhere else for sizing the budget — round 2 had changed this
+   from "four runs" to "five" without updating the nearby "three samples" text or listing it as one of
+   its own four findings. Both figures were independently real (a fourth isolated sample at 39,340ms
+   from proving this same mutation at an intermediate `40_000` timeout; a fifth, non-isolated sample at
+   60,773ms from round 2's own re-verification) but never reconciled with the sizing narrative. Fixed:
+   the entry below now enumerates all five real completion times and states which three sized the
+   budget and why the other two did not. Also fixed: `M14-AGENT-NOTES.md`'s "≈204 168" (an exact value
+   written with an approximation symbol) reworded to state it as exact, with its margin's percentage.
+
 **Mutation evidence (real, not narrated; each restored via `git checkout --`, verified clean via `git
 status --short`/`git diff --stat` afterward).** `runInit`-per-test restored in the committed
 `test/intake-workflow.test.ts` (the exact pre-fix `createProject` work put back in place of the clone):
 all 9 functional tests still passed (the mutation faithfully reproduces the old, correct behavior), and
 the guard failed with `expected 10 to be 1`. `crash-resume.test.ts`'s then-current `200_000` (before
-round 2's `220_000` correction) lowered to `20_000` (well below every measured sample, 39,340-68,056ms
-across five real runs total): `Error: Test timed out in 20000ms` — a genuine timeout, not a mutated
-assertion; the mutation's own point holds regardless of the exact raised baseline value.
+round 2's `220_000` correction) lowered to `20_000` (well below every real completion time this file
+was ever observed to take: the three isolated samples used to size the budget, 49,864/65,709/68,056ms,
+plus a fourth isolated run at 39,340ms taken as part of this same mutation check, plus a fifth,
+non-isolated sample at 60,773ms from round 2's own re-verification — five real completion times total,
+39,340-68,056ms, though the budget itself is sized from the three isolated samples only): `Error: Test
+timed out in 20000ms` — a genuine timeout, not a mutated assertion; the mutation's own point holds
+regardless of the exact raised baseline value.
 
 **Verification.** `pnpm typecheck` and `pnpm run boundaries` clean in a clean `git worktree` of this
 piece's fix commit (`d4cc128`, before round 2's corrections), per Rule 14/15. Scoped, in that

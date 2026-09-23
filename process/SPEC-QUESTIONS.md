@@ -21683,7 +21683,7 @@ merge-queue.ts`; new/edited tests in `packages/engine/test/dispatch/merge.test.t
 test/failures/classify.test.ts`, `packages/vcs/test/merge-queue.test.ts`, `packages/cli/test/commands/
 run/swarm-review-report.test.ts`.
 
-## Q251 — M14 P45: `intake-workflow.test.ts` calls `runInit` once per file instead of once per test; the "known load-sensitive flakes" list moved from `M13-AGENT-NOTES.md` to `M14-AGENT-NOTES.md` with real measured numbers — a two-round critic loop found one real (sequencing) and one minor (comment-precision) finding in round 1, two real (timeout-margin) and two minor findings in round 2, all resolved
+## Q251 — M14 P45: `intake-workflow.test.ts` calls `runInit` once per file instead of once per test; the "known load-sensitive flakes" list moved from `M13-AGENT-NOTES.md` to `M14-AGENT-NOTES.md` with real measured numbers — a three-round critic loop found one real (sequencing) and one minor (comment-precision) finding in round 1, two real (timeout-margin) and two minor findings in round 2, one real (unreconciled mutation-evidence figure) finding in round 3, all resolved, no round 4
 
 **Context.** `PLAN-M14.md` P45, depending on none. `test/intake-workflow.test.ts` built a fresh,
 committed `forge init` project via `runInit` once per test — 9 times across its 9 `it(` blocks — for
@@ -21786,6 +21786,26 @@ round 1's own findings, re-derived everything from the commits and current files
    piece's own Tests-first requirement directly, not by a now-corrected false cross-reference), and
    `M14-AGENT-NOTES.md`'s wording was corrected to stop claiming a table exists here.
 
+**Round 3 (fresh, context-free, scoped to the two round-2 commits but with full repo access — did not
+see rounds 1-2's own findings): 1 real finding, fixed; independently re-confirmed round 2's arithmetic
+and cross-references, and found nothing else.**
+1. **Real, fixed.** The mutation-evidence entry below said crash-resume.test.ts's real completion time
+   ranged "39,340-68,056ms across five real runs," while every other mention in this same entry and in
+   `M14-AGENT-NOTES.md` states three sizing samples (49,864/65,709/68,056ms) — an unreconciled,
+   unexplained discrepancy round 2 introduced (the pre-round-2 text said "four runs," 49,864-68,056ms;
+   round 2 changed it to "five" and moved the low end to 39,340 without updating the "three samples"
+   language beside it, and without this being one of round 2's own four numbered findings). Both
+   numbers were independently real (39,340ms was this piece's own fourth isolated sample, taken while
+   proving the mutation evidence below at a `40_000` timeout, before lowering further to `20_000`;
+   60,773ms was the fifth, non-isolated sample from round 2's own re-verification) but were never
+   reconciled with the "three samples" framing used for sizing the budget. Fixed: the mutation-evidence
+   entry now enumerates all five real completion times explicitly, states which three were used to size
+   the budget, and why the other two were not (a fourth isolated sample below the sizing max, and a
+   fifth non-isolated one). Also fixed in the same pass, a minor/nit round 3 noted: `M14-AGENT-NOTES.md`
+   wrote "3× the highest sample (≈204 168)" using an approximation symbol for a value that is in fact
+   exact (68,056 × 3 = 204,168 precisely) — reworded to state it as exact, with the margin's own
+   percentage (7.75%) added for the same clarity workspace-floor's row already had.
+
 **Mutation evidence (real, not narrated; each restored via `git checkout --` afterward, verified clean
 via `git status --short`/`git diff --stat`).**
 1. **`runInit`-per-test restored → the guard fails for real.** In the committed
@@ -21797,12 +21817,17 @@ via `git status --short`/`git diff --stat`).**
    restored per-test calls). Restored; `git diff --stat test/intake-workflow.test.ts` empty afterward.
 2. **A raised timeout lowered → the file fails under real timing, not narrated.** Performed before
    round 2's `200_000` → `220_000` correction, against the committed `packages/engine/test/e2e/
-   crash-resume.test.ts`: lowered the then-current `200_000` to `20_000` (well below every measured
-   sample, 39,340-68,056ms across five real runs this piece took in total). Ran the file alone:
-   `Error: Test timed out in 20000ms` — a genuine timeout failure, not a mutated assertion. Restored;
-   `git diff --stat` confirmed the original (then-`200_000`, now `220_000` after round 2) value back.
-   The mutation's own point (an insufficient timeout genuinely fails the file) holds regardless of the
-   exact raised baseline value.
+   crash-resume.test.ts`: lowered the then-current `200_000` to `20_000` (well below every real
+   completion time this file was ever observed to take across this piece's own work — not only the
+   three isolated samples used to size the budget, 49,864/65,709/68,056ms, but also a fourth isolated
+   run at 39,340ms taken as part of this very mutation check before the timeout was lowered further to
+   `20_000`, and a fifth, non-isolated sample at 60,773ms from round 2's own re-verification; five real
+   completion times in total, 39,340-68,056ms). Ran the file alone at `20_000`: `Error: Test timed out
+   in 20000ms` — a genuine timeout failure, not a mutated assertion. Restored; `git diff --stat`
+   confirmed the original (then-`200_000`, now `220_000` after round 2) value back. The mutation's own
+   point (an insufficient timeout genuinely fails the file) holds regardless of the exact raised
+   baseline value; the budget itself is still sized from the three isolated samples only (the "3×
+   measured" figures above), not from all five.
 
 **Verification.** `pnpm typecheck` and `pnpm run boundaries` clean in a clean `git worktree` of this
 piece's fix commit (`d4cc128`, before round 2's corrections), per Rule 14/15 (`pnpm install --offline
