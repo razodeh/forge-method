@@ -14640,3 +14640,75 @@ interval map and the context-pack path filter still read `node.produces` exactly
 populating that field does not change their own, separately-disclosed limitations (`Q212`). `migrate:
 migrate-data`/`replan:re-derive` still have nothing to declare until a later piece wires and implements the
 underlying command.
+
+## M14 P3 — An out-of-claim write under `strict` fails the step (`engine/dispatch/{steps,types}.ts`,
+`engine/failures/classify.ts`, `core/errors/codes.ts`; `engine/test/dispatch/strict-fails-step.test.ts`
+(new), `engine/test/failures/classify.test.ts`; `06` §6.7/§6.8, `20` §20.9, `18` §18.4, `05` §5.5 rule 6)
+
+**Piece.** `runLaneLifecycle` now ends a step `failed` with `StepFailureInfo{source:'claim', code:'RUN-104'}`
+when `enforceClaim` under `strict` returns a non-empty `outOfClaim`, instead of silently succeeding after
+reverting it — `06` §6.7 has said `strict` "fail[s] the step" since before M13, and the code never did until
+this piece (`Q232` decision 1, the P31 owner call `Q212` left open). Order: work commit → `PolicyViolation`
+(payload gains `stepFailed: boolean`) → the claim-revert commit and its own `LaneCommitted` → the failure
+returns, strictly before `work.failure` and the P7 output check; no `LaneReady`, the lane never reaches
+`ctx.laneRegistry`. An adapter failure from the same attempt wins as the step's reported cause, but the
+violation is never lost — it is already the `PolicyViolation` event. `warn` is byte-for-byte unchanged.
+`classifyFailure` maps the new source to `policy` so it is never retried (`RetryableFailureClass` excludes
+`policy` at the type level). Does not touch `enforceClaim`, `RUN-083`/`084`, `forge debug`'s scan, or
+`reconstruct.ts` — all confirmed zero-diff by three independent critic rounds.
+
+**Round 1 (fresh): 0 blocking, 2 major (self-fixed before the round finished, independently confirmed
+correct), 1 minor.** The builder's own independent sweep (grepping `claimPolicy`/`resolveStepClaim`/
+`taint.*external` across the whole test suite, not just the plan's own named file list) found two real,
+previously-shipped tests whose scenario now genuinely fails but which still asserted success:
+`packages/engine/test/security/taint-grant.test.ts` (a tainted step forces `strict` regardless of the
+project's own `warn` default) and `test/command-steps-in-claim.test.ts` (its own P2-built "mutation
+evidence" block, stripping `produces` from a real command node under `strict` — the textbook case this
+piece exists to fail). Both fixed before the critic round finished; the critic independently re-derived both
+gaps from first principles, noticed the fixes mid-review (the files' mtimes had moved), and confirmed them
+correct by hand-tracing the logic itself rather than trusting the fix. One minor, fixed: the `RUN-104`
+message repeated "under X enforcement" (the outer template already says it once).
+
+**Round 2 (fresh): 0 blocking, 0 major, 2 minor.** Independently re-verified round 1's full event/commit-
+order, crash-safety and retry-classification trace by reading the code directly, spot-checked round 1's
+specific claims, confirmed all of them. New: the round-1 redundancy fix left `claimFailureDetail`'s own
+`policy` parameter unused (invisible to both `tsc` and eslint's default config, since it sat before a
+later-used parameter) — removed. `packages/engine/test/failures/classify.test.ts`, the dedicated per-source
+unit-test file where every sibling source already has a direct case, had none for the new `'claim'`
+source — added, matching the file's own established style. Also flagged (a documentation note, not a code
+defect): the plan's own "Mutation evidence... two" line for the `classify` mutation undercounted by one at
+that point in the diff; resolved by this same round's own fix, which restored the real count to two.
+
+**Round 3 (fresh, scoped to the two round-2 fixes plus a final full-suite pass): PASS — 0 blocking, 0 major,
+0 minor.** Confirmed the `classify.test.ts` addition is well-formed, re-ran the `classify → validation`
+mutation and confirmed exactly two tests now fail red, confirmed `claimFailureDetail`'s doc comment matches
+the current code. This round's own subagent was cut off mid-suite-run by an unrelated spend-limit error; the
+builder chose to independently re-verify the same mutation and re-run the full scoped suite to completion
+itself rather than trust a resumed subagent's state — see Verification.
+
+**What the critics caught that I missed:** nothing in `runLaneLifecycle`'s own core logic (both fresh rounds
+independently traced the identical event order, crash story and retry exclusion and found it correct on the
+first pass) — what they caught was scope: two real test-suite gaps outside the plan's own named list, a
+message redundancy, the dead parameter that redundancy fix left behind, a missing direct unit-test case for
+symmetry with its siblings, and a stale count in the plan's own mutation-evidence prose.
+
+**Mutation evidence.** Remove the `if (claimFails) {...}` block entirely: 7 of 11 `strict-fails-step.test.ts`
+tests fail red (round 1, run live). Map `claim` → `validation` in `classifyFailure`: exactly two tests fail
+red, one in each of `classify.test.ts`/`strict-fails-step.test.ts` (round 3, run live, after round 2's fix
+closed the count gap it found). Move the `claimFails` check to before the revert-commit block: 18 of 91
+tests fail red across four dispatch test files (round 1, run live) — more than the plan's own stated
+minimum, since the mutation breaks both the ordering and the revert itself. Every mutation reverted and
+confirmed byte-identical via `git hash-object` before committing.
+
+**Verification.** `packages/engine/test/{dispatch,resume,security,failures,interaction}`,
+`packages/cli/test/commands/run`, `test/{nine-steps-claims,authoring-roles-run,command-steps-in-claim,
+agent-prompts-all-workflows,output-contract-known-gaps,workflows,build-stage-compiles}.test.ts`,
+`packages/core/test/errors.test.ts` — 2059 tests green (re-run fresh to completion after round 3's own
+subagent was cut off). `pnpm typecheck` (21/21), `pnpm run boundaries`, `pnpm lint` all clean. Verified in a
+clean `git worktree` of the final commit per rule 14/15.
+
+**Left open.** A rare double-failure edge case (the revert commit itself fails for a genuine VCS reason
+after `PolicyViolation` was already emitted `stepFailed: true`) reports the VCS failure, not `RUN-104` — an
+untouched, pre-existing early-return path, not separately tested here. The Diagram-sidecar hint-scope limit
+`claimFailureHint` shares with the P7 check it mirrors (`SPEC-QUESTIONS.md` Q237) is disclosed, not fixed —
+matching the P7 hint byte-for-byte was the plan's own explicit requirement.
