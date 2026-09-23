@@ -20892,3 +20892,154 @@ CLI quirk the round-2 critic noted but explicitly declined to charge against thi
 silently drops an `undefined`-valued property), rather than an explicit `null`/`[]` — identical, pre-
 existing behaviour for every optional config leaf this schema already had (`execution.testRoots` included),
 not introduced by this piece.
+
+## Q245 — M14 P14: `verdict` front matter binds — `blocked` fails the swarm-review step; a two-round critic loop found one minor doc-completeness gap in round 1, zero new findings in round 2 (which independently re-ran the whole suite in its own isolated worktree)
+
+**Context.** `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: "A `ReviewReport` verdict binds
+(Q217, P32): `blocked` fails the review step (the implementer's loop retries), `incomplete` blocks the
+merge with a remedy, `concerns` proceeds and is recorded on the merge. Mechanism: a `verdict`
+front-matter field the engine writes and the merge step reads; no new gate check. A review that cannot
+stop a merge is theatre, which contradicts `05` §5.5." Q217 (M13 P17) built the report itself but left
+the verdict as data only ("nothing gates on them yet", found-not-fixed item (a)); this piece implements
+the `blocked` half of decision 7 (the mechanism's write side and the review-step half of its read side).
+`PLAN-M14.md` P18 ("`runMergeStep` reads each swarm-review lane's committed `verdict`", `Depends on: P14`)
+implements the `incomplete`/`concerns` half at the merge step — correctly out of scope here, confirmed
+by reading P18's own mandate.
+
+**Decisions.**
+1. **The schema gains one field.** `reviewReportSchema` (`packages/schemas/src/artifacts/review-report.ts`)
+   adds `verdict: z.enum(['blocked','incomplete','concerns','clear']).optional()` inside its existing
+   `.extend({...}).strict()` — optional so every report the engine wrote before this piece (no `verdict`
+   key at all) still validates unchanged; `.strict()` still rejects an unrecognised value like `approved`
+   (05 §5.7's own reviewer instruction: "do not write an approval or a pass verdict").
+   `packages/schemas/json/review-report.schema.json` regenerated to match — the one file `emitJsonSchemas()`
+   produces for this schema (a `verdict` property with the 4-value enum added to `properties`, not to
+   `required`); every other emitted schema file left untouched.
+2. **The engine writes the field it already computes.** `reviewFrontMatter`
+   (`packages/engine/src/interaction/review-report.ts`) already received `verdict` as an input (M13 P17)
+   but never persisted it as a key; it now does. Exported `parseReviewVerdict(frontMatter)`: `undefined`
+   for a missing key, a non-string, or an unrecognised string — never misread as `clear` — the same
+   fail-closed stance the rest of this file already takes toward untrusted/malformed input. Exported
+   `countBlockingFindings(text)`: counts the rendered `## Findings` section's own literal `- [blocking] `
+   lines by an anchored, multiline regex; the indented per-perspective subsections (`  N. [severity] `)
+   never match, and a finding's own summary can never contain a real line break (`sanitizeInline`'s
+   `LINE_BREAKS` class, already load-bearing for the file's whole "hostile text cannot forge structure"
+   guarantee), so no perspective text can forge or hide a counted line — one implementation shared by both
+   the live-write path (`runSwarmReviewStep`, which has the freshly rendered text in hand) and the resume
+   path (`resumeSwarmReviewStep`, which has only the already-committed file's text), rather than two.
+3. **`blocked` fails the step; the lane is still committed.** `runSwarmReviewStep`
+   (`packages/engine/src/interaction/swarm-review-step.ts`) runs the identical `runLaneLifecycle`
+   create/commit/claim/P7-output-check/`LaneReady` sequence for every verdict — the report is a genuinely
+   valid, committed document regardless of what it says. Only once that sequence has already succeeded
+   does the merged verdict itself bind: `blocked` overrides the outcome to `failed` with a new `RUN-108`
+   (`source: 'output'`, message naming the file and the blocking count), and `ctx.laneRegistry.delete`
+   pulls the lane back out of the registry `runLaneLifecycle` had just added it to — precedent for a
+   `LaneReady`'d lane whose step still ends failed already exists and is pre-existing, not new: Q217's own
+   found-not-fixed item (g), "`LaneReady` is still emitted by `runLaneLifecycle` for a step whose work
+   failed (pre-existing, P7's comment says otherwise)." `ArtifactCreated` is checked strictly before this
+   override and never fires for a blocked outcome. `resumeSwarmReviewStep` re-applies the identical rule
+   from the already-committed report's front matter (never its body), with zero sessions dispatched.
+   `incomplete`/`concerns`/`clear` succeed exactly as before, now also carrying the `verdict` key.
+4. **`classifyFailure` keeps a blocked review from retrying automatically.** `RUN-108` is special-cased to
+   `policy` (`06` §6.8's "fail immediately, no retry, surface to human" class) inside the existing
+   `case 'output':` branch, which otherwise still defaults to `validation` as before — a blocked review
+   fails identically on an identical re-review of the identical diff, the same reasoning already applied
+   to `VCS-MISSING-CONFLICT-RESOLVER`, `VCS-LANE-REVERTED`, `RUN-104` and `elicit`. `implement-story.
+   workflow.yaml`'s `review` step declares `retry: { maxAttempts: 2, retryOn: [validation] }`; without
+   this special case, a blocked review's own `RUN-108` (classified the `output` source's default
+   `validation`) would have matched that `retryOn` and retried automatically. Comments added at that
+   step and at `build-stage.workflow.yaml`'s own fanout `review` step explaining why; both edits are
+   comment-only (confirmed by both critic rounds via diff and by a real workflow-compile test run).
+5. **Spec text updated to match.** `specs/05-agent-system.md` §5.7's swarm-review paragraph no longer
+   says "nothing gates on them yet" — it now says the merged verdict binds, `blocked` fails the step
+   (classified so it is never retried automatically), and the other three verdicts still succeed
+   unchanged, as data only, for now (the "for now" carrying forward to P18). `specs/18-persistence-
+   config-and-schemas.md` §18.7's `ReviewReport` paragraph no longer says the schema "carries no
+   type-specific fields beyond the base front matter" without qualification — it now names the one
+   optional `verdict` field and states that a report with no `verdict` key still validates.
+
+**Mutation evidence (self-verified: broken, run, observed red, restored, reconfirmed green — not
+narrated).** The writer not emitting `verdict` (the `verdict: input.verdict,` line removed from
+`reviewFrontMatter`): caught by `review-report.test.ts`'s front-matter `toMatchObject` assertion, and,
+further than the plan's own "schema and git show cases" named, by three `swarm-review-step.test.ts`
+cases including the resume path (whose own blocked-detection depends entirely on the key existing to
+read back). The `blocked` branch reverted (both the live-write guard and the resume guard neutralised
+together, `if (false && ...)`): caught by six `swarm-review-step.test.ts` cases and two CLI cases,
+beyond the plan's own "three cases." `RUN-108` classified `validation` (the special case removed from
+`classify.ts`): caught by `classify.test.ts`'s dedicated policy assertion. The CLI half of that same
+mutation-evidence line ("a second dispatch round in the CLI case") is disclosed below rather than
+claimed as demonstrated: nothing in `forge run` today drives a step through a second dispatch round
+regardless of classification (see Discloses), so this specific claim could not be shown as a live
+behavioural difference — the reasoning behind it (that misclassifying `RUN-108` `validation` WOULD
+retry, once retry has a caller) was traced and confirmed genuine by both critic rounds via
+`compileRetry`'s own default `retryOn` for an undeclared agent step (all five retryable classes,
+`validation` included).
+
+**Two critic rounds** (`GAUNTLET-LOG.md`, `## M14 P14`). **Round 1** (fresh, context-free, given only the
+mandate/spec text and the diff): one minor doc-completeness finding — `swarm-review-step.ts`'s own
+top-level `@see` tag list still named only `Q217`, not `Q232 decision 7`, though the decision was already
+cited inline in the file's own new doc-comment point 4 and `review-report.ts`'s header already cited
+both. Fixed. Everything else the round checked (schema optionality/rejection, `parseReviewVerdict`'s
+four-way exhaustiveness, `countBlockingFindings`'s anchoring and forgery-resistance, the untouched
+lane-commit/claim/output-check sequence, `RUN-108`'s placement and shape, resume's zero-session re-read,
+`classifyFailure`'s scoped special case, Q217(g)/Q232 decision 7 quoted verbatim, P18's ownership of the
+rest of decision 7) checked out. **Round 2** (fresh, context-free, independently re-derived from the
+mandate/spec text rather than re-checking round 1's own claims): zero new findings, after setting up its
+own isolated `git worktree` at the final commit and actually running the tests (round 1 could not: no
+isolated `node_modules`, and the shared working tree was too contended by other agents' concurrent M14
+pieces to run safely without racing their edits) — 116/116 in this piece's own four test files, 243/243
+across corroborating root/schemas suites, 21/21 packages typechecking, clean lint. Traced one level
+further than round 1 on `countBlockingFindings`'s forgery-resistance (confirmed `dispatch-agent-step.ts`'s
+own severity normalisation already closes a finding's `severity` to the three real values before it ever
+reaches this piece's code) and confirmed every must-not-change item via `git show --stat` on each of the
+three commits individually. Loop closed at 2 rounds (the cap is 3; a round finding nothing new is the
+other stopping condition, reached here).
+
+**Verification scope (owner-approved cost cut; no full unscoped suite), confirmed twice in two
+independent clean worktrees.** `packages/engine/test/interaction/{review-report,swarm-review-step}.
+test.ts`, `packages/engine/test/failures/classify.test.ts`, `packages/cli/test/commands/run/
+swarm-review-report.test.ts` (116 tests); `packages/engine/test/{dispatch/outputs,interaction/
+dispatch-agent-step,interaction/session-roster,interaction/session}.test.ts`; `packages/schemas/test/
+{artifacts,registry,json-schema}`; root `test/{agent-prompts-all-workflows,output-contract-known-gaps,
+workflows,templates,build-stage-lane-landing,greenfield-fixture-generated,build-stage-compiles}.test.ts`;
+`packages/cli/test/{commands/loop/review,e2e/init}.test.ts`;
+`packages/agents/test/prompt/brief-keys-attachable.test.ts`. `pnpm typecheck` (21/21 packages) and
+`pnpm run boundaries` both clean; `eslint`/`prettier` clean on every file owned.
+`test/agent-prompts-all-workflows.test.ts` genuinely unchanged, as the plan's own Tests-first list asked.
+
+**Shared-file handling.** `packages/core/src/errors/codes.ts` was being edited live by other concurrent
+M14 pieces (P11/P16/P17) adding their own codes in the same file. This piece's `RUN-108` entry was
+isolated at commit time via a hand-built patch (`git diff -- codes.ts`, trimmed to the one relevant
+hunk, `git apply --cached`), never touching or staging the other agents' uncommitted hunks in the same
+file — confirmed both by reading the committed blob directly and, after a later P16 commit landed
+nearby in the same file, by re-diffing that specific commit to confirm it added only its own
+`GATE-512`/`GATE-513` rows. `packages/schemas/json/review-report.schema.json` (the one JSON schema file
+this piece's own field change affects) was regenerated through the real `emitJsonSchemas()` function,
+isolated to that single output file (never running the full `pnpm emit-schemas`, which would have
+touched other agents' own concurrently-changing schemas) — it was clobbered back to its pre-`verdict`
+state once, mid-session, by an unrelated concurrent process; caught via a stale diff, regenerated a
+second time from the live source, and reconfirmed staged correctly before the commit that actually
+landed. A separate, unrelated `git add` by another agent transiently staged their own
+`gate-report.schema.json` into this piece's own shared index at one point before a commit; caught by
+inspecting `git diff --cached --stat` before committing and unstaged (`git restore --staged`, which
+never touches the working tree) rather than committed.
+
+**Found, not fixed (for the orchestrator).** (a) Decision 7's "(the implementer's loop retries)" has no
+engine primitive: retry is per-step, with no `rerunFrom`, and today has no production caller AT ALL
+(`classifyFailure` is called from exactly one production file, its own sibling `retry.ts`'s
+`decideRetry`, which nothing else calls) — so a blocked review currently just ends the run; a person
+reads the report, fixes the code, and re-runs by hand. This is `10` §10.6 step 7's own "blocking
+findings loop back to 4" under its other name. (b) `forge review` still folds a failed session into an
+empty perspective (Q217 (c), untouched by this piece). (c) `PLAN-M14.md` P18 (merge reads the verdict)
+is the piece that closes the rest of decision 7; until it lands, an `incomplete` or `concerns` review
+still lands at the merge exactly as before this piece. (d) A hand-edited lane branch could forge a
+`verdict:` key directly (Q229's own threat model, already named by P18's own mandate as its problem,
+not this one's — this piece's own writer is never fooled by anything a perspective's own PROSE says,
+which is the threat model it actually owns).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P14`. Files: `packages/schemas/src/artifacts/
+review-report.ts`, `packages/schemas/json/review-report.schema.json`, `packages/engine/src/interaction/
+{review-report,swarm-review-step}.ts`, `packages/engine/src/failures/classify.ts`,
+`packages/core/src/errors/codes.ts`, `packages/templates/templates/workflows/{build-stage,
+implement-story}.workflow.yaml`, `specs/{05-agent-system,18-persistence-config-and-schemas}.md`, the
+tests named above.

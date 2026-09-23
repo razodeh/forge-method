@@ -15296,3 +15296,118 @@ critic noted but explicitly did not charge against this piece: `forge config get
 an unset key omits `value` from the envelope entirely (`JSON.stringify` drops `undefined`), rather than an
 explicit `null`/`[]` — identical, pre-existing behaviour for every optional config leaf (`execution.
 testRoots` included), not introduced here.
+
+## M14 P14 — `verdict` front matter on every engine-written `ReviewReport`; `blocked` fails the swarm-review step (`schemas/artifacts/review-report.ts`, `schemas/json/review-report.schema.json`, `engine/interaction/{review-report,swarm-review-step}.ts`, `engine/failures/classify.ts`, `core/errors/codes.ts`, `templates/workflows/{build-stage,implement-story}.workflow.yaml`, `specs/{05-agent-system,18-persistence-config-and-schemas}.md`; new/edited tests in `engine/test/interaction/{review-report,swarm-review-step}.test.ts`, `engine/test/failures/classify.test.ts`, `cli/test/commands/run/swarm-review-report.test.ts`)
+
+`reviewReportSchema` gains an optional `verdict: blocked|incomplete|concerns|clear` key (still
+`.strict()`, narrowed to `type: 'ReviewReport'`); `reviewFrontMatter` (which already computed and
+received the merged verdict) now writes it. Exported `parseReviewVerdict(frontMatter)` (`undefined`
+for a missing key, a non-string, or an unrecognised string — never misread as `clear`) and
+`countBlockingFindings(text)` (counts the rendered `## Findings` section's own `- [blocking] ` lines
+by anchored regex; the indented per-perspective lines never match, and a finding can never contain a
+line break, so no perspective text can forge a counted line).
+
+`runSwarmReviewStep`: the report still commits on the step's own lane exactly as before (the
+create/commit/claim/P7-output-check/`LaneReady` sequence in `runLaneLifecycle` is untouched), but once
+the merged verdict is `blocked`, the step now ends `failed` with a new `RUN-108` (`source: 'output'`,
+message naming the file and the blocking count), and the lane is pulled back out of `laneRegistry`
+(precedent: `LaneReady` already fires for a failed work step pre-existing this piece,
+`SPEC-QUESTIONS.md` Q217 (g)) so a blocked review can never reach a merge. `ArtifactCreated` is never
+emitted for a blocked outcome. `resumeSwarmReviewStep` re-applies the identical rule by reading the
+already-committed report's front matter, with zero sessions. `incomplete`/`concerns`/`clear` succeed
+unchanged, now carrying the same `verdict` key. `classifyFailure` special-cases `RUN-108` to `policy`
+(not the `output` source's default `validation`), so a blocked review is never retried automatically
+even where a step's `retry.retryOn` lists `validation` (`compileRetry`'s own default for an
+undeclared agent step already includes it) — confirmed live: the CLI fixture's `review` step (no
+explicit `retry:`) would dispatch a second round of perspective sessions were `RUN-108` misclassified
+`validation`, and does not. specs/05 §5.7 and specs/18 §18.7 updated: "nothing gates on them yet" is
+no longer true for `blocked`, and `ReviewReport` has one real field-level shape beyond the base front
+matter. Comments added at `implement-story.workflow.yaml`'s and `build-stage.workflow.yaml`'s own
+`review` steps explaining the retry interaction; both changes are comment-only, confirmed by a real
+workflow-compile test run.
+
+**Round 1 (fresh, context-free): 1 minor, fixed.** `swarm-review-step.ts`'s own top-level `@see` tag
+list still named only `SPEC-QUESTIONS.md Q217`, not `Q232 decision 7`, even though the new numbered
+point 4 of its doc comment already cites the decision inline and `review-report.ts`'s own header was
+already updated to cite both — a doc-completeness gap, zero behavioural effect. Fixed: `@see PLAN-M14.md
+P14` and `Q232 decision 7` added. Everything else in round 1 checked out on full, real verification:
+schema optionality and rejection, `parseReviewVerdict`'s exhaustiveness (including a `null`/array/object
+`verdict` value, which fails the `typeof` guard before ever reaching the `Set.has` check),
+`countBlockingFindings`'s anchoring and forgery-resistance (traced against the actual regex, the actual
+rendering code, and the adversarial "hostile summary" test), the lane-commit/claim/output-check sequence
+left byte-identical, `RUN-108`'s placement strictly before `ArtifactCreated`, resume's zero-session
+front-matter-only re-read, `classifyFailure`'s `RUN-108`-only special case (with the CLI mutation-
+evidence claim traced through the real default-retry chain to confirm it is not vacuous), Q217(g) and
+Q232 decision 7 quoted and matched verbatim, and P18's ownership of decision 7's other two clauses
+(`incomplete` blocks the merge, `concerns` lands with a trailer) confirmed correctly out of scope here.
+
+**Round 2 (fresh, context-free, independently re-derived from scratch — not merely re-checking round
+1's claims): 0 new findings.** Set up its own isolated worktree at the final commit and actually ran
+the tests (round 1 could not: no isolated `node_modules`, and the shared working tree was too
+contended by other agents' concurrent M14 pieces to run safely) — 116/116 in the four files this
+piece's own tests live in, 243/243 across corroborating root/schemas suites
+(`agent-prompts-all-workflows`, `workflows`, `build-stage-compiles`, `schemas/test/artifacts/*`),
+21/21 packages typechecking, clean lint on every touched production file. Independently re-traced
+`parseReviewVerdict`, `countBlockingFindings` (one level further than round 1: confirmed
+`dispatch-agent-step.ts`'s own severity normalisation already closes a finding's `severity` to the
+three real values before it ever reaches this piece's code, foreclosing a fourth channel round 1 had
+not separately named), the blocked-check's sequencing and unconditional lane-registry removal, resume's
+fall-through when the lifecycle itself already failed for an unrelated reason, and every must-not-change
+item via `git show --stat` on each of the three commits individually. No round 3: the loop closed on a
+round finding nothing new.
+
+**Mutation evidence (self-verified: broken, run, observed red, restored, reconfirmed green).** The
+writer not emitting `verdict`: caught by `review-report.test.ts`'s front-matter assertion and, further
+than the plan's own "schema and git show cases" asked for, by three `swarm-review-step.test.ts` cases
+including the resume path (whose own blocked-detection depends entirely on the key existing). The
+blocked branch reverted (both the live-write and resume guards neutralised together): caught by six
+`swarm-review-step.test.ts` cases and two CLI cases (beyond the plan's own "three cases"). `RUN-108`
+classified `validation` (the special case removed): caught by `classify.test.ts`'s dedicated policy
+assertion. The CLI "second dispatch round" half of that same mutation-evidence line could not be
+demonstrated as a LIVE behaviour change today, disclosed below.
+
+**Verification scope (owner-approved cost cut; no full unscoped suite).**
+`packages/engine/test/interaction/{review-report,swarm-review-step}.test.ts`,
+`packages/engine/test/failures/classify.test.ts`,
+`packages/cli/test/commands/run/swarm-review-report.test.ts`,
+`packages/engine/test/{dispatch/outputs,interaction/dispatch-agent-step,interaction/session-roster,interaction/session}.test.ts`,
+`packages/schemas/test/{artifacts,registry,json-schema}`, root `test/{agent-prompts-all-workflows,
+output-contract-known-gaps,workflows,templates,build-stage-lane-landing,greenfield-fixture-generated}.test.ts`,
+`packages/cli/test/{commands/loop/review,e2e/init}.test.ts`,
+`packages/agents/test/prompt/brief-keys-attachable.test.ts` — all green, twice, in two independent
+clean `git worktree`s of the final commit (`pnpm install --offline --frozen-lockfile`); `pnpm typecheck`
+(21/21 packages) and `pnpm run boundaries` both clean in the same worktrees; `eslint`/`prettier` clean
+on every file owned. `test/agent-prompts-all-workflows.test.ts` genuinely unchanged, as the plan asked.
+
+**Shared-file handling.** `packages/core/src/errors/codes.ts` was being edited concurrently by other
+M14 pieces (P11/P16/P17) adding their own codes in the same file. Only the `RUN-108` entry is this
+piece's own hunk, isolated at commit time via a hand-built patch (`git diff -- codes.ts`, trimmed to
+the one relevant hunk, `git apply --cached`) so the working tree's other agents' uncommitted edits were
+never touched, staged, or swept into this piece's commit — confirmed both by reading the committed
+blob directly (`git show <sha>:packages/core/src/errors/codes.ts`) and, after a later P16 commit
+landed nearby in the same file, by re-diffing that specific commit to confirm it added only its own
+`GATE-512`/`GATE-513` rows. `packages/schemas/json/review-report.schema.json` (the one JSON schema
+file this piece's own `verdict` field changes) was regenerated through the real `emitJsonSchemas()`
+function, isolated to that single file only (never running the full `pnpm emit-schemas`, which would
+have touched other agents' own concurrently-changing schemas) — it was clobbered back to its
+pre-`verdict` state once, mid-session, by an unrelated concurrent process; caught via a stale `git
+diff`, regenerated a second time from the live source, and reconfirmed staged correctly before the
+commit that actually landed.
+
+**Discloses.** Decision 7's "(the implementer's loop retries)" has no engine primitive: retry is
+per-step with no `rerunFrom`, and `classifyFailure`'s own `RUN-108 -> policy` mapping means a blocked
+review is never retried automatically even once the dormant retry machinery (`decideRetry`,
+`@forge/engine/failures`) eventually gets a production caller — today it has none at all (confirmed:
+`classifyFailure` is called from exactly one production file, its own sibling `retry.ts`, which nothing
+else calls), so a blocked review currently just ends the run; a person reads the report, fixes the
+code, and re-runs. `forge review` still folds a failed session into an empty perspective (Q217 (c),
+untouched by this piece). The mandate's own mutation-evidence line ("a second dispatch round in the CLI
+case") describes what WOULD happen once retry is wired — genuinely demonstrated as non-vacuous by
+tracing `compileRetry`'s own default `retryOn` for an undeclared agent step, which does include
+`validation` — but cannot be shown as a live behavioural difference in `forge run` today, since nothing
+currently drives a step through more than one dispatch round regardless of classification; recorded
+here rather than either skipped or claimed as demonstrated when it wasn't. `10` §10.6 step 7's own
+"blocking findings loop back to 4" is this same open item under its other name. `packages/engine/src/
+plan/types.ts:63` (the `Surface` list's own citation) was read for context — it is `RetryableFailureClass`'s
+own doc comment, already correctly excluding `policy` from the five retryable classes — and needed no
+change.
