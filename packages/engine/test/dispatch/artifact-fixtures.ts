@@ -50,6 +50,62 @@ export function epicMissingGoalText(id = 'EPIC-001'): string {
   return epicText(id).replace(/^goal: .*\n/m, '');
 }
 
+/** A minimal but schema-valid ADR document (`08` §8.4), at `id` -- the same shape/fields
+ * `packages/engine/test/dispatch/agent.test.ts`'s own `validAdrDocument` (`PLAN-M14.md` P8) uses, so a
+ * document either builds validates against the identical schema the same way. */
+export function adrText(id: string, title = 'A decision'): string {
+  return [
+    '---',
+    `id: ${id}`,
+    'type: ADR',
+    'schemaVersion: 1',
+    `title: ${title}`,
+    'status: accepted',
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    'category: architecture',
+    'deciders: [architect]',
+    'date: 2026-01-15',
+    'reversibility: medium',
+    'blast_radius: []',
+    "revisit_trigger: 'n/a'",
+    'supersedes: []',
+    'superseded_by: null',
+    'related: []',
+    'diagrams: []',
+    "framework: 'n/a'",
+    '---',
+    '',
+    '## Context',
+    '',
+    'x',
+    '',
+    '## Options considered',
+    '',
+    'x',
+    '',
+    '## Decision',
+    '',
+    'x',
+    '',
+    '## Diagram',
+    '',
+    'x',
+    '',
+    '## Consequences',
+    '',
+    'x',
+    '',
+    '## Reversal plan',
+    '',
+    'x',
+    '',
+  ].join('\n');
+}
+
 export function sessionRecordText(sessionType: string, id = 'SESSION-001'): string {
   return [
     '---',

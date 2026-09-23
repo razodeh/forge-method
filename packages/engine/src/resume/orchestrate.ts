@@ -185,9 +185,29 @@ async function runAgentAttempt(
   // already hold. `'resume'` continues an existing adapter session with no fresh assembly at all, so it
   // reserves nothing.
   let reservedOutputIds: ReadonlyMap<string, readonly string[]> | undefined;
+  // `PLAN-M14.md` P10: what THIS lane already held, committed, before this reroll's own session runs --
+  // `runLaneLifecycle`'s own `priorAttemptContent` doc comment has the full reasoning (a crash can leave a
+  // real, valid KB output an earlier, interrupted attempt of the SAME step already committed to this exact
+  // lane; the id-range check must not mistake it for a wrong, unreserved id). Computed HERE, not inside
+  // `runLaneLifecycle` itself: this is the one call site where the lane genuinely MIGHT already carry prior
+  // content (a fresh critic round found an earlier version computed this unconditionally for every
+  // `existing`-lane caller, including `runAgentStep`'s own always-fresh, pre-created lane -- three wasted
+  // git calls on the common path for a lane that provably has nothing to snapshot). Only when there is a
+  // reservation to check ids against at all (`reservedOutputIds !== undefined`): nothing to snapshot for
+  // otherwise.
+  let priorAttemptContent: ReadonlyMap<string, string> | undefined;
   if (source.kind === 'start') {
     try {
       reservedOutputIds = (await reserveDeclaredKbOutputIds(node, ctx, lane.path))?.idsByType;
+      if (reservedOutputIds !== undefined) {
+        const prior = await ctx.vcs.changedFiles(lane, baseSha);
+        const snapshot = new Map<string, string>();
+        for (const path of prior.committed) {
+          const text = await ctx.vcs.readAtRevision(lane, 'HEAD', path);
+          if (text !== undefined) snapshot.set(path, text);
+        }
+        priorAttemptContent = snapshot;
+      }
     } catch (cause) {
       return {
         stepId: node.id,
@@ -207,6 +227,11 @@ async function runAgentAttempt(
     (workLane, workBaseSha) =>
       runAgentWork(node, ctx, workLane, workBaseSha, source, { reservedOutputIds }),
     { lane, baseSha },
+    // `PLAN-M14.md` P10: the SAME reservation this attempt's own prompt was assembled with (or `undefined`
+    // for a `'resume'` continuation, which reserved nothing above) -- so the output check holds a rerolled
+    // KB output to the identical range its block [5] actually promised it, not a freshly rescanned one.
+    reservedOutputIds,
+    priorAttemptContent,
   );
 }
 

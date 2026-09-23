@@ -421,6 +421,28 @@ export interface OutputCheckInput {
   readonly claimReverted: readonly string[];
   /** The agent's own grant forbids writing files: the cause to name when an output is missing. */
   readonly writeForbidden: boolean;
+  /** The step's own supervisor reservation for its declared KB-located outputs (`reserveDeclaredKbOutputIds`,
+   * `dispatch/output-ids.ts`, `PLAN-M14.md` P8), keyed by output `type` (`"ADR"`, not the type's
+   * `idPrefix`) -- `undefined` when this call made no fresh reservation of its own (a resumed session
+   * continuation reuses the prompt a PRIOR call already reserved for; nothing new to check this call, so
+   * the range rule below is skipped rather than guessed at). Every id of a KB-located type that this
+   * step's session produced and that is absent at `baseSha` must lie in this reservation and be used
+   * contiguously from its own base, in order; an id already present at `baseSha` is an update to an
+   * existing artifact, not a new one, and is exempt (`SPEC-QUESTIONS.md` Q232 decision 2, `PLAN-M14.md`
+   * P10). */
+  readonly reservedIds?: ReadonlyMap<string, readonly string[]> | undefined;
+  /** Content this lane already held, committed, BEFORE this attempt's own session ever ran -- keyed by
+   * repo-relative path, `'HEAD'` as of that moment (`runLaneLifecycle`, captured before `runWork`).
+   * `undefined`/absent for a fresh lane (nothing could possibly be pre-existing: `runLaneLifecycle` does
+   * not even compute it then). A crash-resume reroll (`PLAN-M14.md` P8's own "the step's own existing
+   * lane") can leave a REAL, valid KB output from an earlier, interrupted attempt of the SAME step already
+   * committed to this exact lane; the current reservation, computed by scanning that same lane, correctly
+   * reserves ABOVE it (`output-ids.ts`) rather than reusing it, so it is absent at `baseSha` and would
+   * otherwise misread as a wrong, unreserved id. It is this attempt's own history, not a new claim to
+   * validate: exempt from the id-range rule below on exactly the same footing as an id present at
+   * `baseSha` (`PLAN-M14.md` P10). A genuinely wrong id a sibling lane already holds is NOT exempted by
+   * this -- a sibling's content never reaches this map, only this lane's own pre-attempt commits do. */
+  readonly priorAttemptContent?: ReadonlyMap<string, string> | undefined;
 }
 
 interface Problem {
@@ -747,6 +769,170 @@ function listFiles(files: readonly string[]): string {
     : shown;
 }
 
+/** `18` §18.7's own KB registry root -- every type P8's `output-ids.ts` reserves an id for (`ADR`,
+ * `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`). Duplicated as a literal rather than
+ * imported from `output-ids.ts` (this module is imported BY that one, `docRootsOf`; importing back
+ * would cycle) -- the identical "duplicate the shape, not the private symbol" precedent that module's
+ * own doc comment already sets. */
+const KB_PATH_TEMPLATE_PREFIX = 'kb/';
+
+/** Every entry id `text` holds, parsed as `definition`'s own register front matter -- `[]` for text that
+ * does not parse or is `undefined` (an absent base/prior version contributes no ids: every entry now
+ * present counts as new against it, the same stance `validateFile`'s own register branch already takes
+ * for an unparseable base). */
+function registerEntryIds(
+  register: { readonly key: string } | undefined,
+  text: string | undefined,
+  path: string,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  if (text === undefined) return ids;
+  try {
+    const frontMatter = frontMatterOf(ArtifactDocument.parse(text, path));
+    for (const entry of registerEntries(frontMatter, register?.key)) {
+      const id = entryId(entry);
+      if (id !== undefined) ids.add(id);
+    }
+  } catch {
+    // unparseable: contributes no ids.
+  }
+  return ids;
+}
+
+/** The `id` a per-file document's own front matter declares -- `undefined` for text that does not parse,
+ * is `undefined`, or has no string `id` (an absent base/prior version, or one this piece cannot read,
+ * simply has no id to compare against, the same "contributes nothing" stance `registerEntryIds` takes). */
+function documentId(text: string | undefined, path: string): string | undefined {
+  if (text === undefined) return undefined;
+  try {
+    const id = frontMatterOf(ArtifactDocument.parse(text, path))['id'];
+    return typeof id === 'string' ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every id `present`'s files or register entries introduce that is NOT already at `baseSha` AND NOT
+ * already in `input.priorAttemptContent` -- what the KB range rule judges (an id already present at base,
+ * or already committed to this lane before this attempt's own session ran, is an update/this attempt's
+ * own history, not a new claim: exempt, `SPEC-QUESTIONS.md` Q232 decision 2, `PLAN-M14.md` P10). A
+ * `collection: true` register type (`Risk`, `Assumption`, `OpenQuestion`, `Environment`) counts an ENTRY as
+ * new when its id was not among the register file's own entries at either, reusing this module's own
+ * `registerEntries`/`entryId` (the same private shape `output-ids.ts`'s own `registerIdScan` duplicates in
+ * miniature rather than importing, for the identical reason run the other way here). A per-file type
+ * (`ADR`, `Runbook`) counts a produced file as new when ITS OWN `id` FIELD (not merely its path) does not
+ * match the `id` field either version already held at that same path -- keyed on the artifact's own
+ * declared identity, not on path presence: a fresh critic round found the earlier version of this function
+ * compared PATHS ("does a file already exist at this path"), which let a session silently swap an EXISTING
+ * artifact's own id for an unreserved one (rewrite `ADR-0007-seed.md`, still at that same path, so it read
+ * as "an update," but with its front matter changed to declare `id: ADR-0009`) -- never checked against the
+ * reservation at all. The current file's own `id` is trusted directly (not re-derived from the file name):
+ * by the time this runs, `validateFile` has already accepted it, and `checkIdMatchesRegisteredType` (`@forge/
+ * schemas`) already ties a valid `id` to `definition`'s own `idPrefix`/`idWidth`, so there is no daylight
+ * left for the file name and the front matter to disagree that this function would need to police itself. */
+async function newKbIds(
+  definition: ArtifactTypeDefinition,
+  present: readonly { readonly path: string; readonly text: string }[],
+  input: OutputCheckInput,
+): Promise<readonly string[]> {
+  const { lane, baseSha, vcs } = input;
+  if (definition.collection === true) {
+    const register = REGISTER_SCHEMAS[definition.id];
+    const ids: string[] = [];
+    for (const file of present) {
+      let frontMatter: Record<string, unknown>;
+      try {
+        frontMatter = frontMatterOf(ArtifactDocument.parse(file.text, file.path));
+      } catch {
+        continue; // already reported invalid above; contributes no ids here.
+      }
+      const baseText = await vcs.readAtRevision(lane, baseSha, file.path);
+      const baseIds = new Set([
+        ...registerEntryIds(register, baseText, file.path),
+        ...registerEntryIds(register, input.priorAttemptContent?.get(file.path), file.path),
+      ]);
+      for (const entry of registerEntries(frontMatter, register?.key)) {
+        const id = entryId(entry);
+        if (id !== undefined && !baseIds.has(id)) ids.push(id);
+      }
+    }
+    return ids;
+  }
+  const ids: string[] = [];
+  for (const file of present) {
+    const currentId = documentId(file.text, file.path);
+    if (currentId === undefined) continue; // already reported invalid above; contributes no id here.
+    const baseText = await vcs.readAtRevision(lane, baseSha, file.path);
+    const baseId = documentId(baseText, file.path);
+    const priorId = documentId(input.priorAttemptContent?.get(file.path), file.path);
+    if (currentId === baseId || currentId === priorId) continue; // an update, or prior history.
+    ids.push(currentId);
+  }
+  return ids;
+}
+
+/**
+ * For a KB-located type with a reservation this step's own call held (`input.reservedIds`): every id
+ * `newKbIds` finds must be exactly the reservation's own ids, used contiguously starting from its base --
+ * not merely "some id in the reserved set" (a `many` block used out of order, or with a gap, is still
+ * wrong: `08` §18.8's "use them in order... never skipping" promise the prompt itself makes, `PLAN-M14.md`
+ * P8), and never repeated (two DIFFERENT produced files or register entries sharing one id is exactly as
+ * wrong as a gap -- a fresh critic round found an earlier version of this function deduplicated `newIds`
+ * via `new Set` before ever comparing it, so two files both declaring, say, `ADR-0007` silently passed as
+ * though only one had been produced; checked FIRST, against the undeduplicated list, so it cannot be
+ * masked by the range comparison that follows). No reservation for this type (a non-KB output, or this
+ * call made none at all) means nothing to check: `[]`. No NEW ids (every produced file/entry is an update
+ * to something already at base, or already committed to this lane by an earlier attempt of this step)
+ * means nothing to check either -- the whole point of the base/prior-attempt exemption `newKbIds` itself
+ * already applies.
+ */
+async function kbRangeProblems(
+  output: StepNode['outputs'][number],
+  definition: ArtifactTypeDefinition,
+  label: string,
+  present: readonly { readonly path: string; readonly text: string }[],
+  input: OutputCheckInput,
+): Promise<readonly Problem[]> {
+  if (!definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX)) return [];
+  const reserved = input.reservedIds?.get(output.type);
+  if (reserved === undefined) return [];
+  const newIds = await newKbIds(definition, present, input);
+  if (newIds.length === 0) return [];
+
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const id of newIds) {
+    if (seen.has(id)) duplicated.add(id);
+    else seen.add(id);
+  }
+  if (duplicated.size > 0) {
+    return [
+      {
+        kind: 'invalid',
+        text:
+          `${label}: the new id(s) ${listFiles([...duplicated].sort())} were each produced more than ` +
+          `once by this session's own commit -- a reserved id names exactly one artifact, never two`,
+      },
+    ];
+  }
+
+  const used = [...newIds].sort();
+  const expected = reserved.slice(0, used.length);
+  const matches =
+    used.length === expected.length && used.every((id, index) => id === expected[index]);
+  if (matches) return [];
+  return [
+    {
+      kind: 'invalid',
+      text:
+        `${label}: the new id(s) ${listFiles(used)} are not this step's own reserved id(s), used ` +
+        `contiguously from their own base; reserved: ${listFiles(reserved)} (an id already the artifact's ` +
+        `own id at the base revision, or already committed to this lane by an earlier attempt of this ` +
+        `step, is an update, not a new one, and is exempt from this rule)`,
+    },
+  ];
+}
+
 async function checkOne(
   output: StepNode['outputs'][number],
   input: OutputCheckInput,
@@ -859,6 +1045,9 @@ async function checkOne(
   }
   if (problems.length > 0) return problems;
 
+  problems.push(...(await kbRangeProblems(output, definition, label, present, input)));
+  if (problems.length > 0) return problems;
+
   if (output.subtype !== undefined && !subtypeSatisfied(definition.id, output.subtype, valid)) {
     const how =
       definition.id === 'SessionRecord'
@@ -949,6 +1138,16 @@ export async function verifyDeclaredOutputs(
   lane: LaneHandle,
   baseSha: string,
   claimReverted: readonly string[],
+  /** The step's own KB-output reservation, if this attempt made one (`reserveDeclaredKbOutputIds`'s own
+   * `idsByType`, `PLAN-M14.md` P8/P10): threaded through unchanged from whichever call site held it before
+   * assembly. `undefined` for a resumed session continuation (no fresh reservation that call), a `command`
+   * step (never reaches `checkDeclaredOutputs` at all, the check above), or any caller with nothing to
+   * pass -- the KB id-range rule then simply does not run for this call. */
+  reservedIds?: ReadonlyMap<string, readonly string[]>,
+  /** What this lane already held, committed, before this very attempt's own session ran
+   * (`runLaneLifecycle`, captured before `runWork`) -- see `OutputCheckInput.priorAttemptContent`'s own
+   * doc comment for why the id-range rule needs it. */
+  priorAttemptContent?: ReadonlyMap<string, string>,
 ): Promise<StepFailureInfo | undefined> {
   if (node.kind !== 'agent' || node.outputs.length === 0) return undefined;
   return checkDeclaredOutputs({
@@ -963,5 +1162,7 @@ export async function verifyDeclaredOutputs(
     // the agent write access") would point at the wrong fix.
     writeForbidden:
       node.interactionMode === 'swarm-review' ? false : await agentCannotWrite(node, ctx),
+    reservedIds,
+    priorAttemptContent,
   });
 }

@@ -279,8 +279,31 @@ export async function runLaneLifecycle(
    * `ctx.integrationBase`, which may have moved on since — re-resolving it here would silently widen or
    * narrow the claim-enforcement diff window below against a base the lane was never actually built from.
    * `undefined` (every existing caller in this module) means "create a fresh lane," this function's own
-   * original and only behaviour before P19. */
+   * original and only behaviour before P19. NOTE: `runAgentStep`'s own fresh path ALSO always supplies
+   * `existing` (it pre-creates the lane itself so a reservation can be bound before dispatch) -- so
+   * `existing !== undefined` alone does NOT mean "an earlier attempt may already have committed to this
+   * lane." `priorAttemptContent` below exists precisely because that distinction cannot be read off this
+   * parameter; it is why that one is a plain caller-supplied value instead of being derived here. */
   existing?: { readonly lane: LaneHandle; readonly baseSha: string },
+  /** The step's own KB-output reservation (`reserveDeclaredKbOutputIds`'s `idsByType`, `PLAN-M14.md` P8/
+   * P10), threaded straight into `verifyDeclaredOutputs` below so the output check holds a produced KB
+   * output to the SAME reservation its prompt was assembled with -- never recomputed here (a rescan of the
+   * lane at check time, after the session already wrote into it, would see its own fresh output as already
+   * claimed and reject it). `undefined` for every caller with no reservation of its own to pass (a
+   * `command` step, a resumed session continuation, `swarm-review`'s own `ReviewReport`-only lanes): the
+   * range rule then does not run this call, exactly as `verifyDeclaredOutputs`'s own doc comment says. */
+  reservedIds?: ReadonlyMap<string, readonly string[]>,
+  /** What this lane already held, committed, BEFORE this attempt's own session ever ran -- a plain
+   * pass-through, NOT computed here: a fresh critic round found the earlier version of this piece computed
+   * it internally, gated on `existing !== undefined`, which is true on EVERY ordinary fresh KB-output step
+   * (`runAgentStep`'s own pre-created lane, above), not only a genuine crash-resume reroll -- three wasted
+   * git subprocess spawns and a new pre-session failure surface on the common path, contradicting this
+   * piece's own original "zero extra calls for the overwhelming majority of steps" claim. Computed instead
+   * by the one caller that actually knows it might be non-empty (`@forge/engine/resume`'s own
+   * `runAgentAttempt`, exactly when it is rerolling), `undefined` from every other caller (a provably fresh
+   * lane has nothing to snapshot). See `OutputCheckInput.priorAttemptContent`'s own doc comment for why the
+   * id-range check needs it at all. */
+  priorAttemptContent?: ReadonlyMap<string, string>,
 ): Promise<StepOutcome> {
   let lane: LaneHandle;
   let baseSha: string;
@@ -396,7 +419,15 @@ export async function runLaneLifecycle(
   // announced `LaneReady`: resume re-registers every `ready` lane for merging, and a lane whose declared
   // output is missing or invalid must not be merged after a resume when it would not have been before.
   const outputCheck = await runVcsStep(node.id, () =>
-    verifyDeclaredOutputs(node, ctx, lane, baseSha, claimReverted),
+    verifyDeclaredOutputs(
+      node,
+      ctx,
+      lane,
+      baseSha,
+      claimReverted,
+      reservedIds,
+      priorAttemptContent,
+    ),
   );
   if (!outputCheck.ok)
     return failed(node.id, startedAt, ctx.now(), work.detail, outputCheck.failure);
@@ -817,6 +848,7 @@ export async function runAgentStep(
           },
         ),
       { lane: created.lane, baseSha: created.baseSha },
+      reservation?.idsByType,
     );
   } finally {
     // Covers the `!created.ok` return above AND any exception thrown before `bound` was set (including

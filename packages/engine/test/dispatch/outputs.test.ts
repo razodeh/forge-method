@@ -22,6 +22,7 @@ import {
 import type { DocRoots, LaneHandle, VcsFacade } from '../../src/dispatch/types.ts';
 import { toAgentId, type StepNode } from '../../src/plan/index.ts';
 import {
+  adrText,
   assumptionEntry,
   diagramSidecarText,
   environmentEntry,
@@ -78,6 +79,11 @@ function check(
     readonly claimReverted?: readonly string[];
     readonly writeForbidden?: boolean;
     readonly roots?: DocRoots;
+    /** `PLAN-M14.md` P10: the step's own KB-output reservation, keyed by declared output `type`. */
+    readonly reservedIds?: ReadonlyMap<string, readonly string[]>;
+    /** `PLAN-M14.md` P10: content this lane already held, committed, before this attempt's own session
+     * ran -- keyed by repo-relative path. */
+    readonly priorAttemptContent?: ReadonlyMap<string, string>;
   } = {},
 ) {
   return checkDeclaredOutputs({
@@ -93,6 +99,8 @@ function check(
     docRoots: extra.roots ?? ROOTS,
     claimReverted: extra.claimReverted ?? [],
     writeForbidden: extra.writeForbidden ?? false,
+    reservedIds: extra.reservedIds,
+    priorAttemptContent: extra.priorAttemptContent,
   });
 }
 
@@ -543,6 +551,148 @@ describe('register (collection) types', () => {
     const after = risksFileText('RISK-001', 'RISK-002');
     expect(
       await check({ base: { [RISKS]: before }, head: { [RISKS]: after } }, [{ type: 'Risk' }]),
+    ).toBeUndefined();
+  });
+});
+
+/**
+ * `PLAN-M14.md` P10, `SPEC-QUESTIONS.md` Q232 decision 2: the KB id-range rule, at the stub level (fast,
+ * one precise statement per case) rather than only through a real git lane (`output-contract.test.ts`'s
+ * own, slower, end-to-end proof of the same rules) -- matching this file's own established division of
+ * labour (this module's own doc comment, above).
+ *
+ * @see specs/18 §18.8
+ * @see specs/08 §8.6
+ */
+describe('the output check holds a produced KB output to its reserved id range (PLAN-M14.md P10)', () => {
+  const ADR_DECISIONS = 'docs/forge/kb/decisions';
+  const RISKS = 'docs/forge/kb/risks.md';
+
+  it('a produced ADR at exactly its reserved id passes', async () => {
+    expect(
+      await check(
+        { head: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007') } },
+        [{ type: 'ADR' }],
+        { reservedIds: new Map([['ADR', ['ADR-0007']]]) },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('a produced ADR at a different id than the one reserved fails, naming both', async () => {
+    const failure = await check(
+      { head: { [`${ADR_DECISIONS}/ADR-0009-x.md`]: adrText('ADR-0009') } },
+      [{ type: 'ADR' }],
+      { reservedIds: new Map([['ADR', ['ADR-0007']]]) },
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ADR-0009');
+    expect(failure?.message).toContain('ADR-0007');
+  });
+
+  it('cardinality many: the reserved block used in order from its own base passes; a gap fails', async () => {
+    const reservedIds = new Map([['ADR', ['ADR-0007', 'ADR-0008', 'ADR-0009']]]);
+    expect(
+      await check(
+        {
+          head: {
+            [`${ADR_DECISIONS}/ADR-0007-a.md`]: adrText('ADR-0007'),
+            [`${ADR_DECISIONS}/ADR-0008-b.md`]: adrText('ADR-0008'),
+          },
+        },
+        [{ type: 'ADR', cardinality: 'many' }],
+        { reservedIds },
+      ),
+    ).toBeUndefined();
+    const gap = await check(
+      {
+        head: {
+          [`${ADR_DECISIONS}/ADR-0007-a.md`]: adrText('ADR-0007'),
+          [`${ADR_DECISIONS}/ADR-0009-b.md`]: adrText('ADR-0009'),
+        },
+      },
+      [{ type: 'ADR', cardinality: 'many' }],
+      { reservedIds },
+    );
+    expect(gap?.code).toBe('RUN-083');
+  });
+
+  it('two different files declaring the SAME new id fail even though each alone would be in range', async () => {
+    const failure = await check(
+      {
+        head: {
+          [`${ADR_DECISIONS}/ADR-0007-a.md`]: adrText('ADR-0007'),
+          [`${ADR_DECISIONS}/ADR-0007-b.md`]: adrText('ADR-0007'),
+        },
+      },
+      [{ type: 'ADR', cardinality: 'many' }],
+      { reservedIds: new Map([['ADR', ['ADR-0007', 'ADR-0008']]]) },
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ADR-0007');
+    expect(failure?.message).toContain('more than once');
+  });
+
+  it('a register file with two NEW entries sharing one id fails -- the same rule the per-file branch applies', async () => {
+    const failure = await check(
+      { head: { [RISKS]: risksFileText('RISK-005', 'RISK-005') } },
+      [{ type: 'Risk' }],
+      { reservedIds: new Map([['Risk', ['RISK-005', 'RISK-006']]]) },
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('RISK-005');
+    expect(failure?.message).toContain('more than once');
+  });
+
+  it("an id already the artifact's own at the base revision is an update, exempt regardless of the reservation", async () => {
+    expect(
+      await check(
+        {
+          base: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007', 'Old title') },
+          head: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007', 'New title') },
+        },
+        [{ type: 'ADR' }],
+        { reservedIds: new Map([['ADR', ['ADR-0008']]]) },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('an id swapped at an already-existing path is NOT exempt: it must still lie in the reservation', async () => {
+    const failure = await check(
+      {
+        base: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007') },
+        head: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0009') },
+      },
+      [{ type: 'ADR' }],
+      { reservedIds: new Map([['ADR', ['ADR-0008']]]) },
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ADR-0009');
+  });
+
+  it('an id already committed to this lane by an earlier attempt of this step (priorAttemptContent) is exempt', async () => {
+    const priorText = adrText('ADR-0004', 'Leftover from a crashed attempt');
+    expect(
+      await check(
+        {
+          head: {
+            [`${ADR_DECISIONS}/ADR-0004-x.md`]: priorText,
+            [`${ADR_DECISIONS}/ADR-0005-y.md`]: adrText('ADR-0005'),
+          },
+        },
+        [{ type: 'ADR' }],
+        {
+          reservedIds: new Map([['ADR', ['ADR-0005']]]),
+          priorAttemptContent: new Map([[`${ADR_DECISIONS}/ADR-0004-x.md`, priorText]]),
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it('a fabricated reservation for a non-KB type (Epic) is simply ignored', async () => {
+    expect(
+      await check({ head: { [EPIC_PATH]: epicText() } }, [{ type: 'Epic' }], {
+        reservedIds: new Map([['Epic', ['EPIC-9999']]]),
+      }),
     ).toBeUndefined();
   });
 });

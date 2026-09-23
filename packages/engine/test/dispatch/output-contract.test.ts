@@ -23,10 +23,16 @@ import { describe, expect, it } from 'vitest';
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { checkDeclaredOutputs, verifyDeclaredOutputs } from '../../src/dispatch/outputs.ts';
 import { runLaneLifecycle } from '../../src/dispatch/steps.ts';
-import type { ExecuteStepContext, StepOutcome } from '../../src/dispatch/types.ts';
+import type { ExecuteStepContext, LaneHandle, StepOutcome } from '../../src/dispatch/types.ts';
 import { classifyFailure, decideRetry } from '../../src/failures/index.ts';
 import { toAgentId, type StepNode, type StepNodeRetryPolicy } from '../../src/plan/index.ts';
-import { epicMissingGoalText, epicText, sessionRecordText } from './artifact-fixtures.ts';
+import {
+  adrText,
+  epicMissingGoalText,
+  epicText,
+  risksFileText,
+  sessionRecordText,
+} from './artifact-fixtures.ts';
 import { createFixtureAssembly, createTestContext, fixtureAgent, node } from './helpers.ts';
 
 async function createTempRepo(prefix: string): Promise<string> {
@@ -436,5 +442,371 @@ describe('the failure policy applies (06 §6.8)', () => {
       retryOn: ['validation'],
     };
     expect(decideRetry(policy, [first.outcome, second.outcome])).toBe('escalate');
+  });
+});
+
+/**
+ * The output check holds a produced KB output to its reserved id range (`PLAN-M14.md` P10,
+ * `SPEC-QUESTIONS.md` Q232 decision 2): `runAgentStep` always reserves a KB-located declared output's id
+ * before assembly (`PLAN-M14.md` P8), so a real `executeStep` run through a real lane exercises the whole
+ * reserve -> assemble -> write -> check path exactly as a real run would, no different from any other
+ * `runScenario` case above beyond seeding the project with existing ADR content so the reservation lands
+ * on a known, non-trivial base.
+ *
+ * @see specs/18 §18.8
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P10
+ * @see SPEC-QUESTIONS.md Q232 decision 2
+ */
+describe('the output check holds a produced KB output to its reserved id range (PLAN-M14.md P10)', () => {
+  const DECISIONS = 'docs/forge/kb/decisions';
+  const RISKS_PATH = 'docs/forge/kb/risks.md';
+
+  async function seedAdr(projectRoot: string, id: string): Promise<void> {
+    const dir = path.join(projectRoot, DECISIONS);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, `${id}-seed.md`), adrText(id, 'Seed'));
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'seed'], { cwd: projectRoot });
+  }
+
+  async function runAdrScenario(options: {
+    readonly seedId?: string;
+    readonly cardinality?: 'many';
+    readonly writes: readonly { readonly relativePath: string; readonly content: string }[];
+    readonly runId?: string;
+  }) {
+    const projectRoot = await createTempRepo('kb-range');
+    if (options.seedId !== undefined) await seedAdr(projectRoot, options.seedId);
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['wrote the adr'], writeFiles: [...options.writes] });
+    const runId = options.runId ?? 'run-kb-range';
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId,
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const stepNode = node({
+      id: 'wf:write-adr',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'write the adr',
+      produces: ['docs/forge/**'],
+      outputs: [
+        {
+          type: 'ADR',
+          ...(options.cardinality === undefined ? {} : { cardinality: options.cardinality }),
+        },
+      ],
+    });
+    const outcome = await executeStep(stepNode, ctx);
+    return { outcome, projectRoot };
+  }
+
+  it('a produced ADR at exactly its reserved id passes', async () => {
+    const { outcome } = await runAdrScenario({
+      seedId: 'ADR-0006',
+      writes: [{ relativePath: `${DECISIONS}/ADR-0007-x.md`, content: adrText('ADR-0007') }],
+    });
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it('a produced ADR at a different id than the one reserved fails, naming the reserved id', async () => {
+    const { outcome } = await runAdrScenario({
+      seedId: 'ADR-0006',
+      writes: [{ relativePath: `${DECISIONS}/ADR-0009-x.md`, content: adrText('ADR-0009') }],
+    });
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('ADR-0007');
+    expect(outcome.failure?.message).toContain('ADR-0009');
+  });
+
+  it('cardinality many: the reserved block used in order from its own base passes', async () => {
+    const { outcome } = await runAdrScenario({
+      seedId: 'ADR-0006',
+      cardinality: 'many',
+      writes: [
+        { relativePath: `${DECISIONS}/ADR-0007-a.md`, content: adrText('ADR-0007') },
+        { relativePath: `${DECISIONS}/ADR-0008-b.md`, content: adrText('ADR-0008') },
+      ],
+    });
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it('cardinality many: skipping an id in the reserved block (using 0007+0009, never 0008) fails', async () => {
+    const { outcome } = await runAdrScenario({
+      seedId: 'ADR-0006',
+      cardinality: 'many',
+      writes: [
+        { relativePath: `${DECISIONS}/ADR-0007-a.md`, content: adrText('ADR-0007') },
+        { relativePath: `${DECISIONS}/ADR-0009-b.md`, content: adrText('ADR-0009') },
+      ],
+    });
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('ADR-0009');
+  });
+
+  it('cardinality many: two DIFFERENT files in the SAME commit both claiming the one reserved id fail as a duplicate, over a real lane', async () => {
+    const { outcome } = await runAdrScenario({
+      seedId: 'ADR-0006',
+      cardinality: 'many',
+      writes: [
+        { relativePath: `${DECISIONS}/ADR-0007-a.md`, content: adrText('ADR-0007', 'First') },
+        { relativePath: `${DECISIONS}/ADR-0007-b.md`, content: adrText('ADR-0007', 'Second') },
+      ],
+    });
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('ADR-0007');
+    expect(outcome.failure?.message).toContain('more than once');
+  });
+
+  it('an id already present at the base revision is an update, exempt from the range rule', async () => {
+    const projectRoot = await createTempRepo('kb-range-update');
+    await seedAdr(projectRoot, 'ADR-0007');
+    const adapter = new FakePlatformAdapter();
+    // Edits the SAME file, same id, different title -- an update to an existing artifact, not a new one.
+    // The reservation this step gets (ADR-0008, above the seeded ADR-0007) is irrelevant to it.
+    adapter.script(() => true, {
+      text: ['updated the adr'],
+      writeFiles: [
+        { relativePath: `${DECISIONS}/ADR-0007-seed.md`, content: adrText('ADR-0007', 'Updated') },
+      ],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-kb-range-update',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:update-adr',
+        kind: 'agent',
+        agent: toAgentId('architect'),
+        brief: 'update the adr',
+        produces: ['docs/forge/**'],
+        outputs: [{ type: 'ADR' }],
+      }),
+      ctx,
+    );
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it("an id swapped at an already-existing path is NOT exempt as an update: the file's own new id must still lie in the reservation", async () => {
+    // The exemption is keyed on the artifact's own declared `id`, not on the PATH already existing: a
+    // session that rewrites an existing artifact's file, unchanged path, but with a DIFFERENT id in its own
+    // front matter, is producing a new, unreserved id under cover of what looks like an ordinary edit.
+    const projectRoot = await createTempRepo('kb-range-id-swap');
+    await seedAdr(projectRoot, 'ADR-0007');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['swapped the id'],
+      // Same path as the seeded ADR, but its own `id:` field now says ADR-0009 -- never reserved (this
+      // step's own reservation, above the seeded ADR-0007, is ADR-0008) and never seen anywhere else.
+      writeFiles: [
+        { relativePath: `${DECISIONS}/ADR-0007-seed.md`, content: adrText('ADR-0009', 'Swapped') },
+      ],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-kb-range-id-swap',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:swap-adr-id',
+        kind: 'agent',
+        agent: toAgentId('architect'),
+        brief: 'swap the id',
+        produces: ['docs/forge/**'],
+        outputs: [{ type: 'ADR' }],
+      }),
+      ctx,
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('ADR-0009');
+    expect(outcome.failure?.message).toContain('ADR-0008');
+  });
+
+  it("register entries: a new entry inside the reserved range passes; one colliding with a ready sibling lane's own new entry fails", async () => {
+    const projectRoot = await createTempRepo('kb-range-register');
+    await mkdir(path.join(projectRoot, 'docs/forge/kb'), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, RISKS_PATH),
+      risksFileText('RISK-001', 'RISK-002', 'RISK-003'),
+    );
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'seed risks'], { cwd: projectRoot });
+
+    // A ready sibling lane (`ctx.laneRegistry`) that has already produced its OWN new entry, RISK-004 --
+    // this step's own reservation must scan past it (`output-ids.ts`), landing on RISK-005.
+    const siblingLane = await mkdtemp(path.join(tmpdir(), 'forge-outputs-kb-range-sibling-'));
+    await mkdir(path.join(siblingLane, 'docs/forge/kb'), { recursive: true });
+    await writeFile(
+      path.join(siblingLane, RISKS_PATH),
+      risksFileText('RISK-001', 'RISK-002', 'RISK-003', 'RISK-004'),
+    );
+    const siblingHandle: LaneHandle = {
+      laneId: 'lane-sibling',
+      path: siblingLane,
+      branch: 'forge/run-kb-range-register/other',
+    };
+
+    async function attempt(newEntryId: string, runId: string) {
+      const adapter = new FakePlatformAdapter();
+      adapter.script(() => true, {
+        text: ['updated the risk register'],
+        writeFiles: [
+          {
+            relativePath: RISKS_PATH,
+            content: risksFileText('RISK-001', 'RISK-002', 'RISK-003', newEntryId),
+          },
+        ],
+      });
+      const laneRegistry = new Map<string, LaneHandle>([['wf:other-step', siblingHandle]]);
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        // A distinct runId per attempt: each drives its OWN fresh lane for the SAME stepId, and a lane's
+        // branch/worktree name is keyed by (runId, stepId) -- reusing one would collide with the other
+        // attempt's still-real worktree/branch from earlier in this same test.
+        runId,
+        laneRegistry,
+        assembly: createFixtureAssembly(projectRoot, {
+          loadAgent: (agentId) =>
+            Promise.resolve(
+              fixtureAgent(agentId, {
+                tools: {
+                  read: true,
+                  write: true,
+                  network: false,
+                  git_commit: 'lane',
+                  deploy: false,
+                },
+              }),
+            ),
+        }),
+      });
+      return executeStep(
+        node({
+          id: 'wf:write-risk',
+          kind: 'agent',
+          agent: toAgentId('architect'),
+          brief: 'add a risk',
+          produces: ['docs/forge/**'],
+          outputs: [{ type: 'Risk' }],
+        }),
+        ctx,
+      );
+    }
+
+    const inRange = await attempt('RISK-005', 'run-kb-range-register-a');
+    expect(inRange.status).toBe('succeeded');
+    const colliding = await attempt('RISK-004', 'run-kb-range-register-b');
+    expect(colliding.status).toBe('failed');
+    expect(colliding.failure?.code).toBe('RUN-083');
+    expect(colliding.failure?.message).toContain('RISK-004');
+    expect(colliding.failure?.message).toContain('RISK-005');
+  });
+
+  it('register entries: two NEW entries in the same commit sharing one id fail as a duplicate, over a real lane', async () => {
+    const projectRoot = await createTempRepo('kb-range-register-dup');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote the risk register'],
+      // Both entries are new (nothing existed at base) and both claim RISK-001 -- a genuine same-commit
+      // id collision, not merely two entries in range.
+      writeFiles: [{ relativePath: RISKS_PATH, content: risksFileText('RISK-001', 'RISK-001') }],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-kb-range-register-dup',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:write-risk-dup',
+        kind: 'agent',
+        agent: toAgentId('architect'),
+        brief: 'add risks',
+        produces: ['docs/forge/**'],
+        outputs: [{ type: 'Risk', cardinality: 'many' }],
+      }),
+      ctx,
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('RISK-001');
+    expect(outcome.failure?.message).toContain('more than once');
+  });
+
+  it('the range rule is not held against a non-KB type: a fabricated reservation for Epic is simply ignored', async () => {
+    const projectRoot = await createTempRepo('kb-range-epic');
+    const ctx = createTestContext({ projectRoot, adapter: new FakePlatformAdapter() });
+    const baseSha = await ctx.vcs.resolveRevision('main');
+    const lane = await ctx.vcs.createLane('wf:epic-not-held', 'main');
+    await mkdir(path.join(lane.path, 'docs/forge/specs/epics'), { recursive: true });
+    await writeFile(path.join(lane.path, EPIC_PATH), epicText('EPIC-001'));
+    await ctx.vcs.commit(lane, 'write epic', false);
+    // If the range rule ran on every type instead of only KB-located ones, this fabricated, deliberately
+    // mismatched "reservation" for Epic would fail EPIC-001 for not being "ADR-9999" -- it does not, since
+    // Epic's own registry `pathTemplate` ("specs/epics/{id}.md") does not start `kb/`.
+    const failure = await checkDeclaredOutputs({
+      node: node({
+        id: 'wf:epic-not-held',
+        kind: 'agent',
+        agent: toAgentId('po'),
+        outputs: [{ type: 'Epic' }],
+      }),
+      vcs: ctx.vcs,
+      lane,
+      baseSha,
+      docRoots: {
+        kb: 'docs/forge/kb',
+        specs: 'docs/forge/specs',
+        plans: 'docs/forge/plans',
+        sessions: 'docs/forge/sessions',
+        reports: 'docs/forge/reports',
+      },
+      claimReverted: [],
+      writeForbidden: false,
+      reservedIds: new Map([['Epic', ['EPIC-9999']]]),
+    });
+    expect(failure).toBeUndefined();
   });
 });
