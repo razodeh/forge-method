@@ -15996,3 +15996,72 @@ inside one merge's scope could have one review's failure hold back a lane a sibl
 needed — not reachable by anything shipped today.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q250`.
+
+## M14 P45 — Test hygiene: `intake-workflow.test.ts` under the 60s caps, measured per-file timeouts, the list moved to M14-AGENT-NOTES.md
+
+**Context.** `PLAN-M14.md` P45, depending on none. `test/intake-workflow.test.ts` called `runInit`
+once per test (9 times across its 9 `it(` blocks) for identical work every time, pushing its own
+isolated duration (56.05s measured) toward the `vitest.config.ts` 60,000ms e2e cap under load.
+`process/plans/M13-AGENT-NOTES.md` rule 3 separately carried a "known load-sensitive flakes" list with
+the instruction "pass in isolation; do not chase" — an allowlist tolerating flakiness under load
+rather than measuring and budgeting for it.
+
+**Built.** `buildTemplateProject()` calls `runInit` exactly once, in a `beforeAll`, building one
+initialised, committed base project; every test's `createProject()` clones that template cheaply
+instead (`git clone` + `git remote remove origin`), asserting the fresh clone is clean and at the
+template's own `HEAD` before returning. Cleanup moved from one end-of-file `afterAll` to a per-test
+`afterEach` with an explicit `20_000` timeout. Every test's own timeout dropped from `300_000` to a
+real `20_000` budget. A new guard test (runs last in file order) asserts `runInit` ran exactly once
+for the whole file. Measured after: 28.71s for the whole file, down from 56.05s.
+
+`process/plans/M14-AGENT-NOTES.md` (new): the load-sensitive-flakes list M13-AGENT-NOTES.md rule 3
+carried moved here, each file measured (isolated runs, higher of two samples where taken — this shared
+sandbox's own ambient concurrent-agent load produced 30-45% run-to-run variance even without
+deliberate extra load) and given an explicit timeout at 3× measured (rounded up, capped at 600,000) or
+a documented reason the existing budget already gives ≥3× headroom. Two real source changes:
+`crash-resume.test.ts` (`120_000` → `200_000`) and `test/workspace-floor.test.ts` (three previously-
+unprotected subprocess-heavy tests, each given `90_000`). Every other listed file measured
+comfortably under its existing budget; left unchanged. `M13-AGENT-NOTES.md` rule 3 now points at
+`M14-AGENT-NOTES.md`, keeping the unrelated prettier-warnings sentence it also carried.
+
+**Round 1 (fresh, context-free): 1 real finding (a sequencing note) and 1 minor (comment-precision),
+both resolved.**
+1. Correctly caught that, at review time, `M14-AGENT-NOTES.md` still carried a literal `Q<N>`
+   placeholder and neither `SPEC-QUESTIONS.md` nor `GAUNTLET-LOG.md` yet had a P45 entry — the fix
+   commit landing before the docs commit (the mandated two-commit pattern), not a missed step.
+   Resolved by this entry and `SPEC-QUESTIONS.md` Q251; `M14-AGENT-NOTES.md`'s placeholder is now that
+   Q number.
+2. `test/workspace-floor.test.ts`'s first two newly-protected tests' comments each said "3x that"
+   referring to that test's own smaller measured number, when the actual `90_000` applied to all three
+   is 3× the third (slowest) test's number, shared uniformly. Not a correctness risk (every test gets
+   more headroom than its own figure would give), but the comments overstated their own precision.
+   Fixed: reworded to say the timeout is shared with the file's slowest of the three tests.
+
+**Mutation evidence (real, not narrated; each restored via `git checkout --`, verified clean via `git
+status --short`/`git diff --stat` afterward).** `runInit`-per-test restored in the committed
+`test/intake-workflow.test.ts` (the exact pre-fix `createProject` work put back in place of the clone):
+all 9 functional tests still passed (the mutation faithfully reproduces the old, correct behavior), and
+the guard failed with `expected 10 to be 1`. `crash-resume.test.ts`'s raised `200_000` lowered to
+`20_000` (well below every measured sample, 49,864-68,056ms across four real runs): `Error: Test timed
+out in 20000ms` — a genuine timeout, not a mutated assertion.
+
+**Verification.** `pnpm typecheck` and `pnpm run boundaries` clean in a clean `git worktree` of this
+piece's own final commit (`d4cc128`), per Rule 14/15. Scoped, in that worktree: `test/intake-workflow.
+test.ts` (10), `test/workspace-floor.test.ts` (18), `packages/engine/test/e2e/crash-resume.test.ts`
+(1) — 29/29 green. Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) in that
+same worktree as the final check: fully clean. Under-load demonstration on
+`test/intake-workflow.test.ts` (real CPU-saturating parallel load: 20-40 concurrent `yes` processes
+plus `pnpm exec turbo run typecheck --force`): pre-fix, the guard already failed structurally (9 ≠ 1)
+and total run time reached 85.85s under the heaviest load tried, slowest individual test at 16,339ms
+(82% of the new 20,000ms budget); post-fix, under the identical load, all 10 tests passed, slowest
+individual test at 12,745ms (64% of budget), total file time down to 62.93s.
+
+**Discloses (per the plan's own Discloses list).** The list in `M14-AGENT-NOTES.md` remains a list:
+honest, measured budgets, not a claim of determinism under arbitrary CPU starvation — this sandbox's
+own 30-45% run-to-run variance on the identical file/test, observed independent of any deliberate load
+this piece added, is itself the evidence for why. The allowlist-vs-zero-tolerance process decision
+stays the orchestrator's, not this piece's. `CONTRIBUTING.md`'s own general mention of "known,
+accepted, load-sensitive flakes" is unchanged (not in this piece's Surface); its general advice remains
+accurate regardless of this piece's more precise per-file numbers.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q251`.

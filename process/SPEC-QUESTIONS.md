@@ -21682,3 +21682,115 @@ integrate,steps,types}.ts`, `packages/engine/src/failures/classify.ts`, `package
 merge-queue.ts`; new/edited tests in `packages/engine/test/dispatch/merge.test.ts`, `packages/engine/
 test/failures/classify.test.ts`, `packages/vcs/test/merge-queue.test.ts`, `packages/cli/test/commands/
 run/swarm-review-report.test.ts`.
+
+## Q251 — M14 P45: `intake-workflow.test.ts` calls `runInit` once per file instead of once per test; the "known load-sensitive flakes" list moved from `M13-AGENT-NOTES.md` to `M14-AGENT-NOTES.md` with real measured numbers — a one-round critic found one real (sequencing) and one minor (comment-precision) finding, both resolved
+
+**Context.** `PLAN-M14.md` P45, depending on none. `test/intake-workflow.test.ts` built a fresh,
+committed `forge init` project via `runInit` once per test — 9 times across its 9 `it(` blocks — for
+work (`writeInitTree`, `git init`, a commit) that was identical every time: every `createProject` call
+asks for the same `{ name: 'Intake Test', yes: true, level: 'L0' }`, and the one thing that varies per
+test, `options.constraintFiles`, only shapes what the fake adapter scripts for the later `runWorkflow`
+call, never `runInit` itself. Measured baseline (this sandbox, no deliberate load): 56.05s for the
+whole file. Separately, `process/plans/M13-AGENT-NOTES.md` rule 3 carried a list of "known
+load-sensitive flakes" with the instruction "pass in isolation; do not chase" — an allowlist that
+tolerated flakiness under load rather than measuring and budgeting for it.
+
+**Built.** `test/intake-workflow.test.ts`: a new `buildTemplateProject()` calls `runInit` exactly
+once, in a `beforeAll`, building one initialised, committed base project (`templateDir`). Every test's
+`createProject()` now does a cheap local `git clone` of that template (`git clone -q`, then `git
+remote remove origin`) instead of its own `runInit`, and asserts the fresh clone starts clean (`git
+status --porcelain` empty) and at the template's own `HEAD` before returning — a real, pre-mutation
+guard against the shared template leaking dirty state or a divergent ref into any one test. Per-test
+directory cleanup moved from a single end-of-file `afterAll` to an `afterEach` with an explicit
+`20_000` timeout; the template itself is removed by its own `afterAll`. Every test's own explicit
+timeout dropped from the previous (untested) `300_000` to a real `20_000` budget. A new guard test
+(`describe('test hygiene (M14 P45)')`, the last block in the file, so it runs after every test that
+could increment the counter) asserts `runInit` ran exactly once for the whole file. Measured after:
+28.71s for the whole file (down from 56.05s), every individual test comfortably inside its new 20s
+budget with real headroom even under deliberate heavy CPU load (see Verification).
+
+`process/plans/M14-AGENT-NOTES.md` (new): the "known load-sensitive flakes" list M13-AGENT-NOTES.md
+rule 3 carried moved here (Surface: rule 3 → `M14-AGENT-NOTES.md`), each file now measured (isolated
+runs via `node scripts/run-tests.mjs run <path>`; the higher of two samples where two were taken, since
+this shared sandbox's own ambient concurrent-agent load produced 30-45% run-to-run variance even
+without deliberate extra load) and given either an explicit `vitest` timeout at 3× measured (rounded
+up, capped at `600_000`, the `21` §21.1 e2e ceiling; precedent `test/agent-prompts-all-workflows.
+test.ts:288,856`, `test/authoring-roles-run.test.ts:417,425`) or a documented reason the existing
+budget already gives ≥3× headroom — never a SMALLER explicit timeout than the safe global default,
+since that would tighten a test rather than protect it. Two files needed a real source change:
+`packages/engine/test/e2e/crash-resume.test.ts` (`120_000` → `200_000`; measured 49,864ms then
+65,709ms on a second sample, real SIGKILL×20 + resume) and `test/workspace-floor.test.ts` (three
+previously-unprotected subprocess-heavy tests — `vitest list` collection, planted-file collection,
+`tsc --listFiles --noEmit` per tsconfig — each given `90_000`; measured up to 29,972ms, sized from the
+slowest of the three and shared uniformly rather than computed separately per test). Every other
+listed file (`verify-success-criteria.test.ts`, `survey.test.ts`, `resume.test.ts`, `session.test.ts`,
+the whole `tui/test/` tree, `run-upgrade.test.ts`, `backup.test.ts`, `verification.test.ts`) measured
+comfortably under 3× its existing budget; left unchanged — the full table with every measured number
+is in `M14-AGENT-NOTES.md`. `M13-AGENT-NOTES.md` rule 3 now points at `M14-AGENT-NOTES.md` instead of
+carrying the list, keeping the unrelated "4 pre-existing prettier warnings" sentence it also carried
+(re-checked live: `pnpm lint` in a clean worktree of this piece's own final commit is now fully clean —
+those 4 warnings have since been fixed by other M14 pieces, unrelated to this one).
+
+**Round 1 (fresh, context-free): 1 real finding (a sequencing note, resolved by this docs commit) and
+1 minor finding (comment-precision, fixed).**
+1. **Real, resolved by completing the two-commit pattern.** The critic correctly caught that, at the
+   point it reviewed the diff, `M14-AGENT-NOTES.md` still carried a literal `Q<N>` placeholder and
+   neither `SPEC-QUESTIONS.md` nor `GAUNTLET-LOG.md` yet had a P45 entry — confirmed via
+   `grep -n "P45" process/SPEC-QUESTIONS.md process/GAUNTLET-LOG.md` returning nothing at review time.
+   This was the fix commit landing before the docs commit (the mandated two-commit pattern), not a
+   missed step; resolved by this entry and the matching `GAUNTLET-LOG.md` heading, and `M14-AGENT-
+   NOTES.md`'s placeholder is now this Q number.
+2. **Minor, fixed.** `test/workspace-floor.test.ts`'s per-test comments on the first two of the three
+   newly-protected tests each said "the explicit timeout below is 3x that" referring to *that test's
+   own* measured number (~24s each) — but the actual `90_000` applied to all three is 3× the *third*
+   test's larger number (~29,972ms → 89,916 → 90,000), shared uniformly across the block rather than
+   computed separately per test. Not a correctness risk (every test gets MORE headroom than its own 3×
+   figure would give, never less), but the comments overstated their own precision. Fixed: the first
+   two tests' comments now say the timeout is shared with the file's slowest of the three
+   subprocess-heavy tests, cross-referencing the one whose own comment does correctly say "3x that."
+
+**Mutation evidence (real, not narrated; each restored via `git checkout --` afterward, verified clean
+via `git status --short`/`git diff --stat`).**
+1. **`runInit`-per-test restored → the guard fails for real.** In the committed
+   `test/intake-workflow.test.ts`, temporarily replaced `createProject`'s `git clone` + clean-repo
+   assertions with the pre-fix `runInit` call (tier-map edit, `git init`/commit) — the exact per-test
+   work the fix removed. Ran the whole file: all 9 functional tests still passed (proving the mutation
+   faithfully reproduces the old, previously-correct behavior, not an unrelated break), and the guard
+   failed with `AssertionError: expected 10 to be 1` (1 from `beforeAll`'s template build + 9 from the
+   restored per-test calls). Restored; `git diff --stat test/intake-workflow.test.ts` empty afterward.
+2. **A raised timeout lowered → the file fails under real timing, not narrated.** In the committed
+   `packages/engine/test/e2e/crash-resume.test.ts`, lowered the raised `200_000` to `20_000` (well
+   below every measured sample, 49,864-68,056ms across four real runs this piece took). Ran the file
+   alone: `Error: Test timed out in 20000ms` — a genuine timeout failure, not a mutated assertion.
+   Restored; `grep -n "}, 200_000);" packages/engine/test/e2e/crash-resume.test.ts` confirmed the
+   original value back.
+
+**Verification.** `pnpm typecheck` and `pnpm run boundaries` clean in a clean `git worktree` of this
+piece's own final commit (`d4cc128`), per Rule 14/15 (`pnpm install --offline --frozen-lockfile`, ~8s).
+Scoped, in that same worktree: `test/intake-workflow.test.ts` (10 tests), `test/workspace-floor.test.ts`
+(18 tests), `packages/engine/test/e2e/crash-resume.test.ts` (1 test) — 29/29 green
+(`crash-resume.test.ts` took 68,056ms in this run, still comfortably inside its new `200_000` budget).
+Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) run in that same clean worktree
+as the very last check: fully clean, zero warnings. Under-load demonstration (per the piece's own
+Tests-first requirement): `test/intake-workflow.test.ts` run beside a real, CPU-saturating parallel
+load (20-40 concurrent `yes > /dev/null` processes plus `pnpm exec turbo run typecheck --force`) —
+pre-fix, the file's own guard already failed structurally (9 ≠ 1) and its total run time reached 85.85s
+under the heaviest load tried, with the slowest individual test at 16,339ms (82% of the new 20,000ms
+per-test budget, only 3,661ms headroom); post-fix, under the identical load condition, all 10 tests
+passed with the slowest individual test at 12,745ms (64% of budget, 7,255ms headroom) and total file
+time down to 62.93s.
+
+**Discloses (per the plan's own Discloses list).** The list in `M14-AGENT-NOTES.md` remains a list:
+honest, measured budgets, not a claim of determinism under arbitrary CPU starvation — this sandbox's
+own 30-45% run-to-run variance on the identical file/test (observed independent of any deliberate load
+this piece added) is itself the evidence for why a bigger multiplier could not make that claim either.
+The allowlist-vs-zero-tolerance process decision — whether a file this list still tolerates as
+"load-sensitive" should instead be fixed at the root so it stops needing a budget at all, or whether CI
+should simply retry — stays the orchestrator's, not this piece's. `CONTRIBUTING.md`'s own general
+mention of "known, accepted, load-sensitive flakes" (line 55) is unchanged, since it is not in this
+piece's Surface and its general advice ("say so in your PR rather than chasing it") remains accurate
+regardless of this piece's more precise, per-file numbers.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P45`. Files: `test/intake-workflow.test.ts`,
+`test/workspace-floor.test.ts`, `packages/engine/test/e2e/crash-resume.test.ts`, `process/plans/
+M13-AGENT-NOTES.md`; new `process/plans/M14-AGENT-NOTES.md`.

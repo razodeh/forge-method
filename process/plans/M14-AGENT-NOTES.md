@@ -42,7 +42,7 @@ override" reads as a measured, deliberate decision rather than an unmeasured gap
 
 Source changes from this table: `packages/engine/test/e2e/crash-resume.test.ts` (raised), and
 `test/workspace-floor.test.ts` (added, 3 tests). Every other row is a
-measured-and-confirmed-adequate record, not a source change — see `SPEC-QUESTIONS.md` Q<N>
+measured-and-confirmed-adequate record, not a source change — see `SPEC-QUESTIONS.md` Q251
 (`M14 P45`) for the same table at the time it was recorded, and
 `packages/engine/test/e2e/crash-resume.test.ts`/`test/workspace-floor.test.ts` for the two source
 changes themselves.
