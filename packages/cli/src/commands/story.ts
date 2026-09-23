@@ -1,14 +1,20 @@
 /**
- * `forge story verify <storyId>` — the step `implement-story`'s `self-verify` runs (`10` §10.6 step 6:
- * "run the story's DoD check set; attach outputs").
+ * `forge story verify <storyId> [--phase verify|done]` — the step `implement-story`'s `self-verify` runs
+ * with the default phase (`10` §10.6 step 6: "run the story's DoD check set; attach outputs"), and the
+ * `done-check` step runs with `--phase done`, after review (`10` §10.6 step 9).
  *
- * `10` §10.6 names the step and `09` §9.8 defines what it evaluates: the story's `dod_profile`, a named list of
- * `done` checks, "machine-checked", where "A story cannot be marked `done` unless every `done` check passes — and
- * the checks are commands, not opinions." `03` §3.2.5 lists the command (row added by `PLAN-M13.md` P22). It is
- * that evaluation and nothing else: it never edits a story or its status, calls no model, and leaves the
- * project's `test-results.json` and `flaky.json` alone (`persistState: false`; only `forge test run` owns them).
+ * `10` §10.6 names both steps and `09` §9.8, as amended by `PLAN-M14.md` P1 (`SPEC-QUESTIONS.md` Q232
+ * decision 13), defines what each evaluates: the story's `dod_profile` names a `verify` list and a `done`
+ * list, two different moments, not one — "`verify` is what the story itself can already show … and runs
+ * at the self-verify step of the loop … `done` is what only review and the merge can show … and runs at
+ * commit … and again in the merge queue. A story cannot be marked `done` unless every `verify` and `done`
+ * check passes — and the checks are commands, not opinions." `03` §3.2.5 lists the command (row added by
+ * `PLAN-M13.md` P22, corrected by `PLAN-M14.md` P1 to name `verify`, the default phase here — `phase` in
+ * the report and `--json` envelope is `'verify'` unless `--phase done` was given). It is that evaluation
+ * and nothing else: it never edits a story or its status, calls no model, and leaves the project's
+ * `test-results.json` and `flaky.json` alone (`persistState: false`; only `forge test run` owns them).
  *
- * What resolves a check. A plain string in the `done` list is a bounded expression over `story` (evaluated by
+ * What resolves a check. A plain string in the phase's list is a bounded expression over `story` (evaluated by
  * `@forge/methods/dod`, as `spec validate --rule definition-of-ready` does for `ready`). A `{ check: <id> }` entry
  * is answered here, only where a deterministic implementation exists:
  *
@@ -18,6 +24,11 @@
  * | `test:unit`, `:integration`, `:contract`, `:e2e` | that layer's `execution.testCommands` entry, run alone              |
  * | `spec:ac-coverage`                               | each acceptance criterion of THIS story has a passing bound test    |
  * |                                                  | and none has a failing one, in the layers run by this invocation    |
+ *
+ * These are the six `verify`-phase checks in `09` §9.8's own shipped `backend-default` example; the three
+ * `done`-phase ones (`review:blocking-findings == 0`, `docs:public-api-documented`,
+ * `kb:no-new-contradictions`) have no deterministic implementation here (see "Fail closed" below) — `done`
+ * is currently, honestly, never fully green through this command alone.
  *
  * `spec:ac-coverage` reads only the results of the layers this invocation ran (test layers are run first,
  * whatever their place in the list). It never reads an earlier report from disk: nothing on it says which code it
@@ -30,20 +41,19 @@
  * invented ids) is `unverifiable`, which is not a pass: `09` §9.5 (a story cannot reach `verified` while an AC is
  * missing or failing), this codebase's rule that a layer which cannot be verified never reads as passing
  * (`test run`, `test coverage`), and `evaluateDodProfile`'s own rule for an id the resolver does not recognise. A missing
- * profile file, an unparseable one, a profile the file does not define, and a profile whose `done` list is empty
- * (nothing was verified) are each one `unverifiable` `(profile)` check for the same reason. A profile made only of
- * plain expressions over `story` is a real choice (`ready` lists are written that way) and is evaluated as one. `fail` (it ran and the
- * answer was no) and `unverifiable` (it could not be asked) stay distinct in the report, so a reader can tell a
- * broken story from an unfinished setup.
+ * profile file, an unparseable one, a profile the file does not define, and a profile whose selected phase list is
+ * empty or absent (a pre-M14 profile has no `verify` list at all; `verify` is optional on the schema so it still
+ * loads) is each one `unverifiable` `(profile)` check for the same reason — nothing was verified. A profile made
+ * only of plain expressions over `story` is a real choice (`ready` lists are written that way) and is evaluated as
+ * one. `fail` (it ran and the answer was no) and `unverifiable` (it could not be asked) stay distinct in the
+ * report, so a reader can tell a broken story from an unfinished setup.
  *
- * Known consequences, recorded in Q213 and not decided here: `10` §10.6 runs self-verify BEFORE review and
- * document, but `09` §9.8's example `done` list contains `review:blocking-findings == 0` and
- * `docs:public-api-documented`, so a profile shaped like the example can never be fully green at this step; and
- * the `scaffold-project` brief says each `done` id "is mapped to its task-runner command in `delivery/build.md`",
- * prose this command does not read (the mapping it uses is the fixed table above plus `execution.testCommands`),
- * so an id outside that table stays `unverifiable`. A layer counts as passing only if at least one test passed and
- * none failed outside quarantine (F-TEST-6 excludes a quarantined flaky test from the gate, and the message says how
- * many); a failing bound test still defeats `spec:ac-coverage`.
+ * Known, disclosed gap (Q213, unchanged by this split): the `scaffold-project` brief says each `verify`/`done` id
+ * "is mapped to its task-runner command in `delivery/build.md`", prose this command does not read (the mapping it
+ * uses is the fixed table above plus `execution.testCommands`), so an id outside that table stays `unverifiable`.
+ * A layer counts as passing only if at least one test passed and none failed outside quarantine (F-TEST-6 excludes
+ * a quarantined flaky test from the gate, and the message says how many); a failing bound test still defeats
+ * `spec:ac-coverage`.
  *
  * `errors` is the count of checks that are not `pass`, a bare number, because gate checks read it that way
  * (`failOn: 'errors > 0'`); the rest of the `--json` envelope is `{ v: 1, storyId, profile, phase, passed,
@@ -52,7 +62,8 @@
  * @see specs/09 §9.5, §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
- * @see SPEC-QUESTIONS.md Q213
+ * @see PLAN-M14.md P1, P25
+ * @see SPEC-QUESTIONS.md Q213, Q232, Q233
  */
 import { isForgeError } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
@@ -77,6 +88,15 @@ const DOD_PROFILES_RELATIVE_PATH = 'engineering/dod-profiles.yaml';
 const TEST_LAYERS = ['unit', 'integration', 'contract', 'e2e'] as const;
 type TestLayer = (typeof TEST_LAYERS)[number];
 
+/** `09` §9.8's own two self/post-review moments (`PLAN-M14.md` P1, Q232 decision 13). `verify` is the
+ * default `forge story verify` runs; `--phase done` runs `done` (the `done-check` command step). */
+export const STORY_PHASES = ['verify', 'done'] as const;
+export type StoryPhase = (typeof STORY_PHASES)[number];
+
+export function isStoryPhase(value: string | undefined): value is StoryPhase {
+  return value !== undefined && (STORY_PHASES as readonly string[]).includes(value);
+}
+
 export type StoryCheckStatus = 'pass' | 'fail' | 'unverifiable';
 
 export interface StoryCheckResult {
@@ -89,12 +109,15 @@ export interface StoryCheckResult {
 export interface StoryVerifyReport {
   readonly storyId: string;
   readonly profile: string;
-  readonly phase: 'done';
-  /** True only when every check passed. A profile with no checks (`done: []`) is not a pass. */
+  readonly phase: StoryPhase;
+  /** True only when every check passed. A profile with no checks for this phase (absent or `[]`) is not a pass. */
   readonly passed: boolean;
   /** The number of checks that are not `pass`. */
   readonly errors: number;
   readonly checks: readonly StoryCheckResult[];
+  /** Advisory only, never affects `passed`/`errors` (`loadDodProfile`'s own "kb lint" warnings scoped to this
+   * story's `profile`, e.g. one naming the missing `verify` list on a pre-M14 profile, `09` §9.8's split). */
+  readonly warnings: readonly string[];
 }
 
 export type StoryVerifyOutcome =
@@ -352,25 +375,33 @@ async function resolveGuarded(
   }
 }
 
-function reportOf(story: Story, checks: readonly StoryCheckResult[]): StoryVerifyReport {
+function reportOf(
+  story: Story,
+  phase: StoryPhase,
+  checks: readonly StoryCheckResult[],
+  warnings: readonly string[] = [],
+): StoryVerifyReport {
   const errors = checks.filter((check) => check.status !== 'pass').length;
   return {
     storyId: story.id,
     profile: story.dod_profile,
-    phase: 'done',
+    phase,
     passed: errors === 0,
     errors,
     checks,
+    warnings,
   };
 }
 
 /**
- * Evaluates `storyId`'s `done` profile. Never throws for an ordinary condition (an unknown story, a missing
- * profile file, a tool that will not run): each is a typed outcome or an `unverifiable` check.
+ * Evaluates `storyId`'s DoD profile for one phase (`verify` by default, `done` when asked). Never throws
+ * for an ordinary condition (an unknown story, a missing profile file, a tool that will not run): each is
+ * a typed outcome or an `unverifiable` check.
  */
 export async function storyVerify(
   ctx: StoryVerifyContext,
   storyId: string,
+  phase: StoryPhase = 'verify',
 ): Promise<StoryVerifyOutcome> {
   const docs = await findStoryDocuments(ctx, storyId);
   const [doc] = docs;
@@ -397,7 +428,7 @@ export async function storyVerify(
   if (!profiles.success) {
     return {
       kind: 'verified',
-      report: reportOf(story, [
+      report: reportOf(story, phase, [
         {
           check: '(profile)',
           status: 'unverifiable',
@@ -413,7 +444,7 @@ export async function storyVerify(
   if (profile === undefined) {
     return {
       kind: 'verified',
-      report: reportOf(story, [
+      report: reportOf(story, phase, [
         {
           check: '(profile)',
           status: 'unverifiable',
@@ -423,18 +454,40 @@ export async function storyVerify(
     };
   }
 
-  // A profile with nothing to check has verified nothing, and an empty list is more likely an unfinished profile
-  // than a decision: it is not a pass. (A profile of plain expressions is a real choice and is evaluated as one.)
-  if (profile.done.length === 0) {
+  // `loadDodProfile`'s own "kb lint" advisory (`load.ts`'s `verifyWarnings`), scoped to just this story's
+  // own profile: a warning about a DIFFERENT profile in the same file is not this invocation's business.
+  // Exact match against the identical path `verifyWarnings`/`withSourceContext` build (`<relative>:
+  // profiles.<id>`), not a substring/`.endsWith` test: a profile id is schema-unrestricted (any non-empty
+  // string, dots included, `dodProfileFileSchema`'s own `z.record(z.string().min(1), ...)`), so a project
+  // that names a profile e.g. `a.profiles.backend-default` would otherwise make its own missing-`verify`
+  // warning falsely match a story whose real `dod_profile` is plain `backend-default`.
+  const expectedWarningPath = `${ctx.kbRoot}/${DOD_PROFILES_RELATIVE_PATH}: profiles.${story.dod_profile}`;
+  const profileWarnings = profiles.warnings
+    .filter((warning) => warning.path === expectedWarningPath)
+    .map((warning) => warning.message);
+
+  // `verify` is optional on the schema (a pre-M14 profile has none at all): absent reads the same as an
+  // empty list here, both "nothing to check."
+  const phaseChecks = profile[phase] ?? [];
+
+  // A profile with nothing to check has verified nothing, and an empty (or absent) list is more likely an
+  // unfinished profile than a decision: it is not a pass. (A profile of plain expressions is a real choice
+  // and is evaluated as one.)
+  if (phaseChecks.length === 0) {
     return {
       kind: 'verified',
-      report: reportOf(story, [
-        {
-          check: '(profile)',
-          status: 'unverifiable',
-          message: `the "${story.dod_profile}" profile lists no done checks, so nothing was verified: list at least one.`,
-        },
-      ]),
+      report: reportOf(
+        story,
+        phase,
+        [
+          {
+            check: '(profile)',
+            status: 'unverifiable',
+            message: `the "${story.dod_profile}" profile lists no ${phase} checks, so nothing was verified: list at least one.`,
+          },
+        ],
+        profileWarnings,
+      ),
     };
   }
 
@@ -442,7 +495,7 @@ export async function storyVerify(
   // their place in the list, so a check that reads their results (`spec:ac-coverage`) never depends on order.
   const memory: RunMemory = { outcomes: [], ranLayer: false, incomplete: false };
   const resolved = new Map<string, Resolution>();
-  const references = profile.done.flatMap((entry) =>
+  const references = phaseChecks.flatMap((entry) =>
     typeof entry === 'string' ? [] : [entry.check],
   );
   const isLayerCheck = (id: string): boolean =>
@@ -456,8 +509,11 @@ export async function storyVerify(
     resolved.set(id, await resolveGuarded(ctx, story, id, memory));
   }
   // The plain-expression entries are evaluated on their own (a `{ check: }` entry cannot be mistaken for one that
-  // shares its text); the `{ check: }` entries were answered above.
-  const expressions = profile.done.filter((entry): entry is string => typeof entry === 'string');
+  // shares its text); the `{ check: }` entries were answered above. `evaluateDodProfile` is asked with a
+  // synthetic, single-list wrapper (always its own `done` field, whatever phase this really is) — it is
+  // just reused here for its pure per-check-string evaluation, so its own `phase` argument is discarded
+  // by the caller (never read from the returned `DodViolation`s below) and untouched by this piece.
+  const expressions = phaseChecks.filter((entry): entry is string => typeof entry === 'string');
   const violations = evaluateDodProfile(
     { profiles: { expressions: { ready: [], done: expressions } } },
     'expressions',
@@ -466,7 +522,7 @@ export async function storyVerify(
     () => false,
   );
 
-  const checks: StoryCheckResult[] = profile.done.map((entry) => {
+  const checks: StoryCheckResult[] = phaseChecks.map((entry) => {
     if (typeof entry !== 'string') {
       const resolution = resolved.get(entry.check);
       return {
@@ -480,7 +536,7 @@ export async function storyVerify(
       ? { check: entry, status: 'pass', message: 'expression holds.' }
       : { check: entry, status: 'fail', message: violation.message };
   });
-  return { kind: 'verified', report: reportOf(story, checks) };
+  return { kind: 'verified', report: reportOf(story, phase, checks, profileWarnings) };
 }
 
 export interface StoryVerifyRendering {
@@ -521,6 +577,12 @@ export function renderStoryVerify(
     };
   }
   const { report } = outcome;
+  // Advisory only (never affects `exitCode`): printed on stderr in both forms, the same "does not gate the
+  // command, still visible" treatment `buildElicitAskPort`'s own unmatched-answer warning already gives an
+  // `--input` mismatch. `--json`'s stdout stays the one envelope line; a machine reader gets the identical
+  // text back in the envelope's own `warnings` array.
+  const warningLines = report.warnings.map((warning) => `forge: warning: ${oneLine(warning)}`);
+  const stderr = warningLines.length > 0 ? warningLines.join('\n') : undefined;
   if (json) {
     // `JSON.stringify` escapes only U+0000-U+001F, so project-authored text is cleaned first (as the sibling
     // commands do with `sanitizeDeep`): a check id or a message can carry C1 and bidi characters.
@@ -528,13 +590,18 @@ export function renderStoryVerify(
       ...report,
       storyId: oneLine(report.storyId),
       profile: oneLine(report.profile),
+      warnings: report.warnings.map(oneLine),
       checks: report.checks.map((check) => ({
         ...check,
         check: oneLine(check.check),
         message: oneLine(check.message),
       })),
     };
-    return { stdout: JSON.stringify({ v: 1, ...safe }), exitCode: report.passed ? 0 : 1 };
+    return {
+      stdout: JSON.stringify({ v: 1, ...safe }),
+      ...(stderr !== undefined ? { stderr } : {}),
+      exitCode: report.passed ? 0 : 1,
+    };
   }
   const header = report.passed
     ? `forge story verify ${oneLine(report.storyId)} (profile ${oneLine(report.profile)}): every ${report.phase} check passed.`
@@ -547,5 +614,9 @@ export function renderStoryVerify(
   const lines = report.checks.map(
     (check) => `  ${marks[check.status]} ${oneLine(check.check)}: ${oneLine(check.message)}`,
   );
-  return { stdout: [header, ...lines].join('\n'), exitCode: report.passed ? 0 : 1 };
+  return {
+    stdout: [header, ...lines].join('\n'),
+    ...(stderr !== undefined ? { stderr } : {}),
+    exitCode: report.passed ? 0 : 1,
+  };
 }

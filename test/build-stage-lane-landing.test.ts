@@ -821,8 +821,10 @@ describe('the shipped implement-story inner loop, end to end (runEngine, stacked
     expect(seen.get(`${PS}red`)).toEqual([HANDOFF_PATH]);
     expect(seen.get(`${PS}green`)).toEqual([HANDOFF_PATH, 'tests/story-001/story-001.test.ts']);
     expect(seen.get(`${PS}refactor`)).toContain('src/story-001/story-001.ts');
-    // `self-verify` (a command in a lane) ran where green's code and red's tests are: its fake `forge` says so.
-    expect(markerLines(verified)).toHaveLength(1);
+    // `self-verify` AND `done-check` (M14 P25, both `forge story verify ...` in a lane) each ran where
+    // green's code and red's tests are: the fake `forge` (which does not read the `--phase` argument at
+    // all) says so twice.
+    expect(markerLines(verified)).toHaveLength(2);
     for (const perspective of ['design', 'security', 'testing', 'performance']) {
       expect(seen.get(`${PS}review:review:${perspective}`)).toContain('src/story-001/story-001.ts');
     }

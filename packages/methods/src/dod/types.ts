@@ -10,10 +10,16 @@
 
 export type DodCheck = string | { readonly check: string };
 
-/** One profile's own `ready`/`done` lists — every entry in each is checked independently; a profile
- * passes a phase only when every one of that phase's own `DodCheck` entries passes. */
+/** One profile's own `ready`/`verify`/`done` lists — every entry in each is checked independently; a
+ * profile passes a phase only when every one of that phase's own `DodCheck` entries passes. `verify`
+ * is optional (`schema.ts`'s own doc comment): a pre-M14 profile that has not yet split `done` still
+ * parses, with no `verify` list to check. */
 export interface DodPhase {
   readonly ready: readonly DodCheck[];
+  // Explicit `| undefined` (not just `?`): this project's `exactOptionalPropertyTypes: true` treats
+  // those as distinct, and `dodPhaseSchema`'s own zod-inferred type for an `.optional()` field is
+  // `T | undefined`, which a bare `readonly verify?: readonly DodCheck[]` cannot accept assignment from.
+  readonly verify?: readonly DodCheck[] | undefined;
   readonly done: readonly DodCheck[];
 }
 
@@ -32,9 +38,23 @@ export interface DodIssue {
 }
 
 /** `loadDodProfile`/`readDodProfile`'s own return shape — never throws on ordinary malformed input;
- * a caller always gets either a real `profileFile` or the full list of everything wrong with it. */
+ * a caller always gets either a real `profileFile` (plus `warnings`, possibly empty) or the full list
+ * of everything wrong with it. `warnings` is the "kb lint" advisory the schema's own optional
+ * `verify` field enables (`schema.ts`'s own doc comment): a profile that loads fine but still models
+ * only `ready`/`done` gets one `DodIssue`-shaped warning per such profile, naming the `verify`/`done`
+ * split (`09` §9.8, M14 P1) — never a load failure, since the file genuinely still loads.
+ *
+ * Disclosed, not fixed here (M14 P25): of this package's two real callers, `@forge/cli`'s
+ * `story.ts` (`forge story verify`) reads `warnings` and surfaces it; `spec/validate-rules.ts`'s
+ * `validateDefinitionOfReady` (`forge spec validate --rule definition-of-ready`), which also loads this
+ * same file for the SAME project, does not — a project whose profile lacks `verify` gets the advisory
+ * from one command and not the other, until a later piece wires it there too. */
 export type DodParseResult =
-  | { readonly success: true; readonly profileFile: DodProfileFile }
+  | {
+      readonly success: true;
+      readonly profileFile: DodProfileFile;
+      readonly warnings: readonly DodIssue[];
+    }
   | { readonly success: false; readonly issues: readonly DodIssue[] };
 
 /** The one real fact `evaluateDodProfile`'s own bounded expressions need — a plain-string check

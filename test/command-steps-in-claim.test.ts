@@ -4,17 +4,17 @@
  * (`packages/engine/src/dispatch/outputs.ts`) gives a `command` step `globs: produces` and the run's
  * default claim policy; under `strict` (`supervised`/`autonomous`/an adopted project) a write outside
  * that claim is reverted, and since `PLAN-M14.md` P3 the step fails outright too. This file is the
- * guard: for each of the fourteen non-inline command steps the nine named workflows ship, it proves the
+ * guard: for each of the fifteen non-inline command steps the nine named workflows ship, it proves the
  * command's own documented write (read from its real source, not guessed) lies inside the step's real,
  * compiled `produces` claim.
  *
  * **Enumeration.** `kind: command` steps that are not `inline: true`, parsed straight off the shipped
  * YAML the same way `test/command-steps.test.ts` does (an independent re-derivation, not a shared
- * walker) — checked against a pinned list of fourteen and against `test/non-forge-steps.ts`'s own
+ * walker) — checked against a pinned list of fifteen and against `test/non-forge-steps.ts`'s own
  * `NON_FORGE_STEPS` (shared with that file; every one of which is `inline: true`, confirmed here rather
  * than assumed, so the two files' claims about the same workflows cannot quietly diverge).
  *
- * **Unwired today.** Three of the fourteen commands (`forge adopt inventory`, `forge migrate run`,
+ * **Unwired today.** Three of the fifteen commands (`forge adopt inventory`, `forge migrate run`,
  * `forge spec re-derive`) are not wired into `bin.ts` at all yet — each is rejected by the real CLI
  * (`test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED`, Q213). That is why the write determination
  * below is by reading source, not by running the command: shelling any of the three for real would
@@ -45,6 +45,9 @@
  * - `implement-story:self-verify` (`forge story verify {{storyId}} --json`) — `story.ts`'s own doc
  *   comment: "leaves the project's `test-results.json` and `flaky.json` alone (`persistState: false`...)".
  *   Writes nothing; no `produces`.
+ * - `implement-story:done-check` (`forge story verify {{storyId}} --phase done --json`, M14 P25) — the
+ *   identical `story.ts` command, a different `--phase`: the same `persistState: false` doc comment
+ *   applies. Writes nothing; no `produces`.
  * - `migrate:migrate-data` (`forge migrate run --phase expand --json`) and `replan:re-derive`'s approved
  *   branch (`forge spec re-derive --json`) — unwired and unimplemented (see "Unwired today" above):
  *   refused before either could write anything. No `produces` until a later piece wires and implements
@@ -165,7 +168,7 @@ function shippedRawCommandSteps(): readonly RawCommandStep[] {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// What each of the fourteen steps writes, per the header comment's own citations.
+// What each of the fifteen steps writes, per the header comment's own citations.
 // ---------------------------------------------------------------------------------------------------
 
 interface KnownWrite {
@@ -181,7 +184,7 @@ const TEST_RUN_WRITES: readonly KnownWrite[] = [
 
 /** Keyed by the compiled step id (`${workflowId}:${stepId}`). Empty means the header comment's reading of
  * the real command found no write at all — the step is still exercised below (with nothing to write),
- * so all fourteen are covered by one table, not just the six that need `produces`. */
+ * so all fifteen are covered by one table, not just the six that need `produces`. */
 const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
   'adopt:inventory-codebase': [
     { relativePath: 'reports/adoption/inventory.json', content: '{}\n' },
@@ -191,6 +194,7 @@ const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
   'deliver-stage:rehearse-rollback': [],
   'deliver-stage:smoke-test': [],
   'implement-story:self-verify': [],
+  'implement-story:done-check': [],
   'migrate:migrate-data': [],
   'migrate:verify-migration': TEST_RUN_WRITES,
   'quick-fix:verify': TEST_RUN_WRITES,
@@ -203,13 +207,13 @@ const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
 
 const EXPECTED_STEPS = Object.keys(STEP_FIXTURES);
 
-describe('the shipped non-inline command steps are exactly the pinned fourteen (PLAN-M14 P2)', () => {
+describe('the shipped non-inline command steps are exactly the pinned fifteen (PLAN-M14 P2, P25)', () => {
   it('a plain parse-level walk of every shipped workflow finds exactly these, no more and no fewer', () => {
     const nonInline = shippedRawCommandSteps()
       .filter((step) => !step.inline)
       .map((step) => step.key)
       .sort();
-    expect(EXPECTED_STEPS.length).toBe(14);
+    expect(EXPECTED_STEPS.length).toBe(15);
     expect(nonInline).toEqual([...EXPECTED_STEPS].sort());
   });
 
@@ -222,7 +226,7 @@ describe('the shipped non-inline command steps are exactly the pinned fourteen (
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Claim coverage: the real, compiled `produces` for each of the fourteen against the write it names.
+// Claim coverage: the real, compiled `produces` for each of the fifteen against the write it names.
 // ---------------------------------------------------------------------------------------------------
 
 /** The one shared fixture context every one of the nine workflows below compiles against — copied from

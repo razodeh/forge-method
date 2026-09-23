@@ -90,9 +90,16 @@ steps:
     # them", says a home outside `files_expected` is a `FORGE_REQUEST_CHANGE`, not a write, and says not to change tests.
     produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
 
+  # 09 §9.8 (PLAN-M14.md P1/P25, Q232 decision 13): `done` is what only review and the merge can show, so it
+  # runs here, after review and document, not at self-verify -- the lane commit runs `done`.
+  - id: done-check
+    kind: command
+    run: 'forge story verify {{storyId}} --phase done --json'
+    dependsOn: [document]
+
   - id: commit
     kind: checkpoint
-    dependsOn: [document]
+    dependsOn: [done-check]
 
   - id: merge
     kind: merge

@@ -1,17 +1,17 @@
 /**
  * `09` §9.8's own fenced `dod-profiles.yaml` example, parsed directly from the spec file itself (NOT
- * through `loadDodProfile`/`dodPhaseSchema`, which still model only `ready`/`done` — that is `PLAN-M8.md`
- * P1's file, and `PLAN-M14.md` P1 is spec-only: the `verify`/`done` split this test pins is ahead of the
- * code until a later M14 piece builds it, `SPEC-QUESTIONS.md` Q232 decision 13).
+ * through `loadDodProfile`/`dodPhaseSchema` — the `describe` block at the foot of this file does that;
+ * this first block proves what the SPEC TEXT says, independent of the code).
  *
  * `09` §9.8's single `done` list used to conflate two different moments (`10` §10.6 step 6, self-verify,
  * runs BEFORE step 7 review; the old list's `review:blocking-findings == 0` cannot pass there). It now
  * splits into `verify` (what the story itself can already show at step 6) and `done` (what only review
- * and the merge can show, at step 9 and in the merge queue).
+ * and the merge can show, at step 9 and in the merge queue) — `packages/methods/src/dod/schema.ts`
+ * models this as of M14 P25 (`dodPhaseSchema`'s own optional `verify` field).
  *
  * @see specs/09 §9.8
  * @see specs/10 §10.6
- * @see PLAN-M14.md P1
+ * @see PLAN-M14.md P1, P25
  * @see SPEC-QUESTIONS.md Q232, Q233
  */
 import { readFileSync } from 'node:fs';
@@ -21,21 +21,27 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
 
+import { loadDodProfile } from '../../src/dod/index.ts';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
 function readSpec9(): string {
   return readFileSync(path.join(repoRoot, 'specs', '09-spec-driven-development.md'), 'utf8');
 }
 
-/** The ```yaml fenced block under `## 9.8 Definition of Ready / Definition of Done`, parsed as plain
- * YAML — no schema, no `loadDodProfile`: this proves what the SPEC TEXT says, independent of whether the
- * code (`packages/methods/src/dod/schema.ts`) has caught up to it yet. */
-function parseSpecBlock(): unknown {
+/** The raw text of the ```yaml fenced block under `## 9.8 Definition of Ready / Definition of Done`. */
+function fencedYamlText(): string {
   const specText = readSpec9();
   const section = specText.slice(specText.indexOf('## 9.8 Definition of Ready'));
   const fenced = /```yaml\n([\s\S]*?)\n```/.exec(section)?.[1];
   if (fenced === undefined) throw new Error('09 §9.8 has no yaml block');
-  return YAML.parse(fenced);
+  return fenced;
+}
+
+/** Parsed as plain YAML — no schema, no `loadDodProfile`: this proves what the SPEC TEXT says,
+ * independent of whether the code (`packages/methods/src/dod/schema.ts`) has caught up to it yet. */
+function parseSpecBlock(): unknown {
+  return YAML.parse(fencedYamlText());
 }
 
 interface BackendDefaultProfile {
@@ -110,5 +116,26 @@ describe('09 §9.8 backend-default: the DoD example splits into ready/verify/don
     ]) {
       expect(doneIds).not.toContain(buildOrTest);
     }
+  });
+});
+
+describe('09 §9.8 backend-default: the same block parses through the real loadDodProfile (M14 P25)', () => {
+  // The full fenced block also holds `frontend-default`/`data-default`, each an elided `{ … }` (real
+  // prose, not a real profile) — `backendDefault()` already isolates the one real profile the spec
+  // text fully specifies; re-serialising just that (still derived from the parsed spec text, never
+  // hand-copied) is what actually round-trips through the schema.
+  it('loads with zero issues and zero warnings — the schema has caught up to the spec text', () => {
+    const yaml = YAML.stringify({ profiles: { 'backend-default': backendDefault() } });
+    const result = loadDodProfile(yaml, '09-spec-driven-development.md');
+    if (!result.success) {
+      throw new Error(`expected success, got issues: ${JSON.stringify(result.issues)}`);
+    }
+    const profile = result.profileFile.profiles['backend-default'];
+    if (profile === undefined) throw new Error('expected a backend-default profile');
+    expect(profile.ready).toHaveLength(4);
+    expect(profile.verify).toHaveLength(6);
+    expect(profile.done).toHaveLength(3);
+    // The spec's own example already has a `verify` list, so it earns no "add one" warning.
+    expect(result.warnings).toEqual([]);
   });
 });

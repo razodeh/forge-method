@@ -1,6 +1,14 @@
 /**
- * `forge story verify <storyId>` (`10` §10.6 step 6, `09` §9.5 and §9.8, `PLAN-M13.md` P22, Q213): evaluate a story's
- * `done` DoD profile, deterministically, and never read an unverifiable check as a pass.
+ * `forge story verify <storyId> [--phase verify|done]` (`10` §10.6 steps 6 and 9, `09` §9.5 and §9.8 as
+ * amended by `PLAN-M14.md` P1, `PLAN-M13.md` P22, `PLAN-M14.md` P25, Q213, Q232 decision 13): evaluate a
+ * story's `verify` DoD profile by default, or its `done` profile with `--phase done`, deterministically,
+ * and never read an unverifiable check as a pass.
+ *
+ * Most tests below exercise the DEFAULT phase (`verify`) — the same check-resolution mechanics
+ * (`build:lint`, `test:<layer>`, `spec:ac-coverage`, plain expressions, error handling) that used to live
+ * under the old single `done` list now live under `verify`; `profileWithVerify` writes them there.
+ * `describe('storyVerify: --phase done', …)` near the end of this file covers the `done` phase and the
+ * `--phase` argument itself specifically.
  *
  * The test-command runner is a seam (`StoryVerifyContext.runTests`); most cases substitute it with a function that
  * records what it was asked and returns a `TestRunResult`, so a case controls exactly what the "tool" said. One
@@ -9,6 +17,7 @@
  * @see specs/09 §9.5, §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
+ * @see PLAN-M14.md P1, P25
  */
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -26,6 +35,7 @@ import type { TestCommands, TestRunResult } from '../../src/commands/loop/test/r
 import {
   renderStoryVerify,
   storyVerify,
+  type StoryPhase,
   type StoryVerifyContext,
   type StoryVerifyOutcome,
   type StoryVerifyReport,
@@ -81,8 +91,24 @@ async function writeProfiles(project: TestProject, yaml: string): Promise<void> 
   await writeFile(file, yaml, 'utf8');
 }
 
-const profileWithDone = (...done: readonly string[]): string =>
-  `profiles:\n  backend-default:\n    ready: []\n    done:\n${done.map((entry) => `      - ${entry}`).join('\n')}\n`;
+/** One `backend-default` profile, `ready: []`, with `entries` as the named `phase`'s own list and the
+ * OTHER phase left out (`verify` is optional on the schema; `done` is always written explicitly so a
+ * `verify`-only profile still parses). */
+function profileWithPhase(phase: StoryPhase, ...entries: readonly string[]): string {
+  const list = entries.map((entry) => `      - ${entry}`).join('\n');
+  const verifyLine = phase === 'verify' ? `    verify:\n${list}\n` : '';
+  const doneLine = phase === 'done' ? `    done:\n${list}\n` : '    done: []\n';
+  return `profiles:\n  backend-default:\n    ready: []\n${verifyLine}${doneLine}`;
+}
+
+/** A profile whose `verify` list is `entries` — the phase `forge story verify` runs by default, and what
+ * used to be this fixture's own `done` list before the `09` §9.8 split (M14 P1/P25). */
+const profileWithVerify = (...entries: readonly string[]): string =>
+  profileWithPhase('verify', ...entries);
+
+/** A profile whose `done` list is `entries` — the phase `--phase done` runs. */
+const profileWithDone = (...entries: readonly string[]): string =>
+  profileWithPhase('done', ...entries);
 
 interface Call {
   readonly rule: string | undefined;
@@ -138,8 +164,9 @@ async function verify(
   testCommands: TestCommands = {},
   runTests?: TestRunner,
   storyId = 'STORY-001',
+  phase: StoryPhase = 'verify',
 ): Promise<StoryVerifyReport> {
-  const outcome = await storyVerify(ctxFor(project, testCommands, runTests), storyId);
+  const outcome = await storyVerify(ctxFor(project, testCommands, runTests), storyId, phase);
   if (outcome.kind !== 'verified')
     throw new Error(`expected a verified outcome, got ${outcome.kind}`);
   return outcome.report;
@@ -196,13 +223,28 @@ describe('storyVerify: finding the story and its profile', () => {
   it('a story naming a profile the file does not define is unverifiable', async () => {
     const project = await createTestProject();
     await writeStory(project, { dod_profile: 'data-default' });
-    await writeProfiles(project, profileWithDone('story.acceptance.length > 0'));
+    await writeProfiles(project, profileWithVerify('story.acceptance.length > 0'));
     const report = await verify(project);
     expect(report.passed).toBe(false);
     expect(report.checks[0]?.message).toContain('data-default');
   });
 
-  it('a profile whose done list is empty verified nothing: unverifiable, exit 1, never a vacuous pass', async () => {
+  it('a profile whose verify list is empty verified nothing: unverifiable, exit 1, never a vacuous pass', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(
+      project,
+      'profiles:\n  backend-default:\n    ready: []\n    verify: []\n    done: []\n',
+    );
+    const report = await verify(project);
+    expect(report.passed).toBe(false);
+    expect(statusOf(report, '(profile)')).toBe('unverifiable');
+    expect(report.checks[0]?.message).toContain('nothing was verified');
+    expect(report.checks[0]?.message).toContain('verify');
+    expect(renderStoryVerify({ kind: 'verified', report }, false).exitCode).toBe(1);
+  });
+
+  it('a profile with no verify list AT ALL (a pre-M14 profile, verify is schema-optional) is the same: unverifiable, not a crash', async () => {
     const project = await createTestProject();
     await writeStory(project);
     await writeProfiles(project, 'profiles:\n  backend-default:\n    ready: []\n    done: []\n');
@@ -210,13 +252,12 @@ describe('storyVerify: finding the story and its profile', () => {
     expect(report.passed).toBe(false);
     expect(statusOf(report, '(profile)')).toBe('unverifiable');
     expect(report.checks[0]?.message).toContain('nothing was verified');
-    expect(renderStoryVerify({ kind: 'verified', report }, false).exitCode).toBe(1);
   });
 
   it('a story naming an inherited Object property as its profile (constructor) is unverifiable, not a crash', async () => {
     const project = await createTestProject();
     await writeStory(project, { dod_profile: 'constructor' });
-    await writeProfiles(project, profileWithDone("'story.acceptance.length > 0'"));
+    await writeProfiles(project, profileWithVerify("'story.acceptance.length > 0'"));
     const report = await verify(project);
     expect(report.passed).toBe(false);
     expect(statusOf(report, '(profile)')).toBe('unverifiable');
@@ -245,7 +286,7 @@ describe('storyVerify: expressions and unknown ids', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone("'story.acceptance.length > 0'", "'story.files_expected.length > 5'"),
+      profileWithVerify("'story.acceptance.length > 0'", "'story.files_expected.length > 5'"),
     );
     const report = await verify(project);
     expect(statusOf(report, 'story.acceptance.length > 0')).toBe('pass');
@@ -259,7 +300,7 @@ describe('storyVerify: expressions and unknown ids', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone(
+      profileWithVerify(
         '{ check: review:blocking-findings == 0 }',
         '{ check: security:secrets-scan }',
         '{ check: docs:public-api-documented }',
@@ -279,7 +320,10 @@ describe('storyVerify: expressions and unknown ids', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone("'story.acceptance.length > 0'", "{ check: 'story.acceptance.length > 0' }"),
+      profileWithVerify(
+        "'story.acceptance.length > 0'",
+        "{ check: 'story.acceptance.length > 0' }",
+      ),
     );
     const report = await verify(project);
     expect(report.checks.map((entry) => entry.status)).toEqual(['pass', 'unverifiable']);
@@ -290,7 +334,7 @@ describe('storyVerify: expressions and unknown ids', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone('{ check: build:lint }', "'story.acceptance.length > 0'"),
+      profileWithVerify('{ check: build:lint }', "'story.acceptance.length > 0'"),
     );
     const runner: TestRunner = () => Promise.reject(new Error('spawn ENOENT'));
     const report = await verify(project, { lint: 'eslint .' }, runner);
@@ -306,7 +350,7 @@ describe('storyVerify: build and test checks', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone('{ check: build:typecheck }', '{ check: build:lint }'),
+      profileWithVerify('{ check: build:typecheck }', '{ check: build:lint }'),
     );
     const { runner, calls } = recorder((call) =>
       call.rule === 'lint' ? { failed: 0, errors: 3 } : CLEAN,
@@ -323,7 +367,7 @@ describe('storyVerify: build and test checks', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone('{ check: build:lint }', '{ check: test:unit --scope story }'),
+      profileWithVerify('{ check: build:lint }', '{ check: test:unit --scope story }'),
     );
     const { runner, calls } = recorder(() => CLEAN);
     const report = await verify(project, {}, runner);
@@ -337,7 +381,7 @@ describe('storyVerify: build and test checks', () => {
     await writeStory(project);
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit --scope story }', '{ check: test:integration }'),
+      profileWithVerify('{ check: test:unit --scope story }', '{ check: test:integration }'),
     );
     const { runner, calls } = recorder(() => LAYER_OK);
     const report = await verify(
@@ -360,7 +404,7 @@ describe('storyVerify: build and test checks', () => {
   it('a layer that fails is fail, and a layer that could not run is unverifiable: different statuses', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:unit }', '{ check: test:e2e }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }', '{ check: test:e2e }'));
     const { runner } = recorder((call) =>
       call.layers[0] === 'unit'
         ? { failed: 2, errors: 0, outcomes: [{ name: 'a', acId: undefined, status: 'fail' }] }
@@ -379,7 +423,7 @@ describe('storyVerify: build and test checks', () => {
   it('a layer in which no test passed (all skipped, or none reported) verified nothing: unverifiable, not a pass', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:unit }', '{ check: test:e2e }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }', '{ check: test:e2e }'));
     const { runner } = recorder((call) => ({
       ...CLEAN,
       outcomes:
@@ -395,7 +439,7 @@ describe('storyVerify: build and test checks', () => {
   it('a failing test names itself in the report (self-verify attaches output the implementer can act on)', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:unit }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }'));
     const outcomes: TestOutcome[] = Array.from({ length: 7 }, (_, index) => ({
       name: `case ${String(index)} fails`,
       acId: undefined,
@@ -415,7 +459,7 @@ describe('storyVerify: build and test checks', () => {
   it('a failing test already quarantined as flaky is excluded from the layer (F-TEST-6) and the message says so', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:unit }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }'));
     const { runner } = recorder(() => ({
       ...CLEAN,
       outcomes: [pass('AC-001-1'), { name: 'flaky one', acId: undefined, status: 'fail' }],
@@ -428,7 +472,7 @@ describe('storyVerify: build and test checks', () => {
   it('test:nfr is unverifiable: the default test run deliberately excludes the nightly NFR layer', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:nfr }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:nfr }'));
     const { runner, calls } = recorder(() => CLEAN);
     const report = await verify(project, { nfr: 'k6 run' }, runner);
     expect(calls).toEqual([]);
@@ -438,7 +482,7 @@ describe('storyVerify: build and test checks', () => {
   it('answers a repeated check id once', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(project, profileWithDone('{ check: test:unit }', '{ check: test:unit }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }', '{ check: test:unit }'));
     const { runner, calls } = recorder(() => CLEAN);
     const report = await verify(project, { unit: 'u' }, runner);
     expect(calls).toHaveLength(1);
@@ -452,7 +496,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1', 'AC-001-2'] });
     await writeProfiles(
       project,
-      profileWithDone(
+      profileWithVerify(
         '{ check: test:unit }',
         '{ check: test:integration }',
         '{ check: spec:ac-coverage --story }',
@@ -473,7 +517,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1', 'AC-001-2'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     const { runner } = recorder(() => ({
       ...CLEAN,
@@ -493,7 +537,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
   it('a story with no acceptance criteria fails the check', async () => {
     const project = await createTestProject();
     await writeStory(project, { acceptance: [] });
-    await writeProfiles(project, profileWithDone('{ check: spec:ac-coverage }'));
+    await writeProfiles(project, profileWithVerify('{ check: spec:ac-coverage }'));
     const report = await verify(project);
     expect(statusOf(report, 'spec:ac-coverage')).toBe('fail');
   });
@@ -501,7 +545,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
   it('with no test layer in the profile it is unverifiable, even when an old report on disk says everything passed', async () => {
     const project = await createTestProject();
     await writeStory(project, { acceptance: ['AC-001-1'] });
-    await writeProfiles(project, profileWithDone('{ check: spec:ac-coverage }'));
+    await writeProfiles(project, profileWithVerify('{ check: spec:ac-coverage }'));
     await writeNormalizedReport(project.paths, { outcomes: [pass('AC-001-1')] });
     const report = await verify(project);
     expect(statusOf(report, 'spec:ac-coverage')).toBe('unverifiable');
@@ -513,7 +557,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: spec:ac-coverage }', '{ check: test:unit }'),
+      profileWithVerify('{ check: spec:ac-coverage }', '{ check: test:unit }'),
     );
     // A stale on-disk report claims AC-001-1 passes; the layer just run has no test bound to it.
     await writeNormalizedReport(project.paths, { outcomes: [pass('AC-001-1')] });
@@ -529,7 +573,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     // A failing test can be quarantined (excluded from `failed`), so the layer passes; coverage must still not.
     const { runner } = recorder(() => ({
@@ -550,7 +594,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     // Not fail-open: the layer is not a pass either. Coverage is unverifiable, not "pass" on the outcomes it did see.
     const withPassing = recorder(() => ({
@@ -578,7 +622,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     const { runner } = recorder(() => ({
       failed: 1,
@@ -595,7 +639,7 @@ describe('storyVerify: spec:ac-coverage is per story', () => {
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     const runner: TestRunner = () => Promise.reject(new Error('spawn ENOENT'));
     const report = await verify(project, { unit: 'u' }, runner);
@@ -610,7 +654,7 @@ describe('storyVerify: a real test command (real vitest, the real testRun)', () 
     await writeStory(project, { acceptance: ['AC-001-1'] });
     await writeProfiles(
       project,
-      profileWithDone('{ check: test:unit }', '{ check: spec:ac-coverage }'),
+      profileWithVerify('{ check: test:unit }', '{ check: spec:ac-coverage }'),
     );
     const require = createRequire(import.meta.url);
     const vitestPackage = require.resolve('vitest/package.json');
@@ -668,7 +712,7 @@ describe('storyVerify: real vitest, a layer whose every test is skipped', () => 
   it('is unverifiable, and the verification exits not-passed', async () => {
     const project = await createTestProject();
     await writeStory(project, { acceptance: ['AC-001-1'] });
-    await writeProfiles(project, profileWithDone('{ check: test:unit }'));
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }'));
     const require = createRequire(import.meta.url);
     const vitestPackage = require.resolve('vitest/package.json');
     const bin = (require(vitestPackage) as { bin: Record<string, string> }).bin['vitest'];
@@ -684,6 +728,118 @@ describe('storyVerify: real vitest, a layer whose every test is skipped', () => 
     expect(statusOf(report, 'test:unit')).toBe('unverifiable');
     expect(report.passed).toBe(false);
   }, 120_000);
+});
+
+describe('storyVerify: --phase (09 §9.8 verify/done split, M14 P1/P25)', () => {
+  it('with no --phase given, the default is verify: the report says so and only the verify list runs', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify("'story.acceptance.length > 0'"));
+    const report = await verify(project);
+    expect(report.phase).toBe('verify');
+    expect(report.checks).toEqual([
+      expect.objectContaining({ check: 'story.acceptance.length > 0', status: 'pass' }),
+    ]);
+  });
+
+  it('--phase done runs only the done list, ignoring a verify list on the same profile', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(
+      project,
+      "profiles:\n  backend-default:\n    ready: []\n    verify:\n      - 'story.files_expected.length > 0'\n    done:\n      - 'story.acceptance.length > 0'\n",
+    );
+    const report = await verify(project, {}, undefined, 'STORY-001', 'done');
+    expect(report.phase).toBe('done');
+    expect(report.checks).toEqual([
+      expect.objectContaining({ check: 'story.acceptance.length > 0', status: 'pass' }),
+    ]);
+    expect(statusOf(report, 'story.files_expected.length > 0')).toBeUndefined();
+  });
+
+  it('the three real 09 §9.8 done-phase ids have no deterministic implementation: each is unverifiable', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(
+      project,
+      profileWithDone(
+        '{ check: review:blocking-findings == 0 }',
+        '{ check: docs:public-api-documented }',
+        '{ check: kb:no-new-contradictions }',
+      ),
+    );
+    const report = await verify(project, {}, undefined, 'STORY-001', 'done');
+    expect(report.phase).toBe('done');
+    expect(report.checks.map((entry) => entry.status)).toEqual(Array(3).fill('unverifiable'));
+    expect(report.passed).toBe(false);
+  });
+
+  it('a done list that is empty, or absent, is unverifiable naming the done phase — never a vacuous pass', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify("'story.acceptance.length > 0'"));
+    // The fixture above has no `done` key of its own content beyond `[]` (profileWithVerify always writes
+    // `done: []`) — verified under the `done` phase specifically.
+    const report = await verify(project, {}, undefined, 'STORY-001', 'done');
+    expect(report.phase).toBe('done');
+    expect(statusOf(report, '(profile)')).toBe('unverifiable');
+    expect(report.checks[0]?.message).toContain('done');
+  });
+
+  it('a profile with no verify list AT ALL carries the "kb lint" warning naming the split, on any phase', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    // No `verify:` key at all (a real pre-M14 profile) -- `writeProfiles` writes this literal, not through
+    // `profileWithDone`/`profileWithVerify`, so it is genuinely absent, not an empty list.
+    await writeProfiles(
+      project,
+      "profiles:\n  backend-default:\n    ready: []\n    done:\n      - 'story.acceptance.length > 0'\n",
+    );
+    const done = await verify(project, {}, undefined, 'STORY-001', 'done');
+    expect(done.warnings).toHaveLength(1);
+    expect(done.warnings[0]).toContain('verify');
+    expect(done.warnings[0]).toContain('09 §9.8');
+    // The warning names the gap in the whole profile, independent of which phase is being checked.
+    const verifyPhase = await verify(project);
+    expect(verifyPhase.warnings).toHaveLength(1);
+  });
+
+  it('a profile that already has a verify list carries no warning', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify("'story.acceptance.length > 0'"));
+    const report = await verify(project);
+    expect(report.warnings).toEqual([]);
+  });
+
+  it("the warning is scoped to THIS story's own profile: another profile missing verify does not leak in", async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(
+      project,
+      'profiles:\n  backend-default:\n    ready: []\n    verify: []\n    done: []\n' +
+        '  frontend-default:\n    ready: []\n    done: []\n',
+    );
+    const report = await verify(project, {}, undefined, 'STORY-001', 'done');
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('is an EXACT match, not a substring one: a profile id embedding "profiles.<other id>" does not leak its own warning onto the other id', async () => {
+    const project = await createTestProject();
+    await writeStory(project); // dod_profile: 'backend-default'
+    // Profile ids are schema-unrestricted strings (dots included): this one's own path
+    // ("...: profiles.a.profiles.backend-default") ENDS WITH "profiles.backend-default" -- an `.endsWith`
+    // scoping check would wrongly attribute its warning to the real `backend-default` profile below,
+    // which itself has a real `verify` list and deserves no warning at all.
+    await writeProfiles(
+      project,
+      'profiles:\n' +
+        '  backend-default:\n    ready: []\n    verify: []\n    done: []\n' +
+        '  a.profiles.backend-default:\n    ready: []\n    done: []\n',
+    );
+    const report = await verify(project);
+    expect(report.warnings).toEqual([]);
+  });
 });
 
 describe('renderStoryVerify', () => {
@@ -702,12 +858,30 @@ describe('renderStoryVerify', () => {
       { check: 'x', status: 'fail', message: 'bad' },
       { check: 'y', status: 'unverifiable', message: 'unknown' },
     ],
+    warnings: [],
   };
 
   it('--json is one {v:1,...} object carrying a bare numeric errors, exit 1 when not passed', () => {
     const rendering = renderStoryVerify(verified(base), true);
     expect(rendering.exitCode).toBe(1);
     expect(JSON.parse(rendering.stdout ?? '')).toEqual({ v: 1, ...base });
+  });
+
+  it('a non-empty warnings list prints on stderr in both forms, and never changes the exit code', () => {
+    const withWarning = { ...base, passed: true, errors: 0, warnings: ['no "verify" list'] };
+    const text = renderStoryVerify(verified(withWarning), false);
+    expect(text.exitCode).toBe(0);
+    expect(text.stderr).toBe('forge: warning: no "verify" list');
+
+    const json = renderStoryVerify(verified(withWarning), true);
+    expect(json.exitCode).toBe(0);
+    expect(json.stderr).toBe('forge: warning: no "verify" list');
+    expect(JSON.parse(json.stdout ?? '')).toMatchObject({ warnings: ['no "verify" list'] });
+  });
+
+  it('an empty warnings list (the ordinary case) prints nothing extra on stderr', () => {
+    const rendering = renderStoryVerify(verified({ ...base, passed: true, errors: 0 }), false);
+    expect(rendering.stderr).toBeUndefined();
   });
 
   it('exit 0 when passed, exit 2 for a story that cannot be found or read', () => {

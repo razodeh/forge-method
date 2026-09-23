@@ -14,6 +14,10 @@ const dodCheckSchema = z.union([
 const dodPhaseSchema = z
   .object({
     ready: z.array(dodCheckSchema),
+    // Optional, not required: `09` §9.8's own `verify`/`done` split (M14 P1, Q232 decision 13) is new
+    // this milestone, and a pre-M14 profile that still holds only `ready`/`done` must keep loading —
+    // `load.ts`'s own `loadDodProfile` reports its absence as a warning, not a schema failure.
+    verify: z.array(dodCheckSchema).optional(),
     done: z.array(dodCheckSchema),
   })
   .strict();

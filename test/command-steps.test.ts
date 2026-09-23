@@ -232,6 +232,9 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
     expect(steps.length).toBeGreaterThan(0);
     for (const wanted of [
       'forge story verify PLACEHOLDER --json',
+      // `implement-story:done-check` (M14 P25): the lane commit's own `done` phase, distinct from
+      // `self-verify`'s default (`verify`) phase above.
+      'forge story verify PLACEHOLDER --phase done --json',
       'forge test run --json',
       'forge kb sync',
     ]) {
@@ -295,6 +298,7 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge deploy staging --rollback-check',
       'forge deploy --dry-run --rollback-check',
       'forge story verify',
+      'forge story verify STORY-1 --phase bogus',
       'forge spec re-derive --json',
     ]) {
       expect((await ask(bad)).classification, bad).toBe('rejected');
@@ -303,6 +307,7 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge kb sync',
       'forge spec matrix --json',
       'forge story verify STORY-1',
+      'forge story verify STORY-1 --phase done',
       'forge deploy --dry-run --json',
       'forge deploy --rollback-check --json',
     ]) {
@@ -333,13 +338,31 @@ describe('command step strings are shaped as the spec says (P22 / Q213)', () => 
     expect(bad).toEqual([]);
   });
 
+  // `--phase` (M14 P25) takes a value (`verify`/`done`): unlike a bare boolean flag such as `--json`, the
+  // token right after it is that flag's value, not a second positional -- mirrors `bin.ts`'s own
+  // `STORY_VERIFY_FLAGS`.
+  const STORY_VERIFY_VALUE_FLAGS = new Set(['--phase']);
+  function positionalsAfterFlags(tokens: readonly string[]): readonly string[] {
+    const positionals: string[] = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token === undefined) continue;
+      if (token.startsWith('--')) {
+        if (STORY_VERIFY_VALUE_FLAGS.has(token)) index += 1; // skip its value, not a positional
+        continue;
+      }
+      positionals.push(token);
+    }
+    return positionals;
+  }
+
   it('every `forge story verify` names its story with a template expression (a defect loop has no story)', () => {
     const verifies = invocations.filter(
       ({ tokens }) => tokens[1] === 'story' && tokens[2] === 'verify',
     );
     expect(verifies.length).toBeGreaterThanOrEqual(1);
     for (const { step, tokens } of verifies) {
-      const positionals = tokens.slice(3).filter((token) => !token.startsWith('--'));
+      const positionals = positionalsAfterFlags(tokens.slice(3));
       expect(positionals.length, `${step} must name exactly one story`).toBe(1);
       expect(isTemplateToken(positionals[0] ?? ''), `${step} names its story by expression`).toBe(
         true,

@@ -14,8 +14,14 @@
  * actually means is `evaluate.ts`'s own caller-supplied `resolveCheck` function's job, not this
  * module's.
  *
+ * `09` §9.8's own example now splits that `done` list into `verify` (self-verify, `forge story
+ * verify`) and `done` (review/merge) — `verify` is optional on the schema so a pre-M14 profile that
+ * has not adopted the split still loads; `verifyWarnings` below reports its absence as a `warnings`
+ * entry on a successful result, never as a load failure.
+ *
  * @see specs/09 §9.8
  * @see PLAN-M8.md P1
+ * @see PLAN-M14.md P25
  */
 import { readTextFile, type ProjectPaths } from '@forge/core';
 import { parse as parseYaml } from 'yaml';
@@ -37,8 +43,11 @@ function checkIssue(check: DodCheck, path: string): DodIssue | undefined {
 function semanticIssues(profileFile: DodProfileFile): readonly DodIssue[] {
   const issues: DodIssue[] = [];
   for (const [profileId, phase] of Object.entries(profileFile.profiles)) {
-    const phases: readonly (readonly ['ready' | 'done', readonly DodCheck[]])[] = [
+    const phases: readonly (readonly ['ready' | 'verify' | 'done', readonly DodCheck[]])[] = [
       ['ready', phase.ready],
+      // Absent (pre-M14 profile) contributes no entries to check here — its own absence is a
+      // `verifyWarnings` warning below, not a semantic issue.
+      ['verify', phase.verify ?? []],
       ['done', phase.done],
     ];
     for (const [phaseName, checks] of phases) {
@@ -49,6 +58,25 @@ function semanticIssues(profileFile: DodProfileFile): readonly DodIssue[] {
     }
   }
   return issues;
+}
+
+/** `09` §9.8's `verify`/`done` split (M14 P1, Q232 decision 13): a profile that has not adopted it yet
+ * still loads (the schema's own `verify` field is optional), but this is the "kb lint" warning that
+ * names the gap — advisory, since the file it lives in is under the KB root, but never a load failure:
+ * a pre-M14 profile is real, loadable data, not a broken one. */
+function verifyWarnings(profileFile: DodProfileFile): readonly DodIssue[] {
+  const warnings: DodIssue[] = [];
+  for (const [profileId, phase] of Object.entries(profileFile.profiles)) {
+    if (phase.verify !== undefined) continue;
+    warnings.push({
+      path: `profiles.${profileId}`,
+      message:
+        `"${profileId}" has no "verify" list: 09 §9.8 splits the old single "done" list into ` +
+        `"verify" (what forge story verify runs at self-verify) and "done" (what runs at commit and ` +
+        `in the merge queue). Add a "verify" list.`,
+    });
+  }
+  return warnings;
 }
 
 /** Never throws: a YAML syntax error, a zod schema violation, and every `semanticIssues` finding all
@@ -86,7 +114,8 @@ export function loadDodProfile(source: string, sourcePath: string): DodParseResu
   const issues = semanticIssues(profileFile);
   if (issues.length > 0) return { success: false, issues: withSourceContext(issues, sourcePath) };
 
-  return { success: true, profileFile };
+  const warnings = withSourceContext(verifyWarnings(profileFile), sourcePath);
+  return { success: true, profileFile, warnings };
 }
 
 export async function readDodProfile(

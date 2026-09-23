@@ -52,9 +52,10 @@
  * — is wired by `PLAN-M13.md` P10 (`commands/run/run-plan.ts`; `03` names no such subcommand, see
  * `SPEC-QUESTIONS.md`).
  *
- * `story verify <storyId> [--json]` — the command `implement-story.workflow.yaml`'s `self-verify` step runs — is
- * wired by `PLAN-M13.md` P22 (`commands/story.ts`: the story's `done` DoD profile, `09` §9.8; `03` §3.2.5 gained its row,
- * see `SPEC-QUESTIONS.md` Q213).
+ * `story verify <storyId> [--phase verify|done] [--json]` — the command `implement-story.workflow.yaml`'s
+ * `self-verify` step runs (default `--phase verify`) and its `done-check` step runs (`--phase done`) — is
+ * wired by `PLAN-M13.md` P22 (`commands/story.ts`: the story's DoD profile, `09` §9.8; `03` §3.2.5 gained its row,
+ * see `SPEC-QUESTIONS.md` Q213), and the `verify`/`done` split by `PLAN-M14.md` P1/P25 (Q232 decision 13).
  *
  * `run <workflow>` takes `--input <name>=<value>` (repeatable), and `--stage`/`--story` also supply `stageId`/`storyId`
  * (`PLAN-M13.md` P21, `commands/run/expression-context.ts`): a workflow that declares `inputs:` is refused, naming
@@ -278,7 +279,7 @@ import {
   VALIDATE_RULE_IDS,
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
-import { renderStoryVerify, storyVerify } from './commands/story.ts';
+import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './commands/story.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES } from '@forge/schemas';
 import type { ArtifactTypeId } from '@forge/schemas';
@@ -3150,9 +3151,12 @@ async function runRefactorCommand(
   return printWorkflowDispatchResult(`refactor ${target}`, result, json);
 }
 
-/** `forge story verify <storyId> [--json]`: evaluates a story's `done` DoD profile (`09` §9.8, `10` §10.6 step 6),
- * the command `implement-story:self-verify` runs. Arguments are checked before the config is read, like every
- * sibling command. */
+const STORY_VERIFY_FLAGS = { '--phase': true } as const;
+
+/** `forge story verify <storyId> [--phase verify|done] [--json]`: evaluates a story's DoD profile for one
+ * phase (`09` §9.8 as amended by `PLAN-M14.md` P1, `10` §10.6 steps 6 and 9) — `verify` by default, the
+ * command `implement-story:self-verify` runs; `--phase done`, the command `implement-story:done-check`
+ * runs after review. Arguments are checked before the config is read, like every sibling command. */
 async function runStoryCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -3165,10 +3169,17 @@ async function runStoryCommand(
     console.error('forge: "story" needs a real subcommand (verify).');
     return EXIT_CODES.usage;
   }
-  const { positionals } = parseCommandFlags(rest, {});
+  const { values, positionals } = parseCommandFlags(rest, STORY_VERIFY_FLAGS);
   const [storyId] = positionals;
   if (storyId === undefined || positionals.length > 1) {
     console.error('forge: "story verify" needs a real <storyId>.');
+    return EXIT_CODES.usage;
+  }
+  const phaseFlag = values.get('--phase');
+  if (phaseFlag !== undefined && !isStoryPhase(phaseFlag)) {
+    console.error(
+      `forge: "story verify" needs a real --phase (one of: ${STORY_PHASES.join(', ')}); got ${JSON.stringify(phaseFlag)}.`,
+    );
     return EXIT_CODES.usage;
   }
   // `--dry-run` promises no effects (`03` §3.2); verification runs the project's own test commands, so it has no
@@ -3190,6 +3201,7 @@ async function runStoryCommand(
       flakeConfig: config.quality.flake,
     },
     storyId,
+    phaseFlag ?? 'verify',
   );
   const rendering = renderStoryVerify(outcome, json);
   if (rendering.stdout !== undefined) console.log(rendering.stdout);

@@ -1,11 +1,14 @@
 /**
- * `forge story verify <storyId> [--json]` (`10` §10.6 step 6, `09` §9.8, `PLAN-M13.md` P22), invoked as a real
- * subprocess so the literal command line `implement-story.workflow.yaml`'s `self-verify` step runs is proven to
- * be accepted, to read the project it is pointed at (`-C`), and to exit as documented.
+ * `forge story verify <storyId> [--phase verify|done] [--json]` (`10` §10.6 steps 6 and 9, `09` §9.8 as
+ * amended by `PLAN-M14.md` P1, `PLAN-M13.md` P22, `PLAN-M14.md` P25), invoked as a real subprocess so the
+ * literal command lines `implement-story.workflow.yaml`'s `self-verify` (default phase) and `done-check`
+ * (`--phase done`) steps run are proven to be accepted, to read the project it is pointed at (`-C`), and
+ * to exit as documented.
  *
  * @see specs/09 §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
+ * @see PLAN-M14.md P1, P25
  */
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -77,10 +80,13 @@ const STORY = {
   dod_profile: 'backend-default',
 };
 
-/** A bare project: the config (`readConfig` needs only that), one Story and one DoD profiles file. */
+/** A bare project: the config (`readConfig` needs only that), one Story and one DoD profiles file. `checks`
+ * populates the `verify` list by default (the phase `forge story verify` runs with no `--phase`); pass
+ * `phase: 'done'` to populate the `done` list instead, for a `--phase done` case. */
 async function project(
-  done: readonly string[],
+  checks: readonly string[],
   testCommands: Readonly<Record<string, string>> = {},
+  phase: 'verify' | 'done' = 'verify',
 ): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-story-verify-'));
   dirs.push(dir);
@@ -97,16 +103,19 @@ async function project(
     'utf8',
   );
   await mkdir(path.join(dir, 'docs/forge/kb/engineering'), { recursive: true });
+  const list = checks.map((entry) => `      - ${entry}`).join('\n');
+  const verifyLine = phase === 'verify' ? `    verify:\n${list}\n` : '';
+  const doneLine = phase === 'done' ? `    done:\n${list}\n` : '    done: []\n';
   await writeFile(
     path.join(dir, 'docs/forge/kb/engineering/dod-profiles.yaml'),
-    `profiles:\n  backend-default:\n    ready: []\n    done:\n${done.map((entry) => `      - ${entry}`).join('\n')}\n`,
+    `profiles:\n  backend-default:\n    ready: []\n${verifyLine}${doneLine}`,
     'utf8',
   );
   return dir;
 }
 
 describe('forge story verify (real subprocess)', () => {
-  it('exits 0 with a {v:1} envelope when every done check passes', async () => {
+  it('exits 0 with a {v:1} envelope when every verify check passes (the default phase)', async () => {
     const dir = await project(["'story.acceptance.length > 0'"]);
     const result = forge(['story', 'verify', 'STORY-001', '--json'], dir);
     expect(result.status).toBe(0);
@@ -114,7 +123,7 @@ describe('forge story verify (real subprocess)', () => {
       v: 1,
       storyId: 'STORY-001',
       profile: 'backend-default',
-      phase: 'done',
+      phase: 'verify',
       passed: true,
       errors: 0,
     });
@@ -136,6 +145,25 @@ describe('forge story verify (real subprocess)', () => {
     ]);
   });
 
+  it('a pre-M14 profile with no verify list AT ALL prints the "kb lint" warning on stderr and in the --json envelope', async () => {
+    const dir = await project(['{ check: security:secrets-scan }']); // fails -> exit 1, real stderr captured
+    const withoutVerify = path.join(dir, 'docs/forge/kb/engineering/dod-profiles.yaml');
+    await writeFile(
+      withoutVerify,
+      // No `verify:` key at all: a real pre-M14 profile file (`load.ts`'s own "kb lint" advisory names it).
+      'profiles:\n  backend-default:\n    ready: []\n    done:\n      - { check: security:secrets-scan }\n',
+      'utf8',
+    );
+    const result = forge(['story', 'verify', 'STORY-001', '--phase', 'done', '--json'], dir);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forge: warning:');
+    expect(result.stderr).toContain('verify');
+    expect(result.stderr).toContain('09 §9.8');
+    const body = JSON.parse(result.stdout) as { warnings: string[] };
+    expect(body.warnings).toHaveLength(1);
+    expect(body.warnings[0]).toContain('verify');
+  });
+
   it('exits 1 for a check it cannot verify, never 0', async () => {
     const dir = await project(['{ check: security:secrets-scan }']);
     const result = forge(['story', 'verify', 'STORY-001', '--json'], dir);
@@ -152,7 +180,7 @@ describe('forge story verify (real subprocess)', () => {
     dirs.push(elsewhere);
     const result = forge(['story', 'verify', 'STORY-001', '-C', dir], elsewhere);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('every done check passed');
+    expect(result.stdout).toContain('every verify check passed');
   });
 
   it('exits 2 for a story that does not exist, naming the remedy', async () => {
@@ -164,12 +192,14 @@ describe('forge story verify (real subprocess)', () => {
     expect(result.stderr).toContain('forge spec list');
   });
 
-  it('exits 2 for the usage mistakes: no id, two ids, a stray flag, a bad subcommand, none', async () => {
+  it('exits 2 for the usage mistakes: no id, two ids, a stray flag, a bad subcommand, an invalid --phase, none', async () => {
     const dir = await project([]);
     for (const args of [
       ['story', 'verify'],
       ['story', 'verify', 'STORY-001', 'STORY-002'],
       ['story', 'verify', 'STORY-001', '--bogus'],
+      ['story', 'verify', 'STORY-001', '--phase', 'bogus'],
+      ['story', 'verify', 'STORY-001', '--phase'],
       ['story', 'nonsense', 'STORY-001'],
       ['story'],
     ]) {
@@ -232,5 +262,51 @@ describe('forge story verify (real subprocess)', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('--dry-run');
     await expect(stat(marker)).rejects.toThrow();
+  });
+
+  it('--phase verify given explicitly behaves exactly like the default (omitted)', async () => {
+    const dir = await project(["'story.acceptance.length > 0'"]);
+    const result = forge(['story', 'verify', 'STORY-001', '--phase', 'verify', '--json'], dir);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ phase: 'verify', passed: true, errors: 0 });
+  });
+});
+
+describe('forge story verify --phase done (real subprocess)', () => {
+  it("exits 0 with phase: done when every done check passes, ignoring the same profile's verify list", async () => {
+    const dir = await project(["'story.acceptance.length > 0'"], {}, 'done');
+    const result = forge(['story', 'verify', 'STORY-001', '--phase', 'done', '--json'], dir);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      v: 1,
+      storyId: 'STORY-001',
+      profile: 'backend-default',
+      phase: 'done',
+      passed: true,
+      errors: 0,
+    });
+  });
+
+  it('the real 09 §9.8 done-phase ids (no deterministic implementation) are each unverifiable, never a pass', async () => {
+    const dir = await project(
+      [
+        '{ check: review:blocking-findings == 0 }',
+        '{ check: docs:public-api-documented }',
+        '{ check: kb:no-new-contradictions }',
+      ],
+      {},
+      'done',
+    );
+    const result = forge(['story', 'verify', 'STORY-001', '--phase', 'done', '--json'], dir);
+    expect(result.status).toBe(1);
+    const body = JSON.parse(result.stdout) as { checks: { status: string }[] };
+    expect(body.checks.map((entry) => entry.status)).toEqual(Array(3).fill('unverifiable'));
+  });
+
+  it('prints "every done check passed" in the text form, distinct from the verify form', async () => {
+    const dir = await project(["'story.acceptance.length > 0'"], {}, 'done');
+    const result = forge(['story', 'verify', 'STORY-001', '--phase', 'done'], dir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('every done check passed');
   });
 });
