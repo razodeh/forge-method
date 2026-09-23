@@ -328,13 +328,13 @@ describe('waiverExceedsCap', () => {
 
 describe('validateWaiverPolicy', () => {
   it('accepts a well-formed, single-token owner within the cap', () => {
-    expect(() =>
+    expect(() => {
       validateWaiverPolicy(
         waiver({ owner: 'radwan', expiresAt: new Date(NOW + 30 * DAY_MS).toISOString() }),
         NOW,
         90,
-      ),
-    ).not.toThrow();
+      );
+    }).not.toThrow();
   });
 
   it('refuses (GATE-512) an expiry beyond the cap, naming maxDays and the expiry', () => {

@@ -57,27 +57,34 @@ async function findGateOrThrow(ctx: GateCommandContext, gateId: string): Promise
   return definition;
 }
 
+/** `DEFAULT_CONFIG.gates.waiverMaxDays` — this package's own single source of the documented default (90)
+ * — narrowed with a real runtime check rather than a non-null assertion (forbidden in production code by
+ * this repo's own eslint config): `gates` is itself typed optional on `ForgeConfig` (any OTHER config may
+ * omit it), but `DEFAULT_CONFIG` always sets it (`schemas/test/config/docs.test.ts`'s "DEFAULT_CONFIG
+ * itself is a valid config" proves it every run) — this throws instead of silently repeating "90" as a
+ * second, driftable fallback literal if that invariant is ever broken. */
+function defaultWaiverMaxDays(): number {
+  const { gates } = DEFAULT_CONFIG;
+  if (gates === undefined) {
+    throw new Error('DEFAULT_CONFIG.gates is unexpectedly absent (schemas/src/config/defaults.ts)');
+  }
+  return gates.waiverMaxDays;
+}
+
 /** `gates.waiverMaxDays` (`PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10): the project's real,
- * configured cap, defaulting to `DEFAULT_CONFIG.gates.waiverMaxDays` (90) — the single source of that
- * default (`@forge/schemas/config`), not a second, independently-spelled literal here. Absent because a
- * `.forge/config.yaml` was written before this piece existed (the identical "older configs load" reason
+ * configured cap, defaulting to `defaultWaiverMaxDays()` (90). Absent because a `.forge/config.yaml` was
+ * written before this piece existed (the identical "older configs load" reason
  * `execution.mergeChecks`/`paths.release` are already optional for), OR because no config file exists on
  * this project AT ALL YET, both read as the documented default rather than a missing-file error `forge
  * gate waive`/`check`/`approve` have no reason to surface: a project need not have run `forge config set`
  * even once for gate commands to work. A config file that DOES exist but fails to validate still throws
  * (`readConfig`'s own `CFG-001`) — only a literally absent file is this lenient. */
 async function resolveWaiverMaxDays(ctx: GateCommandContext): Promise<number> {
-  // `gates` is itself typed optional on `ForgeConfig` (any OTHER config may omit it) even though
-  // `DEFAULT_CONFIG` — this package's own single source of the default — always sets it
-  // (`schemas/test/config/docs.test.ts`'s "DEFAULT_CONFIG itself is a valid config" proves it every run);
-  // the assertion states that fact for the type checker rather than repeating "90" as a second, driftable
-  // fallback literal here.
-  const fallback = DEFAULT_CONFIG.gates!.waiverMaxDays;
   if (!(await pathExists(ctx.paths.resolveWithin(CONFIG_REL_PATH)))) {
-    return fallback;
+    return defaultWaiverMaxDays();
   }
   const config = await readConfig(ctx.paths);
-  return config.gates?.waiverMaxDays ?? fallback;
+  return config.gates?.waiverMaxDays ?? defaultWaiverMaxDays();
 }
 
 /** `check <id>`: re-evaluates without approving — `10` §10.3 gate rule 3's own non-mutating read
