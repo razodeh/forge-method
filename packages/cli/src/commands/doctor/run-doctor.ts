@@ -29,6 +29,53 @@ import { checkModelTiers } from './model-tiers.ts';
 import { checkSecretReferences } from './secrets.ts';
 import { applyDoctorFix } from './fix.ts';
 import type { DoctorCheck, DoctorFixResult, DoctorReport } from './types.ts';
+import { workflowValidateAll, type WorkflowCommandContext } from '../workflow.ts';
+
+const AGENTS_ROOT = '.forge/agents';
+const WORKFLOWS_ROOT = '.forge/workflows';
+const CHECKS_ROOT = '.forge/checks';
+
+/** `workflow-claims` — `03` §3.7's checklist plus `06` §6.7's empty-claim rule made visible for a
+ * project's *own* customised workflows (`SPEC-QUESTIONS.md` Q225/Q232 decision 6, `PLAN-M14.md` P7).
+ * `forge workflow validate --all` fails the identical defect with an *error* (`write-without-claim`);
+ * here it is only ever a `warning` — `forge doctor` never blocks a project's build over its own
+ * workflow customisation, and a project a pre-`PLAN-M13.md` P36 `forge init` laid down genuinely has
+ * this shape in all nine formerly-empty-claim steps until `forge upgrade` regenerates them, which must
+ * not become a hard failure a project cannot run past. Reuses `workflowValidateAll` unchanged — the
+ * exact real check `forge workflow validate --all` runs — so the two can never disagree about what
+ * counts as an offender; a workflow this check cannot even parse is reported by the existing
+ * `runChecks` crash-to-`hard`-check fallback below, not swallowed here. */
+async function checkWorkflowClaims(paths: ProjectPaths): Promise<DoctorCheck> {
+  const ctx: WorkflowCommandContext = {
+    paths,
+    workflowsRoot: WORKFLOWS_ROOT,
+    agentsRoot: AGENTS_ROOT,
+    checksRoot: CHECKS_ROOT,
+  };
+  const results = await workflowValidateAll(ctx);
+  const offenders: string[] = [];
+  for (const [workflowId, issues] of results) {
+    for (const issue of issues) {
+      if (issue.code === 'write-without-claim') {
+        offenders.push(`${workflowId}:${issue.stepId ?? '(unidentified)'}`);
+      }
+    }
+  }
+  const ok = offenders.length === 0;
+  return {
+    id: 'workflow-claims',
+    ok,
+    severity: 'warning',
+    message: ok
+      ? 'Workflow claims: every write-capable agent step declares outputs or a produces glob.'
+      : `Workflow claims: ${String(offenders.length)} write-capable agent step(s) declare neither outputs nor produces, so they run and change nothing: ${offenders.join(', ')}.`,
+    ...(ok
+      ? {}
+      : {
+          fix: 'Run `forge upgrade` to regenerate a stale shipped workflow, or add `produces:`/`outputs:` to the named step naming what it writes.',
+        }),
+  };
+}
 
 export interface DoctorOptions {
   readonly paths: ProjectPaths;
@@ -94,7 +141,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
       id: 'spec-graph',
       // `agentsRoot`: `forge spec validate` also refuses a Story whose owner is not an implementation role (`PLAN-M13.md` P36), and
       // this check reports what that command reports.
-      promise: checkSpecGraph({ paths, specsRoot, kbRoot, agentsRoot: '.forge/agents' }),
+      promise: checkSpecGraph({ paths, specsRoot, kbRoot, agentsRoot: AGENTS_ROOT }),
     },
     { id: 'stale-lock', promise: checkStaleLock(paths) },
     { id: 'orphaned-worktrees', promise: checkOrphanedWorktrees(projectRoot) },
@@ -102,6 +149,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
     { id: 'diagrams', promise: checkDiagrams(paths, kbRoot) },
     { id: 'secret-references', promise: checkSecretReferences(paths, env) },
     { id: 'model-tiers', promise: checkModelTiers(paths, config, adapter) },
+    { id: 'workflow-claims', promise: checkWorkflowClaims(paths) },
   ];
 
   return Promise.all(

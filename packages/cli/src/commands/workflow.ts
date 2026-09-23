@@ -20,6 +20,7 @@ import {
   type ProjectPaths,
 } from '@forge/core';
 import { listResolvableContentReferences, resolveContentReference } from '@forge/agents/prompt';
+import { readAgentDefinition } from '@forge/agents/schema';
 import { artifactTypeById } from '@forge/schemas';
 import { validateGateDocument } from '@forge/engine/gates';
 import {
@@ -113,12 +114,37 @@ async function listGateIds(
   return ids;
 }
 
+/** Every real `.forge/agents/<id>.yaml`'s own `tools.write` grant, keyed by file stem — what
+ * `agentWrites` (`PLAN-M14.md` P7) is backed by. The identical "not judged" stance
+ * `readImplementationRoles` (`implementation-roles.ts`) already takes for a corrupt sibling: a file
+ * that cannot be read or parsed is simply absent from this map, never a reason to fail the whole
+ * oracle or (wrongly) treat the id as read-only. */
+async function buildAgentWriterMap(
+  ctx: Pick<WorkflowCommandContext, 'paths' | 'agentsRoot'>,
+): Promise<ReadonlyMap<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (!(await pathExists(ctx.paths.resolveWithin(ctx.agentsRoot)))) return map;
+  const entries = await listDirEntriesSorted(ctx.paths.resolveWithin(ctx.agentsRoot));
+  for (const entry of entries) {
+    if (entry.isDirectory || !entry.name.endsWith('.yaml')) continue;
+    const id = entry.name.slice(0, -'.yaml'.length);
+    try {
+      const result = await readAgentDefinition(ctx.paths, `${ctx.agentsRoot}/${entry.name}`);
+      if (result.success) map.set(id, result.agent.tools.write);
+    } catch {
+      // Unreadable: not a writer, not judged (see doc comment above).
+    }
+  }
+  return map;
+}
+
 async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExistenceOracle> {
-  const [agentIds, gateIds, workflowIds, briefPaths] = await Promise.all([
+  const [agentIds, gateIds, workflowIds, briefPaths, agentWriters] = await Promise.all([
     listAgentIds(ctx),
     listGateIds(ctx),
     listWorkflowIds(ctx),
     listResolvableContentReferences(ctx.paths, 'briefs'),
+    buildAgentWriterMap(ctx),
   ]);
   const workflowIdSet = new Set(workflowIds);
   // `validateWorkflow` checks `step.agent`/`step.gate`/etc. as literal ids -- it has no template
@@ -148,6 +174,16 @@ async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExisten
     gateExists: (id) => isTemplateReference(id) || gateIds.has(id),
     artifactTypeExists: (id) => artifactTypeById(id) !== undefined,
     workflowExists: (id) => isTemplateReference(id) || workflowIdSet.has(id),
+    // A still-templated agent reference (`{{ownerRole}}`/`{{item.owner_role}}`, `10` §10.5's own real,
+    // shipped `implement-story`/`build-stage` steps) resolves only at real plan-compilation time, so
+    // this cannot look up a real per-id grant the way it does for a literal id below -- but unlike the
+    // other oracle methods above, "cannot verify" is not read as "assume fine" here: the role such a
+    // template resolves to is, by construction, an implementation role (`isImplementationAgent`,
+    // `@forge/agents/schema`) — a role every shipped implementer declares `tools.write: true` for, the
+    // exact grant a Story's source needs to actually get written. Answering `true` keeps the
+    // empty-claim check live for a templated step instead of silently exempting the one shape it exists
+    // to catch (`SPEC-QUESTIONS.md` Q225's own open item).
+    agentWrites: (id) => (isTemplateReference(id) ? true : (agentWriters.get(id) ?? false)),
   };
 }
 

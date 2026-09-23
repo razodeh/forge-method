@@ -311,11 +311,21 @@ export interface ValidationIssue {
  * incomplete relative to the spec text it cites, the same class of correction as `Q66`'s `baseSha`
  * addition to `enforceClaim`. All four (five) are synchronous: `validateWorkflow`'s own signature
  * returns a plain array, not a `Promise`, so an async oracle could never be called from inside it — a
- * real caller backs this with an already-loaded, in-memory index, not a live lookup. */
+ * real caller backs this with an already-loaded, in-memory index, not a live lookup.
+ *
+ * `agentWrites` (`PLAN-M14.md` P7, `SPEC-QUESTIONS.md` Q225/Q232 decision 6) is a sixth method, of a
+ * different shape than the other five: they ask "does this reference resolve," `agentWrites` asks "if
+ * it resolves, does the resulting agent hold `tools.write: true`" — the same grant
+ * `assembleAgentSession` (`06` §6.7, `PLAN-M13.md` P36) reads before an empty claim withholds it. A
+ * real caller answers `false` for an id it cannot load a real definition for (unknown or corrupt: "not
+ * a writer, not judged," the identical stance the P36 owner-role check already takes for a corrupt
+ * sibling agent file) — never `true` by default, since defaulting to "writes" for an id nothing backs
+ * would fabricate a finding this oracle cannot actually support. */
 export interface WorkflowExistenceOracle {
   readonly agentExists: (id: string) => boolean;
   readonly briefExists: (path: string) => boolean;
   readonly gateExists: (id: string) => boolean;
   readonly artifactTypeExists: (id: string) => boolean;
   readonly workflowExists: (id: string) => boolean;
+  readonly agentWrites: (id: string) => boolean;
 }

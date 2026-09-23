@@ -36,8 +36,17 @@ function allowAllOracle(overrides: Partial<WorkflowExistenceOracle> = {}): Workf
     gateExists: () => true,
     artifactTypeExists: () => true,
     workflowExists: () => true,
+    // Defaults to "not a writer" -- every existing fixture step below was written before
+    // `write-without-claim` existed and carries no claim of its own; a test that means to exercise
+    // the new check overrides this explicitly (`writerOracle` below).
+    agentWrites: () => false,
     ...overrides,
   };
+}
+
+/** `allowAllOracle`, but the one agent id given writes -- the fixture for `write-without-claim`. */
+function writerOracle(writerId = 'engineer'): WorkflowExistenceOracle {
+  return allowAllOracle({ agentWrites: (id) => id === writerId });
 }
 
 describe('validateStructure', () => {
@@ -722,5 +731,122 @@ describe('validateWorkflow', () => {
       issues = validateWorkflow(wf, allowAllOracle());
     }).not.toThrow();
     expect(issues).toContainEqual(expect.objectContaining({ code: 'excessive-nesting-depth' }));
+  });
+
+  // `06` §6.7's "an empty claim means no write," made visible here rather than only at run time
+  // (`SPEC-QUESTIONS.md` Q225/Q232 decision 6, `PLAN-M14.md` P7).
+  describe('write-without-claim', () => {
+    it('reports a write-capable agent step that declares neither outputs nor produces', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer' }]);
+
+      const issues = validateWorkflow(wf, writerOracle());
+
+      expect(issues).toEqual([
+        expect.objectContaining({ code: 'write-without-claim', severity: 'error', stepId: 'a' }),
+      ]);
+    });
+
+    it('treats a produces list of only "!"-exclusions as still empty -- an exclusion subtracts, it never contributes', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'engineer', produces: ['!src/x'] }]);
+
+      const issues = validateWorkflow(wf, writerOracle());
+
+      expect(issues).toContainEqual(expect.objectContaining({ code: 'write-without-claim' }));
+    });
+
+    it('does not report a step whose produces is a single, still-templated string entry', () => {
+      const wf = workflow([
+        { id: 'a', kind: 'agent', agent: 'engineer', produces: '{{run.filesExpected}}' },
+      ]);
+
+      expect(
+        validateWorkflow(wf, writerOracle()).filter(
+          (issue) => issue.code === 'write-without-claim',
+        ),
+      ).toEqual([]);
+    });
+
+    it('does not report a step that declares an output instead of a produces glob', () => {
+      const wf = workflow([
+        { id: 'a', kind: 'agent', agent: 'engineer', outputs: [{ type: 'ADR' }] },
+      ]);
+
+      expect(
+        validateWorkflow(wf, writerOracle()).filter(
+          (issue) => issue.code === 'write-without-claim',
+        ),
+      ).toEqual([]);
+    });
+
+    it('does not report a step whose agent the oracle says does not write', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'reviewer' }]);
+
+      const issues = validateWorkflow(wf, allowAllOracle({ agentWrites: () => false }));
+
+      expect(issues.filter((issue) => issue.code === 'write-without-claim')).toEqual([]);
+    });
+
+    it('reports a "{{ownerRole}}" step with an empty claim -- the oracle says the resolved implementer writes', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: '{{ownerRole}}' }]);
+
+      const issues = validateWorkflow(
+        wf,
+        allowAllOracle({ agentWrites: (id) => id === '{{ownerRole}}' }),
+      );
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'write-without-claim', stepId: 'a' }),
+      );
+    });
+
+    it("never checks a command step -- the rule is about an agent step's write grant, command has none", () => {
+      const wf = workflow([{ id: 'a', kind: 'command', run: 'echo hi' }]);
+
+      const issues = validateWorkflow(wf, allowAllOracle({ agentWrites: () => true }));
+
+      expect(issues.filter((issue) => issue.code === 'write-without-claim')).toEqual([]);
+    });
+
+    it('finds all five offenders nested in a fanout template, parallel and sequence children, onComplete and an onFailure escalation', () => {
+      const wf = workflow(
+        [
+          {
+            id: 'fo',
+            kind: 'fanout',
+            over: 'stage.stories',
+            step: { kind: 'agent', agent: 'engineer' },
+          },
+          {
+            id: 'par',
+            kind: 'parallel',
+            steps: [{ id: 'par-child', kind: 'agent', agent: 'engineer' }],
+          },
+          {
+            id: 'seq',
+            kind: 'sequence',
+            steps: [{ id: 'seq-child', kind: 'agent', agent: 'engineer' }],
+          },
+        ],
+        {
+          onComplete: [{ id: 'oc', kind: 'agent', agent: 'engineer' }],
+          onFailure: {
+            default: 'block',
+            escalations: [{ when: 'true', do: { id: 'esc', kind: 'agent', agent: 'engineer' } }],
+          },
+        },
+      );
+
+      const issues = validateWorkflow(wf, writerOracle());
+
+      expect(issues.filter((issue) => issue.code === 'write-without-claim')).toHaveLength(5);
+    });
+
+    it('reports only unknown-agent, never write-without-claim, for a step whose agent does not exist', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'nonexistent-role' }]);
+
+      const issues = validateWorkflow(wf, allowAllOracle({ agentExists: () => false }));
+
+      expect(issues).toEqual([expect.objectContaining({ code: 'unknown-agent', stepId: 'a' })]);
+    });
   });
 });

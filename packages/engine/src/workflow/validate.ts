@@ -329,13 +329,23 @@ function isWellFormedGlob(glob: string): boolean {
   return minimatch.makeRe(glob) !== false;
 }
 
+/** Normalises `AgentStep`/`CommandStep`'s shared `produces` field (`string | readonly string[] |
+ * undefined`, `types.ts:82`) to a plain array — the one shape every check in this file that reads
+ * `produces` needs, `checkProducesGlobs` and the `write-without-claim` check in `validateWorkflow`
+ * alike. A still-templated entry (`"{{run.filesExpected}}"`) normalises the same as any other string:
+ * this function only counts entries, it does not resolve them. */
+function producesEntries(produces: string | readonly string[] | undefined): readonly string[] {
+  if (produces === undefined) return [];
+  return typeof produces === 'string' ? [produces] : produces;
+}
+
 function checkProducesGlobs(steps: readonly WorkflowStep[]): readonly ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   for (const step of steps) {
     // `06` §6.2's `StepNode.produces` is shared by every kind; `agent` and `command` are the two that
     // author it (`PLAN-M14.md` P2) — both narrow to the same optional `string | readonly string[]` shape.
     if ((step.kind !== 'agent' && step.kind !== 'command') || step.produces === undefined) continue;
-    const globs = typeof step.produces === 'string' ? [step.produces] : step.produces;
+    const globs = producesEntries(step.produces);
     for (const glob of globs) {
       if (!isWellFormedGlob(glob)) {
         issues.push({
@@ -436,6 +446,25 @@ export function validateWorkflow(
           report(
             'unknown-artifact-type',
             `Step "${step.id ?? '(unidentified)'}" declares unknown artifact type "${output.type}" in outputs.`,
+            step.id,
+          );
+        }
+      }
+      // `06` §6.7's own "an empty claim means no write" rule, made visible before a run
+      // (`SPEC-QUESTIONS.md` Q225/Q232 decision 6): a step whose agent holds `tools.write: true` but
+      // declares neither `outputs` nor a non-`!` `produces` entry gets no write grant at all
+      // (`assemble.ts`, `PLAN-M13.md` P36) — it runs and can change nothing, a silent no-op the run
+      // itself never surfaces as a failure. A `!`-only `produces` (e.g. `['!src/x']`) is still an empty
+      // claim: an exclusion subtracts from the claim, it never contributes to it.
+      if (oracle.agentWrites(step.agent)) {
+        const hasOutputs = (step.outputs?.length ?? 0) > 0;
+        const hasProducesClaim = producesEntries(step.produces).some(
+          (glob) => !glob.startsWith('!'),
+        );
+        if (!hasOutputs && !hasProducesClaim) {
+          report(
+            'write-without-claim',
+            `Step "${step.id ?? '(unidentified)'}" runs a write-capable agent ("${step.agent}") with an empty claim: no outputs and no produces glob. 06 §6.7 gives it no write grant at all, so it will run and change nothing. Add outputs or a produces glob naming what it writes.`,
             step.id,
           );
         }
