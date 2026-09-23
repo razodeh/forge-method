@@ -483,7 +483,7 @@ export async function runSwarmReviewStep(
   // lane is pulled back out of the registry `runLaneLifecycle` just added it to, and the step itself ends
   // failed instead of succeeded. Checked strictly before the `ArtifactCreated` emission below: that event
   // is only ever for a step that actually succeeded.
-  if (outcome.status === 'succeeded' && report !== undefined && report.content.verdict === 'blocked') {
+  if (outcome.status === 'succeeded' && report?.content.verdict === 'blocked') {
     ctx.laneRegistry.delete(node.id);
     return failed(
       node,
