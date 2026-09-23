@@ -106,6 +106,44 @@ describe('execution.testRoots (PLAN-M14.md P5)', () => {
   });
 });
 
+describe('paths.release (PLAN-M14.md P12)', () => {
+  it('is an empty list by default', async () => {
+    const project = await createTestProject();
+    const value = await configGet({ paths: project.paths }, 'paths.release');
+    expect(value).toEqual([]);
+  });
+
+  it('round-trips a list of app paths through set/get/explain', async () => {
+    const project = await createTestProject();
+    await configSet({ paths: project.paths }, 'paths.release', '[apps/mobile/**, app.json]');
+    const value = await configGet({ paths: project.paths }, 'paths.release');
+    expect(value).toEqual(['apps/mobile/**', 'app.json']);
+    const explanation = await configExplain({ paths: project.paths }, 'paths.release');
+    expect(explanation.value).toEqual(['apps/mobile/**', 'app.json']);
+    expect(explanation.doc.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a scalar (not a list), without writing it', async () => {
+    const project = await createTestProject();
+    await expect(
+      configSet({ paths: project.paths }, 'paths.release', 'apps/mobile'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    const value = await configGet({ paths: project.paths }, 'paths.release');
+    expect(value).toEqual([]);
+  });
+
+  it('refuses an absolute entry, a ".." segment, and a "!"-leading entry, without writing them', async () => {
+    const project = await createTestProject();
+    for (const bad of ['[/etc/passwd]', '[../outside]', '[apps/../etc]', '["!apps/mobile/**"]']) {
+      await expect(configSet({ paths: project.paths }, 'paths.release', bad)).rejects.toMatchObject(
+        { code: 'CFG-001' },
+      );
+    }
+    const value = await configGet({ paths: project.paths }, 'paths.release');
+    expect(value).toEqual([]);
+  });
+});
+
 describe('configList', () => {
   it('lists every real leaf key with its own real, current value', async () => {
     const project = await createTestProject();

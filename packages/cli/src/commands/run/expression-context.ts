@@ -26,9 +26,17 @@
  * A workflow that cannot be planned for want of an input is refused with the input named and the flag that
  * supplies it (`RUN-089`), before any lane exists, not with the compiler's list of unresolved placeholders.
  *
+ * - `config.paths.release` (`PLAN-M14.md` P12, `SPEC-QUESTIONS.md` Q216 / Q232 decision 4): the one leaf of
+ *   the project's config exposed at the expression language's `config` root, and only when it is non-empty —
+ *   nothing else of the config object is exposed this way. A workflow that reads it while the project has not
+ *   set it (`store-release`'s `prepare-release-build`, claiming the app's own release-build paths) is refused
+ *   (`RUN-106`) before `compileRunPlan` runs at all, naming the key and the `forge config set` line, rather
+ *   than silently compiling a narrower claim than the workflow author wrote.
+ *
  * @see specs/03 §3.2.4
  * @see specs/10 §10.1
  * @see PLAN-M13.md P21
+ * @see PLAN-M14.md P12
  */
 import { ForgeError } from '@forge/core/errors';
 import type { ExpressionContext } from '@forge/engine/expr';
@@ -89,6 +97,34 @@ function refuseMissing(workflowId: string, missing: readonly string[]): never {
   throw new ForgeError('RUN-089', { workflowId, missing: missing.join(', ') });
 }
 
+/** Every string scalar anywhere in a parsed value — the identical small walk `./inputs.ts`'s own
+ * `collectStrings` runs for `referencedRunInputs` (duplicated rather than imported: that function is not
+ * exported, and this is six lines). A comment is not part of the parsed document, so a placeholder
+ * mentioned only in one is not something the workflow reads — the same reasoning that walk documents. */
+function collectWorkflowStrings(value: unknown, into: string[]): void {
+  if (typeof value === 'string') into.push(value);
+  else if (Array.isArray(value)) {
+    for (const entry of value as readonly unknown[]) collectWorkflowStrings(entry, into);
+  } else if (typeof value === 'object' && value !== null) {
+    for (const entry of Object.values(value)) collectWorkflowStrings(entry, into);
+  }
+}
+
+/** Whether the parsed workflow reads `config.paths.release` anywhere — as the whole of a placeholder
+ * (`resolveClaimEntry`'s own whole-placeholder splice, `plan/compile.ts:150-173`, the shape
+ * `store-release.workflow.yaml`'s `produces` uses) or embedded in longer text. The one config leaf
+ * `buildRunExpressionContext` ever exposes (below); nothing else under `config` is real yet, so nothing
+ * else needs a name here. */
+function referencesConfigPathsRelease(workflow: unknown): boolean {
+  const strings: string[] = [];
+  collectWorkflowStrings(workflow, strings);
+  return strings.some((text) =>
+    [...text.matchAll(/\{\{(.*?)\}\}/g)].some((match) =>
+      /(?<![\w.])config\.paths\.release(?![\w.])/.test(match[1] ?? ''),
+    ),
+  );
+}
+
 /**
  * Builds the run's expression context.
  *
@@ -96,8 +132,9 @@ function refuseMissing(workflowId: string, missing: readonly string[]): never {
  * workflow needs was not supplied), `RUN-082` (the stage is declared by no Epic), `RUN-090` (the stage cannot be run
  * as it stands: contradicting documents, a blocked story, nothing left to build), `RUN-091` (the story's owner role
  * would break `10` §10.6's separations), `SPEC-024`/`SPEC-025` (`--story` names no Story, or one with no owner role),
- * `RUN-053` (no such workflow), and the reader's own `CFG-006`/`CFG-007` for a corrupt specs document. A workflow that
- * does not parse is not diagnosed here: it gets the legacy context and the run's own `RUN-045` says why.
+ * `RUN-053` (no such workflow), `RUN-106` (the workflow reads `config.paths.release` and the project has not set
+ * it), and the reader's own `CFG-006`/`CFG-007` for a corrupt specs document. A workflow that does not parse is not
+ * diagnosed here: it gets the legacy context and the run's own `RUN-045` says why.
  */
 export async function buildRunExpressionContext(
   deps: RunDeps,
@@ -257,6 +294,11 @@ export async function buildRunExpressionContext(
   }
 
   if (runValues !== undefined) root['run'] = runValues;
+  // `config.paths.release` (`PLAN-M14.md` P12): the one leaf of the project's config exposed at the
+  // expression language's `config` root, and only when it is non-empty — a workflow that reads it while
+  // the project has not set it is refused below (`RUN-106`), not handed an empty claim silently.
+  const releaseGlobs = deps.config.paths.release;
+  if (releaseGlobs.length > 0) root['config'] = { paths: { release: releaseGlobs } };
   Object.assign(root, inputValues);
 
   // The workflow's own `vars:` last, over the inputs above; a var it cannot resolve is left out and, if a step
@@ -265,6 +307,16 @@ export async function buildRunExpressionContext(
   if (Object.keys(vars).length > 0) root['vars'] = vars;
 
   const context: RunExpressionContext = root;
+
+  // Before anything compiles (`RUN-106`): the project has not set `paths.release`, and the workflow reads
+  // it. Left unchecked, `resolveClaimEntry`'s own whole-placeholder splice would resolve the reference to
+  // zero claim entries with no message at all — `assertPlannable`'s own missing-input check does not cover
+  // this either, since `config.paths.release` is not a run input (`evaluate.ts` resolves a missing/empty
+  // path to `undefined`/`[]`, not an unsupplied-input finding).
+  if (releaseGlobs.length === 0 && referencesConfigPathsRelease(workflow)) {
+    throw new ForgeError('RUN-106', { workflowId });
+  }
+
   const ownerForRoles = context['ownerRole'];
   const roles =
     typeof ownerForRoles === 'string'

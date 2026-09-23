@@ -1265,6 +1265,22 @@ export const ERROR_CODES = {
     remedy:
       'Add each reverted path to the step’s `produces` (or, for a registry artifact, declare it in `outputs`), or make the session write only what the step already claims. `forge logs` names the step and shows the reverted paths; the `PolicyViolation` event carries the complete, unbounded list.',
   },
+  'RUN-106': {
+    // `PLAN-M14.md` P12, `SPEC-QUESTIONS.md` Q216 / Q232 decision 4: `prepare-release-build` used to
+    // guess at the app's own layout with six hard-coded globs (`**/ios/**`, `app.json`, ...); it now
+    // claims a project-configured list (`paths.release`) instead. An empty list is not a missing run
+    // *input* -- `RUN-089` only ever covers those -- it is a project that has not yet said where its own
+    // release build lives, so `buildRunExpressionContext` refuses here, before `compileRunPlan` runs at
+    // all: left unhandled, `resolveClaimEntry`'s own whole-placeholder splice (`plan/compile.ts:150-173`)
+    // would otherwise silently resolve `{{config.paths.release}}` to zero claim entries, narrowing the
+    // step's claim with no message at all rather than failing loudly.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { workflowId: string }) =>
+      `Workflow ${show(d.workflowId)} reads config.paths.release, and it is not set.`,
+    remedy:
+      "Set the project's release-build app paths, for example `forge config set paths.release '[apps/mobile/**, app.json]'`, then run the workflow again.",
+  },
   'RUN-107': {
     // `PLAN-M14.md` P9, `SPEC-QUESTIONS.md` Q221 disclosed item (d) / Q232 decision 18: the integration
     // branch used to accumulate across runs with no path back to `main`'s own newer commits, so a lane

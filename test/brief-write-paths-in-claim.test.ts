@@ -134,6 +134,9 @@ const FIXTURE_CONTEXT = {
   goal: 'extract a shared helper',
   interfaceName: 'orders-api',
   buildTarget: 'ios',
+  // `store-release:prepare-release-build` claims this (`PLAN-M14.md` P12): a project-configured list of
+  // app source paths, spliced into its `produces` claim in place of a guess at the app's own layout.
+  config: { paths: { release: ['apps/mobile/**', 'app.json'] } },
 } as const;
 
 /** The docs roots claim derivation resolves against (`docRootsOf` with no configured override = defaults). */
@@ -803,10 +806,11 @@ const IMPLIED_WRITES: readonly {
 const BROAD_PRODUCES_ALLOWED: Readonly<Record<string, string>> = {
   'initialize-project:scaffold-project|**/*':
     'the scaffold creates the whole repository skeleton (sources, manifests, configs, docs stubs); its claim is the project, by design (10 section 10.2 P4)',
-  'fm-mobile/store-release.workflow.yaml:prepare-release-build|**/ios/**':
-    'the brief names no app path and the native project may sit at any depth (a monorepo keeps it under apps/<name>/); the directory name is the anchor',
-  'fm-mobile/store-release.workflow.yaml:prepare-release-build|**/android/**':
-    'the same, for the Android project',
+  // The two `fm-mobile/store-release.workflow.yaml:prepare-release-build` mobile-glob allowances
+  // (`**/ios/**`, `**/android/**`) are gone: `PLAN-M14.md` P12 replaced those guessed globs with the
+  // project-configured `{{config.paths.release}}` (`SPEC-QUESTIONS.md` Q216 / Q232 decision 4), which this
+  // file's own `FIXTURE_CONTEXT.config.paths.release` resolves to `apps/mobile/**`/`app.json` — narrow by
+  // `isBroadProduces`'s own rule, so no allowance is needed for either.
 };
 
 /**

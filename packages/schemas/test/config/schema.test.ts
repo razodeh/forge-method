@@ -45,6 +45,8 @@ function goldenConfig(): Record<string, unknown> {
       sessions: 'docs/forge/sessions',
       reports: 'docs/forge/reports',
       code: '.',
+      // `PLAN-M14.md` P12: empty by default in `18` §18.3's own example (written before this piece).
+      release: [],
     },
     platform: {
       primary: 'example-adapter',
@@ -231,6 +233,53 @@ describe('configSchema — execution.mergeChecks (PLAN-M13.md P38)', () => {
   it('rejects a key that is not pre or post, and an empty check', () => {
     expect(withMergeChecks({ before: 'fast' }).success).toBe(false);
     expect(withMergeChecks({ pre: '' }).success).toBe(false);
+  });
+});
+
+describe('configSchema — paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q216 / Q232 decision 4)', () => {
+  const withRelease = (release: unknown) => {
+    const config = goldenConfig() as { paths: Record<string, unknown> };
+    return configSchema.safeParse({ ...config, paths: { ...config.paths, release } });
+  };
+
+  it('is required (present, empty by default) — not optional like testRoots/mergeChecks', () => {
+    const config = goldenConfig() as { paths: Record<string, unknown> };
+    const pathsWithoutRelease = Object.fromEntries(
+      Object.entries(config.paths).filter(([key]) => key !== 'release'),
+    );
+    expect(configSchema.safeParse({ ...config, paths: pathsWithoutRelease }).success).toBe(false);
+  });
+
+  it('accepts the empty list', () => {
+    expect(withRelease([]).success).toBe(true);
+  });
+
+  it('accepts a list of repo-relative glob entries', () => {
+    expect(withRelease(['apps/mobile/**', 'app.json', 'pubspec.yaml']).success).toBe(true);
+  });
+
+  it('rejects a scalar (not an array)', () => {
+    expect(withRelease('apps/mobile/**').success).toBe(false);
+  });
+
+  it('rejects an empty-string entry', () => {
+    const result = withRelease(['apps/mobile/**', '']);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['paths', 'release', 1]);
+  });
+
+  it('rejects an absolute entry', () => {
+    expect(withRelease(['/etc/passwd']).success).toBe(false);
+    expect(withRelease(['C:\\secrets']).success).toBe(false);
+  });
+
+  it('rejects an entry with a ".." segment, anywhere in the path', () => {
+    expect(withRelease(['../outside']).success).toBe(false);
+    expect(withRelease(['apps/../../etc']).success).toBe(false);
+  });
+
+  it('rejects a leading "!" (the claim matcher reads it as an exclusion)', () => {
+    expect(withRelease(['!apps/mobile/**']).success).toBe(false);
   });
 });
 

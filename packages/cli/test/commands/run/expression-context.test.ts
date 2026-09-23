@@ -10,6 +10,7 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
@@ -30,6 +31,17 @@ import {
 } from './helpers.ts';
 
 const SPECS_ROOT = 'docs/forge/specs';
+/** `store-release.workflow.yaml` is an fm-mobile module workflow, not one of the 20 `WORKFLOW_INDEX` ids
+ * `readWorkflowFiles()` (below) copies into every project fixture here — so tests that need the real
+ * shipped file copy it themselves, from the module tree directly. */
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
+const STORE_RELEASE_SOURCE = path.join(
+  repoRoot,
+  'modules',
+  'fm-mobile',
+  'workflows',
+  'store-release.workflow.yaml',
+);
 
 let project: TestProject;
 beforeEach(async () => {
@@ -786,5 +798,133 @@ steps:
     const error = await refusal(build('owner-in-shell', { story: 'STORY-001' }));
     expect(error.code).toBe('RUN-088');
     expect(error.message).toContain('ownerRole');
+  });
+});
+
+describe('config.paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q216 / Q232 decision 4)', () => {
+  beforeEach(async () => {
+    await workflow(
+      'reads-release',
+      `inputs:
+  - { name: buildTarget, type: string, required: true }
+steps:
+  - id: a
+    kind: agent
+    agent: mobile
+    brief: b.md
+    produces:
+      - 'test/device-matrix/**'
+      - '{{config.paths.release}}'
+`,
+    );
+    await workflow(
+      'no-release-ref',
+      'steps:\n  - id: a\n    kind: command\n    run: "true"\n    inline: true\n',
+    );
+    // The real shipped file, for "the real shipped store-release workflow" below — not one of the 20
+    // `WORKFLOW_INDEX` ids the outer `beforeEach` already copied.
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, 'store-release.workflow.yaml'),
+      await readFile(STORE_RELEASE_SOURCE, 'utf8'),
+    );
+  });
+
+  it('is absent from the context (and nothing else of config is exposed) when paths.release is empty and the workflow never reads it', async () => {
+    const { context } = await build('no-release-ref', {});
+    expect(Object.hasOwn(context, 'config')).toBe(false);
+  });
+
+  it('refuses with RUN-106, naming the key and the forge config set remedy, before compileRunPlan runs', async () => {
+    const error = await refusal(build('reads-release', { inputs: ['buildTarget=ios'] }));
+    expect(error.code).toBe('RUN-106');
+    expect(error.message).toContain('config.paths.release');
+    expect(error.message).toContain('reads-release');
+    expect(error.remedy).toContain('forge config set paths.release');
+    expect(error.exitCode).toBe(2);
+  });
+
+  it('does not refuse a workflow that never reads config.paths.release, whatever paths.release is', async () => {
+    const { context } = await build('no-release-ref', {});
+    expect(context.config).toBeUndefined();
+  });
+
+  it('is present, and exposes exactly {paths: {release}} and nothing else of the config object, once set', async () => {
+    const deps = {
+      ...testRunDeps(project),
+      config: {
+        ...project.config,
+        paths: { ...project.config.paths, release: ['apps/mobile/**', 'app.json'] },
+      },
+    };
+    const { context } = await buildRunExpressionContext(
+      deps,
+      'reads-release',
+      { inputs: ['buildTarget=ios'] },
+      SPECS_ROOT,
+    );
+    expect(context.config).toEqual({ paths: { release: ['apps/mobile/**', 'app.json'] } });
+    // Nothing else of the real `ForgeConfig` (project name, secrets config, ...) crosses into the
+    // expression language: `config` carries exactly `paths.release`, never the whole config object.
+    expect(Object.keys(context.config as object)).toEqual(['paths']);
+    expect(Object.keys((context.config as { paths: object }).paths)).toEqual(['release']);
+  });
+
+  it('compiles the claim: test/device-matrix/** plus one entry per configured path, once set', async () => {
+    const deps = {
+      ...testRunDeps(project),
+      config: {
+        ...project.config,
+        paths: { ...project.config.paths, release: ['apps/mobile/**', 'app.json'] },
+      },
+    };
+    const { context } = await buildRunExpressionContext(
+      deps,
+      'reads-release',
+      { inputs: ['buildTarget=ios'] },
+      SPECS_ROOT,
+    );
+    const source = await readFile(
+      path.join(project.dir, WORKFLOWS_ROOT, 'reads-release.workflow.yaml'),
+      'utf8',
+    );
+    const parsed = parseWorkflow(source);
+    if (!parsed.success) throw new Error('reads-release does not parse');
+    const compiled = compileRunPlan(parsed.workflow, context);
+    if (!compiled.success) throw new Error(JSON.stringify(compiled.issues));
+    const step = compiled.nodes.find((n) => n.id === 'reads-release:a');
+    expect(step?.produces).toEqual(['test/device-matrix/**', 'apps/mobile/**', 'app.json']);
+  });
+
+  describe('the real shipped store-release workflow', () => {
+    it('refuses with RUN-106 when paths.release is unset (the default project has an empty list)', async () => {
+      const error = await refusal(build('store-release', { inputs: ['buildTarget=ios'] }));
+      expect(error.code).toBe('RUN-106');
+    });
+
+    it('compiles once paths.release is set, splicing the configured entries into the claim', async () => {
+      const deps = {
+        ...testRunDeps(project),
+        config: {
+          ...project.config,
+          paths: { ...project.config.paths, release: ['apps/mobile/**', 'app.json'] },
+        },
+      };
+      const { context } = await buildRunExpressionContext(
+        deps,
+        'store-release',
+        { inputs: ['buildTarget=ios'] },
+        SPECS_ROOT,
+      );
+      const source = await readFile(
+        path.join(project.dir, WORKFLOWS_ROOT, 'store-release.workflow.yaml'),
+        'utf8',
+      );
+      const parsed = parseWorkflow(source);
+      if (!parsed.success) throw new Error('store-release does not parse');
+      const compiled = compileRunPlan(parsed.workflow, context);
+      if (!compiled.success) throw new Error(JSON.stringify(compiled.issues));
+      const step = compiled.nodes.find((n) => n.id === 'store-release:prepare-release-build');
+      expect(step?.produces).toEqual(['test/device-matrix/**', 'apps/mobile/**', 'app.json']);
+    });
   });
 });

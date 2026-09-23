@@ -60,7 +60,13 @@ const workflowPath = path.join(
 const BUILD_TARGET = 'ios-android-1-2-0';
 
 function fixtureExpressionContext(): ExpressionContext {
-  return { buildTarget: BUILD_TARGET } as unknown as ExpressionContext;
+  // `PLAN-M14.md` P12: `prepare-release-build` claims `{{config.paths.release}}`, spliced one entry per
+  // claim (`resolveClaimEntry`) -- a representative, project-configured list, in place of the six globs
+  // this step used to guess with.
+  return {
+    buildTarget: BUILD_TARGET,
+    config: { paths: { release: ['apps/mobile/**', 'app.json'] } },
+  } as unknown as ExpressionContext;
 }
 
 const UNLIMITED_CONCURRENCY: ConcurrencyLimits = {
@@ -285,6 +291,10 @@ describe('store-release.workflow.yaml (19 §19.1, §19.3)', () => {
     expect(compiled.nodes.length).toBe(7);
     expect(compiled.nodes.map((n) => n.id)).toContain('store-release:store-readiness-gate');
     expect(compiled.nodes.map((n) => n.id)).toContain('store-release:verify-gate');
+    // `PLAN-M14.md` P12: `config.paths.release` is spliced into the claim one entry per glob, alongside
+    // the fixed device-matrix claim.
+    const prepare = compiled.nodes.find((n) => n.id === 'store-release:prepare-release-build');
+    expect(prepare?.produces).toEqual(['test/device-matrix/**', 'apps/mobile/**', 'app.json']);
   });
 
   it('dry-runs end to end against the fake adapter: both agent steps, both gate steps, and the real command step all complete', async () => {

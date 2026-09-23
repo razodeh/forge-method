@@ -29,6 +29,9 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     sessions: 'docs/forge/sessions',
     reports: 'docs/forge/reports',
     code: '.',
+    // `PLAN-M14.md` P12: unset until a project names its own app paths — `prepare-release-build`
+    // refuses (`RUN-106`) rather than guessing at the app's own layout.
+    release: [],
   },
   platform: {
     primary: '',

@@ -23,6 +23,7 @@ export type ConfigKeyPath =
   | 'paths.sessions'
   | 'paths.reports'
   | 'paths.code'
+  | 'paths.release'
   | 'platform.primary'
   | 'platform.fallback'
   | 'platform.perAgent'
@@ -118,6 +119,11 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'paths.sessions': 'Repo-relative path to session records.',
   'paths.reports': 'Repo-relative path to generated reports (gates, coverage, drift, cost).',
   'paths.code': 'Repo-relative path to the root of the actual source tree.',
+  'paths.release':
+    "App source paths (globs, repo-relative) `prepare-release-build` claims as the release build's own " +
+    'change — no leading "/", no ".." segment, no leading "!". Empty by default: a workflow that reads ' +
+    "this while it is empty is refused rather than guessing at the app's own layout. Set with `forge " +
+    "config set paths.release '[apps/mobile/**, app.json]'`.",
   'platform.primary':
     'The opaque id of the primary configured platform adapter, or empty if unset.',
   'platform.fallback': 'The opaque id of the fallback platform adapter, or null if there is none.',

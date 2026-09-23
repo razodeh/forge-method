@@ -65,19 +65,17 @@ steps:
       - type: Task
         cardinality: one
     # The device-matrix suite the next step runs (the brief has the step create it if missing, and it may
-    # add a helper beside it), the native projects a release configuration lives in at any depth (a monorepo
-    # keeps them under `apps/<name>/`), and the cross-platform manifests that carry the version and build
-    # number. The brief names none of the app's own paths; these are the layouts it can be run on, and Q216
-    # records them as a guess. `package.json` is left out on purpose: it holds dependencies and scripts, and
-    # the brief forbids changing application behaviour.
+    # add a helper beside it), plus the app's own release-build paths -- a project-configured list
+    # (`paths.release`, M14 P12, `SPEC-QUESTIONS.md` Q216 / Q232 decision 4) rather than a guess at the
+    # app's own layout: the six hard-coded globs this step used to guess with (`**/ios/**`, `app.json`, ...)
+    # are gone. `buildRunExpressionContext` (`packages/cli/src/commands/run/expression-context.ts`) splices
+    # `config.paths.release` in here one entry per claim (`resolveClaimEntry`), and refuses the run with
+    # `RUN-106` before this even compiles when the project has not set the key -- never a silently narrower
+    # claim. `package.json` is left out on purpose: it holds dependencies and scripts, and the brief forbids
+    # changing application behaviour.
     produces:
       - 'test/device-matrix/**'
-      - '**/ios/**'
-      - '**/android/**'
-      - 'app.json'
-      - 'app.config.*'
-      - 'pubspec.yaml'
-      - 'capacitor.config.*'
+      - '{{config.paths.release}}'
     gateEvidence: [G-Deliver]
     limits: { maxTurns: 30, maxCostUsd: 4.0 }
 

@@ -42,6 +42,33 @@ const projectSchema = z
   })
   .strict();
 
+/**
+ * One `paths.release` entry (`PLAN-M14.md` P12, `SPEC-QUESTIONS.md` Q216 / Q232 decision 4): a
+ * repo-relative glob naming where the project's own release-build app source lives, spliced verbatim
+ * into `prepare-release-build`'s claim (`resolveClaimEntry`, `@forge/engine/plan/compile.ts`) in place
+ * of a workflow guessing at the app's own layout. Refused the identical way that claim matcher's own
+ * hygiene already refuses a hand-written `produces` entry (`06` §6.7, `PLAN-M13.md` P16): absolute (it
+ * would resolve outside the project), a `..` segment (it could climb out of the project), or leading `!`
+ * (the claim matcher reads that as an exclusion, not a literal path — this entry is spliced straight
+ * into `produces`, so a `!`-leading one would silently invert its own meaning instead of claiming
+ * anything).
+ */
+function isValidReleasePathEntry(entry: string): boolean {
+  if (entry.startsWith('!')) return false;
+  if (entry.startsWith('/') || /^[A-Za-z]:[\\/]/.test(entry)) return false;
+  if (entry.split(/[/\\]/).some((segment) => segment === '..')) return false;
+  return true;
+}
+
+const releasePathEntrySchema = z
+  .string()
+  .min(1)
+  .refine(isValidReleasePathEntry, (entry) => ({
+    message:
+      `"${entry}" is not a valid paths.release entry: it must be repo-relative (no leading "/"), ` +
+      'contain no ".." segment, and not start with "!".',
+  }));
+
 const pathsSchema = z
   .object({
     kb: z.string().min(1),
@@ -50,6 +77,12 @@ const pathsSchema = z
     sessions: z.string().min(1),
     reports: z.string().min(1),
     code: z.string().min(1),
+    // `PLAN-M14.md` P12: app source paths `prepare-release-build` claims (a glob per entry), read by
+    // `buildRunExpressionContext` (`@forge/cli/commands/run/expression-context.ts`) into the expression
+    // language's `config` root. Empty by default (`defaults.ts`) — deliberately, not guessed: a workflow
+    // that reads `config.paths.release` while it is empty is refused (`RUN-106`) before it compiles at
+    // all, rather than silently claiming nothing.
+    release: z.array(releasePathEntrySchema),
   })
   .strict();
 

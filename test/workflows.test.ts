@@ -130,7 +130,13 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
           path.join(repoRoot, 'modules', 'fm-mobile', 'workflows', 'store-release.workflow.yaml'),
           'utf8',
         ),
-        { ...FIXTURE_CONTEXT, buildTarget: 'ios' },
+        {
+          ...FIXTURE_CONTEXT,
+          buildTarget: 'ios',
+          // `PLAN-M14.md` P12: `prepare-release-build` claims `{{config.paths.release}}`, so this must
+          // resolve for the workflow to compile at all.
+          config: { paths: { release: ['apps/mobile/**', 'app.json'] } },
+        },
       ),
     ).toEqual({
       'store-release:merge-release-build': ['store-release:prepare-release-build'],

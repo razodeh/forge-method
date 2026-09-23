@@ -46,6 +46,9 @@ function buildPaths(kbRoot: string | undefined): ForgeConfig['paths'] {
     sessions: `${kbRoot}/sessions`,
     reports: `${kbRoot}/reports`,
     code: DEFAULT_CONFIG.paths.code,
+    // `--kb-root` only rebases the docs sections above; `paths.release` (`PLAN-M14.md` P12) names app
+    // source paths, unrelated to the KB root, so it keeps its own (empty) default here too.
+    release: DEFAULT_CONFIG.paths.release,
   };
 }
 

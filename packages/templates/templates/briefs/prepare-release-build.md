@@ -15,8 +15,8 @@ device-matrix test suite can run against it; the store-readiness gate follows th
 
 ### Produce
 
-The release configuration changes, inside the app's own paths, and one `Task` record describing
-them.
+The release configuration changes, inside the app paths the project's `paths.release` config key
+names (`forge config get paths.release`), and one `Task` record describing them.
 
 - Version: set the marketing version and build number for this release according to the project's
   versioning convention, and increase the build number monotonically. Do not reuse one that was

@@ -158,7 +158,16 @@ beforeAll(async () => {
   await git('config', 'user.name', 'Fixture');
   await mkdir(path.join(dir, '.forge/workflows'), { recursive: true });
   await mkdir(path.join(dir, '.forge/checks'), { recursive: true });
-  await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(DEFAULT_CONFIG));
+  // `paths.release` (`PLAN-M14.md` P12) is empty by default, and `store-release` reads it: set here so the
+  // generic "plans with its flags" case below succeeds for every workflow, store-release included. The
+  // dedicated "unset" refusal (RUN-106) gets its own, separate project below.
+  await writeFile(
+    path.join(dir, '.forge/config.yaml'),
+    YAML.stringify({
+      ...DEFAULT_CONFIG,
+      paths: { ...DEFAULT_CONFIG.paths, release: ['apps/mobile/**', 'app.json'] },
+    }),
+  );
   await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n');
   for (const file of await shippedWorkflowFiles()) {
     await copyFile(file, path.join(dir, '.forge/workflows', path.basename(file)));
@@ -563,4 +572,90 @@ describe('--json refusals are one envelope line on stdout, for every command tha
     expect(usage.status).toBe(2);
     expect(parse(usage).error.code).toBe('USR-002');
   });
+});
+
+describe('paths.release (PLAN-M14.md P12): the real CLI, unset and set', () => {
+  const storeReleaseSource = path.join(
+    repoRoot,
+    'modules',
+    'fm-mobile',
+    'workflows',
+    'store-release.workflow.yaml',
+  );
+
+  /** Its own small project (not the shared `dir` above, whose config now sets `paths.release` so every
+   * other workflow in the RUNS table keeps planning): a real git repo holding only the one workflow this
+   * describe block needs, with a config it controls directly. */
+  async function freshStoreReleaseProject(config: unknown): Promise<string> {
+    const projectDir = await mkdtemp(path.join(tmpdir(), 'forge-p12-store-release-'));
+    const git = (...args: string[]): Promise<unknown> => execa('git', args, { cwd: projectDir });
+    await git('init', '--quiet', '-b', 'main');
+    await git('config', 'user.email', 'fixture@example.com');
+    await git('config', 'user.name', 'Fixture');
+    await mkdir(path.join(projectDir, '.forge/workflows'), { recursive: true });
+    await mkdir(path.join(projectDir, '.forge/checks'), { recursive: true });
+    await writeFile(path.join(projectDir, '.forge/config.yaml'), YAML.stringify(config));
+    await writeFile(path.join(projectDir, '.gitignore'), '.forge/state/\n');
+    await copyFile(
+      storeReleaseSource,
+      path.join(projectDir, '.forge/workflows', 'store-release.workflow.yaml'),
+    );
+    await git('add', '-A');
+    await git('commit', '--quiet', '-m', 'fixture');
+    return projectDir;
+  }
+
+  async function forgeIn(cwd: string, args: readonly string[]): Promise<Outcome> {
+    const result = await execa(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
+      reject: false,
+      timeout: 120_000,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    return { status: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  it('forge run store-release --input buildTarget=ios --dry-run exits RUN-106 before compile, unset', async () => {
+    const projectDir = await freshStoreReleaseProject(DEFAULT_CONFIG);
+    try {
+      const result = await forgeIn(projectDir, [
+        'run',
+        'store-release',
+        '--input',
+        'buildTarget=ios',
+        '--dry-run',
+        '--json',
+      ]);
+      expect(result.status).toBe(2);
+      const envelope = JSON.parse(result.stdout) as Envelope;
+      expect(envelope.error.code).toBe('RUN-106');
+      expect(envelope.error.message).toContain('config.paths.release');
+      expect(envelope.error.remedy).toContain('forge config set paths.release');
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it('forge run store-release --input buildTarget=ios --dry-run compiles the configured claim, set', async () => {
+    const projectDir = await freshStoreReleaseProject({
+      ...DEFAULT_CONFIG,
+      paths: { ...DEFAULT_CONFIG.paths, release: ['apps/mobile/**', 'app.json'] },
+    });
+    try {
+      const result = await forgeIn(projectDir, [
+        'run',
+        'store-release',
+        '--input',
+        'buildTarget=ios',
+        '--dry-run',
+        '--json',
+      ]);
+      expect(result.status, result.stderr).toBe(0);
+      const plan = (JSON.parse(result.stdout) as { plan: Plan }).plan;
+      expect(plan.success).toBe(true);
+      const prepare = plan.nodes.find((n) => n.id === 'store-release:prepare-release-build');
+      expect(prepare?.produces).toEqual(['test/device-matrix/**', 'apps/mobile/**', 'app.json']);
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

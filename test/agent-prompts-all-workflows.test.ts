@@ -98,6 +98,9 @@ const FIXTURE_CONTEXT = {
   goal: 'extract a shared helper',
   interfaceName: 'orders-api',
   buildTarget: 'ios',
+  // `store-release:prepare-release-build` claims this (`PLAN-M14.md` P12): a project-configured list of
+  // app source paths, spliced into its `produces` claim in place of a guess at the app's own layout.
+  config: { paths: { release: ['apps/mobile/**', 'app.json'] } },
 };
 
 /**
