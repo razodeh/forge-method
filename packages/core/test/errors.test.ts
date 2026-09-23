@@ -83,6 +83,9 @@ const SAMPLE_DETAILS = {
   section: 'Context',
   type: 'Story',
   idWidth: 3,
+  // `RUN-109` (`PLAN-M14.md` P8): a numbered artifact type's own id space (an `idPrefix` distinct from
+  // `type` above, since `RUN-109` names the registry `idPrefix`, e.g. "ADR", not the type id).
+  idPrefix: 'ADR',
   test: 'AC-014-1 AC-014-2 combined validation',
   acs: 'AC-014-1, AC-014-2',
   acId: 'AC-014-2',

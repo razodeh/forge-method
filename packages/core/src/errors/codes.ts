@@ -2139,9 +2139,16 @@ export const ERROR_CODES = {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
     message: (d: { stepId: string; idPrefix: string; idWidth: number }) => {
-      const max = String(10 ** d.idWidth - 1);
-      const placeholder = 'N'.repeat(d.idWidth);
-      return `Step ${show(d.stepId)} needs a new ${d.idPrefix}-${placeholder} id, but all ${max} ${d.idPrefix}-${placeholder} numbers are in use.`;
+      // Every interpolation goes through `show` (this file's own top-of-file rule) -- `idPrefix`
+      // directly, and `idWidth` guarded before it drives arithmetic/`.repeat`: a revived log line
+      // missing either key must render `<missing>`, never the literal "undefined" a bare `${d.key}`
+      // (or `NaN` from `10 ** undefined`) would produce.
+      const prefix = show(d.idPrefix);
+      const validWidth =
+        typeof d.idWidth === 'number' && Number.isInteger(d.idWidth) && d.idWidth > 0;
+      const placeholder = validWidth ? 'N'.repeat(d.idWidth) : show(undefined);
+      const max = validWidth ? String(10 ** d.idWidth - 1) : show(undefined);
+      return `Step ${show(d.stepId)} needs a new ${prefix}-${placeholder} id, but all ${max} ${prefix}-${placeholder} numbers are in use.`;
     },
     remedy:
       'Free numbers by archiving or renumbering existing documents of this type (never reusing one ' +

@@ -21,6 +21,7 @@ import { ForgeError } from '@forge/core/errors';
 import { slugifyStepId } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
+import { TelemetryError } from '@forge/telemetry/errors';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
@@ -805,5 +806,53 @@ describe('a declared KB output reserves a collision-free id before assembly (PLA
     const reservedIds = prompts.map((prompt) => /reserved id `(ADR-\d{4})`/.exec(prompt)?.[1]);
     expect(new Set(reservedIds).size).toBe(3);
     expect([...reservedIds].sort()).toEqual(['ADR-0001', 'ADR-0002', 'ADR-0003']);
+  });
+
+  it('does not leak the reservation when createLaneForStep itself throws (its own LaneCreated emit failing) after a real worktree already exists', async () => {
+    const projectRoot = await createTempRepo('kb-reserve-telemetry-leak');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote it'],
+      writeFiles: [
+        {
+          relativePath: 'docs/forge/kb/decisions/ADR-0001-x.md',
+          content: validAdrDocument('ADR-0001'),
+        },
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-leak' });
+    const realEmit = ctx.telemetry.emit.bind(ctx.telemetry);
+    // `createLaneForStep` calls `ctx.vcs.createLane` (a real worktree) THEN
+    // `ctx.telemetry.emit({type:'LaneCreated'})`, unwrapped -- this fails only that one emit, after the
+    // worktree genuinely exists, so `runAgentStep`'s own reservation was never bound (`created.ok` is
+    // never reached) and must be released by its `finally`, not merely by the two `{ok:false}` branches.
+    const failingCtx = {
+      ...ctx,
+      telemetry: {
+        emit: (event: Parameters<typeof realEmit>[0]) => {
+          if (event.type === 'LaneCreated') {
+            throw new TelemetryError({
+              code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
+              message: 'ENOSPC: no space left on device',
+              remedy: 'Free disk space and retry.',
+            });
+          }
+          return realEmit(event);
+        },
+      },
+    };
+
+    await expect(runAgentStep(adrStep('wf:leaky'), failingCtx)).rejects.toBeInstanceOf(
+      TelemetryError,
+    );
+    // The worktree really was created before the throw.
+    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    await expect(readdir(worktreesDir)).resolves.toHaveLength(1);
+
+    // If the reservation had leaked, this unrelated, later step would be told ADR-0002, not ADR-0001.
+    const succeeded = await runAgentStep(adrStep('wf:after'), ctx);
+    expect(succeeded.status).toBe('succeeded');
+    const prompt = await readFile(promptPathFor(projectRoot, 'run-leak', 'wf:after'), 'utf8');
+    expect(prompt).toContain('reserved id `ADR-0001`');
   });
 });

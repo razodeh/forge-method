@@ -770,44 +770,61 @@ export async function runAgentStep(
   // `runLaneLifecycle`'s commit/claim/output-check sequence ever runs -- `runLaneLifecycle`'s own
   // `existing` parameter (`@forge/engine/resume`'s own crash-resume reroll path already reuses it the
   // identical way) then runs against this exact lane rather than creating a second one.
-  const created = await createLaneForStep(node, ctx);
-  if (!created.ok) {
-    // No lane exists, and none ever will for this attempt: the reservation it made (if any) would
-    // otherwise be pending forever.
-    reservation?.release();
-    return failed(
-      node.id,
-      startedAt,
-      ctx.now(),
-      { kind: 'agent', session: EMPTY_SESSION_RESULT },
-      created.failure,
-    );
-  }
-  // From here on this reservation is governed by the lane's own liveness (`existsSync`), exactly like
-  // `REVIEW-NNN`'s always was (`output-ids.ts`'s own doc comment): "pending" ends the moment a real lane
-  // exists.
-  reservation?.bind(created.lane.path);
+  //
+  // `bound`, and the surrounding try/finally, are not redundant with the two `{ok:false}` branches
+  // below: `createLaneForStep` itself calls `ctx.telemetry.emit({type:'LaneCreated', ...})` UNWRAPPED
+  // (`06` §6.4 step 1's own doc comment), and a `TelemetryError` escaping that emit propagates past both
+  // `if` checks entirely (`executeStep`'s own contract: it is never folded into a `StepOutcome`, only
+  // wrapped into `RUN-038` at the top level) -- a real worktree can already exist by then. Without the
+  // `finally`, that one exception path would leak this reservation for the life of the process (a
+  // `pending` entry, by design, is never pruned by liveness): the `finally` is what actually makes
+  // `output-ids.ts`'s own "released when the step ends without ever getting one" claim hold on EVERY
+  // exit, not merely the two anticipated ones.
+  let bound = false;
+  try {
+    const created = await createLaneForStep(node, ctx);
+    if (!created.ok) {
+      return failed(
+        node.id,
+        startedAt,
+        ctx.now(),
+        { kind: 'agent', session: EMPTY_SESSION_RESULT },
+        created.failure,
+      );
+    }
+    // From here on this reservation is governed by the lane's own liveness (`existsSync`), exactly like
+    // `REVIEW-NNN`'s always was (`output-ids.ts`'s own doc comment): "pending" ends the moment a real
+    // lane exists.
+    reservation?.bind(created.lane.path);
+    bound = true;
 
-  return runLaneLifecycle(
-    node,
-    ctx,
-    startedAt,
-    { kind: 'agent', session: EMPTY_SESSION_RESULT },
-    (lane, baseSha) =>
-      runAgentWork(
-        node,
-        ctx,
-        lane,
-        baseSha,
-        { kind: 'start' },
-        {
-          assembled: assembled.value,
-          untrustedInput: options.untrustedInput,
-          briefKey: options.briefKey,
-        },
-      ),
-    { lane: created.lane, baseSha: created.baseSha },
-  );
+    return await runLaneLifecycle(
+      node,
+      ctx,
+      startedAt,
+      { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      (lane, baseSha) =>
+        runAgentWork(
+          node,
+          ctx,
+          lane,
+          baseSha,
+          { kind: 'start' },
+          {
+            assembled: assembled.value,
+            untrustedInput: options.untrustedInput,
+            briefKey: options.briefKey,
+          },
+        ),
+      { lane: created.lane, baseSha: created.baseSha },
+    );
+  } finally {
+    // Covers the `!created.ok` return above AND any exception thrown before `bound` was set (including
+    // one thrown by `createLaneForStep` itself after it already created a real worktree) -- idempotent
+    // with `IdReservation.release`'s own guard, so this never double-frees a reservation a later
+    // attempt for the same step has already superseded.
+    if (!bound) reservation?.release();
+  }
 }
 
 const EMPTY_SESSION_RESULT = {
