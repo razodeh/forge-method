@@ -15411,3 +15411,104 @@ here rather than either skipped or claimed as demonstrated when it wasn't. `10` 
 plan/types.ts:63` (the `Surface` list's own citation) was read for context — it is `RetryableFailureClass`'s
 own doc comment, already correctly excluding `policy` from the five retryable classes — and needed no
 change.
+
+## M14 P17 — `forge gate check|approve|waive` write the `GateReport` artifact and the digests verify against it (`schemas/artifacts/gate-report.ts`, `schemas/json/gate-report.schema.json`, `engine/gates/{report,approve,index}.ts`, `engine/gates/types.ts` (doc comment only), `engine/dispatch/{index,steps}.ts`, `cli/commands/run/gate-commands.ts`, `core/errors/codes.ts`, new/edited tests in `schemas/test/artifacts/gate-report.test.ts`, `engine/test/gates/report.test.ts`, `engine/test/dispatch/gate.test.ts`, `cli/test/commands/run/gate-commands.test.ts`, `cli/test/bin.test.ts`)
+
+**Built.** `gateCheck`/`gateApprove`/`gateWaive` (`gate-commands.ts`) each now write a real `GateReport`
+document to `<paths.reports>/gates/<gate>-<ts>.md` (new `writeGateReportFile`/`nextGateReportId`/
+`resolveReportsRoot`), numbered `GATE-###` one above the highest id a directory scan of `reports/gates/`
+finds in any file's own front matter — `GateReport`'s registered file name (`<gate>-<ts>.md`) carries no
+id at all, unlike every other numbered type, so `@forge/core`'s own whole-project `IdAllocator` does not
+apply here; this is a plain, single-process scan with no cross-process lock (disclosed below, matching
+the plan's own text). `gateCheck` writes too, not only `approve`/`waive`: rule 4 says every evaluation
+writes one. `gateReportSchema` (`gate-report.ts`) gains three optional fields (`gate`, `outcome:
+passed|failed|waived`, `evaluatedAt`), backward-compatible with a pre-piece report and the static stub
+template; the JSON Schema snapshot is regenerated and committed. A new, pure `renderGateReportFile`
+(`gates/report.ts`, beside `buildGateReport`, itself untouched) renders the body: one `## <checkId>`
+section per deterministic check (`run`, `exitCode`, `passed`, `failOn` from the gate definition, `reason`,
+then `stdout`/`stderr` fenced through `sanitizeResultText` — the identical sanitiser an agent session's
+own result text goes through — capped at 1 MiB with a truncation marker, the fence itself widened past
+the longest backtick run already in the text), one `## <id> (advisory)` section per advisory check (never
+dispatched), and a `## Waiver` section when one is in force. `recordChecks` (`gates/approve.ts`) now
+digests that SAME sanitised, capped text (new `sanitizedCheckText`), not the raw check result, so a
+reader can sha256 the fenced block a written report carries and get back exactly the digest a
+`GateApproved`/`GateWaived` event recorded — proven end to end by a real split-token redaction case, not
+a mocked one. `recordChecks`'s parameter widens to `Pick<GateEvaluationResult, 'checks'>` (all it ever
+read), letting the in-run `runGateStep` (`dispatch/steps.ts`) reuse it on a `GateReport` directly for its
+own `GateEvaluated` payload, which now carries per-check digests — that step still writes no file; only
+the CLI commands do. Validated with `documentProblems` (newly exported from `@forge/engine/dispatch`)
+before `writeFileAtomic`, itself strictly before any event append in all three commands: a write failure
+(`RUN-034`) or a self-built-invalid document (`RangeError`, the same stance `swarm-review-step.ts`'s
+`writeReport` already takes) propagates unwrapped. The three commands' return types widen additively to
+carry `reportPath`, so `bin.ts`'s existing `--json`/human output picks it up with zero changes needed
+there — confirmed directly by reading `runGateSubcommand` and by two new `bin.test.ts` cases.
+`formatGateReport`/`formatGateApproval` append a `report: <path>` line.
+
+**Round 1 (fresh, context-free): 3 real findings, all fixed.**
+1. **Was critical — the regenerated JSON Schema snapshot had not actually been committed.**
+   `gate-report.schema.json` on disk still matched the pre-piece schema when the critic checked (this
+   repo's shared working tree had swept the file back to its committed state between two separate
+   `pnpm emit-schemas` runs earlier in the build — a real hazard of concurrent agents touching the same
+   generated-file directory, not a one-off mistake). `scripts/schema-drift.test.ts`'s own drift check would
+   have failed. Fixed by regenerating again and staging the file into the index immediately (more
+   resistant to a later `git checkout --` sweep than a bare working-tree edit), then re-verified with
+   `pnpm schema-drift`: only pre-existing/concurrent other-piece drift remains (`adr`, `assumption`,
+   `config`, `environment`, `handoff-record`, `open-question`, `risk`, `runbook` — none of them this
+   piece's own file, not touched).
+2. **Moderate — the plan's own required mutation-evidence case ("`documentProblems` skipped: forced-
+   invalid front matter written") had no automated test.** Manual mutation testing during the build had
+   proven the check load-bearing, but nothing pinned it permanently. Fixed with a real test (a clock
+   returning a non-ISO string makes `evaluatedAt`/`created`/`updated` fail `gateReportSchema`, caught by
+   `documentProblems` before any write), the same technique `swarm-review-step.test.ts`'s own precedent
+   already established for `ReviewReport`.
+3. **Moderate — `nextGateReportId` had no overflow guard.** Once `reports/gates/` already held
+   `GATE-999` (the highest id a 3-digit `idWidth` allows), the next call would have silently minted
+   `GATE-1000`, an id `GATE_REPORT_ID_PATTERN`'s own exact-3-digit group could never match back on a later
+   scan — silent duplicate reissuance forever, and a real inconsistency with this codebase's own
+   established convention (`CFG-010`/`IdAllocator`, `RUN-109`/`reserveIds` both refuse the identical
+   exhaustion elsewhere). Fixed: new `GATE-514` (unclaimed — `PLAN-M14.md`'s own error-code table reserves
+   `510`..`513` for P15/P16/P19, nothing for P17), pinned by a real test that hand-places a `GATE-999` file
+   and proves the next id is refused, not silently 4-digit.
+
+**Round 2 (fresh, context-free, independently re-ran every check live): 0 new blocking/major, 1 new
+minor, fixed — no round 3.** Independently verified all three round-1 fixes by direct code reading and
+live command execution (`pnpm schema-drift`, the full scoped test suite, `pnpm typecheck`, `pnpm run
+boundaries`), not by trusting the round-1 commit's own claims — re-run a second time after the shared
+working tree's `HEAD` advanced mid-review, to rule out staleness. One new minor: `GATE-514`'s `exitCode`
+used `EXIT_CODES.failure` where its own cited precedents (`CFG-010`, `RUN-109`) both use
+`EXIT_CODES.usage` — fixed to match.
+
+**What the critic caught that the builder missed.** The schema-snapshot regression was a real, repeat
+instance of the shared-working-tree generated-file hazard this milestone's own earlier pieces had
+already hit once (`M13-AGENT-NOTES.md` rule 14's own `bin.ts` incident) — caught here by round 1 actually
+running the drift script rather than trusting that `emit-schemas` had been run and stayed run. The
+overflow guard is a case the builder's own manual mutation testing never exercised (it only ever created
+a handful of report files per test), surfaced only by round 1 explicitly comparing this piece's own
+numbering function against the two existing, analogous id-exhaustion checks elsewhere in the codebase.
+
+**Mutation evidence (real, not narrated).** Write removed from `writeGateReportFile`: six of the new
+`gate-commands.test.ts` cases fail (more than the plan's own "three cases" — every test in the new
+describe block that reads the written file fails). `recordChecks` reverted to digest raw `stdout`/
+`stderr`: three independent tests fail (two in `report.test.ts`, one in `gate-commands.test.ts`, all with
+a mismatched sha256). `gateApprove` reordered to emit `GateApproved` before writing the report: the
+squatting-file test fails (`collectEvents` is no longer empty). `documentProblems`'s own check skipped
+while forcing an invalid id: the numbering test fails on the wrong id being read back (the invalid
+document is genuinely written). `GATE-514`'s overflow guard removed: the new GATE-999 test fails (a
+different, less specific error is thrown instead — `documentProblems` catches the resulting 4-digit id as
+a secondary safety net, but not with the correct, actionable `GATE-514` remedy).
+
+**Rule 14/15 clean-worktree verification.** `git worktree add -q --detach` at the final commit,
+`pnpm install --offline --frozen-lockfile`, `pnpm typecheck` (21/21 packages), `pnpm run boundaries`
+(clean), and the full scoped suite (439 tests across `gates/`, `gate-commands.test.ts`,
+`gate-report.test.ts`, `paths.test.ts`, `dispatch/gate.test.ts`, `test/templates.test.ts`, plus the
+29 gate-filtered `bin.test.ts` cases) — all green against the real committed blob, not the shared working
+tree.
+
+**Left open (matches the plan's own "Discloses" list).** Directory-scan numbering happens in one process
+with no cross-process lock, so two concurrent `forge gate check` invocations against the same project may
+compute and claim the same next id (the run lock does not cover CLI gate commands). In-run gate steps
+write no report file of their own; committing one onto a lane is a genuinely open question, not decided
+here. A written report is not committed to git by this piece. Advisory checks are only ever listed as not
+run, never dispatched. Also noted, not a gap: a deterministic check's own `run`/`reason` fields are
+rendered unfenced (project-authored/engine-generated text, not untrusted command output — the round-1
+critic traced both through `evaluate.ts` and confirmed neither ever carries raw check output).
