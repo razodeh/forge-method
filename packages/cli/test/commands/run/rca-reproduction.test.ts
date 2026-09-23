@@ -144,6 +144,99 @@ describe('compiled: debug:run-rca and quick-fix:reproduce carry the defect-scope
   });
 });
 
+/**
+ * Disclosed, not fixed (build-stage.workflow.yaml's own escalation comment, `SPEC-QUESTIONS.md` Q232
+ * decision 5): `enforceClaim` matches a changed path against the claim glob by shape alone, with no
+ * concept of "a new file vs. an existing one" -- true of every step's claim in this codebase, not special
+ * to the escalation, but the escalation's own `DEF-*` prefix (no `defectId` to narrow it to) means it
+ * equally covers REWRITING an already-committed regression test for a different, unrelated defect, not
+ * only authoring a new one. Demonstrated directly (not merely asserted) below, against a standalone
+ * workflow carrying the escalation's own exact `produces` list -- `runWorkflow` never compiles
+ * `onFailure` itself (`compilePlan`'s own documented scope), so the escalation cannot be dispatched as
+ * `build-stage:onFailure[0]`; this is the same claim shape run as an ordinary step instead. Dormant
+ * today for the same reason the prefix itself is harmless today: nothing dispatches `onFailure` yet.
+ */
+describe("disclosed: the rca escalation's DEF-* claim also covers rewriting a pre-existing, unrelated defect's regression test", () => {
+  const ESCALATION_WORKFLOW_ID = 'rca-escalation-claim-shape';
+  const PRE_EXISTING_TEST = 'tests/regression/DEF-005.test.ts';
+
+  function escalationWorkflowSource(): string {
+    const [extensionGlob, directoryGlob] = reproductionGlobs('DEF-');
+    return `
+id: ${ESCALATION_WORKFLOW_ID}
+name: rca escalation claim shape
+version: 1.0.0
+description: The build-stage rca escalation's own produces list, run as an ordinary step (onFailure itself is not dispatchable).
+steps:
+  - id: rca
+    kind: agent
+    agent: diagnostician
+    brief: briefs/rca.md
+    produces:
+      - 'docs/forge/sessions/rca/RCA-*.md'
+      - 'docs/forge/reports/defects/DEF-*.md'
+      - '${extensionGlob}'
+      - '${directoryGlob}'
+`;
+  }
+
+  it('a session that overwrites an already-committed DEF-005 regression test under this claim raises no violation at all', async () => {
+    const project = await createTestProject();
+    await writeFixtureAgent(project.dir, 'diagnostician', 'Diagnostician', {
+      write: true,
+      code: true,
+    });
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${ESCALATION_WORKFLOW_ID}.workflow.yaml`),
+      escalationWorkflowSource(),
+    );
+    await mkdir(path.join(project.dir, '.forge', 'briefs'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge', 'briefs', 'rca.md'),
+      'Diagnose the failure and record the RCA.\n',
+    );
+    // The pre-existing regression test for a DIFFERENT, unrelated (here already-closed) defect, on the
+    // base commit before this run's own lane forks from it.
+    await mkdir(path.join(project.dir, 'tests', 'regression'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, PRE_EXISTING_TEST),
+      "test('DEF-005 stays fixed', () => { expect(1 + 1).toBe(2); });\n",
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'escalation claim-shape fixture'], {
+      cwd: project.dir,
+    });
+
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['rewrote DEF-005 instead of DEF-012'],
+      // Silently weakens an unrelated, already-closed defect's own regression test -- nothing about this
+      // step's `produces` claim distinguishes that from authoring DEF-012's own new reproduction.
+      writeFiles: [
+        { relativePath: PRE_EXISTING_TEST, content: "test('DEF-005 stays fixed', () => {});\n" },
+      ],
+    });
+
+    const runId = 'run-escalation-claim-shape';
+    const result = await runWorkflow(testRunDeps(project, adapter), {
+      workflowId: ESCALATION_WORKFLOW_ID,
+      expressionContext: DEFECT_CONTEXT,
+      runId,
+      host: 'test-host',
+    });
+    if (result.kind !== 'run') throw new Error('expected a real run');
+
+    const events: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) events.push(event);
+    expect(events.some((event) => event.type === 'PolicyViolation')).toBe(false);
+    const succeeded = events.find(
+      (event) => event.type === 'StepSucceeded' && event.stepId === `${ESCALATION_WORKFLOW_ID}:rca`,
+    );
+    expect(succeeded).toBeDefined();
+    expect(result.runState.runStatus).toBe('completed');
+  });
+});
+
 const REPRO_TEST = 'tests/regression/DEF-012.test.ts';
 const RCA_DOC = 'docs/forge/sessions/rca/RCA-001.md';
 const DEFECT_EDIT = 'docs/forge/reports/defects/DEF-012.md';

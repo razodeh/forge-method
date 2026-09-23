@@ -20,7 +20,8 @@ steps:
     outputs: [{ type: RCA }]
     # The Defect's "Reproduction" section, which the brief has the step edit, plus the reproduction artifact
     # itself: the brief names a defect-scoped test glob, not a fixed path (`SPEC-QUESTIONS.md` Q232 decision 5,
-    # Q216), matching `isTestPath` (`@forge/engine/dispatch`)'s own extension list.
+    # Q216), using the real extensions `isTestPath` (`@forge/engine/dispatch`) accepts for a `.test.`/`.spec.`
+    # file (its own regex also accepts a few unused combinations, e.g. `.cjsx`, no real toolchain here emits).
     produces:
       - 'docs/forge/reports/defects/**'
       - '**/*{{defectId}}*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'

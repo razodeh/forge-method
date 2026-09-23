@@ -37,8 +37,9 @@ any supporting file in its `evidence`. Record:
 
 If a command alone cannot express the reproduction, add a small artifact and list its path in
 `evidence`. A script goes under `docs/forge/reports/defects/` beside the Defect records, named after
-the defect id. A test goes under a `test`, `tests`, `__tests__` or `e2e` directory, or is simply
-named so the defect id appears in it — either way lies inside this step's own claim. Do not put a
+the defect id. A test is either given a `.test.`/`.spec.` extension or put under a `test`, `tests`,
+`__tests__` or `e2e` directory, named with the defect id either way — either way lies inside this
+step's own claim; the defect id in the name alone, with neither shape, does not. Do not put a
 reproduction only in your final message; the next session cannot see it.
 
 ### Acceptance

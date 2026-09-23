@@ -18,21 +18,21 @@ one seems obvious.
 1. Intake: state the defect as "expected X, observed Y". If you cannot, list the missing facts and
    stop.
 2. Reproduce: produce a deterministic, minimal reproduction as an executable artifact, preferably a
-   failing test named with the defect id, put under a `test`, `tests`, `__tests__` or `e2e`
-   directory or simply named so the defect id appears in the file name (either way lies inside this
-   step's own claim), otherwise a script or command. This is a hard gate; without one you may not
-   diagnose. Make at most five attempts. Your constraints list the exact test commands you may run
-   (the project's own): run one exactly as written, because a command with anything added or changed
-   is refused, and a layer they report as having no runnable command cannot be run from here. If
-   your grant does not let you run commands, write the reproduction anyway (the exact command or
-   test and the output you expect), mark it "written, not run", and continue by inspection of the
-   code, logs and traces, marking every result you reached that way as by inspection. Never write an
-   unrun result as observed. If you ran it and it still does not reproduce, finish with the outcome
-   NEEDS-MORE-EVIDENCE and a precise list of the instrumentation that would make it reproducible.
-   That is a valid result, not a failure. In that case the `RCA` output cannot honestly be produced,
-   because its root cause is required; say so, and record the outcome in the Defect's "Reproduction"
-   section so the next steps see it. In every case, also record the reproduction, or its absence, in
-   that section.
+   failing test named with the defect id, either given a `.test.`/`.spec.` extension or put under a
+   `test`, `tests`, `__tests__` or `e2e` directory (either way lies inside this step's own claim;
+   the defect id in the file name alone, with neither shape, does not), otherwise a script or
+   command. This is a hard gate; without one you may not diagnose. Make at most five attempts. Your
+   constraints list the exact test commands you may run (the project's own): run one exactly as
+   written, because a command with anything added or changed is refused, and a layer they report as
+   having no runnable command cannot be run from here. If your grant does not let you run commands,
+   write the reproduction anyway (the exact command or test and the output you expect), mark it
+   "written, not run", and continue by inspection of the code, logs and traces, marking every result
+   you reached that way as by inspection. Never write an unrun result as observed. If you ran it and
+   it still does not reproduce, finish with the outcome NEEDS-MORE-EVIDENCE and a precise list of
+   the instrumentation that would make it reproducible. That is a valid result, not a failure. In
+   that case the `RCA` output cannot honestly be produced, because its root cause is required; say
+   so, and record the outcome in the Defect's "Reproduction" section so the next steps see it. In
+   every case, also record the reproduction, or its absence, in that section.
 3. Isolate: narrow to the smallest scope that still fails, using bisect with the reproduction as the
    test, targeted instrumentation, delta debugging of the input, or layer isolation.
 4. Hypothesise: state at least three candidate causes, each a falsifiable claim with the observation

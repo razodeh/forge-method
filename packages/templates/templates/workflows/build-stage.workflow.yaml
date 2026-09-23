@@ -145,7 +145,13 @@ onFailure:
       # defect-scoped test glob shape `debug:run-rca`/`quick-fix:reproduce` claim. No `defectId` is available
       # at this point (an escalation, not a per-defect run), so `DEF-*` stands for any defect id: a
       # prefix-scoped claim, not one narrowed to the failure this escalation actually ran for
-      # (`SPEC-QUESTIONS.md` Q232 decision 5, Q216).
+      # (`SPEC-QUESTIONS.md` Q232 decision 5, Q216). `enforceClaim` matches by path shape alone, with no
+      # concept of "a new file vs. an existing one" (true of every step's claim, not special to this one) --
+      # so this same prefix also covers REWRITING an already-committed regression test for a different,
+      # unrelated (possibly already-closed) defect, not only authoring a new one; only `rca.md`'s own advisory
+      # "never edit the story's own tests" stands against that, not the claim itself. Confirmed dormant today
+      # for the same reason the prefix itself is harmless today: `onFailure` is not compiled or dispatched by
+      # anything yet. `packages/cli/test/commands/run/rca-reproduction.test.ts` demonstrates this directly.
       do:
         kind: agent
         agent: diagnostician
