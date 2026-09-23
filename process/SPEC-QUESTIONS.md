@@ -21683,7 +21683,7 @@ merge-queue.ts`; new/edited tests in `packages/engine/test/dispatch/merge.test.t
 test/failures/classify.test.ts`, `packages/vcs/test/merge-queue.test.ts`, `packages/cli/test/commands/
 run/swarm-review-report.test.ts`.
 
-## Q251 — M14 P45: `intake-workflow.test.ts` calls `runInit` once per file instead of once per test; the "known load-sensitive flakes" list moved from `M13-AGENT-NOTES.md` to `M14-AGENT-NOTES.md` with real measured numbers — a one-round critic found one real (sequencing) and one minor (comment-precision) finding, both resolved
+## Q251 — M14 P45: `intake-workflow.test.ts` calls `runInit` once per file instead of once per test; the "known load-sensitive flakes" list moved from `M13-AGENT-NOTES.md` to `M14-AGENT-NOTES.md` with real measured numbers — a two-round critic loop found one real (sequencing) and one minor (comment-precision) finding in round 1, two real (timeout-margin) and two minor findings in round 2, all resolved
 
 **Context.** `PLAN-M14.md` P45, depending on none. `test/intake-workflow.test.ts` built a fresh,
 committed `forge init` project via `runInit` once per test — 9 times across its 9 `it(` blocks — for
@@ -21711,25 +21711,36 @@ budget with real headroom even under deliberate heavy CPU load (see Verification
 
 `process/plans/M14-AGENT-NOTES.md` (new): the "known load-sensitive flakes" list M13-AGENT-NOTES.md
 rule 3 carried moved here (Surface: rule 3 → `M14-AGENT-NOTES.md`), each file now measured (isolated
-runs via `node scripts/run-tests.mjs run <path>`; the higher of two samples where two were taken, since
-this shared sandbox's own ambient concurrent-agent load produced 30-45% run-to-run variance even
-without deliberate extra load) and given either an explicit `vitest` timeout at 3× measured (rounded
-up, capped at `600_000`, the `21` §21.1 e2e ceiling; precedent `test/agent-prompts-all-workflows.
-test.ts:288,856`, `test/authoring-roles-run.test.ts:417,425`) or a documented reason the existing
-budget already gives ≥3× headroom — never a SMALLER explicit timeout than the safe global default,
-since that would tighten a test rather than protect it. Two files needed a real source change:
-`packages/engine/test/e2e/crash-resume.test.ts` (`120_000` → `200_000`; measured 49,864ms then
-65,709ms on a second sample, real SIGKILL×20 + resume) and `test/workspace-floor.test.ts` (three
-previously-unprotected subprocess-heavy tests — `vitest list` collection, planted-file collection,
-`tsc --listFiles --noEmit` per tsconfig — each given `90_000`; measured up to 29,972ms, sized from the
-slowest of the three and shared uniformly rather than computed separately per test). Every other
-listed file (`verify-success-criteria.test.ts`, `survey.test.ts`, `resume.test.ts`, `session.test.ts`,
-the whole `tui/test/` tree, `run-upgrade.test.ts`, `backup.test.ts`, `verification.test.ts`) measured
-comfortably under 3× its existing budget; left unchanged — the full table with every measured number
-is in `M14-AGENT-NOTES.md`. `M13-AGENT-NOTES.md` rule 3 now points at `M14-AGENT-NOTES.md` instead of
-carrying the list, keeping the unrelated "4 pre-existing prettier warnings" sentence it also carried
-(re-checked live: `pnpm lint` in a clean worktree of this piece's own final commit is now fully clean —
-those 4 warnings have since been fixed by other M14 pieces, unrelated to this one).
+runs via `node scripts/run-tests.mjs run <path>`; the highest sample where more than one was taken,
+since this shared sandbox's own ambient concurrent-agent load produced 30-45% run-to-run variance even
+without deliberate extra load) and given either an explicit `vitest` timeout at 3× the highest measured
+sample (rounded up WITH real margin, not the bare next multiple of 10_000 — round 2 below; capped at
+`600_000`, the `21` §21.1 e2e ceiling; precedent `test/agent-prompts-all-workflows.test.ts:288,856`,
+`test/authoring-roles-run.test.ts:417,425`) or a documented reason the existing budget already gives
+≥3× headroom — never a SMALLER explicit timeout than the safe global default, since that would tighten
+a test rather than protect it. Every listed file's own isolated duration, measured (this sandbox, this
+piece's own runs): `crash-resume.test.ts` 49,864/65,709/68,056ms across three samples (real
+SIGKILL×20 + resume); `verify-success-criteria.test.ts`'s SC3 test 50,817/74,576ms; its forced-vacuous
+unit test 1,138ms; `survey.test.ts`'s oversized-fixture test 4,202ms; `resume.test.ts`'s three
+real-SIGKILL/git tests 3,751/3,640/3,832ms; `session.test.ts`'s slowest of 48 tests 4,173ms;
+`tui/test/{ascii-matrix,env,linear}.test.ts*` combined ≤49ms; `tui/test/components/` (15 files) 855ms;
+`tui/test/fuzz/` (10,000 seeded iterations) 5,804ms; `tui/test/replay/` 330ms; `tui/test/screens/`
+(8 files) 131ms; `tui/test/state/` (3 files) 844ms; `run-upgrade.test.ts` 9,433ms alone (21,694ms when
+run in the same invocation as `backup.test.ts` — real inter-file contention, not this file's own cost);
+`backup.test.ts` 3,777ms alone (18,720ms alongside `run-upgrade.test.ts`); `workspace-floor.test.ts`'s
+three subprocess-heavy tests 24,363-24,955 / 24,020-27,865 / 28,965-29,972ms across two samples;
+`verification.test.ts`'s slowest of 4 tests 611ms. Two files needed a real source change:
+`packages/engine/test/e2e/crash-resume.test.ts` (`120_000` → `220_000`, 3× the highest of the three
+samples above with real margin) and `test/workspace-floor.test.ts` (three previously-unprotected
+subprocess-heavy tests — `vitest list` collection, planted-file collection, `tsc --listFiles --noEmit`
+per tsconfig — each given `100_000`, sized from the slowest of the three with real margin and shared
+uniformly rather than computed separately per test; both figures corrected in round 2, below — see
+that round for why the first version's `200_000`/`90_000` were each insufficiently margined). Every
+other listed file above measured comfortably under 3× its existing budget; left unchanged.
+`M13-AGENT-NOTES.md` rule 3 now points at `M14-AGENT-NOTES.md` instead of carrying the list, keeping
+the unrelated "4 pre-existing prettier warnings" sentence it also carried (re-checked live: `pnpm
+lint` in a clean worktree of this piece's own final commit is now fully clean — those 4 warnings have
+since been fixed by other M14 pieces, unrelated to this one).
 
 **Round 1 (fresh, context-free): 1 real finding (a sequencing note, resolved by this docs commit) and
 1 minor finding (comment-precision, fixed).**
@@ -21749,6 +21760,32 @@ those 4 warnings have since been fixed by other M14 pieces, unrelated to this on
    two tests' comments now say the timeout is shared with the file's slowest of the three
    subprocess-heavy tests, cross-referencing the one whose own comment does correctly say "3x that."
 
+**Round 2 (fresh, context-free, reviewing the two already-landed commits independently — did not see
+round 1's own findings, re-derived everything from the commits and current files): 2 real findings and
+2 minor findings, all fixed.**
+1. **Real, fixed.** `crash-resume.test.ts`'s `120_000` → `200_000` was sized from only the first two
+   measured samples (49,864ms, 65,709ms). A third sample this piece itself took later — during the
+   Rule 14/15 clean-worktree verification below — came in at 68,056ms, higher than the figure the
+   multiplier was computed from: 3×68,056=204,168 exceeds `200_000`, so the shipped value gave under
+   3× margin (≈2.94×) against the piece's own fullest disclosed evidence, even though the source
+   comment and `M14-AGENT-NOTES.md` both asserted "3×." Fixed: raised to `220_000` (3× the highest of
+   all three samples, rounded up with real margin); comment and table updated to disclose all three
+   samples and note the third ran less isolated (alongside 2 other files in that same worktree pass).
+2. **Real, fixed.** `workspace-floor.test.ts`'s shared `90_000` cleared 3× its own highest measured
+   figure (29,972ms → 89,916) by only 84ms (0.09% margin) — technically "3×, rounded up" but with no
+   real headroom; a marginally higher future measurement would already put it under the nominal bar.
+   Fixed: raised to `100_000` (≈10,084ms / 11% margin).
+3. **Minor, fixed.** The second workspace-floor test's own comment said "measured isolated duration
+   ~24s," but per the file's own stated convention (record the higher sample) its true range is
+   24,020-27,865ms, i.e. ~28s, not ~24s — closer to the third (tsc) test's ~30s than the number claimed.
+   Reworded to state the correct figure and that it is the higher sample.
+4. **Minor, fixed.** `M14-AGENT-NOTES.md` claimed "see `SPEC-QUESTIONS.md` Q251 ... for the same table
+   at the time it was recorded" — false as written: this Q251 entry has never contained a markdown
+   table (verified: zero `|`-prefixed lines in this entry), only prose. Fixed: this entry's Built
+   section above now states every listed file's own isolated duration inline in prose (satisfying the
+   piece's own Tests-first requirement directly, not by a now-corrected false cross-reference), and
+   `M14-AGENT-NOTES.md`'s wording was corrected to stop claiming a table exists here.
+
 **Mutation evidence (real, not narrated; each restored via `git checkout --` afterward, verified clean
 via `git status --short`/`git diff --stat`).**
 1. **`runInit`-per-test restored → the guard fails for real.** In the committed
@@ -21758,27 +21795,34 @@ via `git status --short`/`git diff --stat`).**
    faithfully reproduces the old, previously-correct behavior, not an unrelated break), and the guard
    failed with `AssertionError: expected 10 to be 1` (1 from `beforeAll`'s template build + 9 from the
    restored per-test calls). Restored; `git diff --stat test/intake-workflow.test.ts` empty afterward.
-2. **A raised timeout lowered → the file fails under real timing, not narrated.** In the committed
-   `packages/engine/test/e2e/crash-resume.test.ts`, lowered the raised `200_000` to `20_000` (well
-   below every measured sample, 49,864-68,056ms across four real runs this piece took). Ran the file
-   alone: `Error: Test timed out in 20000ms` — a genuine timeout failure, not a mutated assertion.
-   Restored; `grep -n "}, 200_000);" packages/engine/test/e2e/crash-resume.test.ts` confirmed the
-   original value back.
+2. **A raised timeout lowered → the file fails under real timing, not narrated.** Performed before
+   round 2's `200_000` → `220_000` correction, against the committed `packages/engine/test/e2e/
+   crash-resume.test.ts`: lowered the then-current `200_000` to `20_000` (well below every measured
+   sample, 39,340-68,056ms across five real runs this piece took in total). Ran the file alone:
+   `Error: Test timed out in 20000ms` — a genuine timeout failure, not a mutated assertion. Restored;
+   `git diff --stat` confirmed the original (then-`200_000`, now `220_000` after round 2) value back.
+   The mutation's own point (an insufficient timeout genuinely fails the file) holds regardless of the
+   exact raised baseline value.
 
 **Verification.** `pnpm typecheck` and `pnpm run boundaries` clean in a clean `git worktree` of this
-piece's own final commit (`d4cc128`), per Rule 14/15 (`pnpm install --offline --frozen-lockfile`, ~8s).
-Scoped, in that same worktree: `test/intake-workflow.test.ts` (10 tests), `test/workspace-floor.test.ts`
-(18 tests), `packages/engine/test/e2e/crash-resume.test.ts` (1 test) — 29/29 green
-(`crash-resume.test.ts` took 68,056ms in this run, still comfortably inside its new `200_000` budget).
-Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) run in that same clean worktree
-as the very last check: fully clean, zero warnings. Under-load demonstration (per the piece's own
-Tests-first requirement): `test/intake-workflow.test.ts` run beside a real, CPU-saturating parallel
-load (20-40 concurrent `yes > /dev/null` processes plus `pnpm exec turbo run typecheck --force`) —
-pre-fix, the file's own guard already failed structurally (9 ≠ 1) and its total run time reached 85.85s
-under the heaviest load tried, with the slowest individual test at 16,339ms (82% of the new 20,000ms
-per-test budget, only 3,661ms headroom); post-fix, under the identical load condition, all 10 tests
-passed with the slowest individual test at 12,745ms (64% of budget, 7,255ms headroom) and total file
-time down to 62.93s.
+piece's fix commit (`d4cc128`, before round 2's corrections), per Rule 14/15 (`pnpm install --offline
+--frozen-lockfile`, ~8s). Scoped, in that same worktree: `test/intake-workflow.test.ts` (10 tests),
+`test/workspace-floor.test.ts` (18 tests), `packages/engine/test/e2e/crash-resume.test.ts` (1 test) —
+29/29 green (`crash-resume.test.ts` took 68,056ms in this run — the third sample that round 2, below,
+shows made the then-`200_000` budget insufficiently margined). After round 2's fixes (`220_000`/
+`100_000`), `test/workspace-floor.test.ts` and `crash-resume.test.ts` re-run together (not in a fresh
+worktree — the working tree itself, already clean of any mutation artifact): 19/19 green,
+`crash-resume.test.ts` at 60,773ms (28% of its new `220_000` budget). Combined `pnpm lint`
+(`eslint . --max-warnings 0 && prettier --check .`) run in the clean worktree as the very last check
+on the fix commit: fully clean, zero warnings; re-run directly (not in a fresh worktree) after round
+2's fix commit landed, also fully clean. Under-load demonstration (per the piece's own Tests-first
+requirement): `test/intake-workflow.test.ts` run beside a real, CPU-saturating parallel load (20-40
+concurrent `yes > /dev/null` processes plus `pnpm exec turbo run typecheck --force`) — pre-fix, the
+file's own guard already failed structurally (9 ≠ 1) and its total run time reached 85.85s under the
+heaviest load tried, with the slowest individual test at 16,339ms (82% of the new 20,000ms per-test
+budget, only 3,661ms headroom); post-fix, under the identical load condition, all 10 tests passed with
+the slowest individual test at 12,745ms (64% of budget, 7,255ms headroom) and total file time down to
+62.93s.
 
 **Discloses (per the plan's own Discloses list).** The list in `M14-AGENT-NOTES.md` remains a list:
 honest, measured budgets, not a claim of determinism under arbitrary CPU starvation — this sandbox's
