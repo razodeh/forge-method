@@ -41,6 +41,16 @@ export interface MergeCandidate {
    * `06` §6.5 step 2's own language: a resolver needs "both lanes' intents," not just the raw conflict. */
   readonly declaredClaim: readonly string[];
   readonly conflictPolicy: 'agent' | 'human' | 'abort';
+  /** `PLAN-M14.md` P18: a swarm-review lane's own bound verdict and the `REVIEW-NNN` id it came from --
+   * `@forge/engine`'s own concern to compute and validate (`parseReviewVerdict`, `SPEC-QUESTIONS.md` Q232
+   * decision 7), this package only formats what it is given. Present together or not at all:
+   * `formatMergeCommitMessage` stamps `Forge-Review-Verdict: <reviewVerdict> (<reviewReportId>)` on the
+   * merge commit only when both are set, never derived or inferred here. `reviewReportId` flows through
+   * the identical newline guard `stepId`/`runId`/`laneId` already get (`assertSingleLine`) since it
+   * ultimately comes from a document on a lane branch this package does not fully trust (a hand-edited
+   * lane branch could forge an `id` with an embedded newline, `SPEC-QUESTIONS.md` Q229's threat model). */
+  readonly reviewVerdict?: string | undefined;
+  readonly reviewReportId?: string | undefined;
 }
 
 export interface ConflictedFile {
@@ -270,12 +280,19 @@ async function stageResolution(laneWorktreePath: string): Promise<void> {
 }
 
 function formatMergeCommitMessage(candidate: MergeCandidate): string {
-  return [
+  const lines = [
     `Merge lane ${candidate.handle.laneId} (${candidate.stepId})`,
     '',
     `Forge-Step: ${candidate.stepId}`,
     `Forge-Run: ${candidate.runId}`,
-  ].join('\n');
+  ];
+  // `PLAN-M14.md` P18: only when both are present -- the engine never sends either for a `clear` verdict
+  // (it lands exactly like any other lane, no trailer, the piece's own mandate) or for a verdict that
+  // never reaches this call at all (`incomplete`/`blocked` refuse the lane before it is ever queued).
+  if (candidate.reviewVerdict !== undefined && candidate.reviewReportId !== undefined) {
+    lines.push(`Forge-Review-Verdict: ${candidate.reviewVerdict} (${candidate.reviewReportId})`);
+  }
+  return lines.join('\n');
 }
 
 function formatRevertCommitMessage(candidate: MergeCandidate, mergeCommitSha: string): string {
@@ -391,6 +408,11 @@ export async function processMergeCandidate(
 ): Promise<MergeOutcome> {
   assertSingleLine('stepId', candidate.stepId);
   assertSingleLine('runId', candidate.runId);
+  // `PLAN-M14.md` P18: the identical guard, for the identical reason -- `reviewReportId` is optional
+  // (most candidates carry neither review field at all), so only checked when actually present.
+  if (candidate.reviewReportId !== undefined) {
+    assertSingleLine('reviewReportId', candidate.reviewReportId);
+  }
   // laneId is not, in general, structurally guaranteed newline-free the way handle.branch is: a
   // reconstructed LaneHandle (e.g. after a crash-resume, via listOrphanedWorktrees, or a caller building
   // one directly) is not provably the untouched output of createLaneWorktree the way a freshly-created

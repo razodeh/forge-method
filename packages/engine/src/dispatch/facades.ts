@@ -157,6 +157,21 @@ export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
       });
       return result.exitCode === 0 && !result.failed ? result.stdout : undefined;
     },
+    async listFilesAtRevision(handle, revision, dir) {
+      // A flag-shaped revision must never reach git, the identical rule readAtRevision's own doc comment
+      // gives; `git ls-tree` would otherwise interpret it as an option rather than a ref.
+      if (revision.startsWith('-')) return [];
+      const result = await execa(
+        'git',
+        ['ls-tree', '-r', '-z', '--name-only', revision, '--', dir],
+        {
+          cwd: handle.path,
+          reject: false,
+        },
+      );
+      if (result.exitCode !== 0) return [];
+      return result.stdout.split('\0').filter((entry) => entry !== '');
+    },
     async enforceClaim(handle, baseSha, declaredGlobs, policy, excludedGlobs) {
       return enforceClaim(asVcsLaneHandle(handle), baseSha, declaredGlobs, policy, excludedGlobs);
     },

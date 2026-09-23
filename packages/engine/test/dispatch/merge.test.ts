@@ -8,7 +8,7 @@
  * @see specs/06 §6.4, §6.5
  * @see PLAN-M5.md P15
  */
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -19,6 +19,8 @@ import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { integrateLane } from '../../src/dispatch/integrate.ts';
+import type { ExecuteStepContext, LaneHandle } from '../../src/dispatch/types.ts';
+import type { StepNode } from '../../src/plan/index.ts';
 import { createTestContext, node, readFileInRepo } from './helpers.ts';
 
 // Not in helpers.ts: node:os's tmpdir is R10-restricted in production code, and the test-file
@@ -514,5 +516,312 @@ describe('runMergeStep', () => {
     // init + produce-a + produce-b + merge-a + merge-b == 5, at minimum (a merge commit may add one
     // more depending on fast-forward-ability, so this asserts a floor, not an exact count).
     expect(commitCount).toBeGreaterThanOrEqual(5);
+  });
+});
+
+const REVIEW_REPORTS_ROOT = 'docs/forge/sessions/reviews';
+
+/** Writes `<reportId>.md` directly onto a fresh lane's own branch -- exactly what `runMergeStep`
+ * (`PLAN-M14.md` P18) reads: a real, committed front-matter document on a real git lane, nothing more.
+ * Bypasses the real swarm-review dispatch (`PLAN-M14.md` P14's own tests already cover that it writes
+ * this shape); this piece only cares what a `merge` step does once such a document is already committed.
+ * `frontMatterExtra` is raw YAML appended after `id`/`type` (e.g. `'verdict: concerns\n'`, or `''` for no
+ * `verdict` key at all -- every report this engine wrote before P14). */
+async function createReviewLane(
+  ctx: ExecuteStepContext,
+  stepId: string,
+  reportId: string,
+  frontMatterExtra: string,
+  subdir = '',
+): Promise<LaneHandle> {
+  const lane = await ctx.vcs.createLane(stepId, ctx.integrationBase);
+  const dir = path.join(lane.path, REVIEW_REPORTS_ROOT, subdir);
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, `${reportId}.md`),
+    `---\nid: ${reportId}\ntype: ReviewReport\n${frontMatterExtra}---\n\nBody.\n`,
+  );
+  await ctx.vcs.commit(
+    lane,
+    `forge(review): ${stepId}\n\nForge-Step: ${stepId}\nForge-Run: ${ctx.runId}`,
+    false,
+  );
+  ctx.laneRegistry.set(stepId, lane);
+  return lane;
+}
+
+function swarmReviewNode(id: string, dependsOn: readonly string[]): StepNode {
+  return node({ id, kind: 'agent', interactionMode: 'swarm-review', dependsOn });
+}
+
+function mergeStepNode(id: string, dependsOn: readonly string[]): StepNode {
+  return node({ id, kind: 'merge', dependsOn, mergePolicy: { conflict: 'abort' } });
+}
+
+function withStepGraph(ctx: ExecuteStepContext, nodes: readonly StepNode[]): ExecuteStepContext {
+  return { ...ctx, stepGraph: new Map(nodes.map((entry) => [entry.id, entry] as const)) };
+}
+
+describe('runMergeStep — swarm-review verdict binding (PLAN-M14.md P18)', () => {
+  it('an incomplete verdict refuses the review lane with MERGE-REVIEW-INCOMPLETE, keeps it registered, names the report/review step/forge resume, leaves the tip unchanged, and also refuses the stacked implement lane it reviews', async () => {
+    const projectRoot = await createTempRepo('merge-review-incomplete');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-incomplete' });
+    const implement = node({
+      id: 'wf:implement',
+      kind: 'command',
+      run: 'echo hi > impl.txt',
+      produces: ['impl.txt'],
+    });
+    expect((await executeStep(implement, ctx)).status).toBe('succeeded');
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: incomplete\n');
+    const review = swarmReviewNode('wf:review', ['wf:implement']);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [implement, review, merge]);
+    const { stdout: preHead } = await execa('git', ['rev-parse', 'HEAD'], { cwd: projectRoot });
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.source).toBe('merge');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
+    expect(outcome.failure?.message).toContain('REVIEW-001');
+    expect(outcome.failure?.message).toContain('wf:review');
+    expect(outcome.failure?.message).toContain('forge resume');
+    // The review lane itself is kept, registered for the next merge that scopes it to retry.
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(true);
+    // The reverse rule (P38 stacking): the implement lane the refused review reviews is not landed
+    // either, even though (processed first, dependencies-first order) it would otherwise land cleanly.
+    expect(withGraph.laneRegistry.has('wf:implement')).toBe(true);
+    // The integration branch's tip never moved, and the implement lane's own file never reached it.
+    const { stdout: postHead } = await execa('git', ['rev-parse', 'HEAD'], { cwd: projectRoot });
+    expect(postHead).toBe(preHead);
+    await expect(readFileInRepo(projectRoot, 'impl.txt')).rejects.toThrow();
+  });
+
+  it("reproduces implement-story.workflow.yaml's own multi-hop chain (green -> refactor -> self-verify -> review, review dependsOn: [self-verify] only): the reverse rule reaches every stacked lane upstream of the review within this merge's own scope, not just its one direct dependency", async () => {
+    const projectRoot = await createTempRepo('merge-review-multihop');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-multihop' });
+    const green = node({
+      id: 'wf:green',
+      kind: 'command',
+      run: 'echo code > green.txt',
+      produces: ['green.txt'],
+    });
+    const refactor = node({
+      id: 'wf:refactor',
+      kind: 'command',
+      run: 'echo refactored > refactor.txt',
+      dependsOn: ['wf:green'],
+      produces: ['refactor.txt'],
+    });
+    // A content-less verification step, exactly like implement-story.workflow.yaml's own `self-verify`
+    // (`forge story verify ... --json`): review's own dependsOn names only this, several stacked hops
+    // downstream of the real code in wf:green/wf:refactor.
+    const selfVerify = node({
+      id: 'wf:self-verify',
+      kind: 'command',
+      run: 'true',
+      dependsOn: ['wf:refactor'],
+    });
+    const review = swarmReviewNode('wf:review', ['wf:self-verify']);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [green, refactor, selfVerify, review, merge]);
+
+    expect((await executeStep(green, withGraph)).status).toBe('succeeded');
+    expect((await executeStep(refactor, withGraph)).status).toBe('succeeded');
+    expect((await executeStep(selfVerify, withGraph)).status).toBe('succeeded');
+    await createReviewLane(withGraph, 'wf:review', 'REVIEW-001', 'verdict: incomplete\n');
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
+    // The whole stacked chain the review builds on stays registered -- not merely wf:self-verify, the
+    // review's own one direct dependency.
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(true);
+    expect(withGraph.laneRegistry.has('wf:self-verify')).toBe(true);
+    expect(withGraph.laneRegistry.has('wf:refactor')).toBe(true);
+    expect(withGraph.laneRegistry.has('wf:green')).toBe(true);
+    // Neither real-code lane's file reached the integration branch.
+    await expect(readFileInRepo(projectRoot, 'green.txt')).rejects.toThrow();
+    await expect(readFileInRepo(projectRoot, 'refactor.txt')).rejects.toThrow();
+  });
+
+  it('refuses every downstream lane of a refused review too, via the ordinary MERGE-DEPENDENCY-NOT-LANDED path (not a second copy of the review-specific logic)', async () => {
+    const projectRoot = await createTempRepo('merge-review-downstream');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-downstream' });
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: incomplete\n');
+    const review = swarmReviewNode('wf:review', []);
+    const document = node({
+      id: 'wf:document',
+      kind: 'command',
+      run: 'echo hi > doc.txt',
+      dependsOn: ['wf:review'],
+      produces: ['doc.txt'],
+    });
+    expect((await executeStep(document, ctx)).status).toBe('succeeded');
+    const merge = mergeStepNode('wf:merge', ['wf:document']);
+    const withGraph = withStepGraph(ctx, [review, document, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    // The review's own lane is kept for the reason already covered above; the downstream lane that
+    // depends on it is refused too, through the pre-existing, generic blockedBy mechanism -- not a
+    // second, review-specific implementation of the same "do not land a lane whose dependency did not
+    // land" rule.
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(true);
+    expect(withGraph.laneRegistry.has('wf:document')).toBe(true);
+    await expect(readFileInRepo(projectRoot, 'doc.txt')).rejects.toThrow();
+  });
+
+  it('a report with no verdict key at all (every report the engine wrote before PLAN-M14.md P14) is treated exactly like incomplete', async () => {
+    const projectRoot = await createTempRepo('merge-review-no-verdict');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-no-verdict' });
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', '');
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(true);
+  });
+
+  it("a REVIEW-*.md nested one directory below the reports root is not read as the report: the lookup requires the exact reports directory, matching resumeSwarmReviewStep's own identical rule", async () => {
+    const projectRoot = await createTempRepo('merge-review-nested');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-nested' });
+    // A `clear` verdict would land cleanly if this nested file were mistakenly read as the report --
+    // instead nothing at the exact reports directory means no report at all, so the lane refuses exactly
+    // like the "no verdict key" case above.
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: clear\n', 'sub');
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(true);
+  });
+
+  it('a blocked verdict also refuses landing (defense in depth: PLAN-M14.md P14 already fails and deregisters a blocked review at step time -- this covers the same committed shape reached any other way, e.g. a hand-edited lane, SPEC-QUESTIONS.md Q229)', async () => {
+    const projectRoot = await createTempRepo('merge-review-blocked');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-blocked' });
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: blocked\n');
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
+  });
+
+  it('a concerns verdict lands: detail.merges carries reviewVerdict/reviewReportId and the merge commit carries the Forge-Review-Verdict trailer', async () => {
+    const projectRoot = await createTempRepo('merge-review-concerns');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-concerns' });
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: concerns\n');
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.detail.kind).toBe('merge');
+    if (outcome.detail.kind !== 'merge') throw new Error('unreachable');
+    expect(outcome.detail.merges).toHaveLength(1);
+    expect(outcome.detail.merges[0]?.reviewVerdict).toBe('concerns');
+    expect(outcome.detail.merges[0]?.reviewReportId).toBe('REVIEW-001');
+    const landedOutcome = outcome.detail.merges[0]?.outcome;
+    if (landedOutcome?.kind !== 'clean') throw new Error('expected a clean merge outcome');
+    const { stdout } = await execa(
+      'git',
+      ['log', '-1', '--format=%B', landedOutcome.mergeCommitSha],
+      {
+        cwd: projectRoot,
+      },
+    );
+    expect(stdout).toContain('Forge-Review-Verdict: concerns (REVIEW-001)');
+    expect(withGraph.laneRegistry.has('wf:review')).toBe(false);
+  });
+
+  it('a clear verdict lands with no Forge-Review-Verdict trailer, though detail.merges still carries its reviewVerdict/reviewReportId (the trailer gate is concerns-only; the outcome metadata is not)', async () => {
+    const projectRoot = await createTempRepo('merge-review-clear');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-clear' });
+    await createReviewLane(ctx, 'wf:review', 'REVIEW-001', 'verdict: clear\n');
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(ctx, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.detail.kind).toBe('merge');
+    if (outcome.detail.kind !== 'merge') throw new Error('unreachable');
+    expect(outcome.detail.merges[0]?.reviewVerdict).toBe('clear');
+    expect(outcome.detail.merges[0]?.reviewReportId).toBe('REVIEW-001');
+    const landedOutcome = outcome.detail.merges[0]?.outcome;
+    if (landedOutcome?.kind !== 'clean') throw new Error('expected a clean merge outcome');
+    const { stdout } = await execa(
+      'git',
+      ['log', '-1', '--format=%B', landedOutcome.mergeCommitSha],
+      {
+        cwd: projectRoot,
+      },
+    );
+    expect(stdout).not.toContain('Forge-Review-Verdict');
+  });
+
+  it('a non-swarm-review lane with a stray REVIEW-*.md file is landed untouched: the check only ever looks at interactionMode === "swarm-review" nodes', async () => {
+    const projectRoot = await createTempRepo('merge-review-stray');
+    const ctx = createTestContext({ projectRoot, runId: 'run-review-stray' });
+    // A blocked-verdict report, on a lane whose own step is NOT swarm-review -- if the check mistakenly
+    // keyed off the file's own name/content instead of the node's interactionMode, this would wrongly
+    // refuse the lane; it must land exactly like any other lane instead.
+    await createReviewLane(ctx, 'wf:stray', 'REVIEW-999', 'verdict: blocked\n');
+    const stray = node({ id: 'wf:stray', kind: 'command', run: 'true' });
+    const merge = mergeStepNode('wf:merge', ['wf:stray']);
+    const withGraph = withStepGraph(ctx, [stray, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('succeeded');
+    await expect(
+      readFileInRepo(projectRoot, `${REVIEW_REPORTS_ROOT}/REVIEW-999.md`),
+    ).resolves.toContain('blocked');
+    expect(withGraph.laneRegistry.has('wf:stray')).toBe(false);
+  });
+
+  it('resume after a crash between LaneReady and the merge still refuses: a fresh context and a fresh, freshly-populated laneRegistry re-derive the same refusal purely from the committed report, never from anything the original attempt computed', async () => {
+    const projectRoot = await createTempRepo('merge-review-resume');
+    const original = createTestContext({ projectRoot, runId: 'run-review-resume' });
+    const reviewLane = await createReviewLane(
+      original,
+      'wf:review',
+      'REVIEW-001',
+      'verdict: incomplete\n',
+    );
+
+    // A brand-new context and a brand-new, empty laneRegistry, as a real resume rebuilds both -- with
+    // only the LaneHandle re-registered (what orphan reclamation restores). Nothing about the original
+    // attempt's own in-memory state (which never existed here in the first place, since the report was
+    // written directly) can leak through: the refusal below can only come from reading the committed
+    // file.
+    const resumed = createTestContext({ projectRoot, runId: 'run-review-resume' });
+    resumed.laneRegistry.set('wf:review', reviewLane);
+    const review = swarmReviewNode('wf:review', []);
+    const merge = mergeStepNode('wf:merge', ['wf:review']);
+    const withGraph = withStepGraph(resumed, [review, merge]);
+
+    const outcome = await executeStep(merge, withGraph);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('MERGE-REVIEW-INCOMPLETE');
   });
 });

@@ -20,13 +20,17 @@
  * @see SPEC-QUESTIONS.md Q62
  * @see PLAN-M5.md P15
  */
+import path from 'node:path';
+
 import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
+import { ArtifactDocument } from '@forge/core/artifacts';
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { artifactTypeById } from '@forge/schemas';
 import { minimatch } from 'minimatch';
 
 import { recordChecks } from '../gates/index.ts';
+import { parseReviewVerdict, type ReviewVerdict } from '../interaction/review-report.ts';
 import { mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import {
@@ -42,7 +46,13 @@ import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
 import { resolveLaneBase } from './lane-base.ts';
 import { reserveDeclaredKbOutputIds, type KbOutputReservation } from './output-ids.ts';
-import { docRootsOf, outputGlob, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
+import {
+  docRootsOf,
+  outputGlob,
+  outputPathFor,
+  resolveStepClaim,
+  verifyDeclaredOutputs,
+} from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { commandStepEnvironment } from './elicit.ts';
 import { runShellCommand } from './shell.ts';
@@ -1048,6 +1058,183 @@ function isConflictPolicy(value: string): value is 'agent' | 'human' | 'abort' {
   return CONFLICT_POLICIES.has(value);
 }
 
+// --- PLAN-M14.md P18: runMergeStep reads each swarm-review lane's committed verdict --------------------
+//
+// A `merge` step must not land a swarm-review lane whose own bound verdict (`PLAN-M14.md` P14,
+// `SPEC-QUESTIONS.md` Q232 decision 7) is not `concerns`/`clear`, and must not land the implement lane it
+// reviews (P38 stacking) either -- even though `mergeLandingScope`'s own dependencies-first order would
+// otherwise land that implement lane BEFORE the review's own turn in the loop below ever comes up.
+// Resolved once, up front, entirely from what is actually committed on each lane's own branch
+// (`ctx.vcs.readAtRevision`/`listFilesAtRevision`, never in-memory state a crash could have lost, `06`
+// §6.10): a lane a hand-edited branch could forge (`SPEC-QUESTIONS.md` Q229's threat model) gets no more
+// trust here than one this engine itself wrote. No gate check is added; this is the merge step's own
+// last-line read of what P14 already bound into the front matter.
+//
+// Scope: only lanes an explicit `merge` step lands (`mergeLandingScope`, this piece's own literal
+// mandate). A `swarm-review` lane no `merge` step ever claims is instead integrated automatically by the
+// engine's own per-step path (`06` §6.4 rule 4, `PLAN-M13.md` P19, `integrateLane` below) once its step
+// succeeds -- that path never runs this check at all, so an `incomplete`-verdict review on such a lane
+// would land silently. Every shipped workflow's own `review` step is always inside a `merge` step's
+// landing scope (`implement-story.workflow.yaml`, `build-stage.workflow.yaml`), so this gap is not
+// reachable today; a future workflow shape that leaves a `swarm-review` step unclaimed by any `merge`
+// would need this piece's own check ported into `integrateLane`, out of this piece's own scope.
+
+const REVIEW_REPORT_FILE = /^REVIEW-\d{3}(?:-.*)?\.md$/;
+
+interface ReviewLookup {
+  readonly verdict: ReviewVerdict;
+  readonly reportId: string;
+}
+
+/** The swarm-review lane's own committed report at `HEAD`, read from the git object database (never the
+ * worktree, `types.ts`'s own `readAtRevision` doc comment) -- `undefined` for anything that is not a
+ * clean, landable signal: no `REVIEW-*.md` under the reports root, a file that fails to parse as an
+ * artifact document at all, or whose `verdict` key is missing or not one of the four real values
+ * (`parseReviewVerdict`'s own contract: never read as `clear`). Several matching files (an unusual lane
+ * shape) are tried in order; the first one with a real, parseable verdict wins. */
+async function readReviewLookup(
+  ctx: ExecuteStepContext,
+  lane: LaneHandle,
+): Promise<ReviewLookup | undefined> {
+  const reportsDir = path.posix.dirname(
+    outputPathFor('ReviewReport', docRootsOf(ctx), 'REVIEW-000'),
+  );
+  // The real `listFilesAtRevision` (`facades.ts`) never actually throws (a missing directory or
+  // unresolvable revision reads as an empty array, its own doc comment) -- this `catch`, like
+  // `readAtRevision`'s identical "any git-level failure reads as absent" convention this whole lookup
+  // already follows, is only reached by a hand-built facade. A genuine infrastructure failure and "the
+  // report is not there" are deliberately not distinguished here, matching that established convention:
+  // both are `MERGE-REVIEW-INCOMPLETE`, a `policy`-classified (never-retried) failure a human has to look
+  // at either way.
+  let files: readonly string[];
+  try {
+    files = await ctx.vcs.listFilesAtRevision(lane, 'HEAD', reportsDir);
+  } catch {
+    return undefined;
+  }
+  for (const file of files) {
+    // `listFilesAtRevision` lists recursively (`git ls-tree -r`): the dirname check, not just the
+    // basename pattern, is what `resumeSwarmReviewStep`'s own identical lookup (`swarm-review-step.ts`)
+    // requires too -- keeping the two in step so a nested `<reportsDir>/sub/REVIEW-999.md` (never written
+    // by this engine, but not excluded by the basename pattern alone) is rejected here exactly as it
+    // already is there, not picked up as a real report by one lookup and refused by the other.
+    if (path.posix.dirname(file) !== reportsDir) continue;
+    if (!REVIEW_REPORT_FILE.test(path.posix.basename(file))) continue;
+    const text = await ctx.vcs.readAtRevision(lane, 'HEAD', file);
+    if (text === undefined) continue;
+    let frontMatter: unknown;
+    try {
+      frontMatter = ArtifactDocument.parse(text, file).frontMatter;
+    } catch {
+      continue;
+    }
+    if (typeof frontMatter !== 'object' || frontMatter === null) continue;
+    const record = frontMatter as Record<string, unknown>;
+    const verdict = parseReviewVerdict(record);
+    if (verdict === undefined) continue;
+    const id = record['id'];
+    if (typeof id !== 'string' || id === '') continue;
+    return { verdict, reportId: id };
+  }
+  return undefined;
+}
+
+/** `MERGE-REVIEW-INCOMPLETE`, beside `VCS-MISSING-CONFLICT-RESOLVER` in `classifyFailure`'s own `policy`
+ * mapping (`classify.ts`): the same committed report fails identically on every retry until a human
+ * actually looks at it, so retrying the merge changes nothing. Names the report (or its absence), the
+ * review step, and the resume path -- the remedy a run stuck here actually needs. */
+function reviewIncompleteFailure(
+  reviewStepId: string,
+  lookup: ReviewLookup | undefined,
+): StepFailureInfo {
+  const found =
+    lookup === undefined
+      ? 'no readable, parseable ReviewReport with a bound verdict'
+      : `${lookup.reportId}, whose bound verdict is "${lookup.verdict}"`;
+  return {
+    source: 'merge',
+    code: 'MERGE-REVIEW-INCOMPLETE',
+    message:
+      `The swarm review ${reviewStepId} was not landed: its committed report is ${found}, neither ` +
+      '"concerns" nor "clear". Remedy: look at the findings the review named, fix or accept them, and ' +
+      `re-run ${reviewStepId} (a fresh review, not a retry of this merge); then \`forge resume\` this run.`,
+  };
+}
+
+/** One entry of `runMergeStep`'s own `merges` accumulator -- structurally identical to
+ * `StepOutcomeDetail`'s own `'merge'` variant's `merges[]` element (`types.ts`), declared once here so
+ * the two review fields are not repeated inline at every use site. */
+interface MergeStepEntry {
+  readonly stepId: string;
+  readonly outcome: MergeOutcome;
+  readonly reviewVerdict?: string | undefined;
+  readonly reviewReportId?: string | undefined;
+}
+
+interface SwarmReviewLanding {
+  /** Predecessor ids this merge must not land: a review lane whose own verdict is not landable, plus (the
+   * reverse rule) its own direct `dependsOn` predecessors within THIS merge's own landing scope -- the
+   * implement lane(s) it reviews (P38 stacking). */
+  readonly refused: ReadonlySet<string>;
+  /** Why each refused id was refused, keyed by that id -- a review and what it reviews share the same
+   * failure object, so both name the same report and the same remedy. */
+  readonly reasons: ReadonlyMap<string, StepFailureInfo>;
+  /** Every review lane whose verdict landed (`concerns`/`clear`), keyed by the review's own step id. */
+  readonly landable: ReadonlyMap<string, ReviewLookup>;
+}
+
+/** Resolves every swarm-review lane's own bound verdict BEFORE any lane in `predecessorLanes` is touched:
+ * `mergeLandingScope`'s own dependencies-first order would otherwise hand a review's implement lane to the
+ * queue before the review's own turn in the loop below ever comes up, so a bad verdict has to be known up
+ * front, not discovered only once the review lane's own entry is reached. */
+async function resolveSwarmReviewLanding(
+  ctx: ExecuteStepContext,
+  stepGraph: ReadonlyMap<string, StepNode>,
+  predecessorLanes: readonly { readonly predecessorId: string; readonly lane: LaneHandle }[],
+): Promise<SwarmReviewLanding> {
+  const inScope = new Set(predecessorLanes.map((entry) => entry.predecessorId));
+  const refused = new Set<string>();
+  const reasons = new Map<string, StepFailureInfo>();
+  const landable = new Map<string, ReviewLookup>();
+  for (const { predecessorId, lane } of predecessorLanes) {
+    const reviewNode = stepGraph.get(predecessorId);
+    if (reviewNode?.interactionMode !== 'swarm-review') continue;
+    const lookup = await readReviewLookup(ctx, lane);
+    if (lookup === undefined || lookup.verdict === 'incomplete' || lookup.verdict === 'blocked') {
+      const failure = reviewIncompleteFailure(predecessorId, lookup);
+      refused.add(predecessorId);
+      reasons.set(predecessorId, failure);
+      // The reverse rule: the implement lane(s) this review reviews are landed BEFORE it in
+      // mergeLandingScope's own post order, so without this a refused review's own upstream would
+      // already be in the integration branch by the time its bad verdict is discovered. Scoped to this
+      // merge's own landing scope only (`inScope`): a predecessor no merge in this call is landing was
+      // integrated earlier (behind a checkpoint `mergeLandingScope` itself already excluded) and is not
+      // this merge's to hold back.
+      //
+      // The FULL transitive upstream closure (`upstreamOf`, the identical helper `blockedBy` below already
+      // uses for the symmetric downstream direction), not just the review's own direct `dependsOn`. A
+      // round-2 gauntlet critic found the direct-only version left the real code lanes landing for
+      // `implement-story.workflow.yaml`'s own canonical inner loop: `review` there `dependsOn: [self-verify]`
+      // (a content-less `forge story verify` command step), several stacked hops downstream of the actual
+      // `green`/`refactor` lanes that hold the reviewed code -- reproduced empirically: with the direct-only
+      // version, `green`'s own file reached the integration branch even though the merge step's own outcome
+      // was `failed`. `upstreamOf` walks every `dependsOn` edge transitively, so it reaches `green`/
+      // `refactor`/`red`/`plan` too, exactly the whole stacked chain this review's own diff is actually
+      // built on -- correct for a linear inner loop, and for `build-stage.workflow.yaml`'s own shorter
+      // `review -> implement -> generate-tests` chain it reaches `generate-tests` as well (the story's own
+      // test files, part of the same reviewed unit of work), never anything outside this merge's own scope.
+      for (const upstreamId of upstreamOf(stepGraph, predecessorId)) {
+        if (!inScope.has(upstreamId) || refused.has(upstreamId)) continue;
+        refused.add(upstreamId);
+        reasons.set(upstreamId, failure);
+      }
+      continue;
+    }
+    landable.set(predecessorId, lookup);
+  }
+  return { refused, reasons, landable };
+}
+
 export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   const startedAt = ctx.now();
   await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
@@ -1102,7 +1289,17 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
         entry.lane !== undefined,
     );
 
-  const merges: { readonly stepId: string; readonly outcome: MergeOutcome }[] = [];
+  // `PLAN-M14.md` P18: every swarm-review lane's own bound verdict, resolved BEFORE any lane below is
+  // touched (this function's own doc comment above has the ordering reasoning). A merge driven with no
+  // compiled plan (`ctx.stepGraph === undefined`) has no way to know which of its predecessors is a
+  // `swarm-review` node at all, so nothing here applies then -- the identical "no plan, no scope beyond
+  // direct predecessors" fallback `landingIds` above already takes.
+  const swarmReview: SwarmReviewLanding =
+    ctx.stepGraph === undefined
+      ? { refused: new Set(), reasons: new Map(), landable: new Map() }
+      : await resolveSwarmReviewLanding(ctx, ctx.stepGraph, predecessorLanes);
+
+  const merges: MergeStepEntry[] = [];
   // First failure wins, not last: several predecessor lanes are each processed independently
   // regardless of an earlier one's own outcome (below), so the *first* thing that went wrong is the
   // more useful signal to surface as the step's own primary failure reason -- `detail.merges` still
@@ -1114,6 +1311,16 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
   for (const { predecessorId } of predecessorLanes) ctx.laneRegistry.delete(predecessorId);
   const notLanded = new Set<string>();
   for (const { predecessorId, lane } of predecessorLanes) {
+    // `PLAN-M14.md` P18: a swarm-review lane with a non-landable verdict, or the implement lane(s) it
+    // reviews (upstream, P38 stacking) -- resolved above, before any lane in this merge's own landing
+    // scope was touched, so this always wins over the dependencies-first landing order below.
+    if (swarmReview.refused.has(predecessorId)) {
+      notLanded.add(predecessorId);
+      ctx.laneRegistry.set(predecessorId, lane);
+      const failure = swarmReview.reasons.get(predecessorId);
+      if (failure !== undefined) anyFailed ??= failure;
+      continue;
+    }
     // A lane whose own dependency did not land is not landed either: its work builds on a lane that is not in
     // the integration branch (a review report for code that is not there). Independent lanes carry on.
     const blockedBy =
@@ -1130,6 +1337,10 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       };
       continue;
     }
+    // `PLAN-M14.md` P18: a landable swarm-review lane's own verdict/report id, carried into the merge
+    // commit's trailer only for `concerns` (`clear` lands exactly like any other lane, no trailer -- the
+    // piece's own mandate) and onto `detail.merges[]` below regardless of which of the two it is.
+    const reviewInfo = swarmReview.landable.get(predecessorId);
     const landed = await landLane(ctx, {
       eventStepId: node.id,
       laneStepId: predecessorId,
@@ -1137,9 +1348,19 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       conflictPolicy,
       checks: resolvedChecks.value.checks,
       skippedLayers: resolvedChecks.value.skipped,
+      ...(reviewInfo?.verdict === 'concerns'
+        ? { reviewVerdict: reviewInfo.verdict, reviewReportId: reviewInfo.reportId }
+        : {}),
     });
-    if (landed.outcome !== undefined)
-      merges.push({ stepId: predecessorId, outcome: landed.outcome });
+    if (landed.outcome !== undefined) {
+      merges.push({
+        stepId: predecessorId,
+        outcome: landed.outcome,
+        ...(reviewInfo === undefined
+          ? {}
+          : { reviewVerdict: reviewInfo.verdict, reviewReportId: reviewInfo.reportId }),
+      });
+    }
     if (landed.failure !== undefined) anyFailed ??= landed.failure;
     if (!contentLanded(landed.outcome) && landed.alreadyIntegrated !== true) {
       notLanded.add(predecessorId);

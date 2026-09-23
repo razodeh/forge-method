@@ -156,6 +156,18 @@ describe('forge run: a swarm-review step', () => {
       },
     );
     expect(stdout).toContain(`Forge-Step: ${REVIEW_STEP}`);
+    // `PLAN-M14.md` P18: `runMergeStep` reads the lane's own committed verdict (here `concerns`, from the
+    // one `major` finding above) and the merge queue stamps it on the merge commit itself. The merge
+    // commit is `forge/integration/current`'s own current tip (nothing else in this workflow commits
+    // after `merge`) -- read directly rather than through the pathspec-filtered `git log` above, whose
+    // default history simplification can omit a merge commit's own message even though the merge did
+    // touch REPORT.
+    const { stdout: mergeCommitBody } = await execa(
+      'git',
+      ['log', '-1', '--format=%B', 'forge/integration/current'],
+      { cwd: p.dir },
+    );
+    expect(mergeCommitBody).toContain('Forge-Review-Verdict: concerns (REVIEW-001)');
 
     // Separation of duties: every session of the step ran read-only, whatever it was asked to do.
     expect(adapter.requests).toHaveLength(2);

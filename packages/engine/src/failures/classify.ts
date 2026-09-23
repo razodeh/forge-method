@@ -98,6 +98,13 @@ function classifyMergeFailure(failure: StepFailureInfo): FailureClass {
   ) {
     return 'policy';
   }
+  // `MERGE-REVIEW-INCOMPLETE` (`PLAN-M14.md` P18): a swarm-review lane's own committed verdict is not
+  // `concerns`/`clear` (`incomplete`, `blocked`, or a missing/unparseable field), or it is the implement
+  // lane such a review reviews (P38 stacking). The same committed report fails identically on every
+  // retry of the merge itself -- only a fresh review, a human decision, changes it -- the identical
+  // "this run's own state lacks something no retry of the identical step can supply" reasoning
+  // `VCS-MISSING-CONFLICT-RESOLVER` above already gives for `classifyVcsFailure`'s own `policy` mapping.
+  if (failure.code === 'MERGE-REVIEW-INCOMPLETE') return 'policy';
   return 'transient';
 }
 

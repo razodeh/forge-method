@@ -74,6 +74,16 @@ export interface LandLaneOptions {
   /** Layers of a named check set that had no configured command: recorded on `MergeStarted`, so a merge that ran
    * fewer checks than its set names says so. */
   readonly skippedLayers?: ResolvedLaneChecks['skipped'] | undefined;
+  /** `PLAN-M14.md` P18: a swarm-review lane's own bound verdict (`concerns` -- the only value a caller
+   * ever passes here; `clear` lands exactly like any other lane, no trailer, and `incomplete`/`blocked`
+   * never reach `landLane` at all, refused earlier) and the `REVIEW-NNN` id it came from, read from the
+   * lane's own committed report before this call (`runMergeStep`'s own pre-pass). Both present or both
+   * absent: passed straight through to `MergeQueueFacade.process`, which only ever asks the vcs layer to
+   * stamp `Forge-Review-Verdict: <verdict> (<id>)` on the merge commit when it receives them
+   * (`merge-queue.ts`'s own `formatMergeCommitMessage`). `integrateLane` below never supplies these: it
+   * lands a lane no `merge` step scoped at all, so no review-verdict context was ever computed for it. */
+  readonly reviewVerdict?: string | undefined;
+  readonly reviewReportId?: string | undefined;
 }
 
 export interface LandLaneResult {
@@ -102,6 +112,11 @@ export async function landLane(
   options: LandLaneOptions,
 ): Promise<LandLaneResult> {
   const { eventStepId, laneStepId, lane, conflictPolicy, checks, skippedLayers } = options;
+  const { reviewVerdict, reviewReportId } = options;
+  const reviewFields =
+    reviewVerdict === undefined || reviewReportId === undefined
+      ? {}
+      : { reviewVerdict, reviewReportId };
   // Nothing to land: the lane's step changed no file, or a crash left it merged but not removed. Merging it
   // again would report a "merge" whose commit is some other lane's (git says "already up to date" and makes no
   // commit), and a failed post-merge check would then revert THAT lane's merge. Applies to a `merge` step's
@@ -148,6 +163,7 @@ export async function landLane(
         runId: ctx.runId,
         declaredClaim: [],
         conflictPolicy,
+        ...reviewFields,
       },
       checks,
     ),

@@ -151,6 +151,13 @@ describe('classifyFailure', () => {
       },
     );
 
+    it("MERGE-REVIEW-INCOMPLETE (PLAN-M14.md P18: a swarm-review lane's own committed verdict is not landable, or it is the implement lane such a review reviews) classifies as 'policy': the same committed report fails identically on retry", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'merge', code: 'MERGE-REVIEW-INCOMPLETE', message: 'x' } }),
+      );
+      expect(result).toBe('policy');
+    });
+
     it("VCS-LANE-REVERTED (a lane whose merge was reverted, offered again) classifies as 'policy': a retry fails identically", () => {
       const result = classifyFailure(
         outcome({ failure: { source: 'vcs', code: 'VCS-LANE-REVERTED', message: 'x' } }),

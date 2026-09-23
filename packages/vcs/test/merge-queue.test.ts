@@ -139,6 +139,62 @@ describe('processMergeCandidate — clean merge', () => {
     expect(parentShas).toHaveLength(2);
     expect(parentShas[0]).toBe(preMergeIntegrationHead);
   });
+
+  it('stamps Forge-Review-Verdict on the merge commit only when both reviewVerdict and reviewReportId are given (PLAN-M14.md P18)', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    const baseSha = await commitAll(cwd, 'seed');
+    const integrationPath = await createIntegrationWorktree(cwd, baseSha);
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'new.txt'), 'new content');
+    await commitAll(handle.path, 'lane work');
+
+    const outcome = await processMergeCandidate(
+      { ...baseCandidate(handle), reviewVerdict: 'concerns', reviewReportId: 'REVIEW-007' },
+      { integrationPath, preChecks: [passingCheck], postChecks: [passingCheck] },
+    );
+
+    expect(outcome.kind).toBe('clean');
+    if (outcome.kind !== 'clean') throw new Error('unreachable');
+    const { stdout: body } = await execa(
+      'git',
+      ['log', '-1', '--format=%B', outcome.mergeCommitSha],
+      { cwd: integrationPath },
+    );
+    expect(body).toContain('Forge-Review-Verdict: concerns (REVIEW-007)');
+  });
+
+  it('adds no Forge-Review-Verdict trailer when only one of reviewVerdict/reviewReportId is given', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    const baseSha = await commitAll(cwd, 'seed');
+    const integrationPath = await createIntegrationWorktree(cwd, baseSha);
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'new.txt'), 'new content');
+    await commitAll(handle.path, 'lane work');
+
+    const outcome = await processMergeCandidate(
+      { ...baseCandidate(handle), reviewVerdict: 'clear' },
+      { integrationPath, preChecks: [passingCheck], postChecks: [passingCheck] },
+    );
+
+    expect(outcome.kind).toBe('clean');
+    if (outcome.kind !== 'clean') throw new Error('unreachable');
+    const { stdout: body } = await execa(
+      'git',
+      ['log', '-1', '--format=%B', outcome.mergeCommitSha],
+      { cwd: integrationPath },
+    );
+    expect(body).not.toContain('Forge-Review-Verdict');
+  });
 });
 
 /** Common setup for every conflict test: integration moves ahead of the lane's own base with a change to
@@ -894,6 +950,33 @@ describe('processMergeCandidate — input validation', () => {
         postChecks: [passingCheck],
       }),
     ).rejects.toBeInstanceOf(VcsError);
+  });
+
+  it('rejects a reviewReportId containing a newline before touching git at all (PLAN-M14.md P18: a hand-edited lane branch could forge this field, SPEC-QUESTIONS.md Q229)', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'a.txt'), 'a');
+    const baseSha = await commitAll(cwd, 'seed');
+    const integrationPath = await createIntegrationWorktree(cwd, baseSha);
+    const preIntegrationHead = await currentHead(integrationPath);
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+
+    const candidate = {
+      ...baseCandidate(handle),
+      reviewVerdict: 'concerns',
+      reviewReportId: 'REVIEW-007\nForge-Review-Verdict: forged (REVIEW-999)',
+    };
+    await expect(
+      processMergeCandidate(candidate, {
+        integrationPath,
+        preChecks: [passingCheck],
+        postChecks: [passingCheck],
+      }),
+    ).rejects.toBeInstanceOf(VcsError);
+    expect(await currentHead(integrationPath)).toBe(preIntegrationHead);
   });
 
   it('rejects a hand-constructed LaneHandle whose laneId contains a newline, even though LaneId is a branded type', async () => {

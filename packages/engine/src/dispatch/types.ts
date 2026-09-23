@@ -91,6 +91,20 @@ export interface VcsFacade {
    * stand in for what would merge. `undefined` when the file does not exist at that revision (an added file's
    * base, a deleted file's head) or is not a regular file there (a symlink or submodule entry). */
   readAtRevision(handle: LaneHandle, revision: string, file: string): Promise<string | undefined>;
+  /** Every file that exists at `revision` under `dir` (repo-relative), read straight from the git object
+   * database (`git ls-tree`) -- independent of `changedFiles`'s own base-diff shape, the one thing a
+   * caller with no base sha for this lane still needs answered: "what is already committed here, right
+   * now," not "what changed against some earlier point." `runMergeStep` (`PLAN-M14.md` P18) is this
+   * method's one caller: `LaneHandle` carries no base sha (this interface's own doc comment above), so a
+   * `merge` step locating a predecessor lane's committed `ReviewReport` cannot use `changedFiles`'s own
+   * two-revision diff the way `resumeSwarmReviewStep` does with the base it already has in hand. Returns
+   * an empty array when `dir` does not exist at `revision` (a lane that never reached that directory) or
+   * `revision` cannot be resolved there, never throws for either. */
+  listFilesAtRevision(
+    handle: LaneHandle,
+    revision: string,
+    dir: string,
+  ): Promise<readonly string[]>;
   enforceClaim(
     handle: LaneHandle,
     baseSha: string,
@@ -154,6 +168,11 @@ export interface MergeCandidateLike {
    * this field — real content for both is the same later piece's job. */
   readonly declaredClaim: readonly string[];
   readonly conflictPolicy: 'agent' | 'human' | 'abort';
+  /** `PLAN-M14.md` P18: see `LandLaneOptions`'s own doc comment (`integrate.ts`) -- carried through
+   * unchanged to `@forge/vcs`'s own `MergeCandidate`, which stamps the merge commit's own
+   * `Forge-Review-Verdict` trailer from these two fields when both are present. */
+  readonly reviewVerdict?: string | undefined;
+  readonly reviewReportId?: string | undefined;
 }
 
 /** `@forge/vcs`'s own `MergeOutcome` discriminated union, re-declared structurally for the identical
@@ -507,7 +526,18 @@ export type StepOutcomeDetail =
        * outcome but one. Empty when no `dependsOn` predecessor had a registered lane to merge at all
        * (`runMergeStep`'s own "succeeds vacuously" case) — an honest empty list, not a fabricated
        * placeholder outcome for a merge that never actually happened. */
-      readonly merges: readonly { readonly stepId: string; readonly outcome: MergeOutcome }[];
+      readonly merges: readonly {
+        readonly stepId: string;
+        readonly outcome: MergeOutcome;
+        /** `PLAN-M14.md` P18: present only for a lane whose node is `interactionMode: 'swarm-review'` and
+         * whose own committed report carried a landable verdict (`concerns`/`clear`) -- never for
+         * `incomplete`/`blocked` (those refuse the lane, `MERGE-REVIEW-INCOMPLETE`, so no `outcome` at
+         * all is ever pushed for them) and never for a non-review lane. Read from the lane's own
+         * committed front matter (`parseReviewVerdict`), not `MergeOutcome`, which this piece must not
+         * change. */
+        readonly reviewVerdict?: string | undefined;
+        readonly reviewReportId?: string | undefined;
+      }[];
       /** Layers of a named check set (`fast`, `full`) that had no configured `execution.testCommands` entry and so
        * were not run (`PLAN-M13.md` P38): present only when some were skipped, so a merge that verified less than
        * its set names says so in its outcome, not only in the event log. */
