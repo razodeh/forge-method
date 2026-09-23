@@ -2075,6 +2075,31 @@ export const ERROR_CODES = {
     remedy:
       'Run `forge gate check <gate>` to see which checks fail, and waive the gate only while one of them does.',
   },
+  // `forge gate waive` refusing an `--expires` later than its own grant plus `gates.waiverMaxDays` days
+  // (default 90, `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10): an unbounded waiver is a
+  // silent, permanent policy change dressed up as a temporary exception. Nothing is appended when this
+  // fires. A hand-recorded waiver already on the event log that exceeds the cap is skipped by `forge gate
+  // check`/`approve` (`gate-commands.ts`'s own `coveringWaiver`/`gateApprove`), never surfaced as this code.
+  'GATE-512': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { maxDays: number; expiresAt: string }) =>
+      `--expires ${show(d.expiresAt)} is more than ${show(d.maxDays)} days after this waiver's own grant (gates.waiverMaxDays).`,
+    remedy:
+      'Choose an --expires no later than gates.waiverMaxDays (default 90) days from now, or raise the ' +
+      'cap with `forge config set gates.waiverMaxDays <days>` if a longer waiver is genuinely warranted.',
+  },
+  // `--owner` held to a real, single-token identifier (`PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232
+  // decision 10): letters, digits, `.`, `_`, `@`, `+`, `:`, `-`, starting alphanumeric, no whitespace and
+  // no invisible Unicode control/format character -- distinct from GATE-504's own "non-blank" check, which
+  // a real word or short phrase ("the team") already passes without naming a real person or system.
+  'GATE-513': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { owner: string }) =>
+      `--owner ${show(d.owner)} is not a real identifier (letters, digits, and . _ @ + : -, starting alphanumeric, no whitespace).`,
+    remedy: 'Provide --owner as a single identifier: a name, handle, email address, or ticket id.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

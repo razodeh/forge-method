@@ -57,13 +57,17 @@ export async function readConfig(paths: ProjectPaths): Promise<ForgeConfig> {
 }
 
 /** `path` is always one of `REAL_KEYS` here (every real caller runs it through `assertRealKey` first)
- * — a real, schema-derived leaf dot-path, whose every ancestor in a real, schema-valid `ForgeConfig`
- * is therefore guaranteed to be a real, plain object. No defensive "ancestor turned out not to be an
- * object" branch is written for that reason: `configLeafPaths` walks the identical `configSchema`
- * `value` itself was already validated against, so that state cannot arise through this module's own
- * real callers -- see `SPEC-QUESTIONS.md`. */
+ * — a real, schema-derived leaf dot-path. Every ancestor in a real, schema-valid `ForgeConfig` used to be
+ * guaranteed a real, plain object by construction, but `gates` (`PLAN-M14.md` P16) is the first field
+ * whose own OPTIONAL-ness sits on a non-leaf ancestor rather than only ever on a leaf (`execution` itself,
+ * the parent `execution.testRoots`/`execution.mergeChecks` nest under, is never optional; `gates` itself
+ * is, for a `.forge/config.yaml` written before this piece existed) -- so a real, schema-valid config CAN
+ * now have `current` genuinely be `undefined` partway down a real leaf's own path, and the walk must stop
+ * there (reading a real leaf's own value out of a real, absent ancestor is `undefined`, not a crash) rather
+ * than dereferencing a property of `undefined`. */
 function getByPath(value: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((current, segment) => {
+    if (current === undefined) return undefined;
     return (current as Record<string, unknown>)[segment];
   }, value);
 }
@@ -71,7 +75,13 @@ function getByPath(value: unknown, path: string): unknown {
 /** Replaces the value at `path` in a plain-object clone of `config` — a real, structural clone (not
  * `config.set()`-style byte splicing: `.forge/config.yaml` is plain YAML data, not an `ArtifactDocument`
  * front-matter file, so there is no existing formatting to preserve). The identical "`path` is always a
- * real, schema-derived leaf" guarantee `getByPath` documents applies here too. */
+ * real, schema-derived leaf" guarantee `getByPath` documents applies here too — including its own P16
+ * update: an ancestor object along the way (`gates`, for a `.forge/config.yaml` written before this piece
+ * existed) can itself be genuinely absent, not merely have an absent leaf. Writing through it creates that
+ * ancestor as an empty object first (never overwriting one already there), so `forge config set
+ * gates.waiverMaxDays 30` on an older config populates `gates: { waiverMaxDays: 30 }` rather than throwing
+ * on a missing intermediate object — `configSchema.safeParse` immediately below is what actually decides
+ * whether the result is valid, not this function. */
 function setByPath(config: ForgeConfig, path: string, value: unknown): ForgeConfig {
   const clone = structuredClone(config) as Record<string, unknown>;
   const lastDot = path.lastIndexOf('.');
@@ -84,6 +94,9 @@ function setByPath(config: ForgeConfig, path: string, value: unknown): ForgeConf
   const ancestorPath = lastDot === -1 ? '' : path.slice(0, lastDot);
   let cursor = clone;
   for (const segment of ancestorPath === '' ? [] : ancestorPath.split('.')) {
+    if (cursor[segment] === undefined) {
+      cursor[segment] = {};
+    }
     cursor = cursor[segment] as Record<string, unknown>;
   }
   cursor[lastKey] = value;

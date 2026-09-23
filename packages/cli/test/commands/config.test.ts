@@ -164,6 +164,53 @@ describe('paths.release (PLAN-M14.md P12)', () => {
   });
 });
 
+describe('gates.waiverMaxDays (PLAN-M14.md P16, SPEC-QUESTIONS.md Q232 decision 10)', () => {
+  it('is 90 by default', async () => {
+    const project = await createTestProject();
+    const value = await configGet({ paths: project.paths }, 'gates.waiverMaxDays');
+    expect(value).toBe(90);
+  });
+
+  it(
+    'is optional (backward compatible): a config.yaml written before this piece, with no gates key at ' +
+      'all, still validates and every other command still works',
+    async () => {
+      const project = await createTestProject();
+      const configPath = path.join(project.dir, '.forge/config.yaml');
+      const raw = YAML.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+      expect('gates' in raw).toBe(true); // sanity: a fresh init really does have the key
+      delete raw['gates'];
+      await writeFile(configPath, YAML.stringify(raw));
+      const value = await configGet({ paths: project.paths }, 'gates.waiverMaxDays');
+      expect(value).toBeUndefined();
+      await expect(configGet({ paths: project.paths }, 'project.name')).resolves.toBeDefined();
+      await expect(configGet({ paths: project.paths }, 'paths.kb')).resolves.toBeDefined();
+    },
+  );
+
+  it('round-trips a positive integer through set/get/explain', async () => {
+    const project = await createTestProject();
+    await configSet({ paths: project.paths }, 'gates.waiverMaxDays', '30');
+    const value = await configGet({ paths: project.paths }, 'gates.waiverMaxDays');
+    expect(value).toBe(30);
+    const explanation = await configExplain({ paths: project.paths }, 'gates.waiverMaxDays');
+    expect(explanation.value).toBe(30);
+    expect(explanation.doc.length).toBeGreaterThan(0);
+  });
+
+  it('refuses zero and a non-numeric value, without writing them', async () => {
+    const project = await createTestProject();
+    await expect(
+      configSet({ paths: project.paths }, 'gates.waiverMaxDays', '0'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    await expect(
+      configSet({ paths: project.paths }, 'gates.waiverMaxDays', 'x'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    const value = await configGet({ paths: project.paths }, 'gates.waiverMaxDays');
+    expect(value).toBe(90);
+  });
+});
+
 describe('configList', () => {
   it('lists every real leaf key with its own real, current value', async () => {
     const project = await createTestProject();

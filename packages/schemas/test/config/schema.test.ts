@@ -302,6 +302,39 @@ describe('configSchema — paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q21
   });
 });
 
+describe('configSchema — gates.waiverMaxDays (PLAN-M14.md P16, SPEC-QUESTIONS.md Q232 decision 10)', () => {
+  const withGates = (gates: unknown) => configSchema.safeParse({ ...goldenConfig(), gates });
+
+  it('is optional: a config written before it existed (no gates key at all) stays valid', () => {
+    expect(configSchema.safeParse(goldenConfig()).success).toBe(true);
+  });
+
+  it('accepts a positive integer', () => {
+    expect(withGates({ waiverMaxDays: 90 }).success).toBe(true);
+    expect(withGates({ waiverMaxDays: 1 }).success).toBe(true);
+  });
+
+  it('rejects zero, a negative number, and a non-integer', () => {
+    expect(withGates({ waiverMaxDays: 0 }).success).toBe(false);
+    expect(withGates({ waiverMaxDays: -1 }).success).toBe(false);
+    expect(withGates({ waiverMaxDays: 1.5 }).success).toBe(false);
+  });
+
+  it('rejects a non-numeric value', () => {
+    expect(withGates({ waiverMaxDays: 'x' }).success).toBe(false);
+  });
+
+  it('rejects an unknown key inside gates (strict)', () => {
+    const result = withGates({ waiverMaxDays: 90, extra: true });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['gates']);
+  });
+
+  it('rejects gates missing waiverMaxDays entirely', () => {
+    expect(withGates({}).success).toBe(false);
+  });
+});
+
 describe('configSchema — enum keys (PLAN-M1.md P8 Check)', () => {
   const enumCases: readonly [section: string, key: string, invalidValue: string][] = [
     ['project', 'level', 'L9'],

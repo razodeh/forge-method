@@ -117,6 +117,10 @@ const SAMPLE_DETAILS = {
   maxDepth: 200,
   expiresAt: '2026-01-01T00:00:00.000Z',
   stepId: 'design:review',
+  // `GATE-512`/`GATE-513` (`PLAN-M14.md` P16): a waiver's `--expires` beyond `gates.waiverMaxDays`
+  // days of its own grant; an `--owner` that is not a real identifier.
+  maxDays: 90,
+  owner: 'radwan',
   // `RUN-104` (`PLAN-M14.md` P3): the claim policy an out-of-claim write violated.
   policy: 'strict',
   // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas.

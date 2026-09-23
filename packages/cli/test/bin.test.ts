@@ -920,7 +920,9 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
       '--owner',
       'radwan',
       '--expires',
-      '2099-01-01T00:00:00.000Z',
+      // Within gates.waiverMaxDays's own default cap (90 days, `PLAN-M14.md` P16) of the real clock this
+      // real-subprocess CLI invocation runs under.
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       '--json',
       '-C',
       dir,
@@ -947,6 +949,62 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
       waiver: { owner: 'radwan' },
     });
     expect(parsed.evaluation.checks.every((check) => check.waived)).toBe(true);
+  });
+
+  it('REFUSES `forge gate waive --expires` beyond gates.waiverMaxDays (GATE-512, exit usage, --json envelope), and records nothing', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+    const result = run([
+      'gate',
+      'waive',
+      RUN_FAILING_GATE_ID,
+      '--reason',
+      'known flaky',
+      '--owner',
+      'radwan',
+      '--expires',
+      new Date(Date.now() + 91 * 24 * 60 * 60 * 1000).toISOString(),
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stdout) as {
+      readonly ok: boolean;
+      readonly error: { readonly code: string; readonly exitCode: number };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error).toMatchObject({ code: 'GATE-512', exitCode: 2 });
+    const events = run(['logs', '--json', '-C', dir]);
+    expect(events.stdout).not.toContain('GateWaived');
+  });
+
+  it('REFUSES `forge gate waive --owner` that is not a real identifier (GATE-513, exit usage), and names --owner <identifier> in the usage line when a required flag is missing', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+    const result = run([
+      'gate',
+      'waive',
+      RUN_FAILING_GATE_ID,
+      '--reason',
+      'known flaky',
+      '--owner',
+      'the team',
+      '--expires',
+      new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stdout) as { readonly error: { readonly code: string } };
+    expect(envelope.error.code).toBe('GATE-513');
+
+    const missingFlags = run(['gate', 'waive', RUN_FAILING_GATE_ID, '-C', dir]);
+    expect(missingFlags.status).toBe(2);
+    expect(missingFlags.stderr).toContain('--owner <identifier>');
   });
 
   it('prints each failing check and why in human-mode `forge gate check` (it printed only passed=false)', async () => {

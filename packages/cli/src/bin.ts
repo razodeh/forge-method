@@ -1161,7 +1161,9 @@ async function runGateSubcommand(
   const owner = values.get('--owner');
   const expiresAt = values.get('--expires');
   if (reason === undefined || owner === undefined || expiresAt === undefined) {
-    console.error('forge: "gate waive" needs --reason <text> --owner <name> --expires <iso-date>.');
+    console.error(
+      'forge: "gate waive" needs --reason <text> --owner <identifier> --expires <iso-date>.',
+    );
     return EXIT_CODES.usage;
   }
   const report = await gateWaive(ctx, gateId, { reason, owner, expiresAt });

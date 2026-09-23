@@ -11,7 +11,15 @@ import path from 'node:path';
 
 import { appendEvent, readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
+
+import {
+  configGet,
+  configSet,
+  CONFIG_REL_PATH,
+} from '../../../src/commands/config.ts';
 import {
   formatGateApproval,
   formatGateReport,
@@ -29,6 +37,24 @@ import {
   createTestProject,
   type TestProject,
 } from './helpers.ts';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Writes a real, schema-valid `.forge/config.yaml` for `project` — the fixture project this file's own
+ * `createTestProject` builds never writes one on disk (only an in-memory `ForgeConfig` for `forge run`'s
+ * own wiring), so `gate-commands.ts`'s own `resolveWaiverMaxDays` falls back to the documented default (90)
+ * for any test that does not call this. `gates.waiverMaxDays` here can override that default for a test
+ * that is genuinely about something else (fallback-to-an-older-waiver ordering) and would otherwise need
+ * its own literal expiries widened well past 90 days to stay meaningful. */
+async function writeConfig(
+  project: TestProject,
+  overrides: { readonly gates?: { readonly waiverMaxDays: number } } = {},
+): Promise<void> {
+  await writeFile(
+    path.join(project.dir, CONFIG_REL_PATH),
+    YAML.stringify({ ...DEFAULT_CONFIG, ...overrides }),
+  );
+}
 
 /** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
 const like = (text: string): string => expect.stringContaining(text) as string;
@@ -140,7 +166,12 @@ async function writeGate(project: TestProject, id: string, yaml: string): Promis
   await writeFile(path.join(project.dir, CHECKS_ROOT, `${id}.gate.yaml`), yaml);
 }
 
-const WAIVER = { reason: 'known flaky', owner: 'radwan', expiresAt: '2099-01-01T00:00:00.000Z' };
+// Within `gates.waiverMaxDays`'s own default cap (90 days, `PLAN-M14.md` P16) of the real, unmocked clock
+// every test below that uses this constant runs under (`ctx()` supplies no `clock` override) -- computed
+// relative to `Date.now()` rather than a fixed far-future literal so it never itself goes stale under that
+// same cap.
+const WAIVER_EXPIRES_AT = new Date(Date.now() + 30 * DAY_MS).toISOString();
+const WAIVER = { reason: 'known flaky', owner: 'radwan', expiresAt: WAIVER_EXPIRES_AT };
 
 // `PLAN-M13.md` P41: `gateApprove` used to append `GateApproved` without evaluating the gate.
 describe('gateApprove evaluates the gate (10 section 10.3 rule 1)', () => {
@@ -227,6 +258,9 @@ describe('gateApprove evaluates the gate (10 section 10.3 rule 1)', () => {
   it('falls back to an OLDER waiver still valid when the newest one has lapsed', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Fail', FAILING_GATE);
+    // Unrelated to gates.waiverMaxDays itself (this test is about newest-first fallback ordering): a
+    // generous configured cap so this test's own long-lived literal expiries below need no rewriting.
+    await writeConfig(project, { gates: { waiverMaxDays: 3650 } });
     const at = (iso: string) => ({ ...ctx(project, 'r-fall'), clock: { now: () => iso } as never });
     await gateWaive(at('2026-01-01T00:00:00.000Z'), 'G-Fail', {
       ...WAIVER,
@@ -243,6 +277,9 @@ describe('gateApprove evaluates the gate (10 section 10.3 rule 1)', () => {
   it('a waiver that has lapsed by approval time covers nothing (GATE-507), and an older still-valid one is used instead', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Fail', FAILING_GATE);
+    // Unrelated to gates.waiverMaxDays itself (this test is about lapsing, not the cap): a generous
+    // configured cap so this test's own long-lived literal expiries below need no rewriting.
+    await writeConfig(project, { gates: { waiverMaxDays: 3650 } });
     const at = (iso: string) => ({ ...ctx(project, 'r-exp'), clock: { now: () => iso } as never });
     await gateWaive(at('2026-01-01T00:00:00.000Z'), 'G-Fail', {
       ...WAIVER,
@@ -420,7 +457,7 @@ describe('formatGateReport (human-mode gate check)', () => {
     const after = await gateCheck(ctx(project, 'r-show'), 'G-Fail');
     expect(after).toMatchObject({ passed: false, approved: true, waiver: WAIVER });
     expect(formatGateReport(after)).toContain(
-      'waived by radwan until 2099-01-01T00:00:00.000Z: known flaky',
+      `waived by radwan until ${WAIVER_EXPIRES_AT}: known flaky`,
     );
     // a run that recorded no waiver shows none
     expect((await gateCheck(ctx(project, 'r-other'), 'G-Fail')).waiver).toBeUndefined();
@@ -500,12 +537,12 @@ openQuestionsPolicy: warn
     const report = await gateWaive(ctx(project, 'run-waive'), 'G-Fail', {
       reason: 'known flaky check',
       owner: 'radwan',
-      expiresAt: '2099-01-01T00:00:00.000Z',
+      expiresAt: WAIVER_EXPIRES_AT,
     });
     expect(report.waiver).toEqual({
       reason: 'known flaky check',
       owner: 'radwan',
-      expiresAt: '2099-01-01T00:00:00.000Z',
+      expiresAt: WAIVER_EXPIRES_AT,
     });
     expect(report.approved).toBe(true);
 
@@ -525,5 +562,132 @@ openQuestionsPolicy: warn
         expiresAt: '2099-01-01T00:00:00.000Z',
       }),
     ).rejects.toMatchObject({ code: 'RUN-050' });
+  });
+});
+
+// `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10: `gates.waiverMaxDays` (default 90) and
+// `--owner` an identifier.
+describe('gateWaive — gates.waiverMaxDays and --owner (PLAN-M14.md P16)', () => {
+  it('GATE-512: refuses --expires exactly one millisecond past the cap, naming maxDays, and appends nothing', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    const grantedAt = Date.parse('2026-01-01T00:00:00.000Z');
+    const at = (iso: string) => ({ ...ctx(project, 'r-91'), clock: { now: () => iso } as never });
+    await expect(
+      gateWaive(at(new Date(grantedAt).toISOString()), 'G-Fail', {
+        ...WAIVER,
+        expiresAt: new Date(grantedAt + 90 * DAY_MS + 1).toISOString(),
+      }),
+    ).rejects.toMatchObject({ code: 'GATE-512', details: { maxDays: 90 } });
+    expect(await collectEvents(project, 'r-91')).toEqual([]);
+  });
+
+  it('accepts --expires exactly maxDays (90) after grant, and records it', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    const grantedAt = Date.parse('2026-01-01T00:00:00.000Z');
+    const at = (iso: string) => ({ ...ctx(project, 'r-90'), clock: { now: () => iso } as never });
+    const expiresAt = new Date(grantedAt + 90 * DAY_MS).toISOString();
+    await gateWaive(at(new Date(grantedAt).toISOString()), 'G-Fail', { ...WAIVER, expiresAt });
+    const events = await collectEvents(project, 'r-90');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'GateWaived', payload: { expiresAt } });
+  });
+
+  it('GATE-513: refuses a non-identifier --owner ("the team": a real word, not a single token), and appends nothing', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    await expect(
+      gateWaive(ctx(project, 'r-owner'), 'G-Fail', { ...WAIVER, owner: 'the team' }),
+    ).rejects.toMatchObject({ code: 'GATE-513' });
+    expect(await collectEvents(project, 'r-owner')).toEqual([]);
+  });
+
+  it('a hand-appended waiver beyond the default cap is skipped by check/approve (GATE-507), and honoured once gates.waiverMaxDays is configured wide enough to cover it', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    const grantedAt = Date.parse('2026-01-01T00:00:00.000Z');
+    const expiresAt = new Date(grantedAt + 400 * DAY_MS).toISOString();
+    // After grant and before this same expiry (so applyWaiver's own lapse check never fires), but more
+    // than 90 (the default cap) and less than 400 days after grant.
+    const checkAt = new Date(grantedAt + 200 * DAY_MS).toISOString();
+    await appendEvent(project.dir, 'r-400', {
+      type: 'GateWaived',
+      runId: 'r-400',
+      ts: new Date(grantedAt).toISOString(),
+      payload: {
+        gateId: 'G-Fail',
+        reason: 'known flaky',
+        owner: 'radwan',
+        expiresAt,
+        evaluation: {
+          passed: false,
+          checks: [
+            { checkId: 'bad', passed: false },
+            { checkId: 'fine', passed: true },
+          ],
+        },
+      },
+    });
+    const at = (iso: string) => ({ ...ctx(project, 'r-400'), clock: { now: () => iso } as never });
+
+    // Default cap (90 days): the 400-day-out waiver is skipped, exactly as an expired or malformed one.
+    const skipped = await gateCheck(at(checkAt), 'G-Fail');
+    expect(skipped.waiver).toBeUndefined();
+    await expect(gateApprove(at(checkAt), 'G-Fail')).rejects.toMatchObject({ code: 'GATE-507' });
+
+    // A configured cap wide enough to cover it: the identical, unchanged waiver is now honoured.
+    await writeConfig(project, { gates: { waiverMaxDays: 400 } });
+    const honoured = await gateCheck(at(checkAt), 'G-Fail');
+    expect(honoured.waiver).toEqual({ reason: 'known flaky', owner: 'radwan', expiresAt });
+    await expect(gateApprove(at(checkAt), 'G-Fail')).resolves.toMatchObject({ basis: 'waiver' });
+  });
+});
+
+describe('gates.waiverMaxDays config (forge config get/set, PLAN-M14.md P16)', () => {
+  it('round-trips through configSet/configGet', async () => {
+    const project = await createTestProject();
+    await writeConfig(project);
+    await configSet({ paths: project.paths }, 'gates.waiverMaxDays', '30');
+    expect(await configGet({ paths: project.paths }, 'gates.waiverMaxDays')).toBe(30);
+  });
+
+  it('refuses 0 and a non-numeric value, without writing them', async () => {
+    const project = await createTestProject();
+    await writeConfig(project);
+    await expect(
+      configSet({ paths: project.paths }, 'gates.waiverMaxDays', '0'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    await expect(
+      configSet({ paths: project.paths }, 'gates.waiverMaxDays', 'x'),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
+    expect(await configGet({ paths: project.paths }, 'gates.waiverMaxDays')).toBe(90);
+  });
+
+  it('a config.yaml written before this piece, with no gates key at all, still loads and gate commands still fall back to the documented default (90)', async () => {
+    const project = await createTestProject();
+    const withoutGates: Record<string, unknown> = { ...DEFAULT_CONFIG };
+    delete withoutGates['gates'];
+    await writeFile(path.join(project.dir, CONFIG_REL_PATH), YAML.stringify(withoutGates));
+    expect(await configGet({ paths: project.paths }, 'project.name')).toBeDefined();
+
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    await expect(
+      gateWaive(ctx(project, 'r-noconf'), 'G-Fail', {
+        ...WAIVER,
+        expiresAt: new Date(Date.now() + 91 * DAY_MS).toISOString(),
+      }),
+    ).rejects.toMatchObject({ code: 'GATE-512', details: { maxDays: 90 } });
+  });
+
+  it('a project with no .forge/config.yaml at all yet still falls back to the documented default (90) -- gate commands do not require forge config set to have run even once', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    await expect(
+      gateWaive(ctx(project, 'r-nofile'), 'G-Fail', {
+        ...WAIVER,
+        expiresAt: new Date(Date.now() + 91 * DAY_MS).toISOString(),
+      }),
+    ).rejects.toMatchObject({ code: 'GATE-512', details: { maxDays: 90 } });
   });
 });

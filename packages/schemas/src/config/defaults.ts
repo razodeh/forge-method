@@ -58,6 +58,11 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     testRoots: undefined,
     mergeChecks: {},
   },
+  // `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10: 90 days is the documented default cap on
+  // how far past its own grant a waiver's `--expires` may fall.
+  gates: {
+    waiverMaxDays: 90,
+  },
   budget: {
     perRunUsd: 25,
     perStepUsdDefault: 2,

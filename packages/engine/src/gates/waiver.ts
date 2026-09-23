@@ -4,9 +4,17 @@
  * half of `15` §15.10's own invariant I3 (`GATE-501`'s own comment: "cannot be approved with a failing
  * check is a run-time gate-approval fact — M5's to enforce").
  *
+ * `isWaiverOwnerIdentifier`/`waiverExceedsCap`/`validateWaiverPolicy` (`PLAN-M14.md` P16,
+ * `SPEC-QUESTIONS.md` Q232 decision 10) are a second, later layer on top of the above, never changing
+ * `applyWaiver`/`isApproved`/`GATE-504`/`GATE-505` themselves: `--owner` must be a real identifier
+ * (`GATE-513`), and a waiver's own `expiresAt` may not fall more than `gates.waiverMaxDays` (default 90)
+ * days later than the moment it was actually granted (`GATE-512`). This package owns no clock and no
+ * config reader of its own (`21` §21.1) — the caller (`@forge/cli`'s `gate-commands.ts`) supplies both.
+ *
  * @see specs/10 §10.3
  * @see specs/15 §15.10 (I3)
  * @see PLAN-M5.md P14
+ * @see PLAN-M14.md P16
  */
 import { ForgeError } from '@forge/core/errors';
 
@@ -119,4 +127,51 @@ export function isApproved(result: GateEvaluationResult): boolean {
     isWellFormedWaiver(result.waiver) &&
     Date.parse(result.waiver.expiresAt) > result.waiverAppliedAt
   );
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** `--owner` held to a real, single-token identifier shape (`PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232
+ * decision 10) — 1 to 100 Unicode code points of letters, digits, and the small punctuation set a real
+ * identifier plausibly contains (`.`, `_`, `@`, `+`, `:`, `-`: an email address, a ticket id, a
+ * `role:oncall` pair), starting with a letter or digit, and never whitespace or an invisible Unicode
+ * "control" (`\p{Cc}`) or "format" (`\p{Cf}`) character — the identical two general categories
+ * `isNonBlank` (above) already strips, so a value that is merely non-blank (a real word, "the team") is
+ * not automatically a real identifier: `--owner` names a person or a system, not a sentence, which
+ * `isNonBlank` alone (the shape `applyWaiver`'s own `GATE-504` still checks, unchanged) cannot tell apart
+ * from an arbitrary short phrase. Deliberately NOT reused for `reason`, which stays free text. */
+export function isWaiverOwnerIdentifier(owner: string): boolean {
+  return /^[\p{L}\p{N}][\p{L}\p{N}._@+:-]{0,99}$/u.test(owner);
+}
+
+/** Whether `waiver.expiresAt` falls more than `maxDays` days later than `grantedAt` — the day-math half of
+ * `10` §10.3 rule 1's own cap (`gates.waiverMaxDays`, `PLAN-M14.md` P16): an unbounded waiver is a silent,
+ * permanent policy change, not a temporary exception. `grantedAt` is caller-supplied, the same
+ * determinism-mandate reason `applyWaiver`'s own `now` already is (`21` §21.1) — this is what lets the
+ * identical check read correctly for BOTH a waiver being granted right now (`grantedAt` is "now") and one
+ * already on record (`grantedAt` is its own `GateWaived` event's `ts`, in `@forge/cli`'s
+ * `gate-commands.ts`): the cap is always measured from the moment the waiver was actually granted, never
+ * from whatever "now" happens to be when it is later re-read. An `expiresAt` that does not even parse is
+ * not this function's own concern — it reads as within the cap here, so a caller that also runs
+ * `applyWaiver` still surfaces the more specific `GATE-504` ("not a real instant") instead. */
+export function waiverExceedsCap(waiver: Waiver, grantedAt: number, maxDays: number): boolean {
+  const expiresAt = Date.parse(waiver.expiresAt);
+  if (Number.isNaN(expiresAt)) return false;
+  return expiresAt > grantedAt + maxDays * MS_PER_DAY;
+}
+
+/** `forge gate waive`'s own additional policy layer (`PLAN-M14.md` P16), beyond `applyWaiver`'s own
+ * shape/expiry checks above, which this neither repeats nor changes: refuses an `--owner` that is not a
+ * real identifier (`GATE-513`) and an `--expires` that exceeds the configured cap (`GATE-512`,
+ * `waiverExceedsCap`). Called by the CLI only, which supplies the real clock reading (`grantedAt`) and the
+ * project's configured `gates.waiverMaxDays` (`maxDays`) — this package owns neither, the identical reason
+ * `applyWaiver` itself takes `now` as a plain argument rather than reading a clock.
+ * @throws {ForgeError} `GATE-513` (owner), `GATE-512` (cap). */
+export function validateWaiverPolicy(waiver: Waiver, grantedAt: number, maxDays: number): void {
+  if (!isWaiverOwnerIdentifier(waiver.owner)) {
+    throw new ForgeError('GATE-513', { owner: waiver.owner });
+  }
+  if (waiverExceedsCap(waiver, grantedAt, maxDays)) {
+    throw new ForgeError('GATE-512', { maxDays, expiresAt: waiver.expiresAt });
+  }
 }

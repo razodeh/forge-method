@@ -198,6 +198,25 @@ const executionSchema = z
   })
   .strict();
 
+/**
+ * `PLAN-M14.md` P16 (`SPEC-QUESTIONS.md` Q232 decision 10): gate-wide waiver policy, independent of any
+ * one gate's own document — a new top-level block, sibling to `execution` (which already carries the
+ * per-gate `autonomyByGate` map above), not nested inside it: this bounds `forge gate waive` itself, not
+ * one gate's own autonomy. `waiverMaxDays` caps how many days later than the moment a waiver is granted
+ * its own `--expires` may fall (`10` §10.3 rule 1: "waivers require a reason, an owner, and an expiry" —
+ * an unbounded expiry is a silent, permanent policy change dressed up as a temporary exception).
+ *
+ * Optional at the top level, the identical "a `.forge/config.yaml` written before this piece has no such
+ * key and must stay valid" reason `execution.mergeChecks`/`paths.release` are already optional for: every
+ * real reader (`@forge/cli`'s `gate-commands.ts`) treats an absent `gates` block the same as the
+ * documented default (90 days, `defaults.ts`), never a validation gap.
+ */
+const gatesSchema = z
+  .object({
+    waiverMaxDays: z.number().int().positive(),
+  })
+  .strict();
+
 const budgetSchema = z
   .object({
     perRunUsd: z.number().nonnegative(),
@@ -379,6 +398,8 @@ export const configSchema = z
     platform: platformSchema,
     models: modelsSchema,
     execution: executionSchema,
+    // `PLAN-M14.md` P16: optional (see `gatesSchema`'s own doc comment above).
+    gates: gatesSchema.optional(),
     budget: budgetSchema,
     roster: rosterSchema,
     kb: kbSchema,

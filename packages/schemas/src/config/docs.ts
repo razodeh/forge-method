@@ -44,6 +44,7 @@ export type ConfigKeyPath =
   | 'execution.testCommands'
   | 'execution.testRoots'
   | 'execution.mergeChecks'
+  | 'gates.waiverMaxDays'
   | 'budget.perRunUsd'
   | 'budget.perStepUsdDefault'
   | 'budget.dailyUsd'
@@ -152,6 +153,8 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
     'Project-relative directories a REPRODUCE/PROVE test-path argument must sit under (`<configured test command> <path>`, never a wildcard grant): unset falls back to the built-in rule (a tests/, __tests__/ or e2e/ directory, or a .test./.spec./_test file name).',
   'execution.mergeChecks':
     'Check sets the engine runs around a lane it integrates itself (one no merge step lands): pre (in the lane, before it lands) and post (in the integration worktree, after; a failure reverts the merge). A name ("fast", "full", or one test layer such as "unit", run as its execution.testCommands) or a shell command. Unset: no checks.',
+  'gates.waiverMaxDays':
+    'Maximum days later than its own grant a `forge gate waive --expires` may fall (10 §10.3 rule 1). Default 90. A hand-recorded waiver whose expiry exceeds its own grant time plus this cap is skipped by `forge gate check`/`approve`, the same as an expired one.',
   'budget.perRunUsd': 'Maximum spend, in USD, for one run.',
   'budget.perStepUsdDefault': 'Default maximum spend, in USD, for one step.',
   'budget.dailyUsd': 'Maximum spend, in USD, per day across all runs.',

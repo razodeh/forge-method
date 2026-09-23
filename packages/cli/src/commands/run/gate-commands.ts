@@ -4,7 +4,7 @@
  * @see specs/03 §3.2.4
  * @see specs/10 §10.3
  */
-import { ForgeError, SYSTEM_CLOCK, type Clock } from '@forge/core';
+import { ForgeError, pathExists, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import {
   applyWaiver,
@@ -13,6 +13,8 @@ import {
   buildGateReport,
   evaluateGate,
   recordChecks,
+  validateWaiverPolicy,
+  waiverExceedsCap,
   type GateApprovalSummary,
   type GateApprover,
   type GateDefinition,
@@ -22,9 +24,11 @@ import {
 } from '@forge/engine/gates';
 import { GateNotFoundError, runShellCommand } from '@forge/engine/dispatch';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { appendEvent, readEvents } from '@forge/telemetry/events';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
+import { CONFIG_REL_PATH, readConfig } from '../config.ts';
 import { loadGateRegistry } from './gates.ts';
 
 export interface GateCommandContext {
@@ -53,6 +57,29 @@ async function findGateOrThrow(ctx: GateCommandContext, gateId: string): Promise
   return definition;
 }
 
+/** `gates.waiverMaxDays` (`PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10): the project's real,
+ * configured cap, defaulting to `DEFAULT_CONFIG.gates.waiverMaxDays` (90) — the single source of that
+ * default (`@forge/schemas/config`), not a second, independently-spelled literal here. Absent because a
+ * `.forge/config.yaml` was written before this piece existed (the identical "older configs load" reason
+ * `execution.mergeChecks`/`paths.release` are already optional for), OR because no config file exists on
+ * this project AT ALL YET, both read as the documented default rather than a missing-file error `forge
+ * gate waive`/`check`/`approve` have no reason to surface: a project need not have run `forge config set`
+ * even once for gate commands to work. A config file that DOES exist but fails to validate still throws
+ * (`readConfig`'s own `CFG-001`) — only a literally absent file is this lenient. */
+async function resolveWaiverMaxDays(ctx: GateCommandContext): Promise<number> {
+  // `gates` is itself typed optional on `ForgeConfig` (any OTHER config may omit it) even though
+  // `DEFAULT_CONFIG` — this package's own single source of the default — always sets it
+  // (`schemas/test/config/docs.test.ts`'s "DEFAULT_CONFIG itself is a valid config" proves it every run);
+  // the assertion states that fact for the type checker rather than repeating "90" as a second, driftable
+  // fallback literal here.
+  const fallback = DEFAULT_CONFIG.gates!.waiverMaxDays;
+  if (!(await pathExists(ctx.paths.resolveWithin(CONFIG_REL_PATH)))) {
+    return fallback;
+  }
+  const config = await readConfig(ctx.paths);
+  return config.gates?.waiverMaxDays ?? fallback;
+}
+
 /** `check <id>`: re-evaluates without approving — `10` §10.3 gate rule 3's own non-mutating read
  * path. Real: the identical `evaluateGate`/`buildGateReport` pipeline `@forge/engine/dispatch`'s own
  * `createGateEvaluator` wraps for a live run, called here directly. Emits no event — the whole point
@@ -73,7 +100,11 @@ export async function gateCheck(ctx: GateCommandContext, gateId: string): Promis
   );
 }
 
-/** The newest recorded waiver for `gateId` that has not lapsed and covers every check failing in `evaluated`. */
+/** The newest recorded waiver for `gateId` that has not lapsed and covers every check failing in `evaluated`.
+ * A recorded waiver whose own `expiresAt` exceeds its own grant (`ts`) plus the configured
+ * `gates.waiverMaxDays` cap is skipped exactly as a malformed (`GATE-504`) or already-lapsed (`GATE-505`)
+ * one is -- a hand-appended waiver that never went through `forge gate waive`'s own `GATE-512` refusal does
+ * not silently bypass the cap here (`PLAN-M14.md` P16). */
 async function coveringWaiver(
   ctx: GateCommandContext,
   gateId: string,
@@ -82,15 +113,19 @@ async function coveringWaiver(
 ): Promise<Waiver | undefined> {
   if (evaluated.passed) return undefined;
   const failing = evaluated.checks.filter((check) => !check.passed).map((check) => check.checkId);
+  const maxDays = await resolveWaiverMaxDays(ctx);
   for (const recorded of await recordedWaivers(ctx, gateId)) {
     if (!failing.every((id) => recorded.coveredCheckIds.includes(id))) continue;
     try {
+      if (waiverExceedsCap(recorded.waiver, recorded.ts, maxDays)) {
+        throw new ForgeError('GATE-512', { maxDays, expiresAt: recorded.waiver.expiresAt });
+      }
       applyWaiver(evaluated, recorded.waiver, now);
       return recorded.waiver;
     } catch (error) {
       if (!(
         error instanceof ForgeError &&
-        (error.code === 'GATE-504' || error.code === 'GATE-505')
+        (error.code === 'GATE-504' || error.code === 'GATE-505' || error.code === 'GATE-512')
       )) {
         throw error;
       }
@@ -191,6 +226,10 @@ interface RecordedWaiver {
   readonly waiver: Waiver;
   /** The checks that were failing when it was granted (empty for a waiver that recorded none). */
   readonly coveredCheckIds: readonly string[];
+  /** Epoch ms this waiver's own `GateWaived` event recorded (`event.ts`) — the moment it was actually
+   * granted, which `gates.waiverMaxDays` (`waiver.ts`'s `waiverExceedsCap`, `PLAN-M14.md` P16) is measured
+   * from, never from whatever "now" happens to be when a later `check`/`approve` re-reads it. */
+  readonly ts: number;
 }
 
 async function recordedWaivers(
@@ -218,6 +257,7 @@ async function recordedWaivers(
       waivers.push({
         waiver: { reason, owner, expiresAt },
         coveredCheckIds: failingCheckIds(evaluation),
+        ts: Date.parse(event.ts),
       });
     }
   }
@@ -276,15 +316,25 @@ export async function gateApprove(
   const now = Date.parse(clock.now());
 
   // A gate that passed needs no waiver, so the event log is only read when a check failed. Newest waiver first;
-  // one that lapsed or is malformed (`GATE-504`/`GATE-505`), or that excused other checks than the ones failing
-  // now (`GATE-507`), is skipped in favour of an older one that covers them, and with none left the approval is
+  // one that lapsed or is malformed (`GATE-504`/`GATE-505`), one whose own expiry exceeds the configured
+  // `gates.waiverMaxDays` cap measured from its own grant (`GATE-512`, `PLAN-M14.md` P16 -- `approveGate`
+  // itself, unchanged, knows nothing of the cap), or that excused other checks than the ones failing now
+  // (`GATE-507`), is skipped in favour of an older one that covers them, and with none left the approval is
   // refused (`GATE-507`).
   const waivers: readonly RecordedWaiver[] = evaluated.passed
     ? []
     : await recordedWaivers(ctx, gateId);
+  const maxDays = evaluated.passed ? undefined : await resolveWaiverMaxDays(ctx);
   let summary: GateApprovalSummary | undefined;
   for (const recorded of [...waivers, undefined]) {
     try {
+      if (
+        recorded !== undefined &&
+        maxDays !== undefined &&
+        waiverExceedsCap(recorded.waiver, recorded.ts, maxDays)
+      ) {
+        throw new ForgeError('GATE-512', { maxDays, expiresAt: recorded.waiver.expiresAt });
+      }
       summary = approveGate({
         definition,
         evaluated,
@@ -298,7 +348,10 @@ export async function gateApprove(
       const skippable =
         recorded !== undefined &&
         error instanceof ForgeError &&
-        (error.code === 'GATE-504' || error.code === 'GATE-505' || error.code === 'GATE-507');
+        (error.code === 'GATE-504' ||
+          error.code === 'GATE-505' ||
+          error.code === 'GATE-507' ||
+          error.code === 'GATE-512');
       if (!skippable) throw error;
     }
   }
@@ -349,7 +402,12 @@ export async function gateWaive(
   // A waiver excuses failing checks. On a gate that passes there is nothing to excuse, and recording one anyway
   // would be a standing waiver for whatever fails later (`10` §10.3 rule 1).
   if (evaluated.passed) throw new ForgeError('GATE-509', { gateId });
-  const waived = applyWaiver(evaluated, waiver, Date.parse(clock.now()));
+  const now = Date.parse(clock.now());
+  const waived = applyWaiver(evaluated, waiver, now);
+  // `PLAN-M14.md` P16: the additional policy layer beyond applyWaiver's own shape/expiry checks above --
+  // `GATE-513` for an `--owner` that is not a real identifier, `GATE-512` for an `--expires` beyond the
+  // configured `gates.waiverMaxDays` cap (default 90). Nothing is appended when this throws.
+  validateWaiverPolicy(waiver, now, await resolveWaiverMaxDays(ctx));
 
   // The waiver and what it waived: the checks that were failing when it was granted, with the digests of their
   // output, so a later reader sees what was excused and not only that something was (`10` §10.3 rule 1: waivers

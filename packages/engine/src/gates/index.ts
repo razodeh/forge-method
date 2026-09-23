@@ -24,7 +24,13 @@ export {
 } from './document.ts';
 export { evaluateGate, MAX_CHECK_STDERR_CHARS } from './evaluate.ts';
 export { buildGateReport } from './report.ts';
-export { applyWaiver, isApproved } from './waiver.ts';
+export {
+  applyWaiver,
+  isApproved,
+  isWaiverOwnerIdentifier,
+  validateWaiverPolicy,
+  waiverExceedsCap,
+} from './waiver.ts';
 export type {
   AdvisoryCheck,
   CheckRunner,
