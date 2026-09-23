@@ -183,11 +183,25 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
   // steps) are not listed: they would tell the session to write files this step's claim reverts. Every value here can
   // come from a user-authored workflow, so each goes through `oneLine`.
   const own = new Map(agent.outputs.map((output) => [output.type, output] as const));
+  // `step.produces` (`PLAN-M14.md` P6) can arrive matcher-escaped: `resolveProduces` backslash-prefixes a
+  // leading `!`/`#` so `enforceClaim`'s real minimatch call (and the skill filter's own reversed
+  // comparison, `pack-for-step.ts`) reads a configured docs root literally, never as negation or a
+  // comment. Classification (`startsWith('!')`, produces-DSL exclusion syntax) MUST run on that exact
+  // escaped form first -- a configured root of `!weird` resolves to `\!weird/...`, which does not itself
+  // start with `!` and so is correctly read as an allowed path, not an exclusion -- and only the text
+  // actually shown to the agent is unescaped, after classification, never before it (a fresh critic
+  // round: unescaping first showed the agent a path containing a literal backslash that does not exist
+  // on disk, and briefly also misclassified an allowed `!`-rooted path as a refusal).
+  const unescapeMatcher = (value: string): string => value.replace(/\\(.)/g, '$1');
   const paths = (
     globs: readonly string[],
   ): { readonly allowed: readonly string[]; readonly refused: readonly string[] } => ({
-    allowed: globs.filter((glob) => !glob.startsWith('!')).map(oneLine),
-    refused: globs.filter((glob) => glob.startsWith('!')).map((glob) => oneLine(glob.slice(1))),
+    allowed: globs
+      .filter((glob) => !glob.startsWith('!'))
+      .map((glob) => oneLine(unescapeMatcher(glob))),
+    refused: globs
+      .filter((glob) => glob.startsWith('!'))
+      .map((glob) => oneLine(unescapeMatcher(glob.slice(1)))),
   });
   const quoted = (list: readonly string[]): string => list.map((path) => `\`${path}\``).join(', ');
   const claim = paths(step.produces);

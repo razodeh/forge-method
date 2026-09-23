@@ -292,20 +292,27 @@ function escapeLeadingMarker(glob: string): string {
  * names a real directory, never a pattern the workflow's author wrote -- the REST of `glob`, the author's
  * own glob syntax, is left exactly as written. A leading `!`/`#` in the rewritten result (a configured
  * root that starts with one) is itself escaped (`escapeLeadingMarker`), matching `outputClaimGlobs`
- * above. A configured root that climbs out of the repository or is absolute (`escapesRepository`, the
- * identical rule `outputClaimGlobs` applies to a registry root) drops the entry (`undefined`) rather than
- * admitting a path that can match nothing inside a lane diff. An entry matching no default root's
- * segments passes through unchanged -- including, trivially, under the shipped default layout, where
- * every configured root equals its own default: this rewrite is the identity transform there, for every
- * shipped claim.
+ * above. `escapesRepository` runs on the NORMALIZED root, not the raw configured string (a fresh critic
+ * round caught the earlier ordering: `paths.specs: 'a/../../elsewhere'` does not itself start with `/` or
+ * `../`, so the raw-string check let it through, but `normalizeRoot` collapses it to `'../elsewhere'`,
+ * which very much climbs out of the repository -- `outputClaimGlobs`'s own identical check runs on its
+ * already-built, already-normalized glob for the same reason). A climbing or absolute root drops the
+ * entry (`undefined`) rather than admitting a path that can match nothing inside a lane diff; so does a
+ * bare root (no trailing segment left in `glob`) whose configured root itself normalizes to the project
+ * root (`''`) -- the one shape this rewrite can otherwise turn into an empty-string glob, which matches
+ * no real path either; an author who means "claim the whole project" writes `produces: ['**']`, not this
+ * coincidence. An entry matching no default root's segments passes through unchanged -- including,
+ * trivially, under the shipped default layout, where every configured root equals its own default: this
+ * rewrite is the identity transform there, for every shipped claim.
  */
 function resolveDocsRootPrefix(glob: string, roots: DocRoots): string | undefined {
   for (const [section, defaultRoot] of DOC_ROOT_SECTIONS) {
     if (!opensWithSegment(glob, defaultRoot)) continue;
     const configured = sectionRoot(section, roots) ?? defaultRoot;
-    if (escapesRepository(configured)) return undefined;
     const root = normalizeRoot(configured);
+    if (escapesRepository(root)) return undefined;
     const rest = glob.slice(defaultRoot.length);
+    if (root === '' && rest === '') return undefined;
     const rewritten =
       root === '' ? rest.replace(/^\//, '') : `${escapeGlob(root, { magicalBraces: true })}${rest}`;
     return escapeLeadingMarker(rewritten);

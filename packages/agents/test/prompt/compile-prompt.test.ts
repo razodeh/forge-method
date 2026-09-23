@@ -522,6 +522,27 @@ describe('compilePrompt', () => {
       expect(text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
     });
 
+    it('a matcher-escaped produces entry (PLAN-M14.md P6, resolveProduces) is classified allowed-vs-refused on the ESCAPED form, and shown unescaped: a leading backslash is never displayed, and a configured root literally named `!weird` is never misread as an exclusion', () => {
+      // `\!weird/x.md`: a configured root of `!weird`, escaped by `resolveProduces` so `enforceClaim`'s
+      // real minimatch call reads it literally rather than as negation -- NOT a produces-DSL exclusion.
+      const allowed = block5({ ...BASE_STEP, produces: ['\\!weird/x.md'] });
+      expect(allowed).toBe("- Files: only the paths in this step's claim: `!weird/x.md`");
+      expect(allowed).not.toContain('\\');
+      expect(allowed).not.toContain('Never write');
+      // A REAL exclusion (a leading, unescaped `!`) under the identical `!weird`-rooted glob still reads
+      // as refused, and is shown unescaped too.
+      const refused = block5({
+        ...BASE_STEP,
+        produces: ['\\!weird/**', '!\\!weird/secret.md'],
+      });
+      expect(refused).toBe(
+        [
+          "- Files: only the paths in this step's claim: `!weird/**`",
+          "- Never write (outside this step's claim): `!weird/secret.md`",
+        ].join('\n'),
+      );
+    });
+
     describe('a reserved id (PLAN-M14.md P8)', () => {
       it('states a single reserved id, and to use exactly it', () => {
         const text = block5({

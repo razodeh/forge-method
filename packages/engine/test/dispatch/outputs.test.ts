@@ -194,6 +194,27 @@ describe('resolveProduces (M14 P6, SPEC-QUESTIONS.md Q232 decision 3: docs/forge
       expect(resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: escaping })).toEqual([]);
     }
   });
+
+  it('a configured root that only escapes the repository AFTER normalization is still dropped (a fresh critic round: the raw string alone does not start with `/` or `../`)', () => {
+    // `posix.normalize('a/../../elsewhere')` collapses to `'../elsewhere'`, which does climb out -- but
+    // the raw string itself starts with neither `/` nor `../` nor equals `..`, so a check on the raw
+    // configured string (rather than the normalized one) would have missed this.
+    expect(
+      resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: 'a/../../elsewhere' }),
+    ).toEqual([]);
+    expect(
+      resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: 'a/b/../../../elsewhere' }),
+    ).toEqual([]);
+  });
+
+  it('a bare-root entry whose configured root itself normalizes to the project root (".") is dropped, not turned into an empty-string glob that matches nothing usefully', () => {
+    expect(resolveProduces(['docs/forge/kb'], { ...ROOTS, kb: '.' })).toEqual([]);
+    expect(resolveProduces(['docs/forge/kb'], { ...ROOTS, kb: './' })).toEqual([]);
+    // A non-bare entry under the same root is unaffected: the tail still has real content.
+    expect(resolveProduces(['docs/forge/kb/glossary.md'], { ...ROOTS, kb: '.' })).toEqual([
+      'glossary.md',
+    ]);
+  });
 });
 
 describe('a declared output that is present and valid', () => {

@@ -459,6 +459,99 @@ describe('block [5] (compile-prompt.ts renderOutputContractBlock) renders the RE
     const block5 = text.slice(text.indexOf('## [5]'), text.indexOf('## [6]'));
     expect(block5).toContain('docs/forge/kb/glossary.md');
   });
+
+  it('a `!`/`#`-leading configured root: block [5] shows the LITERAL path, never the internal matcher-escaped spelling (fresh critic round M1)', async () => {
+    for (const [marker, root] of [
+      ['!', '!weird'],
+      ['#', '#x'],
+    ] as const) {
+      const text = await assembledTextFor(['docs/forge/specs/x.md'], {
+        ...DEFAULT_ROOTS,
+        specs: root,
+      });
+      const block5 = text.slice(text.indexOf('## [5]'), text.indexOf('## [6]'));
+      // The real, writable directory is `!weird` (or `#x`) with no backslash -- that is what a `git
+      // diff` would list, and what the agent must be told, not the matcher-internal `\!weird` spelling
+      // `enforceClaim`'s own real minimatch call needs to read it literally.
+      expect(block5, marker).toContain(`\`${root}/x.md\``);
+      expect(block5, marker).not.toContain('\\');
+    }
+  });
+});
+
+describe('the skill activation filter (pack-for-step.ts matchesStepFileClaim) matches the RESOLVED produces too, not the raw one (PLAN-M14.md P6)', () => {
+  const SKILL_BODY_MARKER = 'THIS-IS-THE-FIXTURE-SKILL-BODY-M14-P6';
+
+  /** A synthetic skill shadowing the real `changelog-writing` id: `templatesPackageRoot` in this test
+   * harness is the fixture project root (`createFixtureAssembly`), not the real `@forge/templates`
+   * package, so writing a `SKILL.md` at the same relative path `SKILL_INDEX` names loads THIS file
+   * instead of the shipped one -- the one way to exercise `activation: auto`'s own `applies_to.paths`
+   * upgrade with a caller-chosen glob, since no shipped skill uses `applies_to.paths` today. */
+  async function withFixtureSkill(projectRoot: string, appliesToPath: string): Promise<void> {
+    const dir = path.join(projectRoot, 'templates', 'skills', 'changelog-writing');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'SKILL.md'),
+      [
+        '---',
+        'id: changelog-writing',
+        'name: Fixture skill',
+        'version: 1.0.0',
+        'description: A fixture skill for the M14 P6 skill-activation-filter test.',
+        'when_to_use: Only in this test.',
+        'applies_to:',
+        `  paths: ["${appliesToPath}"]`,
+        'activation: auto',
+        'budget_tokens: 700',
+        '---',
+        '',
+        SKILL_BODY_MARKER,
+        '',
+      ].join('\n'),
+    );
+  }
+
+  async function skillsBlockFor(produces: readonly string[], docRoots: DocRoots): Promise<string> {
+    const projectRoot = await createTempRepo('skill-filter');
+    await withFixtureSkill(projectRoot, 'knowledge/**');
+    const ctx = createTestContext({
+      projectRoot,
+      docRoots,
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              skills: ['changelog-writing'],
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const stepNode = node({
+      id: 'wf:glossary',
+      kind: 'agent',
+      agent: toAgentId('po'),
+      brief: 'do the work',
+      produces,
+    });
+    const assembled = await assembleAgentSession({ node: stepNode, ctx });
+    const text = assembled.compiled.text;
+    return text.slice(text.indexOf('## [8]'), text.indexOf('## [9]'));
+  }
+
+  it('under a relocated kb root, a skill scoped to the CONFIGURED path (knowledge/**) is upgraded to a body: the filter saw the resolved produces, not the stale default', async () => {
+    const block8 = await skillsBlockFor(['docs/forge/kb/glossary.md'], {
+      ...DEFAULT_ROOTS,
+      kb: 'knowledge',
+    });
+    expect(block8).toContain(SKILL_BODY_MARKER);
+  });
+
+  it('under the shipped default layout, the same skill (scoped to knowledge/**, not docs/forge/kb/**) is NOT upgraded: metadata only', async () => {
+    const block8 = await skillsBlockFor(['docs/forge/kb/glossary.md'], DEFAULT_ROOTS);
+    expect(block8).not.toContain(SKILL_BODY_MARKER);
+    expect(block8).toContain('changelog-writing');
+  });
 });
 
 describe('a step that declares neither outputs nor produces: no write grant (P36), so the policy has nothing to enforce', () => {

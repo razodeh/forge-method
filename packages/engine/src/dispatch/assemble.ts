@@ -544,6 +544,15 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
   // Computed once and reused everywhere this assembly needs the project's configured docs roots (the claim,
   // and below, the RESOLVED `produces` block [5] and the skill filter see, `PLAN-M14.md` P6).
   const docRoots = docRootsOf(ctx);
+  // Computed once (a fresh critic round caught an earlier doc comment overclaiming this when it was really
+  // called twice) and reused for both consumers below: the matcher-escaped form both need. The skill filter
+  // (`pack-for-step.ts`'s `matchesStepFileClaim`) uses a produces entry as a minimatch PATTERN in its own
+  // reversed comparison, where an unescaped leading `!` would be misread as negation. Block [5]
+  // (`compile-prompt.ts`'s `renderOutputContractBlock`) ALSO needs the escaped form to correctly classify
+  // an entry as allowed vs. refused (`paths()`'s own `startsWith('!')` check, which must see a produces-DSL
+  // exclusion's real `!`, not a coincidental one from a configured root that itself starts with `!`) --
+  // it unescapes for DISPLAY only, after that classification, never before.
+  const resolvedProduces = resolveProduces(node.produces, docRoots);
   const claim = resolveStepClaim(node, docRoots, ctx.claimPolicy);
   const mayWrite = input.callerConfinesWrites === true || claim.globs.length > 0;
   const granted: ToolGrant = readOnly
@@ -580,7 +589,9 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
       // configured root (`resolveProduces`, `PLAN-M14.md` P6), so the skill activation filter
       // (`pack-for-step.ts`'s `matchesStepFileClaim`) matches a skill's `applies_to.paths` against the
       // path the session is actually held to under a relocated layout, not the shipped default.
-      produces: resolveProduces(node.produces, docRoots),
+      // Matcher-escaped: the filter uses this as a minimatch PATTERN in its own reversed comparison,
+      // where an unescaped leading `!`/`#` would misread as negation or a comment.
+      produces: resolvedProduces,
       consumes: node.consumes,
     };
     pack = await packForStep(step, agent, kb.backend, kb.tree, {
@@ -602,7 +613,9 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
       declaredInputIds: declared.resolvedIds,
       // RESOLVED (`PLAN-M14.md` P6): block [5] (`renderOutputContractBlock`) must tell the agent the path
       // it will really be held to, under a relocated layout too, not the shipped default it may not use.
-      produces: resolveProduces(node.produces, docRoots),
+      // Still matcher-escaped here -- `renderOutputContractBlock`'s own `paths()` classifies allowed vs.
+      // refused on this exact form and unescapes only what it displays, after classifying.
+      produces: resolvedProduces,
       consumes: node.consumes,
       // Block [5] lists what THIS step's output check demands, at the path the check looks in (`PLAN-M13.md` P18).
       outputs: node.outputs.map((output) => ({
