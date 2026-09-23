@@ -20543,3 +20543,119 @@ pack-for-step,prompt/compile-prompt}.ts`; `packages/core/src/errors/codes.ts`; n
 `packages/engine/test/dispatch/output-ids.test.ts`; edits to `packages/engine/test/dispatch/agent.test.ts`,
 `packages/engine/test/resume/orchestrate.test.ts`, `packages/agents/test/prompt/compile-prompt.test.ts`,
 `packages/core/test/errors.test.ts`.
+
+## Q242 — M14 P13: RCA reproductions live under a defect-scoped test glob the claims include and the briefs name — a two-round critic loop found two majors (both fixed) and a severity overclaim in the round-1 fix's own commit message (disclosed, not amended)
+
+**Context.** `PLAN-M14.md` P13, closing `SPEC-QUESTIONS.md` Q216's own "RCA reproduction location"
+disclosure (`Q232` decision 5): `debug:run-rca`/`quick-fix:reproduce` claimed only
+`docs/forge/reports/defects/**`, so the reproduction test itself — the brief's own "preferably a
+failing test named with the defect id" — was written outside the claim and silently reverted under
+`strict`.
+
+**Built.** `debug:run-rca` and `quick-fix:reproduce` gain two `produces` entries beside the existing
+`docs/forge/reports/defects/**`: `'**/*{{defectId}}*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'` and
+`'**/{test,tests,__tests__,e2e}/**/*{{defectId}}*'`. The eight extensions and four directory names are a
+strict subset of what `isTestPath` (`@forge/engine/dispatch/test-path.ts`, `PLAN-M14.md` P5) accepts —
+checked directly, not eyeballed: `isTestPath`'s own regex (`[cm]?[jt]sx?`) actually accepts 12
+combinations, of which 4 (`cjsx`, `ctsx`, `mjsx`, `mtsx`) are not real extensions this ecosystem's
+tooling ever emits and were correctly left out. `build-stage`'s `onFailure` `rca` escalation gets the
+same two globs with a literal `DEF-*` prefix in place of `{{defectId}}`, since `compilePlan` never
+compiles `onFailure` and no concrete defect id is ever available there; disclosed as prefix-scoped, not
+narrowed to the failure the escalation actually ran for.
+
+Three brief edits say where the reproduction goes and that its path is recorded in the RCA:
+`run-rca-framework.md`'s Reproduce phase, `reproduce-defect.md` (its `docs/forge/reports/defects/`
+location narrowed to a non-test script; a test goes to the new glob instead), and `rca.md`'s "Do not
+edit ... tests" gaining the new-reproduction-test exception. `fix-defect.md`, the `fix` claims and the
+Defect's Reproduction-section claim are unchanged. `test/brief-write-paths-in-claim.test.ts` gains three
+`IMPLIED_WRITES` entries (the reproduction test's own location is left to the agent, so no token names
+it) and six `BROAD_PRODUCES_ALLOWED` entries (the two new globs are necessarily anchored at `**/`, which
+`isBroadProduces` correctly flags broad — the claim has to search the whole project, since the brief
+names no fixed directory). `test/workflows.test.ts`'s structural copy of `build-stage` carries the same
+two new escalation globs. New `packages/cli/test/commands/run/rca-reproduction.test.ts`: compiled
+coverage (both workflows compile `{{defectId}}` with brace groups intact; the escalation is checked at
+parse level only; a representative file for each glob cross-checked directly against `isTestPath`) and
+enforced coverage (a real `forge run` of the real `debug` workflow; a scripted `run-rca` session that
+writes a reproduction test, an RCA record and a Defect edit inside the new claim, plus a plain source
+file and a same-directory test not named for this defect outside it — `strict`, PLAN-M14.md P3, reverts
+exactly the two out-of-claim files and fails the step, proven both via the event log and by reading the
+two survivors directly off the lane's own retained worktree).
+
+**Round 1 (fresh, context-free, dispatched with the diff and spec text, no rationale): 2 major, 2 minor,
+all four fixed (`c1ce7ba`).**
+
+1. **Major — brief wording could send a literal-minded agent to a genuinely out-of-claim path.** All
+   three briefs said a reproduction could be "simply named so the defect id appears in the file name" as
+   an alternative to test-directory placement — but the compiled glob requires EITHER a `.test.`/`.spec.`
+   extension infix OR test-directory placement; the defect id alone, in neither shape (e.g.
+   `src/DEF-012-repro.ts`), is genuinely outside the claim. Since `debug:run-rca` declares `outputs`
+   (always `strict`), a literal reading there would revert the write and fail the whole step. Fixed: all
+   three briefs now state the two real shapes precisely, with the existing `IMPLIED_WRITES` anchors
+   preserved verbatim (confirmed by the still-passing test, which hard-fails on a stale anchor).
+2. **Major — the escalation's disclosed `DEF-*` prefix-scoping did not mention its most concrete
+   consequence.** `enforceClaim` matches a changed path against the claim glob by shape alone, with no
+   concept of "a new file vs. an existing one" (true of every step's claim, not special to this one), so
+   the escalation's own `DEF-*` prefix equally covers REWRITING an already-committed regression test for
+   a different, unrelated (possibly already-closed) defect, not only authoring a new one; only `rca.md`'s
+   own advisory "never edit the story's own tests" stands against that, not the claim itself. Dormant
+   today for the same reason the prefix itself is harmless today: `onFailure` is not compiled or
+   dispatched by anything yet. Fixed by disclosing it precisely in `build-stage.workflow.yaml`'s own
+   comment and demonstrating it directly: a new `rca-reproduction.test.ts` describe block runs the
+   escalation's own exact `produces` list as a standalone step against a pre-existing, committed
+   `DEF-005` regression test, scripts a session that overwrites it, and asserts no `PolicyViolation`
+   fires. Not fixed (teaching `enforceClaim` itself to distinguish new from modified paths is a
+   cross-cutting change to every step's claim in the system, well outside this piece's own Size: S scope)
+   — disclosed and now test-backed instead of merely asserted.
+3. **Minor — an overclaim.** `debug.workflow.yaml`'s comment said the extension list is "the exact set
+   `isTestPath` accepts"; actually a strict, harmless subset (see Built, above). Comment reworded.
+4. **Minor — internal inconsistency.** `rca.md`'s new exception sat only in its "Do not" section; the
+   rest of the brief (Method step 2, the Produce section's `reproduction` field) still described only
+   "the command." Fixed: Method step 2 now names the new-test option where isolation would need it, and
+   Produce's `reproduction` field names both shapes it may record.
+
+**Round 2 (fresh, context-free, scoped to the round-1 fixes, independently re-deriving every technical
+claim rather than trusting the diff or the commit message): 0 blocking, 0 major — genuinely holds up.**
+Reconstructed the compiled glob shapes and ran them through `minimatch` directly; re-derived
+`isTestPath`'s regex arithmetic (12 combinations, not the 8 either commit's prose implied without
+qualification); traced `resolveStepClaim`/`resolveClaimPolicy` and the new demonstration test's git/lane
+mechanics end to end. All four round-1 fixes held. Two new minors:
+- The round-1 fix commit's own message overclaimed severity: it said a literal-minded write "would
+  revert... and fail the whole step" for all three edited briefs, but `quick-fix:reproduce` and the `rca`
+  escalation declare no `outputs`, so under this repo's own shipped `DEFAULT_CONFIG` (`autonomy: guided`,
+  unadopted) `resolveStepClaim` gives them `warn`, not a forced `strict` — a literal-minded write there
+  would be flagged and kept, not reverted-and-failed. True only for `debug:run-rca`. A prose error
+  confined to a commit message, not shipped code or a test; disclosed here rather than amended into
+  history a second time in a shared working tree already showing signs of concurrent git churn this
+  piece worked around (see Records, below).
+- `rca.md`'s Method step 2 used "in isolation" as a plain-English retry idiom one sentence before
+  "isolating the failure" as a forward reference to the loop's own formal step 3 (Isolate) — a genuine,
+  checkable ambiguity. Fixed (`49f9b7e`): reworded to drop the idiom and name the step directly.
+
+**Mutation evidence (hand-run and reverted, not merely asserted).** Both new `produces` entries removed
+from `debug.workflow.yaml`: 3 cases fail in `test/brief-write-paths-in-claim.test.ts` (default-layout
+claim check, RELOCATED-layout claim check, a now-stale `BROAD_PRODUCES_ALLOWED` entry) and 5 in
+`rca-reproduction.test.ts` (both compiled-coverage cases, both enforced cases — the reproduction test
+itself becomes out-of-claim and gets reverted). The extension brace-group widened past the shipped eight
+(`+ txt`): 1 case fails in `brief-write-paths-in-claim.test.ts` (`isBroadProduces` flags the new glob
+string as an unrecognised, un-allowed broad entry) and 2 in `rca-reproduction.test.ts` (exact-string
+equality against the now-changed compiled glob). The `rca.md` "Do not" sentence the `build-stage:onFailure[0]`
+`IMPLIED_WRITES` anchor pins reverted to different wording: 2 cases fail in
+`brief-write-paths-in-claim.test.ts` (the anchor no longer matches the brief text). All three mutations
+reverted cleanly (`git diff` empty) before the docs commit.
+
+**Records.** While this piece was in flight, `M14 P12`'s own commit (`test/workflows.test.ts`,
+`test/brief-write-paths-in-claim.test.ts` are both files this piece also edits) briefly, accidentally,
+swept this piece's own still-uncommitted hunks into its own first commit, then corrected itself; this
+piece's own commit hash therefore changed twice in the shared history (`cd86239` → `b7df801` (amend) →
+reset back to `cd86239` → `ec3049e`, the last confirmed via `git diff` to carry byte-identical tree
+content to `cd86239`) before landing. No content was lost; the final tree was verified against the
+original hand-isolated patches before any further commit built on it.
+
+**Verification scope (this piece; owner-approved cost cut, no full unscoped suite).**
+`packages/cli/test/commands/run/rca-reproduction.test.ts` (7), `test/brief-write-paths-in-claim.test.ts`
+(18), `test/workflows.test.ts` (45), `test/write-implies-claim.test.ts` (6),
+`packages/agents/test/prompt/briefs-{build,planning,ops-gates}-content.test.ts` (386) — 462 cases total,
+all green; `pnpm typecheck` (21/21 packages), `pnpm run boundaries` and `eslint`/`prettier` all clean.
+Three commits: `ec3049e` (feat; landed as `cd862397`, see Records), `c1ce7ba` (critic round 1 fix),
+`49f9b7e` (critic round 2 fix) — re-verified together in a clean `git worktree` of the final commit with
+`pnpm install --offline --frozen-lockfile` before this entry was written.

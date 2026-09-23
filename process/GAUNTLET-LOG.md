@@ -15037,3 +15037,81 @@ all green in a clean `git worktree` of the final commit with `pnpm install --off
 `eslint`/`prettier` clean on every file owned. Three commits: `efac450` (feat), `4d044b0` (critic round 1
 fix), `22d7a18` (critic round 2 fix) — each independently verified in its own clean worktree before the
 next round started.
+
+## M14 P13 — RCA reproductions live under a defect-scoped test glob the claims include and the briefs name (`templates/workflows/{debug,quick-fix,build-stage}.workflow.yaml`, `templates/briefs/{run-rca-framework,reproduce-defect,rca}.md`, `test/{brief-write-paths-in-claim,workflows}.test.ts`, new `cli/test/commands/run/rca-reproduction.test.ts`)
+
+**Rounds taken: 2** (round 1: 2 major + 2 minor, all fixed; round 2: 0 blocking/major, 2 new minor, both
+resolved — one fixed, one disclosed rather than amended into already-shared history).
+
+**Round 1 blocking/major findings.**
+1. All three edited briefs said a reproduction could be "simply named so the defect id appears in the
+   file name" as an alternative to test-directory placement — false: the compiled `produces` glob
+   requires EITHER a `.test.`/`.spec.` extension infix OR test-directory placement, and the defect id
+   alone (e.g. `src/DEF-012-repro.ts`) is genuinely out-of-claim. Since `debug:run-rca` declares
+   `outputs` (always `strict`), a literal reading there would have reverted the write and failed the
+   step. The critic caught this by reconstructing the glob shapes directly rather than trusting the
+   prose. Fixed: all three briefs now state the two real shapes precisely.
+2. `build-stage`'s `rca` escalation's disclosed `DEF-*` prefix-scoping (no `defectId` is ever compiled
+   for `onFailure`) did not mention that `enforceClaim` matches by path shape alone — the same prefix
+   equally covers rewriting an already-committed, unrelated defect's regression test, not only authoring
+   a new one. Dormant today (nothing dispatches `onFailure` yet) but a real gap in what was disclosed.
+   The critic asked for it to be demonstrated, not merely asserted; a new test does so directly (a
+   standalone workflow carrying the escalation's own exact claim, a pre-existing committed test, a
+   session that overwrites it, no `PolicyViolation`).
+
+**What the critic caught that the builder missed.** Both major findings: the builder's own brief edits
+read as correct in isolation (the two-shape requirement is implicit in the glob, and the escalation's
+own comment already said "prefix-scoped") but the critic's insistence on reconstructing the actual
+compiled glob and re-deriving `enforceClaim`'s own matching semantics from source, rather than trusting
+either the brief prose or the disclosure comment, is what surfaced the literal-reading failure mode and
+the rewrite-existing-file consequence. Round 1 also caught a real if harmless arithmetic overclaim
+("the exact set `isTestPath` accepts" — actually a subset missing four unused extension combinations)
+and an internal-consistency gap in `rca.md` between its new exception and the rest of the brief.
+
+**Round 2.** A second fresh, context-free critic independently re-derived every technical claim in the
+round-1 fix from source — the compiled globs via a direct `minimatch` run, `isTestPath`'s own regex
+arithmetic, `resolveStepClaim`/`resolveClaimPolicy`'s actual policy resolution, and the new
+demonstration test's git/lane mechanics — rather than re-reading the diff and trusting its prose. All
+four round-1 fixes held under that independent reconstruction: no blocking or major findings. It found
+two new minors: the round-1 fix commit's own message overclaimed which of the three edited briefs a
+literal-minded write would actually fail under (true only for `debug:run-rca`, since the other two steps
+declare no `outputs` and resolve to `warn` under this repo's shipped default config, not a forced
+`strict`) — a prose error confined to an already-committed message, disclosed in the Q entry rather than
+amended a second time into a shared working tree that had already shown concurrent-git churn (see
+below); and a genuine readability collision in `rca.md` between a plain-English "in isolation" idiom and
+a forward reference to the loop's own formal Isolate step, fixed directly.
+
+**Mutation evidence, hand-run and reverted (this piece's own, beyond what the critic rounds found).**
+Both new `produces` entries removed from `debug.workflow.yaml`: 3 cases fail in
+`test/brief-write-paths-in-claim.test.ts`, 5 in `rca-reproduction.test.ts`. The extension brace-group
+widened past the shipped eight: 1 case fails in `brief-write-paths-in-claim.test.ts`
+(`isBroadProduces`/`BROAD_PRODUCES_ALLOWED` reject the now-unrecognised glob string), 2 in
+`rca-reproduction.test.ts` (exact-string equality against the compiled glob). The `rca.md` sentence the
+`build-stage:onFailure[0]` `IMPLIED_WRITES` anchor pins reverted to different wording: 2 cases fail in
+`brief-write-paths-in-claim.test.ts` (stale anchor). All three reverted cleanly before this log entry.
+
+**Left open (matches the plan's own "Discloses" list).** Shell-script reproductions stay beside the
+Defect, unclaimed by a test glob; nothing verifies an RCA's own `reproduction` field actually names a
+path the claim covers (a G-Stable-adjacent rule for later); the `build-stage` escalation is never
+compiled today, only parsed — `onFailure` wiring is a separate, later piece; the escalation's `DEF-*`
+claim stays prefix-scoped by design, now with its rewrite-existing-file consequence disclosed and
+test-demonstrated rather than fixed (fixing it would mean teaching `enforceClaim` itself to distinguish
+a new path from a modified one, a change to every step's claim in the system, not this piece's own
+scope).
+
+**A shared-working-tree note, for the record.** While this piece was in flight, `M14 P12`'s own first
+commit (touching two of the same root test files this piece edits) briefly, accidentally, swept this
+piece's own still-uncommitted hunks into itself before correcting itself moments later; this piece's own
+feat commit's hash changed twice in consequence (`cd86239` → an amend → a reset back → `ec3049e`) before
+settling, with the final tree confirmed byte-identical to the original hand-isolated patches at every
+step via `git diff`, never trusted by hash alone. No content was lost or duplicated.
+
+**Verification scope (this piece; owner-approved cost cut, no full unscoped suite).**
+`packages/cli/test/commands/run/rca-reproduction.test.ts` (7), `test/brief-write-paths-in-claim.test.ts`
+(18), `test/workflows.test.ts` (45), `test/write-implies-claim.test.ts` (6),
+`packages/agents/test/prompt/briefs-{build,planning,ops-gates}-content.test.ts` (386) — 462 cases total,
+all green in a clean `git worktree` of the final commit with `pnpm install --offline --frozen-lockfile`;
+`pnpm typecheck` (21/21 packages) and `pnpm run boundaries` both clean in the same clean worktree;
+`eslint`/`prettier` clean on every file owned. Three commits: `ec3049e` (feat, landed as `cd862397ba80`
+before the shared-tree reconciliation above renamed it), `c1ce7ba` (critic round 1 fix), `49f9b7e`
+(critic round 2 fix) — each independently re-verified before the next round started.
