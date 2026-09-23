@@ -15512,3 +15512,120 @@ here. A written report is not committed to git by this piece. Advisory checks ar
 run, never dispatched. Also noted, not a gap: a deterministic check's own `run`/`reason` fields are
 rendered unfenced (project-authored/engine-generated text, not untrusted command output — the round-1
 critic traced both through `evaluate.ts` and confirmed neither ever carries raw check output).
+
+## M14 P16 — Waivers: 90-day default cap (`gates.waiverMaxDays`) and `--owner` an identifier (`schemas/config/{schema,defaults,docs,walk}.ts`, `engine/gates/waiver.ts`, `cli/commands/run/gate-commands.ts`, `cli/commands/config.ts`, `cli/bin.ts`, `core/errors/codes.ts`)
+
+New, optional, top-level `gates` config block (`schemas/config/schema.ts`, `.strict()`, `waiverMaxDays:
+z.number().int().positive()`; default `90` in `defaults.ts`) — optional the identical "a
+`.forge/config.yaml` written before this piece existed has no such key and must stay valid" reason
+`paths.release`/`execution.mergeChecks` already are. `configLeafPaths` picks the new leaf up
+automatically; `forge config get/set/explain gates.waiverMaxDays` already work through the existing
+schema-derived `REAL_KEYS` mechanism, no new CLI code needed for that alone.
+
+`gates/waiver.ts` gains a second, later policy layer that never touches
+`applyWaiver`/`isApproved`/`GATE-504`/`GATE-505`: `isWaiverOwnerIdentifier(owner)` —
+`/^[\p{L}\p{N}][\p{L}\p{N}._@+:-]{0,99}$/u`, 1-100 Unicode code points of letters, digits and
+`. _ @ + : -`, starting alphanumeric, never whitespace or an invisible `\p{Cc}`/`\p{Cf}` character (a
+real word or short phrase like "the team" is non-blank but not one token — `isNonBlank` stays the floor
+`applyWaiver`/`GATE-504` still check, deliberately not strengthened); `waiverExceedsCap(waiver,
+grantedAt, maxDays)` — pure day-math (`expiresAt > grantedAt + maxDays * MS_PER_DAY`), `grantedAt`
+caller-supplied so the identical function reads correctly for both a fresh grant ("now") and a waiver
+already on record (its own `GateWaived` event's `ts`); `validateWaiverPolicy(waiver, grantedAt,
+maxDays)` — throws `GATE-513` then `GATE-512`.
+
+`gate-commands.ts`: `gateWaive` calls `validateWaiverPolicy` after `applyWaiver`, before any event is
+appended. `coveringWaiver` (`gate check`) and `gateApprove`'s waiver-selection loop both now also skip a
+recorded waiver whose own `expiresAt` exceeds its own grant (`GateWaived`'s `ts`, newly carried on
+`RecordedWaiver`) plus the configured cap, exactly the way a malformed/already-lapsed one is already
+skipped — a hand-appended waiver that bypassed the CLI's own `GATE-512` refusal cannot silently outlive
+the cap when later read back. `resolveWaiverMaxDays` reads the project's real, configured cap, falling
+back to the documented default when `gates` is absent from an existing config OR no config file exists
+on the project at all yet. `bin.ts`'s `gate waive` usage line now names `--owner <identifier>`.
+
+Two new error codes: `GATE-512` (`--expires` beyond the cap, exit usage, names the cap and the expiry)
+and `GATE-513` (`--owner` not a real identifier, exit usage).
+
+A real, pre-existing latent bug in `cli/commands/config.ts` surfaced and was fixed along the way:
+`gates` is the first config field whose own optionality sits on a non-leaf ancestor rather than only
+ever on a leaf (`paths.release`/`execution.testRoots`/`execution.mergeChecks` are each an optional LEAF
+under an always-present parent object — verified by reading every `.optional()` in `schema.ts`).
+`getByPath`/`setByPath` both assumed every ancestor in a schema-valid `ForgeConfig` is always a real
+object; `forge config get/set gates.waiverMaxDays` against a config missing the `gates` key crashed with
+a raw `Cannot read properties of undefined` instead of reading `undefined` (get) or creating the missing
+ancestor (set). Both fixed.
+
+**Round 1 (fresh, context-free): 1 real gap (fixed), 1 item considered and correctly judged out of
+scope.**
+1. **Real gap, fixed.** `resolveWaiverMaxDays` newly couples gate commands to the validity of the WHOLE
+   project config, not just `gates`: before this piece, `gate check`/`approve`/`waive` never read
+   `.forge/config.yaml` at all. A config invalid for a reason entirely unrelated to `gates` now surfaces
+   `CFG-001` on those gate commands too, once a gate fails. Deliberate and defensible (a broken project
+   config should surface, not be silently worked around), but genuinely untested and undisclosed. Fixed:
+   a real test (later broadened in round 2, below) now proves and documents it.
+2. **Considered, judged correctly out of scope, no change made.** The piece's own "Surface" list names
+   `specs 10 §10.3 rule 1`, which this piece never amends. Verified against `SPEC-QUESTIONS.md` Q232's
+   own "Spec text to amend" list — the recorded authorisation for every M14 spec edit — line by line:
+   decision 10 (waivers) is not on it. The "Surface" line is a citation for grounding, the same as every
+   other piece's own "Spec." field, not an edit instruction absent a Mandate that quotes literal spec
+   prose to change (contrast `PLAN-M14.md` P1's own mandate, which does, for the decisions it actually
+   amends); amending specs/10 here would have violated the standing "keep the edit to what the piece's
+   own brief authorises" rule.
+
+**Round 2 (fresh, context-free, independently re-verified both round-1 resolutions and agreed with
+both): 0 blocking, 2 minor, both fixed — no round 3.**
+1. `schemas/config/walk.ts`'s own `unwrap` doc comment claimed "none of `configSchema`'s fields wrap a
+   `ZodObject` this way today" — this piece's own `gates: gatesSchema.optional()` made that claim false
+   (every prior optional field is an optional LEAF under an always-present parent; `gates` wraps a whole
+   nested object). The walker itself was already correct (written defensively for exactly this case
+   before any field exercised it); only the comment was stale, and untouched by the diff that made it
+   so. Corrected.
+2. The round-1 fix's own test exercised `gateWaive` only; `gateCheck`/`gateApprove` share the identical
+   `resolveWaiverMaxDays` call once their own evaluation has a failing check (verified by reading both
+   functions' own `evaluated.passed` guards), so the coupling is real for all three by construction, but
+   only one was demonstrated. Broadened the one test to assert `CFG-001` from all three real gate
+   commands against the identical invalid config.
+
+**Mutation evidence (real: broken, the named test(s) shown to fail, then restored — not narrated):**
+cap check (`waiverExceedsCap` short-circuited to always `false`) caught by 3 `waiver.test.ts` unit tests
+and the CLI-level `+91d -> GATE-512` test; the recorded-waiver read-back cap check removed from both
+`coveringWaiver` and `gateApprove`'s loop caught by exactly the "hand-appended waiver ... skipped ...
+honoured" test (the 400-day case); `isWaiverOwnerIdentifier` degraded to `isNonBlank`-only caught by the
+unit-level `GATE-513` test and the CLI-level `'the team' -> GATE-513'` test; `resolveWaiverMaxDays`
+hard-coded to return `90` regardless of config caught by exactly the "honoured once
+`gates.waiverMaxDays` is configured wide enough" assertion (plus, as expected collateral, the two
+pre-existing fallback-ordering tests, which now also depend on a wide configured cap).
+
+**Rule 14/15 (clean `git worktree`, final commit):** `pnpm typecheck`, `pnpm run boundaries`, `pnpm
+lint` (eslint + `prettier --check`) all clean for every file this piece touches. Scoped tests, run for
+real in the clean worktree: `packages/schemas/test/config`, `packages/engine/test/gates`,
+`packages/cli/test/commands/config.test.ts`, `packages/cli/test/commands/run/gate-commands.test.ts` —
+580/580 green (includes M14 P17's own concurrently-landed tests in the same files); `packages/cli/test/
+bin.test.ts` (real subprocess dispatch, including two new real-CLI `GATE-512`/`GATE-513` refusal tests
+and the usage-line text) — 162/162 green at the piece's own second commit, re-verified again at the
+final commit.
+
+A high-risk shared-file wave: `packages/cli/src/commands/run/gate-commands.ts`, `packages/cli/src/
+bin.ts`, `packages/cli/test/commands/run/gate-commands.test.ts`, `packages/core/src/errors/codes.ts` and
+`packages/engine/src/gates/index.ts` were all concurrently edited by M14 P17 (`GateReport` writes into
+the identical `gateCheck`/`gateApprove`/`gateWaive` functions this piece also touches) and, for
+`codes.ts`, by M14 P14 too. Every commit in this piece was built by reconstructing an isolated target
+(the parent commit's own blob plus exactly this piece's own edits, replayed via the same tool calls
+originally used) in a scratch location, diffing that against the real parent blob, and applying the
+result to the git INDEX ONLY (`git apply --cached`) — never touching the live, concurrently-changing
+working-tree file — then verifying the committed blob byte-for-byte against the reconstructed target
+(`git show <sha>:<path>` diffed against the scratch file) before moving on. No concurrent agent's
+uncommitted work was ever swept into a commit this piece made, and no commit this piece made was ever
+swept into by a later concurrent commit either (independently confirmed: M14 P14's own gauntlet-log
+entry re-diffed this piece's `codes.ts` commit after it landed nearby in the same file and confirmed it
+added only its own `GATE-512`/`GATE-513` rows).
+
+**Discloses.** `--owner` is not an authenticated identity (unchanged: `isWaiverOwnerIdentifier` is a
+pure shape check, no auth involved); waivers stay gate-wide per run (unchanged: `recordedWaivers` is
+still scoped by `runId`); `forge gate waive` still exits `gateFailed` after recording (unchanged:
+`bin.ts`'s final `report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed` line is byte-for-byte
+untouched by this diff). Additionally, newly disclosed and tested (round 1/2, above): gate commands are
+now coupled to the whole project config's validity once a gate fails, not merely to `gates` itself. An
+unrelated, pre-existing bug (`core/test/errors.test.ts`'s imperative-verb check on `RUN-108`'s own
+remedy text, introduced by M14 P14's `2e8a3dc` and still present on `main`) is not this piece's:
+confirmed unrelated (`GATE-512`/`GATE-513` both pass the identical check cleanly) and not fixed here,
+per standing shared-tree discipline.
