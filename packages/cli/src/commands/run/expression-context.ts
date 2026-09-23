@@ -114,7 +114,14 @@ function collectWorkflowStrings(value: unknown, into: string[]): void {
  * (`resolveClaimEntry`'s own whole-placeholder splice, `plan/compile.ts:150-173`, the shape
  * `store-release.workflow.yaml`'s `produces` uses) or embedded in longer text. The one config leaf
  * `buildRunExpressionContext` ever exposes (below); nothing else under `config` is real yet, so nothing
- * else needs a name here. */
+ * else needs a name here.
+ *
+ * Scoped to `{{...}}`-wrapped text, the same shape `resolveClaimEntry`/`resolveTemplate` themselves ever
+ * substitute into: `SessionStep.when`/`OnFailureEscalation.when` carry a bare expression (no `{{}}`), so a
+ * reference to `config.paths.release` written only there would not be found here. Not a live gap today —
+ * neither field is evaluated by any shipped code yet (`plan/compile.ts`'s own doc comment defers both to
+ * "whichever later piece actually implements" that) — but whoever wires one up should extend this check
+ * (or drop the `{{}}` requirement) at the same time, not discover the silent miss later. */
 function referencesConfigPathsRelease(workflow: unknown): boolean {
   const strings: string[] = [];
   collectWorkflowStrings(workflow, strings);
@@ -296,8 +303,12 @@ export async function buildRunExpressionContext(
   if (runValues !== undefined) root['run'] = runValues;
   // `config.paths.release` (`PLAN-M14.md` P12): the one leaf of the project's config exposed at the
   // expression language's `config` root, and only when it is non-empty — a workflow that reads it while
-  // the project has not set it is refused below (`RUN-106`), not handed an empty claim silently.
-  const releaseGlobs = deps.config.paths.release;
+  // the project has not set it is refused below (`RUN-106`), not handed an empty claim silently. The
+  // field is optional in the schema (a `.forge/config.yaml` written before this piece has no such key,
+  // `@forge/schemas/config`'s own `pathsSchema`), and absent carries the identical meaning "unset" that
+  // an explicit `[]` does — both refuse the identical way, so `?? []` is not a guess at a default, it is
+  // the one real meaning the missing key has.
+  const releaseGlobs = deps.config.paths.release ?? [];
   if (releaseGlobs.length > 0) root['config'] = { paths: { release: releaseGlobs } };
   Object.assign(root, inputValues);
 

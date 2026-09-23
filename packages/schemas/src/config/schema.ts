@@ -54,8 +54,10 @@ const projectSchema = z
  * anything).
  */
 function isValidReleasePathEntry(entry: string): boolean {
+  if (entry.trim() === '') return false;
   if (entry.startsWith('!')) return false;
-  if (entry.startsWith('/') || /^[A-Za-z]:[\\/]/.test(entry)) return false;
+  if (entry.startsWith('/') || entry.startsWith('\\')) return false;
+  if (/^[A-Za-z]:[\\/]/.test(entry)) return false;
   if (entry.split(/[/\\]/).some((segment) => segment === '..')) return false;
   return true;
 }
@@ -65,8 +67,8 @@ const releasePathEntrySchema = z
   .min(1)
   .refine(isValidReleasePathEntry, (entry) => ({
     message:
-      `"${entry}" is not a valid paths.release entry: it must be repo-relative (no leading "/"), ` +
-      'contain no ".." segment, and not start with "!".',
+      `"${entry}" is not a valid paths.release entry: it must be non-blank and repo-relative (no ` +
+      'leading "/" or "\\\\", no drive letter), contain no ".." segment, and not start with "!".',
   }));
 
 const pathsSchema = z
@@ -79,10 +81,15 @@ const pathsSchema = z
     code: z.string().min(1),
     // `PLAN-M14.md` P12: app source paths `prepare-release-build` claims (a glob per entry), read by
     // `buildRunExpressionContext` (`@forge/cli/commands/run/expression-context.ts`) into the expression
-    // language's `config` root. Empty by default (`defaults.ts`) — deliberately, not guessed: a workflow
-    // that reads `config.paths.release` while it is empty is refused (`RUN-106`) before it compiles at
-    // all, rather than silently claiming nothing.
-    release: z.array(releasePathEntrySchema),
+    // language's `config` root. `forge init` writes `[]` for a fresh project (`defaults.ts`) —
+    // deliberately, not guessed: a workflow that reads `config.paths.release` while it is empty (or
+    // unset) is refused (`RUN-106`) before it compiles at all, rather than silently claiming nothing.
+    // Optional, unlike the other `paths.*` fields, the identical reason `execution.testRoots`/
+    // `execution.mergeChecks` are (`PLAN-M14.md` P5, P38): a `.forge/config.yaml` written before this
+    // piece has no such key and must stay valid — every real reader treats an absent key the same as an
+    // empty list (`buildRunExpressionContext`'s own `?? []`), so the two states carry no distinct meaning
+    // (contrast `testRoots`, where "unset" genuinely means something else than "explicitly `[]`").
+    release: z.array(releasePathEntrySchema).optional(),
   })
   .strict();
 

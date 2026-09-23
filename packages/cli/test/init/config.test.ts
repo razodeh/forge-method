@@ -88,6 +88,9 @@ describe('buildForgeConfig', () => {
       sessions: 'custom/docs/sessions',
       reports: 'custom/docs/reports',
       code: DEFAULT_CONFIG.paths.code,
+      // `--kb-root` only rebases the docs sections above; `paths.release` (`PLAN-M14.md` P12) is
+      // unrelated to the KB root, so it keeps its own (empty) `DEFAULT_CONFIG` default here too.
+      release: DEFAULT_CONFIG.paths.release,
     });
   });
 

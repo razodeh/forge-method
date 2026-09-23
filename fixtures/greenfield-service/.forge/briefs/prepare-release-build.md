@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=187cdcc229bb632e360aaa3f4168947cf2a916067dca0ff3d356422888ccf789 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=e7a36f8814d845119e2950e12de4cea4da46650c38aea83f748b4a04998877c3 — edits will be overwritten; use overrides/ -->
 Prepare the mobile app for a release build of the target this run was started for (the workflow's
 `buildTarget` input). That input is not one of this step's declared inputs, so if the target's name
 is not in your context, ask with `FORGE_ASK:` rather than guessing; wherever `<buildTarget>` appears
@@ -16,8 +16,8 @@ device-matrix test suite can run against it; the store-readiness gate follows th
 
 ### Produce
 
-The release configuration changes, inside the app's own paths, and one `Task` record describing
-them.
+The release configuration changes, inside the app paths the project's `paths.release` config key
+names (`forge config get paths.release`), and one `Task` record describing them.
 
 - Version: set the marketing version and build number for this release according to the project's
   versioning convention, and increase the build number monotonically. Do not reuse one that was

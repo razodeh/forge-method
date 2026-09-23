@@ -242,13 +242,18 @@ describe('configSchema — paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q21
     return configSchema.safeParse({ ...config, paths: { ...config.paths, release } });
   };
 
-  it('is required (present, empty by default) — not optional like testRoots/mergeChecks', () => {
-    const config = goldenConfig() as { paths: Record<string, unknown> };
-    const pathsWithoutRelease = Object.fromEntries(
-      Object.entries(config.paths).filter(([key]) => key !== 'release'),
-    );
-    expect(configSchema.safeParse({ ...config, paths: pathsWithoutRelease }).success).toBe(false);
-  });
+  it(
+    'is optional, like execution.testRoots/execution.mergeChecks: a .forge/config.yaml written before ' +
+      'this piece has no paths.release key and must stay valid',
+    () => {
+      const config = goldenConfig() as { paths: Record<string, unknown> };
+      const pathsWithoutRelease = Object.fromEntries(
+        Object.entries(config.paths).filter(([key]) => key !== 'release'),
+      );
+      const result = configSchema.safeParse({ ...config, paths: pathsWithoutRelease });
+      expect(result.success, !result.success ? JSON.stringify(result.error.issues) : '').toBe(true);
+    },
+  );
 
   it('accepts the empty list', () => {
     expect(withRelease([]).success).toBe(true);
@@ -280,6 +285,15 @@ describe('configSchema — paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q21
 
   it('rejects a leading "!" (the claim matcher reads it as an exclusion)', () => {
     expect(withRelease(['!apps/mobile/**']).success).toBe(false);
+  });
+
+  it('rejects a whitespace-only entry (min(1) alone would accept it)', () => {
+    expect(withRelease(['   ']).success).toBe(false);
+    expect(withRelease(['\t']).success).toBe(false);
+  });
+
+  it('rejects a Windows UNC path (a leading "\\\\", no drive letter)', () => {
+    expect(withRelease(['\\\\server\\share']).success).toBe(false);
   });
 });
 

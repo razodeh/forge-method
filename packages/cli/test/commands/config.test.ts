@@ -1,10 +1,11 @@
 /**
  * `forge config <get|set|list|explain|edit>`.
  */
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
 import {
   configEdit,
@@ -112,6 +113,25 @@ describe('paths.release (PLAN-M14.md P12)', () => {
     const value = await configGet({ paths: project.paths }, 'paths.release');
     expect(value).toEqual([]);
   });
+
+  it(
+    'is optional (backward compatible): a config.yaml written before this piece, with no paths.release ' +
+      'key at all, still validates and every other command still works',
+    async () => {
+      const project = await createTestProject();
+      const configPath = path.join(project.dir, '.forge/config.yaml');
+      const raw = YAML.parse(await readFile(configPath, 'utf8')) as {
+        paths: Record<string, unknown>;
+      };
+      expect('release' in raw.paths).toBe(true); // sanity: a fresh init really does have the key
+      delete raw.paths['release'];
+      await writeFile(configPath, YAML.stringify(raw));
+      const value = await configGet({ paths: project.paths }, 'paths.release');
+      expect(value).toBeUndefined();
+      await expect(configGet({ paths: project.paths }, 'project.name')).resolves.toBeDefined();
+      await expect(configGet({ paths: project.paths }, 'paths.kb')).resolves.toBeDefined();
+    },
+  );
 
   it('round-trips a list of app paths through set/get/explain', async () => {
     const project = await createTestProject();
