@@ -13,9 +13,13 @@
 import { z } from 'zod';
 
 /**
- * Unwraps `ZodNullable`/`ZodOptional`/`ZodDefault`/`ZodEffects` to the type underneath — none of
- * `configSchema`'s fields wrap a `ZodObject` this way today, but the walker should not silently
- * mis-classify one as a leaf (or vice versa) if a future field ever does.
+ * Unwraps `ZodNullable`/`ZodOptional`/`ZodDefault`/`ZodEffects` to the type underneath. `gates`
+ * (`PLAN-M14.md` P16) is the first field where this actually matters for a `ZodObject`: unlike
+ * `execution.testRoots`/`execution.mergeChecks`/`paths.release` (each an optional LEAF under an
+ * always-present parent object), `gates: gatesSchema.optional()` wraps a whole nested object — without
+ * this unwrap the walker would misclassify it as a leaf itself, one dot-path short of the real leaf
+ * (`gates.waiverMaxDays`) underneath. The walker was written defensively for exactly this case before
+ * any field actually exercised it; it now does.
  */
 function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   if (
