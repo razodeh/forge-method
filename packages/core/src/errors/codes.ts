@@ -1249,6 +1249,22 @@ export const ERROR_CODES = {
     remedy:
       'Pass a JSON or YAML file holding one object whose keys are question names and whose values are the answers as text (quote a number or true/false so it keeps its exact spelling), for example {"ideaSummary": "A booking app", "greenfield": "greenfield"}.',
   },
+  'RUN-104': {
+    // `PLAN-M14.md` P3, `SPEC-QUESTIONS.md` Q232 decision 1 (Q212's own P31 residual, now resolved): `06`
+    // §6.7 said a `strict` claim policy "fail[s] the step" over an out-of-claim write; the code, until
+    // this piece, only ever reverted it (`PLAN-M13.md` P14). `enforceClaim` still reverts every offending
+    // path exactly as before, and that revert (and its own `LaneCommitted {reason:'claim-revert'}`) has
+    // already landed by the time this is raised -- nothing here changes what survives on the lane branch,
+    // only whether the step itself is reported as having gone wrong. `warn` never raises this (`06`
+    // §6.7's own unchanged `guided` default): an out-of-claim write there stays a bare `PolicyViolation`
+    // event with the step otherwise succeeding.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; policy: string; detail: string }) =>
+      `Step ${show(d.stepId)} wrote outside its claim under ${show(d.policy)} enforcement: ${show(d.detail)}`,
+    remedy:
+      'Add each reverted path to the step’s `produces` (or, for a registry artifact, declare it in `outputs`), or make the session write only what the step already claims. `forge logs` names the step and shows the reverted paths; the `PolicyViolation` event carries the complete, unbounded list.',
+  },
   'RUN-097': {
     // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an
     // authoring or judging role, or one the project does not have). `implement-story` runs its plan, implementation,

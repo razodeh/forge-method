@@ -5,8 +5,13 @@
  * session that writes exactly the step's declared output. The step declares no `produces`: before P14 the
  * `strict` levels reverted the output and the run failed with RUN-083 ("add the path to `produces`").
  *
+ * Since `PLAN-M14.md` P3 (`SPEC-QUESTIONS.md` Q232 decision 1), a real out-of-claim write under `strict`
+ * fails the step -- and so the whole run -- at the claim itself (`RUN-104`), before the output check ever
+ * runs: reverted exactly as P14 already proved, no longer silent.
+ *
  * @see specs/06 §6.7
  * @see PLAN-M13.md P14
+ * @see PLAN-M14.md P3
  */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -149,7 +154,7 @@ describe('forge run: a step whose session writes exactly its declared output', (
       expect(reverts).toEqual([]);
     });
 
-    it(`under ${label} a write outside the declared output is still reverted, the output survives`, async () => {
+    it(`under ${label} a write outside the declared output is still reverted, the output survives, and (PLAN-M14.md P3) the run fails`, async () => {
       const project = await projectWith(autonomy, adopted);
       const adapter = new FakePlatformAdapter();
       adapter.script(() => true, {
@@ -164,7 +169,9 @@ describe('forge run: a step whose session writes exactly its declared output', (
         adapter,
         `run-claim-stray-${autonomy}-${String(adopted)}`,
       );
-      expect(result.runState.runStatus).toBe('completed');
+      // `06` §6.7 as amended (`SPEC-QUESTIONS.md` Q232 decision 1): the out-of-claim write is reverted
+      // exactly as before, but the step -- and so the whole run -- now fails too.
+      expect(result.runState.runStatus).toBe('failed');
       const revert = events.find(
         (event) =>
           event.type === 'LaneCommitted' &&
@@ -178,9 +185,18 @@ describe('forge run: a step whose session writes exactly its declared output', (
       expect(violation?.payload).toMatchObject({
         kind: 'out-of-claim-write',
         policy: 'strict',
+        stepFailed: true,
         paths: [STRAY_PATH],
         totalReverted: 1,
       });
+      const failed = events.find(
+        (event) => event.type === 'StepFailed' && event.stepId === STEP_ID,
+      );
+      expect(JSON.stringify(failed?.payload)).toContain('RUN-104');
+      // What `forge logs`/`--json` surfaces: the step's own remedy travels with the code.
+      expect(JSON.stringify(failed?.payload)).toMatch(/Remedy/i);
+      // The dependent gate never runs: a step whose claim was violated is never announced ready.
+      expect(typesFor(events, GATE_STEP_ID)).toEqual([]);
     });
   }
 
@@ -209,7 +225,7 @@ describe('forge run: a step whose session writes exactly its declared output', (
     ).toEqual([]);
   });
 
-  it('a session that writes only a stray file fails the run with RUN-083 under every level: nothing legitimate was there to lose', async () => {
+  it('a session that writes only a stray file fails the run with RUN-104 under every level: the claim violation is caught before the output check ever runs (PLAN-M14.md P3)', async () => {
     for (const [autonomy, adopted] of CASES) {
       const project = await projectWith(autonomy, adopted);
       const adapter = new FakePlatformAdapter();
@@ -226,7 +242,8 @@ describe('forge run: a step whose session writes exactly its declared output', (
       const failed = events.find(
         (event) => event.type === 'StepFailed' && event.stepId === STEP_ID,
       );
-      expect(JSON.stringify(failed?.payload)).toContain('RUN-083');
+      expect(JSON.stringify(failed?.payload)).toContain('RUN-104');
+      expect(JSON.stringify(failed?.payload)).toMatch(/Remedy/i);
       expect(typesFor(events, GATE_STEP_ID)).toEqual([]);
     }
   });

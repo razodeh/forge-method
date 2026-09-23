@@ -151,6 +151,12 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       // asking again cannot change either until a human supplies the answer, so it is `06` §6.8's "fail
       // immediately, surface to a human" class.
       return 'policy';
+    case 'claim':
+      // `enforceClaim` found a `strict` step wrote outside its claim (`PLAN-M14.md` P3, `SPEC-QUESTIONS.md`
+      // Q232 decision 1): the same session writing the same stray path violates the same claim identically
+      // on every retry, so it is `06` §6.8's "fail immediately, surface to a human" class, exactly like
+      // `elicit` above and the `prompt`-sourced policy codes.
+      return 'policy';
     case 'output':
       // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
       // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as

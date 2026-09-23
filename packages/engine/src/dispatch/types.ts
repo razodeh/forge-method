@@ -459,7 +459,16 @@ export interface StepFailureInfo {
     /** An `elicit` step got no usable answer (`PLAN-M13.md` P20): none could be asked (no terminal, no answers
      * file entry) or one broke the question's own rules. `code` is `RUN-101` or `RUN-102`. Always classified
      * `policy` by `classifyFailure`: asking again changes nothing until a human supplies the answer. */
-    | 'elicit';
+    | 'elicit'
+    /** `enforceClaim` found a `strict`-policy step wrote outside its claim (`PLAN-M14.md` P3, `06` §6.7 as
+     * amended, `SPEC-QUESTIONS.md` Q232 decision 1, Q212's own P31 residual). The offending path(s) are
+     * reverted regardless of this failure (`runLaneLifecycle` reverts and records the `PolicyViolation`
+     * event before ever constructing this) -- this is only whether the step itself is also reported as
+     * having gone wrong. `code` is always `RUN-104`. Always classified `policy` by `classifyFailure`
+     * (never retried: the same session writing the same stray path violates the same claim identically).
+     * `warn` never produces this: an out-of-claim write there stays a `PolicyViolation` event with the
+     * step otherwise succeeding, `06` §6.7's own unchanged `guided` default. */
+    | 'claim';
   readonly code?: string | undefined;
   readonly message: string;
   /** The real, registered `ForgeError` a `vcs`-sourced failure was wrapped into for provenance

@@ -206,8 +206,9 @@ describe('an agent step with declared outputs', () => {
       });
       expect(kept.outcome.status).toBe('succeeded');
     }
-    // What claim enforcement still reverts is what lies outside outputs and `produces`, and the failure
-    // for a missing output says so when the stray write was the only thing the session did.
+    // What claim enforcement still reverts is what lies outside outputs and `produces` -- and, since
+    // `PLAN-M14.md` P3, a real violation under `strict` now fails the step at the claim itself, before
+    // the output check (below) ever gets a chance to report the output as missing.
     const stray = await runScenario({
       outputs: [{ type: 'Epic' }],
       writes: [{ relativePath: 'src/not-the-epic.ts', content: 'x\n' }],
@@ -215,8 +216,8 @@ describe('an agent step with declared outputs', () => {
       claimPolicy: 'strict',
     });
     const failure = expectFailed(stray.outcome);
-    expect(failure.code).toBe('RUN-083');
-    expect(failure.message).toContain('the session committed no file');
+    expect(failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(failure.message).toContain('src/not-the-epic.ts');
   });
 
   it('a session that failed (adapter error) keeps its adapter failure: the contract is only checked after an ok session', async () => {

@@ -7,8 +7,9 @@
  *
  * @see specs/06 §6.10
  * @see PLAN-M5.md P19
+ * @see PLAN-M14.md P3
  */
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,7 +21,7 @@ import {
   removeLaneWorktree,
   slugifyStepId,
 } from '@forge/vcs';
-import { appendEvent } from '@forge/telemetry/events';
+import { appendEvent, readEvents } from '@forge/telemetry/events';
 import {
   FAKE_MODEL_ID,
   FakePlatformAdapter,
@@ -93,6 +94,81 @@ async function writeUnresolvedStepLog(
     stepId,
     laneId,
     payload: { sessionId },
+  });
+}
+
+/** Hand-builds the durable log a real crash strictly AFTER `PLAN-M14.md` P3's own claim-revert commit
+ * (and its `LaneCommitted {reason:'claim-revert'}`) would have left behind, but before the step's own
+ * failure (`StepFailed`) was ever appended -- proving a crash landing in that exact window does not
+ * leave a lane both reverted and unaccounted for. No new resume rule exists for this (`06` §6.10 is
+ * unchanged): the step is simply still in `RunState.unresolvedStepIds`, and the *existing* P19 reroll
+ * path (`rollbackLaneToBase` then a fresh session) re-drives it from scratch, exactly as it already does
+ * for a crash mid-session. The caller is expected to have made the matching real commits on `lane`
+ * first (a work commit, then a revert commit), so the durable log and the real git state agree. */
+async function writeUnresolvedStepLogAfterClaimRevert(
+  projectRoot: string,
+  runId: string,
+  stepId: string,
+  laneId: string,
+  baseSha: string,
+  sessionId: string,
+  strayPath: string,
+): Promise<void> {
+  await writeUnresolvedStepLog(projectRoot, runId, stepId, laneId, baseSha, sessionId);
+  await appendEvent(projectRoot, runId, {
+    ts: nextTs(),
+    runId,
+    type: 'SessionEnded',
+    stepId,
+    laneId,
+    payload: { ok: true },
+  });
+  await appendEvent(projectRoot, runId, {
+    ts: nextTs(),
+    runId,
+    type: 'UsageRecorded',
+    stepId,
+    payload: {
+      model: FAKE_MODEL_ID,
+      platform: 'fake',
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      costUsd: 0,
+      estimated: true,
+      durationMs: 0,
+    },
+  });
+  await appendEvent(projectRoot, runId, {
+    ts: nextTs(),
+    runId,
+    type: 'LaneCommitted',
+    stepId,
+    laneId,
+    payload: undefined,
+  });
+  await appendEvent(projectRoot, runId, {
+    ts: nextTs(),
+    runId,
+    type: 'PolicyViolation',
+    stepId,
+    laneId,
+    payload: {
+      kind: 'out-of-claim-write',
+      policy: 'strict',
+      stepFailed: true,
+      paths: [strayPath],
+      totalOutOfClaim: 1,
+      totalReverted: 1,
+    },
+  });
+  await appendEvent(projectRoot, runId, {
+    ts: nextTs(),
+    runId,
+    type: 'LaneCommitted',
+    stepId,
+    laneId,
+    payload: { reason: 'claim-revert' },
   });
 }
 
@@ -559,5 +635,127 @@ describe('resumeRun', () => {
     expect(ctx.laneRegistry.has(stepId)).toBe(false);
     expect(runState.laneStatuses.get(laneId)).toBe('removed');
     expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
+  });
+
+  describe('a crash strictly after the claim-revert commit (PLAN-M14.md P3): no new resume rule', () => {
+    const STRAY_PATH = 'src/stray.ts';
+
+    /** Real git state matching what a crashed first attempt's own commit/enforce sequence would have
+     * left on `lane`: a work commit adding `STRAY_PATH`, then a real second commit reverting it --
+     * exactly `runLaneLifecycle`'s own two commits, made by hand here since there is no way to stop a
+     * real `executeStep` call mid-flight without an actual process kill. */
+    async function commitThenRevertStray(lanePath: string): Promise<void> {
+      await mkdir(path.dirname(path.join(lanePath, STRAY_PATH)), { recursive: true });
+      await writeFile(path.join(lanePath, STRAY_PATH), 'export const leak = 1;\n');
+      await execa('git', ['add', '-A'], { cwd: lanePath });
+      await execa('git', ['commit', '--quiet', '-m', 'work'], { cwd: lanePath });
+      await execa('git', ['rm', '-f', '--quiet', STRAY_PATH], { cwd: lanePath });
+      await execa('git', ['commit', '--quiet', '-m', 'revert out-of-claim changes'], {
+        cwd: lanePath,
+      });
+    }
+
+    it('re-rolls and re-runs the step from scratch; a fresh, in-claim-only session succeeds', async () => {
+      const runId = 'run-claim-crash-clean';
+      const stepId = 'wf:implement';
+      const projectRoot = await createTempRepo('claim-crash-clean');
+      const laneId = `${runId}-${slugifyStepId(stepId)}`;
+      const lane = await createLaneWorktree(projectRoot, {
+        runId,
+        stepId,
+        integrationBase: 'main',
+      });
+      const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: lane.path });
+      await commitThenRevertStray(lane.path);
+      await writeUnresolvedStepLogAfterClaimRevert(
+        projectRoot,
+        runId,
+        stepId,
+        laneId,
+        baseSha.trim(),
+        'session-crashed-after-revert',
+        STRAY_PATH,
+      );
+
+      const adapter = withCapabilities({ sessionResume: false });
+      adapter.script(() => true, {
+        text: ['clean retry'],
+        writeFiles: [{ relativePath: 'src/ok.ts', content: 'export const ok = 1;\n' }],
+      });
+
+      // A single-file claim (not `src/**`): `src/ok.ts` is inside it, `STRAY_PATH` is not.
+      const steps = new Map([[stepId, agentNode(stepId, ['src/ok.ts'])]]);
+      const ctx: ResumeContext = {
+        ...createTestContext({ projectRoot, adapter, runId, claimPolicy: 'strict' }),
+        steps,
+      };
+
+      const runState = await resumeRun(runId, ctx);
+
+      expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
+      expect(runState.unresolvedStepIds).toEqual([]);
+      await expect(readFile(path.join(lane.path, 'src', 'ok.ts'), 'utf8')).resolves.toContain(
+        'ok = 1',
+      );
+      expect(existsSync(path.join(lane.path, STRAY_PATH))).toBe(false);
+    });
+
+    it('a repeated out-of-claim write on the resumed attempt fails RUN-104 again -- never silently different across a crash', async () => {
+      const runId = 'run-claim-crash-repeat';
+      const stepId = 'wf:implement';
+      const projectRoot = await createTempRepo('claim-crash-repeat');
+      const laneId = `${runId}-${slugifyStepId(stepId)}`;
+      const lane = await createLaneWorktree(projectRoot, {
+        runId,
+        stepId,
+        integrationBase: 'main',
+      });
+      const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: lane.path });
+      await commitThenRevertStray(lane.path);
+      await writeUnresolvedStepLogAfterClaimRevert(
+        projectRoot,
+        runId,
+        stepId,
+        laneId,
+        baseSha.trim(),
+        'session-crashed-after-revert',
+        STRAY_PATH,
+      );
+
+      const adapter = withCapabilities({ sessionResume: false });
+      // The resumed session repeats the identical mistake the crashed attempt made.
+      adapter.script(() => true, {
+        text: ['repeated the same stray write'],
+        writeFiles: [{ relativePath: STRAY_PATH, content: 'export const leak = 1;\n' }],
+      });
+
+      const steps = new Map([[stepId, agentNode(stepId, ['src/ok.ts'])]]);
+      const ctx: ResumeContext = {
+        ...createTestContext({ projectRoot, adapter, runId, claimPolicy: 'strict' }),
+        steps,
+      };
+
+      const runState = await resumeRun(runId, ctx);
+
+      expect(runState.stepStatuses.get(stepId)).toBe('failed');
+      expect(runState.unresolvedStepIds).toEqual([]);
+      expect(existsSync(path.join(lane.path, STRAY_PATH))).toBe(false);
+
+      const events = [];
+      for await (const event of readEvents(projectRoot, runId)) events.push(event);
+      const failedEvents = events.filter(
+        (event) => event.type === 'StepFailed' && event.stepId === stepId,
+      );
+      // Exactly one StepFailed -- resumeOneStep's own single, real emission for this attempt, not the
+      // pre-crash attempt's (which never reached StepFailed at all).
+      expect(failedEvents).toHaveLength(1);
+      expect(JSON.stringify(failedEvents[0]?.payload)).toContain('RUN-104');
+      expect(JSON.stringify(failedEvents[0]?.payload)).toMatch(/"source":"claim"/);
+      // No LaneReady from the resumed attempt either.
+      const laneReadyAfterResume = events.filter(
+        (event) => event.type === 'LaneReady' && event.stepId === stepId,
+      );
+      expect(laneReadyAfterResume).toEqual([]);
+    });
   });
 });

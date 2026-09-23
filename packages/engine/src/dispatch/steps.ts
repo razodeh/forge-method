@@ -23,6 +23,8 @@
 import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import type { SessionRequest } from '@forge/adapter-kit';
+import { artifactTypeById } from '@forge/schemas';
+import { minimatch } from 'minimatch';
 
 import { mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
@@ -38,12 +40,13 @@ import { GateNotFoundError } from './facades.ts';
 import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
 import { resolveLaneBase } from './lane-base.ts';
-import { docRootsOf, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
+import { docRootsOf, outputGlob, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { commandStepEnvironment } from './elicit.ts';
 import { runShellCommand } from './shell.ts';
 import { runVcsStep } from './vcs-step.ts';
 import type {
+  DocRoots,
   ExecuteStepContext,
   LaneHandle,
   MergeOutcome,
@@ -111,6 +114,100 @@ function buildCommitMessage(node: StepNode, ctx: ExecuteStepContext, subject: st
 
 /** Bound on the paths a `PolicyViolation` event lists (the totals are always recorded). */
 const MAX_VIOLATION_PATHS_LOGGED = 50;
+
+/** Bound on how many out-of-claim paths `RUN-104`'s own message names — tighter than the event's own
+ * `MAX_VIOLATION_PATHS_LOGGED` above: the event is the durable, more-complete record (it always carries
+ * the true totals too, whichever bound its own path list hits); this is a one-line failure message a
+ * terminal prints. */
+const MAX_CLAIM_FAILURE_PATHS = 5;
+
+/** How long a single path may run in `RUN-104`'s own message before being cut, mirroring `outputs.ts`'s
+ * own `MAX_PROBLEM_CHARS` discipline for the identical reason: an agent-controlled path is untrusted text
+ * reaching the terminal and the event log. */
+const MAX_CLAIM_FAILURE_PATH_CHARS = 300;
+
+/** The same character classes `outputs.ts`'s own `clip` strips, duplicated here rather than imported:
+ * `outputs.ts` exports neither it nor its `CONTROL_CHARS` (this piece's own Surface list does not touch
+ * that file), and a claim-failure path is exactly the same class of untrusted, agent-controlled text that
+ * function already exists to sanitise before it reaches a terminal or the event log. */
+const CLAIM_FAILURE_CONTROL_CHARS =
+  // eslint-disable-next-line no-control-regex -- the point is to match control characters
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
+
+function clipClaimPath(path: string): string {
+  const clean = path.replace(CLAIM_FAILURE_CONTROL_CHARS, ' ');
+  return clean.length > MAX_CLAIM_FAILURE_PATH_CHARS
+    ? `${clean.slice(0, MAX_CLAIM_FAILURE_PATH_CHARS)}...`
+    : clean;
+}
+
+function listClaimFailurePaths(paths: readonly string[]): string {
+  const shown = paths.slice(0, MAX_CLAIM_FAILURE_PATHS).map(clipClaimPath).join(', ');
+  return paths.length > MAX_CLAIM_FAILURE_PATHS
+    ? `${shown}, and ${String(paths.length - MAX_CLAIM_FAILURE_PATHS)} more`
+    : shown;
+}
+
+/** Whether any `reverted` path sits at a declared output's own registry location (`outputGlob` — the very
+ * derivation `resolveStepClaim` unions the claim from, so this asks the identical question the claim
+ * itself was built from) — the one way a legitimate output's own path can still end up reverted: a
+ * `produces` exclusion (`!<glob>`, `PLAN-M13.md` P36) that happens to carve the declared output's own
+ * registry path back out of the claim `outputClaimGlobs` put it in. When it does, `RUN-104` keeps the P7
+ * output check's own "check the project's configured docs roots" hint (`outputs.ts`'s own `checkOne`), so
+ * the remedy for "my declared output was reverted" reads the same whichever of the two failures reports
+ * it. */
+function claimFailureHint(node: StepNode, roots: DocRoots, reverted: readonly string[]): string {
+  const atDeclaredOutput = node.outputs.some((output) => {
+    const definition = artifactTypeById(output.type);
+    return (
+      definition !== undefined &&
+      reverted.some((file) => minimatch(file, outputGlob(definition.id, roots), { dot: true }))
+    );
+  });
+  return atDeclaredOutput
+    ? ' A declared output’s own registry path is among what was reverted; check the project’s configured docs roots.'
+    : '';
+}
+
+/** `RUN-104`'s own `detail`: every out-of-claim path, bounded, plus the true total (`06` §6.7 as amended,
+ * `PLAN-M14.md` P3, `SPEC-QUESTIONS.md` Q232 decision 1). The policy itself is not repeated here: the
+ * `RUN-104` message template (`codes.ts`) already states it once ("wrote outside its claim under
+ * ${policy} enforcement"). */
+function claimFailureDetail(
+  node: StepNode,
+  roots: DocRoots,
+  outOfClaim: readonly string[],
+  reverted: readonly string[],
+): string {
+  return (
+    `${String(outOfClaim.length)} path(s): ${listClaimFailurePaths(outOfClaim)}.` +
+    claimFailureHint(node, roots, reverted)
+  );
+}
+
+/** The `StepFailureInfo` `runLaneLifecycle` returns when `strict` finds a non-empty `outOfClaim` (`06`
+ * §6.7 as amended, `SPEC-QUESTIONS.md` Q232 decision 1): `source: 'claim'`, always `RUN-104`, classified
+ * `policy` by `classifyFailure` (never retried — the same session writing the same stray path violates
+ * the same claim identically). */
+function claimFailure(
+  node: StepNode,
+  roots: DocRoots,
+  policy: 'strict' | 'warn',
+  outOfClaim: readonly string[],
+  reverted: readonly string[],
+): StepFailureInfo {
+  const error = new ForgeError('RUN-104', {
+    stepId: node.id,
+    policy,
+    detail: claimFailureDetail(node, roots, outOfClaim, reverted),
+  });
+  return {
+    source: 'claim',
+    code: error.code,
+    message: `${error.message} -- Remedy: ${error.remedy}`,
+    cause: error,
+  };
+}
 
 /**
  * `06` §6.4 lifecycle step 1: creates the step's lane and records `LaneCreated` with the base it was created from.
@@ -211,18 +308,26 @@ export async function runLaneLifecycle(
 
     // `06` §6.7 (P14): an agent step's claim is its `produces` plus its declared outputs' registry paths,
     // and a step that declares outputs is `strict` at every autonomy level (`resolveStepClaim`).
-    const claim = resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy);
+    const roots = docRootsOf(ctx);
+    const claim = resolveStepClaim(node, roots, ctx.claimPolicy);
     const enforceResult = await runVcsStep(node.id, () =>
       ctx.vcs.enforceClaim(lane, baseSha, claim.globs, claim.policy, claim.exclude),
     );
     if (!enforceResult.ok)
       return failed(node.id, startedAt, ctx.now(), work.detail, enforceResult.failure);
     claimReverted = enforceResult.value.reverted;
-    if (enforceResult.value.outOfClaim.length > 0) {
-      // `06` §6.7: an out-of-claim write is a policy violation. Enforcement never fails the step for it, so
-      // this event is the record of which files fell outside the claim and whether they were reverted
-      // (`strict`) or kept (`warn`): a brief-named document outside a step's outputs and `produces` is
-      // otherwise discarded without a trace.
+    const outOfClaim = enforceResult.value.outOfClaim;
+    // `06` §6.7 as amended (`PLAN-M14.md` P3, `SPEC-QUESTIONS.md` Q232 decision 1): under `strict` a
+    // non-empty `outOfClaim` now fails the step too -- `warn` keeps its own unchanged "revert (an excluded
+    // path only) or keep, flag, step still succeeds" behaviour. Decided here, before either the event
+    // below or the revert commit, but only ACTED on (the early `return` after both) once they have
+    // actually landed: the trace and the revert are real regardless of the step's own eventual status.
+    const claimFails = claim.policy === 'strict' && outOfClaim.length > 0;
+    if (outOfClaim.length > 0) {
+      // `06` §6.7: an out-of-claim write is a policy violation, `strict` or `warn` alike -- this event is
+      // the record of which files fell outside the claim, whether they were reverted (`strict`) or kept
+      // (`warn`), and now whether the violation also fails the step (`stepFailed`): a brief-named document
+      // outside a step's outputs and `produces` is otherwise discarded without a trace.
       await ctx.telemetry.emit({
         type: 'PolicyViolation',
         stepId: node.id,
@@ -230,10 +335,11 @@ export async function runLaneLifecycle(
         payload: {
           kind: 'out-of-claim-write',
           policy: claim.policy,
-          paths: enforceResult.value.outOfClaim
+          stepFailed: claimFails,
+          paths: outOfClaim
             .slice(0, MAX_VIOLATION_PATHS_LOGGED)
             .map((file) => (file.length > 300 ? `${file.slice(0, 300)}...` : file)),
-          totalOutOfClaim: enforceResult.value.outOfClaim.length,
+          totalOutOfClaim: outOfClaim.length,
           totalReverted: enforceResult.value.reverted.length,
         },
       });
@@ -258,6 +364,23 @@ export async function runLaneLifecycle(
         laneId: lane.laneId,
         payload: { reason: 'claim-revert' },
       });
+    }
+    if (claimFails) {
+      // Returned here -- strictly after the trace and the revert commit above, strictly before the
+      // `work.failure` check and the P7 output check below -- so a claim violation never reaches
+      // `LaneReady` and its lane never reaches `ctx.laneRegistry` (both happen only past this point). An
+      // adapter failure from this same attempt wins over this one (the work itself already went wrong for
+      // its own reason, the more informative thing to surface as the step's primary failure), but the
+      // violation is never silently lost either way: it is already the `PolicyViolation` event just
+      // emitted, `stepFailed: true` regardless of which failure the step itself ends up carrying.
+      return failed(
+        node.id,
+        startedAt,
+        ctx.now(),
+        work.detail,
+        work.failure ??
+          claimFailure(node, roots, claim.policy, outOfClaim, enforceResult.value.reverted),
+      );
     }
   }
 

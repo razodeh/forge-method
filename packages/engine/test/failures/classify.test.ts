@@ -148,6 +148,13 @@ describe('classifyFailure', () => {
     });
   });
 
+  it("classifies a strict claim violation as 'policy': the same session writing the same stray path fails identically on retry (PLAN-M14.md P3)", () => {
+    const result = classifyFailure(
+      outcome({ failure: { source: 'claim', code: 'RUN-104', message: 'x' } }),
+    );
+    expect(result).toBe('policy');
+  });
+
   it("defaults the two sources no real handler ever constructs (telemetry, unsupported) to 'transient'", () => {
     // Neither is reachable through @forge/engine/dispatch's own real callers (a TelemetryError always
     // escapes as a thrown RUN-038, never folded into StepOutcome data; nothing in this milestone

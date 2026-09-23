@@ -140,6 +140,9 @@ function revertCommits(events: readonly ForgeEvent[]): number {
 interface ViolationPayload {
   readonly kind: string;
   readonly policy: string;
+  /** Whether this violation also failed the step (`PLAN-M14.md` P3): `true` only when `policy` is
+   * `'strict'` -- `warn` never fails the step. */
+  readonly stepFailed: boolean;
   readonly paths: string[];
   readonly totalOutOfClaim: number;
   readonly totalReverted: number;
@@ -178,7 +181,7 @@ describe('a step that declares outputs: its own output is inside its claim', () 
       expect(events.map((event) => event.type)).toContain('LaneReady');
     });
 
-    it(`enforces strict under ${label}: a write outside outputs and produces is reverted, the output is kept`, async () => {
+    it(`enforces strict under ${label}: a write outside outputs and produces is reverted, and (PLAN-M14.md P3) fails the step`, async () => {
       const { outcome, events, committed } = await run({
         outputs: [{ type: 'Epic' }],
         writes: [
@@ -187,15 +190,20 @@ describe('a step that declares outputs: its own output is inside its claim', () 
         ],
         claimPolicy,
       });
-      expect(outcome.status).toBe('succeeded');
+      // `06` §6.7 as amended (`SPEC-QUESTIONS.md` Q232 decision 1): a step that declares `outputs` is
+      // always enforced `strict` (`resolveStepClaim`), so both `DEFAULT_POLICIES` labels land here --
+      // the out-of-claim write is reverted exactly as P14 already proved, and now also fails the step.
+      expect(outcome.status).toBe('failed');
+      expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
       expect(committed).toContain(EPIC_PATH);
       expect(committed).not.toContain(STRAY);
       expect(revertCommits(events)).toBe(1);
-      // Enforcement does not fail the step, so the event is the trace of what was discarded.
+      // The trace still records exactly what was discarded, `stepFailed` now naming the consequence.
       expect(violations(events)).toEqual([
         {
           kind: 'out-of-claim-write',
           policy: 'strict',
+          stepFailed: true,
           paths: [STRAY],
           totalOutOfClaim: 1,
           totalReverted: 1,
@@ -203,7 +211,7 @@ describe('a step that declares outputs: its own output is inside its claim', () 
       ]);
     });
 
-    it(`a \`produces\` glob is still part of the claim under ${label}: the union, not a replacement`, async () => {
+    it(`a \`produces\` glob is still part of the claim under ${label}: the union, not a replacement; an out-of-claim write beyond it still fails the step`, async () => {
       const { outcome, committed } = await run({
         outputs: [{ type: 'Epic' }],
         produces: ['src/**'],
@@ -214,21 +222,27 @@ describe('a step that declares outputs: its own output is inside its claim', () 
         ],
         claimPolicy,
       });
-      expect(outcome.status).toBe('succeeded');
+      // `other/x.txt` is neither a declared output nor covered by `produces`: still out of claim, so this
+      // now fails too (`PLAN-M14.md` P3) even though both EPIC_PATH and STRAY are legitimately kept.
+      expect(outcome.status).toBe('failed');
+      expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
       expect(committed).toContain(EPIC_PATH);
       expect(committed).toContain(STRAY);
       expect(committed).not.toContain('other/x.txt');
     });
   }
 
-  it('a session that writes only outside the claim loses everything and the step fails the contract (nothing legitimate was discarded)', async () => {
+  it('a session that writes only outside the claim loses everything and the step fails -- now at the claim itself (PLAN-M14.md P3), before the output check ever runs', async () => {
     const { outcome, committed } = await run({
       outputs: [{ type: 'Epic' }],
       writes: [{ relativePath: STRAY, content: 'x\n' }],
+      // A step declaring `outputs` is always enforced `strict` (`resolveStepClaim`), whatever the
+      // project's own default policy passed here -- the very point `06` §6.7's own forced-strict rule
+      // makes: nothing legitimate was ever at risk of being lost, so the step fails loudly instead.
       claimPolicy: 'warn',
     });
-    expect(failureOf(outcome)).toMatchObject({ source: 'output', code: 'RUN-083' });
-    expect(failureOf(outcome).message).toContain('the session committed no file');
+    expect(failureOf(outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(failureOf(outcome).message).toContain(STRAY);
     expect(committed).toEqual([]);
   });
 
@@ -247,14 +261,16 @@ describe('a step that declares outputs: its own output is inside its claim', () 
     });
     expect(followed.outcome.status).toBe('succeeded');
     expect(followed.committed).toContain('documentation/specs/epics/EPIC-001.md');
-    // The old layout's path is no longer the registry path: it is out of claim and reverted.
+    // The old layout's path is no longer the registry path: it is out of claim, reverted, and (PLAN-M14.md
+    // P3) fails the step directly -- the output check never even runs, since the claim violation returns
+    // first.
     const stale = await run({
       outputs: [{ type: 'Epic' }],
       writes: [{ relativePath: EPIC_PATH, content: epicText() }],
       claimPolicy: 'strict',
       docRoots: relocated,
     });
-    expect(failureOf(stale.outcome).code).toBe('RUN-083');
+    expect(failureOf(stale.outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
     expect(stale.committed).toEqual([]);
   });
 
@@ -377,7 +393,7 @@ describe('what the derived claim is made of', () => {
     expect(committed).toEqual([]);
   });
 
-  it('a root that starts with `!` or `#` is read literally by the claim matcher (no negation, no comment)', async () => {
+  it('a root that starts with `!` or `#` is read literally by the claim matcher (no negation, no comment); the stray still fails the step (PLAN-M14.md P3)', async () => {
     for (const marker of ['!', '#']) {
       const root = `${marker}docs`;
       const { outcome, committed } = await run({
@@ -390,7 +406,8 @@ describe('what the derived claim is made of', () => {
         claimPolicy: 'strict',
         docRoots: { ...DEFAULT_ROOTS, specs: root },
       });
-      expect(outcome.status).toBe('succeeded');
+      expect(outcome.status).toBe('failed');
+      expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
       expect(committed).toContain(`${root}/epics/EPIC-001.md`);
       expect(committed).not.toContain(STRAY);
     }
@@ -525,12 +542,12 @@ describe('a symlink at a declared output path is still refused', () => {
     expect(ctx.laneRegistry.has('wf:link')).toBe(false);
   });
 
-  it('a symlink outside the claim is reverted like any other out-of-claim path', async () => {
+  it('a symlink outside the claim is reverted like any other out-of-claim path, and (PLAN-M14.md P3) fails the step at the claim itself -- the output check never runs', async () => {
     const { outcome, ctx, committed } = await laneWithSymlinks([
       EPIC_PATH,
       'docs/forge/kb/link.md',
     ]);
-    expect(failureOf(outcome).code).toBe('RUN-083');
+    expect(failureOf(outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
     expect(ctx.laneRegistry.has('wf:link')).toBe(false);
     expect(committed).not.toContain('docs/forge/kb/link.md');
   });
@@ -546,17 +563,19 @@ describe('an out-of-claim write leaves a trace: a PolicyViolation event (06 §6.
     expect(violations(events)).toEqual([]);
   });
 
-  it('under warn (a step with only produces) the write is kept and still flagged, with nothing reverted', async () => {
-    const { events, committed } = await run({
+  it('under warn (a step with only produces) the write is kept and still flagged, with nothing reverted, and the step still succeeds (unchanged, PLAN-M14.md P3)', async () => {
+    const { outcome, events, committed } = await run({
       produces: ['docs/**'],
       writes: [{ relativePath: STRAY, content: 'x\n' }],
       claimPolicy: 'warn',
     });
+    expect(outcome.status).toBe('succeeded');
     expect(committed).toContain(STRAY);
     expect(violations(events)).toEqual([
       {
         kind: 'out-of-claim-write',
         policy: 'warn',
+        stepFailed: false,
         paths: [STRAY],
         totalOutOfClaim: 1,
         totalReverted: 0,
@@ -564,8 +583,8 @@ describe('an out-of-claim write leaves a trace: a PolicyViolation event (06 §6.
     ]);
   });
 
-  it('lists at most 50 paths but always records the totals', async () => {
-    const { events } = await run({
+  it('lists at most 50 paths but always records the totals; 51 out-of-claim strays fail the step under strict', async () => {
+    const { outcome, events } = await run({
       outputs: [{ type: 'Epic' }],
       writes: [
         { relativePath: EPIC_PATH, content: epicText() },
@@ -577,9 +596,12 @@ describe('an out-of-claim write leaves a trace: a PolicyViolation event (06 §6.
       claimPolicy: 'strict',
     });
     const [event] = violations(events);
+    expect(event?.stepFailed).toBe(true);
     expect(event?.paths).toHaveLength(50);
     expect(event?.totalOutOfClaim).toBe(51);
     expect(event?.totalReverted).toBe(51);
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
   });
 });
 

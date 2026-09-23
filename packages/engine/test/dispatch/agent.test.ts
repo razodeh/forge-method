@@ -2,12 +2,14 @@
  * `runAgentStep` (via `executeStep`) — `PLAN-M5.md` P15's own Checks text: an `agent` step runs a real
  * `FakePlatformAdapter` session inside a real tmp-dir lane and its `SessionResult` becomes the step's own
  * outcome; claim enforcement runs on every completion, proven by an out-of-claim write being reverted
- * through this entry point; the full event sequence for one successful agent step matches `18` §18.4's own
- * catalogue exactly, in order, with `StepStarted` demonstrably written before the adapter session starts.
+ * through this entry point AND, under `strict`, failing the step (`PLAN-M14.md` P3, `06` §6.7 as amended);
+ * the full event sequence for one successful agent step matches `18` §18.4's own catalogue exactly, in
+ * order, with `StepStarted` demonstrably written before the adapter session starts.
  *
  * @see specs/06 §6.4, §6.7
  * @see specs/18 §18.4
  * @see PLAN-M5.md P15
+ * @see PLAN-M14.md P3
  */
 import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -134,7 +136,7 @@ describe('runAgentStep', () => {
     expect(stdout).toContain('Forge-Run: run-test');
   });
 
-  it("reverts an out-of-claim write through this entry point -- claim enforcement runs on every agent step completion, not just in @forge/vcs's own unit tests", async () => {
+  it("reverts an out-of-claim write through this entry point and fails the step under strict -- claim enforcement runs on every agent step completion, not just in @forge/vcs's own unit tests", async () => {
     const projectRoot = await createTempRepo('agent-claim');
     const adapter = new FakePlatformAdapter();
     adapter.script(() => true, {
@@ -161,7 +163,10 @@ describe('runAgentStep', () => {
 
     const outcome = await executeStep(stepNode, ctx);
 
-    expect(outcome.status).toBe('succeeded');
+    // `PLAN-M14.md` P3, `06` §6.7 as amended (`SPEC-QUESTIONS.md` Q232 decision 1): `strict` still reverts
+    // the out-of-claim file exactly as before, but the step itself now fails too.
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
     const [laneDir] = await readdir(worktreesDir);
     const laneRoot = path.join(worktreesDir, laneDir ?? '');
@@ -186,12 +191,12 @@ describe('runAgentStep', () => {
       // session -- the ledger's own sole input, previously never produced by any real dispatch code.
       'UsageRecorded',
       'LaneCommitted',
-      // `06` §6.7 (P14): an out-of-claim write is recorded as a policy violation naming the files, before
-      // the revert commit, because enforcement never fails the step for it.
+      // `06` §6.7: an out-of-claim write is recorded as a policy violation naming the files, before the
+      // revert commit; the revert and the trace both land before the step's own failure is returned.
       'PolicyViolation',
       'LaneCommitted',
-      'LaneReady',
-      'StepSucceeded',
+      // No `LaneReady`: a claim violation under `strict` is never announced ready (`PLAN-M14.md` P3).
+      'StepFailed',
     ]);
   });
 

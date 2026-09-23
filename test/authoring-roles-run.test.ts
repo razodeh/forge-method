@@ -21,9 +21,11 @@
  *  - the session ALSO writes three things outside the claim: source code (`src/stray.ts`), a governance file
  *    no step claims (`reports/waivers.md`, a Waiver would bypass a gate) and its OWN agent definition
  *    (`.forge/agents/<role>.yaml`, a role widening its own grant): all three are reverted, the output is
- *    kept, and one `PolicyViolation` `out-of-claim-write` names them (the step is not asserted to fail: whether
- *    `strict` should fail the step is the owner call recorded as P31, `06` §6.7 vs Q212);
- *  - the session writes only a stray file: the step FAILS (`RUN-083`), loudly, and nothing is lost;
+ *    kept, one `PolicyViolation` `out-of-claim-write` names them, AND (`PLAN-M14.md` P3, `06` §6.7 as
+ *    amended, `SPEC-QUESTIONS.md` Q232 decision 1 -- the P31 owner call Q212 left open, now resolved) the
+ *    step itself fails;
+ *  - the session writes only a stray file: the step FAILS at the claim itself (`RUN-104`), before the
+ *    output check (`RUN-083`) ever runs, loudly, and nothing legitimate was ever lost;
  *  - a write-forbidden agent (the shipped definition with `write: false`, i.e. what the role was before P15)
  *    gets no write from the same session and fails `RUN-084`: the negative control that shows the passing
  *    cases pass because of the grant.
@@ -36,6 +38,7 @@
  * @see specs/06 §6.7
  * @see specs/20 §20.1
  * @see PLAN-M13.md P14, P15
+ * @see PLAN-M14.md P3
  */
 import { execa } from 'execa';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -647,15 +650,20 @@ describe('P15: an authoring role writes its declared output and only that (real 
         for (const file of filesOf(testCase)) expect(lane).toContain(file.relativePath);
       });
 
-      it('a session that also writes source code, a Waiver and its own agent definition: all three are reverted, the output is kept, PolicyViolation names them', async () => {
+      it('a session that also writes source code, a Waiver and its own agent definition: all three are reverted, the output is kept, PolicyViolation names them, and (PLAN-M14.md P3) the step fails', async () => {
         const strays = [STRAY_SOURCE, STRAY_GOVERNANCE, strayAgent(testCase)];
-        const { events: all, dir } = await run(
+        const {
+          result,
+          events: all,
+          dir,
+        } = await run(
           testCase,
           honestAdapter(testCase, [...filesOf(testCase), ...strays], []),
           `p15-stray-${testCase.step}`,
         );
-        // Not asserted here: whether the step then succeeds. `strict` reverts and traces and does not fail
-        // the step today, `06` §6.7 says it fails it: an owner call (P31) this test must not decide.
+        // `06` §6.7 as amended (`SPEC-QUESTIONS.md` Q232 decision 1, the P31 owner call this file's own
+        // docstring used to leave open): `strict` still reverts and traces exactly as before, and now
+        // also fails the step.
         expect(all.filter(isRevert).some((event) => event.stepId === stepNodeId(testCase))).toBe(
           true,
         );
@@ -663,8 +671,12 @@ describe('P15: an authoring role writes its declared output and only that (real 
           (event) => event.type === 'PolicyViolation' && event.stepId === stepNodeId(testCase),
         );
         const payload = violation?.payload as
-          { paths?: string[]; totalReverted?: number } | undefined;
-        expect(violation?.payload).toMatchObject({ kind: 'out-of-claim-write', policy: 'strict' });
+          { paths?: string[]; totalReverted?: number; stepFailed?: boolean } | undefined;
+        expect(violation?.payload).toMatchObject({
+          kind: 'out-of-claim-write',
+          policy: 'strict',
+          stepFailed: true,
+        });
         expect([...(payload?.paths ?? [])].sort()).toEqual(
           strays.map((stray) => stray.relativePath).sort(),
         );
@@ -679,9 +691,14 @@ describe('P15: an authoring role writes its declared output and only that (real 
         ).toBe(originalAgent.get(testCase.agent));
         for (const file of filesOf(testCase))
           expect(files, `lost ${file.relativePath}`).toContain(file.relativePath);
+        expect(result.runState.runStatus).toBe('failed');
+        const failed = eventsFor(all, 'StepFailed', stepNodeId(testCase));
+        expect(failed.length).toBe(1);
+        expect(JSON.stringify(failed[0]?.payload)).toContain('RUN-104');
+        expect(eventsFor(all, 'StepSucceeded', stepNodeId(testCase))).toEqual([]);
       });
 
-      it('a session that writes ONLY a stray file fails RUN-083: loudly, with nothing legitimate lost', async () => {
+      it('a session that writes ONLY a stray file fails RUN-104 at the claim itself, before the output check ever runs: loudly, with nothing legitimate lost', async () => {
         const { events: all } = await run(
           testCase,
           honestAdapter(testCase, [STRAY_SOURCE], []),
@@ -689,8 +706,10 @@ describe('P15: an authoring role writes its declared output and only that (real 
         );
         const failed = eventsFor(all, 'StepFailed', stepNodeId(testCase));
         expect(failed.length).toBe(1);
-        // RUN-083 today (the output check); a stricter `strict` (P31) may fail the step earlier with a claim code.
-        expect(JSON.stringify(failed[0]?.payload)).toMatch(/RUN-083|claim-violation/i);
+        // `PLAN-M14.md` P3: the claim violation is caught before the output check ever runs, so this is
+        // `RUN-104` (`source: 'claim'`), not the output check's own `RUN-083`.
+        expect(JSON.stringify(failed[0]?.payload)).toContain('RUN-104');
+        expect(JSON.stringify(failed[0]?.payload)).not.toContain('RUN-083');
         expect(eventsFor(all, 'StepSucceeded', stepNodeId(testCase))).toEqual([]);
       });
 
@@ -730,15 +749,21 @@ describe('P15: the autonomy levels and an adopted project, for the step Q208 saw
     ['autonomous', false],
     ['guided', true],
   ] as const) {
-    it(`under ${autonomy}${adopted ? ' + adopted' : ''}: the output is kept, the strays are reverted and traced`, async () => {
+    it(`under ${autonomy}${adopted ? ' + adopted' : ''}: the output is kept, the strays are reverted and traced, and (PLAN-M14.md P3) the run fails`, async () => {
       const strays = [STRAY_SOURCE, STRAY_GOVERNANCE, strayAgent(retro)];
-      const { events: all, dir } = await run(
+      const {
+        result,
+        events: all,
+        dir,
+      } = await run(
         retro,
         honestAdapter(retro, [...filesOf(retro), ...strays], []),
         `p15-retro-${autonomy}-${String(adopted)}`,
         { autonomy, adopted },
       );
-      // The output is in the step's own lane (whether the step then succeeds is the P31 owner call).
+      // The output is in the step's own lane -- reverted exactly as before, but every one of these three
+      // combinations resolves `strict` (`run-retro` declares `outputs`, forced `strict` regardless, `06`
+      // §6.7 as amended), so the step -- and the run -- now fails too (`SPEC-QUESTIONS.md` Q232 decision 1).
       const lane = await tracked(await laneDir(dir));
       for (const file of filesOf(retro)) expect(lane).toContain(file.relativePath);
       expect(lane).not.toContain(STRAY_SOURCE.relativePath);
@@ -747,8 +772,13 @@ describe('P15: the autonomy levels and an adopted project, for the step Q208 saw
       expect(violation?.payload).toMatchObject({
         kind: 'out-of-claim-write',
         policy: 'strict',
+        stepFailed: true,
         totalReverted: 3,
       });
+      expect(result.runState.runStatus).toBe('failed');
+      const failed = eventsFor(all, 'StepFailed', stepNodeId(retro));
+      expect(failed.length).toBe(1);
+      expect(JSON.stringify(failed[0]?.payload)).toContain('RUN-104');
     });
   }
 });

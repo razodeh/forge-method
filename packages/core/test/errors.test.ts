@@ -114,6 +114,8 @@ const SAMPLE_DETAILS = {
   maxDepth: 200,
   expiresAt: '2026-01-01T00:00:00.000Z',
   stepId: 'design:review',
+  // `RUN-104` (`PLAN-M14.md` P3): the claim policy an out-of-claim write violated.
+  policy: 'strict',
   vcsCode: 'VCS-GIT-OPERATION-FAILED',
   vcsMessage: 'git worktree add failed: already exists',
   telemetryCode: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',

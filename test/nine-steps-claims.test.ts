@@ -10,9 +10,11 @@
  *
  * The real shipped workflow, compiled by the run's own compiler, dispatched through the real `executeStep` over the context
  * `forge run` builds (a real `forge init` project, real agents, strict `FakePlatformAdapter`), against a real git lane under
- * `supervised` autonomy (the `strict` claim policy). Each step's scripted session writes an in-claim file, a file outside a
- * per-story claim, and every protected path a project-wide step must never reach; the lane's committed tree and the
- * `PolicyViolation` event say what survived.
+ * `supervised` autonomy (the `strict` claim policy). Each entry below is dispatched twice, into two distinctly-id'd clones of
+ * the same real node (so each gets its own lane): once with only an in-claim write (succeeds under both policies), once with
+ * every protected path added too (still reverted and traced under both -- a protected path is a denial, not a claim question
+ * -- but since `PLAN-M14.md` P3, `06` §6.7 as amended, `SPEC-QUESTIONS.md` Q232 decision 1, `strict` now also fails the step
+ * over it; `guided`'s own `warn` default still does not).
  *
  * `.git/` cannot be exercised here: git never lists its own directory as a lane change, so no session could stage a write to
  * it and nothing would be reverted. It is in the exclusion set (`NEVER_WRITABLE_GLOBS`, asserted in
@@ -21,6 +23,7 @@
  * @see specs/06 §6.7
  * @see specs/20 §20.2
  * @see PLAN-M13.md P36
+ * @see PLAN-M14.md P3
  */
 import { execa } from 'execa';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -32,7 +35,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionRequest } from '@forge/adapter-kit';
 import { ProjectPaths } from '@forge/core';
-import { executeStep, type ExecuteStepContext } from '@forge/engine/dispatch';
+import { executeStep, type ExecuteStepContext, type LaneHandle } from '@forge/engine/dispatch';
 import { compileRunPlan } from '@forge/engine/plan';
 import type { StepNode } from '@forge/engine/plan';
 import { parseWorkflow } from '@forge/engine/workflow';
@@ -130,6 +133,11 @@ const ctxs = new Map<'supervised' | 'guided', ExecuteStepContext>();
 let adapter: FakePlatformAdapter;
 const requests: SessionRequest[] = [];
 let nodes = new Map<string, StepNode>();
+/** Every lane a context's own `createLane` produced, keyed by `${runId}:${stepId}` — captured at creation
+ * rather than read back from `ctx.laneRegistry` (`PLAN-M14.md` P3, `SPEC-QUESTIONS.md` Q232 decision 1):
+ * a step whose claim was violated under `strict` now fails and is never registered there, but its lane
+ * (and what survived claim enforcement on it) is still real and still worth inspecting. */
+const capturedLanes = new Map<string, LaneHandle>();
 
 beforeAll(async () => {
   projectDir = await mkdtemp(path.join(tmpdir(), 'forge-p36-nine-'));
@@ -172,17 +180,27 @@ beforeAll(async () => {
       execution: { ...written.execution, autonomy },
       models: { ...written.models, tiers },
     };
-    const built = {
-      ...(await buildRunEngineContext({
-        paths: new ProjectPaths(projectDir),
-        projectRoot: projectDir,
-        config,
-        runId: `run-p36-nine-${autonomy}`,
-        adapter,
-        checksRoot: '.forge/checks',
-        agentsRoot: '.forge/agents',
-      })),
+    const runId = `run-p36-nine-${autonomy}`;
+    const base = await buildRunEngineContext({
+      paths: new ProjectPaths(projectDir),
+      projectRoot: projectDir,
+      config,
+      runId,
+      adapter,
+      checksRoot: '.forge/checks',
+      agentsRoot: '.forge/agents',
+    });
+    const built: ExecuteStepContext = {
+      ...base,
       retainLaneWorktrees: false,
+      vcs: {
+        ...base.vcs,
+        createLane: async (stepId, sha) => {
+          const lane = await base.vcs.createLane(stepId, sha);
+          capturedLanes.set(`${runId}:${stepId}`, lane);
+          return lane;
+        },
+      },
     };
     expect(built.claimPolicy).toBe(autonomy === 'supervised' ? 'strict' : 'warn');
     ctxs.set(autonomy, built);
@@ -206,8 +224,8 @@ afterAll(async () => {
 });
 
 async function laneTree(ctx: ExecuteStepContext, stepId: string): Promise<string[]> {
-  const lane = ctx.laneRegistry.get(stepId);
-  if (lane === undefined) throw new Error(`step ${stepId} left no lane (did it fail?)`);
+  const lane = capturedLanes.get(`${ctx.runId}:${stepId}`);
+  if (lane === undefined) throw new Error(`step ${stepId} never created a lane`);
   return (await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: lane.path })).stdout
     .split('\n')
     .filter((line) => line !== '');
@@ -268,42 +286,78 @@ describe.each(['supervised', 'guided'] as const)(
       const id = `${entry.workflow}:${entry.step}`;
 
       if (entry.scope === 'project') {
-        it(`${entry.key}: keeps ordinary source and tests, reverts every protected path, traces them (PolicyViolation)`, async () => {
+        it(`${entry.key}: keeps ordinary source and tests when the session stays inside the claim`, async () => {
           const node = nodes.get(id);
           if (node === undefined) throw new Error(id);
           expect(node.produces).toEqual(['**', '!@protected']);
-          const { outcome, request } = await dispatch(context(), node, [
+          const cleanNode: StepNode = { ...node, id: `${id}:clean-${autonomy}` };
+          const { outcome, request } = await dispatch(context(), cleanNode, [
+            'src/fix.ts',
+            'test/fix.test.ts',
+            'migrations/002_expand.sql',
+          ]);
+          expect(request?.tools.write, `${entry.key} kept its write grant`).toBe(true);
+          expect(outcome.status).toBe('succeeded');
+          const tree = await laneTree(context(), cleanNode.id);
+          for (const kept of ['src/fix.ts', 'test/fix.test.ts', 'migrations/002_expand.sql']) {
+            expect(tree, kept).toContain(kept);
+          }
+        });
+
+        it(`${entry.key}: a protected write is reverted and traced (PolicyViolation); under strict it also fails the step (PLAN-M14.md P3)`, async () => {
+          const node = nodes.get(id);
+          if (node === undefined) throw new Error(id);
+          const protectedNode: StepNode = { ...node, id: `${id}:protected-${autonomy}` };
+          const { outcome, request } = await dispatch(context(), protectedNode, [
             'src/fix.ts',
             'test/fix.test.ts',
             'migrations/002_expand.sql',
             ...PROTECTED,
           ]);
           expect(request?.tools.write, `${entry.key} kept its write grant`).toBe(true);
-          expect(outcome.status).toBe('succeeded');
-          const tree = await laneTree(context(), id);
+          const tree = await laneTree(context(), protectedNode.id);
           for (const kept of ['src/fix.ts', 'test/fix.test.ts', 'migrations/002_expand.sql']) {
             expect(tree, kept).toContain(kept);
           }
           // Reverted at both policies: a protected path is a denial, not a claim question.
           for (const protectedPath of PROTECTED)
             expect(tree, protectedPath).not.toContain(protectedPath);
-          expect((await violationsOf(context(), id)).sort()).toEqual([...PROTECTED].sort());
+          expect((await violationsOf(context(), protectedNode.id)).sort()).toEqual(
+            [...PROTECTED].sort(),
+          );
+          if (strict) {
+            expect(outcome.status).toBe('failed');
+            expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+          } else {
+            expect(outcome.status).toBe('succeeded');
+          }
         });
       } else {
-        it(`${entry.key}: writes inside the story's files_expected, less its tests; the tests and .git/.forge/.env are reverted, other strays follow the policy`, async () => {
+        it(`${entry.key}: writes inside the story's files_expected when the session stays inside the claim`, async () => {
           const node = nodes.get(id);
           if (node === undefined) throw new Error(id);
           expect(node.produces).toEqual(['src/story-1.ts', STORY_TEST, `!${STORY_TEST}`]);
+          const cleanNode: StepNode = { ...node, id: `${id}:clean-${autonomy}` };
+          const { outcome, request } = await dispatch(context(), cleanNode, ['src/story-1.ts']);
+          expect(request?.tools.write).toBe(true);
+          expect(outcome.status).toBe('succeeded');
+          const tree = await laneTree(context(), cleanNode.id);
+          expect(tree).toContain('src/story-1.ts');
+        });
+
+        it(`${entry.key}: the test, strays and protected paths are reverted and traced; under strict the step also fails (PLAN-M14.md P3)`, async () => {
+          const node = nodes.get(id);
+          if (node === undefined) throw new Error(id);
           const stray = ['src/other-story.ts', 'README.md'];
-          const { outcome, request } = await dispatch(context(), node, [
+          const dirtyNode: StepNode = { ...node, id: `${id}:dirty-${autonomy}` };
+          const { outcome, request } = await dispatch(context(), dirtyNode, [
             'src/story-1.ts',
             STORY_TEST,
             ...stray,
             ...PROTECTED,
           ]);
           expect(request?.tools.write).toBe(true);
-          expect(outcome.status).toBe('succeeded');
-          const tree = await laneTree(context(), id);
+          const tree = await laneTree(context(), dirtyNode.id);
           expect(tree).toContain('src/story-1.ts');
           // `red` wrote the test and the implementer is not to edit it (10 §10.6), and `.git`, `.forge` and `.env` are never
           // writable: excluded, so reverted at both policies.
@@ -314,9 +368,15 @@ describe.each(['supervised', 'guided'] as const)(
             if (strict) expect(tree, path).not.toContain(path);
             else expect(tree, path).toContain(path);
           }
-          expect((await violationsOf(context(), id)).sort()).toEqual(
+          expect((await violationsOf(context(), dirtyNode.id)).sort()).toEqual(
             [STORY_TEST, ...stray, ...PROTECTED].sort(),
           );
+          if (strict) {
+            expect(outcome.status).toBe('failed');
+            expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+          } else {
+            expect(outcome.status).toBe('succeeded');
+          }
         });
       }
     }

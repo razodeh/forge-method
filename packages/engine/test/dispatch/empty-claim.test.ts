@@ -7,9 +7,14 @@
  * Real assembly, a real git lane, the real claim enforcement and event log; only the model session is faked. The fake
  * adapter refuses a write when the request's `tools.write` is false, exactly as a real adapter's tool layer would.
  *
+ * A write that still lands out of claim (a session that ignores the grant, or the fake's own direct-write test
+ * harness bypassing it) is reverted under every policy an empty claim resolves to (always `strict`, P36) -- and,
+ * since `PLAN-M14.md` P3, that also fails the step (`06` §6.7 as amended, `SPEC-QUESTIONS.md` Q232 decision 1).
+ *
  * @see specs/06 §6.7
  * @see specs/20 §20.1
  * @see PLAN-M13.md P36
+ * @see PLAN-M14.md P3
  */
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -160,8 +165,8 @@ describe('the effective write grant is the agent grant AND a non-empty claim', (
     expect(NO_CLAIM_WRITE_NOTE).toBe('no write: this step declares no outputs or produces');
   });
 
-  it('a step that declares produces keeps the agent write grant, and the claim still confines it', async () => {
-    const { requests, committed, events } = await run({
+  it('a step that declares produces keeps the agent write grant, and the claim still confines it (strict: reverted and the step fails, PLAN-M14.md P3)', async () => {
+    const { outcome, requests, committed, events } = await run({
       claimPolicy: 'strict',
       produces: ['src/**'],
       writes: [
@@ -174,6 +179,8 @@ describe('the effective write grant is the agent grant AND a non-empty claim', (
     expect(committed).toContain('src/ok.ts');
     expect(committed).not.toContain('lib/stray.ts');
     expect(violationPaths(events)).toEqual(['lib/stray.ts']);
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
   });
 
   it('a step that declares outputs and no produces keeps the agent write grant', async () => {
@@ -333,7 +340,7 @@ describe('a project-wide claim minus the protected set, enforced on a real lane'
 
   for (const claimPolicy of ['strict', 'warn'] as const) {
     it(`keeps ordinary source and reverts every protected path under strict; under ${claimPolicy} it names them`, async () => {
-      const { requests, committed, events } = await run({
+      const { outcome, requests, committed, events } = await run({
         claimPolicy,
         produces: PROJECT,
         writes: [
@@ -351,13 +358,19 @@ describe('a project-wide claim minus the protected set, enforced on a real lane'
       expect(committed).toContain('test/fix.test.ts');
       if (claimPolicy === 'strict') {
         for (const write of PROTECTED_WRITES) expect(committed).not.toContain(write.relativePath);
+        // `PLAN-M14.md` P3, `06` §6.7 as amended: a real out-of-claim write under strict now fails the
+        // step too, not only under this describe's own "reverted, not merely flagged" scoped scenario.
+        expect(outcome.status).toBe('failed');
+        expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+      } else {
+        expect(outcome.status).toBe('succeeded');
       }
     });
   }
 
   for (const claimPolicy of ['strict', 'warn'] as const) {
     it(`an agent whose claim NAMES a protected floor path (.forge/**) still cannot write it, under ${claimPolicy}: it is reverted, not merely flagged`, async () => {
-      const { committed, events } = await run({
+      const { outcome, committed, events } = await run({
         claimPolicy,
         produces: ['.forge/**', 'src/**', '.env*'],
         writes: [
@@ -377,6 +390,13 @@ describe('a project-wide claim minus the protected set, enforced on a real lane'
       expect(committed).not.toContain('.forge/agents/backend.yaml');
       expect(committed).not.toContain('.env');
       expect(committed).not.toContain('.env.production');
+      // `PLAN-M14.md` P3: the floor is always reverted (unchanged), but under strict it now fails the step.
+      if (claimPolicy === 'strict') {
+        expect(outcome.status).toBe('failed');
+        expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+      } else {
+        expect(outcome.status).toBe('succeeded');
+      }
     });
   }
 
@@ -450,16 +470,19 @@ describe('the second line of defence: a session that writes although it was gran
     return { outcome, events, committed: await treeAt(lanePath) };
   }
 
-  it('strict reverts everything an empty-claim session wrote', async () => {
+  it('strict reverts everything an empty-claim session wrote, and fails the step (PLAN-M14.md P3)', async () => {
     const { outcome, events, committed } = await ignoringTheGrant('strict');
-    expect(outcome.status).toBe('succeeded');
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     expect(committed).not.toContain('src/sneaky.ts');
     expect(committed).not.toContain('.env');
     expect(violationPaths(events).sort()).toEqual(['.env', 'src/sneaky.ts']);
   });
 
-  it('warn reverts it too: whatever an empty-claim session changed got past the grant, so the default policy does not keep it', async () => {
-    const { committed, events } = await ignoringTheGrant('warn');
+  it('warn reverts it too: an empty claim is enforced strict regardless of the project default (resolveStepClaim, P36), so this also fails the step', async () => {
+    const { outcome, committed, events } = await ignoringTheGrant('warn');
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     expect(committed).not.toContain('src/sneaky.ts');
     expect(committed).not.toContain('.env');
     expect(violationPaths(events).sort()).toEqual(['.env', 'src/sneaky.ts']);

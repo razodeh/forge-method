@@ -19,7 +19,9 @@ import { FakePlatformAdapter } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
+import { createVcsFacade } from '../../src/dispatch/facades.ts';
 import { resolveStepClaim } from '../../src/dispatch/outputs.ts';
+import type { LaneHandle } from '../../src/dispatch/types.ts';
 import { dispatchAgentStep } from '../../src/interaction/dispatch-agent-step.ts';
 import { toAgentId } from '../../src/plan/index.ts';
 import { restrictGrantForTaint } from '../../src/security/taint-guard.ts';
@@ -248,7 +250,7 @@ describe('a tainted step is held to its claim at every autonomy level', () => {
     ]);
   });
 
-  it('end to end (default policy warn): a file the tainted step wrote outside its `produces` is reverted, not kept', async () => {
+  it('end to end (default policy warn): a file the tainted step wrote outside its `produces` is reverted, not kept, and (PLAN-M14.md P3) fails the step -- unlike the untainted control at the same `warn` default', async () => {
     const projectRoot = await repo('claim');
     const adapter = new FakePlatformAdapter({}, { strict: true });
     adapter.script(() => true, {
@@ -259,11 +261,23 @@ describe('a tainted step is held to its claim at every autonomy level', () => {
       ],
     });
     const runId = 'run-taint-claim';
+    // Captured at creation, not read back from `ctx.laneRegistry`: `PLAN-M14.md` P3 (`06` §6.7 as amended,
+    // `SPEC-QUESTIONS.md` Q232 decision 1) means a real claim violation under the now-forced `strict`
+    // policy fails the step, and a failed step's lane is never registered there.
+    const real = createVcsFacade(projectRoot, runId);
+    let created: LaneHandle | undefined;
     const ctx = createTestContext({
       projectRoot,
       adapter,
       runId,
       claimPolicy: 'warn',
+      vcs: {
+        ...real,
+        createLane: async (stepId, base) => {
+          created = await real.createLane(stepId, base);
+          return created;
+        },
+      },
       assembly: createFixtureAssembly(projectRoot, { loadAgent: () => Promise.resolve(CAPABLE) }),
     });
     const stepNode = node({
@@ -275,11 +289,15 @@ describe('a tainted step is held to its claim at every autonomy level', () => {
       taint: 'external',
     });
     const outcome = await executeStep(stepNode, ctx);
-    expect(outcome.status).toBe('succeeded');
-    const lane = ctx.laneRegistry.get('wf:t');
-    if (lane === undefined) throw new Error('no lane');
-    const tree = (await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: lane.path }))
-      .stdout;
+    // `resolveStepClaim` forces `strict` for a tainted step regardless of the project's own `warn`
+    // default (asserted directly above); a real out-of-claim write under `strict` now fails the step.
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(ctx.laneRegistry.has('wf:t')).toBe(false);
+    if (created === undefined) throw new Error('no lane');
+    const tree = (
+      await execa('git', ['ls-tree', '-r', '--name-only', 'HEAD'], { cwd: created.path })
+    ).stdout;
     expect(tree).toContain('docs/summary.md');
     expect(tree).not.toContain('src/stray.ts');
 

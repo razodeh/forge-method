@@ -1,11 +1,13 @@
 /**
  * `runCommandStep` (via `executeStep`) — `PLAN-M5.md` P15's own Checks text: a `command` step with
  * `inline: true` never creates a lane; a non-inline command step runs the identical lane lifecycle an
- * agent step does (create, commit, enforce claim).
+ * agent step does (create, commit, enforce claim -- and, under `strict`, an out-of-claim write fails it
+ * too, `PLAN-M14.md` P3, `06` §6.7 as amended).
  *
- * @see specs/06 §6.4
+ * @see specs/06 §6.4, §6.7
  * @see specs/10 §10.1
  * @see PLAN-M5.md P15
+ * @see PLAN-M14.md P3
  */
 import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -111,7 +113,7 @@ describe('runCommandStep', () => {
     expect(content.trim()).toBe('generated');
   });
 
-  it("a non-inline command step's own out-of-claim write is reverted through this entry point, identically to an agent step", async () => {
+  it("a non-inline command step's own out-of-claim write is reverted through this entry point, identically to an agent step, and fails it under strict", async () => {
     const projectRoot = await createTempRepo('command-claim');
     const ctx = createTestContext({ projectRoot, claimPolicy: 'strict' });
     const stepNode = node({
@@ -123,7 +125,10 @@ describe('runCommandStep', () => {
 
     const outcome = await executeStep(stepNode, ctx);
 
-    expect(outcome.status).toBe('succeeded');
+    // `PLAN-M14.md` P3, `06` §6.7 as amended: `strict` still reverts the out-of-claim file exactly as
+    // before, but a `command` step's claim violation now fails it too, identically to an `agent` step's.
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
     const [laneDir] = await readdir(worktreesDir);
     const laneRoot = path.join(worktreesDir, laneDir ?? '');

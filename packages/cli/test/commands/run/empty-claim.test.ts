@@ -4,8 +4,12 @@
  * session (which, like a real adapter's tool layer, refuses a write when the request's `tools.write` is false). The agent's
  * own definition has `tools.write: true` in every case; only the step's claim differs.
  *
+ * A real out-of-claim write under `strict` (`06` §6.7 as amended, `SPEC-QUESTIONS.md` Q232 decision 1)
+ * also fails the step, and so the run, since `PLAN-M14.md` P3.
+ *
  * @see specs/06 §6.7
  * @see PLAN-M13.md P36
+ * @see PLAN-M14.md P3
  */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -116,9 +120,9 @@ describe('forge run: a step with no outputs and no produces', () => {
 });
 
 describe('forge run: a step that declares produces', () => {
-  it('keeps the agent write grant, and the claim still confines it (strict): a stray write is reverted and traced', async () => {
+  it('keeps the agent write grant, and the claim still confines it (strict): a stray write is reverted, traced, and (PLAN-M14.md P3) fails the run', async () => {
     const project = await projectWith('\n    produces: [ "src/**" ]', 'supervised');
-    const { requests, events } = await run(
+    const { result, requests, events } = await run(
       project,
       ['src/ok.ts', 'lib/stray.ts'],
       'run-empty-claimed',
@@ -129,8 +133,15 @@ describe('forge run: a step that declares produces', () => {
     );
     expect(violation?.payload).toMatchObject({
       kind: 'out-of-claim-write',
+      stepFailed: true,
       paths: ['lib/stray.ts'],
       totalReverted: 1,
     });
+    // `06` §6.7 as amended (`SPEC-QUESTIONS.md` Q232 decision 1): `supervised` resolves `strict`, so this
+    // real out-of-claim write now fails the step and the run, not only under an `outputs`-declared step.
+    expect(result.runState.runStatus).toBe('failed');
+    const failed = events.find((event) => event.type === 'StepFailed' && event.stepId === STEP_ID);
+    expect(JSON.stringify(failed?.payload)).toContain('RUN-104');
+    expect(JSON.stringify(failed?.payload)).toMatch(/Remedy/i);
   });
 });

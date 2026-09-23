@@ -3,7 +3,7 @@
  * naming it (`PLAN-M14.md` P2, `SPEC-QUESTIONS.md` Q212/Q216/Q232 decision 1). `resolveStepClaim`
  * (`packages/engine/src/dispatch/outputs.ts`) gives a `command` step `globs: produces` and the run's
  * default claim policy; under `strict` (`supervised`/`autonomous`/an adopted project) a write outside
- * that claim is reverted today, silently, and once P3 lands the step fails outright. This file is the
+ * that claim is reverted, and since `PLAN-M14.md` P3 the step fails outright too. This file is the
  * guard: for each of the fourteen non-inline command steps the nine named workflows ship, it proves the
  * command's own documented write (read from its real source, not guessed) lies inside the step's real,
  * compiled `produces` claim.
@@ -74,7 +74,7 @@
  * @see specs/06 §6.7
  * @see specs/18 §18.4
  * @see specs/10 §10.1
- * @see PLAN-M14.md P2
+ * @see PLAN-M14.md P2, P3
  * @see SPEC-QUESTIONS.md Q212, Q216, Q232
  */
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -450,15 +450,18 @@ describe("every shipped non-inline command step's own documented write is inside
   }
 });
 
-describe('mutation evidence: without `produces` the guard above would have failed (PLAN-M14 P2)', () => {
-  it('adopt:inventory-codebase with `produces` stripped: strict reverts the inventory report, guided keeps it but flags it', async () => {
+describe('mutation evidence: without `produces` the guard above would have failed (PLAN-M14 P2, and now fails the step outright: PLAN-M14 P3)', () => {
+  it('adopt:inventory-codebase with `produces` stripped: strict reverts the inventory report and fails the step; guided keeps it but flags it', async () => {
     const real = compiledNode('adopt', 'inventory-codebase');
     const stripped: StepNode = { ...real, produces: [] };
     const writes = STEP_FIXTURES['adopt:inventory-codebase'] ?? [];
     expect(writes.length).toBeGreaterThan(0);
 
     const strict = await runStep(stripped, writes, 'strict');
-    expect(strict.outcome.status).toBe('succeeded');
+    // `06` §6.7 as amended (`PLAN-M14.md` P3, `SPEC-QUESTIONS.md` Q232 decision 1): the revert is
+    // unchanged, but a real out-of-claim write under `strict` now also fails the step.
+    expect(strict.outcome.status).toBe('failed');
+    expect(strict.outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     expect(strict.tree).not.toContain('reports/adoption/inventory.json');
     expect(strict.claimResults).toEqual([
       {
@@ -468,17 +471,19 @@ describe('mutation evidence: without `produces` the guard above would have faile
     ]);
 
     const warn = await runStep(stripped, writes, 'warn');
+    expect(warn.outcome.status).toBe('succeeded');
     expect(warn.tree).toContain('reports/adoption/inventory.json');
     expect(warn.claimResults).toEqual([
       { outOfClaim: ['reports/adoption/inventory.json'], reverted: [] },
     ]);
   });
 
-  it('debug:prove-fix with `produces` stripped: strict reverts both test-run reports', async () => {
+  it('debug:prove-fix with `produces` stripped: strict reverts both test-run reports and fails the step', async () => {
     const real = compiledNode('debug', 'prove-fix');
     const stripped: StepNode = { ...real, produces: [] };
     const strict = await runStep(stripped, TEST_RUN_WRITES, 'strict');
-    expect(strict.outcome.status).toBe('succeeded');
+    expect(strict.outcome.status).toBe('failed');
+    expect(strict.outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
     const expectedPaths = TEST_RUN_WRITES.map((write) => write.relativePath).sort();
     for (const write of TEST_RUN_WRITES) expect(strict.tree).not.toContain(write.relativePath);
     expect([...(strict.claimResults[0]?.outOfClaim ?? [])].sort()).toEqual(expectedPaths);
