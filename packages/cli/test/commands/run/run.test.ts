@@ -6,6 +6,7 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P20
  */
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -25,6 +26,7 @@ import {
   FIXTURE_STEP_VERIFY_ID,
   FIXTURE_WORKFLOW_ID,
   FIXTURE_WORKFLOW_SOURCE,
+  WORKFLOWS_ROOT,
   cleanupAll,
   createTestProject,
   fixtureExpressionContext,
@@ -95,6 +97,11 @@ describe('runWorkflow', () => {
     });
     expect(result.kind).toBe('dry-run');
     expect(await readRunLock(project.paths)).toBeUndefined();
+    // `SPEC-QUESTIONS.md` Q232 decision 18: `--dry-run` never syncs the integration branch either —
+    // nothing plans or prints without spawning any session or writing any file (`03` §3.2's own
+    // `--dry-run` contract) means never even creating the integration worktree this sync would run
+    // against.
+    expect(existsSync(project.paths.resolveState('worktrees'))).toBe(false);
   });
 
   it('runs a real workflow to completion: real event log, real lock lifecycle, real produced artifact', async () => {
@@ -130,8 +137,14 @@ describe('runWorkflow', () => {
     // A real manifest and last-run pointer, readable back for a later `forge resume`.
     const manifest = JSON.parse(
       await readFile(path.join(project.dir, '.forge/state/runs/run-fixed/manifest.json'), 'utf8'),
-    ) as { workflowId: string };
+    ) as { workflowId: string; integrationTipAtStart: string; syncedFromTrunk: string | null };
     expect(manifest.workflowId).toBe(FIXTURE_WORKFLOW_ID);
+    // `SPEC-QUESTIONS.md` Q232 decision 18: the sync's own outcome is recorded on the manifest — this
+    // is the very first run, so the integration branch was just created from `main` (equal tips, a
+    // no-op sync).
+    const mainTip = (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim();
+    expect(manifest.integrationTipAtStart).toBe(mainTip);
+    expect(manifest.syncedFromTrunk).toBeNull();
     const lastRun = JSON.parse(
       await readFile(path.join(project.dir, '.forge/state/last-run.json'), 'utf8'),
     ) as { runId: string };
@@ -166,6 +179,61 @@ describe('runWorkflow', () => {
     );
   });
 
+  it('SPEC-QUESTIONS.md Q232 decision 18: a diverged integration branch refuses the run before anything exists for it — lock released, no runs/<id>/, last-run.json unchanged, no half-merge', async () => {
+    const project = await createTestProject();
+    // A real prior run, so there is a real "last known run" state to prove untouched by the refusal.
+    const first = await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-1',
+      host: 'test-host',
+    });
+    expect(first.kind).toBe('run');
+    const lastRunBefore = await readFile(
+      path.join(project.dir, '.forge/state/last-run.json'),
+      'utf8',
+    );
+
+    // Diverge main and the integration branch for real: a commit on each side the other does not have.
+    await writeFile(path.join(project.dir, 'main-only.txt'), 'm\n');
+    await execa('git', ['add', 'main-only.txt'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: project.dir });
+    const integrationPath = path.join(
+      project.dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
+    await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
+    await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
+
+    await expect(
+      runWorkflow(testRunDeps(project), {
+        workflowId: FIXTURE_WORKFLOW_ID,
+        expressionContext: fixtureExpressionContext(),
+        runId: 'run-2-diverged',
+        host: 'test-host',
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-107' });
+
+    expect(await readRunLock(project.paths)).toBeUndefined();
+    await expect(
+      readFile(path.join(project.dir, '.forge/state/runs/run-2-diverged/manifest.json'), 'utf8'),
+    ).rejects.toThrow();
+    const lastRunAfter = await readFile(
+      path.join(project.dir, '.forge/state/last-run.json'),
+      'utf8',
+    );
+    expect(lastRunAfter).toBe(lastRunBefore);
+
+    // No half-merge left behind in the integration worktree either.
+    expect((await execa('git', ['status', '--porcelain'], { cwd: integrationPath })).stdout).toBe(
+      '',
+    );
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: integrationPath }),
+    ).rejects.toThrow();
+  });
+
   it('a full real run through a real merge step lands the change on the real integration branch', async () => {
     const project = await createTestProject({ variant: 'merge' });
     const result = await runWorkflow(testRunDeps(project), {
@@ -189,6 +257,102 @@ describe('runWorkflow', () => {
       cwd: project.dir,
     });
     expect(stdout).toContain('Merge lane');
+  });
+
+  it('SPEC-QUESTIONS.md Q221 disclosed item (d) / Q232 decision 18: run 1 lands a lane, a human commits directly to main, run 2’s first session already sees it', async () => {
+    // Run 1's own workflow deliberately has no lane-creating step (one inline `command` only): a
+    // successful lane a workflow's own plan does not land with an explicit `merge` step is still
+    // auto-integrated by the engine itself as soon as it succeeds (confirmed directly: the regular
+    // fixture's own merge-less `implement` lane lands a real `--no-ff` merge commit on the integration
+    // branch during the run) -- so a workflow *with* a lane would leave the integration branch already
+    // one commit ahead of `main` by the time run 1 finishes. A human's *own* subsequent commit straight
+    // to `main` would then be a genuine, structural divergence (two unrelated commits from the same
+    // point), which `RUN-107` correctly refuses -- that combination is this piece's own disclosed,
+    // known-open residual ("`deliver` still folds nothing back onto `main`"; the diverged case above
+    // covers it). The case this test proves is the one `Q221`'s disclosure actually names: successive
+    // `forge run` invocations against an integration branch that has not (yet) diverged from `main` --
+    // here, because nothing has landed on it yet -- where a human's direct commit to `main` in between
+    // them must still reach the very next run's first real lane.
+    const project = await createTestProject();
+    const noLaneWorkflowId = 'cli-fixture-no-lane';
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${noLaneWorkflowId}.workflow.yaml`),
+      `id: ${noLaneWorkflowId}\n` +
+        'name: CLI fixture (no lane-creating step)\n' +
+        'version: 1.0.0\n' +
+        'description: One inline command step only -- nothing ever lands on the integration branch.\n' +
+        '\n' +
+        'steps:\n' +
+        '  - id: noop\n' +
+        '    kind: command\n' +
+        '    run: "true"\n' +
+        '    inline: true\n',
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add no-lane fixture workflow'], {
+      cwd: project.dir,
+    });
+
+    const first = await runWorkflow(testRunDeps(project), {
+      workflowId: noLaneWorkflowId,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-1',
+      host: 'test-host',
+    });
+    expect(first.kind).toBe('run');
+    if (first.kind !== 'run') throw new Error('unreachable');
+    expect(first.runState.runStatus).toBe('completed');
+
+    // Confirmed: run 1 left the integration branch exactly where it started, equal to `main`.
+    const integrationPathBefore = path.join(
+      project.dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    const mainTipBeforeHotfix = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPathBefore })).stdout.trim(),
+    ).toBe(mainTipBeforeHotfix);
+
+    // A human commits directly to `main` -- never touching a lane, never touching the integration
+    // branch.
+    await writeFile(path.join(project.dir, 'hotfix.txt'), 'hotfix\n');
+    await execa('git', ['add', 'hotfix.txt'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'hotfix'], { cwd: project.dir });
+
+    const second = await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-2',
+      host: 'test-host',
+    });
+    expect(second.kind).toBe('run');
+    if (second.kind !== 'run') throw new Error('unreachable');
+    expect(second.runState.runStatus).toBe('completed');
+
+    // Run 2's own `implement` lane was branched from the integration tip *after* this run's own sync —
+    // it genuinely contains the hotfix, proving the sync ran before any lane (the run's first real
+    // session) was ever created, not merely before the workflow finished.
+    const lanes = await runLanes(project.paths, project.dir, 'run-2');
+    const laneId = lanes[0]?.laneId;
+    if (laneId === undefined) throw new Error('run 2 left no lane');
+    const hotfixInLane = await readFile(
+      project.paths.resolveState(`worktrees/${laneId}/hotfix.txt`),
+      'utf8',
+    );
+    expect(hotfixInLane).toBe('hotfix\n');
+
+    // And the integration branch itself was really fast-forwarded, not merely the lane rebased past it.
+    const integrationPathAfter = path.join(
+      project.dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    const hotfixOnIntegration = await readFile(
+      path.join(integrationPathAfter, 'hotfix.txt'),
+      'utf8',
+    );
+    expect(hotfixOnIntegration).toBe('hotfix\n');
   });
 
   it('a real gate check spawned by a fresh run carries the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4), through the real commandEnvFor -> commandEnv -> createGateEvaluator chain, not a hand-built env', async () => {

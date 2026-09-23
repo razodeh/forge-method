@@ -116,6 +116,10 @@ const SAMPLE_DETAILS = {
   stepId: 'design:review',
   // `RUN-104` (`PLAN-M14.md` P3): the claim policy an out-of-claim write violated.
   policy: 'strict',
+  // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas.
+  branch: 'forge/integration/current',
+  integrationTip: 'a1b2c3d4e5f6',
+  trunkTip: '1a2b3c4d5e6f',
   vcsCode: 'VCS-GIT-OPERATION-FAILED',
   vcsMessage: 'git worktree add failed: already exists',
   telemetryCode: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',

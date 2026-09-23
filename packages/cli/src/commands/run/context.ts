@@ -28,7 +28,7 @@ import {
 import type { AskPort } from '@forge/engine/dispatch';
 import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
-import { parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
+import { VcsError, getDirtyFiles, parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
 import type { ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 import { resolveClaimPolicy } from '@forge/kb/adopt';
@@ -63,8 +63,11 @@ export interface BuildRunContextInput {
   readonly lanesFromIntegration?: boolean;
 }
 
-/** The trunk the integration branch is first created from (never an integration branch itself). */
-const TRUNK = 'main';
+/** The trunk the integration branch is first created from (never an integration branch itself), and the
+ * one branch `syncIntegrationBranchToTrunk` ever fast-forwards an integration branch towards. Exported so
+ * `run.ts` (the only real caller of that sync, `SPEC-QUESTIONS.md` Q232 decision 18) shares this exact
+ * literal rather than a second copy that could drift. */
+export const TRUNK = 'main';
 
 /** A branch name that is safe to hand to git as a ref: letters, digits, `_`, `-`, `.` and `/` between such
  * components, no `..`, no leading or trailing dot or slash, no `.lock`, at most 200 characters. */
@@ -448,6 +451,141 @@ async function recoverFromWorktreeAddFailure(
   await runGitOrThrow(['worktree', 'prune'], projectRoot);
   await runGitOrThrow(args, projectRoot);
   return target;
+}
+
+export interface IntegrationSyncResult {
+  /** The integration branch's own tip once this call returns — after any fast-forward this call itself
+   * performed, so it is always what the run's own lanes are about to branch from, not merely whatever the
+   * branch happened to be when this call started. */
+  readonly integrationTipAtStart: string;
+  /** The trunk sha this call fast-forwarded the integration branch to, or `null` when nothing moved (the
+   * tips were already equal, or the integration branch is ahead of trunk and has nothing to receive). */
+  readonly syncedFromTrunk: string | null;
+}
+
+/** `git symbolic-ref --quiet --short HEAD` in `cwd`, or the literal `'HEAD'` when detached (which this
+ * function's own callers never leave a worktree in, but a refusal's own display text still needs
+ * something to name). Purely descriptive — never used to decide behaviour, unlike
+ * `repairInterruptedIntegrationWorktree`'s identical read above, which does. */
+async function currentBranchOrDetached(cwd: string): Promise<string> {
+  const result = await execa('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+    cwd,
+    reject: false,
+  });
+  return result.exitCode === 0 ? result.stdout.trim() : 'HEAD';
+}
+
+/** Whether `ancestor` is an ancestor of (or identical to) `descendant`, per `git merge-base
+ * --is-ancestor` (exit 0 yes, exit 1 no) — the one primitive that actually answers this; no comparison
+ * of the two tip shas alone can. Any other outcome is a genuine failure of the check itself (a bad ref,
+ * a corrupted object database, a missing `git`), reported the same way every other unexpected git
+ * failure in this module is (`isSpawnNotFound` / `RUN-055`, mirroring `runGitOrThrow`) — never silently
+ * read as "not an ancestor." `reject: false` (not `runGitOrThrow`) because exit code 1 here is a real,
+ * expected answer, not a failure to translate. */
+async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+  const result = await execa('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+    cwd,
+    env: { LC_ALL: 'C', LANG: 'C' },
+    reject: false,
+  });
+  if (result.exitCode === 0) return true;
+  if (result.exitCode === 1) return false;
+  if (result.code === 'ENOENT') throw new ForgeError('ENV-004', { tool: 'git' });
+  throw new ForgeError('RUN-055', {
+    detail:
+      result.shortMessage === undefined || result.shortMessage === ''
+        ? `git merge-base --is-ancestor exited ${String(result.exitCode)}`
+        : result.shortMessage,
+  });
+}
+
+/** How many leading hex characters of a full sha a refusal names — long enough to be unambiguous in a
+ * message, short enough to read; never used for a git command, which always gets the full sha. */
+const SHORT_SHA_LENGTH = 12;
+
+/**
+ * Fast-forwards the integration worktree's own checked-out branch to `trunk` (always `TRUNK`, `'main'`,
+ * in production) — never any other direction, and never anything but a real `--ff-only` merge.
+ * `SPEC-QUESTIONS.md` Q221's own disclosed gap (d): the integration branch used to accumulate across
+ * runs with no path back to `main`'s own newer commits, so a lane branched from it stopped seeing what a
+ * human (or a later `deliver` step) committed there directly — `Q232` decision 18 closes it: "The
+ * integration branch is fast-forwarded to `main` at run start and the run refuses if they have
+ * diverged."
+ *
+ * Four outcomes, decided from `git merge-base --is-ancestor` alone — never from attempting a merge and
+ * inspecting its own exit code or message text, which is exactly the locale-fragile message-matching
+ * `ensureIntegrationWorktree`'s own TOCTOU recovery above deliberately avoids:
+ *
+ * - **Equal** tips: no-op.
+ * - **Integration behind** trunk (the integration tip is an ancestor of the trunk tip): `git merge
+ *   --ff-only <trunk sha>` moves the branch — never `git reset --hard`, which leaves no reflog-visible
+ *   trace of *why* the branch moved and, unlike a real merge, has no built-in refusal for a case that
+ *   is not actually safe.
+ * - **Integration ahead** of trunk (the trunk tip is an ancestor of the integration tip — a later
+ *   `deliver` step has not folded it back into `main` yet): no-op. There is nothing in this direction to
+ *   fast-forward, and the integration branch's own extra commits are never touched.
+ * - **Diverged** (neither tip is an ancestor of the other): refused, `ForgeError('RUN-107', ...)`,
+ *   naming the branch and both tips. A run never merges `main` into a diverged integration branch on its
+ *   own — that would create a real merge commit, unattended, with its own conflict risk — so this
+ *   function never calls plain `git merge` at all; the only merge command it ever runs is the
+ *   `--ff-only` one above, and only once the ancestor check has already proven it cannot fail, so
+ *   `MERGE_HEAD` is never created by this function under any outcome.
+ *
+ * A dirty integration worktree — not the project's own working tree (`runWorkflow`'s own
+ * `assertCleanWorkingTree` already checked that, before this is ever reached): the SEPARATE worktree
+ * this branch is checked out in — is refused before any of the above, with a distinct `VcsError`
+ * (`VCS-INTEGRATION-DIRTY`, never `VCS-DIRTY-TREE`, whose registered `VCS-010` wrapper and remedy
+ * — "run `git stash`" — are written for the project's own tree, not this internal one a user never
+ * edits directly; `vcs-refusal.ts`'s generic branch prints this one, code and message, unchanged). No
+ * merge is ever attempted against a dirty tree, so there is no possibility of a silent half-merge.
+ *
+ * @see specs/06 §6.5
+ * @see specs/20 §20.2 point 4
+ * @see SPEC-QUESTIONS.md Q221, Q232 decision 18
+ */
+export async function syncIntegrationBranchToTrunk(
+  integrationPath: string,
+  trunk: string,
+): Promise<IntegrationSyncResult> {
+  const dirtyFiles = await getDirtyFiles(integrationPath);
+  if (dirtyFiles.length > 0) {
+    const branch = await currentBranchOrDetached(integrationPath);
+    throw new VcsError({
+      code: 'VCS-INTEGRATION-DIRTY',
+      message:
+        `The integration worktree for ${branch} has ${String(dirtyFiles.length)} uncommitted ` +
+        `change(s), so it cannot be synced with ${trunk}: ${dirtyFiles.join(', ')}.`,
+      remedy:
+        'This is the integration worktree, not your own working tree — inspect it directly (under ' +
+        '`.forge/state/worktrees/`) and commit or discard what is there, then run again.',
+      details: { dirtyFiles, branch },
+    });
+  }
+
+  const integrationTip = await resolveRevision(integrationPath, 'HEAD');
+  const trunkTip = await resolveRevision(integrationPath, trunk);
+
+  if (integrationTip === trunkTip) {
+    return { integrationTipAtStart: integrationTip, syncedFromTrunk: null };
+  }
+  if (await isAncestor(integrationPath, trunkTip, integrationTip)) {
+    // Trunk is already fully contained in the integration branch: nothing to bring in.
+    return { integrationTipAtStart: integrationTip, syncedFromTrunk: null };
+  }
+  if (await isAncestor(integrationPath, integrationTip, trunkTip)) {
+    // The integration branch is a strict ancestor of trunk: a real fast-forward. This is the only
+    // `git merge` call this function ever makes, and only once the check above has already proven it
+    // must succeed.
+    await runGitOrThrow(['merge', '--ff-only', trunkTip], integrationPath);
+    return { integrationTipAtStart: trunkTip, syncedFromTrunk: trunkTip };
+  }
+
+  const branch = await currentBranchOrDetached(integrationPath);
+  throw new ForgeError('RUN-107', {
+    branch,
+    integrationTip: integrationTip.slice(0, SHORT_SHA_LENGTH),
+    trunkTip: trunkTip.slice(0, SHORT_SHA_LENGTH),
+  });
 }
 
 export async function buildRunEngineContext(

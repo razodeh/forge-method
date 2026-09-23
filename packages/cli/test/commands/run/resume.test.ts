@@ -191,6 +191,73 @@ steps:
     expect(explicit.runId).toBe(runId);
   }, 30_000);
 
+  it('SPEC-QUESTIONS.md Q232 decision 18: a resumed run never re-syncs the integration branch with main, even when they have diverged since the crash — only runWorkflow syncs', async () => {
+    const project = await createTestProject({ variant: 'slow' });
+    const runId = 'run-crash-no-resync';
+
+    // The crashed run's own `runWorkflow` already synced once, before it was killed (the manifest —
+    // its first durable write — is written only after that sync succeeds, so a crash `spawnAndKill`
+    // waits for is always a crash *after* it).
+    await spawnAndKill(project.paths, project.dir, runId);
+
+    const integrationPath = project.paths.resolveState(
+      'worktrees/integration-forge-integration-current',
+    );
+
+    // Diverge main and the integration branch for real, *after* the crash the killed run already
+    // synced against — a resume that re-synced would either throw RUN-107 here or fast-forward the
+    // branch; this proves it does neither.
+    await writeFile(path.join(project.dir, 'hotfix-after-crash.txt'), 'h\n');
+    await execa('git', ['add', 'hotfix-after-crash.txt'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'hotfix after crash'], { cwd: project.dir });
+    await writeFile(path.join(integrationPath, 'integration-only-after-crash.txt'), 'i\n');
+    await execa('git', ['add', 'integration-only-after-crash.txt'], { cwd: integrationPath });
+    await execa('git', ['commit', '--quiet', '-m', 'integration-only after crash'], {
+      cwd: integrationPath,
+    });
+    const integrationTipDiverged = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const { runState } = await resumeWorkflow(testRunDeps(project), { runId, host: 'test-host' });
+    expect(runState.runStatus).toBe('completed');
+
+    // Resume neither refused (`RUN-107`) nor fast-forwarded/reset the branch to `main` — it continued
+    // building on the diverged tip exactly as it was (its own `implement` lane is later auto-merged on
+    // top, `06` §6.4, so `HEAD` moves *forward* from here, but never discards or bypasses this commit,
+    // and `main`'s own hotfix is never folded in).
+    const mainTip = (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim();
+    const headAfter = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    const stillHasDivergedCommit = await execa(
+      'git',
+      ['merge-base', '--is-ancestor', integrationTipDiverged, headAfter],
+      { cwd: integrationPath, reject: false },
+    );
+    expect(stillHasDivergedCommit.exitCode).toBe(0);
+    const hotfixWasFoldedIn = await execa(
+      'git',
+      ['merge-base', '--is-ancestor', mainTip, headAfter],
+      {
+        cwd: integrationPath,
+        reject: false,
+      },
+    );
+    expect(hotfixWasFoldedIn.exitCode).not.toBe(0);
+
+    // And the resumed run's own lane, branched from that same diverged tip, genuinely does not see the
+    // hotfix main gained after the crash -- proof by absence, not merely "no error was thrown".
+    const lanes = await runLanes(project.paths, project.dir, runId);
+    const laneId = lanes[0]?.laneId;
+    if (laneId === undefined) throw new Error('resumed run left no lane');
+    const laneDir = project.paths.resolveState(`worktrees/${laneId}`);
+    await expect(readFile(path.join(laneDir, 'hotfix-after-crash.txt'), 'utf8')).rejects.toThrow();
+    await expect(
+      readFile(path.join(laneDir, 'integration-only-after-crash.txt'), 'utf8'),
+    ).resolves.toBe('i\n');
+  }, 30_000);
+
   it('a resumed run threads the real run id into the launcher shim, so a gate check it genuinely re-dispatches after the crash carries the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4) -- not merely a command step (which self-stamps regardless), but the gate-check path, which depends on this threading', async () => {
     const project = await createTestProject({ variant: 'slow' });
     const runId = 'run-crash-marker';

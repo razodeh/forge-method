@@ -1265,6 +1265,23 @@ export const ERROR_CODES = {
     remedy:
       'Add each reverted path to the step’s `produces` (or, for a registry artifact, declare it in `outputs`), or make the session write only what the step already claims. `forge logs` names the step and shows the reverted paths; the `PolicyViolation` event carries the complete, unbounded list.',
   },
+  'RUN-107': {
+    // `PLAN-M14.md` P9, `SPEC-QUESTIONS.md` Q221 disclosed item (d) / Q232 decision 18: the integration
+    // branch used to accumulate across runs with no path back to `main`'s own newer commits, so a lane
+    // branched from it stopped seeing what a human (or a later `deliver` step) committed there directly.
+    // `syncIntegrationBranchToTrunk` (`context.ts`) fast-forwards it to `main` at the start of every
+    // `forge run`, before anything else for the run exists -- but a genuinely diverged branch (neither
+    // tip is an ancestor of the other) cannot be fast-forwarded without either discarding real commits
+    // (`git reset --hard`, never done) or creating a real, unattended merge commit (`git merge main`,
+    // also never done): both are refused instead. `forge resume` and `forge merge` never raise this --
+    // neither one re-syncs the branch at all.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { branch: string; integrationTip: string; trunkTip: string }) =>
+      `Integration branch ${show(d.branch)} (at ${show(d.integrationTip)}) has diverged from main (at ${show(d.trunkTip)}) and cannot be fast-forwarded.`,
+    remedy:
+      'Merge `main` into the branch by hand in the integration worktree (under `.forge/state/worktrees/`) and push the resolution, or delete the branch once its work has been delivered so the next run creates it fresh from `main`.',
+  },
   'RUN-097': {
     // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an
     // authoring or judging role, or one the project does not have). `implement-story` runs its plan, implementation,

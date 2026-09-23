@@ -17,7 +17,13 @@ import { parseWorkflow } from '@forge/engine/workflow';
 import type { ForgeConfig } from '@forge/schemas/config';
 import { assertCleanWorkingTree } from '@forge/vcs';
 
-import { buildRunEngineContext } from './context.ts';
+import {
+  TRUNK,
+  buildRunEngineContext,
+  ensureIntegrationWorktree,
+  integrationBranchFor,
+  syncIntegrationBranchToTrunk,
+} from './context.ts';
 import {
   createLauncherShimOrWarn,
   removeLiveLauncherShims,
@@ -174,26 +180,48 @@ export async function runWorkflow(
   const lock: RunLock = { pid: process.pid, host: options.host, runId, startedAt: clock.now() };
   await acquireRunLock(deps.paths, lock);
 
-  // Persisted so a later `forge resume` can re-compile the identical plan (`runEngine`'s own
-  // `resumeFrom` path needs the same `workflowSource`/`expressionContext` this invocation used —
-  // neither is recoverable from the event log alone, which records only that a run happened, not
-  // what was fed into compiling its plan).
-  const manifestPath = deps.paths.resolveState(`runs/${runId}/manifest.json`);
-  await writeFileAtomic(
-    manifestPath,
-    JSON.stringify({
-      workflowId: options.workflowId,
-      expressionContext: options.expressionContext,
-    }),
-  );
-  // `forge resume`'s own "the last (or given) run" (`03` §3.2.4) needs a real way to find "the
-  // last" one — this is that pointer, updated every time a new run actually starts.
-  await writeFileAtomic(deps.paths.resolveState('last-run.json'), JSON.stringify({ runId }));
-
-  const removeSignalHandlers = installRunSignalHandlers();
-
+  let removeSignalHandlers: (() => void) | undefined;
   let shim: LauncherShim | undefined;
   try {
+    // `SPEC-QUESTIONS.md` Q221's own disclosed gap (d) / Q232 decision 18: "the integration branch is
+    // fast-forwarded to `main` at run start[, and] the run refuses if they have diverged." Run here --
+    // after the lock (so a refusal below leaves it released, via `finally`) but before the manifest,
+    // `last-run.json`, or anything else this run creates -- so a refusal (a diverged branch, `RUN-107`;
+    // a dirty integration worktree, a typed `VcsError`) leaves nothing behind for this run at all: no
+    // `runs/<id>/`, no changed `last-run.json`, and (once `finally` below runs) no held lock either.
+    // Only `runWorkflow` does this: `resumeWorkflow` continues the plan a run already started against
+    // whatever the branch was synced to then, and `forge merge`/`forge review`/`debug`/`session`/`panel`
+    // build a context of their own without ever calling this.
+    const integrationBranch = integrationBranchFor(deps.config, options.expressionContext);
+    const integrationPath = await ensureIntegrationWorktree(
+      deps.paths,
+      deps.projectRoot,
+      integrationBranch,
+      TRUNK,
+    );
+    const sync = await syncIntegrationBranchToTrunk(integrationPath, TRUNK);
+
+    // Persisted so a later `forge resume` can re-compile the identical plan (`runEngine`'s own
+    // `resumeFrom` path needs the same `workflowSource`/`expressionContext` this invocation used —
+    // neither is recoverable from the event log alone, which records only that a run happened, not
+    // what was fed into compiling its plan). `integrationTipAtStart`/`syncedFromTrunk` record the sync
+    // just performed above, for audit — never read back by `resumeWorkflow`, which never re-syncs.
+    const manifestPath = deps.paths.resolveState(`runs/${runId}/manifest.json`);
+    await writeFileAtomic(
+      manifestPath,
+      JSON.stringify({
+        workflowId: options.workflowId,
+        expressionContext: options.expressionContext,
+        integrationTipAtStart: sync.integrationTipAtStart,
+        syncedFromTrunk: sync.syncedFromTrunk,
+      }),
+    );
+    // `forge resume`'s own "the last (or given) run" (`03` §3.2.4) needs a real way to find "the
+    // last" one — this is that pointer, updated every time a new run actually starts.
+    await writeFileAtomic(deps.paths.resolveState('last-run.json'), JSON.stringify({ runId }));
+
+    removeSignalHandlers = installRunSignalHandlers();
+
     // `runId` is real by this point (computed above), so every shell command this run spawns --
     // `command` steps, gate checks, merge checks -- carries the FORGE run marker
     // (`@forge/core/session-marker`, `PLAN-M14.md` P4) via `commandEnvFor`.
@@ -215,7 +243,7 @@ export async function runWorkflow(
     const runState = await runEngine(workflowSource, options.expressionContext, ctx);
     return { kind: 'run', runId, runState };
   } finally {
-    removeSignalHandlers();
+    removeSignalHandlers?.();
     await shim?.cleanup();
     await releaseRunLock(deps.paths);
   }

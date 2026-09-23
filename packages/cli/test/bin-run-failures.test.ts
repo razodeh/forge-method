@@ -329,6 +329,81 @@ describe('forge run: a dirty working tree is a refusal, not a stack trace (Q208 
   });
 });
 
+describe('forge run: a diverged integration branch is a refusal, not a stack trace (M14 P9, SPEC-QUESTIONS.md Q232 decision 18)', () => {
+  it('exits 1, names RUN-107, leaves no MERGE_HEAD or half-merge in the integration worktree, and creates no new run directory', async () => {
+    const dir = await project();
+    // A first, real run: creates the integration branch (equal to main, no lane in this fixture).
+    const first = run(['run', 'p12-command', '-C', dir]);
+    expect(first.status).toBe(0);
+    const runsDir = path.join(dir, '.forge/state/runs');
+    const runDirsBefore = await readdir(runsDir);
+
+    // Diverge main and the integration branch for real: a commit on each side the other does not have.
+    await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
+    await execa('git', ['add', 'main-only.txt'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
+    const integrationPath = path.join(
+      dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
+    await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
+    await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
+
+    const second = run(['run', 'p12-command', '-C', dir]);
+
+    expect(second.status).toBe(1);
+    expect(second.stdout).toBe('');
+    // Plain-text refusals print the message and remedy, not the bare code (`--json` below carries that).
+    expect(second.stderr).toContain('diverged from main');
+    expect(second.stderr).toContain('Merge `main` into the branch');
+    expect(second.stderr).not.toContain('VcsError');
+    expect(second.stderr).not.toMatch(/\n\s+at /u);
+
+    // No merge was ever attempted: no MERGE_HEAD, a perfectly clean status in the integration worktree.
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: integrationPath }),
+    ).rejects.toThrow();
+    expect((await execa('git', ['status', '--porcelain'], { cwd: integrationPath })).stdout).toBe(
+      '',
+    );
+
+    // No new run directory for the refused second attempt.
+    expect((await readdir(runsDir)).sort()).toEqual(runDirsBefore.sort());
+  });
+
+  it('is identical under --json: one-line envelope, code RUN-107, exit 1', async () => {
+    const dir = await project();
+    const first = run(['run', 'p12-command', '-C', dir]);
+    expect(first.status).toBe(0);
+
+    await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
+    await execa('git', ['add', 'main-only.txt'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
+    const integrationPath = path.join(
+      dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
+    await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
+    await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
+
+    const json = run(['run', 'p12-command', '-C', dir, '--json']);
+    expect(json.status).toBe(1);
+    expect(json.stdout.trimEnd().split('\n')).toHaveLength(1);
+    const envelope = JSON.parse(json.stdout) as {
+      v: number;
+      ok: boolean;
+      error: { code: string; message: string; remedy: string; exitCode: number };
+    };
+    expect(envelope.v).toBe(1);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('RUN-107');
+    expect(envelope.error.exitCode).toBe(1);
+    expect(envelope.error.remedy).toContain('Merge `main` into the branch');
+  });
+});
+
 describe('forge init honours -C (Q208 finding 7)', () => {
   /** A directory `forge init` treats as already initialised, so no platform CLI is needed. */
   async function initialised(): Promise<string> {

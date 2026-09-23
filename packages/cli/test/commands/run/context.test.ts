@@ -8,7 +8,7 @@
  * @see PLAN-M5.md P15
  */
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -22,6 +22,7 @@ import {
   integrationBranchOfRun,
   isTargetRegisteredWorktree,
   stageIdOfContext,
+  syncIntegrationBranchToTrunk,
 } from '../../../src/commands/run/context.ts';
 import {
   AGENTS_ROOT,
@@ -656,5 +657,225 @@ describe('the integration branch of a run (PLAN-M13.md P19)', () => {
     });
     expect(ctx.integrationBase).toBe('forge/integration/mvp');
     expect(await currentBranch(ctx.integrationPath)).toBe('forge/integration/mvp');
+  });
+});
+
+/** A real commit directly on `main`, in the project's own primary working tree (not a lane, not the
+ * integration worktree) — what a human, or a `deliver` step, does. */
+async function commitOnMain(projectDir: string, file: string, content: string): Promise<void> {
+  await writeFile(path.join(projectDir, file), content);
+  await execa('git', ['add', file], { cwd: projectDir });
+  await execa('git', ['commit', '--quiet', '-m', `commit ${file} on main`], { cwd: projectDir });
+}
+
+/** A real commit directly on the integration branch, in the SEPARATE integration worktree — what a
+ * lane merge (or, here, a test manufacturing a real divergence) does; never the project's own tree. */
+async function commitOnIntegration(
+  integrationPath: string,
+  file: string,
+  content: string,
+): Promise<void> {
+  await writeFile(path.join(integrationPath, file), content);
+  await execa('git', ['add', file], { cwd: integrationPath });
+  await execa('git', ['commit', '--quiet', '-m', `commit ${file} on integration`], {
+    cwd: integrationPath,
+  });
+}
+
+describe('syncIntegrationBranchToTrunk (M14 P9, SPEC-QUESTIONS.md Q221 disclosed item (d) / Q232 decision 18)', () => {
+  it('equal tips: a real no-op, HEAD untouched', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    const mainTip = (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim();
+
+    const result = await syncIntegrationBranchToTrunk(integrationPath, 'main');
+
+    expect(result).toEqual({ integrationTipAtStart: mainTip, syncedFromTrunk: null });
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(mainTip);
+  });
+
+  it('integration two commits behind trunk: a real `--ff-only` fast-forward, HEAD == main, no new commit is created (never `git reset --hard`)', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnMain(project.dir, 'a.txt', 'a\n');
+    await commitOnMain(project.dir, 'b.txt', 'b\n');
+    const mainTip = (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim();
+    const mainCommitCount = (
+      await execa('git', ['rev-list', '--count', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+
+    const result = await syncIntegrationBranchToTrunk(integrationPath, 'main');
+
+    expect(result).toEqual({ integrationTipAtStart: mainTip, syncedFromTrunk: mainTip });
+    const headAfter = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    // A real fast-forward moves the ref to the exact same commit main is on -- never a new merge commit.
+    expect(headAfter).toBe(mainTip);
+    expect(
+      (
+        await execa('git', ['rev-list', '--count', headAfter], { cwd: integrationPath })
+      ).stdout.trim(),
+    ).toBe(mainCommitCount);
+    expect((await execa('git', ['status', '--porcelain'], { cwd: integrationPath })).stdout).toBe(
+      '',
+    );
+  });
+
+  it('integration ahead of trunk: a real no-op — its own extra commit is never discarded (what a `git reset --hard` mutation would do instead)', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'ahead.txt', 'x\n');
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const result = await syncIntegrationBranchToTrunk(integrationPath, 'main');
+
+    expect(result).toEqual({ integrationTipAtStart: integrationTip, syncedFromTrunk: null });
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTip);
+    expect(existsSync(path.join(integrationPath, 'ahead.txt'))).toBe(true);
+  });
+
+  it('diverged: refused with RUN-107 naming the branch and both short shas — never merges main in, never creates MERGE_HEAD, leaves the worktree exactly as it was', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnMain(project.dir, 'main-only.txt', 'm\n');
+    await commitOnIntegration(integrationPath, 'integration-only.txt', 'i\n');
+    const mainTip = (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim();
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    let threw: unknown;
+    try {
+      await syncIntegrationBranchToTrunk(integrationPath, 'main');
+    } catch (error) {
+      threw = error;
+    }
+
+    expect(threw).toMatchObject({
+      code: 'RUN-107',
+      details: {
+        branch: 'forge/integration/current',
+        integrationTip: integrationTip.slice(0, 12),
+        trunkTip: mainTip.slice(0, 12),
+      },
+    });
+
+    // No merge was ever attempted at all: no MERGE_HEAD, a perfectly clean status, HEAD unchanged.
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: integrationPath }),
+    ).rejects.toThrow();
+    expect((await execa('git', ['status', '--porcelain'], { cwd: integrationPath })).stdout).toBe(
+      '',
+    );
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTip);
+  });
+
+  it('a dirty integration worktree — the SEPARATE worktree, not the project’s own tree — is refused with a typed VcsError distinct from VCS-DIRTY-TREE, never a silent half-merge, even when a fast-forward would otherwise be possible', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    // Main has real new work to bring in -- proving the dirty check is unconditional, not merely a
+    // side effect of there being nothing to sync anyway.
+    await commitOnMain(project.dir, 'c.txt', 'c\n');
+    const integrationTipBefore = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await writeFile(path.join(integrationPath, 'untracked-scratch.txt'), 'wip\n');
+
+    let threw: unknown;
+    try {
+      await syncIntegrationBranchToTrunk(integrationPath, 'main');
+    } catch (error) {
+      threw = error;
+    }
+
+    expect(threw).toMatchObject({ name: 'VcsError', code: 'VCS-INTEGRATION-DIRTY' });
+    // Not the project-tree-specific code `vcs-refusal.ts` gives its own VCS-010 remedy/file-listing to.
+    expect((threw as { code: string }).code).not.toBe('VCS-DIRTY-TREE');
+
+    // Never attempted a merge: HEAD unchanged, no half-merge, and the uncommitted file survives
+    // untouched (never discarded).
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTipBefore);
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: integrationPath }),
+    ).rejects.toThrow();
+    await expect(
+      readFile(path.join(integrationPath, 'untracked-scratch.txt'), 'utf8'),
+    ).resolves.toBe('wip\n');
+  });
+
+  it('a trunk ref that does not resolve (a project without it) gets a clear VcsError, not a guess', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await expect(
+      syncIntegrationBranchToTrunk(integrationPath, 'no-such-trunk-branch'),
+    ).rejects.toMatchObject({ name: 'VcsError' });
+  });
+});
+
+describe("forge merge's own code path never re-syncs the integration branch (Q232 decision 18: only runWorkflow syncs)", () => {
+  it('the exact combo `forge merge` calls (integrationBranchOfRun + ensureIntegrationWorktree, never syncIntegrationBranchToTrunk) leaves a diverged branch untouched', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnMain(project.dir, 'main-only.txt', 'm\n');
+    await commitOnIntegration(integrationPath, 'integration-only.txt', 'i\n');
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    // `runMergeCommand` (`bin.ts`) resolves the run's own integration branch, then re-ensures the
+    // worktree -- never a sync call anywhere on that path.
+    const branch = await integrationBranchOfRun(project.paths, project.config, 'no-such-run');
+    const again = await ensureIntegrationWorktree(project.paths, project.dir, branch, 'main');
+
+    expect(again).toBe(integrationPath);
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTip);
   });
 });

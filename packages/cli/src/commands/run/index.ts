@@ -5,12 +5,15 @@
  * @see specs/03 §3.2.4
  */
 export {
+  TRUNK,
   buildRunEngineContext,
   ensureIntegrationWorktree,
   integrationBranchFor,
   integrationBranchOfRun,
   isTargetRegisteredWorktree,
+  syncIntegrationBranchToTrunk,
   type BuildRunContextInput,
+  type IntegrationSyncResult,
 } from './context.ts';
 export { abortRun, assertStopped, pauseRun, type StopResult } from './control.ts';
 export {
