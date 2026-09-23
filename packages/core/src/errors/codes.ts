@@ -1277,10 +1277,10 @@ export const ERROR_CODES = {
     // neither one re-syncs the branch at all.
     severity: 'error',
     exitCode: EXIT_CODES.failure,
-    message: (d: { branch: string; integrationTip: string; trunkTip: string }) =>
-      `Integration branch ${show(d.branch)} (at ${show(d.integrationTip)}) has diverged from main (at ${show(d.trunkTip)}) and cannot be fast-forwarded.`,
+    message: (d: { branch: string; trunk: string; integrationTip: string; trunkTip: string }) =>
+      `Integration branch ${show(d.branch)} (at ${show(d.integrationTip)}) has diverged from ${show(d.trunk)} (at ${show(d.trunkTip)}) and cannot be fast-forwarded.`,
     remedy:
-      'Merge `main` into the branch by hand in the integration worktree (under `.forge/state/worktrees/`) and push the resolution, or delete the branch once its work has been delivered so the next run creates it fresh from `main`.',
+      'Merge the trunk branch into the integration branch by hand in the integration worktree (under `.forge/state/worktrees/`) and push the resolution, or delete the branch once its work has been delivered so the next run creates it fresh from the trunk.',
   },
   'RUN-097': {
     // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an

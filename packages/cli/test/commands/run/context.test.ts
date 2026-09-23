@@ -20,6 +20,7 @@ import {
   ensureIntegrationWorktree,
   integrationBranchFor,
   integrationBranchOfRun,
+  isAncestor,
   isTargetRegisteredWorktree,
   stageIdOfContext,
   syncIntegrationBranchToTrunk,
@@ -782,6 +783,7 @@ describe('syncIntegrationBranchToTrunk (M14 P9, SPEC-QUESTIONS.md Q221 disclosed
       code: 'RUN-107',
       details: {
         branch: 'forge/integration/current',
+        trunk: 'main',
         integrationTip: integrationTip.slice(0, 12),
         trunkTip: mainTip.slice(0, 12),
       },
@@ -850,6 +852,53 @@ describe('syncIntegrationBranchToTrunk (M14 P9, SPEC-QUESTIONS.md Q221 disclosed
     await expect(
       syncIntegrationBranchToTrunk(integrationPath, 'no-such-trunk-branch'),
     ).rejects.toMatchObject({ name: 'VcsError' });
+  });
+});
+
+describe('isAncestor (M14 P9): the real primitive syncIntegrationBranchToTrunk branches on', () => {
+  it('true when ancestor really is one (or is the same commit), false when it is not', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    const base = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await commitOnIntegration(integrationPath, 'child.txt', 'c\n');
+    const tip = (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim();
+
+    expect(await isAncestor(integrationPath, base, tip)).toBe(true);
+    expect(await isAncestor(integrationPath, tip, base)).toBe(false);
+    expect(await isAncestor(integrationPath, tip, tip)).toBe(true);
+  });
+
+  it('a genuine `git merge-base --is-ancestor` failure (neither a real 0 nor 1 exit) is reported as RUN-055, never silently read as "not an ancestor" (a critic round found this branch of syncIntegrationBranchToTrunk had zero coverage)', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    const tip = (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim();
+    // A syntactically valid-looking sha that resolves to no real object: confirmed directly,
+    // `git merge-base --is-ancestor <this> HEAD` exits 128 with "fatal: Not a valid commit name", a
+    // genuinely different outcome from either a real "yes" (0) or "no" (1) answer.
+    // `syncIntegrationBranchToTrunk`'s own real call sequence always hands this function two shas
+    // `resolveRevision` (`git rev-parse --verify`) has already proven resolve to real objects, so this
+    // exact failure is not reliably reproducible through that public entry point — `isAncestor` is
+    // exported specifically so it is directly testable here instead, the same reason
+    // `isTargetRegisteredWorktree` above is.
+    const bogus = 'a'.repeat(40);
+    await expect(isAncestor(integrationPath, bogus, tip)).rejects.toMatchObject({
+      code: 'RUN-055',
+    });
+    await expect(isAncestor(integrationPath, tip, bogus)).rejects.toMatchObject({
+      code: 'RUN-055',
+    });
   });
 });
 

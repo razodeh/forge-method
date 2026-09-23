@@ -481,8 +481,20 @@ async function currentBranchOrDetached(cwd: string): Promise<string> {
  * a corrupted object database, a missing `git`), reported the same way every other unexpected git
  * failure in this module is (`isSpawnNotFound` / `RUN-055`, mirroring `runGitOrThrow`) — never silently
  * read as "not an ancestor." `reject: false` (not `runGitOrThrow`) because exit code 1 here is a real,
- * expected answer, not a failure to translate. */
-async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+ * expected answer, not a failure to translate.
+ *
+ * Exported — not just used locally — for the identical "directly testable" reason
+ * `isTargetRegisteredWorktree`'s own doc comment above gives: `syncIntegrationBranchToTrunk`'s own two
+ * real callers always hand this function two shas `resolveRevision` has already proven resolve to real
+ * objects, so a genuine non-0/1 `merge-base` failure (a corrupted or partially-fetched object database
+ * missing an *intermediate* commit neither endpoint's own sha needs to resolve) is not reliably
+ * reproducible through that public entry point on demand in a test; calling this directly, with a
+ * deliberately bogus `ancestor`/`descendant`, is. */
+export async function isAncestor(
+  cwd: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
   const result = await execa('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
     cwd,
     env: { LC_ALL: 'C', LANG: 'C' },
@@ -525,8 +537,10 @@ const SHORT_SHA_LENGTH = 12;
  *   `deliver` step has not folded it back into `main` yet): no-op. There is nothing in this direction to
  *   fast-forward, and the integration branch's own extra commits are never touched.
  * - **Diverged** (neither tip is an ancestor of the other): refused, `ForgeError('RUN-107', ...)`,
- *   naming the branch and both tips. A run never merges `main` into a diverged integration branch on its
- *   own — that would create a real merge commit, unattended, with its own conflict risk — so this
+ *   naming the branch, `trunk` itself (never a hardcoded `'main'` literal in the details, even though
+ *   every real caller passes `TRUNK`), and both tips. A run never merges `main` into a diverged
+ *   integration branch on its own — that would create a real merge commit, unattended, with its own
+ *   conflict risk — so this
  *   function never calls plain `git merge` at all; the only merge command it ever runs is the
  *   `--ff-only` one above, and only once the ancestor check has already proven it cannot fail, so
  *   `MERGE_HEAD` is never created by this function under any outcome.
@@ -583,6 +597,7 @@ export async function syncIntegrationBranchToTrunk(
   const branch = await currentBranchOrDetached(integrationPath);
   throw new ForgeError('RUN-107', {
     branch,
+    trunk,
     integrationTip: integrationTip.slice(0, SHORT_SHA_LENGTH),
     trunkTip: trunkTip.slice(0, SHORT_SHA_LENGTH),
   });

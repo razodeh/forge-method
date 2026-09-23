@@ -355,8 +355,10 @@ describe('forge run: a diverged integration branch is a refusal, not a stack tra
     expect(second.status).toBe(1);
     expect(second.stdout).toBe('');
     // Plain-text refusals print the message and remedy, not the bare code (`--json` below carries that).
+    // The message names the real `trunk` value passed to the sync (always `main` in production), not a
+    // hardcoded literal.
     expect(second.stderr).toContain('diverged from main');
-    expect(second.stderr).toContain('Merge `main` into the branch');
+    expect(second.stderr).toContain('Merge the trunk branch into the integration branch');
     expect(second.stderr).not.toContain('VcsError');
     expect(second.stderr).not.toMatch(/\n\s+at /u);
 
@@ -400,7 +402,50 @@ describe('forge run: a diverged integration branch is a refusal, not a stack tra
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe('RUN-107');
     expect(envelope.error.exitCode).toBe(1);
-    expect(envelope.error.remedy).toContain('Merge `main` into the branch');
+    expect(envelope.error.remedy).toContain('Merge the trunk branch into the integration branch');
+  });
+});
+
+describe('forge merge: never re-syncs the integration branch with main (M14 P9, SPEC-QUESTIONS.md Q232 decision 18 — only forge run syncs)', () => {
+  it('a real forge merge --all leaves a diverged integration branch untouched: no RUN-107, no fast-forward, no crash', async () => {
+    // A critic round found this guarantee ("forge merge is excluded") was pinned only by replicating
+    // `runMergeCommand`'s own call sequence by hand, never by exercising the real CLI entry point --
+    // this drives the actual `forge merge` subprocess instead. `mergeAllReady` needs no real, landed
+    // lane to prove the point: with zero `ready` lanes it is a real no-op after the exact two git calls
+    // (`integrationBranchOfRun` + `ensureIntegrationWorktree`) `runMergeCommand` makes before ever
+    // reaching it -- neither one syncs, so a genuinely diverged branch is simply not this command's
+    // concern, and it exits cleanly rather than refusing.
+    const dir = await project();
+    const first = run(['run', 'p12-command', '-C', dir]);
+    expect(first.status).toBe(0);
+
+    // Diverge main and the integration branch for real: a commit on each side the other does not have.
+    await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
+    await execa('git', ['add', 'main-only.txt'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
+    const integrationPath = path.join(
+      dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
+    await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
+    await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
+    const integrationTipDiverged = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const merge = run(['merge', '--all', '-C', dir]);
+
+    expect(merge.status).toBe(0);
+    expect(merge.stderr).not.toContain('RUN-107');
+    expect(merge.stderr).not.toMatch(/\n\s+at /u);
+    expect(JSON.parse(merge.stdout)).toEqual([]);
+
+    // Concretely: the integration branch was never fast-forwarded or reset -- still exactly where the
+    // test's own manual commit left it.
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTipDiverged);
   });
 });
 

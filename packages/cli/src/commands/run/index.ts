@@ -10,6 +10,7 @@ export {
   ensureIntegrationWorktree,
   integrationBranchFor,
   integrationBranchOfRun,
+  isAncestor,
   isTargetRegisteredWorktree,
   syncIntegrationBranchToTrunk,
   type BuildRunContextInput,

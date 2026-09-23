@@ -259,7 +259,7 @@ describe('runWorkflow', () => {
     expect(stdout).toContain('Merge lane');
   });
 
-  it('SPEC-QUESTIONS.md Q221 disclosed item (d) / Q232 decision 18: run 1 lands a lane, a human commits directly to main, run 2’s first session already sees it', async () => {
+  it('SPEC-QUESTIONS.md Q221 disclosed item (d) / Q232 decision 18: when nothing has landed on the integration branch yet, a human’s direct commit to main between two runs reaches the second run’s first lane', async () => {
     // Run 1's own workflow deliberately has no lane-creating step (one inline `command` only): a
     // successful lane a workflow's own plan does not land with an explicit `merge` step is still
     // auto-integrated by the engine itself as soon as it succeeds (confirmed directly: the regular
@@ -353,6 +353,74 @@ describe('runWorkflow', () => {
       'utf8',
     );
     expect(hotfixOnIntegration).toBe('hotfix\n');
+  });
+
+  it('SPEC-QUESTIONS.md Q221 disclosed item (d) / Q232 decision 18 (the disclosed residual, proved rather than merely asserted): once a lane HAS already landed on the integration branch, a human’s subsequent direct commit to main is a genuine divergence and run 2 correctly refuses with RUN-107, never silently missing the hotfix', async () => {
+    // A critic round found the sibling test above (using a lane-less run 1) does not, by itself, prove
+    // anything about the far more common real case -- a workflow whose own lane already landed (the
+    // standard fixture's merge-less `implement` lane is auto-integrated by the engine the moment it
+    // succeeds, `06` §6.4) -- and that nothing in this suite pinned what happens then. This does: run 1
+    // uses the STANDARD fixture (a real lane lands a real `--no-ff` merge commit on the integration
+    // branch), so by the time it finishes the integration branch already holds one commit `main` does
+    // not. A human's own subsequent commit straight to `main` is then two unrelated commits from the
+    // same point -- a real, structural divergence, not merely a "behind" case -- and `deliver` still
+    // folds nothing back onto `main` (this piece's own disclosed, known-open residual), so there is no
+    // path that could make this a clean fast-forward. `RUN-107` is the correct outcome: never a silent
+    // continue that would leave run 2 building on stale integration state while quietly missing main's
+    // own newer commit.
+    const project = await createTestProject();
+    const first = await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-1',
+      host: 'test-host',
+    });
+    expect(first.kind).toBe('run');
+    if (first.kind !== 'run') throw new Error('unreachable');
+    expect(first.runState.runStatus).toBe('completed');
+
+    // Confirmed: run 1's own lane really did land on the integration branch (it is genuinely ahead of
+    // the `main` it started from), not merely still 'ready' and unmerged.
+    const integrationPath = path.join(
+      project.dir,
+      '.forge/state/worktrees/integration-forge-integration-current',
+    );
+    const mainTipBeforeHotfix = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+    const integrationTipAfterRun1 = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    expect(integrationTipAfterRun1).not.toBe(mainTipBeforeHotfix);
+    const { stdout: log } = await execa('git', ['log', '--oneline', 'forge/integration/current'], {
+      cwd: project.dir,
+    });
+    expect(log).toContain('Merge lane');
+
+    // A human commits directly to `main`.
+    await writeFile(path.join(project.dir, 'hotfix.txt'), 'hotfix\n');
+    await execa('git', ['add', 'hotfix.txt'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'hotfix'], { cwd: project.dir });
+
+    await expect(
+      runWorkflow(testRunDeps(project), {
+        workflowId: FIXTURE_WORKFLOW_ID,
+        expressionContext: fixtureExpressionContext(),
+        runId: 'run-2',
+        host: 'test-host',
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-107' });
+
+    // Refused cleanly: the integration branch is exactly where run 1's own merge left it, no half-merge.
+    expect(
+      (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim(),
+    ).toBe(integrationTipAfterRun1);
+    expect((await execa('git', ['status', '--porcelain'], { cwd: integrationPath })).stdout).toBe(
+      '',
+    );
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: integrationPath }),
+    ).rejects.toThrow();
   });
 
   it('a real gate check spawned by a fresh run carries the FORGE run marker (@forge/core/session-marker, PLAN-M14.md P4), through the real commandEnvFor -> commandEnv -> createGateEvaluator chain, not a hand-built env', async () => {

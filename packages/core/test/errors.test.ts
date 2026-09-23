@@ -118,6 +118,7 @@ const SAMPLE_DETAILS = {
   policy: 'strict',
   // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas.
   branch: 'forge/integration/current',
+  trunk: 'main',
   integrationTip: 'a1b2c3d4e5f6',
   trunkTip: '1a2b3c4d5e6f',
   vcsCode: 'VCS-GIT-OPERATION-FAILED',
