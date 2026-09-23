@@ -138,6 +138,17 @@ async function buildAgentWriterMap(
   return map;
 }
 
+/** Whether `value` is exactly one templated `{{...}}` expression naming the owner-role placeholder --
+ * `{{ownerRole}}` (`implement-story.workflow.yaml`'s `plan`/`green`/`refactor`/`document`) or
+ * `{{item.owner_role}}` (`build-stage.workflow.yaml`'s `implement`), the two real shapes `10` §10.5's
+ * own shipped workflows use for "the Story's own owner, resolved at plan-compilation time." Tolerant
+ * of internal whitespace (`{{ ownerRole }}`) and of `ownerRole`/`owner_role` case, but anchored to the
+ * whole string: a template *containing* this alongside other text does not match, since `agentWrites`
+ * only ever sees a full `step.agent` value, never a substring of one. */
+function isOwnerRoleTemplate(value: string): boolean {
+  return /^\{\{\s*(?:[\w.]*\.)?owner_?[Rr]ole\s*\}\}$/.test(value);
+}
+
 async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExistenceOracle> {
   const [agentIds, gateIds, workflowIds, briefPaths, agentWriters] = await Promise.all([
     listAgentIds(ctx),
@@ -174,16 +185,27 @@ async function buildOracle(ctx: WorkflowCommandContext): Promise<WorkflowExisten
     gateExists: (id) => isTemplateReference(id) || gateIds.has(id),
     artifactTypeExists: (id) => artifactTypeById(id) !== undefined,
     workflowExists: (id) => isTemplateReference(id) || workflowIdSet.has(id),
-    // A still-templated agent reference (`{{ownerRole}}`/`{{item.owner_role}}`, `10` §10.5's own real,
-    // shipped `implement-story`/`build-stage` steps) resolves only at real plan-compilation time, so
-    // this cannot look up a real per-id grant the way it does for a literal id below -- but unlike the
-    // other oracle methods above, "cannot verify" is not read as "assume fine" here: the role such a
-    // template resolves to is, by construction, an implementation role (`isImplementationAgent`,
+    // A still-templated agent reference resolves only at real plan-compilation time, so this cannot
+    // look up a real per-id grant the way it does for a literal id below. Unlike the other oracle
+    // methods above, "cannot verify" is deliberately NOT read as "assume fine" here for every possible
+    // template: only `{{ownerRole}}`/`{{item.owner_role}}` (`isOwnerRoleTemplate` above) is proven, by
+    // construction, to always resolve to an implementation role (`isImplementationAgent`,
     // `@forge/agents/schema`) — a role every shipped implementer declares `tools.write: true` for, the
-    // exact grant a Story's source needs to actually get written. Answering `true` keeps the
-    // empty-claim check live for a templated step instead of silently exempting the one shape it exists
-    // to catch (`SPEC-QUESTIONS.md` Q225's own open item).
-    agentWrites: (id) => (isTemplateReference(id) ? true : (agentWriters.get(id) ?? false)),
+    // exact grant a Story's source needs to actually get written; answering `true` for exactly that
+    // shape keeps the empty-claim check live for the one templated step shape it exists to catch
+    // (`SPEC-QUESTIONS.md` Q225's own open item) instead of silently exempting it. A fresh critic round
+    // found that treating EVERY `{{...}}` agent reference this way (the first draft) is broader than
+    // that invariant actually proves: nothing stops a project's own custom workflow from templating a
+    // genuinely read-only role (e.g. `{{item.reviewerRole}}`) into `agent:`, which would then be a
+    // false-positive, CI-blocking `write-without-claim` error for a step whose empty claim is correct.
+    // Any OTHER templated reference is therefore "not judged" (`false`), the identical stance a corrupt
+    // or unknown real agent file already takes below, not "assume it writes."
+    agentWrites: (id) =>
+      isOwnerRoleTemplate(id)
+        ? true
+        : isTemplateReference(id)
+          ? false
+          : (agentWriters.get(id) ?? false),
   };
 }
 

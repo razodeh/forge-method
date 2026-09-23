@@ -270,6 +270,30 @@ describe('workflowValidate: write-without-claim', () => {
     const issues = await workflowValidate(ctxFor(project), 'broken-agent');
     expect(issues.filter((issue) => issue.code === 'write-without-claim')).toEqual([]);
   });
+
+  it('reports an empty-claim "{{ownerRole}}"/"{{item.owner_role}}" step -- the two real templated shapes always resolve to a writer', async () => {
+    const project = await createTestProject();
+    const { writeFileAtomic } = await import('@forge/core/fs');
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/workflows/templated-owner.workflow.yaml'),
+      "id: templated-owner\nname: templated-owner\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: a\n    kind: agent\n    agent: '{{ownerRole}}'\n    brief: fixture\n  - id: b\n    kind: agent\n    agent: '{{item.owner_role}}'\n    brief: fixture\n    dependsOn: [a]\n",
+    );
+    const issues = await workflowValidate(ctxFor(project), 'templated-owner');
+    expect(
+      issues.filter((issue) => issue.code === 'write-without-claim').map((i) => i.stepId),
+    ).toEqual(['a', 'b']);
+  });
+
+  it('does not report an empty-claim step templated with anything OTHER than the owner-role placeholder -- "not judged", not "assume it writes"', async () => {
+    const project = await createTestProject();
+    const { writeFileAtomic } = await import('@forge/core/fs');
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/workflows/templated-other.workflow.yaml'),
+      "id: templated-other\nname: templated-other\nversion: 1.0.0\ndescription: fixture\nsteps:\n  - id: a\n    kind: agent\n    agent: '{{item.reviewerRole}}'\n    brief: fixture\n",
+    );
+    const issues = await workflowValidate(ctxFor(project), 'templated-other');
+    expect(issues.filter((issue) => issue.code === 'write-without-claim')).toEqual([]);
+  });
 });
 
 describe('workflowValidate: write-without-claim, against the real, shipped roster', () => {

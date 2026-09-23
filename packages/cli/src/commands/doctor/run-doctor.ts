@@ -43,8 +43,16 @@ const CHECKS_ROOT = '.forge/checks';
  * this shape in all nine formerly-empty-claim steps until `forge upgrade` regenerates them, which must
  * not become a hard failure a project cannot run past. Reuses `workflowValidateAll` unchanged — the
  * exact real check `forge workflow validate --all` runs — so the two can never disagree about what
- * counts as an offender; a workflow this check cannot even parse is reported by the existing
- * `runChecks` crash-to-`hard`-check fallback below, not swallowed here. */
+ * counts as an offender.
+ *
+ * `workflowValidateAll` itself throws (`readWorkflow`'s own `CFG-001`) for a workflow file it cannot
+ * even parse -- a real, ordinary mistake in a project's own hand-edited `.forge/workflows/*.yaml`, the
+ * exact population this check exists for. Left uncaught, that throw would reach `runChecks`'s generic
+ * crash fallback below and report `severity: 'hard'`, silently escalating this check past its own
+ * stated `warning`-only contract and flipping `DoctorReport.ok` to `false` over a YAML typo -- a fresh
+ * critic round caught this (a `forge doctor` run must never hard-fail a project's build over its own
+ * workflow customisation). Caught here and downgraded to the identical honest `warning` shape
+ * `checkConfigValidity`/`checkManifest` (`project.ts`) already give their own YAML parse failures. */
 async function checkWorkflowClaims(paths: ProjectPaths): Promise<DoctorCheck> {
   const ctx: WorkflowCommandContext = {
     paths,
@@ -52,7 +60,18 @@ async function checkWorkflowClaims(paths: ProjectPaths): Promise<DoctorCheck> {
     agentsRoot: AGENTS_ROOT,
     checksRoot: CHECKS_ROOT,
   };
-  const results = await workflowValidateAll(ctx);
+  let results: Awaited<ReturnType<typeof workflowValidateAll>>;
+  try {
+    results = await workflowValidateAll(ctx);
+  } catch (cause) {
+    return {
+      id: 'workflow-claims',
+      ok: false,
+      severity: 'warning',
+      message: `Workflow claims: could not be checked -- a workflow file could not be read or parsed: ${String(renderCause(cause))}.`,
+      fix: 'Run `forge workflow validate --all` for the exact error, then fix the named workflow file.',
+    };
+  }
   const offenders: string[] = [];
   for (const [workflowId, issues] of results) {
     for (const issue of issues) {

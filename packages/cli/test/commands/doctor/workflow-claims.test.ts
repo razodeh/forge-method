@@ -107,4 +107,23 @@ describe('doctor workflow-claims', () => {
     expect(check?.ok).toBe(true);
     expect(check?.severity).toBe('warning');
   });
+
+  it('reports a real, unparseable .forge/workflows/*.yaml as a warning, never a hard failure that flips the overall report', async () => {
+    // A fresh critic round: `workflowValidateAll` throws `CFG-001` for a workflow file it cannot even
+    // parse (`readWorkflow`); left uncaught, that crash would reach `runChecks`'s generic
+    // crash-to-`hard` fallback and flip `DoctorReport.ok` over an ordinary hand-edited YAML typo --
+    // exactly the population this `warning`-only check exists for.
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/workflows'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/workflows/broken.workflow.yaml'),
+      'id: [unterminated',
+    );
+
+    const { check, report } = await workflowClaimsCheck(project);
+
+    expect(check?.ok).toBe(false);
+    expect(check?.severity).toBe('warning');
+    expect(report.ok).toBe(true);
+  });
 });
