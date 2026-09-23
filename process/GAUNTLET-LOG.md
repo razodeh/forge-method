@@ -16065,3 +16065,145 @@ accepted, load-sensitive flakes" is unchanged (not in this piece's Surface); its
 accurate regardless of this piece's more precise per-file numbers.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q251`.
+
+## M14 P15 — `forge gate approve|waive` under the session marker is refused unless the gate names agents and `may_approve` lists it (`cli/bin.ts`, `cli/commands/run/gate-commands.ts`, `engine/gates/approve.ts` (doc comment only), `core/errors/codes.ts`, `specs/10-workflow-engine-and-lifecycle.md`; new/edited tests in `cli/test/commands/run/gate-commands.test.ts`, `cli/test/bin.test.ts`, `cli/test/commands/run/run.test.ts`)
+
+**Built.** `runGateSubcommand` (`bin.ts`) reads the real FORGE session marker
+(`FORGE_RUN_ID`/`FORGE_STEP_ID`/`FORGE_AGENT_ID`, `@forge/core/session-marker`, P4) once from
+`realEnvSnapshot()` into a new `GateCommandContext.marker` (plus a new `agentsRoot` field), never
+re-read ambiently downstream. `gate-commands.ts`'s new `resolveApprover(ctx, gateId, explicit?)`
+decides who is approving/waiving for both `gateApprove` and `gateWaive` (which no longer hard-codes
+`{kind:'human'}`): an explicit caller-supplied approver (the pre-existing `ApproveOptions.approver`
+seam) always wins; otherwise no marker, or one whose own `runId` does not match the resolved `--run`,
+is discarded byte-identically to `{kind:'human'}` (every gate command before this piece); a marker
+naming this run with no agent id — a run's own bare `command` step, which `commandStepEnvironment`
+stamps with `FORGE_RUN_ID`/`FORGE_STEP_ID` but never `FORGE_AGENT_ID` (only an `agent` step's own
+session gets that) — is refused outright as the new `GATE-510`, before any check command runs, for
+both approve and waive; a marker naming this run and a real agent id resolves that agent's own roster
+entry via `readProjectAgent` for its `gates.may_approve`, and the existing, byte-unchanged
+`approverRefusal` (`gates/approve.ts`) decides from there (roles, `alwaysHuman`, `may_approve`)
+exactly as it already does for a human. An agent id the roster does not recognise (`RUN-056`) is
+rewrapped as `GATE-508` carrying `RUN-056` as its cause; the fix from round 1 narrows this to exactly
+that case — `isForgeError(cause) && cause.code === 'RUN-056'` — so any OTHER I/O failure
+`readProjectAgent` raises (e.g. `EMFILE`, or a directory squatting the agent's own file path) still
+propagates unwrapped and stays retryable, never misreported as an authorisation refusal. `gateReject`
+makes no authorisation decision at all (rule 6 only binds who may APPROVE), so it never refuses under
+the marker, but records the marker itself as `approver` (`"run <runId> step <stepId>"`) in its
+`GateRejected` payload for exactly the bare-run-marker case, and that case only — every other shape
+(no marker, an agent marker, a mismatched run id) is byte-identical to before. `check` is unaffected
+entirely (it approves nothing, so the marker is never consulted).
+
+`approverRefusal`'s own function body, `runGateStep`'s taint guard (`dispatch/steps.ts`, the in-run
+`gate` step, untouched by this diff at all — it calls `ctx.gates.evaluate` directly and never reaches
+`gate-commands.ts`), every shipped `*.gate.yaml` (still `roles: [human]` only, no `may_approve`
+anywhere), and `G-Deliver`'s `alwaysHuman` are all untouched. `specs/10` §10.3 rule 6 is amended — as
+`packages/core/src/session-marker.ts`'s own doc comment already promised ("amended in P15") — replacing
+"The command is a person's: it cannot tell an agent that runs it from one" with the marker's real
+three-way split (no/mismatched marker → human; this-run+agent → `may_approve`/`alwaysHuman` bind;
+this-run+no-agent → refused outright); `--owner` remains the person's own word regardless (Q229,
+unchanged) and rule 1 is untouched. New `GATE-510` (`core/errors/codes.ts`), pre-assigned to this
+piece in `PLAN-M14.md`'s own error-code allocation table (`GATE-510..GATE-513` for P15/P16/P19).
+
+**Round 1 (fresh, context-free): 2 real findings, both fixed.**
+1. **Major.** `run.test.ts`'s own new GATE-510 test asserted only that the command step failed and no
+   `GateApproved` was recorded — not that `GATE-510` specifically fired. Empirically confirmed
+   vacuous: temporarily swapping the `GATE-510` throw for an unrelated `USR-002` left the test passing.
+   Root cause traced two layers deep: `currentLauncher(process.env)` (used by every OTHER real-launcher
+   test in this file) replays the CALLING process's own `process.argv[1]` — correct when that caller
+   genuinely is the `forge` CLI, but wrong from inside a vitest worker (it replayed vitest's own worker
+   bootstrap as "forge", which crashed on `"Expected worker to be run in node:child_process"` the
+   moment the step's own `run:` text tried to invoke a real nested `forge`, something no prior test in
+   this file actually did). Fixed with a hand-built `LauncherSpec` (`REAL_FORGE_LAUNCHER`) pointing
+   directly at the real `packages/cli/bin/forge.mjs`, a second copy of the fixture gate written under
+   `.forge/checks/` (the real CLI's own hardcoded root, `bin.ts`'s `CHECKS_ROOT`, distinct from this
+   fixture's own `docs/forge/checks/`), and an assertion that the `StepFailed` event's own `message`
+   contains a phrase unique to `GATE-510`'s message template — traced end to end (`runCommandStep`/
+   `executeStep`) to confirm this is the only structured signal actually available at that layer (the
+   `--json` envelope carrying the real code goes to stdout, but the persisted event only ever keeps
+   `stderr || stdout`, and stderr is always non-empty for a CLI refusal).
+2. **Major.** `resolveApprover`'s `catch` block rewrapped ANY error `readProjectAgent` raised into
+   `GATE-508`, not only the documented `RUN-056` case — `readProjectAgent`'s own doc comment is explicit
+   that any other I/O failure "propagates unchanged so it stays retryable." Fixed with an
+   `isForgeError(cause) && cause.code === 'RUN-056'` guard, rethrowing anything else; proven with a new
+   test using a real directory squatting an agent's own `.yaml` path (a genuine `EISDIR` → `RUN-034`,
+   confirmed neither `ENOENT` nor `ENOTDIR`, so `readProjectAgent`'s own `isMissingFile` correctly does
+   not treat it as "no such agent").
+
+**Round 2 (fresh, context-free, independently re-verified both round-1 fixes by hand-tracing the code
+and re-running the tests): 1 real finding, fixed; 1 minor, deliberately not fixed (see Discloses).**
+1. **Major.** `gateReject`'s own doc comment claims an `approver` field is recorded ONLY for a bare
+   run-marker, but the test suite only exercised "no marker" and "bare run marker" with strict payload
+   equality — never "an agent marker" or "a mismatched run id," so a regression widening the scoping
+   (e.g. dropping the `marker.agentId === undefined` half of the guard) would go uncaught. Fixed: one
+   new test covers all three remaining shapes (agent marker; mismatched run + agent; mismatched run, no
+   agent), each with `toEqual` asserting no `approver` key at all.
+
+**Round 3 (fresh, context-free, final round; independently re-verified rounds 1-2's fixes by
+hand-tracing every branch of `resolveApprover` and `bareRunMarker` against a fresh mutation analysis,
+and re-ran `gate-commands.test.ts`/`run.test.ts`/the full `errors.test.ts` itself): 1 real finding,
+fixed.**
+1. **Minor.** `gateWaive`'s own newly-added `approver.kind === 'human' ? 'human' : \`agent
+   ${approver.agentId}\`` ternary (previously hard-coded to `'human'`, this piece's own change) had ZERO
+   test execution under its agent branch — every `gateWaive` call in the suite that reached this line
+   passed no marker at all, or a bare marker that short-circuits to `GATE-510` before ever reaching it.
+   (`gateApprove`'s identical duplicated ternary WAS exercised, by tests (a)/(c)/the pre-existing
+   `may_approve` seam test, though only via `code`, never the resulting `details.approver` string —
+   closed too, incidentally, by the same fix.) Fixed: extended test (c) (`alwaysHuman` overriding an
+   otherwise-valid agent) to call `gateWaive` under the identical marker and gate right after
+   `gateApprove`, asserting `details.approver === 'agent sre'` for both.
+
+**Mutation evidence (real, not narrated; each broken, the named test(s) shown to fail with the real
+diagnostic above, then restored and re-verified green).**
+- Marker read removed (`resolveApprover`'s `explicit !== undefined` branch made unconditional): 5 of 7
+  marker-suite tests failed ((a),(b),(c),(d),(f) — (e) and (g) are unaffected by construction, since (e)
+  already exercises the "marker discarded" fallback and (g) has no marker at all).
+- `gateWaive`'s own `resolveApprover` call replaced with the pre-piece hard-coded `{kind:'human'}`: only
+  the waive half of test (d) failed (`GATE-509` instead of the expected `GATE-510`), exactly isolating
+  the one line this restores.
+- `--run` equality check dropped (`marker === undefined` only, no `runId` match): test (e), rewritten in
+  round 1's own critic loop to use a gate an honoured agent marker WOULD approve (so a defeated equality
+  check produces a different, detectable outcome — approval — not merely the same refusal by
+  coincidence), failed by resolving instead of rejecting.
+- `isForgeError`/`RUN-056` guard removed from `resolveApprover`'s catch: the new directory-squatting
+  test failed, `GATE-508` instead of the expected `RUN-034`.
+- `gateReject`'s `bareRunMarker` guard weakened (`marker.agentId === undefined` half dropped): the new
+  round-2 test failed on its very first case (an agent marker wrongly recorded `approver: 'run
+  run-agent step ship'`).
+- `gateWaive`'s agent-branch ternary hard-coded back to `'human'`: the round-3 extension of test (c)
+  failed on its second (`gateWaive`) assertion, `details.approver` showing `'human'` instead of `'agent
+  sre'`.
+- `GATE-510` throw swapped for an unrelated `USR-002` (round 1's own original, empirically-confirmed
+  vacuity check): the rewritten `run.test.ts` test now fails correctly on this mutation, where the
+  original, pre-round-1 version of that test did not.
+
+**Rule 14/15 (clean `git worktree` at the final commit `1b2fb0b`).** `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 packages clean), `pnpm run boundaries` (clean). Scoped, in
+that worktree: `cli/test/commands/run/gate-commands.test.ts` (57), `cli/test/commands/run/run.test.ts`
+(16), `cli/test/bin.test.ts` (165, full file — a real, subprocess-heavy run), `core/test/errors.test.ts`
+(462, full file, per this milestone's own standing rule for a piece adding new error codes),
+`engine/test/gates/approve.test.ts` (28), `engine/test/dispatch/gate.test.ts` (9),
+`test/workflows.test.ts` (45), `test/gate-declarations-authored.test.ts` (15) — 797/797 green. Combined
+`pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) clean on every file this piece touches.
+
+**Shared working tree.** `bin.ts`, `gate-commands.ts` and `codes.ts` were the identified
+concurrency-risk files (P16/P17 had both recently finished editing `bin.ts`/`gate-commands.ts`/
+`codes.ts` per the dispatch brief); `git status`/`git diff` were re-checked before every edit and
+before the final commit, and only this piece's own exact files were ever `git add`ed (never `-A`).
+M14 P18 and M14 P45 both landed concurrently on other files while this piece's three critic rounds
+ran; neither touched any file this piece owns, confirmed by re-checking `git status --short` after
+each landing.
+
+**Discloses (per the plan's own Discloses list, plus one from round 2).** `quorum > 1` stays refused
+(unchanged `approverRefusal` logic, still exercised by the pre-existing `G-Quorum` test). No shipped
+gate names an agent in `may_approve`, so the "unless" clause is exercised by fixture gates only — real
+production use needs an owner decision this piece does not make (which agents should hold
+`may_approve` for which gates, `SPEC-QUESTIONS.md` Q220, already disclosed as open by `gates/
+approve.ts`'s own doc comment). The in-run `gate` step keeps the taint guard as its own only rule,
+genuinely untouched. Additionally: round 2 judged the `run.test.ts` GATE-510 test's message-substring
+assertion a real but irreducible coupling to `GATE-510`'s exact prose, not a shortcut chosen over a
+better option — traced (see round 1 above) to there being no structured field available in a
+`StepFailed` event's own persisted payload at all; left as is, since strengthening it would mean either
+changing `runCommandStep`'s own persisted-event shape (out of this piece's scope) or accepting the
+identical fragility one layer up.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q252`.
