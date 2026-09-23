@@ -23,8 +23,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { docRootsOf, resolveStepClaim } from '@forge/engine/dispatch';
+import { docRootsOf, outputClaimGlobs, resolveStepClaim } from '@forge/engine/dispatch';
 import { compileRunPlan } from '@forge/engine/plan';
+import type { StepNode } from '@forge/engine/plan';
 import { parseWorkflow, type Workflow, type WorkflowStep } from '@forge/engine/workflow';
 import { WORKFLOW_INDEX } from '@forge/templates';
 
@@ -130,6 +131,11 @@ interface ShippedStep {
   /** The agent field as written (possibly a `{{ownerRole}}` template). */
   readonly agentRef: string;
   readonly claim: readonly string[];
+  /** As authored/compiled, untouched by `resolveStepClaim` -- the identity check below (`PLAN-M14.md` P6)
+   * reconstructs the expected claim from these directly, rather than trusting `resolveStepClaim` to prove
+   * itself. */
+  readonly produces: readonly string[];
+  readonly outputs: StepNode['outputs'];
 }
 
 function collect(): readonly ShippedStep[] {
@@ -148,6 +154,8 @@ function collect(): readonly ShippedStep[] {
         module,
         agentRef: authoredAgent(workflow, rest) ?? String(node.agent),
         claim: resolveStepClaim(node, ROOTS, 'warn').globs,
+        produces: node.produces,
+        outputs: node.outputs,
       });
     }
     const hooks: { name: string; step: WorkflowStep }[] = [];
@@ -176,6 +184,8 @@ function collect(): readonly ShippedStep[] {
           ROOTS,
           'warn',
         ).globs,
+        produces,
+        outputs: declared.outputs ?? [],
       });
     }
   }
@@ -281,5 +291,47 @@ describe('every shipped agent step: a write grant implies a non-empty claim (P36
       for (const copy of copiesFor(step))
         expect(canWrite(copy.agent), `${key}/${copy.agent.id}`).toBe(false);
     }
+  });
+});
+
+/**
+ * The `docs/forge/<section>/` rewrite (`PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q232 decision 3, Q216) must
+ * be the identity transform under the shipped default layout, for EVERY shipped agent step's real claim --
+ * not just a synthetic fixture. `ROOTS` here is `docRootsOf({})`, the shipped default layout every real
+ * project starts with; reconstructs the expected claim directly from each step's own `produces`/`outputs`
+ * (a plain literal filter and `outputClaimGlobs`, not a second call to `resolveStepClaim`), so a rewrite
+ * bug that silently mangled every shipped claim the same way could not hide behind comparing
+ * `resolveStepClaim`'s own output to itself.
+ */
+describe('the docs-root rewrite is the identity transform under the shipped default layout, for every shipped claim (M14 P6)', () => {
+  it('every shipped step’s resolved claim equals its own literal produces (non-`!` entries) union its outputs’ registry globs -- byte for byte, no rewrite under the default layout', () => {
+    expect(steps.length).toBeGreaterThanOrEqual(50);
+    for (const step of steps) {
+      const literalProduces = step.produces.filter(
+        (glob) => glob !== '!@protected' && !glob.startsWith('!'),
+      );
+      // Mirrors `resolveStepClaim`'s own branch exactly (`outputs.ts`): only the outputs branch dedupes
+      // with a `Set` (it unions two independently-derived lists); the produces-only branch returns its
+      // globs as written, duplicates included, so this must not silently dedupe a real duplicate away.
+      const expected =
+        step.outputs.length === 0
+          ? literalProduces
+          : [...new Set([...literalProduces, ...outputClaimGlobs(step.outputs, ROOTS)])];
+      expect(step.claim, step.key).toEqual(expected);
+    }
+  });
+
+  it('at least one real shipped produces glob actually opens with a default docs root (the rewrite has something real to be the identity ON, not a vacuous pass)', () => {
+    const withDocsRootProduces = steps.filter((step) =>
+      step.produces.some(
+        (glob) =>
+          glob.replace(/^!/, '').startsWith('docs/forge/kb/') ||
+          glob.replace(/^!/, '').startsWith('docs/forge/specs/') ||
+          glob.replace(/^!/, '').startsWith('docs/forge/plans/') ||
+          glob.replace(/^!/, '').startsWith('docs/forge/sessions/') ||
+          glob.replace(/^!/, '').startsWith('docs/forge/reports/'),
+      ),
+    );
+    expect(withDocsRootProduces.length).toBeGreaterThan(0);
   });
 });

@@ -75,7 +75,11 @@ export interface PackForStepOptions {
  * against `produces`/`consumes` (the only per-step path signal `StepContext` carries -- there is no
  * per-step "language" signal available at this layer at all, so `applies_to.languages` is never
  * checked here; a real gap, recorded rather than faked, since inventing one from nothing this piece
- * has access to would be worse than honestly not matching on it). */
+ * has access to would be worse than honestly not matching on it). `produces` here is whatever its
+ * caller put in `StepContext` -- `@forge/engine/dispatch`'s `assembleAgentSession` hands it the RESOLVED
+ * claim (`resolveProduces`, `PLAN-M14.md` P6), a `docs/forge/<section>/` prefix already rewritten to the
+ * project's configured root, so a path-scoped skill matches the path a session is actually held to under
+ * a relocated layout too; this module has no roots of its own to resolve one from. */
 function matchesStepFileClaim(
   applies: { readonly paths?: readonly string[] | undefined } | undefined,
   step: StepContext,

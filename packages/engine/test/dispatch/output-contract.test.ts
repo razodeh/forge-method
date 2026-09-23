@@ -262,6 +262,7 @@ describe('configured docs roots', () => {
   const RELOCATED = {
     kb: 'documentation/kb',
     specs: 'documentation/specs',
+    plans: 'documentation/plans',
     sessions: 'documentation/sessions',
     reports: 'documentation/reports',
   };
@@ -306,6 +307,7 @@ describe('what the lane branch actually carries', () => {
       docRoots: {
         kb: 'docs/forge/kb',
         specs: 'docs/forge/specs',
+        plans: 'docs/forge/plans',
         sessions: 'docs/forge/sessions',
         reports: 'docs/forge/reports',
       },

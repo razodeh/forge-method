@@ -514,6 +514,7 @@ describe('buildRunEngineContext', () => {
     expect(ctx.docRoots).toEqual({
       kb: 'documentation/kb',
       specs: 'documentation/specs',
+      plans: relocated.paths.plans,
       sessions: relocated.paths.sessions,
       reports: relocated.paths.reports,
     });

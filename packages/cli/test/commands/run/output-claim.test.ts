@@ -248,3 +248,94 @@ describe('forge run: a step whose session writes exactly its declared output', (
     }
   });
 });
+
+describe('forge run: a relocated paths.kb follows into a `produces` glob too, not only declared outputs (M14 P6, SPEC-QUESTIONS.md Q232 decision 3, Q216)', () => {
+  const RELOCATED_WORKFLOW_ID = 'claim-wf-relocated';
+  const RELOCATED_STEP_ID = `${RELOCATED_WORKFLOW_ID}:write-glossary`;
+  const RELOCATED_WORKFLOW = `
+id: ${RELOCATED_WORKFLOW_ID}
+name: A produces glob follows a relocated paths.kb
+version: 1.0.0
+description: An agent step whose produces names the shipped default kb root, under a relocated paths.kb.
+steps:
+  - id: write-glossary
+    kind: agent
+    agent: po
+    brief: briefs/implement.md
+    produces: [ "docs/forge/kb/glossary.md" ]
+`;
+
+  // Equivalent to `forge config set paths.kb knowledge` on the project (the CLI command itself, and its
+  // own write-back to `.forge/config.yaml`, is `config.test.ts`'s job): the config this run actually uses
+  // has a relocated `paths.kb`, exactly as `forge config set` would leave it.
+  async function relocatedProject(): Promise<TestProject> {
+    const base = await createTestProject();
+    await writeFixtureAgent(base.dir, 'po', 'po', { write: true });
+    await writeFile(
+      path.join(base.dir, WORKFLOWS_ROOT, `${RELOCATED_WORKFLOW_ID}.workflow.yaml`),
+      RELOCATED_WORKFLOW,
+    );
+    await execa('git', ['add', '-A'], { cwd: base.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'relocated claim workflow'], { cwd: base.dir });
+    return {
+      ...base,
+      config: {
+        ...base.config,
+        execution: { ...base.config.execution, autonomy: 'autonomous' },
+        paths: { ...base.config.paths, kb: 'knowledge' },
+      },
+    };
+  }
+
+  async function runRelocated(project: TestProject, adapter: FakePlatformAdapter, runId: string) {
+    const result = await runWorkflow(testRunDeps(project, adapter), {
+      workflowId: RELOCATED_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId,
+      host: 'test-host',
+    });
+    if (result.kind !== 'run') throw new Error('expected a real run');
+    const events: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) events.push(event);
+    return { result, events };
+  }
+
+  it('a session writing to the CONFIGURED root (knowledge/glossary.md) is kept, nothing reverted, the run completes', async () => {
+    const project = await relocatedProject();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote the glossary'],
+      writeFiles: [{ relativePath: 'knowledge/glossary.md', content: '# Glossary\n' }],
+    });
+    const { result, events } = await runRelocated(project, adapter, 'run-relocated-ok');
+    expect(result.runState.runStatus).toBe('completed');
+    const reverts = events.filter(
+      (event) =>
+        event.type === 'LaneCommitted' &&
+        (event.payload as { reason?: string } | undefined)?.reason === 'claim-revert',
+    );
+    expect(reverts).toEqual([]);
+  });
+
+  it('a session writing to the shipped DEFAULT layout path (docs/forge/kb/glossary.md) is reverted and the run fails (RUN-104, PLAN-M14.md P3)', async () => {
+    const project = await relocatedProject();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote the glossary at the stale default path'],
+      writeFiles: [{ relativePath: 'docs/forge/kb/glossary.md', content: '# Glossary\n' }],
+    });
+    const { result, events } = await runRelocated(project, adapter, 'run-relocated-stale');
+    expect(result.runState.runStatus).toBe('failed');
+    const revert = events.find(
+      (event) =>
+        event.type === 'LaneCommitted' &&
+        event.stepId === RELOCATED_STEP_ID &&
+        (event.payload as { reason?: string } | undefined)?.reason === 'claim-revert',
+    );
+    expect(revert).toBeDefined();
+    const failed = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === RELOCATED_STEP_ID,
+    );
+    expect(JSON.stringify(failed?.payload)).toContain('RUN-104');
+  });
+});

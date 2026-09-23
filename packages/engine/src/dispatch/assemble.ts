@@ -43,7 +43,7 @@ import { slugifyStepId } from '@forge/vcs';
 import type { StepNode } from '../plan/index.ts';
 import { restrictGrantForTaint } from '../security/taint-guard.ts';
 import { answersVisibleTo } from './elicit.ts';
-import { docRootsOf, outputGlob, resolveStepClaim } from './outputs.ts';
+import { docRootsOf, outputGlob, resolveProduces, resolveStepClaim } from './outputs.ts';
 import { deriveTestExec, grantWithTestExec, testLayersForBrief } from './test-command-grant.ts';
 import type { ExecuteStepContext, KbAccess, StepFailureInfo } from './types.ts';
 
@@ -534,7 +534,10 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
   // grant AND the step's claim (`produces` plus declared outputs) being non-empty. A step with nothing to write inside
   // used to keep the agent's `write: true` and, under `guided`'s `warn`, write anywhere with nothing reverted. The one
   // exception is a caller that confines writes itself (`forge debug`'s FIX scans its diff against an exclusion set).
-  const claim = resolveStepClaim(node, docRootsOf(ctx), ctx.claimPolicy);
+  // Computed once and reused everywhere this assembly needs the project's configured docs roots (the claim,
+  // and below, the RESOLVED `produces` block [5] and the skill filter see, `PLAN-M14.md` P6).
+  const docRoots = docRootsOf(ctx);
+  const claim = resolveStepClaim(node, docRoots, ctx.claimPolicy);
   const mayWrite = input.callerConfinesWrites === true || claim.globs.length > 0;
   const granted: ToolGrant = readOnly
     ? { read: resolved.grant.read, write: false, exec: false, network: 'none' }
@@ -566,7 +569,11 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
     const step: StepContext = {
       brief: briefText,
       declaredInputIds: declared.resolvedIds,
-      produces: node.produces,
+      // RESOLVED, not `node.produces` verbatim: a `docs/forge/<section>/` prefix follows the project's
+      // configured root (`resolveProduces`, `PLAN-M14.md` P6), so the skill activation filter
+      // (`pack-for-step.ts`'s `matchesStepFileClaim`) matches a skill's `applies_to.paths` against the
+      // path the session is actually held to under a relocated layout, not the shipped default.
+      produces: resolveProduces(node.produces, docRoots),
       consumes: node.consumes,
     };
     pack = await packForStep(step, agent, kb.backend, kb.tree, {
@@ -582,12 +589,13 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
   const stepBrief = [briefText, runInputsSection(node), answersSection(node, ctx), declared.section]
     .filter((part) => part !== '')
     .join('\n\n');
-  const docRoots = docRootsOf(ctx);
   const compiled = compilePrompt(
     {
       brief: stepBrief,
       declaredInputIds: declared.resolvedIds,
-      produces: node.produces,
+      // RESOLVED (`PLAN-M14.md` P6): block [5] (`renderOutputContractBlock`) must tell the agent the path
+      // it will really be held to, under a relocated layout too, not the shipped default it may not use.
+      produces: resolveProduces(node.produces, docRoots),
       consumes: node.consumes,
       // Block [5] lists what THIS step's output check demands, at the path the check looks in (`PLAN-M13.md` P18).
       outputs: node.outputs.map((output) => ({

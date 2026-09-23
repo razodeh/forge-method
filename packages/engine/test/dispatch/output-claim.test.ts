@@ -24,6 +24,7 @@ import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { describe, expect, it } from 'vitest';
 
+import { assembleAgentSession } from '../../src/dispatch/assemble.ts';
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { createVcsFacade } from '../../src/dispatch/facades.ts';
 import {
@@ -47,6 +48,7 @@ import { createFixtureAssembly, createTestContext, fixtureAgent, node } from './
 const DEFAULT_ROOTS: DocRoots = {
   kb: 'docs/forge/kb',
   specs: 'docs/forge/specs',
+  plans: 'docs/forge/plans',
   sessions: 'docs/forge/sessions',
   reports: 'docs/forge/reports',
 };
@@ -250,6 +252,7 @@ describe('a step that declares outputs: its own output is inside its claim', () 
     const relocated: DocRoots = {
       kb: 'documentation/kb',
       specs: 'documentation/specs',
+      plans: 'documentation/plans',
       sessions: 'documentation/sessions',
       reports: 'documentation/reports',
     };
@@ -288,6 +291,173 @@ describe('a step that declares outputs: its own output is inside its claim', () 
       'docs/forge/reports/handoffs.md',
       'docs/forge/specs/stories/STORY-*.md',
     ]);
+  });
+});
+
+describe('produces itself follows a relocated docs root too, not only the registry half of the claim (M14 P6, Q232 decision 3, Q216)', () => {
+  it('a `produces` glob written against the default layout is claimed at the configured root; the literal default-layout path is out of claim and reverted (fails the step, P3)', async () => {
+    const relocatedKb = { ...DEFAULT_ROOTS, kb: 'knowledge' };
+    const followed = await run({
+      produces: ['docs/forge/kb/glossary.md'],
+      writes: [{ relativePath: 'knowledge/glossary.md', content: '# Glossary\n' }],
+      claimPolicy: 'strict',
+      docRoots: relocatedKb,
+    });
+    expect(followed.outcome.status).toBe('succeeded');
+    expect(followed.committed).toContain('knowledge/glossary.md');
+    const stale = await run({
+      produces: ['docs/forge/kb/glossary.md'],
+      writes: [{ relativePath: 'docs/forge/kb/glossary.md', content: '# Glossary\n' }],
+      claimPolicy: 'strict',
+      docRoots: relocatedKb,
+    });
+    expect(failureOf(stale.outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(stale.committed).toEqual([]);
+  });
+
+  it('a `!docs/forge/<section>/x/**` exclusion follows the relocated root too: a write under the excluded, relocated path is still reverted although the rest of the relocated root is claimed', async () => {
+    const relocatedKb = { ...DEFAULT_ROOTS, kb: 'knowledge' };
+    const { outcome, committed } = await run({
+      produces: ['docs/forge/kb/**', '!docs/forge/kb/x/**'],
+      writes: [
+        { relativePath: 'knowledge/glossary.md', content: '# Glossary\n' },
+        { relativePath: 'knowledge/x/secret.md', content: 'x\n' },
+      ],
+      claimPolicy: 'strict',
+      docRoots: relocatedKb,
+    });
+    expect(failureOf(outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(committed).toContain('knowledge/glossary.md');
+    expect(committed).not.toContain('knowledge/x/secret.md');
+  });
+
+  it('a produces glob whose leading segment is a default root plus a DIFFERENT trailing segment (docs/forge/kbx) is left alone: the segment-boundary counter-example', async () => {
+    const { outcome, committed } = await run({
+      produces: ['docs/forge/kbx/**'],
+      writes: [{ relativePath: 'docs/forge/kbx/y.md', content: 'x\n' }],
+      claimPolicy: 'strict',
+      docRoots: { ...DEFAULT_ROOTS, kb: 'knowledge' },
+    });
+    expect(outcome.status).toBe('succeeded');
+    expect(committed).toContain('docs/forge/kbx/y.md');
+  });
+
+  it('a configured root that starts with `!` or `#` is read literally by the real claim matcher for a `produces`-derived glob too, not just the registry half', async () => {
+    for (const marker of ['!', '#']) {
+      const root = `${marker}weird`;
+      const { outcome, committed } = await run({
+        produces: ['docs/forge/specs/x.md'],
+        writes: [
+          { relativePath: `${root}/x.md`, content: 'x\n' },
+          // Under an unescaped `!…` glob every OTHER path would wrongly count as inside the claim.
+          { relativePath: STRAY, content: 'x\n' },
+        ],
+        claimPolicy: 'strict',
+        docRoots: { ...DEFAULT_ROOTS, specs: root },
+      });
+      expect(outcome.status).toBe('failed');
+      expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+      expect(committed).toContain(`${root}/x.md`);
+      expect(committed).not.toContain(STRAY);
+    }
+  });
+
+  it('a configured root that escapes the repository drops the rewritten produces entry from the claim: it contributes nothing, the rest of the claim is unaffected', () => {
+    for (const escaping of ['../out', '/abs', '..']) {
+      const claim = resolveStepClaim(
+        { kind: 'agent', outputs: [], produces: ['docs/forge/specs/x.md', 'src/**'] },
+        { ...DEFAULT_ROOTS, specs: escaping },
+        'warn',
+      );
+      expect(claim.globs).toEqual(['src/**']);
+    }
+  });
+
+  it('...end to end: a stray write is reverted and fails the step under strict, exactly as if the escaping entry had never been declared', async () => {
+    const { outcome, committed } = await run({
+      produces: ['docs/forge/specs/x.md', 'src/**'],
+      writes: [
+        { relativePath: 'src/ok.ts', content: 'export const ok = 1;\n' },
+        { relativePath: 'lib/stray.ts', content: 'export const stray = 1;\n' },
+      ],
+      claimPolicy: 'strict',
+      docRoots: { ...DEFAULT_ROOTS, specs: '../out' },
+    });
+    expect(failureOf(outcome)).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(committed).toContain('src/ok.ts');
+    expect(committed).not.toContain('lib/stray.ts');
+  });
+
+  it('is the identity transform for every shipped default-layout produces glob: DEFAULT_ROOTS resolves to itself (no rewrite, no drop, no escape)', () => {
+    for (const produces of [
+      ['docs/forge/kb/glossary.md'],
+      ['docs/forge/specs/**'],
+      ['docs/forge/plans/stages.md'],
+      ['docs/forge/sessions/SESSION-*.md'],
+      ['docs/forge/reports/handoffs.md'],
+      ['src/**', '!docs/forge/kb/x/**'],
+    ]) {
+      expect(
+        resolveStepClaim({ kind: 'agent', outputs: [], produces }, DEFAULT_ROOTS, 'warn').globs,
+      ).toEqual(produces.filter((glob) => !glob.startsWith('!')));
+    }
+  });
+});
+
+describe('block [5] (compile-prompt.ts renderOutputContractBlock) renders the RESOLVED produces under a relocated layout, traced end to end through assembleAgentSession (PLAN-M14.md P6)', () => {
+  async function assembledTextFor(
+    produces: readonly string[],
+    docRoots: DocRoots,
+  ): Promise<string> {
+    const projectRoot = await createTempRepo('block5');
+    const ctx = createTestContext({
+      projectRoot,
+      docRoots,
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const stepNode = node({
+      id: 'wf:glossary',
+      kind: 'agent',
+      agent: toAgentId('po'),
+      brief: 'do the work',
+      produces,
+    });
+    const assembled = await assembleAgentSession({ node: stepNode, ctx });
+    return assembled.compiled.text;
+  }
+
+  it('a relocated kb root: block [5] names the configured path, never the shipped default the session would actually be reverted for writing to', async () => {
+    const text = await assembledTextFor(['docs/forge/kb/glossary.md'], {
+      ...DEFAULT_ROOTS,
+      kb: 'knowledge',
+    });
+    const block5 = text.slice(text.indexOf('## [5]'), text.indexOf('## [6]'));
+    expect(block5).toContain('knowledge/glossary.md');
+    expect(block5).not.toContain('docs/forge/kb/glossary.md');
+  });
+
+  it('an exclusion follows the relocation too: block [5] still says "Never write" at the configured path', async () => {
+    const text = await assembledTextFor(['docs/forge/kb/**', '!docs/forge/kb/x/**'], {
+      ...DEFAULT_ROOTS,
+      kb: 'knowledge',
+    });
+    const block5 = text.slice(text.indexOf('## [5]'), text.indexOf('## [6]'));
+    expect(block5).toContain("Files: only the paths in this step's claim: `knowledge/**`");
+    expect(block5).toContain("Never write (outside this step's claim): `knowledge/x/**`");
+    expect(block5).not.toContain('docs/forge/kb');
+  });
+
+  it('under the shipped default layout, block [5] is unchanged: the shipped default path itself', async () => {
+    const text = await assembledTextFor(['docs/forge/kb/glossary.md'], DEFAULT_ROOTS);
+    const block5 = text.slice(text.indexOf('## [5]'), text.indexOf('## [6]'));
+    expect(block5).toContain('docs/forge/kb/glossary.md');
   });
 });
 
@@ -418,6 +588,7 @@ describe('the claim of every registry type covers a concrete path of that type',
   const RELOCATED: DocRoots = {
     kb: 'documentation/kb',
     specs: 'documentation/specs',
+    plans: 'documentation/plans',
     sessions: 'documentation/sessions',
     reports: 'documentation/reports',
   };

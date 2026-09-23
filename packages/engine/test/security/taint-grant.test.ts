@@ -237,6 +237,7 @@ describe('a tainted step is held to its claim at every autonomy level', () => {
   const ROOTS = {
     kb: 'docs/forge/kb',
     specs: 'docs/forge/specs',
+    plans: 'docs/forge/plans',
     sessions: 'docs/forge/sessions',
     reports: 'docs/forge/reports',
   };

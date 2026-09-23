@@ -46,6 +46,7 @@ import { createFixtureAssembly, createTestContext, fixtureAgent, node } from './
 const ROOTS: DocRoots = {
   kb: 'docs/forge/kb',
   specs: 'docs/forge/specs',
+  plans: 'docs/forge/plans',
   sessions: 'docs/forge/sessions',
   reports: 'docs/forge/reports',
 };

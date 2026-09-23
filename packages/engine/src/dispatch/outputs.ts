@@ -86,13 +86,18 @@ import type {
   VcsFacade,
 } from './types.ts';
 
-/** The configured root a `18` §18.7 template's first segment names (`specs`, `kb`, `sessions`, `reports`). */
+/** The configured root a `18` §18.7 template's first segment names (`specs`, `kb`, `sessions`, `reports`),
+ * or (`PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q232 decision 3) a `produces` glob's own leading segment
+ * (`plans` besides: no registry template opens with it, but `docs/forge/plans/...` is a real, shipped
+ * `produces` root -- `plan-stages.workflow.yaml` -- that must follow `paths.plans` too). */
 function sectionRoot(segment: string, roots: DocRoots): string | undefined {
   switch (segment) {
     case 'specs':
       return roots.specs;
     case 'kb':
       return roots.kb;
+    case 'plans':
+      return roots.plans;
     case 'sessions':
       return roots.sessions;
     case 'reports':
@@ -250,13 +255,104 @@ export function resolveStepClaim(
 /** The reserved `produces` exclusion that names the protected set (`protectedFixGlobs`): `!@protected`. */
 export const PROTECTED_CLAIM_EXCLUSION = '!@protected';
 
+/** `18` §18.3's `paths` keys a `produces` glob's own leading segments can spell in the SHIPPED default
+ * layout (`DEFAULT_CONFIG.paths`, `defaults.ts:25-32`), paired with the literal default value
+ * `resolveDocsRootPrefix` compares a glob's prefix against. `code` is excluded: no `18` §18.7 registry
+ * root nor any shipped `produces` glob ever names it as a docs-root shorthand. */
+const DOC_ROOT_SECTIONS: readonly (readonly [
+  'kb' | 'specs' | 'plans' | 'sessions' | 'reports',
+  string,
+])[] = (['kb', 'specs', 'plans', 'sessions', 'reports'] as const).map(
+  (section) => [section, DEFAULT_CONFIG.paths[section]] as const,
+);
+
+/** Whether `glob` opens with `prefix` at a path-segment boundary: matches `prefix` itself and
+ * `prefix/...`, never a same-prefixed sibling segment (`docs/forge/kb` must not match `docs/forge/kbx`,
+ * `SPEC-QUESTIONS.md` Q216/Q232 decision 3's own counter-example). */
+function opensWithSegment(glob: string, prefix: string): boolean {
+  return glob === prefix || glob.startsWith(`${prefix}/`);
+}
+
+/** Escapes a leading `!`/`#` so the real claim matcher (`@forge/vcs`'s `enforceClaim`, negation and
+ * comments both left on) reads it literally instead of as a second-level negation or a comment -- the
+ * identical escape `outputClaimGlobs` applies to a registry root, just above. */
+function escapeLeadingMarker(glob: string): string {
+  return /^[!#]/.test(glob) ? `\\${glob}` : glob;
+}
+
+/**
+ * Rewrites `glob`'s leading segments from a SHIPPED DEFAULT docs root (`DOC_ROOT_SECTIONS`) to the
+ * project's own CONFIGURED root for that section (`roots`), so a `produces` glob (or a brief's own
+ * `docs/forge/<section>/...` text) written against the shipped default layout still names the right path
+ * after `forge config set paths.<section> <elsewhere>` (`SPEC-QUESTIONS.md` Q216: "58 references become
+ * uncovered"; `Q232` decision 3: engine expansion, one place, workflow YAML stays authorable). Segment-
+ * boundary matched (`opensWithSegment`): `docs/forge/kbx` is untouched, and the bare root
+ * (`docs/forge/kb`, no trailing segment) becomes the configured root with no trailing slash. The
+ * configured root is glob-escaped (the identical treatment `outputGlob` gives a configured root) since it
+ * names a real directory, never a pattern the workflow's author wrote -- the REST of `glob`, the author's
+ * own glob syntax, is left exactly as written. A leading `!`/`#` in the rewritten result (a configured
+ * root that starts with one) is itself escaped (`escapeLeadingMarker`), matching `outputClaimGlobs`
+ * above. A configured root that climbs out of the repository or is absolute (`escapesRepository`, the
+ * identical rule `outputClaimGlobs` applies to a registry root) drops the entry (`undefined`) rather than
+ * admitting a path that can match nothing inside a lane diff. An entry matching no default root's
+ * segments passes through unchanged -- including, trivially, under the shipped default layout, where
+ * every configured root equals its own default: this rewrite is the identity transform there, for every
+ * shipped claim.
+ */
+function resolveDocsRootPrefix(glob: string, roots: DocRoots): string | undefined {
+  for (const [section, defaultRoot] of DOC_ROOT_SECTIONS) {
+    if (!opensWithSegment(glob, defaultRoot)) continue;
+    const configured = sectionRoot(section, roots) ?? defaultRoot;
+    if (escapesRepository(configured)) return undefined;
+    const root = normalizeRoot(configured);
+    const rest = glob.slice(defaultRoot.length);
+    const rewritten =
+      root === '' ? rest.replace(/^\//, '') : `${escapeGlob(root, { magicalBraces: true })}${rest}`;
+    return escapeLeadingMarker(rewritten);
+  }
+  return glob;
+}
+
+/**
+ * `produces` with each entry's docs-root prefix resolved to the project's configured root
+ * (`resolveDocsRootPrefix`), `produces` SHAPE preserved: a `!`-prefixed exclusion keeps its `!` (only the
+ * glob after it is rewritten), and the reserved `!@protected` (`PROTECTED_CLAIM_EXCLUSION`) is untouched
+ * -- it names no docs-root prefix itself, `protectedFixGlobs` reads the configured roots directly. This
+ * is what `assemble.ts` hands `packForStep` and `compilePrompt` in place of the raw `node.produces`
+ * (`PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q232 decision 3), so block [5] (`compile-prompt.ts`'s
+ * `renderOutputContractBlock`) and the skill activation filter (`pack-for-step.ts`'s
+ * `matchesStepFileClaim`) see the path a session is actually held to, under a relocated layout too. Not a
+ * claim itself (`splitClaim`, just below, builds the real claim on top of this): an entry a configured
+ * root would take outside the repository is dropped here exactly as the claim itself drops it, never
+ * shown as though it were still writable.
+ */
+export function resolveProduces(produces: readonly string[], roots: DocRoots): readonly string[] {
+  const resolved: string[] = [];
+  for (const entry of produces) {
+    if (entry === PROTECTED_CLAIM_EXCLUSION) {
+      resolved.push(entry);
+      continue;
+    }
+    if (entry.startsWith('!')) {
+      const rewritten = resolveDocsRootPrefix(entry.slice(1), roots);
+      if (rewritten !== undefined) resolved.push(`!${rewritten}`);
+      continue;
+    }
+    const rewritten = resolveDocsRootPrefix(entry, roots);
+    if (rewritten !== undefined) resolved.push(rewritten);
+  }
+  return resolved;
+}
+
 /**
  * A `produces` list split into the paths a step may write and the paths it may not (`PLAN-M13.md` P36, `06` §6.7). An entry
  * that starts `!` is an exclusion: `!<glob>` removes matching paths from the claim, and the reserved `!@protected`
  * removes FORGE's protected set (`protectedFixGlobs`: CI and hook configuration, package manifests and test-runner config,
  * credentials and `.env*`, editor and agent-tool config, the project's document roots), the very list a `forge debug` FIX
  * is held to, so what a fix may not touch and what a project-wide step may not touch cannot drift. Exclusions are never
- * part of `globs`: `enforceClaim` reads its globs as a union, where a `!` entry would widen the claim instead.
+ * part of `globs`: `enforceClaim` reads its globs as a union, where a `!` entry would widen the claim instead. Splits
+ * `resolveProduces`'s own output (`PLAN-M14.md` P6), so a `docs/forge/<section>/` prefix is already the configured root by
+ * the time this looks at `!`/`!@protected`.
  */
 function splitClaim(
   produces: readonly string[],
@@ -264,7 +360,7 @@ function splitClaim(
 ): { readonly globs: readonly string[]; readonly excluded: readonly string[] } {
   const globs: string[] = [];
   const excluded: string[] = [];
-  for (const entry of produces) {
+  for (const entry of resolveProduces(produces, roots)) {
     if (entry === PROTECTED_CLAIM_EXCLUSION) excluded.push(...protectedFixGlobs(roots));
     else if (entry.startsWith('!')) excluded.push(entry.slice(1));
     else globs.push(entry);

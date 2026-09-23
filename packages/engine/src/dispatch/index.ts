@@ -60,6 +60,7 @@ export {
   outputGlob,
   outputPathCoveredBy,
   PROTECTED_CLAIM_EXCLUSION,
+  resolveProduces,
   resolveStepClaim,
   verifyDeclaredOutputs,
   type OutputCheckInput,

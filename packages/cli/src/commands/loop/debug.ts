@@ -902,6 +902,7 @@ async function runDebugLoop(
   const docRoots: DocRoots = {
     kb: deps.config.paths.kb,
     specs: deps.config.paths.specs,
+    plans: deps.config.paths.plans,
     sessions: deps.config.paths.sessions,
     reports: deps.config.paths.reports,
   };

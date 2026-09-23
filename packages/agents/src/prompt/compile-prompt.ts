@@ -171,6 +171,10 @@ const READ_ONLY_OUTPUT_CONTRACT =
  * separate front-matter-template field at all, and the spec's own worked example never gives one
  * either. Rendered from the real data this type actually has rather than inventing a template field
  * neither the schema nor the spec's own canonical example ever defines -- see `SPEC-QUESTIONS.md` Q102.
+ * `step.produces` renders exactly what its caller supplied -- `@forge/engine/dispatch`'s
+ * `assembleAgentSession` hands the RESOLVED claim (`resolveProduces`, `PLAN-M14.md` P6), so this block
+ * names the path a session is actually held to under a relocated docs layout too, not only the shipped
+ * default; this module itself has no docs roots to resolve one from, and does not need any.
  */
 function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): string {
   // What the block says must match what the engine enforces for THIS step (`PLAN-M13.md` P18, `SPEC-QUESTIONS.md`

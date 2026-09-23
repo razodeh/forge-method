@@ -250,7 +250,7 @@ describe('a swarm-review step persists its ReviewReport through a lane, and the 
       projectRoot,
       adapter,
       assembly: reviewerAssembly(projectRoot),
-      docRoots: { kb: 'k', specs: 's', sessions: './notes/sessions/', reports: 'r' },
+      docRoots: { kb: 'k', specs: 's', plans: 'p', sessions: './notes/sessions/', reports: 'r' },
     });
     const outcome = await executeStep(reviewNode(), ctx);
     expect(outcome.status).toBe('succeeded');

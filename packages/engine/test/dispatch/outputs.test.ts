@@ -13,7 +13,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { checkDeclaredOutputs, outputGlob } from '../../src/dispatch/outputs.ts';
+import {
+  checkDeclaredOutputs,
+  outputGlob,
+  PROTECTED_CLAIM_EXCLUSION,
+  resolveProduces,
+} from '../../src/dispatch/outputs.ts';
 import type { DocRoots, LaneHandle, VcsFacade } from '../../src/dispatch/types.ts';
 import { toAgentId, type StepNode } from '../../src/plan/index.ts';
 import {
@@ -35,6 +40,7 @@ import { node } from './helpers.ts';
 const ROOTS: DocRoots = {
   kb: 'docs/forge/kb',
   specs: 'docs/forge/specs',
+  plans: 'docs/forge/plans',
   sessions: 'docs/forge/sessions',
   reports: 'docs/forge/reports',
 };
@@ -113,6 +119,80 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
 
   it('escapes glob metacharacters in a configured root so a hostile or odd root cannot widen the match', () => {
     expect(outputGlob('Epic', { ...ROOTS, specs: 'a[b]/**/x' })).not.toContain('**');
+  });
+});
+
+describe('resolveProduces (M14 P6, SPEC-QUESTIONS.md Q232 decision 3: docs/forge/<section>/ prefixes follow the configured roots)', () => {
+  const RELOCATED: DocRoots = {
+    kb: 'knowledge',
+    specs: 'spec',
+    plans: 'p',
+    sessions: 's',
+    reports: 'r',
+  };
+
+  it('rewrites a produces glob whose leading segments equal a default root, one case per section', () => {
+    expect(resolveProduces(['docs/forge/kb/glossary.md'], RELOCATED)).toEqual([
+      'knowledge/glossary.md',
+    ]);
+    expect(resolveProduces(['docs/forge/specs/epics/EPIC-*.md'], RELOCATED)).toEqual([
+      'spec/epics/EPIC-*.md',
+    ]);
+    expect(resolveProduces(['docs/forge/plans/stages.md'], RELOCATED)).toEqual(['p/stages.md']);
+    expect(resolveProduces(['docs/forge/sessions/SESSION-*.md'], RELOCATED)).toEqual([
+      's/SESSION-*.md',
+    ]);
+    expect(resolveProduces(['docs/forge/reports/handoffs.md'], RELOCATED)).toEqual([
+      'r/handoffs.md',
+    ]);
+  });
+
+  it('a bare default root (no trailing segment) becomes the configured root, with no trailing slash', () => {
+    expect(resolveProduces(['docs/forge/kb'], RELOCATED)).toEqual(['knowledge']);
+  });
+
+  it('leaves a same-prefixed sibling segment untouched: docs/forge/kbx is not docs/forge/kb (the segment-boundary counter-example)', () => {
+    expect(resolveProduces(['docs/forge/kbx/y'], RELOCATED)).toEqual(['docs/forge/kbx/y']);
+  });
+
+  it('is the identity transform under the shipped default layout, for a variety of produces shapes', () => {
+    for (const glob of [
+      'docs/forge/kb/glossary.md',
+      'docs/forge/specs/**',
+      'docs/forge/plans/stages.md',
+      'docs/forge/sessions/SESSION-*.md',
+      'docs/forge/reports/handoffs.md',
+      'src/**',
+      '!docs/forge/kb/x/**',
+      'docs/forge/kbx/y',
+    ]) {
+      expect(resolveProduces([glob], ROOTS), glob).toEqual([glob]);
+    }
+  });
+
+  it('a `!` exclusion is rewritten too, its `!` kept, and expands to a claim exclusion (resolveStepClaim.exclude)', () => {
+    expect(resolveProduces(['!docs/forge/kb/x/**'], RELOCATED)).toEqual(['!knowledge/x/**']);
+  });
+
+  it('`!@protected` is untouched: it names no docs-root prefix of its own', () => {
+    expect(resolveProduces([PROTECTED_CLAIM_EXCLUSION], RELOCATED)).toEqual([
+      PROTECTED_CLAIM_EXCLUSION,
+    ]);
+  });
+
+  it('a configured root that starts with `!` or `#` is escaped so the real claim matcher reads it literally, never as negation or a comment', () => {
+    expect(resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: '!weird' })).toEqual([
+      '\\!weird/x.md',
+    ]);
+    expect(resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: '#x' })).toEqual([
+      '\\#x/x.md',
+    ]);
+  });
+
+  it('a configured root that climbs out of the repository or is absolute drops the rewritten entry, rather than admitting a path outside the project', () => {
+    for (const escaping of ['../out', '/abs', '..']) {
+      expect(resolveProduces(['docs/forge/specs/x.md'], { ...ROOTS, specs: escaping })).toEqual([]);
+    }
   });
 });
 

@@ -15,6 +15,14 @@
  * by `resolveStepClaim` (P14's own derivation, not a copy) and matched with `minimatch` `{ dot: true }`,
  * the matcher `@forge/vcs`'s `enforceClaim` applies, so this test agrees with what enforcement will do.
  *
+ * **Runs under two layouts** (`PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q216, Q232 decision 3): the shipped
+ * default (`ROOTS`) and a relocated one (`RELOCATED`, `{kb:'knowledge', specs:'spec', plans:'p',
+ * sessions:'s', reports:'r'}`). Before P6 a `produces` glob's own literal `docs/forge/...` prefix did not
+ * follow a relocated root while the registry-derived half of the claim did, so this comparison could only
+ * ever hold for the default layout; the caveat this doc comment used to carry here is lifted, since
+ * `resolveStepClaim` (and this file's own `extractWritePaths`, unchanged) now resolve the same way.
+ *
+
  * **The extractor** (`extractWritePaths`) is deliberately conservative and documented, because a false
  * positive costs an exemption and a false negative costs a silently discarded file:
  *
@@ -45,8 +53,6 @@
  *
  * **What this does not cover** (each is recorded in `SPEC-QUESTIONS.md` Q216):
  * - A step with no `outputs` and no `produces` has no claim to compare a brief with (`KNOWN_EMPTY_CLAIM`).
- * - The `produces` globs are literal `docs/forge/...` paths, so the comparison holds for the default docs
- *   layout only; the registry-derived half of the claim follows a relocated `paths.kb` and these do not.
  * - Agent prompt specialisations (`prompts/<agent>.<brief>.md`) are not scanned, only the brief.
  * - A path the brief leaves to the agent (a component's KB entry, the app's release configuration) is
  *   represented by a chosen path or a hand-declared glob, so the test cannot say the glob is complete.
@@ -133,6 +139,34 @@ const FIXTURE_CONTEXT = {
 /** The docs roots claim derivation resolves against (`docRootsOf` with no configured override = defaults). */
 const ROOTS: DocRoots = docRootsOf({});
 const PLANS_ROOT = DEFAULT_CONFIG.paths.plans;
+
+/** A relocated layout (`PLAN-M14.md` P6's own worked example), every section moved to a short, distinct
+ * root so a rewrite bug that confused two sections cannot hide: `{kb:'knowledge', specs:'spec',
+ * plans:'p', sessions:'s', reports:'r'}`. */
+const RELOCATED: DocRoots = {
+  kb: 'knowledge',
+  specs: 'spec',
+  plans: 'p',
+  sessions: 's',
+  reports: 'r',
+};
+
+/** `EXEMPT.path`/`IMPLIED_WRITES.path` are authored once, in default-layout terms (matching the brief
+ * text they quote) -- relocated here at compare time rather than duplicated per layout, so the exemption
+ * list stays tied to its one piece of textual evidence regardless of which layout a run checks it under.
+ * The identical segment-prefix rewrite `resolvePath` above applies to a raw brief token. */
+function relocateDefaultPath(p: string, roots: DocRoots): string {
+  const docs = DEFAULT_CONFIG.paths;
+  const prefixes: readonly [string, string][] = [
+    [docs.kb, roots.kb],
+    [docs.specs, roots.specs],
+    [docs.plans, roots.plans],
+    [docs.sessions, roots.sessions],
+    [docs.reports, roots.reports],
+  ];
+  const hit = prefixes.find(([from]) => p === from || p.startsWith(`${from}/`));
+  return hit === undefined ? p : `${hit[1]}${p.slice(hit[0].length)}`;
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The extractor
@@ -257,10 +291,13 @@ function resolvePath(raw: string, sectionContext: string | undefined, roots: Doc
   const first = p.split('/')[0] ?? '';
   const rest = p.split('/').slice(1).join('/');
   const docs = DEFAULT_CONFIG.paths;
+  // `roots.plans` (`PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q232 decision 3): `DocRoots` used to have no
+  // `plans` field at all, so this resolved a `docs/forge/plans/...` reference to itself, unconditionally
+  // -- the very half of the "does not cover" caveat this file's own module doc comment used to carry.
   const prefixes: readonly [string, string][] = [
     [docs.kb, roots.kb],
     [docs.specs, roots.specs],
-    [PLANS_ROOT, PLANS_ROOT],
+    [PLANS_ROOT, roots.plans],
     [docs.sessions, roots.sessions],
     [docs.reports, roots.reports],
   ];
@@ -269,7 +306,7 @@ function resolvePath(raw: string, sectionContext: string | undefined, roots: Doc
     p = `${hit[1]}${p.slice(hit[0].length)}`;
   } else if (first === 'kb') p = `${roots.kb}/${rest}`;
   else if (first === 'specs') p = `${roots.specs}/${rest}`;
-  else if (first === 'plans') p = `${PLANS_ROOT}/${rest}`;
+  else if (first === 'plans') p = `${roots.plans}/${rest}`;
   else if (first === 'reports') p = `${roots.reports}/${rest}`;
   else if (first === 'sessions') p = `${roots.sessions}/${rest}`;
   else if (KB_SECTION_NAMES.includes(first)) p = `${roots.kb}/${p}`;
@@ -997,60 +1034,78 @@ describe('enumeration is real', () => {
   });
 });
 
-describe('every path a brief tells the agent to write lies in the step claim', () => {
-  it('holds for every shipped agent step', async () => {
-    const problems: string[] = [];
-    const seenExempt = new Set<(typeof EXEMPT)[number]>();
-    for (const { key, node } of steps) {
-      const { globs: claim, exclude } = resolveStepClaim(node, ROOTS, 'strict');
-      const brief = await briefOf(node);
-      const refs: { raw: string; resolved: string; sentence: string }[] = [
-        ...extractWritePaths(brief),
-      ];
-      for (const implied of IMPLIED_WRITES.filter((entry) => entry.step === key)) {
-        expect(brief, `stale IMPLIED_WRITES entry for ${key}: ${implied.why}`).toMatch(
-          implied.anchor,
-        );
-        refs.push({ raw: implied.path, resolved: implied.path, sentence: implied.why });
+/**
+ * The main coverage check, parametrised on the docs roots (`PLAN-M14.md` P6): run once under the shipped
+ * default layout (unchanged from before P6) and once under a relocated one (`RELOCATED`, new). `EXEMPT`/
+ * `IMPLIED_WRITES` are authored once in default-layout terms (they quote default-layout brief text) and
+ * relocated at compare time (`relocateDefaultPath`), so the lists themselves never need a second,
+ * per-layout copy.
+ */
+async function checkEveryBriefWritePathIsClaimed(roots: DocRoots): Promise<void> {
+  const problems: string[] = [];
+  const seenExempt = new Set<(typeof EXEMPT)[number]>();
+  for (const { key, node } of steps) {
+    const { globs: claim, exclude } = resolveStepClaim(node, roots, 'strict');
+    const brief = await briefOf(node);
+    const refs: { raw: string; resolved: string; sentence: string }[] = [
+      ...extractWritePaths(brief, roots),
+    ];
+    for (const implied of IMPLIED_WRITES.filter((entry) => entry.step === key)) {
+      expect(brief, `stale IMPLIED_WRITES entry for ${key}: ${implied.why}`).toMatch(
+        implied.anchor,
+      );
+      const path = relocateDefaultPath(implied.path, roots);
+      refs.push({ raw: implied.path, resolved: path, sentence: implied.why });
+    }
+    // A Diagram is registered through a `<file>.mmd.yaml` sidecar, so writing the view means writing it too.
+    for (const ref of [...refs]) {
+      if (ref.resolved.endsWith('.mmd')) {
+        refs.push({ ...ref, raw: `${ref.raw}.yaml`, resolved: `${ref.resolved}.yaml` });
       }
-      // A Diagram is registered through a `<file>.mmd.yaml` sidecar, so writing the view means writing it too.
-      for (const ref of [...refs]) {
-        if (ref.resolved.endsWith('.mmd')) {
-          refs.push({ ...ref, raw: `${ref.raw}.yaml`, resolved: `${ref.resolved}.yaml` });
-        }
-      }
-      for (const ref of refs) {
-        const covered = claimCovers(ref.resolved, claim, exclude);
-        const exempt = EXEMPT.find(
-          (entry) =>
-            entry.step === key && entry.path === ref.resolved && entry.sentence.test(ref.sentence),
-        );
-        if (exempt !== undefined) {
-          seenExempt.add(exempt);
-          if (covered)
-            problems.push(
-              `${key}: exemption for ${ref.resolved} is unnecessary, the claim covers it`,
-            );
-          continue;
-        }
-        if (!covered) {
+    }
+    for (const ref of refs) {
+      const covered = claimCovers(ref.resolved, claim, exclude);
+      const exempt = EXEMPT.find(
+        (entry) =>
+          entry.step === key &&
+          relocateDefaultPath(entry.path, roots) === ref.resolved &&
+          entry.sentence.test(ref.sentence),
+      );
+      if (exempt !== undefined) {
+        seenExempt.add(exempt);
+        if (covered)
           problems.push(
-            `${key}: the brief tells the agent to write \`${ref.raw}\` (${ref.resolved}), outside its claim [${claim.join(', ')}]. ` +
-              `Sentence: "${ref.sentence.trim().slice(0, 140)}"`,
+            `${key}: exemption for ${ref.resolved} is unnecessary, the claim covers it`,
           );
-        }
+        continue;
+      }
+      if (!covered) {
+        problems.push(
+          `${key}: the brief tells the agent to write \`${ref.raw}\` (${ref.resolved}), outside its claim [${claim.join(', ')}]. ` +
+            `Sentence: "${ref.sentence.trim().slice(0, 140)}"`,
+        );
       }
     }
-    expect(problems, problems.join('\n')).toEqual([]);
-    for (const entry of EXEMPT) {
-      expect(seenExempt.has(entry), `stale exemption: ${entry.step} | ${entry.path}`).toBe(true);
-    }
-    for (const implied of IMPLIED_WRITES) {
-      expect(
-        steps.some((step) => step.key === implied.step),
-        `IMPLIED_WRITES names an unknown step: ${implied.step}`,
-      ).toBe(true);
-    }
+  }
+  expect(problems, problems.join('\n')).toEqual([]);
+  for (const entry of EXEMPT) {
+    expect(seenExempt.has(entry), `stale exemption: ${entry.step} | ${entry.path}`).toBe(true);
+  }
+  for (const implied of IMPLIED_WRITES) {
+    expect(
+      steps.some((step) => step.key === implied.step),
+      `IMPLIED_WRITES names an unknown step: ${implied.step}`,
+    ).toBe(true);
+  }
+}
+
+describe('every path a brief tells the agent to write lies in the step claim', () => {
+  it('holds for every shipped agent step, under the shipped default layout', async () => {
+    await checkEveryBriefWritePathIsClaimed(ROOTS);
+  });
+
+  it('holds for every shipped agent step under a RELOCATED layout too (M14 P6, the caveat this file used to carry is lifted)', async () => {
+    await checkEveryBriefWritePathIsClaimed(RELOCATED);
   });
 
   it('pins the instances the P14 and P11 reviews named, so an extractor regression cannot hide them', async () => {

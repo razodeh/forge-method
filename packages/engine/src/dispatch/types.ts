@@ -408,9 +408,13 @@ export interface ExecuteStepContext {
     { readonly pre?: string | undefined; readonly post?: string | undefined } | undefined;
 }
 
-/** The four `paths` config keys an artifact path template's first segment names (`18` §18.7): `specs/...`,
- * `kb/...`, `sessions/...`, `reports/...`. */
-export type DocRoots = Pick<ForgeConfig['paths'], 'kb' | 'specs' | 'sessions' | 'reports'>;
+/** The `paths` config keys a `18` §18.7 artifact path template's first segment (`specs/...`, `kb/...`,
+ * `sessions/...`, `reports/...`) or a `produces` glob's own `docs/forge/<section>/` prefix (`plans`
+ * besides: `PLAN-M14.md` P6, `SPEC-QUESTIONS.md` Q232 decision 3) can name. */
+export type DocRoots = Pick<
+  ForgeConfig['paths'],
+  'kb' | 'specs' | 'plans' | 'sessions' | 'reports'
+>;
 
 /** `16` §16.8's own literal bound table, all optional and independently overridable — see
  * `ExecuteStepContext.sessionBounds`'s own doc comment for how a caller supplies this. */

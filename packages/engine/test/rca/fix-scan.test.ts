@@ -11,6 +11,7 @@ import { protectedFixGlobs, scanFixDiff, type FixChange } from '../../src/rca/fi
 const ROOTS = {
   kb: 'docs/forge/kb',
   specs: 'docs/forge/specs',
+  plans: 'docs/forge/plans',
   sessions: 'docs/forge/sessions',
   reports: 'docs/forge/reports',
 };

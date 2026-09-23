@@ -507,6 +507,7 @@ export async function buildRunEngineContext(
     docRoots: {
       kb: input.config.paths.kb,
       specs: input.config.paths.specs,
+      plans: input.config.paths.plans,
       sessions: input.config.paths.sessions,
       reports: input.config.paths.reports,
     },
