@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=af3648a7164796d4a13ffc20e7ede9b34df45e716f63a670d1105680fb03b34b — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=1c74f348f082bb85b7e139da02536e4357f106778695b1b0927b7655b295b239 — edits will be overwritten; use overrides/
 id: migrate
 name: Migrate
 version: 1.0.0
@@ -15,7 +15,18 @@ steps:
     brief: briefs/plan-migration.md
     outputs: [{ type: ADR }]
     # "Unknowns ... are open questions or explicit assumptions with a validation method" (Q216).
-    produces: ['docs/forge/kb/open-questions.md', 'docs/forge/kb/assumptions.md']
+    # `migrations.yaml` is the machine-readable migration-order declaration `G-Integration`'s
+    # `migration:order` check reads (PLAN-M14.md P21, briefs/plan-migration.md "Declarations the gate
+    # reads"): this step appends this ADR's phases to the file `shape-solution:model-data` first wrote.
+    produces:
+      [
+        'docs/forge/kb/open-questions.md',
+        'docs/forge/kb/assumptions.md',
+        'docs/forge/kb/data/migrations.yaml',
+      ]
+    # This step's own inputs are the scanned codebase, not yet provenance-tracked KB entries (`20`
+    # §20.5 point 6, `SPEC-QUESTIONS.md` Q232 decision 15).
+    taint: external
 
   - id: expand
     kind: agent
@@ -25,6 +36,8 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
     produces: ['**', '!@protected']
+    # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external
 
   - id: migrate-data
     kind: command
@@ -39,8 +52,14 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
     produces: ['**', '!@protected']
+    # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external
 
   - id: verify-migration
     kind: command
     run: 'forge test run --json'
     dependsOn: [contract]
+    # `forge test run` (no `--rule`) owns `test-results.json` and, whenever a layer was configured and the
+    # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
+    # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
+    produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']

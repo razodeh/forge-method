@@ -569,6 +569,12 @@ function buildLeafNode(
     ...(agentStep?.perspectives === undefined || agentStep.perspectives.length === 0
       ? {}
       : { perspectives: agentStep.perspectives }),
+    // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P27: the workflow author's own `AgentStep.taint`,
+    // carried through verbatim -- present only when authored (`'taint' in node` stays `false`
+    // otherwise), matching `gateEvidence`/`interactionMode`/`perspectives` immediately above. No other
+    // step kind ever reaches here with one: `agentStep` is `undefined` for every other kind, and
+    // `workflowStepSchema`'s own per-kind schemas make `taint:` unauthorable on them in real YAML.
+    ...(agentStep?.taint === undefined ? {} : { taint: agentStep.taint }),
     run:
       step.kind === 'command'
         ? // A `command` step's `run` is shell text: every substituted value (a run input, a story or epic field, a

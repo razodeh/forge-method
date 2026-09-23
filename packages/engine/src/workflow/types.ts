@@ -85,6 +85,17 @@ export interface AgentStep extends WorkflowStepBase {
   /** `"escalate"` in the worked example; kept a plain string for the same reason `mode` is — the closed
    * set of valid failure dispositions is a later piece's own concern to define and enforce. */
   readonly onFailure?: string | undefined;
+  /** `20` §20.5 point 3 / `15` §15.5.4: the workflow author's own declaration that this step's context
+   * includes untrusted content — `'external'` is the only value either spec passage names, so a plain
+   * optional literal rather than a wider enum, matching `plan/types.ts`'s own `StepNode.taint`, the
+   * compiled field `compilePlan` copies this onto verbatim (`PLAN-M14.md` P27). `agent`-kind only: no
+   * other step kind's context is ever packed from KB/skill content at all (`assemble.ts`'s own
+   * `AgentContextPack`), so no other kind has anything for this to describe — `validateStructure`'s
+   * `taint-on-non-agent-step` check (`workflow/validate.ts`) refuses one declared anywhere else, and
+   * `workflowStepSchema`'s own per-kind `.strict()` schemas already make it unauthorable there in real
+   * YAML. `17` §17.2's own `adopt`/`migrate` steps that read an existing, FORGE-did-not-write codebase
+   * are the two shipped workflows that declare this today (`20` §20.5 point 6). */
+  readonly taint?: 'external' | undefined;
 }
 
 export interface CommandStep extends WorkflowStepBase {

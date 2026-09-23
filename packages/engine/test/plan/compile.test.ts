@@ -72,6 +72,41 @@ describe('compilePlan -- gateEvidence for block [7] (05 §5.3)', () => {
   });
 });
 
+describe('compilePlan -- StepNode.taint (PLAN-M14.md P27, 20 §20.5 point 3)', () => {
+  it("an agent step's authored taint: external compiles onto the node, id unchanged", () => {
+    const nodes = expectOk(
+      compilePlan(workflow([agentStep({ id: 'a', brief: 'briefs/a.md', taint: 'external' })]), {}),
+    );
+    const node = findNode(nodes, 'w:a');
+    expect(node.id).toBe(compileStepId('w', 'a'));
+    expect(node.taint).toBe('external');
+  });
+
+  it('an agent step that never declares taint compiles with no taint key at all', () => {
+    const nodes = expectOk(compilePlan(workflow([agentStep({ id: 'a' })]), {}));
+    expect('taint' in findNode(nodes, 'w:a')).toBe(false);
+  });
+
+  it("a fanout-expanded item carries its own template step's authored taint, per expanded id", () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          {
+            id: 'gen',
+            kind: 'fanout',
+            over: 'stage.stories',
+            itemKey: '{{item.id}}',
+            step: { kind: 'agent', agent: 'engineer', brief: 'briefs/x.md', taint: 'external' },
+          },
+        ]),
+        { stage: { stories: [{ id: 's1' }, { id: 's2' }] } },
+      ),
+    );
+    expect(findNode(nodes, 'w:gen:s1').taint).toBe('external');
+    expect(findNode(nodes, 'w:gen:s2').taint).toBe('external');
+  });
+});
+
 describe('compilePlan -- run inputs for block [4] (M13 P5)', () => {
   it("an agent step carries the run's values for the workflow's declared inputs, and a fanout child also its item", () => {
     const nodes = expectOk(

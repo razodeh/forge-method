@@ -24,6 +24,19 @@
  *   *signal* half (nothing produces that signal today). A gauntlet critic reviewing this piece read an
  *   earlier draft of this doc comment as implying S6 gate-approval is enforced in production today; it
  *   is not, and this paragraph exists specifically so a future reader does not make the same reading.
+ *   **Updated by `PLAN-M14.md` P27, which a later gauntlet critic caught this paragraph going stale
+ *   for:** "nothing... populates `taint` on any real `StepNode` yet" is no longer true in general —
+ *   `compilePlan` (`plan/compile.ts`) now copies an authored `AgentStep.taint` onto its compiled node
+ *   for real, and `restrictGrantForTaint` below (a different real consumer this same file documents,
+ *   not `assertGateApprovalAllowed`) fires for real on five real, shipped `StepNode`s (`adopt`'s
+ *   `reverse-derive-specs`/`gap-analysis`, `migrate`'s `plan-migration`/`expand`/`contract`) — see
+ *   `plan/types.ts`'s own `StepNode.taint` doc comment for the current, accurate picture. The
+ *   *gate-approval* claim immediately above specifically still holds, unchanged by P27: nothing in
+ *   this codebase propagates an upstream agent step's own taint onto a dependent `gate` step's own
+ *   compiled node (a `gate` step can never author `taint` itself, `workflow/schema.ts`), so
+ *   `assertGateApprovalAllowed` still only ever sees a real, non-`undefined` taint when a caller
+ *   constructs one by hand (a test, today) — this one surface's own "enforcement exists, the signal
+ *   does not" framing is still accurate.
  * - **A second, taint-blind path to `GateApproved` exists and is out of this piece's scope, disclosed
  *   rather than silently ignored**: `forge gate approve <id>` (`@forge/cli`'s own `packages/cli/src/
  *   commands/run/gate-commands.ts`, `gateApprove`) emits a real `GateApproved` event directly, with no

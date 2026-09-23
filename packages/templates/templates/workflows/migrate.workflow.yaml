@@ -23,6 +23,9 @@ steps:
         'docs/forge/kb/assumptions.md',
         'docs/forge/kb/data/migrations.yaml',
       ]
+    # This step's own inputs are the scanned codebase, not yet provenance-tracked KB entries (`20`
+    # §20.5 point 6, `SPEC-QUESTIONS.md` Q232 decision 15).
+    taint: external
 
   - id: expand
     kind: agent
@@ -32,6 +35,8 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
     produces: ['**', '!@protected']
+    # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external
 
   - id: migrate-data
     kind: command
@@ -46,6 +51,8 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The migration goal names no paths.
     produces: ['**', '!@protected']
+    # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external
 
   - id: verify-migration
     kind: command

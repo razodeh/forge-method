@@ -9,12 +9,13 @@
  * included (`SPEC-QUESTIONS.md` Q203 D8, Q215). Here the request the adapter actually receives is checked, through
  * the real dispatch paths and the fake adapter, against a control that is identical but untainted.
  */
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import type { SessionRequest, ToolGrant } from '@forge/adapter-kit';
+import { slugifyStepId } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
@@ -23,14 +24,47 @@ import { createVcsFacade } from '../../src/dispatch/facades.ts';
 import { resolveStepClaim } from '../../src/dispatch/outputs.ts';
 import type { LaneHandle } from '../../src/dispatch/types.ts';
 import { dispatchAgentStep } from '../../src/interaction/dispatch-agent-step.ts';
-import { toAgentId } from '../../src/plan/index.ts';
+import { compilePlan, toAgentId, type StepNode } from '../../src/plan/index.ts';
 import { restrictGrantForTaint } from '../../src/security/taint-guard.ts';
+import { parseWorkflow } from '../../src/workflow/index.ts';
 import {
   createFixtureAssembly,
   createTestContext,
   fixtureAgent,
   node,
 } from '../dispatch/helpers.ts';
+
+/** The real, shipped `adopt`/`migrate` workflows (`packages/templates/templates/workflows/`), read
+ * directly by path rather than through `@forge/templates`: `@forge/engine` has no dependency edge to
+ * that package, in `src/` or `test/` (`test/workflows.test.ts`'s own doc comment has the fuller
+ * boundary reasoning), so this reads the same real file that package ships by raw path instead —
+ * the identical pattern `run/budget-refusal.test.ts`'s own `RETRO_SOURCE` already establishes. */
+const REPO = path.resolve(import.meta.dirname, '../../../..');
+const ADOPT_SOURCE = await readFile(
+  path.join(REPO, 'packages/templates/templates/workflows/adopt.workflow.yaml'),
+  'utf8',
+);
+const MIGRATE_SOURCE = await readFile(
+  path.join(REPO, 'packages/templates/templates/workflows/migrate.workflow.yaml'),
+  'utf8',
+);
+
+/** The real, compiled `StepNode` for `stepId`, from the real shipped `source` text — `parseWorkflow`
+ * then `compilePlan`, the same real pipeline `forge run` itself goes through (`PLAN-M14.md` P27), not a
+ * hand-built `node()`. */
+function compiledStep(source: string, stepId: string): StepNode {
+  const parsed = parseWorkflow(source);
+  if (!parsed.success) {
+    throw new Error(`failed to parse: ${parsed.issues.map((issue) => issue.message).join('; ')}`);
+  }
+  const plan = compilePlan(parsed.workflow, {});
+  if (!plan.success) throw new Error(`failed to compile: ${JSON.stringify(plan.issues)}`);
+  const found = plan.nodes.find((candidate) => candidate.id === stepId);
+  if (found === undefined) {
+    throw new Error(`no compiled step "${stepId}"; got ${plan.nodes.map((n) => n.id).join(', ')}`);
+  }
+  return found;
+}
 
 async function repo(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), `forge-taint-${prefix}-`));
@@ -177,6 +211,95 @@ describe('an agent step marked taint: external, through the real dispatch path',
     const text = requests[0]?.systemPrompt.text ?? '';
     expect(text).not.toContain('git *');
     expect(text).not.toContain('ls*');
+  });
+});
+
+describe('the real, shipped adopt/migrate workflows, compiled and dispatched (PLAN-M14.md P27)', () => {
+  it('adopt:reverse-derive-specs, through executeStep: {read, write, exec: false, network: none}, externalContent: true, no test commands', async () => {
+    const stepNode = compiledStep(ADOPT_SOURCE, 'adopt:reverse-derive-specs');
+    expect(stepNode.taint).toBe('external');
+
+    const projectRoot = await repo('adopt-reverse-derive');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () =>
+          Promise.resolve(
+            fixtureAgent('architect', {
+              tools: {
+                read: true,
+                write: true,
+                exec: ['git *'],
+                network: true,
+                git_commit: 'lane',
+                deploy: false,
+              },
+            }),
+          ),
+      }),
+    });
+    // The eventual output check (a real ADR/DataModel pair) is not this test's concern -- the grant and
+    // `context.json` are both real before that check ever runs (`assemble.ts`'s own doc comment: "context.json
+    // is written first ... immediately before it hands the session to the adapter"), so `outcome.status` is
+    // deliberately not asserted here.
+    await executeStep(stepNode, ctx);
+
+    const grant = grantOf(requests, (id) => id === stepNode.id);
+    expect(grant).toEqual({ read: true, write: true, exec: false, network: 'none' });
+
+    const contextJson = JSON.parse(
+      await readFile(
+        path.join(
+          projectRoot,
+          '.forge',
+          'state',
+          'runs',
+          ctx.runId,
+          'steps',
+          slugifyStepId(stepNode.id),
+          'context.json',
+        ),
+        'utf8',
+      ),
+    ) as { externalContent: boolean; testCommands?: unknown };
+    expect(contextJson.externalContent).toBe(true);
+    expect('testCommands' in contextJson).toBe(false);
+  });
+
+  it('migrate:expand (backend, real exec: ["git *"]) has exec: false once compiled and dispatched for real', async () => {
+    const stepNode = compiledStep(MIGRATE_SOURCE, 'migrate:expand');
+    expect(stepNode.taint).toBe('external');
+
+    const projectRoot = await repo('migrate-expand');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () =>
+          Promise.resolve(
+            fixtureAgent('backend', {
+              tools: {
+                read: true,
+                write: true,
+                exec: ['git *'],
+                network: true,
+                git_commit: 'lane',
+                deploy: false,
+              },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(stepNode, ctx);
+    // No claim was written outside `produces: ['**', '!@protected']`, and nothing was written at all --
+    // this step genuinely succeeds too, not only the grant restriction.
+    expect(outcome.status).toBe('succeeded');
+
+    const grant = grantOf(requests, (id) => id === stepNode.id);
+    expect(grant).toEqual({ read: true, write: true, exec: false, network: 'none' });
   });
 });
 

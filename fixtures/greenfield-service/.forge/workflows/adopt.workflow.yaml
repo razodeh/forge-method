@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=8c8a73c756d125280ae411253809b901c6015e473f1e73fc2df0834a8942cc0a — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8537edceb7027f48f2a55311b9a1bb655a155014dcaebb52fc189a6a9f9a59f5 — edits will be overwritten; use overrides/
 id: adopt
 name: Adopt (Brownfield Ingestion)
 version: 1.0.0
@@ -8,6 +8,9 @@ steps:
   - id: inventory-codebase
     kind: command
     run: 'forge adopt inventory --json'
+    # `forge adopt inventory` writes the INVENTORY phase's own report (`packages/cli/src/commands/adopt.ts`
+    # `writeInventoryReport`), the one tracked file this step's lane produces (`PLAN-M14.md` P2).
+    produces: ['reports/adoption/inventory.json']
 
   - id: reverse-derive-specs
     kind: agent
@@ -17,6 +20,9 @@ steps:
     outputs: [{ type: ADR, cardinality: many }, { type: DataModel }]
     # "Anything you cannot evidence is an explicit open question" (Q216).
     produces: ['docs/forge/kb/open-questions.md']
+    # This step's own context is an existing codebase FORGE did not write (17 §17.2's CARTOGRAPHY
+    # phase); `20` §20.5 point 6 and `SPEC-QUESTIONS.md` Q232 decision 15 taint it.
+    taint: external
 
   - id: gap-analysis
     kind: agent
@@ -24,3 +30,6 @@ steps:
     brief: briefs/adoption-gap-analysis.md
     dependsOn: [reverse-derive-specs]
     outputs: [{ type: HandoffRecord, subtype: adoption-gap-analysis }]
+    # Same reason as reverse-derive-specs above: reads the scanned codebase (20 §20.5 point 6,
+    # SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external

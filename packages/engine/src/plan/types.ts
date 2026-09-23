@@ -196,17 +196,32 @@ export interface StepNode {
   readonly when?: string | undefined;
   /** `20` §20.5 point 3 / `15` §15.5.4: set when this step's own context includes untrusted content
    * (`@forge/agents`'s own `markExternalContent`) — `'external'` is the only value either of those
-   * describes, so a plain optional literal rather than a wider enum. Additive: no compiler in this
-   * package sets it yet (a step's own taint is a runtime fact about what context it was actually built
-   * with, not something `compilePlan` can determine from authored workflow YAML alone), so every
-   * existing `StepNode` construction is unaffected and this defaults to `undefined` (not tainted)
-   * everywhere it is not explicitly set. **This means every real, compiled `StepNode` in this codebase
-   * has `taint: undefined` today** — `markExternalContent` itself has zero production callers
-   * (confirmed by grep) — so `runGateStep`'s own real consumption of this field
-   * (`@forge/engine/security`'s own `assertGateApprovalAllowed`) is a real, correct, always-on check
-   * that simply never yet has a real tainted step to refuse. See `taint-guard.ts`'s own doc comment for
-   * why this is disclosed as "the enforcement exists, the signal does not yet," not "S6 gate approval is
-   * enforced in production today." */
+   * describes, so a plain optional literal rather than a wider enum.
+   *
+   * **`'agent'`-kind nodes only, copied straight off the authored `AgentStep.taint`
+   * (`PLAN-M14.md` P27).** `compilePlan` (`compile.ts`'s `buildLeafNode`) sets this exactly when the
+   * workflow author wrote `taint: external` on that step (`workflow/schema.ts`'s `agentStepSchema`
+   * accepts only that one literal; `workflow/validate.ts`'s `checkTaintOnlyOnAgentSteps` refuses it
+   * anywhere else, even on a hand-built `Workflow` object bypassing `parseWorkflow`) — every other
+   * `StepNode` kind's `taint` stays `undefined`, and an `agent` step that never declared it compiles
+   * with no `taint` key at all, the same "present only when non-empty" shape `gateEvidence`/
+   * `interactionMode` already use. `adopt`'s `reverse-derive-specs`/`gap-analysis` and `migrate`'s
+   * `plan-migration`/`expand`/`contract` (`17` §17.2, `20` §20.5 point 6, `SPEC-QUESTIONS.md` Q232
+   * decision 15) are the two shipped workflows, and the exactly five steps
+   * (`test/tainted-steps.test.ts`), that declare it today.
+   *
+   * This is still only *one* of the two taint sources `20` §20.5 point 3 describes, not the whole
+   * signal: `PLAN-M14.md` P30 (depends on this piece) additionally taints a step whose own declared
+   * `inputs:` names an `mcp:`/`fetch:` reference or a KB entry carrying `external` provenance — a fact
+   * `compilePlan` cannot read off `AgentStep.taint` alone, since it depends on what a *run* actually
+   * resolves an input to, not merely what the workflow author wrote on the step itself.
+   * `markExternalContent` itself still has zero production callers (confirmed by grep, unchanged by
+   * this piece): every real tainted `StepNode` in this codebase today is *authored*, not
+   * runtime-detected from actually-packed content. The existing consumers of this field
+   * (`restrictGrantForTaint`, `assertGateApprovalAllowed`, `context.json`'s `externalContent`) were
+   * already real and already wired before this piece — see `taint-guard.ts`'s own doc comment — this
+   * piece is what finally gives them a real, compiled step to fire on (`adopt`/`migrate`'s own compiled
+   * plans), not only a hand-built `StepNode` in a test. */
   readonly taint?: 'external' | undefined;
 }
 

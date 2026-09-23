@@ -203,6 +203,43 @@ describe('workflowValidateAll', () => {
     // Every other real workflow was still checked too.
     expect(results.size).toBeGreaterThan(1);
   });
+
+  // `PLAN-M14.md` P27: `adopt`/`migrate`'s five real agent steps now author `taint: external` --
+  // `validate --all` against the real, shipped roster must accept it (no `taint-on-non-agent-step`, no
+  // schema-shape issue at all), not merely tolerate it by accident.
+  it('accepts the real, shipped adopt/migrate workflows -- their taint: external steps are clean', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-workflow-taint-'));
+    initDirs.push(dir);
+    await runInit(
+      dir,
+      { name: 'P27 real roster', yes: true, level: 'L0' },
+      { candidateAdapters: [new FakePlatformAdapter()], env: {}, modulesDir: REAL_MODULES_DIR },
+    );
+    const paths = new ProjectPaths(dir);
+    const ctx = {
+      paths,
+      workflowsRoot: '.forge/workflows',
+      agentsRoot: '.forge/agents',
+      checksRoot: '.forge/checks',
+    };
+
+    const adopt = await workflowShow(ctx, 'adopt');
+    const taintedAdoptSteps = adopt.steps.filter(
+      (step) => step.kind === 'agent' && step.taint === 'external',
+    );
+    expect(taintedAdoptSteps.map((step) => step.id).sort()).toEqual([
+      'gap-analysis',
+      'reverse-derive-specs',
+    ]);
+
+    const results = await workflowValidateAll(ctx);
+    expect(results.get('adopt')).toEqual([]);
+    expect(results.get('migrate')).toEqual([]);
+    // No OTHER real, shipped workflow reports a taint-related finding either.
+    for (const issues of results.values()) {
+      expect(issues.filter((issue) => issue.code === 'taint-on-non-agent-step')).toEqual([]);
+    }
+  });
 });
 
 // `06` §6.7's "an empty claim means no write," surfaced at validate time (`SPEC-QUESTIONS.md`

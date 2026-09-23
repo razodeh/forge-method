@@ -19,6 +19,9 @@ steps:
     outputs: [{ type: ADR, cardinality: many }, { type: DataModel }]
     # "Anything you cannot evidence is an explicit open question" (Q216).
     produces: ['docs/forge/kb/open-questions.md']
+    # This step's own context is an existing codebase FORGE did not write (17 §17.2's CARTOGRAPHY
+    # phase); `20` §20.5 point 6 and `SPEC-QUESTIONS.md` Q232 decision 15 taint it.
+    taint: external
 
   - id: gap-analysis
     kind: agent
@@ -26,3 +29,6 @@ steps:
     brief: briefs/adoption-gap-analysis.md
     dependsOn: [reverse-derive-specs]
     outputs: [{ type: HandoffRecord, subtype: adoption-gap-analysis }]
+    # Same reason as reverse-derive-specs above: reads the scanned codebase (20 §20.5 point 6,
+    # SPEC-QUESTIONS.md Q232 decision 15).
+    taint: external

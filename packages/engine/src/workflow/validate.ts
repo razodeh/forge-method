@@ -360,6 +360,32 @@ function checkProducesGlobs(steps: readonly WorkflowStep[]): readonly Validation
   return issues;
 }
 
+/** `AgentStep.taint` (`workflow/types.ts`) is the only step-kind shape carrying a `taint` field at all
+ * (`PLAN-M14.md` P27, `20` §20.5 point 3): real YAML authoring `taint:` on any other kind already fails
+ * `workflowStepSchema`'s own per-kind `.strict()` object before ever reaching this function
+ * (`parseWorkflow` reports it as an unrecognised key, a schema error). This is defense in depth for the
+ * *other* real path into `validateStructure` this file's own top-of-file doc comment already names — a
+ * `Workflow` object built by hand, bypassing `parseWorkflow`'s own YAML entry point entirely (a test,
+ * or any future caller that assembles one programmatically). Read structurally rather than through
+ * `WorkflowStep`'s own type on purpose: that type correctly has no `taint` on any kind but `AgentStep`,
+ * so a non-agent step actually carrying one at runtime is only reachable this way, never through the
+ * type checker, and a plain `step.taint` access on the union would not compile. */
+function checkTaintOnlyOnAgentSteps(steps: readonly WorkflowStep[]): readonly ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const step of steps) {
+    if (step.kind === 'agent') continue;
+    const taint = (step as { readonly taint?: unknown }).taint;
+    if (taint === undefined) continue;
+    issues.push({
+      code: 'taint-on-non-agent-step',
+      severity: 'error',
+      message: `Step "${step.id ?? '(unidentified)'}" (kind "${step.kind}") declares "taint", which only an agent step may carry (20 §20.5 point 3).`,
+      ...(step.id === undefined ? {} : { stepId: step.id }),
+    });
+  }
+  return issues;
+}
+
 /** `10` §10.1's own "Validation" subsection: unique step ids; no dependency cycles; `produces` globs
  * well-formed. "Fanout `over` resolves against a schema, not executed" is deliberately not a fourth
  * check here — `schema.ts`'s own `nonBlank()` constraint on `FanoutStep.over` already guarantees this
@@ -375,6 +401,7 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
     ...checkNoCycles(addressable),
     ...checkProducesGlobs(allSteps),
     ...checkUniqueElicitQuestions(allSteps),
+    ...checkTaintOnlyOnAgentSteps(allSteps),
     ...(addressableExceeded || allExceeded ? [excessiveDepthIssue('excessive-nesting-depth')] : []),
   ];
 }

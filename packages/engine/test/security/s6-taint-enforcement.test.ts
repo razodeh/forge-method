@@ -64,11 +64,13 @@ import { readEvents } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
+import { compilePlan } from '../../src/plan/index.ts';
 import {
   assertGateApprovalAllowed,
   assertGrantEscalationAllowed,
   assertProductionTargetAllowed,
 } from '../../src/security/taint-guard.ts';
+import { parseWorkflow } from '../../src/workflow/index.ts';
 import type { GateDefinition } from '../../src/gates/index.ts';
 import { createTestContext, node } from '../dispatch/helpers.ts';
 
@@ -169,6 +171,58 @@ describe('S6 surface 1 of 3: gate approval', () => {
 
     expect(outcome.status).toBe('failed');
     expect(outcome.failure?.message).toContain('tainted');
+  });
+
+  it('a REAL compiled plan (parseWorkflow + compilePlan, PLAN-M14.md P27, not a hand-built node()) is refused gate approval', async () => {
+    // The agent step's own `taint: external` is authored, real, and copied onto its compiled node by
+    // the real `compilePlan` pipeline this piece (P27) wires up -- asserted below before anything else,
+    // so the refusal that follows is provably attributable to a REAL compiled signal, not a fabricated
+    // one. Nothing in this codebase (P27 included -- out of its own scope, disclosed in
+    // `plan/types.ts`'s own `StepNode.taint` doc comment) propagates that taint onto a dependent GATE
+    // step's own compiled node: `runGateStep` only ever reads a gate node's OWN `taint`, which a `gate`
+    // step can never author (`workflow/schema.ts`, `workflow/validate.ts`'s `taint-on-non-agent-step`).
+    // So the gate node below is taken from this SAME real compile (real retry policy, limits,
+    // `dependsOn`, idempotency key -- not the bare `node()` test fixture every other test in this file
+    // uses) with `taint: 'external'` merged in by hand, standing in for that undone propagation, to
+    // prove S6's real enforcement (`runGateStep` -> `assertGateApprovalAllowed`) still refuses the
+    // REAL compiler's own output shape once a real signal reaches it -- not only a synthetic fixture.
+    const source = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: reads-codebase
+    kind: agent
+    agent: architect
+    taint: external
+  - id: approve
+    kind: gate
+    gate: G-Test
+    dependsOn: [reads-codebase]
+`;
+    const parsed = parseWorkflow(source);
+    if (!parsed.success) throw new Error(`failed to parse: ${JSON.stringify(parsed.issues)}`);
+    const plan = compilePlan(parsed.workflow, {});
+    if (!plan.success) throw new Error(`failed to compile: ${JSON.stringify(plan.issues)}`);
+    const agentNode = plan.nodes.find((candidate) => candidate.id === 'w:reads-codebase');
+    const gateNode = plan.nodes.find((candidate) => candidate.id === 'w:approve');
+    expect(agentNode?.taint).toBe('external');
+    expect(gateNode?.taint).toBeUndefined();
+    if (gateNode === undefined) throw new Error('no compiled gate node');
+
+    const projectRoot = await tempRepo('gate-real-compile');
+    const gateRegistry = new Map([['G-Test', alwaysPassingGate('G-Test')]]);
+    const ctx = createTestContext({ projectRoot, gateRegistry, runId: 'run-s6-real-compile' });
+
+    const outcome = await executeStep({ ...gateNode, taint: 'external' }, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.source).toBe('gate');
+    expect(outcome.failure?.message).toContain('tainted');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-s6-real-compile')) events.push(event);
+    expect(events.some((event) => event.type === 'GateApproved')).toBe(false);
   });
 });
 

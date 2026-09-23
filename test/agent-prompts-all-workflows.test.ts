@@ -548,8 +548,19 @@ async function readRawAgent(agentId: string): Promise<RawAgent> {
 
 /** The grant a session must carry, derived by hand from the agent file: with no overlay and no escalation
  * (this project has neither) `resolveStepToolGrant` returns the agent's own `tools` verbatim, network
- * `false` meaning `none`. Deliberately not computed by calling the resolver. */
-function expectedGrant(raw: RawAgent): {
+ * `false` meaning `none`. Deliberately not computed by calling the resolver.
+ *
+ * `tainted` (`PLAN-M14.md` P27, `20` §20.5 points 3/4): a tainted step's grant unconditionally loses
+ * `exec` and any host-qualified `network`, independent of what the agent itself declares
+ * (`restrictGrantForTaint`) -- hand-derived here too, the identical "never call the resolver" discipline
+ * this function already follows, not a call into `security/taint-guard.ts`. `write` is left as the
+ * agent declares it: every real tainted step among the shipped workflows today (`adopt`/`migrate`'s
+ * five) declares a real claim (`produces` or `outputs`), so this helper does not attempt the general
+ * `mayWrite` computation `resolveStepClaim` makes, only the two unconditional taint drops. */
+function expectedGrant(
+  raw: RawAgent,
+  tainted = false,
+): {
   read: boolean;
   write: boolean;
   exec: readonly string[] | false;
@@ -562,6 +573,8 @@ function expectedGrant(raw: RawAgent): {
       : raw.tools.network === true
         ? 'allowlist'
         : raw.tools.network;
+  if (tainted)
+    return { read: raw.tools.read, write: raw.tools.write, exec: false, network: 'none' };
   return { read: raw.tools.read, write: raw.tools.write, exec, network };
 }
 
@@ -893,7 +906,7 @@ async function checkAgentStep(
     const agent = await assembly.loadAgent(String(node.agent));
     if (agent.id !== String(node.agent)) problems.push(`${where}: resolved agent id "${agent.id}"`);
     const raw = await readRawAgent(agent.id);
-    const want = expectedGrant(raw);
+    const want = expectedGrant(raw, node.taint === 'external');
     const got = request.tools;
     if (
       got.read !== want.read ||
@@ -1053,7 +1066,7 @@ async function checkAgentStep(
       `${where}: block [7] does not list the checks of gates ${JSON.stringify(gateIds)} (or the explicit "none declared")`,
     );
   }
-  const want = expectedGrant(raw);
+  const want = expectedGrant(raw, node.taint === 'external');
   const constraints = blocks.get(6) ?? '';
   if (!constraints.includes(`- network: ${want.network}`)) {
     problems.push(`${where}: block [6] does not state network: ${want.network}`);

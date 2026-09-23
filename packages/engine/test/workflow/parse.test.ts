@@ -511,3 +511,74 @@ steps:
     expect(result.success).toBe(false);
   });
 });
+
+describe('parseWorkflow — AgentStep.taint (PLAN-M14.md P27, 20 §20.5 point 3)', () => {
+  it('accepts "taint: external" on an agent step, carried onto the parsed step', () => {
+    const text = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: a
+    kind: agent
+    agent: architect
+    taint: external
+`;
+    const result = parseWorkflow(text);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.workflow.steps[0]).toMatchObject({ kind: 'agent', taint: 'external' });
+  });
+
+  it('an agent step that never declares taint parses with no taint key at all', () => {
+    const text = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: a
+    kind: agent
+    agent: architect
+`;
+    const result = parseWorkflow(text);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const step = result.workflow.steps[0];
+    if (step === undefined) throw new Error('expected a parsed step');
+    expect('taint' in step).toBe(false);
+  });
+
+  it('rejects "taint: internal" -- "external" is the only literal the schema accepts (a schema error)', () => {
+    const text = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: a
+    kind: agent
+    agent: architect
+    taint: internal
+`;
+    const result = parseWorkflow(text);
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects "taint" on a command step (.strict()) -- only AgentStep carries the field at all', () => {
+    const text = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: a
+    kind: command
+    run: echo hi
+    taint: external
+`;
+    const result = parseWorkflow(text);
+    expect(result.success).toBe(false);
+  });
+});

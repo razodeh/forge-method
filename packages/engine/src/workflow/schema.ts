@@ -93,6 +93,11 @@ const agentStepSchema = z
     limits: stepLimitsSchema.optional(),
     retry: retryPolicySchema.optional(),
     onFailure: nonBlank().optional(),
+    // `20` §20.5 point 3 / `15` §15.5.4: the only value either spec passage names (`types.ts`'s own
+    // `AgentStep.taint` doc comment); `'external'` is the sole literal accepted, not any non-blank
+    // string, so an author's typo (`taint: External`) is a real, located schema error, not a silently
+    // accepted no-op (`PLAN-M14.md` P27).
+    taint: z.literal('external').optional(),
   })
   .strict();
 

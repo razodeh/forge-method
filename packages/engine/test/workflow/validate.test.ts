@@ -486,6 +486,58 @@ describe('validateStructure', () => {
     });
   });
 
+  // `PLAN-M14.md` P27: `AgentStep.taint` (`workflow/types.ts`) is the only step shape carrying a
+  // `taint` field at all -- real YAML authoring one on another kind already fails `workflowStepSchema`
+  // (a schema error, `parse.test.ts`), so this is defense in depth for a hand-built `Workflow` object
+  // that bypasses `parseWorkflow` entirely, the same real second path this file's own top-of-file doc
+  // comment already documents for every other check here.
+  describe('taint only on agent steps (20 §20.5 point 3)', () => {
+    it('reports a command step carrying "taint" -- unreachable through real YAML, but not through a hand-built Workflow', () => {
+      const wf = workflow([
+        { id: 'a', kind: 'command', run: 'echo hi', taint: 'external' } as unknown as WorkflowStep,
+      ]);
+
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'taint-on-non-agent-step', stepId: 'a' }),
+      );
+    });
+
+    it('does not report an agent step -- the one kind that legitimately carries it', () => {
+      const wf = workflow([{ id: 'a', kind: 'agent', agent: 'architect', taint: 'external' }]);
+
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'taint-on-non-agent-step'),
+      ).toEqual([]);
+    });
+
+    it('does not report any step with no taint field at all', () => {
+      const wf = workflow([
+        { id: 'a', kind: 'agent', agent: 'architect' },
+        { id: 'b', kind: 'command', run: 'echo hi' },
+        { id: 'c', kind: 'gate', gate: 'G-Always' },
+      ]);
+
+      expect(
+        validateStructure(wf).filter((issue) => issue.code === 'taint-on-non-agent-step'),
+      ).toEqual([]);
+    });
+
+    it('checks a step nested inside a fanout child too', () => {
+      const wf = workflow([
+        {
+          id: 'a',
+          kind: 'fanout',
+          over: 'stage.stories',
+          step: { kind: 'gate', gate: 'G-Always', taint: 'external' } as unknown as WorkflowStep,
+        },
+      ]);
+
+      expect(validateStructure(wf)).toContainEqual(
+        expect.objectContaining({ code: 'taint-on-non-agent-step' }),
+      );
+    });
+  });
+
   describe('excessive nesting depth', () => {
     it('reports one excessive-nesting-depth issue, rather than crashing, for an extremely deeply nested sequence of single-child parallel groups', () => {
       const NESTING_DEPTH = 3000;
