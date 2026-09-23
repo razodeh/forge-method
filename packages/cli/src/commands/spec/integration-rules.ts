@@ -382,7 +382,10 @@ const migrationsSchema = migrationsObjectSchema.refine(
 
 /** Every key a `migrations.yaml` declaration may carry, derived from the schema itself (see
  * `VERSION_SKEW_KEYS`). */
-export const MIGRATION_KEYS: readonly string[] = uniqueKeys(migrationsObjectSchema, migrationSchema);
+export const MIGRATION_KEYS: readonly string[] = uniqueKeys(
+  migrationsObjectSchema,
+  migrationSchema,
+);
 
 const REMEDY_MIGRATIONS_FILE =
   'a YAML mapping with migrations: a list in apply order of {id, phase (expand|migrate|contract), release, after?, expands?}; "migrations: []" with a none_reason sentence declares that there are none.';

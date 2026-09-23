@@ -591,7 +591,12 @@ steps:
     };
   }
 
-  async function runReal(workflowId: string, project: RunTestProject, adapter: FakePlatformAdapter, runId: string) {
+  async function runReal(
+    workflowId: string,
+    project: RunTestProject,
+    adapter: FakePlatformAdapter,
+    runId: string,
+  ) {
     const result = await runWorkflow(testRunDeps(project, adapter), {
       workflowId,
       expressionContext: fixtureExpressionContext(),
@@ -630,7 +635,12 @@ steps:
         },
       ],
     });
-    const { result, events } = await runReal(FREEZE_WORKFLOW_ID, project, adapter, 'run-p21-freeze-ok');
+    const { result, events } = await runReal(
+      FREEZE_WORKFLOW_ID,
+      project,
+      adapter,
+      'run-p21-freeze-ok',
+    );
     expect(result.runState.runStatus).toBe('completed');
     expect(typesFor(events, FREEZE_STEP_ID)).toContain('StepSucceeded');
     expect(typesFor(events, FREEZE_GATE_STEP_ID)).toContain('GateApproved');
@@ -643,7 +653,10 @@ steps:
     adapter.script(() => true, {
       text: ['wrote the initial migrations declaration'],
       writeFiles: [
-        { relativePath: MIGRATIONS_PATH, content: 'migrations: []\nnone_reason: none planned yet\n' },
+        {
+          relativePath: MIGRATIONS_PATH,
+          content: 'migrations: []\nnone_reason: none planned yet\n',
+        },
       ],
     });
     const { result, events } = await runReal(

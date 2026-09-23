@@ -98,7 +98,10 @@ describe('the four steps claim the declaration file their own brief tells them t
   });
 
   it('migrate:plan-migration claims migrations.yaml', async () => {
-    const produces = await stepProduces(path.join(workflowsDir, 'migrate.workflow.yaml'), 'plan-migration');
+    const produces = await stepProduces(
+      path.join(workflowsDir, 'migrate.workflow.yaml'),
+      'plan-migration',
+    );
     expect(produces).toContain(MIGRATIONS_PATH);
   });
 });
@@ -140,13 +143,17 @@ describe('for each file, at least one brief names every key the real schema expo
     // guard: a helper that silently returned nothing would make the assertion below vacuous).
     expect(VERSION_SKEW_KEYS.length).toBeGreaterThanOrEqual(9);
     const texts = await Promise.all(['freeze-contracts', 'draft-contract'].map(brief));
-    expect(texts.some((text) => namesPathAndEveryKey(text, SKEW_PATH, VERSION_SKEW_KEYS))).toBe(true);
+    expect(texts.some((text) => namesPathAndEveryKey(text, SKEW_PATH, VERSION_SKEW_KEYS))).toBe(
+      true,
+    );
   });
 
   it('at least one of model-data.md/plan-migration.md names every MIGRATION_KEYS key', async () => {
     expect(MIGRATION_KEYS.length).toBeGreaterThanOrEqual(7);
     const texts = await Promise.all(['model-data', 'plan-migration'].map(brief));
-    expect(texts.some((text) => namesPathAndEveryKey(text, MIGRATIONS_PATH, MIGRATION_KEYS))).toBe(true);
+    expect(texts.some((text) => namesPathAndEveryKey(text, MIGRATIONS_PATH, MIGRATION_KEYS))).toBe(
+      true,
+    );
   });
 
   it('freeze-contracts.md says every contract is declared', async () => {
@@ -191,7 +198,10 @@ async function fixtureProject(): Promise<FixtureProject> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-gate-declarations-'));
   cleanupDirs.push(dir);
   await mkdir(path.join(dir, KB_ROOT), { recursive: true });
-  return { dir, ctx: { paths: new ProjectPaths(dir), specsRoot: 'docs/forge/specs', kbRoot: KB_ROOT } };
+  return {
+    dir,
+    ctx: { paths: new ProjectPaths(dir), specsRoot: 'docs/forge/specs', kbRoot: KB_ROOT },
+  };
 }
 
 async function put(project: FixtureProject, relative: string, text: string): Promise<void> {
@@ -249,7 +259,9 @@ describe('the embedded declaration samples round-trip through the real rule func
     await put(bad, SKEW_PATH, misspelled);
     const violations = await validateVersionSkew(bad.ctx);
     expect(violations.violations.length).toBeGreaterThan(0);
-    expect(violations.violations.map((violation) => violation.message).join(' ')).toContain('max_skew');
+    expect(violations.violations.map((violation) => violation.message).join(' ')).toContain(
+      'max_skew',
+    );
   });
 
   it('model-data.md’s migrations.yaml sample passes migration-order-violations with errors: 0, and a misspelled key fails naming it', async () => {

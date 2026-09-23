@@ -38,8 +38,8 @@ the YAML record carry the id, title and a reference to it. The contract states:
 
 ### Declarations the gate reads
 
-Write or update `docs/forge/kb/architecture/version-skew.yaml` so this contract's id is declared there
-too, alongside every other id already declared. `G-Integration`'s `version:skew` check
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so this contract's id is declared
+there too, alongside every other id already declared. `G-Integration`'s `version:skew` check
 (`forge spec validate --rule version-skew`) reads that file, not this contract. Add or update this
 id's entry under `contracts`: `current` (this contract's version) and one `consumers` entry per
 consumer this run adds or moves, `{name, version}`. Only raise `policy.max_skew` when the versioning
