@@ -191,7 +191,16 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
   // start with `!` and so is correctly read as an allowed path, not an exclusion -- and only the text
   // actually shown to the agent is unescaped, after classification, never before it (a fresh critic
   // round: unescaping first showed the agent a path containing a literal backslash that does not exist
-  // on disk, and briefly also misclassified an allowed `!`-rooted path as a refusal).
+  // on disk, and briefly also misclassified an allowed `!`-rooted path as a refusal). Blanket, not
+  // scoped to only the root's own escaping: a second, independent critic round found this can also strip
+  // a workflow author's OWN backslash escape written elsewhere in the same produces entry (minimatch's
+  // own escape syntax, e.g. `notes\*.md` meaning the literal filename `notes*.md`), showing it as if it
+  // were a live wildcard while the real claim still matches only the literal name. No shipped brief does
+  // this (confirmed: `test/write-implies-claim.test.ts`'s identity check covers every real produces
+  // entry), enforcement and skill matching are both unaffected (only this display text is wrong), and a
+  // precise fix needs `resolveProduces` to return which prefix of the string is its own escaping rather
+  // than a flat string a display step can no longer tell apart from the author's -- left open rather than
+  // guessed at here.
   const unescapeMatcher = (value: string): string => value.replace(/\\(.)/g, '$1');
   const paths = (
     globs: readonly string[],

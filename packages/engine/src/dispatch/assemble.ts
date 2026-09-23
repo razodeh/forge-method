@@ -544,14 +544,18 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
   // Computed once and reused everywhere this assembly needs the project's configured docs roots (the claim,
   // and below, the RESOLVED `produces` block [5] and the skill filter see, `PLAN-M14.md` P6).
   const docRoots = docRootsOf(ctx);
-  // Computed once (a fresh critic round caught an earlier doc comment overclaiming this when it was really
-  // called twice) and reused for both consumers below: the matcher-escaped form both need. The skill filter
-  // (`pack-for-step.ts`'s `matchesStepFileClaim`) uses a produces entry as a minimatch PATTERN in its own
-  // reversed comparison, where an unescaped leading `!` would be misread as negation. Block [5]
-  // (`compile-prompt.ts`'s `renderOutputContractBlock`) ALSO needs the escaped form to correctly classify
-  // an entry as allowed vs. refused (`paths()`'s own `startsWith('!')` check, which must see a produces-DSL
-  // exclusion's real `!`, not a coincidental one from a configured root that itself starts with `!`) --
-  // it unescapes for DISPLAY only, after that classification, never before.
+  // Computed once here and reused for both of ITS OWN two consumers below (a round-2 critic caught the
+  // first version of this comment overclaiming "computed once" full stop: `resolveStepClaim`, right below,
+  // calls `resolveProduces` again on its own -- a second, independent call with identical arguments, since
+  // the real enforcement claim and this assembly's own display/filter values are built on two separate
+  // paths through the same pure function; no drift risk, since both calls always agree, but "once" was not
+  // literally true). Both of ITS consumers need the matcher-escaped form. The skill filter (`pack-for-
+  // step.ts`'s `matchesStepFileClaim`) uses a produces entry as a minimatch PATTERN in its own reversed
+  // comparison, where an unescaped leading `!` would be misread as negation. Block [5] (`compile-prompt.ts`'s
+  // `renderOutputContractBlock`) ALSO needs the escaped form to correctly classify an entry as allowed vs.
+  // refused (`paths()`'s own `startsWith('!')` check, which must see a produces-DSL exclusion's real `!`,
+  // not a coincidental one from a configured root that itself starts with `!`) -- it unescapes for DISPLAY
+  // only, after that classification, never before.
   const resolvedProduces = resolveProduces(node.produces, docRoots);
   const claim = resolveStepClaim(node, docRoots, ctx.claimPolicy);
   const mayWrite = input.callerConfinesWrites === true || claim.globs.length > 0;
