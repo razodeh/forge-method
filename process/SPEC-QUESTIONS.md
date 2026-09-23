@@ -21279,3 +21279,160 @@ gates/{waiver,index}.ts`, `packages/engine/test/gates/waiver.test.ts`, `packages
 run/gate-commands.ts`, `packages/cli/src/commands/config.ts`, `packages/cli/src/bin.ts`,
 `packages/cli/test/commands/run/gate-commands.test.ts`, `packages/cli/test/commands/config.test.ts`,
 `packages/cli/test/bin.test.ts`, `packages/core/src/errors/codes.ts`, `packages/core/test/errors.test.ts`.
+
+## Q248 — M14 P11: declared KB outputs carry `sources`; a register entry may be deprecated, never removed — a three-round critic loop found one real minor scoping-precision fix in round 1, one real wording fix in round 2, and one real moderate prompt-accuracy fix (plus two trivial wording nitpicks) in round 3, no blocking or major findings in any round
+
+**Context.** `PLAN-M14.md` P11, depending on P1 (already landed: `02` §2.5 / `08` §8.6's declared-output
+exception text), P8 and P10 (already landed: the reservation and id-range halves of the declared-KB-
+output machinery). `08` §8.6's `KbWriter` invariants ("every write records `sources`," "never reused
+[or removed]... deleted entries become `deprecated`") bind a `KbWriter` write directly; before this
+piece nothing bound them to a *declared* KB output's own file write, the path `08` §8.6's own closing
+paragraph says is "checked to the same rules by the output contract... instead."
+
+**Built.** `artifactSourceSchema` (new `packages/schemas/src/artifacts/source.ts`) is the shape of
+`@forge/kb`'s former private `kbEntrySourceSchema` (`kind`/`ref`), moved into `@forge/schemas` so
+`kbEntrySchema` (still `sources: min(1)`, unchanged) and the six KB-located registry schemas (`ADR`,
+`Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`) share one real schema instead of two
+independently typed copies; `@forge/kb/schema` re-exports it. Each of the six gains an OPTIONAL
+`sources` field (schema-optional by design — `forge spec validate`/`forge kb lint` stay unchanged for
+hand-written artifacts, the Mandate's own "must not change... existing projects' validity"); their six
+templates gain `sources: []`, landed in the same commit as the schema change.
+
+`outputs.ts`'s `validateFile` gains two invariants, scoped to exactly the six KB-located types
+(`definition.pathTemplate.startsWith('kb/')` for the two per-file types ADR/Runbook; `register !==
+undefined && definition.pathTemplate.startsWith('kb/')` for the four register types, after round 1's
+fix — see below): (1) **sources** — every produced KB document, and every new-or-changed register
+entry, must carry at least one `sources` item; an untouched sibling entry is not the session's problem;
+(2) **retained, never removed** — every register entry id present at the base revision must still be
+present at HEAD, checked against the full current entry set (not the diff), so an untouched entry still
+counts as retained; an entry may gain a status change (ADR/Runbook already have one; OpenQuestion's own
+`resolved`) without ever disappearing from its file.
+
+Block [5] (`compile-prompt.ts`) states both rules in one fixed line, appended once whenever the step
+declares at least one KB-located output — `isKbLocatedOutput` reuses the identical `pathTemplate`-
+starts-with-`kb/` predicate `outputs.ts` uses, so the prompt's claim cannot drift from what the check
+enforces. `test/agent-prompts-all-workflows.test.ts`'s own block-[5] structural parser (pre-existing,
+not part of this piece) needed one addition — excluding the new fixed line from its per-output-type
+extraction, since it is a file-set-wide note, not a per-type line.
+
+`specs/06` §6.4 rule 1 gains one cross-reference sentence (the piece's own authorised spec edit, "adds
+the `06` §6.4 rule 1 cross-reference only"): a declared KB output's write is still bound by `08` §8.6's
+`KbWriter` invariants, checked by the output contract instead of by `KbWriter` itself.
+
+Every shared KB-located test fixture builder (`artifact-fixtures.ts`, and its two necessary same-shape
+duplicates — `agent.test.ts`/`orchestrate.test.ts`'s own `validAdrDocument`, and `cli/kb-output-
+ids.test.ts`'s own `adrText`, each already duplicated pre-P11 for real package-boundary reasons, not by
+this piece) now defaults to a real, non-empty `sources` entry, so every pre-existing "this should pass"
+test keeps passing unmodified; a test that wants the P11 failure passes `[]` to omit the field.
+
+**Round 1 (fresh, context-free): 1 real minor fix, 1 false alarm.**
+**Fixed:** the register-type (`Risk`/`Assumption`/`OpenQuestion`/`Environment`) sources/retained-entry
+checks were gated only on `register !== undefined` (membership in the `REGISTER_SCHEMAS` map), not also
+on the identical `pathTemplate.startsWith('kb/')` predicate the per-file branch and block [5]'s own
+`isKbLocatedOutput` use — a doc comment's "can never drift" claim was true only by the coincidence that
+all four `REGISTER_SCHEMAS` keys happen to be `kb/`-rooted today, not by construction. No live behavioral
+bug (confirmed: today's four real register types are all `kb/`-rooted, so nothing was wrongly admitted
+or excluded), but a real robustness gap the critic correctly named. Fixed: both register-branch gates in
+`validateFile` now read `register !== undefined && definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX)
+&& ...`, tying the guarantee to the same literal test everywhere it is stated or enforced.
+**False alarm (resolved, not a defect):** the round-1 diff bundle the critic was handed omitted the
+`packages/schemas/json/*.schema.json` regeneration (an oversight in which files were included in that
+round's bundle, not in the actual implementation) — the critic's own live-tree cross-check confirmed all
+seven affected files were already correctly regenerated on disk.
+
+**Round 2 (fresh, context-free): 1 real fix, nothing else.**
+**Fixed:** block [5]'s fixed text said "every produced document or **changed** register entry," omitting
+"new" — the real rule (and the runtime `RUN-083` failure message itself, worded correctly throughout)
+covers "every produced document and every **new or** changed register entry." Not a functional bug (the
+actual check and its failure message were always correct; only the prompt's own advance description
+undersold it, which the task specifically asked to verify word-for-word) — fixed by changing "changed"
+to "new/changed" in `compile-prompt.ts`'s `KB_OUTPUT_RULES_LINE` and its literal test copy, both
+byte-verified identical via a quick Node script before and after.
+
+**Round 3 (final, 3-round cap; fresh, context-free): 1 real moderate fix, 2 trivial wording nitpicks,
+nothing else across a full independent re-pass of the whole piece.**
+**Fixed (moderate):** the same fixed text's closing clause — "mark it deprecated/superseded (or
+resolved) rather than deleting it" — read as a blanket instruction for every KB-located type, but
+`riskSchema`/`assumptionSchema`/`environmentSchema` are `.strict()` objects with no status field of any
+kind; a step whose only declared output is one of those three would be told by block [5] to attempt an
+edit its own schema refuses. The underlying *enforcement* (the retained-entry check) was never affected
+— it only requires the id to remain present, never that a status field exists — but the agent-facing
+prompt text asserted an action three of the six types cannot take. Fixed: the line now reads "...stays
+at HEAD -- never delete it (mark it deprecated/superseded/resolved instead, where its schema has such a
+field)," in both `compile-prompt.ts` and its test copy (re-verified byte-identical). **Fixed (nitpicks):**
+a stale "changed register entry" (missing "new/") survived in the JSDoc comment directly above
+`KB_OUTPUT_RULES_LINE` and in a new test `describe` title in `outputs.test.ts`, both inconsistent with
+the round-2-corrected string/message two lines away; both retyped to match. No other findings: round 3
+independently re-verified the six-type scoping, the retained-entry removed/changed/untouched logic, the
+`sources: []`/malformed-entry evasion question, the `test/agent-prompts-all-workflows.test.ts` parser
+fix, `kbEntrySchema`'s `min(1)`, every pinned spec sentence byte-for-byte against the live spec files,
+and `KbWriter`/lint-rule non-interference, and found nothing further.
+
+**Mutation evidence (self-verified, each reverted after observing red).** Sources rule dropped (both the
+register-entry and per-file-document checks disabled): 8 tests across `outputs.test.ts` (ADR, Runbook,
+Risk new-entry, Risk changed-entry, Assumption, OpenQuestion, Environment) and `output-contract.test.ts`
+(real-lane ADR) fail red; the Epic-exemption test correctly stays green. Retained-entry rule dropped: 3
+tests fail red (base-absent, id-changed-in-place, the real-lane case); Epic-exemption stays green. Rule
+applied to every type instead of gated on the six KB-located types (mutated the per-file gate to
+unconditional): 14 tests fail red, including this piece's own Epic-not-held tests AND several
+pre-existing, unrelated Epic-output tests elsewhere in the same file — confirming the scoping guard is
+load-bearing for coverage well beyond this piece's own new tests. `sources` made schema-required
+(mutated `riskSchema`'s `sources` from `.optional()` to `.min(1)`): 5 tests fail red across two files —
+`risk.test.ts`'s "accepts a well-formed risk entry" and "accepts with no sources field at all," plus
+`test/templates.test.ts`'s "Risk template still validates ... with `sources: []`" (the template's own
+scaffold value now fails `.min(1)`) — confirming both the schema-level tests and the templates content
+test are real, load-bearing catches for this exact regression class, not vacuous. All four mutations
+reverted immediately after observing red, confirmed by `grep -n "&& false\|if (true)"` finding nothing
+left in `outputs.ts`, full scoped suite re-run green afterward.
+
+**Verification scope (owner-approved cost cut, no full unscoped suite).** The complete test suites of
+every package touched — `@forge/schemas` (34 files/523 tests), `@forge/kb` (36 files/521 tests),
+`@forge/agents` (32 files/1066 tests) — plus scoped engine/cli/root tests (`outputs`, `output-contract`,
+`output-claim`, `empty-claim`, `strict-fails-step`, `output-ids`, `agent`, `gate`, `swarm-review-step`,
+`resume/{orchestrate,output-contract-resume,revalidate}`, `compile-prompt`, `kb-output-ids`, `templates`,
+`spec-cli-examples`, `output-contract-known-gaps`, `agent-prompts-all-workflows`, `workflows`,
+`build-stage-compiles`, `determinism`, `fm-mobile-workflow`, `fm-service-workflow`,
+`intake-workflow`) — 2000+ cases total, all green, both in the shared working tree and in a clean `git
+worktree` of the final commit with `pnpm install --offline --frozen-lockfile`. `pnpm typecheck` (21/21
+packages) and `pnpm run boundaries` both clean in the same clean worktree; `eslint --max-warnings
+0`/`prettier --check` clean on every file owned, in the clean worktree too. Schema drift (`node
+scripts/assert-schema-drift.mjs`, run in the clean worktree): zero drift on the seven files this piece
+owns (`adr`/`assumption`/`environment`/`handoff-record`/`open-question`/`risk`/`runbook`); one other
+file, `config.schema.json`, shows pre-existing drift from other, already-landed M14 pieces' own config
+schema additions (`testRoots`, `gates.waiverMaxDays`) that were never regenerated — not this piece's to
+fix, confirmed unrelated by diffing its content, left untouched at its committed HEAD content.
+
+**Shared-tree incident.** M14 P14/P16/P17 were concurrently committing throughout this piece's own
+build. The committed JSON Schema files for two unrelated, concurrently-in-flight pieces' own schema
+edits (`config.schema.json` from already-landed `paths.release`/`gates.waiverMaxDays` work;
+`gate-report.schema.json` from P17's own mid-flight `GateReport` work) were twice transiently
+regenerated into this working tree alongside this piece's own seven files, by running `pnpm
+emit-schemas` against a shared tree that had both sets of uncommitted source changes present at once.
+Both were restored to their real HEAD content via `git show HEAD:<path>` before every commit, verified
+by diffing each restored file's content against what only the other piece's own dirty source would
+produce, and by the final `git add` listing only this piece's own seven json files (plus the two new
+schema/test files) — confirmed via `git status --short` immediately before staging and `git show
+<sha>:<path>` on the committed blobs afterward. `process/GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` themselves
+were mid-write by M14 P16 at the point this piece was ready to record its own entries; this entry and
+its `GAUNTLET-LOG.md` counterpart were held back until P16's own docs commit (`0f11dd8`, Q247) landed,
+rather than risk a concurrent-append collision on the same tail of either file.
+
+**Discloses (per the plan's own Discloses list).** `forge spec validate`/`forge kb lint` do not require
+`sources` on a hand-written artifact — the schema leaves it optional by design; only the output check,
+for produced content, enforces it. A statement rewritten under a kept id is not detected by this piece
+— the retained-entry rule checks only that the id survives, not that the content is faithful; the
+shipped linter's contradiction detection is the intended, separate mechanism for that. Whether `sources`
+should eventually become schema-required (with a migration for pre-existing hand-written entries) is an
+explicit owner decision this piece does not make.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P11`. Files: `packages/schemas/src/artifacts/{adr,
+assumption,environment,index,open-question,risk,runbook,source(new)}.ts`, `packages/schemas/json/{adr,
+assumption,environment,handoff-record,open-question,risk,runbook}.schema.json`, `packages/kb/src/
+schema/{index,kb-entry}.ts`, `packages/engine/src/dispatch/outputs.ts`, `packages/agents/src/prompt/
+compile-prompt.ts`, `packages/templates/templates/artifacts/{ADR,Runbook,Risk,Assumption,OpenQuestion,
+Environment}.md`, `specs/06-orchestration-and-parallelism.md`; new/edited tests in `packages/schemas/
+test/artifacts/{adr,assumption,environment,open-question,risk,runbook,source(new)}.test.ts`,
+`packages/kb/test/schema/kb-entry.test.ts`, `packages/engine/test/dispatch/{agent,artifact-fixtures,
+output-contract,outputs}.test.ts`, `packages/engine/test/resume/orchestrate.test.ts`,
+`packages/agents/test/prompt/compile-prompt.test.ts`, `packages/cli/test/commands/run/
+kb-output-ids.test.ts`, `test/{templates,spec-cli-examples,agent-prompts-all-workflows}.test.ts`.
