@@ -53,7 +53,7 @@ list, in apply order, each entry `{id, phase, release, after?, expands?}`: `phas
 follow; `expands` (required on a `migrate` or `contract`) the id of the `expand` migration it belongs
 to, whose `contract` entry must ship in a later release than that `expand` and than every `migrate` of
 it (the destructive change is always a separate, later release, `12` F-DATA-6, `14` §14.4 rule 3). No
-migration is planned at this step, so write it empty with a reason:
+migration is planned at this step, so write `migrations: []` with a `none_reason` sentence saying so:
 
 ```yaml
 migrations: []

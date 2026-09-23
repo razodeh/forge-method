@@ -116,13 +116,23 @@ describe('every brief that writes one of the two files names its exact path (PLA
 });
 
 describe('for each file, at least one brief names every key the real schema exports (PLAN-M14.md P21)', () => {
-  /** Whether `text` (a brief's full content: prose and any fenced sample) mentions `filePath` and every
-   * one of `keys` — deliberately a plain substring test: every key here is a distinctive
-   * `snake_case`/short identifier the brief writes backticked, so a false positive would need the key's
-   * exact spelling to appear by coincidence, which the mutation check below rules out for the two briefs
-   * this actually asserts on. */
+  /** Strips fenced code blocks (their own round-trip is a separate test below) so this check falls on
+   * the brief's own PROSE explanation of the shape, not merely on a sample that happens to type every
+   * field name as YAML: a brief whose explaining paragraph was deleted, leaving only the sample, must
+   * fail here (the piece's own "schema-key paragraph removed" mutation evidence) — checking the whole
+   * text (sample included) would let the sample alone satisfy this vacuously for every key the sample
+   * happens to show. */
+  function stripFencedCode(text: string): string {
+    return text.replace(/```[\s\S]*?```/g, '');
+  }
+
+  /** Whether `text`'s own PROSE (fenced samples excluded) mentions `filePath` and every one of `keys` —
+   * deliberately a plain substring test: every key here is a distinctive `snake_case`/short identifier
+   * the brief writes backticked, so a false positive would need the key's exact spelling to appear by
+   * coincidence, which the mutation check below rules out for the two briefs this actually asserts on. */
   function namesPathAndEveryKey(text: string, filePath: string, keys: readonly string[]): boolean {
-    return text.includes(filePath) && keys.every((key) => text.includes(key));
+    const prose = stripFencedCode(text);
+    return prose.includes(filePath) && keys.every((key) => prose.includes(key));
   }
 
   it('at least one of freeze-contracts.md/draft-contract.md names every VERSION_SKEW_KEYS key', async () => {

@@ -42,14 +42,13 @@ contract, so implementers import the generated types and never re-declare them.
 
 ### Declarations the gate reads
 
-Write or update `docs/forge/kb/architecture/version-skew.yaml` so EVERY valid contract is declared
-there: every one you freeze here and every one already frozen earlier. `G-Integration`'s `version:skew`
-check (`forge spec validate --rule version-skew`) reads that file, not the contracts, so an id with no
-declaration fails there even on a stage that never touches it. A YAML mapping: `policy.max_skew` (an
-integer: how many versions behind current may still run side by side), and `contracts`, an `INT-###`
-id to `{current, supported?, consumers}` — `current` its version, `supported` an ascending list ending
-at `current`, `consumers` a list of `{name, version}` pairs. `contracts: {}` needs a `none_reason`
-sentence; a MISSING file always fails. Self-attested, nothing verifies it against a real deploy:
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so EVERY valid contract is declared:
+every one you freeze here, every one already frozen. Keep it current at every level, not only L4 —
+`version:skew` only gates at L4, but a project's level can rise, so a declaration started there would
+already be behind. A YAML mapping: `policy.max_skew` (versions behind current still allowed side by
+side), `contracts`, an `INT-###` id to `{current, supported?, consumers}` — `current` its version,
+`supported` ascending, ending at `current`, `consumers` a `{name, version}` list. `contracts: {}`
+needs a `none_reason` sentence; MISSING always fails. Self-attested, unverified:
 
 ```yaml
 policy:
