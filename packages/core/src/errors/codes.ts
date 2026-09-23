@@ -1310,7 +1310,7 @@ export const ERROR_CODES = {
     message: (d: { stepId: string; file: string; count: number }) =>
       `Step ${show(d.stepId)}'s review, ${show(d.file)}, is blocked: ${show(d.count)} blocking finding(s).`,
     remedy:
-      'Read the report, fix the blocking findings, and run the workflow again -- a blocked review is not retried automatically; `forge resume` re-applies this same rule from the already-committed report with no new sessions.',
+      'Fix the blocking findings the report names, then run the workflow again -- a blocked review is not retried automatically; `forge resume` re-applies this same rule from the already-committed report with no new sessions.',
   },
   'RUN-097': {
     // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an
