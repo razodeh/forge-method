@@ -107,6 +107,22 @@ describe('classifyFailure', () => {
     });
   });
 
+  describe('output-sourced failures', () => {
+    it("RUN-108 (a swarm-review step's merged verdict is blocked, PLAN-M14.md P14) classifies as 'policy': a retry over the same diff fails identically", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'output', code: 'RUN-108', message: 'x' } }),
+      );
+      expect(result).toBe('policy');
+    });
+
+    it("any other output code (a missing or invalid declared output, RUN-083/RUN-084) still classifies as 'validation'", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'output', code: 'RUN-083', message: 'x' } }),
+      );
+      expect(result).toBe('validation');
+    });
+  });
+
   describe('merge-sourced failures', () => {
     it("MERGE-CONFLICT-UNRESOLVED classifies as 'conflict'", () => {
       const result = classifyFailure(

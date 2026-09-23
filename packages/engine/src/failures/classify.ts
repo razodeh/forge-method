@@ -158,6 +158,14 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       // `elicit` above and the `prompt`-sourced policy codes.
       return 'policy';
     case 'output':
+      // `RUN-108` (`PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7): a swarm-review step's merged
+      // verdict is `blocked`. The report itself is a valid, committed document -- this is not the P7
+      // output-contract check failing (that stays `validation`, below) -- and re-running the identical
+      // session over the identical diff fails identically: `06` §6.8's own "fail immediately, no retry,
+      // surface to a human" class, the same as `elicit` and the `claim`-sourced codes above.
+      // `implement-story.workflow.yaml`'s own `review` step declares `retryOn: [validation]`; classifying
+      // this `policy` instead is what keeps that retry from firing on a blocked review.
+      if (failure.code === 'RUN-108') return 'policy';
       // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
       // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as
       // for any other step failure. (Retrying a session that could not write is futile when the cause is

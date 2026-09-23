@@ -119,6 +119,9 @@ steps:
       perspectives: [design, security, testing, performance]
       inputs: ['diff:lane', 'artifact:Story({{item.id}})']
       outputs: [{ type: ReviewReport }]
+      # A merged `blocked` verdict fails this step with RUN-108 (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232
+      # decision 7); it declares no `retry` of its own, so a blocked review escalates the same way any
+      # other unretried step failure here does.
 
   - id: merge
     kind: merge

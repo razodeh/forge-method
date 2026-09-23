@@ -22,10 +22,17 @@
  * read as clean) over `concerns` (at least one `major` finding) over `clear` (only `minor` findings, or none,
  * with evidence of what was examined).
  *
+ * **Binding (`PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7).** The merged verdict is now also
+ * written into the front matter as its own `verdict` key (`reviewFrontMatter`, `reviewReportSchema`'s own
+ * optional enum), and `swarm-review-step.ts` is the caller that acts on it: a `blocked` verdict fails the
+ * step even though the report itself is a valid, committed document. `parseReviewVerdict` below reads that
+ * key back for a caller that only has the committed file (a resume, a later merge step), never trusting
+ * anything but the real front matter key a perspective's own prose can never reach.
+ *
  * @see specs/05 §5.7
  * @see specs/13 §13.3
  * @see specs/18 §18.6, §18.7
- * @see SPEC-QUESTIONS.md Q217
+ * @see SPEC-QUESTIONS.md Q217, Q232 decision 7
  */
 import * as YAML from 'yaml';
 
@@ -370,6 +377,10 @@ export function reviewFrontMatter(input: ReviewFrontMatterInput): Record<string,
     revision: 1,
     author,
     run: sanitizeInline(input.runId, 200),
+    // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: the merged verdict `buildReviewReport` already
+    // computed, written back as its own key so a caller that only has the committed file (resume, a later
+    // merge step) can read it without re-deriving anything from the body's rendered prose.
+    verdict: input.verdict,
     changelog: [
       {
         revision: 1,
@@ -384,4 +395,40 @@ export function reviewFrontMatter(input: ReviewFrontMatterInput): Record<string,
 /** The whole file: `---`, the YAML front matter, `---`, a blank line, the body. */
 export function renderReviewReportFile(frontMatter: Record<string, unknown>, body: string): string {
   return `---\n${YAML.stringify(frontMatter)}---\n\n${body}`;
+}
+
+const REVIEW_VERDICTS: ReadonlySet<string> = new Set<ReviewVerdict>([
+  'blocked',
+  'incomplete',
+  'concerns',
+  'clear',
+]);
+
+/**
+ * Reads `verdict` back out of an already-parsed `ReviewReport` front matter object (`reviewReportSchema`'s
+ * own optional enum) — `undefined` for a report with no `verdict` key at all (every report this engine
+ * wrote before `PLAN-M14.md` P14) or one whose value is not a string or not one of the four real verdicts
+ * (a hand-edited or otherwise malformed report, `SPEC-QUESTIONS.md` Q229's threat model): a caller treats
+ * either exactly like "missing," never like `clear`, so a malformed or pre-P14 report is never silently
+ * read as passing.
+ */
+export function parseReviewVerdict(frontMatter: Record<string, unknown>): ReviewVerdict | undefined {
+  const { verdict } = frontMatter;
+  return typeof verdict === 'string' && REVIEW_VERDICTS.has(verdict)
+    ? (verdict as ReviewVerdict)
+    : undefined;
+}
+
+/**
+ * How many `blocking` findings a rendered `ReviewReport` file's own `## Findings` section lists — counted
+ * from the rendered TEXT (the one thing both a step that just wrote the report and a resume that only has
+ * the already-committed file both actually have), not re-derived from `ReviewReportContent.findings`
+ * separately for each caller. Anchored at column 0 with the exact literal `buildReviewReport` itself
+ * writes (`- [blocking] `): the per-perspective subsections list their own findings indented under a
+ * number (`  1. [blocking] ...`), which this never matches, and a finding's own summary can never contain
+ * a line break (`sanitizeInline` strips them before rendering), so no perspective's text can forge a line
+ * this counts.
+ */
+export function countBlockingFindings(text: string): number {
+  return (text.match(/^- \[blocking\] /gm) ?? []).length;
 }

@@ -18,6 +18,7 @@ import { ArtifactDocument, validateArtifact } from '@forge/core/artifacts';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
+import { laneBranchName } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runWorkflow } from '../../../src/commands/run/run.ts';
@@ -177,13 +178,50 @@ describe('forge run: a swarm-review step', () => {
       },
       CLEAN,
     );
-    const { result } = await run(p, adapter, 'run-swarm-hostile');
-    expect(result.runState.runStatus).toBe('completed');
-    const text = await readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8');
+    const runId = 'run-swarm-hostile';
+    const { result } = await run(p, adapter, runId);
+    // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: the blocking finding merges to `blocked`,
+    // which now fails the review step -- so the report never reaches the merge/integration branch, and is
+    // read from the review step's own lane branch instead.
+    expect(result.runState.runStatus).toBe('failed');
+    const branch = laneBranchName(runId, REVIEW_STEP);
+    const { stdout: text } = await execa('git', ['show', `${branch}:${REPORT}`], { cwd: p.dir });
     const doc = ArtifactDocument.parse(text, REPORT);
-    expect(doc.frontMatter).toMatchObject({ id: 'REVIEW-001', author: 'reviewer' });
+    expect(doc.frontMatter).toMatchObject({ id: 'REVIEW-001', author: 'reviewer', verdict: 'blocked' });
     expect(text.match(/^- Verdict: \*\*/gm)).toHaveLength(1);
     expect(text).toContain('- Verdict: **blocked**');
+    await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();
+  });
+
+  it('a blocking perspective fails the run at review: one dispatch round, the report committed on the lane, no merge commit', async () => {
+    const p = await project();
+    const adapter = scripted(
+      { findings: [{ summary: 'sql injection', severity: 'blocking' }], checked: ['queries'] },
+      CLEAN,
+    );
+    const runId = 'run-swarm-blocked';
+    const { result, events } = await run(p, adapter, runId);
+
+    expect(result.runState.runStatus).toBe('failed');
+    const failed = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === REVIEW_STEP,
+    );
+    expect(failed?.payload).toMatchObject({ code: 'RUN-108' });
+    // One dispatch round: exactly the two perspective sessions, never re-dispatched.
+    expect(adapter.requests).toHaveLength(2);
+    expect(events.filter((event) => event.type === 'SessionStarted')).toHaveLength(2);
+    // The lane reached `LaneReady` (the report really is committed and valid) but was never registered for
+    // merging: no `MergeCompleted`/`GateApproved`, and the merge target never lands in the integration branch.
+    const reviewTypes = events.filter((event) => event.stepId === REVIEW_STEP).map((e) => e.type);
+    expect(reviewTypes).toEqual(
+      expect.arrayContaining(['LaneCreated', 'LaneCommitted', 'LaneReady', 'StepFailed']),
+    );
+    expect(events.map((event) => event.type)).not.toContain('MergeCompleted');
+    expect(events.map((event) => event.type)).not.toContain('GateApproved');
+    const branch = laneBranchName(runId, REVIEW_STEP);
+    const { stdout: text } = await execa('git', ['show', `${branch}:${REPORT}`], { cwd: p.dir });
+    expect(text).toContain('- Verdict: **blocked**');
+    await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();
   });
 
   it('a perspective that fails fails the run: no lane, no report, no merge', async () => {

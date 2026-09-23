@@ -73,6 +73,10 @@ steps:
     dependsOn: [self-verify]
     inputs: ['diff:lane', 'artifact:Story({{storyId}})']
     outputs: [{ type: ReviewReport }]
+    # A merged `blocked` verdict fails this step with RUN-108 (18 §18.7, SPEC-QUESTIONS.md Q232 decision 7)
+    # classified `policy`, not `validation` (PLAN-M14.md P14) -- so `retryOn: [validation]` below never
+    # retries a blocked review (the same diff would fail the same way): step 7's own "blocking findings loop
+    # back to 4" (10 §10.6) is a person fixing the code and re-running, not an automatic retry loop.
     retry: { maxAttempts: 2, retryOn: [validation] }
     onFailure: escalate
 

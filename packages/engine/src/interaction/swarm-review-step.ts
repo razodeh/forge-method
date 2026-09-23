@@ -21,6 +21,13 @@
  * 3. The output check is not skipped or reimplemented: `runLaneLifecycle` runs `verifyDeclaredOutputs` on the
  *    committed lane exactly as for any agent step, so a report that is missing, or that fails
  *    `validateArtifact` there, fails the step with the typed `RUN-083`.
+ * 4. Only once that check has passed (a genuinely valid, committed report) does the merged verdict itself
+ *    bind (`PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7): `blocked` fails the step with `RUN-108`
+ *    even though the report is valid — the lane already reached `LaneReady` and the registry by then (the
+ *    same "a lane-based handler's `LaneReady` outlives its step's own eventual status" precedent
+ *    `executeStep`'s own doc comment already states, Q217 (g)), so it is explicitly pulled back out.
+ *    `incomplete`/`concerns`/`clear` succeed unchanged; `resumeSwarmReviewStep` re-applies this same rule
+ *    from the committed report, with zero sessions.
  *
  * The step's `outputs` are treated as including `ReviewReport` whether or not the workflow lists it (the mode
  * implies the output, and the claim and the check must cover what the engine writes).
@@ -46,6 +53,7 @@
  */
 import path from 'node:path';
 
+import { ArtifactDocument } from '@forge/core/artifacts';
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import { resolveStepModel } from '@forge/agents/resolve';
 import { ProjectPaths, writeFileAtomic } from '@forge/core/fs';
@@ -68,10 +76,12 @@ import type { StepNode } from '../plan/index.ts';
 import { dispatchAgentStep } from './dispatch-agent-step.ts';
 import {
   buildReviewReport,
-  type ReviewReportContent,
+  countBlockingFindings,
+  parseReviewVerdict,
   provenanceLines,
   renderReviewReportFile,
   reviewFrontMatter,
+  type ReviewReportContent,
 } from './review-report.ts';
 import type { InteractionOutcome, InteractionParticipant, PerspectiveReview } from './types.ts';
 
@@ -109,6 +119,20 @@ function failed(
 
 function outputFailure(node: StepNode, detail: string): StepFailureInfo {
   const error = new ForgeError('RUN-083', { stepId: node.id, detail });
+  return {
+    source: 'output',
+    code: error.code,
+    message: `${error.message} -- Remedy: ${error.remedy}`,
+    cause: error,
+  };
+}
+
+/** `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: the report is a valid, committed document (the
+ * P7 output check already passed it) — this is not that check failing again, so `RUN-108`, not `RUN-083`.
+ * `source: 'output'` still: the step's own output is what is at fault (a `blocked` review), not the
+ * adapter, a claim, or the vcs layer. */
+function blockedVerdictFailure(node: StepNode, file: string, blockingCount: number): StepFailureInfo {
+  const error = new ForgeError('RUN-108', { stepId: node.id, file, count: blockingCount });
   return {
     source: 'output',
     code: error.code,
@@ -219,6 +243,9 @@ interface WrittenReport {
   readonly id: string;
   readonly file: string;
   readonly content: ReviewReportContent;
+  /** The whole rendered file (front matter and body), so `countBlockingFindings` has one implementation
+   * both this write path and `resumeSwarmReviewStep`'s own read-only path can share. */
+  readonly text: string;
 }
 
 /**
@@ -263,7 +290,7 @@ async function writeReport(
     throw new RangeError(`the engine built an invalid ${id}: ${problems.join('; ')}`);
   }
   await writeFileAtomic(new ProjectPaths(lane.path).resolveWithin(file), text);
-  return { id, file, content };
+  return { id, file, content, text };
 }
 
 // --- the step ----------------------------------------------------------------------------------------
@@ -449,6 +476,23 @@ export async function runSwarmReviewStep(
       }
     },
   );
+  // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: the report is committed on its lane exactly as
+  // any other verdict's -- `runLaneLifecycle` already ran the P7 output check against it, emitted
+  // `LaneReady` and registered the lane (precedent for a `LaneReady`'d lane whose step still ends failed:
+  // `executeStep`'s own doc comment, Q217 (g)) -- but a `blocked` review must never reach a merge, so the
+  // lane is pulled back out of the registry `runLaneLifecycle` just added it to, and the step itself ends
+  // failed instead of succeeded. Checked strictly before the `ArtifactCreated` emission below: that event
+  // is only ever for a step that actually succeeded.
+  if (outcome.status === 'succeeded' && report !== undefined && report.content.verdict === 'blocked') {
+    ctx.laneRegistry.delete(node.id);
+    return failed(
+      node,
+      outcome.startedAt,
+      outcome.finishedAt,
+      outcome.detail,
+      blockedVerdictFailure(node, report.file, countBlockingFindings(report.text)),
+    );
+  }
   // Only for a report that survived the commit, the claim and the output check: the log must not say an
   // artifact was created for a step that then failed. `laneFile`, not `path`: the file lives on the lane
   // branch until a merge, and `path` is what resume re-validates against the project checkout.
@@ -493,20 +537,20 @@ export async function resumeSwarmReviewStep(
     // discards what is left of it and re-runs the step.
     return undefined;
   }
-  let found = false;
+  let found: { readonly file: string; readonly text: string } | undefined;
   for (const file of changed.committed) {
     if (path.posix.dirname(file) !== reportsDir || !REPORT_FILE.test(path.posix.basename(file))) {
       continue;
     }
     const text = await ctx.vcs.readAtRevision(lane, 'HEAD', file);
     if (text !== undefined && isProvenance(text, node.id, ctx.runId)) {
-      found = true;
+      found = { file, text };
       break;
     }
   }
-  if (!found) return undefined;
+  if (found === undefined) return undefined;
   const detail: StepOutcomeDetail = { kind: 'agent', session: EMPTY_SESSION };
-  return runLaneLifecycle(
+  const outcome = await runLaneLifecycle(
     withReviewReportOutput(node),
     ctx,
     ctx.now(),
@@ -519,4 +563,24 @@ export async function resumeSwarmReviewStep(
       }),
     { lane, baseSha },
   );
+  // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: re-applies the same rule from the report
+  // already on the lane, with zero sessions -- the committed text is the exact text the output check just
+  // re-validated (nothing changed the lane between the read above and here), so parsing it again here is
+  // safe. The front matter, never the rendered body: a perspective's own text can reach the body, never
+  // the front matter (`review-report.ts`'s own doc comment).
+  if (outcome.status === 'succeeded') {
+    const frontMatter = ArtifactDocument.parse(found.text, found.file)
+      .frontMatter as Record<string, unknown>;
+    if (parseReviewVerdict(frontMatter) === 'blocked') {
+      ctx.laneRegistry.delete(node.id);
+      return failed(
+        node,
+        outcome.startedAt,
+        outcome.finishedAt,
+        outcome.detail,
+        blockedVerdictFailure(node, found.file, countBlockingFindings(found.text)),
+      );
+    }
+  }
+  return outcome;
 }

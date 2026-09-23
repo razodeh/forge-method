@@ -20,11 +20,13 @@ import { TelemetryError } from '@forge/telemetry/errors';
 import { FakePlatformAdapter } from '@forge/testkit';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
+import { laneBranchName } from '@forge/vcs';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { createTelemetryFacade, createVcsFacade } from '../../src/dispatch/facades.ts';
 import type { ExecuteStepContext, StepOutcome } from '../../src/dispatch/types.ts';
+import { classifyFailure } from '../../src/failures/classify.ts';
 import { resumeSwarmReviewStep } from '../../src/interaction/swarm-review-step.ts';
 import { toAgentId, type StepNode } from '../../src/plan/index.ts';
 import { resumeRun, type ResumeContext } from '../../src/resume/orchestrate.ts';
@@ -292,14 +294,20 @@ describe('a swarm-review step persists its ReviewReport through a lane, and the 
         assembly: reviewerAssembly(projectRoot),
       });
       const outcome = await executeStep(reviewNode(), ctx);
-      expect(outcome.status, label).toBe('succeeded');
-      const lane = ctx.laneRegistry.get('wf:review');
-      const text = await showOnBranch(
-        projectRoot,
-        lane?.branch ?? '',
-        `${REVIEWS_DIR}/REVIEW-001.md`,
-      );
+      // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: `blocked` fails the step; the other three
+      // verdicts still succeed unchanged. The report is committed on the lane either way, so it is always
+      // read from the real lane branch (`laneBranchName`), never `ctx.laneRegistry`, which a `blocked`
+      // outcome no longer holds an entry for.
+      expect(outcome.status, label).toBe(verdict === 'blocked' ? 'failed' : 'succeeded');
+      const branch = laneBranchName(ctx.runId, 'wf:review');
+      const text = await showOnBranch(projectRoot, branch, `${REVIEWS_DIR}/REVIEW-001.md`);
       expect(text, label).toContain(`- Verdict: **${verdict}**`);
+      // The front matter carries the same verdict as its own key, for every one of the four values.
+      expect(text, label).toContain(`verdict: ${verdict}`);
+      expect(ctx.laneRegistry.has('wf:review'), label).toBe(verdict !== 'blocked');
+      if (verdict === 'blocked') {
+        expect(outcome.failure).toMatchObject({ source: 'output', code: 'RUN-108' });
+      }
     }
   });
 });
@@ -326,15 +334,21 @@ describe('hostile perspective text cannot alter the front matter or the verdict'
       assembly: reviewerAssembly(projectRoot),
     });
     const outcome = await executeStep(reviewNode(), ctx);
-    expect(outcome.status).toBe('succeeded');
-    const lane = ctx.laneRegistry.get('wf:review');
+    // `PLAN-M14.md` P14: a blocking finding merges to `blocked`, which now fails the step -- the report is
+    // still committed on the lane exactly as before, so it is read from the real branch, not the registry
+    // (which no longer holds an entry once the step has failed this way).
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'output', code: 'RUN-108' });
+    expect(ctx.laneRegistry.has('wf:review')).toBe(false);
+    const branch = laneBranchName(ctx.runId, 'wf:review');
     const file = `${REVIEWS_DIR}/REVIEW-001.md`;
-    const text = await showOnBranch(projectRoot, lane?.branch ?? '', file);
+    const text = await showOnBranch(projectRoot, branch, file);
     const doc = ArtifactDocument.parse(text, file);
     expect(doc.frontMatter).toMatchObject({
       id: 'REVIEW-001',
       type: 'ReviewReport',
       author: 'reviewer',
+      verdict: 'blocked',
     });
     expect(validateArtifact(doc)).toEqual({ valid: true });
     expect(text.match(/^- Verdict: \*\*/gm)).toEqual(['- Verdict: **']);
@@ -347,6 +361,99 @@ describe('hostile perspective text cannot alter the front matter or the verdict'
     expect(text.match(/^- Step: /gm)).toHaveLength(1);
     expect(text.match(/^- Run: /gm)).toHaveLength(1);
     expect(text.match(/^---$/gm)).toHaveLength(2);
+  });
+});
+
+describe('a blocked verdict fails the step (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232 decision 7)', () => {
+  it('one blocking finding fails the step RUN-108, source output, the report on the lane names it in its own front matter, no registry entry, classified policy', async () => {
+    const projectRoot = await createTempRepo('blocked-fails');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, 'wf:review', {
+      ...cleanPerspectives(),
+      security: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+
+    const outcome = await executeStep(reviewNode(), ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'output', code: 'RUN-108' });
+    expect(outcome.failure?.message).toContain(`${REVIEWS_DIR}/REVIEW-001.md`);
+    expect(outcome.failure?.message).toContain('1 blocking');
+    // No registry entry: the lane `runLaneLifecycle` already added is pulled back out.
+    expect(ctx.laneRegistry.has('wf:review')).toBe(false);
+    // The report is still committed on the lane branch, and its own front matter names the verdict.
+    const branch = laneBranchName(ctx.runId, 'wf:review');
+    const text = await showOnBranch(projectRoot, branch, `${REVIEWS_DIR}/REVIEW-001.md`);
+    expect(text).toMatch(/^verdict: blocked$/m);
+    // `LaneCreated`/`LaneCommitted`/`LaneReady` all fired (the lane really is ready and inspectable, `06`
+    // §6.4); only the terminal event is `StepFailed`, never `StepSucceeded`.
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    for (const type of ['LaneCreated', 'LaneCommitted', 'LaneReady', 'StepFailed'] as const) {
+      expect(types, type).toContain(type);
+    }
+    expect(types).not.toContain('StepSucceeded');
+    expect(types).not.toContain('ArtifactCreated');
+    // `classifyFailure` (`06` §6.8): `policy`, not `validation` -- never automatically retried, unlike a
+    // genuine RUN-083 output-contract failure.
+    expect(classifyFailure(outcome)).toBe('policy');
+  });
+
+  it('resume re-applies the same rule from the committed report, with zero sessions', async () => {
+    const projectRoot = await createTempRepo('blocked-resume');
+    const runId = 'run-resume-blocked';
+    const step = reviewNode();
+    const first = new FakePlatformAdapter();
+    scriptPerspectives(first, 'wf:review', {
+      ...cleanPerspectives(),
+      security: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+    });
+    const now = createTestClock();
+    const realTelemetry = createTelemetryFacade(projectRoot, runId, now);
+    // The process dies after the report was committed, before the step's own outcome is decided.
+    const crashing = createTestContext({
+      projectRoot,
+      adapter: first,
+      runId,
+      now,
+      telemetry: {
+        emit: (event) =>
+          event.type === 'LaneReady'
+            ? Promise.reject(new Error('simulated crash'))
+            : realTelemetry.emit(event),
+      },
+      assembly: reviewerAssembly(projectRoot),
+    });
+    await expect(executeStep(step, crashing)).rejects.toThrow('simulated crash');
+
+    const second = new FakePlatformAdapter();
+    const secondRequests = requestsOf(second);
+    const resumed = createTestContext({
+      projectRoot,
+      adapter: second,
+      runId,
+      assembly: reviewerAssembly(projectRoot),
+    });
+    const state = await resumeRun(runId, {
+      ...resumed,
+      steps: new Map([[step.id, step]]),
+    });
+
+    expect(state.stepStatuses.get('wf:review')).toBe('failed');
+    // Zero sessions: no perspective ran again.
+    expect(secondRequests).toEqual([]);
+    expect(resumed.laneRegistry.has('wf:review')).toBe(false);
+    const branch = laneBranchName(runId, 'wf:review');
+    const text = await showOnBranch(projectRoot, branch, `${REVIEWS_DIR}/REVIEW-001.md`);
+    expect(text).toContain('- Verdict: **blocked**');
+    const types = (await eventsOf(projectRoot, runId)).map((event) => event.type);
+    expect(types.filter((type) => type === 'StepFailed')).toHaveLength(1);
+    expect(types).not.toContain('StepSucceeded');
+    expect(types).not.toContain('ArtifactCreated');
   });
 });
 
@@ -676,8 +783,10 @@ describe('a review with nothing readable is not recorded, and never merges as a 
     for (const perspective of PERSPECTIVES) {
       adapter.script((request) => request.stepId === `wf:review:review:${perspective}`, {
         text: [
+          // `major`, not `blocking`: this test is about the prose/fenced-json parsing path, not
+          // `PLAN-M14.md` P14's own blocked-fails-the-step behaviour (covered separately, above).
           perspective === 'design'
-            ? answer([{ summary: 'fenced blocker', severity: 'blocking' }], ['x'])
+            ? answer([{ summary: 'fenced blocker', severity: 'major' }], ['x'])
             : answer([], ['read it']),
         ],
       });
@@ -701,7 +810,7 @@ describe('a review with nothing readable is not recorded, and never merges as a 
       lane?.branch ?? '',
       `${REVIEWS_DIR}/REVIEW-001.md`,
     );
-    expect(text).toContain('- Verdict: **blocked**');
+    expect(text).toContain('- Verdict: **concerns**');
     expect(text).toContain('` fenced blocker `');
   });
 
@@ -778,13 +887,13 @@ describe('a blocking finding is never shopped away by a malformed sibling', () =
       adapter,
       assembly: reviewerAssembly(projectRoot),
     });
-    expect((await executeStep(reviewNode(), ctx)).status).toBe('succeeded');
-    const lane = ctx.laneRegistry.get('wf:review');
-    const text = await showOnBranch(
-      projectRoot,
-      lane?.branch ?? '',
-      `${REVIEWS_DIR}/REVIEW-001.md`,
-    );
+    const outcome = await executeStep(reviewNode(), ctx);
+    // `PLAN-M14.md` P14: `blocked` fails the step even here -- outranking `incomplete` decides what the
+    // REPORT says, not whether the step itself now succeeds.
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ code: 'RUN-108' });
+    const branch = laneBranchName(ctx.runId, 'wf:review');
+    const text = await showOnBranch(projectRoot, branch, `${REVIEWS_DIR}/REVIEW-001.md`);
     expect(text).toContain('- Verdict: **blocked**');
     expect(text).toContain('` real blocker `');
   });
@@ -794,9 +903,11 @@ describe('the engine records what it wrote', () => {
   it('emits ArtifactCreated with the verdicts it computed, and the report says what the perspectives read', async () => {
     const projectRoot = await createTempRepo('artifact-event');
     const adapter = new FakePlatformAdapter();
+    // A `major` finding merges to `concerns`, which still succeeds (`PLAN-M14.md` P14 only fails the step
+    // for `blocked` -- that scenario, and its own "no ArtifactCreated," is the next test below).
     scriptPerspectives(adapter, 'wf:review', {
       ...cleanPerspectives(),
-      security: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+      security: { findings: [{ summary: 'sqli', severity: 'major' }], checked: ['queries'] },
     });
     const ctx = createTestContext({
       projectRoot,
@@ -811,10 +922,10 @@ describe('the engine records what it wrote', () => {
       type: 'ReviewReport',
       id: 'REVIEW-001',
       laneFile: `${REVIEWS_DIR}/REVIEW-001.md`,
-      verdict: 'blocked',
+      verdict: 'concerns',
       perspectives: [
         { name: 'design', verdict: 'clear' },
-        { name: 'security', verdict: 'blocked' },
+        { name: 'security', verdict: 'concerns' },
         { name: 'testing', verdict: 'clear' },
       ],
     });
@@ -827,6 +938,23 @@ describe('the engine records what it wrote', () => {
     );
     expect(text).toContain(`- Reviewed revision: \` ${head} \``);
     expect(text).toContain(`- Lane base: \` ${head} \``);
+  });
+
+  it('does not log an artifact for a step whose merged verdict is blocked (PLAN-M14.md P14): the event is only ever for a step that succeeded', async () => {
+    const projectRoot = await createTempRepo('artifact-event-blocked');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, 'wf:review', {
+      ...cleanPerspectives(),
+      security: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+    expect((await executeStep(reviewNode(), ctx)).status).toBe('failed');
+    const events = await eventsOf(projectRoot, 'run-test');
+    expect(events.map((event) => event.type)).not.toContain('ArtifactCreated');
   });
 
   it('does not log an artifact for a step that then failed its output check (resume would re-validate a file that never merged)', async () => {

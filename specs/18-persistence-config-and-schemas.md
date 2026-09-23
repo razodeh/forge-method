@@ -298,7 +298,11 @@ already named it as the real output of the `review` step's `swarm-review` mode, 
 actually added to this table — `forge workflow validate --all` reported it as an unknown artifact
 type on every fresh `forge init` until this fix. No field-level shape is specified for it here (the
 identical situation `GateReport` is already in — see `SPEC-QUESTIONS.md` Q23), so its own schema
-carries no type-specific fields beyond the base front matter every artifact type shares.
+carries no type-specific fields beyond the base front matter every artifact type shares — except one:
+an optional `verdict: blocked|incomplete|concerns|clear` (`SPEC-QUESTIONS.md` Q232 decision 7), the
+engine's own merged verdict from `05` §5.7, written by the engine before the file is committed. A
+`blocked` verdict fails the swarm-review step that wrote it; a report with no `verdict` key (every one
+written before this field existed) still validates unchanged.
 
 ## 18.8 ID allocation
 

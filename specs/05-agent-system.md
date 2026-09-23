@@ -343,8 +343,10 @@ parsed from their prose), and validates it; the step's outputs (which always inc
 or not the step lists it) are then checked on that lane like any other agent step's. The `reviewer` role stays
 `write: false`: reviewers cannot write what they review. A perspective that returns nothing readable, or
 findings with malformed entries and no blocking finding of its own, fails the step instead of being recorded as
-a clean review. The verdicts are
-data (in the report and in the run's `ArtifactCreated` event); nothing gates on them yet.
+a clean review. The verdicts are data (in the report's own `verdict` front-matter key and in the run's
+`ArtifactCreated` event, the latter only for a step that succeeds) and the merged verdict binds: a `blocked`
+verdict fails the step instead of succeeding it, classified so it is never retried automatically; `incomplete`,
+`concerns` and `clear` still succeed the step unchanged, as data only, for now.
 
 ## 5.8 Model tier mapping
 

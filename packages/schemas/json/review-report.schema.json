@@ -72,6 +72,15 @@
     "updated": {
       "format": "date",
       "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "blocked",
+        "incomplete",
+        "concerns",
+        "clear"
+      ],
+      "type": "string"
     }
   },
   "required": [

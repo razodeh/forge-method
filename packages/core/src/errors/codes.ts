@@ -1298,6 +1298,20 @@ export const ERROR_CODES = {
     remedy:
       'Merge the trunk branch into the integration branch by hand in the integration worktree (under `.forge/state/worktrees/`) and push the resolution, or delete the branch once its work has been delivered so the next run creates it fresh from the trunk.',
   },
+  'RUN-108': {
+    // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: a swarm-review step's merged verdict is
+    // `blocked` (at least one perspective reported a blocking finding). The `ReviewReport` is still
+    // committed on the step's own lane exactly as any other verdict's, and it is a genuinely valid
+    // document (the P7 output-contract check already passed it, `RUN-083`) -- this is a distinct code
+    // because the report is fine and the REVIEW is not: `classifyFailure` maps this to `policy`, so the
+    // never-automatic-retry rule applies even where a workflow's own `retryOn` lists `validation`.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; file: string; count: number }) =>
+      `Step ${show(d.stepId)}'s review, ${show(d.file)}, is blocked: ${show(d.count)} blocking finding(s).`,
+    remedy:
+      'Read the report, fix the blocking findings, and run the workflow again -- a blocked review is not retried automatically; `forge resume` re-applies this same rule from the already-committed report with no new sessions.',
+  },
   'RUN-097': {
     // `PLAN-M13.md` P36, `09` §9.3, `10` §10.6: the story's `owner_role` names an agent that does not produce code (an
     // authoring or judging role, or one the project does not have). `implement-story` runs its plan, implementation,
