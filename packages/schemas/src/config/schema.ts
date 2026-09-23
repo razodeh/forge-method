@@ -57,7 +57,10 @@ function isValidReleasePathEntry(entry: string): boolean {
   if (entry.trim() === '') return false;
   if (entry.startsWith('!')) return false;
   if (entry.startsWith('/') || entry.startsWith('\\')) return false;
-  if (/^[A-Za-z]:[\\/]/.test(entry)) return false;
+  // A drive letter is refused whether or not a separator follows it (`C:\secrets` and the
+  // drive-relative `C:secrets` are both absolute-ish Windows paths; only the first was caught before
+  // a round-2 critic found the gap between this function's own behaviour and its documented contract).
+  if (/^[A-Za-z]:/.test(entry)) return false;
   if (entry.split(/[/\\]/).some((segment) => segment === '..')) return false;
   return true;
 }

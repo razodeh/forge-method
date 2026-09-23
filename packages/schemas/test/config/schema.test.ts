@@ -295,6 +295,11 @@ describe('configSchema — paths.release (PLAN-M14.md P12, SPEC-QUESTIONS.md Q21
   it('rejects a Windows UNC path (a leading "\\\\", no drive letter)', () => {
     expect(withRelease(['\\\\server\\share']).success).toBe(false);
   });
+
+  it('rejects a bare drive letter with no separator (drive-relative, e.g. "C:secrets")', () => {
+    expect(withRelease(['C:secrets']).success).toBe(false);
+    expect(withRelease(['c:secrets']).success).toBe(false);
+  });
 });
 
 describe('configSchema — enum keys (PLAN-M1.md P8 Check)', () => {
