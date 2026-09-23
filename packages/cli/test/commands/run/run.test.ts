@@ -95,6 +95,37 @@ steps:
       expect(result.plan.issues[0]).toMatchObject({ code: 'dangling-dependency' });
     }
   });
+
+  it("carries an agent step's authored taint: external onto its compiled node -- what --json prints, JSON.stringify(result.plan) verbatim (bin.ts's printWorkflowDispatchResult), needs nothing beyond this real field already being there (PLAN-M14.md P27)", () => {
+    const source = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: reads-codebase
+    kind: agent
+    agent: architect
+    taint: external
+  - id: ordinary
+    kind: command
+    run: "true"
+`;
+    const result = dryRunWorkflow(source, fixtureExpressionContext());
+    expect(result.plan.success).toBe(true);
+    if (!result.plan.success) return;
+    const tainted = result.plan.nodes.find((node) => node.id === 'w:reads-codebase');
+    const ordinary = result.plan.nodes.find((node) => node.id === 'w:ordinary');
+    expect(tainted?.taint).toBe('external');
+    expect(ordinary?.taint).toBeUndefined();
+    // The exact shape `printWorkflowDispatchResult` serialises for `--json`.
+    const printed = JSON.parse(JSON.stringify({ v: 1, plan: result.plan })) as {
+      plan: { nodes: readonly { id: string; taint?: string }[] };
+    };
+    expect(printed.plan.nodes.find((node) => node.id === 'w:reads-codebase')?.taint).toBe(
+      'external',
+    );
+  });
 });
 
 describe('runWorkflow', () => {
