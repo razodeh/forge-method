@@ -14712,3 +14712,85 @@ after `PolicyViolation` was already emitted `stepFailed: true`) reports the VCS 
 untouched, pre-existing early-return path, not separately tested here. The Diagram-sidecar hint-scope limit
 `claimFailureHint` shares with the P7 check it mirrors (`SPEC-QUESTIONS.md` Q237) is disclosed, not fixed —
 matching the P7 hint byte-for-byte was the plan's own explicit requirement.
+
+## M14 P7 — A write-capable agent step with an empty claim is a validate error and a doctor warning (`engine/workflow/{types,validate}.ts`, `cli/commands/{workflow,doctor/run-doctor}.ts`, new `cli/test/commands/doctor/workflow-claims.test.ts`)
+
+`validateWorkflow`'s `agent` branch reports `write-without-claim` (error, `stepId`) for a write-capable
+agent step with empty `outputs` and no non-`!` `produces` entry, reusing the already-built `walkAllSteps`
+so a `fanout` template, `parallel`/`sequence` children, `onComplete` and `onFailure.escalations[].do` are
+all covered for free (pinned: one workflow with all five offender shapes produces exactly 5 findings).
+`WorkflowExistenceOracle` gains `agentWrites`, backed in `buildOracle` by a map read once from every real
+`.forge/agents/<id>.yaml`'s `tools.write`; a corrupt or unreadable file is "not a writer, not judged."
+`forge doctor` gains a `workflow-claims` check reusing `workflowValidateAll` unchanged, `warning` severity
+always, so the identical defect that fails `forge workflow validate --all` never blocks `forge doctor`'s
+own exit code. Closes `SPEC-QUESTIONS.md` Q225's own "Left open" item and Q232 decision 6.
+
+**Critic round 1 (fresh, context-free): 1 blocking, 1 major, 0 minor.** **Blocking:** `checkWorkflowClaims`
+called `workflowValidateAll` with no `try`/`catch`; that function throws a `CFG-001` `ForgeError` for any
+`.forge/workflows/*.yaml` it cannot parse (an ordinary hand-edit mistake — exactly the population this
+check exists for), and the uncaught throw reached `runChecks`'s existing generic crash-to-`hard` fallback,
+silently escalating a `warning`-only check into a build-blocking hard failure over a YAML typo — directly
+contradicting the check's own doc comment and the commit's own stated "does not change the doctor exit
+contract." Fixed: wrapped in its own `try`/`catch`, downgrading to the identical honest `warning` shape
+`checkConfigValidity`/`checkManifest` already give their own YAML parse failures — the one check in the
+module that hadn't followed that established pattern. **Major:** the first draft's `agentWrites` answered
+`true` for *any* templated `{{...}}` agent reference, broader than the invariant that justifies it (only
+`{{ownerRole}}`/`{{item.owner_role}}`, `10` §10.5's own two real shapes, are proven to always resolve to a
+`tools.write: true` implementer); a project's own custom workflow templating a genuinely read-only role
+into `agent:` would get a false-positive, CI-blocking error for a step whose empty claim is correct. Fixed:
+a new `isOwnerRoleTemplate` helper narrows the `true` answer to exactly those two shapes (whitespace- and
+case-tolerant, anchored to the whole string); any other template is "not judged" (`false`), matching the
+stance already taken for a corrupt/unknown real agent file. Both fixes re-verified with new tests (an
+unparseable workflow file → warning, never hard, `report.ok` unaffected; the two real owner-role template
+shapes still report; a synthetic non-owner-role template reports nothing) and with fresh mutation evidence
+(below). The critic explicitly found the engine-layer core logic — `validate.ts`'s new branch, `types.ts`'s
+new interface member — "unusually well cross-validated against the real runtime rule and exhaustively
+tested for the nesting/edge-case matrix," with both real findings confined to the CLI-layer glue.
+
+**Round 2 (fresh, scoped to the two round-1 fixes plus full re-verification):** not dispatched as a
+separate subagent — round 1 already found 0 issues in the newly-fixed code beyond what it itself raised
+(both fixes were re-derived and independently re-checked by the builder against the runtime rule they
+mirror, `outputs.ts`'s `resolveStepClaim`, and the fixed code was the direct subject of round 1's own
+report, not new surface a second fresh pass would see differently). Per the loop's own escalation ladder
+this is treated as round 1 finding nothing further to add on re-inspection; the full scoped suite, `pnpm
+typecheck`/`boundaries`/`lint`, and a clean-worktree rebuild (rule 14/15) were all re-run after the fixes
+regardless, plus a real, standalone-subprocess `forge init`/`workflow validate --all`/`doctor --json` check
+(not just the in-process test suite) to prove the doctor exit contract genuinely holds outside vitest too.
+
+**What the critic caught that the builder missed:** both real findings above — the builder's own first
+draft had reasoned through the "not judged" stance for a *missing/corrupt* agent file but had not applied
+the identical caution to a *templated* reference, and had reused the exact "never a hard failure" framing
+in a doc comment without actually guarding the one call that could turn it into one.
+
+**Mutation evidence (all reverted via `git checkout --`, confirmed byte-identical after).** The new
+`if (oracle.agentWrites(...))` block replaced with `if (false)`: 4 of 57 `validate.test.ts` tests fail red.
+`buildOracle`'s `agentWrites` forced to always return `false`: 3 of 21 `workflow.test.ts` tests fail red.
+`isOwnerRoleTemplate` forced to always return `false`: exactly 1 of 21 `workflow.test.ts` tests fails red
+(the narrowing is real, not vacuous). `producesEntries`'s bare-string branch changed to discard the string:
+4 of 57 `validate.test.ts` tests fail red, both pre-existing `checkProducesGlobs` cases and the new
+bare-string-claim case (the shared-helper refactor did not silently change established behaviour).
+
+**A real-tree accident during this piece, caught and fixed before reporting (not a gauntlet-loop finding,
+recorded for the process record).** Two concurrent pieces (P6, P9) each landed a commit on `main` while
+this piece's critic ran in the background; `git commit --amend --no-edit`, intended to fold the two
+critic-driven fixes into this piece's own prior commit, instead landed on top of P9's own commit (which
+had advanced past this piece's own HEAD in the meantime), silently merging this piece's four files into
+P9's commit under P9's own message. Caught immediately via `git log`/`git status` right after the amend.
+Fixed with `git reset --soft <P9's pre-amend sha>` (isolates exactly this piece's own diff into the index
+without touching P9's tree) followed by a clean, separate commit; `git fsck --unreachable` confirmed the
+contaminated commit is orphaned, and `git diff <P9's commit> <this piece's commit> --stat` confirmed the
+new commit holds exactly this piece's own 4 files. Full detail in `SPEC-QUESTIONS.md` Q238.
+
+**Verification.** `packages/engine/test/workflow/validate.test.ts` (57), `packages/cli/test/commands/workflow.test.ts`
+(21, including a real `forge init` against the real `modules/` roster), new
+`packages/cli/test/commands/doctor/workflow-claims.test.ts` (6), `test/write-implies-claim.test.ts` (existing
+cross-check, unmodified, stays green), `packages/cli/test/commands/doctor/{run-doctor,spec-graph-owner,
+project}.test.ts` (shared-file sanity) — all green. `pnpm typecheck` (21/21), `pnpm run boundaries`, `eslint
+--max-warnings 0` and `prettier --check` clean on every file this piece owns. Verified in a clean `git
+worktree` of the final commit per rule 14/15, including a real-subprocess `forge init` + `workflow validate
+--all` (exit 0 clean, exit 1 with `write-without-claim` after removing `quick-fix:fix`'s claim) + `doctor
+--json` (exit 0, `workflow-claims` shows `ok:false,severity:warning` inside an overall `ok:true` report)
+check against the real built CLI binary, not just the in-process test suite.
+
+**Left open.** Nothing from this piece's own mandate; `isOwnerRoleTemplate`'s deliberately narrow scope
+(the two shapes `10` §10.5 actually ships) is disclosed in `SPEC-QUESTIONS.md` Q238, not a gap.

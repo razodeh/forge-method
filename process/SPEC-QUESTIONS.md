@@ -19941,3 +19941,154 @@ fail) even though the specific code differs from what the event predicted. Pre-e
 early-return path, not exercised by a dedicated test here (an infrastructure-failure edge case orthogonal
 to this piece's own claim-violation scope). The Diagram-sidecar hint-scope limit `claimFailureHint` shares
 with the P7 check (above) is disclosed, not a gap this piece's own mandate authorises closing.
+
+## Q238 — M14 P7: a write-capable agent step with an empty claim is a validate error and a doctor warning — the oracle's `agentWrites` narrowed to the one templated shape it can actually prove, after a critic caught a broader false-positive risk and an unguarded parse crash
+
+**Context.** `PLAN-M14.md` P7, closing `SPEC-QUESTIONS.md` Q225's own "Left open" item ("An empty claim
+is a silent no-op success ... Recommended: `forge workflow validate` and `forge doctor` finding for a
+write-capable agent step with no claim") and `Q232` decision 6 ("A write-capable agent step with an
+empty claim is a validation finding: error in `forge workflow validate --all`, warning in `doctor` for
+user workflows; the silent no-op stays impossible by construction (P36) and becomes visible before a
+run"). `06` §6.7's "empty claim means no write" rule (Q225, P36) makes the *runtime* grant silently
+withheld; nothing before this piece told an author their workflow had that shape until a run quietly did
+nothing.
+
+**Built.** `validateWorkflow`'s `agent` branch (`packages/engine/src/workflow/validate.ts`) reports
+`write-without-claim` (`severity: 'error'`, `stepId`) for an agent step with empty `outputs` and no
+non-`!` `produces` entry (normalised via a new shared `producesEntries` helper, reused by
+`checkProducesGlobs` too) when `oracle.agentWrites(step.agent)` is `true`. `walkAllSteps` (already
+built, unmodified) supplies every reachable step, so the check reaches a `fanout` template, `parallel`/
+`sequence` children, `onComplete` and `onFailure.escalations[].do` for free — pinned by a dedicated test
+asserting exactly 5 offenders across all five shapes in one workflow.
+
+`WorkflowExistenceOracle` (`packages/engine/src/workflow/types.ts`) gains a sixth, differently-shaped
+method: `agentWrites: (id: string) => boolean` — the other five ask "does this reference resolve,"
+this one asks "if it resolves, does the agent hold `tools.write: true`." `buildOracle`
+(`packages/cli/src/commands/workflow.ts`) backs it with a map built once from every real
+`.forge/agents/<id>.yaml`, read via `loadAgentDefinition`'s existing `tools.write` field; a file that
+cannot be read or parsed is simply absent from the map — "not a writer, not judged," the identical
+stance `readImplementationRoles` (`implementation-roles.ts`, P36) already takes for a corrupt sibling.
+
+`forge doctor` gains a `workflow-claims` check (`run-doctor.ts`, `severity: 'warning'` always) over
+`.forge/workflows/*.workflow.yaml`, reusing `workflowValidateAll` unchanged and filtering its results to
+`write-without-claim` — the exact same real check `forge workflow validate --all` runs, so the two can
+never disagree about what counts as an offender. Its `fix` text names `forge upgrade` (for a project
+whose workflows predate P36's nine claims) and `produces:`/`outputs:` (for a hand-edited one). A
+`warning`-severity check never flips `DoctorReport.ok` (`03` §3.7's exit-code contract reads `hard`
+failures only) — confirmed by both a direct test and, after the fix below, a real subprocess run.
+
+**Two critic-round fixes (both real, both fixed before commit).**
+
+1. **BLOCKING — `checkWorkflowClaims`'s unguarded `workflowValidateAll` call let an ordinary hand-edit
+   mistake become a hard doctor failure.** `workflowValidateAll` (unmodified by this piece) throws a
+   `CFG-001` `ForgeError` for any `.forge/workflows/*.yaml` it cannot parse — exactly the population a
+   user hand-edits, and exactly what this check exists to be advisory about. Left uncaught, that throw
+   reached `runChecks`'s pre-existing generic crash-to-`severity:'hard'` fallback, flipping
+   `DoctorReport.ok` to `false` over a YAML typo — contradicting this check's own doc comment ("never
+   blocks a project's build over its own workflow customisation") and the commit's own stated non-goal
+   ("does not change the doctor exit contract"). Fixed: `checkWorkflowClaims` now wraps the call in its
+   own `try`/`catch`, downgrading a parse failure to the identical honest `warning`-severity shape
+   `checkConfigValidity`/`checkManifest` (`project.ts`) already give their own YAML parse failures — a
+   pattern this file's own first draft was the only check in the module not to follow. A dedicated test
+   (writing an unparseable `.forge/workflows/broken.workflow.yaml` and asserting `check.severity ===
+   'warning'` and `report.ok === true`) pins it; the real-subprocess check below exercises the same path
+   end to end via `forge doctor --json`.
+
+2. **MAJOR — the first draft's "every templated `{{...}}` agent reference writes" was broader than the
+   invariant that justifies it.** `10` §10.5's own shipped workflows use exactly two templated `agent:`
+   shapes, `{{ownerRole}}` and `{{item.owner_role}}`, both of which always resolve to an implementation
+   role (`isImplementationAgent`, `@forge/agents/schema`) — a role every shipped implementer declares
+   `tools.write: true` for. The first draft answered `true` for *any* string containing `{{`, which nothing
+   in the schema or the oracle actually restricts to that one shape: a project's own custom workflow
+   templating a genuinely read-only role into `agent:` (e.g. `{{item.reviewerRole}}`) would get a
+   false-positive, CI-blocking `write-without-claim` *error* for a step whose empty claim is correct.
+   Fixed: a new `isOwnerRoleTemplate` helper (`workflow.ts`, a whitespace- and case-tolerant regex
+   anchored to the whole string) answers `true` only for the two proven shapes; any other templated
+   reference is "not judged" (`false`) — the identical stance a corrupt or unknown real agent file
+   already takes, never "assume it writes." Two new tests pin both directions: `{{ownerRole}}`/
+   `{{item.owner_role}}` with an empty claim still report `write-without-claim`; a synthetic
+   `{{item.reviewerRole}}` with an empty claim reports nothing.
+
+Neither finding touched the engine-layer core logic (`validate.ts`'s new branch, `types.ts`'s new
+interface member), which a fresh critic round found "unusually well cross-validated against the real
+runtime rule [`resolveStepClaim`/`outputs.ts`] and exhaustively tested for the nesting/edge-case matrix" —
+both fixes are CLI-layer glue (`workflow.ts`/`run-doctor.ts`).
+
+**A real-tree accident during this piece, caught and fixed before reporting.** While the critic ran in
+the background, two other concurrent pieces (P6, P9) each landed their own commit on `main`. This
+piece's own critic-fix commit was built with `git commit --amend --no-edit` against what the builder
+believed was still its own HEAD; `main` had actually advanced to P9's own (already twice-amended) commit
+in the meantime, so the amend silently folded this piece's 4 files into P9's commit instead of creating a
+new one — exactly the shared-tree failure mode `process/plans/M13-AGENT-NOTES.md` rule 14/15 exists to
+catch. Caught immediately by inspecting `git log`/`git status` right after the amend (P9's own commit
+message on a diff that included this piece's own files). Fixed with `git reset --soft <P9's own
+pre-amend sha>` (moves the branch pointer back without touching the index, so the four files' changes —
+the only real diff between the contaminated commit and P9's original — land staged and ready to
+re-commit) followed by a clean, separate commit; confirmed via `git fsck --unreachable` that the
+contaminated commit is now genuinely orphaned and `git diff <P9 commit> <this piece's new commit>
+--stat` shows exactly this piece's own 4 files. `git commit --amend` is now understood to be unsafe in
+this shared-tree workflow except immediately after that piece's own un-amended commit, with no
+possibility of another agent's commit having landed in between — a plain new commit is safer whenever
+that cannot be guaranteed.
+
+**Tests.** `packages/engine/test/workflow/validate.test.ts`: writer + nothing → one finding; an
+all-`!`-exclusion `produces` → still empty; a bare-string still-templated `produces` (`{{run.filesExpected}}`)
+→ none (counts as a claim); `outputs: [{type: 'ADR'}]` → none; a non-writer agent → none; a mocked
+`{{ownerRole}}` reference → error; a `command` step → never checked; the five-nesting-shape case → exactly
+5; an unknown agent → only `unknown-agent`, never also `write-without-claim`. `packages/cli/test/commands/workflow.test.ts`:
+a real write-capable fixture agent with an empty claim → error; a real non-writer agent → none; a real
+`produces` claim → none; a corrupt sibling agent file → none, no crash; the real `{{ownerRole}}`/
+`{{item.owner_role}}` shapes through the real, narrowed `buildOracle` → error; a non-owner-role template
+through the same real path → none; a real `forge init` project (real `modules/` roster) → `validate --all`
+clean, and removing `quick-fix:fix`'s shipped `produces` reports exactly that step. New
+`packages/cli/test/commands/doctor/workflow-claims.test.ts` (6 tests): no `.forge/workflows` at all →
+clean; a real empty-claim step → warning naming `workflow:step`, `fix` text naming `forge upgrade` and
+`produces:`/`outputs:`, overall `report.ok` unaffected; a real claim → clean; a non-writer agent → clean;
+a corrupt sibling agent → clean, no crash; an unparseable workflow file → warning, never hard, overall
+`report.ok` unaffected. `test/write-implies-claim.test.ts` (existing, unmodified, run as the cross-check
+the plan names) stays green — its own "no step lets a write-capable agent run with an empty claim"
+invariant over the whole shipped roster is the same invariant this piece's engine-level check now also
+enforces via a completely different code path (a real oracle over real `.forge/agents/` files, not
+`resolveStepClaim` over a compiled plan node), and both agree.
+
+**Mutation evidence (each reverted via `git checkout --`, confirmed byte-identical via `git diff --stat`
+after).** The `if (oracle.agentWrites(...)) {...}` block replaced with `if (false)`: 4 of 57
+`validate.test.ts` tests fail red (the main empty-claim case, the mocked `{{ownerRole}}` case, and the
+five-nesting-shape case, which drops from 5 to 0). `buildOracle`'s `agentWrites` forced to always return
+`false`: 3 of 21 `workflow.test.ts` tests fail red (the real fixture-agent case, the real templated-owner
+case, the real-roster removal case). `isOwnerRoleTemplate` forced to always return `false`: exactly 1 of
+21 `workflow.test.ts` tests fails red (the templated-owner case only — confirms the narrowing is real,
+not vacuous). `producesEntries`'s bare-string branch changed to return `[]` instead of `[produces]`: 4 of
+57 `validate.test.ts` tests fail red — both the pre-existing `checkProducesGlobs` bare-string cases
+(shared helper) and the new bare-string-templated-claim case, confirming the refactor did not silently
+change `checkProducesGlobs`'s own established behaviour while also proving the new check's own bare-string
+handling is real.
+
+**Real, real-subprocess CLI verification (clean `git worktree`, rule 14/15).** `forge init` (real
+`modules/` content, `FakePlatformAdapter`) then the real `packages/cli/bin/forge.mjs workflow validate
+--all -C <dir>` subprocess: exit `0`, `"no real issues"` for the shipped roster; after removing
+`quick-fix:fix`'s `produces` from the materialised file, the same subprocess: exit `1`, stderr naming
+`write-without-claim`, step `"fix"`, agent `"backend"`. The real `forge.mjs doctor --json -C <dir>`
+subprocess against the same mutated project: exit `0`, `{"ok":true,...}`, with the `workflow-claims`
+entry in `checks[]` showing `"ok":false,"severity":"warning"` — the doctor exit contract genuinely
+unaffected by a real, standalone process, not just the in-process test suite.
+
+**Left open.** Nothing from this piece's own mandate. `checkWorkflowClaims` does not distinguish "no
+`.forge/workflows` directory at all" from "directory present but empty" (both read as zero findings,
+matching every sibling doctor check's own tolerant-absence convention). `isOwnerRoleTemplate`'s regex is
+deliberately narrow to the two shapes `10` §10.5 actually ships; a third templated `agent:` shape a
+future workflow author invents for the same "any implementer" purpose would need its own case added here
+(disclosed, not a defect — the alternative, a broader heuristic, is exactly what critic finding 2 above
+found unsafe).
+
+**Verification scope (owner-approved cost cut).** `packages/engine/test/workflow/validate.test.ts`,
+`packages/cli/test/commands/workflow.test.ts`, `packages/cli/test/commands/doctor/workflow-claims.test.ts`,
+`packages/cli/test/commands/doctor/{run-doctor,spec-graph-owner,project}.test.ts` (shared-file sanity),
+`test/write-implies-claim.test.ts`; `pnpm typecheck` (21/21), `pnpm run boundaries`, `eslint --max-warnings 0`
+and `prettier --check` on every file this piece owns. Verified in a clean `git worktree` of the final
+commit (`pnpm install --offline --frozen-lockfile`), including the real-subprocess `forge init`/`workflow
+validate --all`/`doctor --json` check above.
+
+**Files.** `packages/engine/src/workflow/{types,validate}.ts`; `packages/cli/src/commands/{workflow,doctor/run-doctor}.ts`;
+`packages/engine/test/workflow/validate.test.ts`; `packages/cli/test/commands/workflow.test.ts`; new
+`packages/cli/test/commands/doctor/workflow-claims.test.ts`.
