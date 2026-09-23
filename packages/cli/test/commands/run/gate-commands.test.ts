@@ -686,4 +686,13 @@ describe('gates.waiverMaxDays config (forge config get/set, PLAN-M14.md P16)', (
       }),
     ).rejects.toMatchObject({ code: 'GATE-512', details: { maxDays: 90 } });
   });
+
+  it('a real .forge/config.yaml that is invalid for a reason entirely unrelated to gates surfaces CFG-001 on a failing gate command too -- a new coupling: before this piece, gate commands never read config.yaml at all, so an unrelated config defect never affected them', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    await writeFile(path.join(project.dir, CONFIG_REL_PATH), 'version: not-a-number\n');
+    await expect(gateWaive(ctx(project, 'r-badconf'), 'G-Fail', WAIVER)).rejects.toMatchObject({
+      code: 'CFG-001',
+    });
+  });
 });
