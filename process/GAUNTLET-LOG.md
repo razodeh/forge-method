@@ -15211,3 +15211,88 @@ land before any commit, so `priorAttemptContent` is empty there). A real fix nee
 retry layer (`steps.ts`/`orchestrate.ts`) to durably record what a lane was actually told to use, not
 just this piece's own range comparison — left for an owner call rather than guessed at, matching this
 piece's own `Size: S` scope and the 3-round cap already reached without it.
+
+## M14 P12 — `prepare-release-build` claims `paths.release`, refusing with a remedy until set (`schemas/config/{schema,defaults,docs}.ts`, `cli/commands/run/expression-context.ts`, `cli/init/config.ts`, `core/errors/codes.ts`, `modules/fm-mobile/workflows/store-release.workflow.yaml`, `templates/briefs/prepare-release-build.md`, `fixtures/greenfield-service/.forge/briefs/prepare-release-build.md`)
+
+New config leaf `paths.release: string[]` (`schemas/config/schema.ts`, entries repo-relative, refusing
+absolute, `..`, a leading `!`, blank/whitespace-only and a Windows drive letter). `store-release.
+workflow.yaml`'s `prepare-release-build` step replaces the six globs it used to guess the app's own
+layout with (`**/ios/**`, `app.json`, `pubspec.yaml`, ...) with `{{config.paths.release}}`, spliced one
+claim entry per configured path by the existing whole-placeholder splice in `resolveClaimEntry`
+(`plan/compile.ts`, unchanged). `buildRunExpressionContext` exposes exactly `config: {paths: {release}}`
+at the expression language's `config` root, and only when the list is non-empty — nothing else of the
+real project config ever crosses into a workflow's templates. When the list is empty (or the key is
+absent) and the workflow reads `config.paths.release`, the run refuses with a new `RUN-106` before
+`compileRunPlan` even runs, naming the key and a `forge config set` remedy: `assertPlannable`'s own
+missing-input check (`RUN-089`) only ever covers unsupplied run *inputs*, and the expression language
+resolves a missing/absent `config` root to `undefined`, not a finding, so without this check an unset key
+would have silently narrowed the step's claim to zero entries instead of failing loudly. The brief now
+names the key; `package.json` stays unclaimed, the `Task` output and `RESERVED_INPUT_NAMES` (already
+reserves `config`) are unchanged.
+
+**Round 1 (fresh, context-free): 2 blocking, 1 major, 2 minor, all fixed.** **Blocking 1:** `paths.release`
+shipped as a *required* field on the `.strict()` `pathsSchema`, with zero default-merging in `readConfig`
+(`YAML.parse` + `configSchema.safeParse`, nothing else) — every `.forge/config.yaml` written before this
+piece landed (missing the new key) failed `CFG-001` on every command that reads it (`forge run`, `forge
+plan`, `forge config get/set/list/explain` alike), confirmed against a real scratch project and the real
+CLI, with no existing or new test feeding an old-shape config through the new schema to catch it. Fixed
+the same way `execution.testRoots`/`execution.mergeChecks` already establish for exactly this situation:
+`release` is now `.optional()`, every real reader treats an absent key the same as an explicit `[]`
+(`buildRunExpressionContext`'s own `?? []`), and a new CLI-level test proves a hand-written, pre-P12-shaped
+config.yaml round-trips through `configGet` without error. **Blocking 2:** a pre-existing, unmodified test
+(`cli/test/init/config.test.ts`'s `'rebases every paths.* entry under --kb-root, not just paths.kb'`)
+asserted the exact literal shape of `config.paths` with no `release` key — a real, reproducible failure
+against this piece's own `buildPaths` edit that the critic caught by actually running the suite before
+trusting the diff. Fixed by adding the new key to the expected object. **Major:** the checked-in
+`fixtures/greenfield-service/.forge/briefs/prepare-release-build.md` snapshot still carried the old
+"inside the app's own paths" prose after the shipped template was rewritten — invisible to
+`test/greenfield-fixture-generated.test.ts`, whose drift check is a self-hash (did a human edit the file
+since), never a comparison against the live template; the critic read the test's own scope to confirm
+brief body content specifically is outside what it checks. Fixed: body copied from the now-current
+template, header hash recomputed to match, both independently re-verified by round 2. **Minor (both
+fixed):** a whitespace-only entry (`min(1)` alone accepts it) and a Windows UNC path (`\\server\share`, no
+drive letter, so the existing `C:\`-shaped check missed it) were accepted; a doc-comment disclosure was
+also added noting `referencesConfigPathsRelease` only scans `{{...}}`-wrapped text, so a bare `when:`
+expression referencing the key would not be detected — confirmed inert today (neither `SessionStep.when`
+nor `OnFailureEscalation.when` is evaluated by any shipped code yet).
+
+**Round 2 (fresh, context-free): 0 blocking, 0 major, 1 minor, fixed — no round 3.** Independently
+reproduced every round-1 fix as genuinely fixed (real scratch-project CLI runs both ways, an independent
+sha256 recomputation of the regenerated fixture's header against its own documented algorithm rather than
+trusting the file's claim, a fresh 27-case adversarial probe against the real schema, a full isolated-
+worktree run: typecheck, 952 tests, boundaries, lint all green). One real minor: `isValidReleasePathEntry`'s
+own doc comment and refusal message say "no drive letter", but the check only caught one followed by a
+separator (`C:\secrets`), so the bare drive-relative form (`C:secrets`) slipped past its own stated
+contract — inert (the claim matcher only ever compares against real, git-reported repo-relative paths, so
+this could never let a write actually escape the project), but a real asymmetry between what the function
+claims and what it does. Fixed: any `<letter>:` prefix is refused now, separator or not.
+
+**What the critic caught that the builder missed:** both blocking findings in round 1 — a required-field
+schema change with no back-compat path (the single largest gap in the whole change, per the round-1
+critic's own words) and a pre-existing test the build's own verification pass never ran. **What held up
+under real, hostile verification, not just re-reading:** the RUN-106 refusal genuinely fires before
+`compileRunPlan` (traced control-flow, not just line order); detection survives negation (`!{{config.
+paths.release}}`) and embedding (`prefix-{{...}}-suffix`), tried directly against the real CLI; `config`
+never exposes more than `paths.release` (grepped for every `deps.config` reference: exactly one); the two
+dropped `BROAD_PRODUCES_ALLOWED` allowances are genuinely safe once hand-traced against `isBroadProduces`'s
+real logic; absent vs. explicit `paths.release: []` behave byte-identically (two real scratch-project runs
+compared).
+
+**Mutation evidence.** Config exposed unconditionally (even empty): the "absent from context" test fails.
+The RUN-106 check removed: the unset-refusal test and the real-CLI `forge run store-release --dry-run`
+unset case both fail (would have compiled a claim narrower than the workflow author wrote, silently). A
+guessed mobile glob restored to the workflow: the fm-mobile-workflow `produces` assertion fails. The whole
+config object exposed instead of just `paths.release`: the "exposes exactly {paths: {release}}" test
+fails. `optional()` reverted to required: the backward-compat CLI test and the `packages/schemas/test/
+config/schema.test.ts` back-compat test both fail; a real scratch project with a pre-P12 config.yaml fails
+`CFG-001` again (verified by hand, both before the round-1 fix and after — the exact regression the round-1
+critic found is exactly what these tests now pin).
+
+**Left open (matches the plan's own "Discloses" list).** A listed `apps/mobile/**` still admits app
+source (nothing narrows the claim further than the project's own configured glob); `forge init` does not
+prompt for the key; the key name is this piece's choice; `config` is the only expression-language root a
+workflow can reach through `forge config set` today. One pre-existing, out-of-scope CLI quirk the round-2
+critic noted but explicitly did not charge against this piece: `forge config get <optional-key> --json` on
+an unset key omits `value` from the envelope entirely (`JSON.stringify` drops `undefined`), rather than an
+explicit `null`/`[]` — identical, pre-existing behaviour for every optional config leaf (`execution.
+testRoots` included), not introduced here.

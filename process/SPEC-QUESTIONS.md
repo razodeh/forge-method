@@ -20771,3 +20771,124 @@ there. A real fix needs the crash-recovery/retry layer (`steps.ts`/`orchestrate.
 what a lane was actually told to use, not just this piece's own range comparison against whatever
 happens to already be committed — left for an owner call rather than guessed at, matching this piece's
 own `Size: S` scope and the 3-round critic cap already reached without touching it.
+
+## Q244 — M14 P12: `prepare-release-build` claims a configured list of app paths — a two-round critic loop found two blocking regressions and one major staleness gap in round 1 (all fixed), one genuine minor in round 2, no round 3
+
+**Context.** `PLAN-M14.md` P12, closing `Q216`/`Q232` decision 4's own binding text: "`prepare-release-build`
+claims a configured list of app paths (Q216): a config key the brief and the claim both read; until set,
+the step refuses with a remedy rather than guessing." Before this piece, `store-release.workflow.yaml`'s
+`prepare-release-build` step guessed at a mobile app's own file layout with six hard-coded globs
+(`**/ios/**`, `**/android/**`, `app.json`, `app.config.*`, `pubspec.yaml`, `capacitor.config.*`) — Q216
+itself recorded them as a guess, since the brief names none of the app's own paths and cannot: the app's
+layout is a fact about the project, not the workflow.
+
+**Built.** New `paths.release: string[]` leaf (`schemas/config/schema.ts`, optional — see round 1 below —
+default `[]`; entries refused for being blank/whitespace-only, absolute, a Windows drive letter or UNC
+path, containing a `..` segment, or leading `!`, the identical hygiene the claim matcher's own hand-written-
+`produces` rule already enforces). `configLeafPaths` stops at the new `ZodArray`, so `forge config
+get/set/explain paths.release` already work through the existing schema-derived `REAL_KEYS` mechanism — no
+code change needed in `cli/commands/config.ts` at all. `store-release.workflow.yaml`'s `prepare-release-
+build` step replaces the six guessed globs with `'{{config.paths.release}}'`, spliced one claim entry per
+configured path by the pre-existing whole-placeholder splice in `resolveClaimEntry` (`plan/compile.ts`,
+built for `{{item.files_expected}}`-shaped entries; untouched by this piece). `buildRunExpressionContext`
+(`cli/commands/run/expression-context.ts`) exposes exactly `config: {paths: {release}}` at the expression
+language's `config` root, and only when the list is non-empty — the one leaf of the real project config a
+workflow's templates can ever see, nothing else, confirmed by grep (exactly one place in the codebase ever
+passes `deps.config` into an expression context). When the list is empty (or absent) and the workflow
+references `config.paths.release`, the run refuses with new `RUN-106` before `compileRunPlan` even runs,
+naming the key and a `forge config set` remedy: neither `assertPlannable`'s own missing-input check
+(`RUN-089`, unsupplied run *inputs* only) nor the expression language's own "missing path resolves to
+`undefined`" behaviour would otherwise catch this — left unhandled, the whole-placeholder splice would
+have silently resolved the reference to zero claim entries, narrowing the step's claim with no message at
+all. The brief now names the key. Must-not-change items held: `package.json` stays unclaimed, the `Task`
+output is unchanged, `RESERVED_INPUT_NAMES` (already reserves `config`) is untouched.
+
+**Round 1 (fresh, context-free): 2 blocking, 1 major, 2 minor, all fixed.**
+1. **Blocking — no backward compatibility.** `paths.release` shipped as a *required* field on the
+   `.strict()` `pathsSchema`. `readConfig` (`cli/commands/config.ts`) does `YAML.parse` +
+   `configSchema.safeParse` with zero default-merging (`02` §2.8's layering happens elsewhere, never in
+   this function), so every `.forge/config.yaml` written before this piece (missing the new key) failed
+   `CFG-001` on every command that reads one — `forge run`, `forge plan`, `forge config get/set/list/
+   explain` alike — confirmed by the critic against a real scratch project and the real CLI, not merely
+   read off the schema. No test in the original diff fed an old-shape config through the new schema, so
+   nothing caught it. Fixed the same way `execution.testRoots`/`execution.mergeChecks` already establish
+   for exactly this situation (`PLAN-M14.md` P5, P38): `release` is now `.optional()`; every real reader
+   treats an absent key identically to an explicit `[]` (`buildRunExpressionContext`'s own `?? []` — "unset"
+   and "empty" carry no distinct meaning here, unlike `testRoots`, where they do). A new CLI-level test
+   proves a hand-written, pre-P12-shaped `config.yaml` round-trips through `configGet` with no error.
+2. **Blocking — a pre-existing, unmodified test broke and was never run before commit.**
+   `cli/test/init/config.test.ts`'s `'rebases every paths.* entry under --kb-root, not just paths.kb'`
+   asserted the exact literal shape of `config.paths` with no `release` key; this piece's own edit to
+   `buildPaths` (adding `release: DEFAULT_CONFIG.paths.release` to its `--kb-root` branch) broke it. The
+   critic caught this by actually running the suite (`node scripts/run-tests.mjs run cli/test/init/
+   config.test.ts`), not by reading the diff. Fixed by adding the key to the expected object; the critic's
+   own round-1 report additionally grepped the repository for a second hardcoded-shape instance and found
+   none.
+3. **Major — a checked-in fixture snapshot went stale, invisibly.** `fixtures/greenfield-service/.forge/
+   briefs/prepare-release-build.md` still carried the pre-piece "inside the app's own paths" prose after
+   the shipped template (`templates/briefs/prepare-release-build.md`) was rewritten to name the new key.
+   `test/greenfield-fixture-generated.test.ts` — this repository's own dedicated drift guard for exactly
+   this class of staleness — did not catch it: its check is a self-hash (has a human hand-edited the file
+   since it was generated), never a comparison against the live template, and its structural workflow-step
+   comparison explicitly excludes brief body text. Fixed: the fixture's body replaced with the current
+   template's, verbatim, and its `forge:generated` header hash recomputed by hand against the real
+   algorithm (`generated-header.ts`'s `sha256` of the body with the header line stripped) — independently
+   re-derived by the round-2 critic from the algorithm itself, not merely re-read, and confirmed to match.
+4. **Minor, fixed:** a whitespace-only `paths.release` entry (`.min(1)` alone accepts one) and a Windows
+   UNC path (`\\server\share`, no drive letter, so the existing `C:\`/`C:/`-shaped absolute check missed
+   it) were both silently accepted; both now refused, each pinned by a new adversarial test.
+5. **Minor, disclosed (not a code change):** `referencesConfigPathsRelease` (the pre-compile scanner behind
+   `RUN-106`) only recognises `config.paths.release` inside a `{{...}}` placeholder, the one shape
+   `resolveClaimEntry`/`resolveTemplate` themselves ever substitute into. A bare (non-mustache) expression
+   referencing the key — the shape `SessionStep.when`/`OnFailureEscalation.when` use — would not be
+   detected. Confirmed inert today by both critic rounds independently (grepped every consumer of both
+   fields in `engine/dispatch`/`engine/resume`; neither is evaluated by any shipped scheduler/dispatch code
+   yet, per `SessionStep`'s own doc comment). A doc-comment note now flags this for whoever wires either
+   field up to be evaluated, so the gap is found by reading, not rediscovered the hard way.
+
+**Round 2 (fresh, context-free): 0 blocking, 0 major, 1 minor, fixed — no round 3.** Independently
+reproduced every round-1 fix as genuinely fixed, by doing the verification again from scratch rather than
+re-reading the round-1 commit's own claims: two more real scratch-project CLI runs (pre-P12-shaped config
+now works; absent vs. explicit `paths.release: []` produce byte-identical `RUN-106` envelopes); an
+independent sha256 recomputation of the regenerated fixture's header, from the algorithm, not the file's
+own claim; a fresh 27-case adversarial probe against the real `configSchema` (control characters, URL-
+encoded traversal, unicode lookalike separators, a bare `.`/`./`, a 100,000-character entry — all traced
+through to `resolveClaimEntry` → `@forge/vcs`'s `enforceClaim`/`minimatch`, which only ever compares
+against real, already-normalized, git-reported paths, so none of these can actually let a write escape the
+project, correctly judged not worth flagging); a full isolated-worktree run (`pnpm typecheck`, 952 tests,
+`pnpm run boundaries`, `pnpm lint`, all green, output quoted). One real minor: `isValidReleasePathEntry`'s
+own doc comment and error message claim to refuse "no drive letter" generally, but the check only matched
+a drive letter followed by a separator (`/^[A-Za-z]:[\\/]/`), so the bare drive-relative form (`C:secrets`,
+no separator) slipped past its own stated contract — inert for the same claim-matcher reason as the round-1
+adversarial cases, but a real asymmetry between the function's documented behaviour and its actual one.
+Fixed: any `<letter>:` prefix is now refused, separator or not.
+
+**What the critic caught that the builder missed.** Both round-1 blocking findings: a required-field schema
+change with no migration path (the round-1 critic's own words: "the single largest gap in the whole
+change"), and a pre-existing test the build's own verification pass evidently never ran before committing.
+**What held up under real, hostile, run-it-yourself verification, not just re-reading the diff:** the
+RUN-106 refusal genuinely fires before `compileRunPlan` (control flow traced, not just line order);
+detection survives negation (`!{{config.paths.release}}`) and mid-string embedding, tried directly through
+the real CLI; `config` never exposes more of the real project config than `paths.release`; the two dropped
+`BROAD_PRODUCES_ALLOWED` allowances are genuinely safe once hand-traced against `isBroadProduces`'s actual
+logic rather than trusted from a comment.
+
+**Mutation evidence.** `config` exposed unconditionally even when empty: the "absent from context" unit
+test fails. The `RUN-106` check removed: both the unit refusal test and the real-CLI `forge run
+store-release --dry-run` unset case fail (a narrower claim would have compiled silently instead). A
+guessed mobile glob restored to the workflow: the `fm-mobile-workflow` compiled-`produces` assertion
+fails. The whole config object exposed instead of `paths.release` alone: the "exposes exactly {paths:
+{release}}" test fails. `.optional()` reverted to required: the new backward-compat CLI and schema tests
+both fail, and — verified by hand, not merely predicted — a real scratch project with a pre-P12
+`config.yaml` throws `CFG-001` again, the exact regression round 1 found.
+
+**Left open (matches the plan's own "Discloses" list).** A configured `apps/mobile/**` still admits
+ordinary app source (nothing narrows the claim beyond what the project itself names); `forge init` does not
+prompt for the key; the key name (`paths.release`, alongside the other `paths.*` document-root keys, rather
+than e.g. a new top-level section) is this piece's own choice; `config` is the only expression-language
+root a workflow reaches through `forge config set` at all today. One pre-existing, genuinely out-of-scope
+CLI quirk the round-2 critic noted but explicitly declined to charge against this piece: `forge config get
+<optional-key> --json` on an unset key omits `value` from the JSON envelope entirely (`JSON.stringify`
+silently drops an `undefined`-valued property), rather than an explicit `null`/`[]` — identical, pre-
+existing behaviour for every optional config leaf this schema already had (`execution.testRoots` included),
+not introduced by this piece.
