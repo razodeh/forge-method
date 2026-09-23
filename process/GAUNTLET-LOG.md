@@ -15727,3 +15727,147 @@ that the id survives, not that the content is faithful; the shipped linter's con
 the intended, separate mechanism for that. Whether `sources` should eventually become schema-required
 (with a migration for pre-existing hand-written entries) is an explicit owner decision this piece does
 not make.
+
+## M14 P21 — Briefs and claims for `architecture/version-skew.yaml` and `data/migrations.yaml` (`cli/commands/spec/integration-rules.ts`, `templates/workflows/{build-stage,shape-solution,migrate}.workflow.yaml`, `modules/fm-service/workflows/contract-test-cycle.workflow.yaml`, `templates/briefs/{freeze-contracts,draft-contract,model-data,plan-migration,critique-integration}.md`, new `test/gate-declarations-authored.test.ts`, edits to `test/workflows.test.ts`, `cli/test/commands/spec/integration-rules.test.ts`)
+
+**Context.** `PLAN-M14.md` P21, depending on none (P3, already landed, for the fails-the-step half). `10`
+§10.3's `G-Integration` row and `packages/cli/src/commands/spec/integration-rules.ts` (M13 P26, Q228)
+already define and check `version-skew`/`migration-order-violations` against
+`<kb>/architecture/version-skew.yaml` / `<kb>/data/migrations.yaml`, but — as that file's own doc
+comment said until this piece — "no shipped brief yet asks an agent to write either file." This piece
+closes that gap: the four steps whose work the two files summarise now claim and are told to write them.
+
+**Built.** `produces` on `build-stage:freeze-contracts` and fm-service `contract-test-cycle:draft-contract`
+gains the literal `docs/forge/kb/architecture/version-skew.yaml`; `shape-solution:model-data` and
+`migrate:plan-migration` gain the literal `docs/forge/kb/data/migrations.yaml`. Each of the five briefs
+(the four writers plus `critique-integration`, the advisory reviewer that reads both) gains a
+"### Declarations the gate reads" section naming the exact path, the deterministic check that reads it
+(`version:skew`/`migration:order`), and the shape in prose — `freeze-contracts.md` and `model-data.md`
+each also carry a real, working YAML sample (the other two brief's sections cross-reference those for
+the full shape, since "at least one brief per file" is what the piece's own Tests-first line requires).
+`freeze-contracts.md` states it declares EVERY valid contract, including ones frozen in an earlier
+stage; `model-data.md` writes the file's initial (normally empty, `none_reason`-carrying) state;
+`plan-migration.md` appends its ADR's phases without disturbing what is already there, naming `release`
+and `expands` specifically (the two fields its own append duty is about).
+
+`packages/cli/src/commands/spec/integration-rules.ts`'s two module-private zod schemas
+(`skewSchema`/`migrationsSchema`) had every sub-object inlined; this piece names each level
+(`policySchema`, `consumerSchema`, `contractEntrySchema`, `contractsSchema`, `skewObjectSchema` /
+`migrationSchema`, `migrationsObjectSchema`) at the exact same nesting and `.strict()`/`.refine()`
+composition as before (behaviourally a no-op refactor — the pre-existing 60-test
+`version-skew`/`migration-order-violations` suite passes unchanged), purely so a new `uniqueKeys()`
+helper can read each level's real `.shape` and export `VERSION_SKEW_KEYS` (9 keys) / `MIGRATION_KEYS`
+(7 keys) — derived from the schema, not hand-copied, so a future schema change cannot silently leave a
+brief's key list stale without a test noticing. `VERSION_SKEW_FILE`/`MIGRATIONS_FILE` and the rule
+functions' own logic are untouched.
+
+New `test/gate-declarations-authored.test.ts` (root): the four steps' real `produces` name the two
+paths; every brief that writes one names its exact path; for each file, at least one brief's own PROSE
+(fenced samples excluded — see round 1 below) names every exported key; `freeze-contracts.md` says
+every contract is declared; `plan-migration.md` names `expands`/`release`; `critique-integration.md`
+names both checks and both paths and stays read-only; each of `freeze-contracts.md`/`model-data.md`'s
+embedded YAML samples is extracted VERBATIM and round-tripped through the real
+`validateVersionSkew`/`validateMigrationOrder`, passing with `errors: 0`, and fails naming the field
+when one key is misspelled. `packages/cli/test/commands/spec/integration-rules.test.ts` gains a real
+`runWorkflow` describe block (`FakePlatformAdapter`, a synthetic mirror of the two steps' real claim
+shape, real lane commit/claim enforcement): an architect session writing a contract AND
+`version-skew.yaml` keeps both; a data-architect session keeps `migrations.yaml`; a
+`version-skew.yml` write (wrong extension, outside the claim by construction) is reverted and fails the
+step with `RUN-104` (`PLAN-M14.md` P3). `test/brief-write-paths-in-claim.test.ts` needed no edits: its
+existing extractor already recognises the new "Write/Append `` `path` ``" sentences as writes (verified
+by hand-tracing its verb-adjacency rule, not assumed) and its existing claim-coverage assertion is what
+was red before `produces` was edited and green after. `test/workflows.test.ts`'s hand-built
+`build-stage.workflow.yaml` worked-example fixture updated for the one new `produces` entry it would
+otherwise fail on byte-for-byte.
+
+**Round 1 (fresh, context-free): 2 real findings (both fixed), 2 nitpicks (judged, one deferred with
+reasons, one not worth a change).**
+1. **Real (moderate), fixed.** The "at least one brief names every key" check matched a brief's WHOLE
+   text, fence included — since the fenced YAML sample already types every field name literally, the
+   check passed even with the explaining prose paragraph deleted, so the piece's own "schema-key
+   paragraph removed: key assertion [fails]" mutation-evidence claim was false as first shipped. Fixed:
+   the check now strips fenced code before matching (verified live — deleting freeze-contracts.md's
+   prose paragraph while keeping its fence now fails exactly the key-assertion test, restored,
+   re-verified green). This surfaced a second, real gap the same fix exposed: `model-data.md`'s own
+   prose never named `none_reason` at all (only its fence did), so the corrected, stricter check would
+   have failed on real, unmutated content — fixed by naming it in the sentence introducing the fence.
+2. **Real (minor, documentation gap), fixed.** The Discloses line "`freeze-contracts` runs at every
+   level while `G-Integration` is L4-only (the brief says why)" was only half true: the brief stated the
+   consequence (an undeclared contract fails the check even on a level that never gates on it) but never
+   the reason. Fixed: `freeze-contracts.md` now says why (a project's level can rise, so a declaration
+   only started at L4 would already be behind), with the rest of the paragraph tightened to stay under
+   `briefs-build-content.test.ts`'s 90-line ceiling (landed at 89, later re-confirmed by round 2).
+3. **Nitpick, judged, deferred with reasons (unchanged).** The key-assertion check's plain substring
+   match has low discriminating power for a handful of short, common-English schema keys (`id`, `name`,
+   `version`, `after`, `current`) — true only in the abstract, since the real briefs correctly name every
+   key as its own backticked term (verified directly); tightening it to require backtick-wrapped word
+   boundaries would force re-verbosifying several `` `{key, key, ...}` `` groupings against the same line
+   ceiling round 1's other fix just clawed margin back on. Left as a disclosed, deliberate trade-off.
+
+**Round 2 (fresh, context-free, independently re-ran the whole piece and re-verified round 1's fixes by
+its own live mutation, not by trusting round 1's account): 0 real findings, 2 nitpicks (both
+re-confirmations, nothing new).**
+1. Re-verified round 1 fix 1 live: deleted the same prose paragraph, confirmed 3 tests fail; restored,
+   confirmed 15/15 green. Re-verified round 1 fix 2: confirmed `model-data.md`'s prose now names
+   `none_reason` outside its fence, confirmed the line-count ceiling still holds (89 of 90).
+   Independently re-derived `VERSION_SKEW_KEYS`/`MIGRATION_KEYS` by hand from the live schemas and
+   cross-checked against the real exports: exact match, no drift. Ran `pnpm typecheck` (21/21 clean) in
+   addition to the scoped test files.
+2. **Nitpick (commit-message precision, no code/test change).** This piece's own "Mutation evidence"
+   phrase "removed from `freeze-contracts.produces`: two root tests **and the end-to-end revert**" reads
+   as one chained claim; editing the real, shipped `build-stage.workflow.yaml` trips only the two root
+   tests — the "end-to-end revert" evidence comes from mutating the SAME shape inside the real
+   `runWorkflow` describe block's own synthetic mirror workflow, independently, not from the shipped
+   YAML directly. Both halves are individually real (confirmed live by the critic); the phrasing just
+   reads more tightly coupled than the two actually are. Noted, not changed (a commit-message wording
+   nitpick on an already-landed commit, not a code or test issue).
+3. **Nitpick, re-confirmed accurate as disclosed.** Round 1's finding 3 (substring discriminating power)
+   re-checked and found still true and still correctly deferred; nothing to add.
+
+**Mutation evidence (real: broken, the named test(s) shown to fail, then restored — not narrated, each
+independently reproduced by round 2's own critic in addition to the builder).**
+`docs/forge/kb/architecture/version-skew.yaml` removed from `freeze-contracts`'s real `produces`
+(`build-stage.workflow.yaml`): exactly 2 tests fail red — `test/gate-declarations-authored.test.ts`'s
+claim test and `test/workflows.test.ts`'s worked-example equality test (a third failure mode, the same
+shape mutated inside `integration-rules.test.ts`'s own synthetic `runWorkflow` mirror workflow, fails
+its own real-`runWorkflow` "keeps both" test — `runStatus` flips from `completed` to `failed` — an
+independent, not chained, piece of evidence for the identical failure mode). The schema-key paragraph
+mutation and the misspelled-sample-key mutation are each described under round 1/round-1-fix above and
+reproduced independently by round 2; all reverted, full scoped suite re-run green after each.
+
+**Verification scope (owner-approved cost cut, no full unscoped suite).** `test/{gate-declarations-authored,
+brief-write-paths-in-claim,workflows,build-stage-compiles,build-stage-lane-landing,fm-service-workflow,
+fm-mobile-workflow,output-contract-known-gaps,authoring-roles-run,greenfield-fixture-generated}.test.ts`,
+`packages/agents/test/prompt/{briefs-planning-content,briefs-build-content,briefs-ops-gates-content,
+content-index}.test.ts`, `packages/cli/test/commands/spec/{interfaces,integration-rules,gate-rule-coverage}.test.ts`,
+`packages/cli/test/commands/gate-p26-coverage.test.ts`, `packages/testkit/test/strict.test.ts`,
+`packages/engine/test/workflow/parse.test.ts` — 800+ cases total, all green, run both in the shared
+working tree and (rule 14/15) in a clean `git worktree` of the final commit with `pnpm install
+--offline --frozen-lockfile`. `pnpm typecheck`, `pnpm run boundaries` and the combined `pnpm lint`
+(`eslint . --max-warnings 0 && prettier --check .`, not `eslint`/`prettier --check` run separately) all
+clean in that same clean worktree.
+
+**Shared-tree incident.** None on this piece's own files: every commit's staged file list was checked
+against `git status --short` immediately before `git add` (never `-A`/`.`), and every commit's
+committed blob content was verified directly with `git show <sha>:<path>` afterward, not only
+`git diff --cached` before. Files this wave's other concurrently-committing pieces (P11/P16/P17) own —
+`core/errors/codes.ts`, `cli/bin.ts`, `cli/commands/run/gate-commands.ts`,
+`engine/dispatch/{index,outputs,steps}.ts`, `engine/gates/{approve,index,report,types}.ts` — were never
+touched by this piece; confirmed disjoint from this piece's own Surface throughout.
+
+**Discloses (per the plan's own Discloses list).** Both files stay self-attested: the checks prove a
+declaration is present, well-formed and internally consistent, never that it matches the project's real
+deployed versions or real migration history. `critique-integration` stays unwired — nothing in this
+milestone dispatches a gate's advisory checks yet (a pre-existing, system-wide gap, confirmed by round
+2 tracing the engine's own gate-evaluation code; not something this piece was asked to fix).
+`freeze-contracts` runs at every level while `G-Integration` is L4-only; the brief now says why (round
+1's own fix, above). Two concurrent `contract-test-cycle` runs still conflict at `merge-contract`
+(unchanged by this piece; `contract-test-cycle.workflow.yaml`'s own header comment already documents
+the single-lane-merge shape this piece's one new `produces` entry on `draft-contract` does not alter).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q249`. Files: `packages/cli/src/commands/spec/integration-rules.ts`,
+`packages/templates/templates/workflows/{build-stage,shape-solution,migrate}.workflow.yaml`,
+`modules/fm-service/workflows/contract-test-cycle.workflow.yaml`, `packages/templates/templates/briefs/
+{freeze-contracts,draft-contract,model-data,plan-migration,critique-integration}.md`; new
+`test/gate-declarations-authored.test.ts`; edits to `test/workflows.test.ts`, `packages/cli/test/
+commands/spec/integration-rules.test.ts`.
