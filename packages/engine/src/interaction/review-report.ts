@@ -412,7 +412,9 @@ const REVIEW_VERDICTS: ReadonlySet<string> = new Set<ReviewVerdict>([
  * either exactly like "missing," never like `clear`, so a malformed or pre-P14 report is never silently
  * read as passing.
  */
-export function parseReviewVerdict(frontMatter: Record<string, unknown>): ReviewVerdict | undefined {
+export function parseReviewVerdict(
+  frontMatter: Record<string, unknown>,
+): ReviewVerdict | undefined {
   const { verdict } = frontMatter;
   return typeof verdict === 'string' && REVIEW_VERDICTS.has(verdict)
     ? (verdict as ReviewVerdict)

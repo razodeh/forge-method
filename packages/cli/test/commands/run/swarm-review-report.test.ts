@@ -187,7 +187,11 @@ describe('forge run: a swarm-review step', () => {
     const branch = laneBranchName(runId, REVIEW_STEP);
     const { stdout: text } = await execa('git', ['show', `${branch}:${REPORT}`], { cwd: p.dir });
     const doc = ArtifactDocument.parse(text, REPORT);
-    expect(doc.frontMatter).toMatchObject({ id: 'REVIEW-001', author: 'reviewer', verdict: 'blocked' });
+    expect(doc.frontMatter).toMatchObject({
+      id: 'REVIEW-001',
+      author: 'reviewer',
+      verdict: 'blocked',
+    });
     expect(text.match(/^- Verdict: \*\*/gm)).toHaveLength(1);
     expect(text).toContain('- Verdict: **blocked**');
     await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();

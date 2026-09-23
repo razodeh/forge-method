@@ -132,7 +132,11 @@ function outputFailure(node: StepNode, detail: string): StepFailureInfo {
  * P7 output check already passed it) — this is not that check failing again, so `RUN-108`, not `RUN-083`.
  * `source: 'output'` still: the step's own output is what is at fault (a `blocked` review), not the
  * adapter, a claim, or the vcs layer. */
-function blockedVerdictFailure(node: StepNode, file: string, blockingCount: number): StepFailureInfo {
+function blockedVerdictFailure(
+  node: StepNode,
+  file: string,
+  blockingCount: number,
+): StepFailureInfo {
   const error = new ForgeError('RUN-108', { stepId: node.id, file, count: blockingCount });
   return {
     source: 'output',
@@ -570,8 +574,10 @@ export async function resumeSwarmReviewStep(
   // safe. The front matter, never the rendered body: a perspective's own text can reach the body, never
   // the front matter (`review-report.ts`'s own doc comment).
   if (outcome.status === 'succeeded') {
-    const frontMatter = ArtifactDocument.parse(found.text, found.file)
-      .frontMatter as Record<string, unknown>;
+    const frontMatter = ArtifactDocument.parse(found.text, found.file).frontMatter as Record<
+      string,
+      unknown
+    >;
     if (parseReviewVerdict(frontMatter) === 'blocked') {
       ctx.laneRegistry.delete(node.id);
       return failed(
