@@ -35,6 +35,7 @@ import { resolveClaimPolicy } from '@forge/kb/adopt';
 
 import { resolvePackageRoot } from '../../init/package-root.ts';
 import { loadGateRegistry } from './gates.ts';
+import { MAX_DIRTY_FILES_LISTED } from './vcs-refusal.ts';
 
 export interface BuildRunContextInput {
   readonly paths: ProjectPaths;
@@ -540,10 +541,9 @@ const SHORT_SHA_LENGTH = 12;
  *   naming the branch, `trunk` itself (never a hardcoded `'main'` literal in the details, even though
  *   every real caller passes `TRUNK`), and both tips. A run never merges `main` into a diverged
  *   integration branch on its own — that would create a real merge commit, unattended, with its own
- *   conflict risk — so this
- *   function never calls plain `git merge` at all; the only merge command it ever runs is the
- *   `--ff-only` one above, and only once the ancestor check has already proven it cannot fail, so
- *   `MERGE_HEAD` is never created by this function under any outcome.
+ *   conflict risk — so this function never calls plain `git merge` at all; the only merge command it
+ *   ever runs is the `--ff-only` one above, and only once the ancestor check has already proven it
+ *   cannot fail, so `MERGE_HEAD` is never created by this function under any outcome.
  *
  * A dirty integration worktree — not the project's own working tree (`runWorkflow`'s own
  * `assertCleanWorkingTree` already checked that, before this is ever reached): the SEPARATE worktree
@@ -564,11 +564,23 @@ export async function syncIntegrationBranchToTrunk(
   const dirtyFiles = await getDirtyFiles(integrationPath);
   if (dirtyFiles.length > 0) {
     const branch = await currentBranchOrDetached(integrationPath);
+    // Capped the same way `refusalFromVcsError`'s own `VCS-010` wrapper caps `VCS-DIRTY-TREE`
+    // (`vcs-refusal.ts`) — this code has no such downstream wrapper (it falls through that function's
+    // generic branch, printing this message unchanged), so the cap has to happen here instead, or an
+    // integration worktree that somehow accumulated many uncommitted files would print a wall of text.
+    // `details.dirtyFiles` stays the full, untruncated list: never load-bearing for the message, but a
+    // caller inspecting the error programmatically still gets everything.
+    const listedDirtyFiles = dirtyFiles.slice(0, MAX_DIRTY_FILES_LISTED);
+    const moreDirtyFiles = dirtyFiles.length - listedDirtyFiles.length;
+    const dirtyFilesText =
+      moreDirtyFiles > 0
+        ? `${listedDirtyFiles.join(', ')}, and ${String(moreDirtyFiles)} more`
+        : listedDirtyFiles.join(', ');
     throw new VcsError({
       code: 'VCS-INTEGRATION-DIRTY',
       message:
         `The integration worktree for ${branch} has ${String(dirtyFiles.length)} uncommitted ` +
-        `change(s), so it cannot be synced with ${trunk}: ${dirtyFiles.join(', ')}.`,
+        `change(s), so it cannot be synced with ${trunk}: ${dirtyFilesText}.`,
       remedy:
         'This is the integration worktree, not your own working tree — inspect it directly (under ' +
         '`.forge/state/worktrees/`) and commit or discard what is there, then run again.',

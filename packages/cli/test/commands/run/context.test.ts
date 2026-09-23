@@ -841,6 +841,43 @@ describe('syncIntegrationBranchToTrunk (M14 P9, SPEC-QUESTIONS.md Q221 disclosed
     ).resolves.toBe('wip\n');
   });
 
+  it('a dirty integration worktree with many uncommitted files caps its message the same way VCS-010 does, never a wall of text, while details.dirtyFiles stays the full list (a round-2 critic finding: this code has no downstream wrapper to truncate it for it)', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    const fileCount = 15;
+    for (let i = 0; i < fileCount; i += 1) {
+      // Zero-padded so lexical order (what `git status`/`getDirtyFiles` returns) matches numeric
+      // order -- otherwise "scratch-14.txt" would sort ahead of "scratch-2.txt" and land inside the
+      // cap by accident, defeating the point of this test.
+      await writeFile(
+        path.join(integrationPath, `scratch-${String(i).padStart(2, '0')}.txt`),
+        'wip\n',
+      );
+    }
+
+    let threw: unknown;
+    try {
+      await syncIntegrationBranchToTrunk(integrationPath, 'main');
+    } catch (error) {
+      threw = error;
+    }
+
+    expect(threw).toMatchObject({ name: 'VcsError', code: 'VCS-INTEGRATION-DIRTY' });
+    const error = threw as { message: string; details: { dirtyFiles: readonly string[] } };
+    // The message names the true count and stops listing after the cap, with "and N more".
+    expect(error.message).toContain(`${String(fileCount)} uncommitted change(s)`);
+    expect(error.message).toContain('and 5 more');
+    expect(error.message).not.toContain('scratch-14.txt');
+    // The full, untruncated list is still on `details`, never load-bearing for the message alone.
+    expect(error.details.dirtyFiles).toHaveLength(fileCount);
+    expect(error.details.dirtyFiles).toContain('scratch-14.txt');
+  });
+
   it('a trunk ref that does not resolve (a project without it) gets a clear VcsError, not a guess', async () => {
     const project = await createTestProject();
     const integrationPath = await ensureIntegrationWorktree(
