@@ -49,7 +49,8 @@
  * @see specs/06 §6.4, §6.7, §6.10
  * @see specs/13 §13.3
  * @see PLAN-M13.md P17
- * @see SPEC-QUESTIONS.md Q217
+ * @see PLAN-M14.md P14
+ * @see SPEC-QUESTIONS.md Q217, Q232 decision 7
  */
 import path from 'node:path';
 
