@@ -56,6 +56,7 @@ export {
 export {
   checkDeclaredOutputs,
   docRootsOf,
+  documentProblems,
   outputClaimGlobs,
   outputGlob,
   outputPathCoveredBy,

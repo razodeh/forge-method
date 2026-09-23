@@ -2100,6 +2100,21 @@ export const ERROR_CODES = {
       `--owner ${show(d.owner)} is not a real identifier (letters, digits, and . _ @ + : -, starting alphanumeric, no whitespace).`,
     remedy: 'Provide --owner as a single identifier: a name, handle, email address, or ticket id.',
   },
+  // `forge gate check`/`approve`/`waive` refusing to write a `GateReport` once `reports/gates/` already
+  // holds `GATE-999` (`18` §18.8's own id-width bound, `idWidth: 3` for `GateReport`): the identical
+  // "refuse, never silently widen or wrap the id" stance `CFG-010` (`IdAllocator`) and `RUN-109`
+  // (`reserveIds`) already take for the same exhaustion case in every other numbered artifact type
+  // (`PLAN-M14.md` P17's own `nextGateReportId`, `gate-commands.ts`). Nothing is written when this fires.
+  'GATE-514': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { max: number }) =>
+      `reports/gates/ already holds the highest GateReport id this project's idWidth allows (GATE-${show(d.max)}); no id is free for a new one.`,
+    remedy:
+      'Archive or remove old reports under reports/gates/ (GateReport ids are never reused once freed), ' +
+      "or widen the GateReport registry entry's idWidth (schemas/src/registry/artifact-types.ts) if the " +
+      'project genuinely needs more than 999 gate reports.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

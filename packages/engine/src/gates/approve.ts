@@ -38,6 +38,7 @@ import { createHash } from 'node:crypto';
 
 import { ForgeError } from '@forge/core/errors';
 
+import { sanitizedCheckText } from './report.ts';
 import type { GateDefinition, GateEvaluationResult, Waiver } from './types.ts';
 import { applyWaiver, isApproved } from './waiver.ts';
 
@@ -95,9 +96,18 @@ function describeApprover(approver: GateApprover): string {
 
 /** The audit-trail record of every deterministic check in `evaluated`: verdict plus digests of the exact
  * output. `waived` marks the failing ones a waiver covers. Shared by an approval and a waiver, so the two events
- * describe one evaluation the same way. */
+ * describe one evaluation the same way.
+ *
+ * `PLAN-M14.md` P17: the digests are of `sanitizedCheckText`'s output (`report.ts`) — the SAME sanitised,
+ * capped text a written `GateReport` fences `stdout`/`stderr` as — not the raw check result, so a reader
+ * can sha256 the fenced block in the report file this run also wrote and get back exactly these digests
+ * ("the digests verify against it"). Typed over `Pick<GateEvaluationResult, 'checks'>` rather than the
+ * full interface: this function has only ever read `.checks`, and the narrower type lets `runGateStep`
+ * (`dispatch/steps.ts`) reuse it directly on a `GateReport` (no `advisory`/`openQuestionsPolicy` of its
+ * own) for the in-run `GateEvaluated` payload's own per-check digests, without a second, duplicate
+ * digesting function. */
 export function recordChecks(
-  evaluated: GateEvaluationResult,
+  evaluated: Pick<GateEvaluationResult, 'checks'>,
   waived: boolean,
 ): readonly ApprovedCheckRecord[] {
   return evaluated.checks.map((check) => ({
@@ -106,8 +116,10 @@ export function recordChecks(
     passed: check.passed,
     waived: waived && !check.passed,
     exitCode: check.exitCode,
-    stdoutSha256: sha256(check.stdout),
-    ...(check.stderr === undefined ? {} : { stderrSha256: sha256(check.stderr) }),
+    stdoutSha256: sha256(sanitizedCheckText(check.stdout)),
+    ...(check.stderr === undefined
+      ? {}
+      : { stderrSha256: sha256(sanitizedCheckText(check.stderr)) }),
     ...(check.reason === undefined ? {} : { reason: check.reason }),
   }));
 }

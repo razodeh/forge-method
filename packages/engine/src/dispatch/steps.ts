@@ -26,6 +26,7 @@ import type { SessionRequest } from '@forge/adapter-kit';
 import { artifactTypeById } from '@forge/schemas';
 import { minimatch } from 'minimatch';
 
+import { recordChecks } from '../gates/index.ts';
 import { mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import {
@@ -1004,7 +1005,12 @@ export async function runGateStep(node: StepNode, ctx: ExecuteStepContext): Prom
   await ctx.telemetry.emit({
     type: 'GateEvaluated',
     stepId: node.id,
-    payload: { gateId: node.gate, passed: report.passed },
+    // `PLAN-M14.md` P17: digests, not the raw check output -- `10` §10.3 rule 4's own audit trail as
+    // `GateApproved`/`GateWaived` already carry it (`recordChecks`, `gates/approve.ts`), reused as-is
+    // (it reads only `.checks`, which a `GateReport` carries too). This in-run step writes no report
+    // FILE of its own (that is `gate check`/`approve`/`waive`'s own job, `gate-commands.ts`) -- only
+    // the event gains the per-check digests.
+    payload: { gateId: node.gate, passed: report.passed, checks: recordChecks(report, false) },
   });
   const finishedAt = ctx.now();
   const detail: StepOutcomeDetail = { kind: 'gate', report };

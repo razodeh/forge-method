@@ -41,8 +41,24 @@
       "format": "date",
       "type": "string"
     },
+    "evaluatedAt": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "gate": {
+      "minLength": 1,
+      "type": "string"
+    },
     "id": {
       "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "waived"
+      ],
       "type": "string"
     },
     "revision": {

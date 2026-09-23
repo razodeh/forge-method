@@ -71,6 +71,72 @@ describe('runGateStep', () => {
     ]);
   });
 
+  it("the GateEvaluated payload carries per-check digests (PLAN-M14.md P17), and writes no GateReport file of its own -- that is gate check/approve/waive's own job", async () => {
+    const projectRoot = await createTempRepo('gate-digests');
+    // A distinct real repo standing in for the integration worktree, the same "evaluates against
+    // ctx.integrationPath, not ctx.projectRoot" setup the test above this one uses -- the file check
+    // below only means something if it looks at the SAME tree the gate step actually evaluated (and
+    // would write into, if it wrote at all), not merely at a directory nothing here ever touches.
+    const integrationPath = await createTempRepo('gate-digests-integration');
+    const gateRegistry = new Map([
+      [
+        'G-Test',
+        gate({
+          id: 'G-Test',
+          checks: {
+            deterministic: [
+              {
+                id: 'check-a',
+                run: `echo '{"errors":0}'; echo warn >&2`,
+                failOn: 'errors > 0',
+              },
+            ],
+            advisory: [],
+          },
+        }),
+      ],
+    ]);
+    const ctx = createTestContext({
+      projectRoot,
+      integrationPath,
+      gateRegistry,
+      runId: 'run-gate-digests',
+    });
+    const stepNode = node({ id: 'wf:gate', kind: 'gate', gate: 'G-Test' });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-gate-digests')) events.push(event);
+    const evaluated = events.find((event) => event.type === 'GateEvaluated');
+    const payload = evaluated?.payload as {
+      readonly gateId: string;
+      readonly passed: boolean;
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly stdoutSha256: string;
+        readonly stderrSha256?: string;
+      }[];
+    };
+    expect(payload.checks).toHaveLength(1);
+    expect(payload.checks[0]?.checkId).toBe('check-a');
+    expect(payload.checks[0]?.stdoutSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(payload.checks[0]?.stderrSha256).toMatch(/^[0-9a-f]{64}$/);
+    // The event log never carries the raw output itself, only its digest (`20` §20.10 S3).
+    expect(JSON.stringify(evaluated)).not.toContain('"stdout":');
+    expect(JSON.stringify(evaluated)).not.toContain('"stderr":');
+
+    // No `GateReport` file: an in-run gate step evaluates and emits digests, it does not write a report
+    // document -- `gate check`/`approve`/`waive` (`@forge/cli`) are the only writers. Checked in BOTH
+    // trees a hypothetical regression could plausibly write into.
+    await expect(
+      readdir(path.join(integrationPath, 'docs', 'forge', 'reports', 'gates')),
+    ).rejects.toThrow();
+    await expect(
+      readdir(path.join(projectRoot, 'docs', 'forge', 'reports', 'gates')),
+    ).rejects.toThrow();
+  });
+
   it('a gate with a failing deterministic check produces a failed outcome, emitting GateRejected', async () => {
     const projectRoot = await createTempRepo('gate-fail');
     const gateRegistry = new Map([

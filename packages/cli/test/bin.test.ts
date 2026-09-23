@@ -778,6 +778,51 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
     expect(parsed.report.passed).toBe(true);
   });
 
+  it('`forge gate check <id> --json` carries reportPath, naming a real, written GateReport file (PLAN-M14.md P17); human mode prints a `report: <path>` line', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+
+    const jsonResult = run(['gate', 'check', RUN_GATE_ID, '--json', '-C', dir]);
+    expect(jsonResult.status).toBe(0);
+    const parsed = JSON.parse(jsonResult.stdout) as {
+      readonly report: { readonly reportPath: string };
+    };
+    expect(parsed.report.reportPath).toMatch(
+      new RegExp(`^docs/forge/reports/gates/${RUN_GATE_ID}-.*\\.md$`),
+    );
+    expect(existsSync(path.join(dir, parsed.report.reportPath))).toBe(true);
+
+    const humanResult = run(['gate', 'check', RUN_GATE_ID, '-C', dir]);
+    expect(humanResult.status).toBe(0);
+    expect(humanResult.stdout).toContain('report: docs/forge/reports/gates/');
+  });
+
+  it('`forge gate approve <id> --json` carries reportPath under `evaluation`, naming a real, written GateReport file', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+
+    const result = run([
+      'gate',
+      'approve',
+      RUN_GATE_ID,
+      '--reason',
+      'looks fine',
+      '--json',
+      '-C',
+      dir,
+    ]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly evaluation: { readonly reportPath: string };
+    };
+    expect(parsed.evaluation.reportPath).toMatch(
+      new RegExp(`^docs/forge/reports/gates/${RUN_GATE_ID}-.*\\.md$`),
+    );
+    expect(existsSync(path.join(dir, parsed.evaluation.reportPath))).toBe(true);
+  });
+
   it('exits 2 with a real, specific message for `forge gate reject <id>` with no --reason', async () => {
     const dir = await realRunProject();
     const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);

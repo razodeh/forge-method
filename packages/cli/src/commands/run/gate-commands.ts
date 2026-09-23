@@ -4,7 +4,16 @@
  * @see specs/03 §3.2.4
  * @see specs/10 §10.3
  */
-import { ForgeError, pathExists, SYSTEM_CLOCK, type Clock } from '@forge/core';
+import {
+  ArtifactDocument,
+  ForgeError,
+  listDirSorted,
+  pathExists,
+  readTextFile,
+  writeFileAtomic,
+  SYSTEM_CLOCK,
+  type Clock,
+} from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import {
   applyWaiver,
@@ -13,6 +22,7 @@ import {
   buildGateReport,
   evaluateGate,
   recordChecks,
+  renderGateReportFile,
   validateWaiverPolicy,
   waiverExceedsCap,
   type GateApprovalSummary,
@@ -22,14 +32,19 @@ import {
   type GateReport,
   type Waiver,
 } from '@forge/engine/gates';
-import { GateNotFoundError, runShellCommand } from '@forge/engine/dispatch';
+import { documentProblems, GateNotFoundError, runShellCommand } from '@forge/engine/dispatch';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
+import { definitionForType, renderArtifactPath } from '@forge/schemas';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { appendEvent, readEvents } from '@forge/telemetry/events';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
 import { CONFIG_REL_PATH, readConfig } from '../config.ts';
 import { loadGateRegistry } from './gates.ts';
+
+/** `18` §18.7's own registered `GateReport` row: `idPrefix`/`idWidth` for numbering
+ * (`nextGateReportId`), and the definition `documentProblems` validates a written report against. */
+const GATE_REPORT_TYPE = definitionForType('GateReport');
 
 export interface GateCommandContext {
   readonly paths: ProjectPaths;
@@ -87,24 +102,152 @@ async function resolveWaiverMaxDays(ctx: GateCommandContext): Promise<number> {
   return config.gates?.waiverMaxDays ?? defaultWaiverMaxDays();
 }
 
+/** `paths.reports` (`18` §18.7's `GateReport` row is rooted here): the project's real, configured
+ * reports root, defaulting to `DEFAULT_CONFIG.paths.reports` ("docs/forge/reports") the same
+ * lenient-if-absent way `resolveWaiverMaxDays` reads `gates.waiverMaxDays` just above — a project need
+ * not have run `forge config set` even once for `gate check`/`approve`/`waive` to know where to write a
+ * `GateReport`. Unlike `gates.waiverMaxDays`, `paths.reports` is a REQUIRED field of a validated config
+ * (`schema.ts`'s `pathsSchema`, unlike `paths.release`), so once a config file exists this never falls
+ * further back than it: only a literally absent config file reads the packaged default. */
+async function resolveReportsRoot(ctx: GateCommandContext): Promise<string> {
+  if (!(await pathExists(ctx.paths.resolveWithin(CONFIG_REL_PATH)))) {
+    return DEFAULT_CONFIG.paths.reports;
+  }
+  const config = await readConfig(ctx.paths);
+  return config.paths.reports;
+}
+
+/** `GATE-###`, `18` §18.7's own `idPrefix`/`idWidth`, matched against a whole `id` (an optional
+ * `-<suffix>` sub-id, `front-matter.ts`'s own base id pattern, is accepted and ignored — no real
+ * `GateReport` writer here ever adds one, but a hand-edited file might). */
+const GATE_REPORT_ID_PATTERN = new RegExp(
+  `^${GATE_REPORT_TYPE.idPrefix}-(\\d{${String(GATE_REPORT_TYPE.idWidth)}})(?:-\\d+)?$`,
+);
+
+/** One above the highest `GATE-###` id this registry's `idWidth` can represent (`999` for the real,
+ * 3-digit `GateReport` entry) — the same bound `@forge/core`'s own `IdAllocator` (`CFG-010`) and
+ * `output-ids.ts`'s `reserveIds` (`RUN-109`) already refuse past, for the identical reason: silently
+ * widening to a 4-digit id would produce one `GATE_REPORT_ID_PATTERN` itself can never match back on a
+ * later scan (its `\d{3}` group is exact-width), so every id after it would misread the same, already-
+ * claimed number as still free and re-issue it forever. */
+const MAX_GATE_REPORT_NUMERIC_ID = 10 ** GATE_REPORT_TYPE.idWidth - 1;
+
+/** The next free `GATE-###` id: one above the highest already claimed by a real `GateReport` file under
+ * `<reportsRoot>/gates/` — `18` §18.8's own "truth is a scan of existing artifacts," scoped to this one
+ * directory rather than the whole project. `GateReport`'s own registered file name is `<gate>-<ts>.md`
+ * (`18` §18.7), not `<id>-....md` like every other numbered type, so the id can only be read out of each
+ * file's own front matter, never off the file name itself — unlike `@forge/core`'s own `IdAllocator`
+ * (whole-project scan, `.forge/state/ids.json` cache), this is a plain, single-process directory scan
+ * with no cross-process lock: two concurrent `forge gate check` invocations against the same project may
+ * compute and claim the identical next id (disclosed, `PLAN-M14.md` P17 — the run lock does not cover CLI
+ * gate commands). A file that is not real Markdown, or not a `GateReport`, or whose `id` does not match
+ * the registered shape, claims nothing — best-effort per file, the same stance
+ * `@forge/core/ids`'s own `countIdsFromFiles` already takes for the identical reason: one malformed file
+ * must not make numbering fail outright.
+ * @throws {ForgeError} `GATE-514` if every id up to `MAX_GATE_REPORT_NUMERIC_ID` is already claimed. */
+async function nextGateReportId(paths: ProjectPaths, reportsRoot: string): Promise<string> {
+  const dir = `${reportsRoot}/gates`;
+  let highest = 0;
+  if (await pathExists(paths.resolveWithin(dir))) {
+    for (const name of await listDirSorted(paths.resolveWithin(dir))) {
+      if (!name.toLowerCase().endsWith('.md')) continue;
+      let frontMatter: Record<string, unknown>;
+      try {
+        const text = await readTextFile(paths.resolveWithin(`${dir}/${name}`));
+        frontMatter = ArtifactDocument.parse(text, `${dir}/${name}`).frontMatter as Record<
+          string,
+          unknown
+        >;
+      } catch {
+        continue;
+      }
+      if (frontMatter['type'] !== 'GateReport') continue;
+      const id = frontMatter['id'];
+      const match = typeof id === 'string' ? GATE_REPORT_ID_PATTERN.exec(id) : null;
+      if (match?.[1] !== undefined) highest = Math.max(highest, Number.parseInt(match[1], 10));
+    }
+  }
+  if (highest >= MAX_GATE_REPORT_NUMERIC_ID) {
+    throw new ForgeError('GATE-514', { max: MAX_GATE_REPORT_NUMERIC_ID });
+  }
+  return `${GATE_REPORT_TYPE.idPrefix}-${String(highest + 1).padStart(GATE_REPORT_TYPE.idWidth, '0')}`;
+}
+
+/** Writes `report` as a real `GateReport` document (`10` §10.3 rule 4: "every gate evaluation writes a
+ * `GateReport` artifact... with the exact command output — this is the audit trail") to
+ * `<paths.reports>/gates/<gate>-<ts>.md` and returns its path, relative to the project root.
+ * `evaluatedAt` — the caller's own clock, sampled once (`21` §21.1) — is both the front matter's own
+ * `evaluatedAt` and (filesystem-safe: `:` is invalid in a Windows file name) this file's own `<ts>`.
+ *
+ * Validated with `documentProblems` (`@forge/engine/dispatch`) — the identical function the output check
+ * judges an engine-written `ReviewReport` with — before it is ever written: a document this piece built
+ * wrong is a bug here, not a caller-facing failure with a remedy to offer, the same `RangeError` stance
+ * `swarm-review-step.ts`'s own `writeReport` already takes for the identical shape of self-check. Written
+ * with `writeFileAtomic` (a typed `RUN-034` on failure, e.g. a plain file squatting where the `gates/`
+ * directory itself needs to be created) BEFORE the caller appends any event: nothing is approved or
+ * waived without its own audit trail actually landing on disk first. */
+async function writeGateReportFile(
+  ctx: GateCommandContext,
+  definition: GateDefinition,
+  report: GateReport,
+  evaluatedAt: string,
+): Promise<string> {
+  const reportsRoot = await resolveReportsRoot(ctx);
+  const ts = evaluatedAt.replace(/:/g, '-');
+  const pathResult = renderArtifactPath('GateReport', { gate: definition.id, ts });
+  if (!pathResult.success) {
+    // `GateReport`'s own registered `pathTemplate` names exactly `{gate}` and `{ts}`, both supplied
+    // above -- this would be a bug in this function, not a caller-facing failure with a remedy.
+    throw new RangeError(
+      `renderArtifactPath('GateReport', ...) failed: missing ${pathResult.missingVariable}`,
+    );
+  }
+  // `GateReport`'s own registered `pathTemplate` ('reports/gates/{gate}-{ts}.md') names a literal
+  // `reports/` top-level segment matching `ForgeConfig.paths.reports`'s own namespace label -- the
+  // identical "strip the registered top-level label, reroot under the real configured path" `forge adr
+  // new`/`loop/debug.ts`'s own `scaffoldDefect` already do for `kb/`/`reports/`.
+  const relativePath = `${reportsRoot}/${pathResult.path.replace(/^reports\//, '')}`;
+  const id = await nextGateReportId(ctx.paths, reportsRoot);
+  const text = renderGateReportFile({
+    id,
+    gate: definition,
+    report,
+    runId: ctx.runId,
+    evaluatedAt,
+  });
+  const problems = documentProblems(GATE_REPORT_TYPE, relativePath, text).problems;
+  if (problems.length > 0) {
+    throw new RangeError(`the engine built an invalid ${id}: ${problems.join('; ')}`);
+  }
+  await writeFileAtomic(ctx.paths.resolveWithin(relativePath), text);
+  return relativePath;
+}
+
 /** `check <id>`: re-evaluates without approving — `10` §10.3 gate rule 3's own non-mutating read
  * path. Real: the identical `evaluateGate`/`buildGateReport` pipeline `@forge/engine/dispatch`'s own
  * `createGateEvaluator` wraps for a live run, called here directly. Emits no event — the whole point
  * of "does not mutate" (a caller that *wants* the result recorded calls `approve`/`reject` next,
- * which do). */
-export async function gateCheck(ctx: GateCommandContext, gateId: string): Promise<GateReport> {
+ * which do) — but `PLAN-M14.md` P17 still writes a real `GateReport` document: rule 4 says every
+ * EVALUATION writes one, and `check` genuinely evaluates the gate, it just appends no event. */
+export async function gateCheck(
+  ctx: GateCommandContext,
+  gateId: string,
+): Promise<GateReport & { readonly reportPath: string }> {
   const definition = await findGateOrThrow(ctx, gateId);
   const evaluated = await evaluateFresh(ctx, definition);
   // `10` §10.3 rule 1: a waiver "appears in every report until resolved". The report shows the newest waiver this
   // run recorded that has not lapsed and that was granted for every check failing now (`passed` stays false: the
   // checks still fail; `approved` says the waiver covers them).
   const clock = ctx.clock ?? SYSTEM_CLOCK;
-  const now = Date.parse(clock.now());
+  const nowIso = clock.now();
+  const now = Date.parse(nowIso);
   const waiver = await coveringWaiver(ctx, gateId, evaluated, now);
-  return buildGateReport(
+  const report = buildGateReport(
     definition,
     waiver === undefined ? evaluated : applyWaiver(evaluated, waiver, now),
   );
+  const reportPath = await writeGateReportFile(ctx, definition, report, nowIso);
+  return { ...report, reportPath };
 }
 
 /** The newest recorded waiver for `gateId` that has not lapsed and covers every check failing in `evaluated`.
@@ -153,20 +296,29 @@ function evaluateFresh(
 }
 
 /** Human-mode `forge gate approve` line. The waiver's `owner` was typed by a person and read back from the event log,
- * so it is terminal-sanitised like any other text a check or a file supplies. */
-export function formatGateApproval(gateId: string, summary: GateApprovalSummary): string {
+ * so it is terminal-sanitised like any other text a check or a file supplies. `reportPath` (`PLAN-M14.md` P17)
+ * is engine-computed, not user text, but sanitised the same way every other dynamic value on this line is;
+ * optional so a caller that hand-builds a `GateApprovalSummary` without one (a test fixture) still formats. */
+export function formatGateApproval(
+  gateId: string,
+  summary: GateApprovalSummary & { readonly reportPath?: string },
+): string {
   const how =
     summary.basis === 'waiver'
       ? `waived ${String(summary.checksWaived)} failing check(s) under a waiver by ${sanitizeForTerminal(summary.waiver?.owner ?? 'unknown')}`
       : `${String(summary.checksPassed)} checks passed`;
-  return `forge gate approve ${sanitizeForTerminal(gateId)}: recorded (${how}).`;
+  const reportLine =
+    summary.reportPath === undefined ? '' : `\nreport: ${sanitizeForTerminal(summary.reportPath)}`;
+  return `forge gate approve ${sanitizeForTerminal(gateId)}: recorded (${how}).${reportLine}`;
 }
 
 /** Human-mode `forge gate check`/`waive` output: the verdict, then for EVERY failing check its id, its exit code and
  * why it failed, so a person is not sent to `--json` to learn what went wrong (the fail-closed `reason` of
- * `PLAN-M13.md` P35, and the stderr the audit trail now keeps, `P41`). A check whose own `failOn` tripped has no
- * `reason`: the finding is in its output, so the first line of that is shown instead. */
-export function formatGateReport(report: GateReport): string {
+ * `PLAN-M13.md` P35, and the stderr the audit trail now keeps, `P41`), then the real `GateReport` document this
+ * evaluation just wrote (`PLAN-M14.md` P17) — `reportPath` optional so a caller that hand-builds a `GateReport`
+ * without one (a test fixture) still formats. A check whose own `failOn` tripped has no `reason`: the finding is
+ * in its output, so the first line of that is shown instead. */
+export function formatGateReport(report: GateReport & { readonly reportPath?: string }): string {
   const lines = [`${sanitizeForTerminal(report.gateId)}: passed=${String(report.passed)}`];
   // A check's output is untrusted text shown in a terminal or a CI log: whitespace collapsed (a pretty-printed JSON
   // body is one line, not `{`), secret shapes redacted, escapes and control bytes stripped, then capped.
@@ -201,6 +353,9 @@ export function formatGateReport(report: GateReport): string {
     lines.push(
       `  waived by ${oneLine(report.waiver.owner)} until ${oneLine(report.waiver.expiresAt)}: ${oneLine(report.waiver.reason)}`,
     );
+  }
+  if (report.reportPath !== undefined) {
+    lines.push(`report: ${sanitizeForTerminal(report.reportPath)}`);
   }
   return lines.join('\n');
 }
@@ -304,7 +459,7 @@ export async function gateApprove(
   gateId: string,
   reason?: string,
   options: ApproveOptions = {},
-): Promise<GateApprovalSummary> {
+): Promise<GateApprovalSummary & { readonly reportPath: string }> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   const approver = options.approver ?? { kind: 'human' };
@@ -320,7 +475,8 @@ export async function gateApprove(
   }
   const evaluated = await evaluateFresh(ctx, definition);
   // Sampled AFTER the checks ran (they have no time limit): a waiver that lapsed while they ran has lapsed.
-  const now = Date.parse(clock.now());
+  const nowIso = clock.now();
+  const now = Date.parse(nowIso);
 
   // A gate that passed needs no waiver, so the event log is only read when a check failed. Newest waiver first;
   // one that lapsed or is malformed (`GATE-504`/`GATE-505`), one whose own expiry exceeds the configured
@@ -333,6 +489,10 @@ export async function gateApprove(
     : await recordedWaivers(ctx, gateId);
   const maxDays = evaluated.passed ? undefined : await resolveWaiverMaxDays(ctx);
   let summary: GateApprovalSummary | undefined;
+  // The waiver `approveGate` actually accepted, if any -- kept so the `GateReport` this approval writes
+  // (below) reports the identical, already-validated evaluation `summary` itself describes, rather than
+  // re-deriving it from a second, independent waiver-selection pass that could in principle disagree.
+  let usedWaiver: Waiver | undefined;
   for (const recorded of [...waivers, undefined]) {
     try {
       if (
@@ -350,6 +510,7 @@ export async function gateApprove(
         approver,
         now,
       });
+      usedWaiver = recorded?.waiver;
       break;
     } catch (error) {
       const skippable =
@@ -364,12 +525,24 @@ export async function gateApprove(
   }
   if (summary === undefined) throw new ForgeError('GATE-507', { gateId, failing: 'the gate' });
 
+  // `PLAN-M14.md` P17, `10` §10.3 rule 4: the real `GateReport` document, written BEFORE the event --
+  // `usedWaiver` re-applies deterministically to the identical `(evaluated, now)` `approveGate` itself
+  // just accepted it against, so this cannot throw where that did not. A write failure (`RUN-034`) or a
+  // self-built-invalid document (`RangeError`) propagates unwrapped: nothing is approved without its
+  // trail actually landing on disk.
+  const finalReport = buildGateReport(
+    definition,
+    usedWaiver === undefined ? evaluated : applyWaiver(evaluated, usedWaiver, now),
+  );
+  const reportPath = await writeGateReportFile(ctx, definition, finalReport, nowIso);
+
   await emitGateEvent(ctx, 'GateApproved', gateId, {
     reason,
     approver: summary.approver,
     evaluation: summary,
+    reportPath,
   });
-  return summary;
+  return { ...summary, reportPath };
 }
 
 export async function gateReject(
@@ -394,7 +567,7 @@ export async function gateWaive(
   ctx: GateCommandContext,
   gateId: string,
   input: WaiveInput,
-): Promise<GateReport> {
+): Promise<GateReport & { readonly reportPath: string }> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   // A waiver is what lets a failing gate be approved, so it is held to the gate's `approval` block like the
@@ -409,12 +582,19 @@ export async function gateWaive(
   // A waiver excuses failing checks. On a gate that passes there is nothing to excuse, and recording one anyway
   // would be a standing waiver for whatever fails later (`10` §10.3 rule 1).
   if (evaluated.passed) throw new ForgeError('GATE-509', { gateId });
-  const now = Date.parse(clock.now());
+  const nowIso = clock.now();
+  const now = Date.parse(nowIso);
   const waived = applyWaiver(evaluated, waiver, now);
   // `PLAN-M14.md` P16: the additional policy layer beyond applyWaiver's own shape/expiry checks above --
   // `GATE-513` for an `--owner` that is not a real identifier, `GATE-512` for an `--expires` beyond the
   // configured `gates.waiverMaxDays` cap (default 90). Nothing is appended when this throws.
   validateWaiverPolicy(waiver, now, await resolveWaiverMaxDays(ctx));
+
+  // `PLAN-M14.md` P17, `10` §10.3 rule 4: the real `GateReport` document, written BEFORE the event -- a
+  // write failure (`RUN-034`) or a self-built-invalid document (`RangeError`) propagates unwrapped, so
+  // nothing is waived without its trail actually landing on disk.
+  const report = buildGateReport(definition, waived);
+  const reportPath = await writeGateReportFile(ctx, definition, report, nowIso);
 
   // The waiver and what it waived: the checks that were failing when it was granted, with the digests of their
   // output, so a later reader sees what was excused and not only that something was (`10` §10.3 rule 1: waivers
@@ -427,7 +607,8 @@ export async function gateWaive(
       passed: evaluated.passed,
       checks: recordChecks(evaluated, !evaluated.passed),
     },
+    reportPath,
   });
 
-  return buildGateReport(definition, waived);
+  return { ...report, reportPath };
 }

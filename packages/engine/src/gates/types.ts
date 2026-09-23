@@ -165,14 +165,16 @@ export interface Waiver {
 /** The payload `buildGateReport` computes — deliberately a *different* type from `@forge/schemas`'
  * already-built `GateReport` artifact type (`gate-report.ts`, `SPEC-QUESTIONS.md` Q23), despite the
  * identical name and no import relationship between the two packages to ever collide at compile time.
- * `@forge/schemas`' own `GateReport` is base front matter narrowed to `type: 'GateReport'` with *no*
- * type-specific fields at all — Q23 found `10` §10's own gate rules never specify a field-level shape for
- * the artifact *document*, only that "every gate evaluation writes a GateReport artifact... with the exact
- * command output." This type is that missing shape: the actual evaluation data rule 4's audit trail needs.
- * Splitting it into a schema-conformant front matter plus a rendered markdown body (this type's own natural
- * audit-trail content) is `@forge/core`'s already-built front-matter writer's job when a later piece
- * actually writes one of these to `docs/forge/reports/gates/` — not reinvented here, per this piece's own
- * Mandate. */
+ * `@forge/schemas`' own `GateReport` is base front matter narrowed to `type: 'GateReport'` — Q23 found
+ * `10` §10's own gate rules never specify a field-level shape for the artifact *document*, only that
+ * "every gate evaluation writes a GateReport artifact... with the exact command output," so it originally
+ * carried no type-specific fields at all; `PLAN-M14.md` P17 later gave it three optional ones (`gate`,
+ * `outcome`, `evaluatedAt`), still no substitute for this type — the schema validates front matter shape,
+ * this type is the actual evaluation data rule 4's audit trail needs (every check's full result, the
+ * waiver, `openQuestionsPolicy`). Splitting it into that schema-conformant front matter plus a rendered
+ * Markdown body (this type's own natural audit-trail content) is `renderGateReportFile`'s job (`report.ts`,
+ * beside `buildGateReport`, P17) — `buildGateReport` itself stays exactly as it always was: pure, and
+ * silent about *when* or *where* anything gets written. */
 export interface GateReport {
   readonly gateId: string;
   readonly passed: boolean;

@@ -23,7 +23,14 @@ export {
   type GateDocumentResult,
 } from './document.ts';
 export { evaluateGate, MAX_CHECK_STDERR_CHARS } from './evaluate.ts';
-export { buildGateReport } from './report.ts';
+export {
+  buildGateReport,
+  gateReportOutcome,
+  renderGateReportFile,
+  sanitizedCheckText,
+  MAX_GATE_REPORT_CHECK_TEXT_BYTES,
+  type GateReportFileInput,
+} from './report.ts';
 export {
   applyWaiver,
   isApproved,

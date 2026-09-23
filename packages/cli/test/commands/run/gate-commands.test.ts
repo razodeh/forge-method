@@ -6,14 +6,16 @@
  * @see specs/03 §3.2.4
  * @see specs/10 §10.3
  */
-import { access, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { ArtifactDocument, validateArtifact } from '@forge/core/artifacts';
 import { appendEvent, readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
 
-import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import { DEFAULT_CONFIG, type ForgeConfig } from '@forge/schemas/config';
 
 import { configGet, configSet, CONFIG_REL_PATH } from '../../../src/commands/config.ts';
 import {
@@ -44,7 +46,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * its own literal expiries widened well past 90 days to stay meaningful. */
 async function writeConfig(
   project: TestProject,
-  overrides: { readonly gates?: { readonly waiverMaxDays: number } } = {},
+  overrides: {
+    readonly gates?: { readonly waiverMaxDays: number };
+    /** `PLAN-M14.md` P17's own "relocated `paths.reports` followed": a real config overriding where
+     * `GateReport` documents (and everything else under `paths.*`) live. */
+    readonly paths?: ForgeConfig['paths'];
+  } = {},
 ): Promise<void> {
   await writeFile(
     path.join(project.dir, CONFIG_REL_PATH),
@@ -491,7 +498,9 @@ describe('formatGateReport (human-mode gate check)', () => {
     expect(text).toContain('"errors": 1');
     expect(text).not.toContain('ghp_');
     expect(text).toContain('[REDACTED]');
-    expect(text.split('\n')).toHaveLength(2);
+    // The verdict line, the one FAIL line -- and, since PLAN-M14.md P17, a trailing `report: <path>` line
+    // naming the real GateReport document this check also wrote.
+    expect(text.split('\n')).toHaveLength(3);
   });
 
   it('prints every failing check with its exit code and why, and stderr; nothing for a passing one', async () => {
@@ -694,5 +703,228 @@ describe('gates.waiverMaxDays config (forge config get/set, PLAN-M14.md P16)', (
     await expect(gateWaive(ctx(project, 'r-badconf'), 'G-Fail', WAIVER)).rejects.toMatchObject({
       code: 'CFG-001',
     });
+  });
+});
+
+// `PLAN-M14.md` P17: `forge gate check|approve|waive` write the real `GateReport` artifact
+// (`<paths.reports>/gates/<gate>-<ts>.md`), and the digests `GateApproved`/`GateWaived` record verify
+// against the fenced text that report file carries.
+describe('gate report files (PLAN-M14.md P17)', () => {
+  function ctxAt(project: TestProject, runId: string, iso: string): GateCommandContext {
+    return { ...ctx(project, runId), clock: { now: () => iso } };
+  }
+
+  function gatesDir(project: TestProject): string {
+    return path.join(project.dir, 'docs', 'forge', 'reports', 'gates');
+  }
+
+  async function readReport(project: TestProject, reportPath: string): Promise<ArtifactDocument> {
+    const text = await readFile(path.join(project.dir, reportPath), 'utf8');
+    return ArtifactDocument.parse(text, reportPath);
+  }
+
+  it('gateCheck writes a real, schema-valid GateReport file under docs/forge/reports/gates/, numbered GATE-001, then GATE-002', async () => {
+    const project = await createTestProject();
+    const first = await gateCheck(
+      ctxAt(project, 'r-1', '2026-03-04T12:00:00.000Z'),
+      FIXTURE_GATE_ID,
+    );
+    expect(first.reportPath).toBe(
+      `docs/forge/reports/gates/${FIXTURE_GATE_ID}-2026-03-04T12-00-00.000Z.md`,
+    );
+    const firstDoc = await readReport(project, first.reportPath);
+    expect(firstDoc.frontMatter).toMatchObject({
+      id: 'GATE-001',
+      type: 'GateReport',
+      gate: FIXTURE_GATE_ID,
+      outcome: 'passed',
+      evaluatedAt: '2026-03-04T12:00:00.000Z',
+    });
+    expect(validateArtifact(firstDoc)).toEqual({ valid: true });
+
+    const second = await gateCheck(
+      ctxAt(project, 'r-1', '2026-03-04T12:05:00.000Z'),
+      FIXTURE_GATE_ID,
+    );
+    expect(second.reportPath).not.toBe(first.reportPath);
+    const secondDoc = await readReport(project, second.reportPath);
+    expect(secondDoc.frontMatter).toMatchObject({ id: 'GATE-002' });
+  });
+
+  it('an existing GATE-007 report already on disk makes the next id GATE-008', async () => {
+    const project = await createTestProject();
+    await mkdir(gatesDir(project), { recursive: true });
+    await writeFile(
+      path.join(gatesDir(project), 'G-Old-2020-01-01T00-00-00.000Z.md'),
+      [
+        '---',
+        'id: GATE-007',
+        'type: GateReport',
+        'schemaVersion: 1',
+        'title: an older report',
+        'status: passed',
+        'created: 2020-01-01',
+        'updated: 2020-01-01',
+        'revision: 1',
+        'author: gatekeeper',
+        'changelog: []',
+        '---',
+        '',
+        'an older report, hand-placed',
+        '',
+      ].join('\n'),
+    );
+    const report = await gateCheck(ctx(project), FIXTURE_GATE_ID);
+    const doc = await readReport(project, report.reportPath);
+    expect(doc.frontMatter).toMatchObject({ id: 'GATE-008' });
+  });
+
+  it('gateApprove writes the report BEFORE appending GateApproved, whose payload and returned summary both carry the matching reportPath', async () => {
+    const project = await createTestProject();
+    const summary = await gateApprove(ctx(project, 'r-appr'), FIXTURE_GATE_ID, 'fine');
+    expect(summary.reportPath).toMatch(
+      new RegExp(`^docs/forge/reports/gates/${FIXTURE_GATE_ID}-.*\\.md$`),
+    );
+    const [event] = await collectEvents(project, 'r-appr');
+    expect(event).toMatchObject({
+      type: 'GateApproved',
+      payload: { reportPath: summary.reportPath },
+    });
+    const doc = await readReport(project, summary.reportPath);
+    expect(doc.frontMatter).toMatchObject({ outcome: 'passed', gate: FIXTURE_GATE_ID });
+  });
+
+  it('a plain file squatting where the gates/ directory itself needs to be created throws a typed RUN-034, and records no GateApproved', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, 'docs', 'forge', 'reports'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, 'docs', 'forge', 'reports', 'gates'),
+      'a plain file squatting the gates/ directory path',
+    );
+    await expect(
+      gateApprove(ctx(project, 'r-squat'), FIXTURE_GATE_ID, 'fine'),
+    ).rejects.toMatchObject({
+      code: 'RUN-034',
+    });
+    expect(await collectEvents(project, 'r-squat')).toEqual([]);
+  });
+
+  it('gateWaive writes a report with outcome: waived, naming the waived gate', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Fail', FAILING_GATE);
+    const report = await gateWaive(ctx(project, 'r-wv'), 'G-Fail', WAIVER);
+    const doc = await readReport(project, report.reportPath);
+    expect(doc.frontMatter).toMatchObject({ outcome: 'waived', gate: 'G-Fail' });
+  });
+
+  it("the fenced stdout in the written report is exactly the text whose sha256 the GateApproved event's digest records -- the digests verify against it", async () => {
+    const project = await createTestProject();
+    // Split across two shell variables (18 chars each, neither half alone `ghp_[A-Za-z0-9]{36}`-shaped)
+    // and concatenated only in the command's OWN stdout at run time -- unlike the pre-existing "collapses
+    // pretty-printed JSON..." test above (whose secret sits in a `printf` literal this piece's own
+    // `renderGateReportFile` now ALSO renders, unredacted, as the check's declared `run:` line, `10` §10.3
+    // rule 4's own "the exact command output" being about stdout/stderr, not the project-authored command
+    // that produced it), this keeps the full token out of the `run:` text `renderGateReportFile` embeds
+    // verbatim, so the assertions below are genuinely about stdout redaction, not a `run:` line artifact.
+    const token = `ghp_${'b'.repeat(36)}`;
+    await writeGate(
+      project,
+      'G-Sec2',
+      [
+        'id: G-Sec2',
+        'checks:',
+        '  deterministic:',
+        '    - id: sec',
+        '      run: |',
+        `        a="ghp_${'b'.repeat(18)}"`,
+        `        b="${'b'.repeat(18)}"`,
+        '        printf \'{"errors":0,"token":"%s%s"}\' "$a" "$b"',
+        '      failOn: "errors > 0"',
+        '',
+      ].join('\n'),
+    );
+    const summary = await gateApprove(ctx(project, 'r-verify'), 'G-Sec2', 'ok');
+    const digest = summary.checks[0]?.stdoutSha256;
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+
+    const text = await readFile(path.join(project.dir, summary.reportPath), 'utf8');
+    expect(text).not.toContain(token);
+    expect(text).toContain('[REDACTED]');
+    const fenced = /```\n([\s\S]*?)\n```/.exec(text)?.[1];
+    expect(fenced).toBeDefined();
+    expect(fenced).not.toContain(token);
+    expect(
+      createHash('sha256')
+        .update(fenced ?? '', 'utf8')
+        .digest('hex'),
+    ).toBe(digest);
+  });
+
+  it('a relocated paths.reports is followed: the report lands under the configured root, not the default', async () => {
+    const project = await createTestProject();
+    await writeConfig(project, { paths: { ...DEFAULT_CONFIG.paths, reports: 'custom/reports' } });
+    const report = await gateCheck(ctx(project), FIXTURE_GATE_ID);
+    expect(report.reportPath.startsWith('custom/reports/gates/')).toBe(true);
+    await expect(access(path.join(project.dir, report.reportPath))).resolves.toBeUndefined();
+    // the default location was never touched
+    await expect(access(gatesDir(project))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('formatGateReport/formatGateApproval append a `report: <path>` line once a report was written', async () => {
+    const project = await createTestProject();
+    const report = await gateCheck(ctx(project), FIXTURE_GATE_ID);
+    expect(formatGateReport(report)).toContain(`report: ${report.reportPath}`);
+
+    const summary = await gateApprove(ctx(project, 'r-fmt'), FIXTURE_GATE_ID, 'fine');
+    expect(formatGateApproval(FIXTURE_GATE_ID, summary)).toContain(`report: ${summary.reportPath}`);
+  });
+
+  // Mutation evidence the plan's own brief names explicitly: "documentProblems skipped: forced-invalid
+  // front matter written." A clock whose `now()` is not a real ISO instant makes `renderGateReportFile`
+  // build a document whose own `evaluatedAt`/`created`/`updated` fail `gateReportSchema` -- exactly the
+  // shape `documentProblems` exists to catch before anything reaches disk (the identical real-precedent
+  // technique `swarm-review-step.test.ts`'s own "a report the engine builds invalid is not written" case
+  // uses for `ReviewReport`).
+  it('a clock producing a non-ISO instant makes the engine build an invalid GateReport: documentProblems catches it, a typed error propagates, and nothing is written or appended', async () => {
+    const project = await createTestProject();
+    const badClock = { ...ctx(project, 'r-badclock'), clock: { now: () => 'not-a-real-instant' } };
+
+    await expect(gateApprove(badClock, FIXTURE_GATE_ID, 'fine')).rejects.toThrow(RangeError);
+    expect(await collectEvents(project, 'r-badclock')).toEqual([]);
+    await expect(access(gatesDir(project))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  // The overflow companion to `CFG-010` (`IdAllocator`) and `RUN-109` (`reserveIds`): a hand-placed
+  // `GATE-999` (the highest id a 3-digit idWidth allows) must refuse a new id outright, never silently
+  // issue a 4-digit one `GATE_REPORT_ID_PATTERN`'s own exact-width group could never read back.
+  it('GATE-514: refuses a new id once reports/gates/ already holds GATE-999, and writes nothing', async () => {
+    const project = await createTestProject();
+    await mkdir(gatesDir(project), { recursive: true });
+    await writeFile(
+      path.join(gatesDir(project), 'G-Old-2020-01-01T00-00-00.000Z.md'),
+      [
+        '---',
+        'id: GATE-999',
+        'type: GateReport',
+        'schemaVersion: 1',
+        'title: the last id this idWidth allows',
+        'status: passed',
+        'created: 2020-01-01',
+        'updated: 2020-01-01',
+        'revision: 1',
+        'author: gatekeeper',
+        'changelog: []',
+        '---',
+        '',
+        'already at the ceiling',
+        '',
+      ].join('\n'),
+    );
+    await expect(gateCheck(ctx(project), FIXTURE_GATE_ID)).rejects.toMatchObject({
+      code: 'GATE-514',
+      details: { max: 999 },
+    });
+    // only the hand-placed GATE-999 file is there -- nothing new was written
+    expect(await readdir(gatesDir(project))).toEqual(['G-Old-2020-01-01T00-00-00.000Z.md']);
   });
 });
