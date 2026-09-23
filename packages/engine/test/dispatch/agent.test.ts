@@ -595,7 +595,8 @@ describe('the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.
   });
 });
 
-/** A minimal but schema-VALID ADR document (`08` §8.4) at `id`. */
+/** A minimal but schema-VALID ADR document (`08` §8.4) at `id` -- `sources` included (`PLAN-M14.md`
+ * P11: the output check now requires at least one on every produced KB document). */
 function validAdrDocument(id: string): string {
   return [
     '---',
@@ -620,6 +621,9 @@ function validAdrDocument(id: string): string {
     'related: []',
     'diagrams: []',
     "framework: 'n/a'",
+    'sources:',
+    '  - kind: decision',
+    "    ref: 'ADR-0001'",
     '---',
     '',
     '## Context',

@@ -43,6 +43,7 @@ export {
   type SessionRecord,
   type SessionTruncationBound,
 } from './session-record.ts';
+export { artifactSourceSchema, type ArtifactSource } from './source.ts';
 export { storySchema, type Story } from './story.ts';
 export { taskSchema, type Task } from './task.ts';
 export { visionSchema, type Vision } from './vision.ts';

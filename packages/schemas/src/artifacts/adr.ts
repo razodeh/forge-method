@@ -1,11 +1,19 @@
 /**
  * `adrSchema` — `08` §8.4's ADR (`ADR-####`, 4-digit per `18` §18.7).
  *
+ * `sources` is OPTIONAL here (`PLAN-M14.md` P11): `08` §8.6's own "every write records sources" is a
+ * `KbWriter`/output-CHECK invariant, not a schema constraint (a hand-written or pre-P11 ADR without one
+ * stays valid to `forge spec validate`/`forge kb lint`); `@forge/engine`'s output check requires it on
+ * every produced ADR instead (`dispatch/outputs.ts`).
+ *
  * @see specs/08 §8.4
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
  */
 import { z } from 'zod';
 
 import { baseFrontMatterShape, checkIdMatchesRegisteredType } from '../registry/front-matter.ts';
+import { artifactSourceSchema } from './source.ts';
 
 const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded', 'deprecated'] as const;
 
@@ -24,6 +32,7 @@ export const adrSchema = baseFrontMatterShape
     related: z.array(z.string().min(1)),
     diagrams: z.array(z.string().min(1)),
     framework: z.string().min(1),
+    sources: z.array(artifactSourceSchema).optional(),
   })
   .strict()
   .superRefine(checkIdMatchesRegisteredType)

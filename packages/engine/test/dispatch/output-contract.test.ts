@@ -810,3 +810,79 @@ describe('the output check holds a produced KB output to its reserved id range (
     expect(failure).toBeUndefined();
   });
 });
+
+/**
+ * `PLAN-M14.md` P11, `08` §8.6: the two KbWriter invariants end to end through a real git lane --
+ * `outputs.test.ts` proves the rules themselves against a stub; this proves they hold over
+ * `executeStep`'s real commit and claim-enforcement path too.
+ *
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
+ */
+describe('sources and never-removed (PLAN-M14.md P11), end to end over a real lane', () => {
+  const DECISIONS = 'docs/forge/kb/decisions';
+  const RISKS = 'docs/forge/kb/risks.md';
+
+  it('a produced ADR with no sources fails; the same document with a source succeeds', async () => {
+    const { outcome: missing } = await runScenario({
+      outputs: [{ type: 'ADR' }],
+      writes: [
+        { relativePath: `${DECISIONS}/ADR-0001-x.md`, content: adrText('ADR-0001', 'x', []) },
+      ],
+      runId: 'run-p11-adr-missing',
+    });
+    expect(missing.status).toBe('failed');
+    expect(missing.failure?.code).toBe('RUN-083');
+    expect(missing.failure?.message).toContain('no sources');
+
+    const { outcome: ok } = await runScenario({
+      outputs: [{ type: 'ADR' }],
+      writes: [{ relativePath: `${DECISIONS}/ADR-0001-x.md`, content: adrText('ADR-0001') }],
+      runId: 'run-p11-adr-ok',
+    });
+    expect(ok.status).toBe('succeeded');
+  });
+
+  it('a base register entry silently dropped at HEAD fails the step, naming it', async () => {
+    const projectRoot = await createTempRepo('p11-retained');
+    await mkdir(path.join(projectRoot, 'docs/forge/kb'), { recursive: true });
+    await writeFile(path.join(projectRoot, RISKS), risksFileText('RISK-001', 'RISK-002'));
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'seed risks'], { cwd: projectRoot });
+
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['dropped a risk'],
+      // RISK-001 vanishes -- a hand-removal, not a status change.
+      writeFiles: [{ relativePath: RISKS, content: risksFileText('RISK-002', 'RISK-003') }],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-p11-retained',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: (agentId) =>
+          Promise.resolve(
+            fixtureAgent(agentId, {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(
+      node({
+        id: 'wf:drop-risk',
+        kind: 'agent',
+        agent: toAgentId('architect'),
+        brief: 'update the risk register',
+        produces: ['docs/forge/**'],
+        outputs: [{ type: 'Risk' }],
+      }),
+      ctx,
+    );
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('RISK-001');
+    expect(outcome.failure?.message).toContain('08 §8.6');
+  });
+});

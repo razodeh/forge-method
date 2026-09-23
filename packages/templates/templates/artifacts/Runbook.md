@@ -14,6 +14,7 @@ immediate_mitigation: '<the first thing to do to limit damage>'
 diagnosis_steps: []
 escalation: '<who to page, and when>'
 post_incident_actions: []
+sources: []
 ---
 
 <Anything else an on-call responder needs before running this runbook under pressure.>

@@ -974,7 +974,11 @@ async function checkAgentStep(
     (line) =>
       !line.startsWith('- Files: ') &&
       !line.startsWith('- Never write ') &&
-      !line.startsWith('- This step declares no'),
+      !line.startsWith('- This step declares no') &&
+      // `PLAN-M14.md` P11: a fixed, file-set-wide note (not a per-output line) stated once when at
+      // least one declared output is KB-located -- names no single type of its own to compare against
+      // `declaredTypes`, so it is excluded here the same way the claim lines above already are.
+      !line.startsWith('- KB output rules '),
   );
   const listedTypes = typedLines.map((line) => /^- (\w+):/.exec(line)?.[1] ?? '');
   if (listedTypes.sort().join(',') !== [...declaredTypes].sort().join(',')) {

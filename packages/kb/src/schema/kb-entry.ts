@@ -10,12 +10,23 @@
  * itself part of what `08` §8.3 normatively requires, not a separate later-phase check the way `18`
  * §18.6's `requiredSections` mechanism treats the 22 registry types.
  *
+ * `sources`'s own entry shape (`kind`/`ref`) is `@forge/schemas`'s `artifactSourceSchema`
+ * (`PLAN-M14.md` P11): this schema keeps `sources: min(1)` ("provenance is mandatory", `08` §8.3)
+ * unchanged, but the shape itself now lives in `@forge/schemas/artifacts` too, since the six
+ * KB-located registry schemas (`ADR`, `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`)
+ * gained an OPTIONAL `sources` field of the identical shape, and two independently-typed copies of the
+ * same "provenance" concept could otherwise drift apart.
+ *
  * @see specs/08 §8.3
+ * @see specs/08 §8.6
  * @see SPEC-QUESTIONS.md Q18
  * @see SPEC-QUESTIONS.md Q51
  * @see PLAN-M3.md P6
+ * @see PLAN-M14.md P11
  */
 import { z } from 'zod';
+
+import { artifactSourceSchema } from '@forge/schemas';
 
 import { KB_SECTIONS, sectionIdToken } from './sections.ts';
 
@@ -35,21 +46,13 @@ export const KB_ENTRY_TYPES = [
 export type KbEntryType = (typeof KB_ENTRY_TYPES)[number];
 
 const KB_ENTRY_STATUSES = ['draft', 'active', 'superseded', 'deprecated'] as const;
-/** Exported (unlike the sibling `KB_ENTRY_STATUSES`/`KB_ENTRY_SOURCE_KINDS` above) because `@forge/kb/
- * write`'s own `KbWriter.write` needs the real, ordered rank of this exact four-value set to enforce a
+/** Exported (unlike the sibling `KB_ENTRY_STATUSES` above) because `@forge/kb/write`'s own
+ * `KbWriter.write` needs the real, ordered rank of this exact four-value set to enforce a
  * caller-supplied confidence ceiling (`PLAN-M10.md` P16: INFERENCE's own output must be structurally
  * confined to `low`/`medium`) — see `KB_ENTRY_CONFIDENCE_RANK` in `../write/writer.ts`. */
 export const KB_ENTRY_CONFIDENCE = ['low', 'medium', 'high', 'verified'] as const;
-const KB_ENTRY_SOURCE_KINDS = ['decision', 'human', 'code'] as const;
 
 const KB_ENTRY_ID_PATTERN = /^KB-([A-Z]+)-\d{4}(-\d+)?$/;
-
-const kbEntrySourceSchema = z
-  .object({
-    kind: z.enum(KB_ENTRY_SOURCE_KINDS),
-    ref: z.string().min(1),
-  })
-  .strict();
 
 // CommonMark permits up to three leading spaces on an ATX heading without changing how it renders —
 // a gauntlet critic found the original patterns anchored at column 0 exactly, silently treating a
@@ -90,7 +93,7 @@ export const kbEntrySchema = z
     status: z.enum(KB_ENTRY_STATUSES),
     confidence: z.enum(KB_ENTRY_CONFIDENCE),
     owner: z.string().min(1),
-    sources: z.array(kbEntrySourceSchema).min(1),
+    sources: z.array(artifactSourceSchema).min(1),
     created: z.string().date(),
     updated: z.string().date(),
     verified: z.string().date().optional(),
@@ -151,5 +154,8 @@ export type KbEntry = z.infer<typeof kbEntrySchema>;
 export type KbEntryConfidence = (typeof KB_ENTRY_CONFIDENCE)[number];
 
 /** One `sources` entry — `08` §8.3: "provenance is mandatory." Named separately so `@forge/kb/write`
- * can reference the shape without reaching into `KbEntry['sources'][number]`. */
+ * can reference the shape without reaching into `KbEntry['sources'][number]`. Re-exports `@forge/schemas`'s
+ * `artifactSourceSchema` (`PLAN-M14.md` P11) rather than keeping its own copy, so this type and the six
+ * KB-located registry schemas' own OPTIONAL `sources` field always describe the identical shape. */
+export { artifactSourceSchema, type ArtifactSource } from '@forge/schemas';
 export type KbSource = KbEntry['sources'][number];

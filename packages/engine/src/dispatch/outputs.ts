@@ -47,10 +47,23 @@
  * briefs record a `step` that does not contain the subtype word and so fail this rule, `SPEC-QUESTIONS.md`
  * Q209).
  *
+ * **KB output invariants** (`PLAN-M14.md` P11, `08` §8.6's `KbWriter` invariants, which bind a declared
+ * output exactly as they bind a `KbWriter` write): for the six KB-located types (`ADR`, `Runbook`, `Risk`,
+ * `Assumption`, `OpenQuestion`, `Environment` -- registry `pathTemplate` starting `kb/`), every produced
+ * document and every new or changed register entry must carry at least one `sources` item, and every
+ * register entry id present at the base revision must still be present at HEAD (it may gain
+ * `status: deprecated`/`superseded`, or `resolved` for `OpenQuestion`, where its schema has one, but is
+ * never simply removed from the file). Neither rule is schema-enforced (`sources` is optional on all six
+ * types, `PLAN-M14.md` P11's own Mandate) -- only this check applies them, the same "the declared-output path is
+ * checked to the KbWriter rules by the output contract instead" split `08` §8.6's own closing paragraph
+ * states; `forge spec validate`/`forge kb lint` do not.
+ *
  * @see specs/05 §5.5
  * @see specs/06 §6.8
+ * @see specs/08 §8.6
  * @see specs/18 §18.6, §18.7
  * @see PLAN-M13.md P7
+ * @see PLAN-M14.md P8, P10, P11
  * @see SPEC-QUESTIONS.md Q208
  */
 import { posix } from 'node:path';
@@ -611,6 +624,27 @@ function interfaceContractProblems(path: string, text: string): readonly string[
   return result.success ? [] : [issueText(result.error)];
 }
 
+/** `18` §18.7's own KB registry root -- every type P8's `output-ids.ts` reserves an id for (`ADR`,
+ * `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`), and the same six this piece
+ * (`PLAN-M14.md` P11) binds to `08` §8.6's `sources`/never-removed invariants below. Moved above
+ * `validateFile` (it used to live only beside `kbRangeProblems`, further down) now that both need it. */
+const KB_PATH_TEMPLATE_PREFIX = 'kb/';
+
+/** `08` §8.6's "Every write records `sources`. A write with no source is rejected" for a per-file KB
+ * document (`ADR`, `Runbook`) -- the register branch below enforces the identical rule per produced
+ * entry; this is its single-document counterpart. Called only after `documentProblems` has already
+ * confirmed `text` parses and validates against the schema, so this second, cheap parse cannot itself
+ * fail. Returns the bare problem text (`checkOne` already prefixes it with the file's own path). */
+function kbDocumentSourceProblem(path: string, text: string): string | undefined {
+  const frontMatter = frontMatterOf(ArtifactDocument.parse(text, path));
+  const sources = frontMatter['sources'];
+  if (Array.isArray(sources) && sources.length > 0) return undefined;
+  return (
+    'no sources: 08 §8.6 requires at least one (kind: decision, human or code, with a ref) on ' +
+    'every produced KB document'
+  );
+}
+
 /** Validates one produced file of `definition`'s type; `base` is its content at the base revision. */
 async function validateFile(
   definition: ArtifactTypeDefinition,
@@ -669,6 +703,40 @@ async function validateFile(
         // An unparseable base version contributes no entries, so every entry now present counts as produced.
       }
     }
+    // `PLAN-M14.md` P11, `08` §8.6's KbWriter invariant "never reused (deleted entries become
+    // deprecated, files retained)": for the four register types, gated on the identical
+    // `pathTemplate.startsWith('kb/')` predicate the per-file branch below (and block [5]'s own
+    // `isKbLocatedOutput`, `compile-prompt.ts`) use -- not merely `register !== undefined` alone, so
+    // this rule's own scope is tied to the SAME test everywhere it is stated or enforced, rather than
+    // coinciding with `REGISTER_SCHEMAS`'s four keys only by the accident of what that map happens to
+    // hold today. `HandoffRecord`/`Waiver` are neither KB-located nor register-schema'd, so this never
+    // reaches them either way. An id the base revision already held must still be present at HEAD --
+    // checked against the CURRENT entries' own ids, not the diff, so an entry the session left
+    // untouched still counts as present. The schema cannot express this (it validates one entry's
+    // shape, never the file's whole id set), so the check does.
+    if (
+      register !== undefined &&
+      definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX) &&
+      before.size > 0
+    ) {
+      const currentIds = new Set(
+        entries.flatMap((entry) => {
+          const id = entryId(entry);
+          return id === undefined ? [] : [id];
+        }),
+      );
+      const removed = [...before.keys()].filter((id) => !currentIds.has(id)).sort();
+      if (removed.length > 0) {
+        return {
+          problems: removed.map(
+            (id) =>
+              `entry ${id} was present at the base revision and is missing at HEAD: 08 §8.6 says an ` +
+              'id is never reused or removed once assigned -- mark it deprecated/superseded (or ' +
+              'resolved) instead of deleting it',
+          ),
+        };
+      }
+    }
     const produced = entries.filter(
       (entry) => before.get(entryId(entry) ?? '') !== canonical(entry),
     );
@@ -678,6 +746,24 @@ async function validateFile(
           `the session changed the file but added or modified no ${type} entry (entries identical to the base version do not count)`,
         ],
       };
+    }
+    // `PLAN-M14.md` P11, `08` §8.6's KbWriter invariant "Every write records sources. A write with no
+    // source is rejected": every entry this session added or changed (`produced`, not the whole file)
+    // must carry at least one `sources` item; an untouched sibling entry with none is not this
+    // session's problem to fix, and the schema leaves `sources` optional (P11's own Mandate), so only
+    // the check enforces this. Gated on the same `kb/`-rooted predicate as the retained-entry check
+    // just above, for the identical reason.
+    if (register !== undefined && definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX)) {
+      const missingSources = produced.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const sources = entry['sources'];
+        if (Array.isArray(sources) && sources.length > 0) return [];
+        return [
+          `entry ${entryId(entry) ?? '(unknown id)'} has no sources: 08 §8.6 requires at least one ` +
+            '(kind: decision, human or code, with a ref) on every produced or changed entry',
+        ];
+      });
+      if (missingSources.length > 0) return { problems: missingSources };
     }
     return {
       problems: [],
@@ -713,9 +799,15 @@ async function validateFile(
   }
 
   const checked = documentProblems(definition, path, text);
-  return checked.problems.length > 0
-    ? { problems: checked.problems }
-    : { problems: [], valid: { path, producedText: text, sessionType: checked.sessionType } };
+  if (checked.problems.length > 0) return { problems: checked.problems };
+  // `PLAN-M14.md` P11: the two per-file KB document types (`ADR`, `Runbook` -- every other type
+  // `documentProblems` validates lives outside `kb/`) are held to `08` §8.6's sources invariant too,
+  // the identical rule the register branch above enforces per entry.
+  if (definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX)) {
+    const sourceProblem = kbDocumentSourceProblem(path, text);
+    if (sourceProblem !== undefined) return { problems: [sourceProblem] };
+  }
+  return { problems: [], valid: { path, producedText: text, sessionType: checked.sessionType } };
 }
 
 /** The artifact's own field value for a DSL subtype (`retrospective` -> `retro`); own keys only. */
@@ -768,13 +860,6 @@ function listFiles(files: readonly string[]): string {
     ? `${shown}, and ${String(files.length - MAX_LISTED_FILES)} more`
     : shown;
 }
-
-/** `18` §18.7's own KB registry root -- every type P8's `output-ids.ts` reserves an id for (`ADR`,
- * `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`). Duplicated as a literal rather than
- * imported from `output-ids.ts` (this module is imported BY that one, `docRootsOf`; importing back
- * would cycle) -- the identical "duplicate the shape, not the private symbol" precedent that module's
- * own doc comment already sets. */
-const KB_PATH_TEMPLATE_PREFIX = 'kb/';
 
 /** Every entry id `text` holds, parsed as `definition`'s own register front matter -- `[]` for text that
  * does not parse or is `undefined` (an absent base/prior version contributes no ids: every entry now

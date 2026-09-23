@@ -23,6 +23,28 @@ describe('riskSchema — valid', () => {
   it('accepts a well-formed risk entry', () => {
     expect(riskSchema.safeParse(validRisk()).success).toBe(true);
   });
+
+  it('accepts with no sources field at all (PLAN-M14.md P11: sources is optional here)', () => {
+    const result = riskSchema.safeParse(validRisk());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.sources).toBeUndefined();
+  });
+
+  it('accepts a well-formed sources array', () => {
+    const result = riskSchema.safeParse({
+      ...validRisk(),
+      sources: [{ kind: 'code', ref: 'src/tax/validate.ts@a1b2c3d' }],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('riskSchema — sources shape (PLAN-M14.md P11)', () => {
+  it('rejects a source with an unknown kind', () => {
+    const result = riskSchema.safeParse({ ...validRisk(), sources: [{ kind: 'guess', ref: 'x' }] });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['sources', 0, 'kind']);
+  });
 });
 
 describe('riskSchema — invalid, each asserting the error path', () => {

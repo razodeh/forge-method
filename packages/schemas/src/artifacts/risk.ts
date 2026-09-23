@@ -7,12 +7,19 @@
  * same purpose elsewhere in this registry rather than inventing a new one. See `SPEC-QUESTIONS.md`
  * Q23.
  *
+ * `sources` is OPTIONAL here (`PLAN-M14.md` P11): `08` §8.6's own "every write records sources" is a
+ * `KbWriter`/output-CHECK invariant, not a schema constraint; `@forge/engine`'s output check requires
+ * it on every new or changed produced entry instead (`dispatch/outputs.ts`).
+ *
  * @see specs/08 §8.2
+ * @see specs/08 §8.6
  * @see SPEC-QUESTIONS.md Q23
+ * @see PLAN-M14.md P11
  */
 import { z } from 'zod';
 
 import { entryIdSchema } from './entry-id.ts';
+import { artifactSourceSchema } from './source.ts';
 
 export const riskSchema = z
   .object({
@@ -22,6 +29,7 @@ export const riskSchema = z
     impact: z.string().min(1),
     mitigation: z.string().min(1),
     owner: z.string().min(1),
+    sources: z.array(artifactSourceSchema).optional(),
   })
   .strict();
 

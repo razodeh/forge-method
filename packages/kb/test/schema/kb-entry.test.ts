@@ -165,6 +165,21 @@ describe('kbEntrySchema — provenance is mandatory', () => {
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['sources']);
   });
+
+  it('rejects a source with an unknown kind (PLAN-M14.md P11: the shared artifactSourceSchema shape, still enforced per item)', () => {
+    const result = kbEntrySchema.safeParse(
+      workedExample({ sources: [{ kind: 'guess', ref: 'ADR-0011' }] }),
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['sources', 0, 'kind']);
+  });
+
+  it('rejects a missing sources field entirely, the same as an empty array', () => {
+    const withoutSources = workedExample();
+    delete withoutSources['sources'];
+    const result = kbEntrySchema.safeParse(withoutSources);
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('kbEntrySchema — status/superseded_by consistency', () => {

@@ -94,7 +94,9 @@ Lane lifecycle:
 - Lanes never touch `.forge/state/`. A lane may write a `docs/forge/` path (the KB included) only if
   it is one of the step's declared `outputs` or lies in its `produces` (§6.7); any other KB change
   from a lane goes through the KB proposal channel, applied by the supervisor on the integration
-  branch (this prevents KB merge conflicts entirely).
+  branch (this prevents KB merge conflicts entirely). A declared KB output's own write is still bound
+  by `08` §8.6's `KbWriter` invariants — sources, never reused or removed — checked by the output
+  contract instead of by `KbWriter` itself (`08` §8.6).
 - A lane whose step succeeded and which no `merge` step lands is enqueued in the merge queue by the engine
   as soon as the step succeeds (between scheduling ticks, in plan order), and lanes are created from the
   integration branch tip (a stacked lane excepted, below), so a later step, an inline step and a gate see it. A `merge` step lands the lanes

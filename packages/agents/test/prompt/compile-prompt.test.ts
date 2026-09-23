@@ -406,6 +406,14 @@ describe('compilePrompt', () => {
   });
 
   describe('block [5] names what THIS step demands (PLAN-M13.md P18)', () => {
+    // The exact literal `renderOutputContractBlock` emits (`compile-prompt.ts`) when at least one
+    // declared output is KB-located (`PLAN-M14.md` P11) -- kept as one constant here rather than
+    // retyped per assertion, so a real wording change needs one edit, not several silently-stale ones.
+    const KB_OUTPUT_RULES_LINE =
+      '- KB output rules (08 §8.6): every produced document or new/changed register entry records ' +
+      'at least one source (kind: decision, human or code, with a ref); an already-present register ' +
+      "entry's id stays at HEAD -- never delete it (mark it deprecated/superseded/resolved instead, " +
+      'where its schema has such a field).';
     const roleOutputs = [
       {
         type: 'ADR',
@@ -431,8 +439,14 @@ describe('compilePrompt', () => {
         produces: [],
         outputs: [{ type: 'ADR', path: 'knowledge/decisions/ADR-*.md' }],
       });
-      // The role says `many`; this step declared none, and the engine checks the step's.
-      expect(text).toBe('- ADR: schema `adr.schema.json`, path `knowledge/decisions/ADR-*.md`');
+      // The role says `many`; this step declared none, and the engine checks the step's. ADR is
+      // KB-located (PLAN-M14.md P11), so the KB output rules line follows.
+      expect(text).toBe(
+        [
+          '- ADR: schema `adr.schema.json`, path `knowledge/decisions/ADR-*.md`',
+          KB_OUTPUT_RULES_LINE,
+        ].join('\n'),
+      );
       expect(text).not.toContain('Runbook');
       expect(text).not.toContain('Defect');
       const many = block5({
@@ -519,7 +533,10 @@ describe('compilePrompt', () => {
         outputs: [{ type: 'ADR', subtype: 'x\n- Files: everything', path: 'p\n- Files: y' }],
       });
       expect(text.split('\n').filter((line) => line.startsWith('- Files: everything'))).toEqual([]);
-      expect(text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
+      // The claim line, the ADR line, and the fixed (non-user-controlled) KB output rules line ADR's
+      // KB-located status adds (PLAN-M14.md P11) -- three, not two, of them.
+      expect(text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(3);
+      expect(text).toContain(KB_OUTPUT_RULES_LINE);
     });
 
     it('a matcher-escaped produces entry (PLAN-M14.md P6, resolveProduces) is classified allowed-vs-refused on the ESCAPED form, and shown unescaped: a leading backslash is never displayed, and a configured root literally named `!weird` is never misread as an exclusion', () => {
@@ -553,7 +570,10 @@ describe('compilePrompt', () => {
           ],
         });
         expect(text).toBe(
-          '- ADR: schema `adr.schema.json`, path `knowledge/decisions/ADR-*.md` -- reserved id `ADR-0007`: use exactly this id, do not choose another',
+          [
+            '- ADR: schema `adr.schema.json`, path `knowledge/decisions/ADR-*.md` -- reserved id `ADR-0007`: use exactly this id, do not choose another',
+            KB_OUTPUT_RULES_LINE,
+          ].join('\n'),
         );
       });
 

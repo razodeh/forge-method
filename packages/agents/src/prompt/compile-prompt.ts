@@ -2,9 +2,12 @@
  * `compilePrompt` — `05` §5.3's own nine-block system prompt assembly.
  *
  * @see specs/05 §5.3
+ * @see specs/08 §8.6
  * @see PLAN-M6.md A5
+ * @see PLAN-M14.md P11
  */
 import type { StyleProfile } from '@forge/extensions/style';
+import { artifactTypeById } from '@forge/schemas';
 
 import type { StepContext } from '../context/pack-for-step.ts';
 import type { AgentContextPack } from '../context/types.ts';
@@ -164,6 +167,33 @@ function renderContextPackBlock(pack: AgentContextPack): string {
 const READ_ONLY_OUTPUT_CONTRACT =
   'This session is read-only: do not create or modify files. Your output is your final message (or the structured output the task asks for), and no artifact file is expected from you.';
 
+/** `18` §18.7's own KB registry root -- the identical predicate `dispatch/outputs.ts`'s own
+ * `kbRangeProblems`/`validateFile` and `dispatch/output-ids.ts` already use to single out the six
+ * KB-located types (`ADR`, `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment`), so this
+ * block's own claim about which outputs the rule below binds can never drift from what the output
+ * check actually enforces (`PLAN-M14.md` P11). Not imported (`@forge/engine` would cycle back to
+ * `@forge/agents`; `@forge/schemas`'s own `artifactTypeById` is what both sides call). */
+const KB_PATH_TEMPLATE_PREFIX = 'kb/';
+
+function isKbLocatedOutput(type: string): boolean {
+  return artifactTypeById(type)?.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX) === true;
+}
+
+/** `08` §8.6's own two `KbWriter` invariants, stated once per prompt when this step declares at least
+ * one KB-located output (`PLAN-M14.md` P11): every produced document or new/changed register entry
+ * needs a source, and a register entry the base revision already held must still be present at HEAD.
+ * The "mark it deprecated/superseded" option is phrased conditionally ("where its schema has such a
+ * field"), not as a blanket instruction: `Risk`/`Assumption`/`Environment` have no status field at all
+ * (`.strict()`, no such key), so telling every KB-located step to set one would send an agent whose
+ * only declared output is one of those three at an edit its own schema refuses -- a fresh critic round
+ * caught an earlier version of this text doing exactly that. Fixed text, not per-output data, so it
+ * needs no `oneLine`/heading-defanging of its own. */
+const KB_OUTPUT_RULES_LINE =
+  '- KB output rules (08 §8.6): every produced document or new/changed register entry records at ' +
+  "least one source (kind: decision, human or code, with a ref); an already-present register entry's " +
+  'id stays at HEAD -- never delete it (mark it deprecated/superseded/resolved instead, where its ' +
+  'schema has such a field).';
+
 /**
  * `05` §5.3 point 5 names this block "exact artifact schema + file paths + front-matter template" --
  * but `AgentDefinition.outputs` (A1's own schema, matching `05` §5.3's own worked `architect` example
@@ -260,8 +290,13 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
       ? `- ${type}: declared by this step${subtype}${reserved}`
       : `- ${type}: ${head}${cardinality}${subtype}${sidecar}${reserved}`;
   });
+  // `PLAN-M14.md` P11: stated once, not per output line, when at least one declared output is
+  // KB-located -- the two invariants are file-set-wide facts about `08` §8.6, not per-output data.
+  const kbRulesLine = declared.some((wanted) => isKbLocatedOutput(wanted.type))
+    ? [KB_OUTPUT_RULES_LINE]
+    : [];
   // The step's own claim beyond its declared outputs (its `produces`) is enforced too, so it is stated too.
-  return [...lines, ...claimLines].join('\n');
+  return [...lines, ...kbRulesLine, ...claimLines].join('\n');
 }
 
 /** The test commands a step may run (`PromptConstraints.testCommands`), one per line, each in backticks: the exact string

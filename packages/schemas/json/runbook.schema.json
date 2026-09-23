@@ -79,6 +79,31 @@
       "exclusiveMinimum": 0,
       "type": "integer"
     },
+    "sources": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "decision",
+              "human",
+              "code"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "status": {
       "minLength": 1,
       "type": "string"

@@ -28,6 +28,32 @@ describe('openQuestionSchema — valid', () => {
       openQuestionSchema.safeParse({ ...validOpenQuestion(), status: 'resolved' }).success,
     ).toBe(true);
   });
+
+  it('accepts with no sources field at all (PLAN-M14.md P11: sources is optional here)', () => {
+    const result = openQuestionSchema.safeParse(validOpenQuestion());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.sources).toBeUndefined();
+  });
+
+  it('accepts a well-formed sources array, resolved with a source recording why', () => {
+    const result = openQuestionSchema.safeParse({
+      ...validOpenQuestion(),
+      status: 'resolved',
+      sources: [{ kind: 'decision', ref: 'ADR-0014' }],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('openQuestionSchema — sources shape (PLAN-M14.md P11)', () => {
+  it('rejects a source with an unknown kind', () => {
+    const result = openQuestionSchema.safeParse({
+      ...validOpenQuestion(),
+      sources: [{ kind: 'guess', ref: 'x' }],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['sources', 0, 'kind']);
+  });
 });
 
 describe('openQuestionSchema — invalid, each asserting the error path', () => {

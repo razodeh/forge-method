@@ -20,10 +20,12 @@ export {
   kbEntrySchema,
   KB_ENTRY_TYPES,
   KB_ENTRY_CONFIDENCE,
+  artifactSourceSchema,
   type KbEntry,
   type KbEntryType,
   type KbEntryConfidence,
   type KbSource,
+  type ArtifactSource,
 } from './kb-entry.ts';
 export { KB_SECTIONS, sectionIdToken, sectionForIdToken, type KbSection } from './sections.ts';
 export {

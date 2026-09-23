@@ -7,6 +7,7 @@ data_policy: '<what kind of data this environment may hold>'
 secrets_source: '<where its secrets come from>'
 owner: '<the role responsible for this environment>'
 access: '<how to get access>'
+sources: []
 ---
 
 <A one-off entry stub: copy this front-matter block into `kb/delivery/environments.md` to register a

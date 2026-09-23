@@ -184,7 +184,8 @@ function agentNode(stepId: string, produces: readonly string[] = []): StepNode {
 
 /** A minimal but schema-VALID ADR document (`08` §8.4, `packages/templates/templates/artifacts/ADR.md`'s
  * own shape) at `id` -- `PLAN-M14.md` P8's own resume test needs the output check (P7) to actually pass
- * on both the reserved id's own document and a still-committed leftover one from before the crash. */
+ * on both the reserved id's own document and a still-committed leftover one from before the crash.
+ * `sources` included (`PLAN-M14.md` P11: the output check now requires at least one). */
 function validAdrDocument(id: string): string {
   return [
     '---',
@@ -209,6 +210,9 @@ function validAdrDocument(id: string): string {
     'related: []',
     'diagrams: []',
     "framework: 'n/a'",
+    'sources:',
+    '  - kind: decision',
+    "    ref: 'ADR-0001'",
     '---',
     '',
     '## Context',

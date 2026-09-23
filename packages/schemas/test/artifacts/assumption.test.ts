@@ -21,6 +21,31 @@ describe('assumptionSchema — valid', () => {
   it('accepts the spec §5.6 example', () => {
     expect(assumptionSchema.safeParse(validAssumption()).success).toBe(true);
   });
+
+  it('accepts with no sources field at all (PLAN-M14.md P11: sources is optional here)', () => {
+    const result = assumptionSchema.safeParse(validAssumption());
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.sources).toBeUndefined();
+  });
+
+  it('accepts a well-formed sources array', () => {
+    const result = assumptionSchema.safeParse({
+      ...validAssumption(),
+      sources: [{ kind: 'human', ref: 'elicitation 2026-03-04' }],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('assumptionSchema — sources shape (PLAN-M14.md P11)', () => {
+  it('rejects a source with an unknown kind', () => {
+    const result = assumptionSchema.safeParse({
+      ...validAssumption(),
+      sources: [{ kind: 'guess', ref: 'x' }],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['sources', 0, 'kind']);
+  });
 });
 
 describe('assumptionSchema — invalid, each asserting the error path', () => {

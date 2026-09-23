@@ -28,6 +28,8 @@ import {
   environmentEntry,
   openQuestionEntry,
   registerFileText,
+  riskEntry,
+  runbookText,
   waiverEntry,
   waiversFileText,
   epicMissingGoalText,
@@ -693,6 +695,194 @@ describe('the output check holds a produced KB output to its reserved id range (
       await check({ head: { [EPIC_PATH]: epicText() } }, [{ type: 'Epic' }], {
         reservedIds: new Map([['Epic', ['EPIC-9999']]]),
       }),
+    ).toBeUndefined();
+  });
+});
+
+/**
+ * `PLAN-M14.md` P11, `08` §8.6's KbWriter invariant "Every write records `sources`. A write with no
+ * source is rejected": the output check applies this to every produced KB document and every new or
+ * changed register entry, for the six KB-located types (`ADR`, `Runbook`, `Risk`, `Assumption`,
+ * `OpenQuestion`, `Environment`) -- the schema itself leaves `sources` optional (P11's own Mandate), so
+ * only the check enforces it.
+ *
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
+ */
+describe('the output check requires sources on a produced KB document or new/changed register entry (PLAN-M14.md P11)', () => {
+  const ADR_DECISIONS = 'docs/forge/kb/decisions';
+  const RUNBOOKS = 'docs/forge/kb/ops/runbooks';
+  const RISKS = 'docs/forge/kb/risks.md';
+
+  it('a produced ADR with a source passes; without one fails RUN-083 naming the file and the rule', async () => {
+    expect(
+      await check({ head: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007') } }, [
+        { type: 'ADR' },
+      ]),
+    ).toBeUndefined();
+    const failure = await check(
+      { head: { [`${ADR_DECISIONS}/ADR-0007-x.md`]: adrText('ADR-0007', 'x', []) } },
+      [{ type: 'ADR' }],
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ADR-0007-x.md');
+    expect(failure?.message).toContain('no sources');
+    expect(failure?.message).toContain('08 §8.6');
+  });
+
+  it('a produced Runbook with a source passes; without one fails, naming the rule', async () => {
+    expect(
+      await check({ head: { [`${RUNBOOKS}/RUN-001-x.md`]: runbookText('RUN-001') } }, [
+        { type: 'Runbook' },
+      ]),
+    ).toBeUndefined();
+    const failure = await check(
+      { head: { [`${RUNBOOKS}/RUN-001-x.md`]: runbookText('RUN-001', 'x', []) } },
+      [{ type: 'Runbook' }],
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('no sources');
+  });
+
+  it('a new register entry without sources fails, naming it; the same entry with a source passes', async () => {
+    expect(
+      await check({ head: { [RISKS]: risksFileText('RISK-001') } }, [{ type: 'Risk' }]),
+    ).toBeUndefined();
+    const withoutSource = await check(
+      { head: { [RISKS]: registerFileText('Risk', 'risks', [riskEntry('RISK-001', [])]) } },
+      [{ type: 'Risk' }],
+    );
+    expect(withoutSource?.code).toBe('RUN-083');
+    expect(withoutSource?.message).toContain('RISK-001');
+    expect(withoutSource?.message).toContain('no sources');
+  });
+
+  it('a changed register entry without sources fails; an untouched sibling entry without sources does not block it', async () => {
+    // Simulates a pre-P11 register: RISK-001 has no sources and is left untouched; the session only
+    // adds RISK-002, also without sources -- RISK-002 is what fails, not the untouched RISK-001.
+    const noSourceEntry = riskEntry('RISK-001', []);
+    const base = registerFileText('Risk', 'risks', [noSourceEntry]);
+    const head = registerFileText('Risk', 'risks', [noSourceEntry, riskEntry('RISK-002', [])]);
+    const failure = await check({ base: { [RISKS]: base }, head: { [RISKS]: head } }, [
+      { type: 'Risk' },
+    ]);
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('RISK-002');
+    expect(failure?.message).not.toContain('RISK-001');
+  });
+
+  it('Assumption: a new register entry without sources fails', async () => {
+    const failure = await check(
+      {
+        head: {
+          'docs/forge/kb/assumptions.md': registerFileText('Assumption', 'assumptions', [
+            assumptionEntry('ASM-001', []),
+          ]),
+        },
+      },
+      [{ type: 'Assumption' }],
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ASM-001');
+    expect(failure?.message).toContain('no sources');
+  });
+
+  it('OpenQuestion: a new register entry without sources fails', async () => {
+    const failure = await check(
+      {
+        head: {
+          'docs/forge/kb/open-questions.md': registerFileText('OpenQuestion', 'open_questions', [
+            openQuestionEntry('OQ-001', []),
+          ]),
+        },
+      },
+      [{ type: 'OpenQuestion' }],
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('OQ-001');
+    expect(failure?.message).toContain('no sources');
+  });
+
+  it('Environment: a new register entry without sources fails', async () => {
+    const failure = await check(
+      {
+        head: {
+          'docs/forge/kb/delivery/environments.md': registerFileText(
+            'Environment',
+            'environments',
+            [environmentEntry('ENV-001', [])],
+          ),
+        },
+      },
+      [{ type: 'Environment' }],
+    );
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('ENV-001');
+    expect(failure?.message).toContain('no sources');
+  });
+
+  it('Epic (not KB-located) is not held to the sources rule: no sources field at all still passes', async () => {
+    expect(await check({ head: { [EPIC_PATH]: epicText() } }, [{ type: 'Epic' }])).toBeUndefined();
+  });
+});
+
+/**
+ * `PLAN-M14.md` P11, `08` §8.6's KbWriter invariant "never reused (deleted entries become
+ * `deprecated`, files retained)": a register entry id present at the base revision must still be
+ * present at HEAD, whatever else the session changed about the file -- the piece's own title, "a
+ * register entry may be deprecated, never removed."
+ *
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
+ */
+describe('a register entry may be deprecated, never removed (PLAN-M14.md P11)', () => {
+  const RISKS = 'docs/forge/kb/risks.md';
+  const OQ = 'docs/forge/kb/open-questions.md';
+
+  it('a base entry absent at HEAD fails, naming it', async () => {
+    const base = risksFileText('RISK-001', 'RISK-002');
+    const head = risksFileText('RISK-002', 'RISK-003'); // RISK-001 silently dropped
+    const failure = await check({ base: { [RISKS]: base }, head: { [RISKS]: head } }, [
+      { type: 'Risk' },
+    ]);
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('RISK-001');
+    expect(failure?.message).toContain('08 §8.6');
+  });
+
+  it('an id changed in place fails: the old id is now absent at HEAD, exactly as wrong as deleting it', async () => {
+    const base = risksFileText('RISK-001');
+    const head = registerFileText('Risk', 'risks', [riskEntry('RISK-099')]);
+    const failure = await check({ base: { [RISKS]: base }, head: { [RISKS]: head } }, [
+      { type: 'Risk' },
+    ]);
+    expect(failure?.code).toBe('RUN-083');
+    expect(failure?.message).toContain('RISK-001');
+  });
+
+  it('every base entry still present, even untouched, passes -- retaining and adding both work', async () => {
+    const base = risksFileText('RISK-001');
+    const head = risksFileText('RISK-001', 'RISK-002');
+    expect(
+      await check({ base: { [RISKS]: base }, head: { [RISKS]: head } }, [{ type: 'Risk' }]),
+    ).toBeUndefined();
+  });
+
+  it('OpenQuestion status: resolved passes -- retiring an entry by changing its status, not removing it', async () => {
+    const base = registerFileText('OpenQuestion', 'open_questions', [openQuestionEntry('OQ-001')]);
+    const head = registerFileText('OpenQuestion', 'open_questions', [
+      openQuestionEntry('OQ-001').replace('status: open', 'status: resolved'),
+    ]);
+    expect(
+      await check({ base: { [OQ]: base }, head: { [OQ]: head } }, [{ type: 'OpenQuestion' }]),
+    ).toBeUndefined();
+  });
+
+  it('Epic (not a register type) is not held to the retained-entry rule', async () => {
+    const base = epicText('EPIC-001');
+    const head = epicText('EPIC-001', { goal: 'Ship a different thing' });
+    expect(
+      await check({ base: { [EPIC_PATH]: base }, head: { [EPIC_PATH]: head } }, [{ type: 'Epic' }]),
     ).toBeUndefined();
   });
 });

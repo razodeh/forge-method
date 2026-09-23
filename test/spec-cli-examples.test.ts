@@ -185,3 +185,38 @@ describe('pinned amended sentences (Q232/PLAN-M14.md P1) — delete an `it` indi
     expect(readSpec('03-cli-and-installer.md')).toContain('"ok":false,"error"');
   });
 });
+
+/**
+ * `M14 P11` (`SPEC-QUESTIONS.md` Q232 decision 2, `PLAN-M14.md` P11): P11 pins the `02` §2.5 / `08`
+ * §8.6 sentences it relies on (both already amended by P1, above) and adds exactly one new sentence of
+ * its own -- a `06` §6.4 rule 1 cross-reference, nothing else -- so this block only proves that one new
+ * sentence plus the two it depends on, the same "delete an `it` individually once reworded" contract
+ * the P1 block above establishes.
+ *
+ * @see specs/02 §2.5
+ * @see specs/06 §6.4
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
+ */
+describe('pinned amended/added sentences (PLAN-M14.md P11)', () => {
+  it("06 §6.4 rule 1: a declared KB output write is cross-referenced to 08 §8.6's KbWriter invariants", () => {
+    const spec06 = readSpec('06-orchestration-and-parallelism.md');
+    expect(spec06).toContain(
+      "A declared KB output's own write is still bound\n  by `08` §8.6's `KbWriter` invariants",
+    );
+  });
+
+  it("08 §8.6 (P1): still states the mandatory-sources and never-reused/removed KbWriter invariants P11's own output check enforces", () => {
+    const spec08 = readSpec('08-knowledge-body.md');
+    expect(spec08).toContain('Every write records `sources`. A write with no source is rejected.');
+    expect(spec08).toContain(
+      'never reused (deleted entries become `deprecated`,\n  files retained)',
+    );
+  });
+
+  it("02 §2.5 (P1): still names the declared-output exception's own invariants", () => {
+    expect(readSpec('02-architecture-and-tech-stack.md')).toContain(
+      'mandatory `sources`, deprecate-not-delete',
+    );
+  });
+});

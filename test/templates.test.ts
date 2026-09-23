@@ -260,3 +260,40 @@ describe.each(ARTIFACT_TYPES.map((type) => [type.id, type] as const))(
     });
   },
 );
+
+/**
+ * `PLAN-M14.md` P11: the six KB-located types' templates gain `sources: []` (schema and template land
+ * together, the Mandate's own words) -- an empty array is a legitimate scaffold, since `sources` is
+ * OPTIONAL on all six schemas (the output check, not the schema, requires it be non-empty on a
+ * PRODUCED document or entry; a fresh, uncopied scaffold is neither).
+ *
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
+ */
+describe('the six KB-located templates carry `sources: []` and validate as scaffolds (PLAN-M14.md P11)', () => {
+  const KB_LOCATED_TYPES = [
+    'ADR',
+    'Runbook',
+    'Risk',
+    'Assumption',
+    'OpenQuestion',
+    'Environment',
+  ] as const;
+
+  it.each(KB_LOCATED_TYPES)('%s template front matter carries sources: []', (id) => {
+    const { data } = readTemplate(id);
+    expect(data).toMatchObject({ sources: [] });
+  });
+
+  it.each(KB_LOCATED_TYPES)(
+    '%s template still validates against the real schema with sources: []',
+    (id) => {
+      const { data } = readTemplate(id);
+      const result = SCHEMA_BY_TYPE[id].safeParse(data);
+      expect(
+        result.success,
+        result.success ? '' : JSON.stringify(result.error.issues, null, 2),
+      ).toBe(true);
+    },
+  );
+});

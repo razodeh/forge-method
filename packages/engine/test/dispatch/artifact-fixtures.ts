@@ -4,10 +4,42 @@
  * (`18` §18.7): front matter that satisfies the type's own `@forge/schemas` schema, so a test that expects
  * success is proving the real validators accept it, not a stub. Not `*.test.ts`, so it may be shared.
  *
+ * `PLAN-M14.md` P11: the output check now requires at least one `sources` item on every produced KB
+ * document and every new/changed register entry (`08` §8.6), so every KB-located builder below
+ * (`adrText`, `riskEntry`, `assumptionEntry`, `openQuestionEntry`, `environmentEntry`) takes an
+ * optional `sources` override defaulting to `DEFAULT_SOURCE` -- every EXISTING call site keeps getting
+ * a schema-valid, non-empty `sources` for free, and a test that specifically wants the P11 failure
+ * passes `[]` to omit the field entirely.
+ *
  * @see specs/18 §18.6, §18.7
+ * @see specs/08 §8.6
+ * @see PLAN-M14.md P11
  */
 
 export const DOCS = 'docs/forge';
+
+/** One `sources` item, matching `artifactSourceSchema`'s shape (`kind`/`ref`). */
+export interface SourceFixture {
+  readonly kind: 'decision' | 'human' | 'code';
+  readonly ref: string;
+}
+
+/** The default a KB-located fixture builder uses unless a test overrides it -- one real-shaped source,
+ * schema-valid and non-empty, so every pre-existing "this should pass" call site keeps passing without
+ * having to be touched by P11. */
+export const DEFAULT_SOURCE: readonly SourceFixture[] = [{ kind: 'decision', ref: 'ADR-0001' }];
+
+/** `sources:` rendered as YAML lines at `indent`, or `[]` when `sources` is empty (the field is then
+ * omitted entirely, not emitted as `sources: []` -- both are equally "no source" to the output check,
+ * and omission is what a real agent that never wrote the field would produce). */
+function entrySourcesLines(sources: readonly SourceFixture[], indent: string): string[] {
+  if (sources.length === 0) return [];
+  const lines: string[] = [`${indent}sources:`];
+  for (const source of sources) {
+    lines.push(`${indent}  - kind: ${source.kind}`, `${indent}    ref: '${source.ref}'`);
+  }
+  return lines;
+}
 
 export function epicText(
   id = 'EPIC-001',
@@ -52,8 +84,14 @@ export function epicMissingGoalText(id = 'EPIC-001'): string {
 
 /** A minimal but schema-valid ADR document (`08` §8.4), at `id` -- the same shape/fields
  * `packages/engine/test/dispatch/agent.test.ts`'s own `validAdrDocument` (`PLAN-M14.md` P8) uses, so a
- * document either builds validates against the identical schema the same way. */
-export function adrText(id: string, title = 'A decision'): string {
+ * document either builds validates against the identical schema the same way. `sources` defaults to
+ * `DEFAULT_SOURCE` (`PLAN-M14.md` P11); pass `[]` to build a document the output check's sources rule
+ * rejects. */
+export function adrText(
+  id: string,
+  title = 'A decision',
+  sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+): string {
   return [
     '---',
     `id: ${id}`,
@@ -77,6 +115,7 @@ export function adrText(id: string, title = 'A decision'): string {
     'related: []',
     'diagrams: []',
     "framework: 'n/a'",
+    ...entrySourcesLines(sources, ''),
     '---',
     '',
     '## Context',
@@ -102,6 +141,39 @@ export function adrText(id: string, title = 'A decision'): string {
     '## Reversal plan',
     '',
     'x',
+    '',
+  ].join('\n');
+}
+
+/** A minimal but schema-valid Runbook document (`14` §14), at `id`. `sources` defaults to
+ * `DEFAULT_SOURCE` (`PLAN-M14.md` P11); pass `[]` to build a document the output check's sources rule
+ * rejects. */
+export function runbookText(
+  id: string,
+  title = 'API returns 503 under load',
+  sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+): string {
+  return [
+    '---',
+    `id: ${id}`,
+    'type: Runbook',
+    'schemaVersion: 1',
+    `title: ${title}`,
+    'status: active',
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: ops',
+    'changelog: []',
+    "symptoms: 'p95 latency exceeds 5s'",
+    "immediate_mitigation: 'scale the deployment'",
+    'diagnosis_steps: [check dashboards]',
+    "escalation: 'page the on-call SRE'",
+    'post_incident_actions: [file an RCA]',
+    ...entrySourcesLines(sources, ''),
+    '---',
+    '',
+    'What an on-call responder needs before running this under pressure.',
     '',
   ].join('\n');
 }
@@ -141,7 +213,9 @@ export function sessionRecordText(sessionType: string, id = 'SESSION-001'): stri
   ].join('\n');
 }
 
-export function riskEntry(id: string): string {
+/** `sources` defaults to `DEFAULT_SOURCE` (`PLAN-M14.md` P11); pass `[]` for an entry the output
+ * check's sources rule rejects. */
+export function riskEntry(id: string, sources: readonly SourceFixture[] = DEFAULT_SOURCE): string {
   return [
     `  - id: ${id}`,
     '    statement: It could break',
@@ -149,10 +223,13 @@ export function riskEntry(id: string): string {
     '    impact: high',
     '    mitigation: Test it',
     '    owner: em',
+    ...entrySourcesLines(sources, '    '),
   ].join('\n');
 }
 
-/** A `kb/risks.md` register (`collection: true`) holding the given entry ids. */
+/** A `kb/risks.md` register (`collection: true`) holding the given entry ids, each with `DEFAULT_SOURCE`
+ * -- not `ids.map(riskEntry)`: `Array.prototype.map` also passes the element's index as `riskEntry`'s
+ * own second (`sources`) parameter, silently defeating its default. */
 export function risksFileText(...ids: readonly string[]): string {
   return [
     '---',
@@ -166,7 +243,7 @@ export function risksFileText(...ids: readonly string[]): string {
     'author: em',
     'changelog: []',
     'risks:',
-    ...ids.map(riskEntry),
+    ...ids.map((id) => riskEntry(id)),
     '---',
     '',
   ].join('\n');
@@ -215,19 +292,40 @@ export function registerFileText(type: string, key: string, entries: readonly st
   return ['---', `type: ${type}`, ...REGISTER_BASE, `${key}:`, ...entries, '---', ''].join('\n');
 }
 
-export const openQuestionEntry = (id: string): string =>
-  [`  - id: ${id}`, '    question: Which database', '    status: open'].join('\n');
+/** `sources` defaults to `DEFAULT_SOURCE` (`PLAN-M14.md` P11); pass `[]` for an entry the output
+ * check's sources rule rejects. Not a bare arrow assigned from another function (each still takes
+ * `sources` as its own second parameter, so `[...ids].map(openQuestionEntry)` would leak the array
+ * index into it the identical way `riskEntry`'s own doc comment warns against). */
+export function openQuestionEntry(
+  id: string,
+  sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+): string {
+  return [
+    `  - id: ${id}`,
+    '    question: Which database',
+    '    status: open',
+    ...entrySourcesLines(sources, '    '),
+  ].join('\n');
+}
 
-export const assumptionEntry = (id: string): string =>
-  [
+export function assumptionEntry(
+  id: string,
+  sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+): string {
+  return [
     `  - id: ${id}`,
     '    text: Users have accounts',
     '    confidence: low',
     '    validate_by: 2026-06-01',
+    ...entrySourcesLines(sources, '    '),
   ].join('\n');
+}
 
-export const environmentEntry = (id: string): string =>
-  [
+export function environmentEntry(
+  id: string,
+  sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+): string {
+  return [
     `  - id: ${id}`,
     '    purpose: staging',
     '    url: https://staging.example.com',
@@ -236,7 +334,9 @@ export const environmentEntry = (id: string): string =>
     '    secrets_source: vault',
     '    owner: sre',
     '    access: team',
+    ...entrySourcesLines(sources, '    '),
   ].join('\n');
+}
 
 export const waiverEntry = (id: string, extra = ''): string =>
   [

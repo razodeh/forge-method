@@ -45,7 +45,8 @@ const DECISIONS = 'docs/forge/kb/decisions';
 /** A minimal but schema-valid ADR document (`08` §8.4), at `id` -- the same shape
  * `packages/engine/test/dispatch/artifact-fixtures.ts`'s own `adrText` uses, duplicated here rather than
  * imported: this file lives in `@forge/cli`'s own test tree, and reaching into another package's `test/`
- * directory (never published, never a real module boundary) is not a real import path. */
+ * directory (never published, never a real module boundary) is not a real import path. `sources`
+ * included (`PLAN-M14.md` P11: the output check now requires at least one on every produced ADR). */
 function adrText(id: string): string {
   return [
     '---',
@@ -70,6 +71,9 @@ function adrText(id: string): string {
     'related: []',
     'diagrams: []',
     "framework: 'n/a'",
+    'sources:',
+    '  - kind: decision',
+    "    ref: 'ADR-0001'",
     '---',
     '',
     '## Context',
