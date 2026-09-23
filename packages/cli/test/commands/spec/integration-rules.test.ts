@@ -15,9 +15,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { execa } from 'execa';
+import { FakePlatformAdapter } from '@forge/testkit';
+import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SpecCommandContext } from '../../../src/commands/spec.ts';
+import { runWorkflow } from '../../../src/commands/run/run.ts';
 import {
   specValidateRule,
   VALIDATE_RULE_IDS,
@@ -30,6 +34,16 @@ import {
   createTestProject,
   type TestProject,
 } from '../helpers.ts';
+import { writeFixtureAgent } from '../loop/helpers.ts';
+import {
+  WORKFLOWS_ROOT,
+  FIXTURE_GATE_ID,
+  cleanupAll as cleanupRunAll,
+  createTestProject as createRunTestProject,
+  fixtureExpressionContext,
+  testRunDeps,
+  type TestProject as RunTestProject,
+} from '../run/helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -489,5 +503,196 @@ describe('migration-order-violations', () => {
     const first = JSON.stringify(await run(project, RULE));
     expect(JSON.stringify(await run(project, RULE))).toBe(first);
     expect((await run(project, RULE)).map((v) => v.subject)).toEqual(['A-1', 'Z-1']);
+  });
+});
+
+/**
+ * `PLAN-M14.md` P21's own "real runWorkflow" case: the two declaration files these rules read are
+ * genuinely inside the writing step's claim, through a real `runWorkflow`, a real lane commit and a
+ * real `FakePlatformAdapter` session -- not merely a produces-list assertion. `build-stage:freeze-contracts`
+ * and `shape-solution:model-data`'s own real `produces` (`PLAN-M14.md` P21) are mirrored here rather than
+ * run through the full shipped workflows, which would need every other stage step to succeed too; the
+ * claim shape under test is identical (`freeze-contracts`'s own `outputs` + `produces`,
+ * `model-data`'s own `produces`).
+ *
+ * @see PLAN-M14.md P21
+ * @see PLAN-M14.md P3
+ */
+describe('real runWorkflow: the declaration files stay inside the writing step’s own claim (PLAN-M14.md P21)', () => {
+  afterEach(cleanupRunAll);
+
+  const FREEZE_WORKFLOW_ID = 'p21-freeze-wf';
+  const FREEZE_STEP_ID = `${FREEZE_WORKFLOW_ID}:freeze-contracts`;
+  const FREEZE_GATE_STEP_ID = `${FREEZE_WORKFLOW_ID}:verify`;
+  const CONTRACT_PATH = 'docs/forge/specs/interfaces/orders-api.yaml';
+  const SKEW_PATH = `${KB_ROOT}/architecture/version-skew.yaml`;
+  const SKEW_WRONG_EXT_PATH = `${KB_ROOT}/architecture/version-skew.yml`;
+  /** A real, schema-valid `InterfaceContract` (the same shape `contract()` above writes under
+   * `specs/interfaces/`) -- the engine's own output-contract check validates the full record, not only
+   * that the file exists. */
+  const CONTRACT_CONTENT = `id: INT-001
+type: InterfaceContract
+schemaVersion: 1
+title: Orders API
+status: draft
+created: 2026-01-15
+updated: 2026-01-15
+revision: 1
+author: architect
+changelog: []
+openapi: 3.1.0
+`;
+
+  const FREEZE_WORKFLOW = `
+id: ${FREEZE_WORKFLOW_ID}
+name: P21 freeze-contracts claim
+version: 1.0.0
+description: Mirrors build-stage's freeze-contracts claim -- InterfaceContract outputs plus version-skew.yaml in produces.
+steps:
+  - id: freeze-contracts
+    kind: agent
+    agent: architect
+    brief: briefs/implement.md
+    outputs: [ { type: InterfaceContract, cardinality: many } ]
+    produces: [ '${SKEW_PATH}' ]
+  - id: verify
+    kind: gate
+    gate: ${FIXTURE_GATE_ID}
+    dependsOn: [ freeze-contracts ]
+`;
+
+  const MODEL_DATA_WORKFLOW_ID = 'p21-model-data-wf';
+  const MODEL_DATA_STEP_ID = `${MODEL_DATA_WORKFLOW_ID}:model-data`;
+  const MIGRATIONS_PATH = `${KB_ROOT}/data/migrations.yaml`;
+
+  const MODEL_DATA_WORKFLOW = `
+id: ${MODEL_DATA_WORKFLOW_ID}
+name: P21 model-data claim
+version: 1.0.0
+description: Mirrors shape-solution's model-data claim -- migrations.yaml in produces.
+steps:
+  - id: model-data
+    kind: agent
+    agent: data-architect
+    brief: briefs/implement.md
+    produces: [ '${MIGRATIONS_PATH}' ]
+`;
+
+  async function projectWith(workflowId: string, workflow: string): Promise<RunTestProject> {
+    const base = await createRunTestProject();
+    await writeFixtureAgent(base.dir, 'architect', 'Architect', { write: true });
+    await writeFixtureAgent(base.dir, 'data-architect', 'Data architect', { write: true });
+    await writeFile(path.join(base.dir, WORKFLOWS_ROOT, `${workflowId}.workflow.yaml`), workflow);
+    await execa('git', ['add', '-A'], { cwd: base.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'p21 declaration workflow'], { cwd: base.dir });
+    return {
+      ...base,
+      config: { ...base.config, execution: { ...base.config.execution, autonomy: 'autonomous' } },
+    };
+  }
+
+  async function runReal(workflowId: string, project: RunTestProject, adapter: FakePlatformAdapter, runId: string) {
+    const result = await runWorkflow(testRunDeps(project, adapter), {
+      workflowId,
+      expressionContext: fixtureExpressionContext(),
+      runId,
+      host: 'test-host',
+    });
+    if (result.kind !== 'run') throw new Error('expected a real run');
+    const events: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) events.push(event);
+    return { result, events };
+  }
+
+  function typesFor(events: readonly ForgeEvent[], stepId: string): string[] {
+    return events.filter((event) => event.stepId === stepId).map((event) => event.type);
+  }
+
+  function revertsFor(events: readonly ForgeEvent[], stepId: string) {
+    return events.filter(
+      (event) =>
+        event.type === 'LaneCommitted' &&
+        event.stepId === stepId &&
+        (event.payload as { reason?: string } | undefined)?.reason === 'claim-revert',
+    );
+  }
+
+  it('an architect session writing a contract AND version-skew.yaml keeps both', async () => {
+    const project = await projectWith(FREEZE_WORKFLOW_ID, FREEZE_WORKFLOW);
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['froze a contract and declared version skew'],
+      writeFiles: [
+        { relativePath: CONTRACT_PATH, content: CONTRACT_CONTENT },
+        {
+          relativePath: SKEW_PATH,
+          content: 'policy:\n  max_skew: 1\ncontracts: {}\nnone_reason: none frozen yet\n',
+        },
+      ],
+    });
+    const { result, events } = await runReal(FREEZE_WORKFLOW_ID, project, adapter, 'run-p21-freeze-ok');
+    expect(result.runState.runStatus).toBe('completed');
+    expect(typesFor(events, FREEZE_STEP_ID)).toContain('StepSucceeded');
+    expect(typesFor(events, FREEZE_GATE_STEP_ID)).toContain('GateApproved');
+    expect(revertsFor(events, FREEZE_STEP_ID)).toEqual([]);
+  });
+
+  it('a data-architect session keeps migrations.yaml', async () => {
+    const project = await projectWith(MODEL_DATA_WORKFLOW_ID, MODEL_DATA_WORKFLOW);
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote the initial migrations declaration'],
+      writeFiles: [
+        { relativePath: MIGRATIONS_PATH, content: 'migrations: []\nnone_reason: none planned yet\n' },
+      ],
+    });
+    const { result, events } = await runReal(
+      MODEL_DATA_WORKFLOW_ID,
+      project,
+      adapter,
+      'run-p21-model-data-ok',
+    );
+    expect(result.runState.runStatus).toBe('completed');
+    expect(typesFor(events, MODEL_DATA_STEP_ID)).toContain('StepSucceeded');
+    expect(revertsFor(events, MODEL_DATA_STEP_ID)).toEqual([]);
+  });
+
+  it('a version-skew.yml write (wrong extension) is reverted and fails the step (PLAN-M14.md P3)', async () => {
+    const project = await projectWith(FREEZE_WORKFLOW_ID, FREEZE_WORKFLOW);
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['declared version skew at the wrong extension'],
+      writeFiles: [
+        { relativePath: CONTRACT_PATH, content: CONTRACT_CONTENT },
+        {
+          relativePath: SKEW_WRONG_EXT_PATH,
+          content: 'policy:\n  max_skew: 1\ncontracts: {}\nnone_reason: none frozen yet\n',
+        },
+      ],
+    });
+    const { result, events } = await runReal(
+      FREEZE_WORKFLOW_ID,
+      project,
+      adapter,
+      'run-p21-freeze-wrong-ext',
+    );
+    expect(result.runState.runStatus).toBe('failed');
+    const revert = revertsFor(events, FREEZE_STEP_ID)[0];
+    expect(revert).toBeDefined();
+    const violation = events.find(
+      (event) => event.type === 'PolicyViolation' && event.stepId === FREEZE_STEP_ID,
+    );
+    expect(violation?.payload).toMatchObject({
+      kind: 'out-of-claim-write',
+      policy: 'strict',
+      stepFailed: true,
+      paths: [SKEW_WRONG_EXT_PATH],
+      totalReverted: 1,
+    });
+    const failed = events.find(
+      (event) => event.type === 'StepFailed' && event.stepId === FREEZE_STEP_ID,
+    );
+    expect(JSON.stringify(failed?.payload)).toContain('RUN-104');
+    expect(typesFor(events, FREEZE_GATE_STEP_ID)).toEqual([]);
   });
 });

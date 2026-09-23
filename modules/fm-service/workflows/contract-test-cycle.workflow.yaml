@@ -52,11 +52,14 @@ steps:
       - type: InterfaceContract
         cardinality: one
     # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside the YAML
-    # record, under the same name (Q216).
+    # record, under the same name (Q216). `version-skew.yaml` is the version-skew declaration
+    # `G-Integration`'s own `version:skew` check reads (PLAN-M14.md P21, briefs/draft-contract.md
+    # "Declarations the gate reads"): this contract's id is declared there too.
     produces:
       - 'docs/forge/specs/interfaces/{{interfaceName}}.proto'
       - 'docs/forge/specs/interfaces/{{interfaceName}}.graphql'
       - 'docs/forge/specs/interfaces/{{interfaceName}}.ts'
+      - 'docs/forge/kb/architecture/version-skew.yaml'
     gateEvidence: [G-Integration]
     limits: { maxTurns: 30, maxCostUsd: 4.0 }
 

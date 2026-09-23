@@ -26,12 +26,16 @@ steps:
     outputs: [{ type: DataModel }]
     # The five `data/` KB entries, the Assumption register (an estimate without a basis is stated as an assumption with
     # `validate_by`), and the ER views the brief names, the state diagrams it asks for (`08`
-    # §8.11.3 puts them under `domain/views/`), and the storage ADR (Q216).
+    # §8.11.3 puts them under `domain/views/`), and the storage ADR (Q216). `migrations.yaml` is the
+    # machine-readable migration-order declaration `G-Integration`'s `migration:order` check reads
+    # (PLAN-M14.md P21, briefs/model-data.md "Declarations the gate reads"), a separate file from the prose
+    # `migrations.md` strategy above; this step writes its initial (usually empty) state.
     produces:
       - 'docs/forge/kb/data/data-model.md'
       - 'docs/forge/kb/data/access-patterns.md'
       - 'docs/forge/kb/data/consistency.md'
       - 'docs/forge/kb/data/migrations.md'
+      - 'docs/forge/kb/data/migrations.yaml'
       - 'docs/forge/kb/data/lifecycle.md'
       - 'docs/forge/kb/assumptions.md'
       - 'docs/forge/kb/data/views/*.mmd'

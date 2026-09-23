@@ -42,11 +42,14 @@ steps:
       - type: InterfaceContract
         cardinality: many
     # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside its YAML
-    # record in the same directory (Q216).
+    # record in the same directory (Q216). `version-skew.yaml` is the version-skew declaration
+    # `G-Integration`'s `version:skew` check reads (PLAN-M14.md P21, briefs/freeze-contracts.md
+    # "Declarations the gate reads"): every contract this step freezes is declared there too.
     produces:
       - 'docs/forge/specs/interfaces/*.proto'
       - 'docs/forge/specs/interfaces/*.graphql'
       - 'docs/forge/specs/interfaces/*.ts'
+      - 'docs/forge/kb/architecture/version-skew.yaml'
     gateEvidence: [G-Design]
 
   - id: contracts-gate

@@ -40,6 +40,28 @@ kinds a stage can share:
 Where the stack can generate code from a contract, name the generator and its output location in the
 contract, so implementers import the generated types and never re-declare them.
 
+### Declarations the gate reads
+
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so EVERY valid contract is declared
+there: every one you freeze here and every one already frozen earlier. `G-Integration`'s `version:skew`
+check (`forge spec validate --rule version-skew`) reads that file, not the contracts, so an id with no
+declaration fails there even on a stage that never touches it. A YAML mapping: `policy.max_skew` (an
+integer: how many versions behind current may still run side by side), and `contracts`, an `INT-###`
+id to `{current, supported?, consumers}` — `current` its version, `supported` an ascending list ending
+at `current`, `consumers` a list of `{name, version}` pairs. `contracts: {}` needs a `none_reason`
+sentence; a MISSING file always fails. Self-attested, nothing verifies it against a real deploy:
+
+```yaml
+policy:
+  max_skew: 1
+contracts:
+  INT-001:
+    current: 2
+    supported: [1, 2]
+    consumers:
+      - { name: fm-web, version: 2 }
+```
+
 ### Acceptance
 
 `G-Design` runs `forge spec interfaces --check-frozen` and fails on any `undefined_refs`. So:

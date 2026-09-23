@@ -17,6 +17,16 @@ cross-service contract tests pass, declared version skew is within policy and de
 are ordered. They see only what is declared. Whether the contracts are complete and the sequencing
 real is your job.
 
+### Declarations the gate reads
+
+`version:skew` reads `docs/forge/kb/architecture/version-skew.yaml` (`freeze-contracts.md` and
+`draft-contract.md` write it); `migration:order` reads `docs/forge/kb/data/migrations.yaml`
+(`model-data.md` writes its initial state, `plan-migration.md` appends to it). Read both for IN2 and
+IN4: they are self-attested declarations, not verified against a deployed version or a migration
+history, so a `none_reason` or an empty declaration you judge implausible against what you see
+elsewhere in the evidence is a `not-evidenced` objection, not a `fail` you can prove from the
+repository alone.
+
 ### Criteria
 
 - **IN1 Complete contracts.** Every cross-service interaction in the interaction matrix has an

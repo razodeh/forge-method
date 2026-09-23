@@ -195,7 +195,10 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // test glob for the reproduction test the brief now permits it to add (`SPEC-QUESTIONS.md` Q232 decision 5,
   // Q216). No `defectId` is available for an escalation (`compilePlan` never compiles `onFailure`, so nothing
   // ever resolves a template here), so `DEF-*` stands in as a prefix, not one narrowed to a single defect.
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216), implement's `!{{item.test_paths}}` exclusion (Q225) and the rca escalation's reproduction-test globs (M14 P13, Q216)", () => {
+  // `PLAN-M14.md` P21 added one more `produces` entry to `freeze-contracts` itself:
+  // `docs/forge/kb/architecture/version-skew.yaml`, the version-skew declaration `G-Integration`'s own
+  // `version:skew` check reads (`briefs/freeze-contracts.md`'s new "Declarations the gate reads" section).
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216, M14 P21), implement's `!{{item.test_paths}}` exclusion (Q225) and the rca escalation's reproduction-test globs (M14 P13, Q216)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -228,7 +231,7 @@ steps:
     outputs:
       - type: InterfaceContract
         cardinality: many
-    produces: [ "docs/forge/specs/interfaces/*.proto", "docs/forge/specs/interfaces/*.graphql", "docs/forge/specs/interfaces/*.ts" ]
+    produces: [ "docs/forge/specs/interfaces/*.proto", "docs/forge/specs/interfaces/*.graphql", "docs/forge/specs/interfaces/*.ts", "docs/forge/kb/architecture/version-skew.yaml" ]
     gateEvidence: [ G-Design ]
 
   - id: contracts-gate

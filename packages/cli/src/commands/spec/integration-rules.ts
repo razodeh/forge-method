@@ -23,7 +23,14 @@
  * `migrations: []` and `contracts: {}` are valid declarations ("none") only with a `none_reason` sentence, so an empty
  * declaration is a statement someone made and a reviewer can read; a MISSING file is a violation, because absence is not a
  * statement. `max_skew` above 10 is refused. Neither is cross-checked against migration files or consumers in the repository
- * (no convention says where they are), so an empty declaration is exactly as true as its author says. No shipped brief yet asks an agent to write either file (a follow-on, recorded in Q228).
+ * (no convention says where they are), so an empty declaration is exactly as true as its author says.
+ *
+ * **Who writes them** (`PLAN-M14.md` P21). `build-stage:freeze-contracts` and fm-service
+ * `contract-test-cycle:draft-contract` write or update `version-skew.yaml`; `shape-solution:model-data` writes the
+ * initial `migrations.yaml` and `migrate:plan-migration` appends to it. Each brief's own `### Declarations the gate
+ * reads` section states the exact shape below in prose, so `VERSION_SKEW_KEYS` and `MIGRATION_KEYS` are exported here
+ * (the schemas themselves stay module-private) for a content test to hold every brief to every key, with no copy of
+ * either list to drift.
  *
  * **`version-skew`.** Every valid interface contract is declared; every declared id names a contract that exists; per
  * contract `current` is a positive integer, `supported` (when given) is a strictly ascending list of positive integers
@@ -61,6 +68,16 @@ const MAX_ENTRIES = 5000;
 /** More versions than this side by side is not a policy. */
 const MAX_SKEW_LIMIT = 10;
 const NONE_REASON = 'an empty declaration must say why (none_reason: a sentence)';
+
+/** The field names of one or more `z.object` schemas, deduplicated, in first-seen order — how
+ * `VERSION_SKEW_KEYS`/`MIGRATION_KEYS` are derived from the schemas themselves rather than hand-copied. */
+function uniqueKeys(...schemas: readonly z.ZodObject<z.ZodRawShape>[]): readonly string[] {
+  const seen = new Set<string>();
+  for (const schema of schemas) {
+    for (const key of Object.keys(schema.shape)) seen.add(key);
+  }
+  return [...seen];
+}
 
 function violation(subject: string, message: string, remedy: string): RuleViolation {
   return { subject, message, remedy };
@@ -167,30 +184,42 @@ const reason = z
 
 const version = z.number().int().positive().max(1_000_000);
 
-const skewSchema = z
+/** Named (rather than inlined) so `VERSION_SKEW_KEYS` below can read each level's `.shape` — the
+ * validation this composes is unchanged from before P21's naming pass. */
+const policySchema = z.object({ max_skew: z.number().int().min(0).max(MAX_SKEW_LIMIT) }).strict();
+const consumerSchema = z.object({ name: z.string().min(1), version }).strict();
+const contractEntrySchema = z
   .object({
-    policy: z.object({ max_skew: z.number().int().min(0).max(MAX_SKEW_LIMIT) }).strict(),
-    none_reason: reason,
-    contracts: z
-      .record(
-        z.string().min(1),
-        z
-          .object({
-            current: version,
-            supported: z.array(version).min(1).max(1000).optional(),
-            consumers: z
-              .array(z.object({ name: z.string().min(1), version }).strict())
-              .max(MAX_ENTRIES),
-          })
-          .strict(),
-      )
-      .refine((all) => Object.keys(all).length <= MAX_ENTRIES, 'too many contracts'),
+    current: version,
+    supported: z.array(version).min(1).max(1000).optional(),
+    consumers: z.array(consumerSchema).max(MAX_ENTRIES),
   })
-  .strict()
-  .refine((all) => (Object.keys(all.contracts).length > 0 ? true : all.none_reason !== undefined), {
-    path: ['none_reason'],
-    message: NONE_REASON,
-  });
+  .strict();
+const contractsSchema = z
+  .record(z.string().min(1), contractEntrySchema)
+  .refine((all) => Object.keys(all).length <= MAX_ENTRIES, 'too many contracts');
+
+const skewObjectSchema = z
+  .object({
+    policy: policySchema,
+    none_reason: reason,
+    contracts: contractsSchema,
+  })
+  .strict();
+const skewSchema = skewObjectSchema.refine(
+  (all) => (Object.keys(all.contracts).length > 0 ? true : all.none_reason !== undefined),
+  { path: ['none_reason'], message: NONE_REASON },
+);
+
+/** Every key a `version-skew.yaml` declaration may carry, at any nesting level, derived from the schema
+ * itself (not copied by hand) so a brief that names them all cannot silently fall behind a schema change
+ * (`test/gate-declarations-authored.test.ts`, `PLAN-M14.md` P21). */
+export const VERSION_SKEW_KEYS: readonly string[] = uniqueKeys(
+  skewObjectSchema,
+  policySchema,
+  contractEntrySchema,
+  consumerSchema,
+);
 
 const REMEDY_SKEW_FILE =
   'a YAML mapping with policy.max_skew (an integer) and contracts (an INT-### id to {current, supported?, consumers: [{name, version}]}); "contracts: {}" with a none_reason sentence declares that there are none.';
@@ -340,16 +369,20 @@ const migrationSchema = z
   })
   .strict();
 
-const migrationsSchema = z
+const migrationsObjectSchema = z
   .object({
     migrations: z.array(migrationSchema).max(MAX_ENTRIES),
     none_reason: reason,
   })
-  .strict()
-  .refine((all) => (all.migrations.length > 0 ? true : all.none_reason !== undefined), {
-    path: ['none_reason'],
-    message: NONE_REASON,
-  });
+  .strict();
+const migrationsSchema = migrationsObjectSchema.refine(
+  (all) => (all.migrations.length > 0 ? true : all.none_reason !== undefined),
+  { path: ['none_reason'], message: NONE_REASON },
+);
+
+/** Every key a `migrations.yaml` declaration may carry, derived from the schema itself (see
+ * `VERSION_SKEW_KEYS`). */
+export const MIGRATION_KEYS: readonly string[] = uniqueKeys(migrationsObjectSchema, migrationSchema);
 
 const REMEDY_MIGRATIONS_FILE =
   'a YAML mapping with migrations: a list in apply order of {id, phase (expand|migrate|contract), release, after?, expands?}; "migrations: []" with a none_reason sentence declares that there are none.';

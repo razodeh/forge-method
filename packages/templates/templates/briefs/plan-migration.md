@@ -52,6 +52,16 @@ considered, Decision, Diagram, Consequences, Reversal plan. It must contain:
   names the release boundary between switching the last reader and removing the old structure.
 - A `revisit_trigger` that is checkable, and the blast radius (components, teams, consumers).
 
+### Declarations the gate reads
+
+Append `docs/forge/kb/data/migrations.yaml` with this ADR's phases: do not replace what is already
+declared there, and do not reorder an existing entry. `G-Integration`'s `migration:order` check
+(`forge spec validate --rule migration-order-violations`) reads it. One entry per phase, in apply
+order, each naming `release` (the release that phase ships in) and, on the `migrate` and `contract`
+entries, `expands` (this ADR's `expand` entry's id): the `contract` entry's `release` must be later
+than its `expands` entry's and later than every `migrate` entry of the same `expands`, since the
+destructive change is always a separate, later release. `model-data.md` shows the full shape.
+
 ### Acceptance criteria
 
 - No phase requires the previous code version to break. State how each phase is compatible with the

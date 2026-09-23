@@ -43,6 +43,26 @@ access patterns instead of guesses.
    score table. Choose a category, not a product; `select-tech-stack` picks the product inside it.
    If a constraint already mandates a store, record it as the decision and do not re-score.
 
+### Declarations the gate reads
+
+Write `docs/forge/kb/data/migrations.yaml`: a separate, machine-readable file from the prose
+`data/migrations.md` strategy above. `G-Integration`'s `migration:order` check
+(`forge spec validate --rule migration-order-violations`) reads it, not the prose. It is a `migrations`
+list, in apply order, each entry `{id, phase, release, after?, expands?}`: `phase` is `expand`,
+`migrate` or `contract`; `release` the release that ships it; `after` (optional) the ids it must
+follow; `expands` (required on a `migrate` or `contract`) the id of the `expand` migration it belongs
+to, whose `contract` entry must ship in a later release than that `expand` and than every `migrate` of
+it (the destructive change is always a separate, later release, `12` F-DATA-6, `14` §14.4 rule 3). No
+migration is planned at this step, so write it empty with a reason:
+
+```yaml
+migrations: []
+none_reason: no migrations planned yet; migrate:plan-migration appends them against an ADR
+```
+
+A later `migrate` run appends its own ADR's phases to this same file (`plan-migration.md`); this step
+only establishes it.
+
 ### Acceptance criteria
 
 - Every capability's data needs are satisfiable from the model: name, for each capability, the

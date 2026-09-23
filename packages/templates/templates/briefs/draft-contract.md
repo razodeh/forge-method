@@ -36,6 +36,16 @@ the YAML record carry the id, title and a reference to it. The contract states:
 - Examples: at least one valid example per operation and one per documented error, which the tests
   can validate.
 
+### Declarations the gate reads
+
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so this contract's id is declared there
+too, alongside every other id already declared. `G-Integration`'s `version:skew` check
+(`forge spec validate --rule version-skew`) reads that file, not this contract. Add or update this
+id's entry under `contracts`: `current` (this contract's version) and one `consumers` entry per
+consumer this run adds or moves, `{name, version}`. Only raise `policy.max_skew` when the versioning
+decision above needs a wider window, with the ADR that justifies it. `freeze-contracts.md` shows the
+full shape, including the `none_reason` a still-empty `contracts` needs.
+
 ### Acceptance
 
 `G-Integration` runs on the merged contract before this interaction's tests are written. It checks
