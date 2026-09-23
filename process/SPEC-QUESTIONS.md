@@ -20407,3 +20407,139 @@ Verified in a clean `git worktree` of each of the three commits.
 **Files.** `packages/cli/src/commands/run/{context,run,index}.ts`; `packages/core/src/errors/codes.ts`;
 new tests and edits across `packages/cli/test/commands/run/{context,run,resume}.test.ts`,
 `packages/cli/test/bin-run-failures.test.ts`, `packages/core/test/errors.test.ts`.
+
+## Q241 — M14 P8: declared KB outputs get a supervisor-reserved, collision-free id before prompt assembly — a two-round critic loop found a shared-fixture message-template break and a reservation leak on an unwrapped exception, both fixed
+
+**Context.** `PLAN-M14.md` P8, `SPEC-QUESTIONS.md` Q232 decision 2 ("Lanes write their declared KB
+outputs as files; `KbWriter`'s guarantees become checks... a registry-allocated id with no collision" —
+this piece is the id-allocation half; the output-check half is P10, later). Generalises `PLAN-M13.md`
+P17's own `REVIEW-NNN` reservation pattern (`SPEC-QUESTIONS.md` Q217) rather than rebuilding it.
+
+**Built.** The `REVIEW-NNN` queue in `swarm-review-step.ts` (its own `queues`/`handedOut`/
+`pruneReservations`/`enqueue`/`reportFilesIn`/`numberOf`) moved wholesale into a new
+`packages/engine/src/dispatch/output-ids.ts`, parameterised by `(idPrefix, idWidth, scan target, count)`;
+`allocateNumber` is now a ~20-line thin caller of the shared `reserveIds`, in place of the ~110 lines it
+replaced. Two `ScanTarget` shapes: `directoryIdScan` (one id per FILE, directly under a fixed directory —
+`REVIEW`/`ADR`/`Runbook`) and `registerIdScan` (one id per ENTRY inside a single shared register file —
+`Risk`/`Assumption`/`OpenQuestion`/`Environment`, whose `pathTemplate` names one file for the whole
+project, not one per id). A reservation is `pending` from the moment `reserveIds` returns until it is
+either `bind()`-ed to a real lane path (from then on governed by the identical `existsSync` liveness
+`REVIEW-NNN` always used) or `release()`-d (the step ended without ever getting one) — a `pending`
+reservation is *never* pruned by liveness, the specific bug a naive reuse of `REVIEW-NNN`'s own
+lane-always-already-exists assumption would have caused (there is no lane path to check yet).
+
+For every declared output whose registry `pathTemplate` starts `kb/` (`ADR`, `Runbook`, `Risk`,
+`Assumption`, `OpenQuestion`, `Environment`), `runAgentStep` (`dispatch/steps.ts`) now calls
+`reserveDeclaredKbOutputIds` BEFORE `tryAssemble`: base = 1 + the highest `<PREFIX>-N` visible in the
+integration worktree, the project root, every `ctx.laneRegistry` lane, and (only once one exists) the
+reserving step's own lane — above every other reservation this run already holds. One id for
+`cardinality: 'one'` (the default), a contiguous block of 25 for `'many'`. On a crash-resume reroll
+(`resume/orchestrate.ts`'s `runAgentAttempt`), the reservation is made with the step's own real,
+already-existing lane path supplied directly (so it starts already lane-bound, and the scan sees whatever
+that lane's own working tree already holds from before the crash, which a brand-new process's own empty
+in-memory table otherwise could not). `StepOutputContext` (`agents/context/pack-for-step.ts`) gains
+`reservedIds`, threaded through `AssembleInput.reservedOutputIds`; block [5] (`compile-prompt.ts`'s
+`renderOutputContractBlock`) states a single reserved id ("use exactly this id, do not choose another")
+or a range with an explicit in-order rule, through the same `oneLine` defence and `neutralizeBlockHeadings`
+pass every other block-5 value gets — absent entirely for a non-KB output. Exhaustion is a new
+`RUN-109` (`core/errors/codes.ts`), a typed `source: 'prompt'` refusal raised before any lane exists
+(mirroring how a missing agent/brief/model is refused); the identical code, unmodified, also now covers
+`REVIEW-NNN` exhaustion (folded into `RUN-083` by `swarm-review-step.ts`'s own unchanged catch — the
+message text is not byte-identical to the old bare `RangeError`, but the pinned test only ever asserted
+`toContain`, never `toBe`, so this is not a behaviour change against what was actually tested).
+
+`packages/engine/src/dispatch/outputs.ts` (P10's own territory: the output check, `IdAllocator`,
+`KbIdAllocator`) has a **literal zero-line diff** across every commit this piece made — confirmed by
+`git diff`, not merely stated.
+
+**Round 1 (fresh, context-free): 1 blocking, 1 major, both fixed.** **Blocking:** `RUN-109`'s message
+template interpolated `idPrefix` bare (`${d.idPrefix}`, twice) and used `idWidth` raw in arithmetic
+(`10 ** d.idWidth`, `'N'.repeat(d.idWidth)`) instead of going through `show()` — violating `codes.ts`'s
+own stated top-of-file rule, and, reproduced by the critic in an isolated worktree at the commit itself,
+genuinely broke `core/test/errors.test.ts`'s own cross-cutting, registry-wide "every declared code renders
+end to end" and "renders `<missing>`" tests: the shared `SAMPLE_DETAILS` fixture had no `idPrefix` key, so
+the message rendered the literal string "undefined". **Major:** a KB-output reservation could leak
+permanently (for the life of the process) if `createLaneForStep`'s own `ctx.telemetry.emit(
+{type:'LaneCreated'})` — called UNWRAPPED, by `06` §6.4 step 1's own design, after `ctx.vcs.createLane`
+has already created a real worktree — threw a `TelemetryError`: `runAgentStep`'s own two release sites
+covered only the CONTROLLED `{ok:false}` returns of `tryAssemble`/`createLaneForStep`, not an exception
+escaping the create-lane call itself. The critic proved this live with its own scratch reproduction (a
+telemetry wrapper failing only the `LaneCreated` emit) before trusting the fix.
+
+Both fixed. `RUN-109`'s message: `idPrefix` through `show()`; `idWidth` validated (`typeof === 'number' &&
+Number.isInteger && > 0`) before it drives arithmetic/`.repeat`, falling back to `show(undefined)`
+("`<missing>`") otherwise; `idPrefix: 'ADR'` added to `SAMPLE_DETAILS`. The leak: the lane-creation-
+through-`runLaneLifecycle`-dispatch region in `runAgentStep` now runs inside `try`/`finally`, releasing
+the reservation whenever it was never actually bound — covers every exit, including a thrown one, not
+just the two anticipated `{ok:false}` returns. A new regression test in `agent.test.ts` reproduces the
+critic's own scenario and was confirmed load-bearing (reverting the `finally`'s release call makes it
+fail red: a later, unrelated step gets `ADR-0002` instead of the freed `ADR-0001`).
+
+**Round 2 (fresh, context-free, scoped to both round-1 fixes): 0 blocking, 0 major — a genuine pass.**
+Independently re-verified rather than trusted: drove the new `RUN-109` message function directly with its
+own battery of adversarial `idWidth` shapes (`0`, `-1`, `Infinity`, `-Infinity`, `NaN`, `2.5`, a string,
+`21`) and confirmed every one degrades cleanly; traced `IdReservation.bind`/`.release` end to end
+(pure synchronous `Map` closures, provably cannot throw) and `tryAssemble` (a single `try`/`catch`
+wrapping all of `assembleAgentSession`, provably cannot throw uncaught either); checked every OTHER
+`runLaneLifecycle` caller for the identical leak shape and found none has the window (`orchestrate.ts`'s
+reroll always supplies `existing`, so `createLaneForStep`/`LaneCreated` is never invoked on it at all;
+`swarm-review-step.ts` only ever reserves *inside* `runWork`, strictly after its lane already exists) —
+`runAgentStep`'s fresh path was the only place with the gap, and the only place the fix touched, correctly
+and completely scoped. Independently mutation-tested the `finally` guard in its own disposable worktree
+(commented out the release call, reran the new regression test, watched it fail exactly as the commit
+described, discarded the worktree).
+
+One real minor, fixed: the `idWidth` guard bounded "wrong shape" but not "too large" — `idWidth:
+1_000_000_000` is a genuine positive integer, so it passed the guard, and `'N'.repeat(1_000_000_000)` then
+threw `RangeError: Invalid string length` — the exact crash class the round-1 fix's own comment claimed to
+have eliminated. Unreachable today (the `18` §18.7 registry's own `idWidth` is always a hardcoded `3` or
+`4`, never derived from config or session input — traced to the one production call site,
+`output-ids.ts`'s `reserveIds`), but the round-1 comment overclaimed completeness. Fixed: `&&
+d.idWidth <= 15` added to the guard (comfortably above every real registry width, inside float64-exact
+arithmetic); a new test drives `1_000_000_000`, `Infinity` and `16`, confirming each degrades to
+`<missing>` with no crash, and confirms a real width (`4`) still renders the real digits — mutation-
+confirmed by removing the bound and watching the exact `RangeError` reproduce. No round 3: round 2 found
+nothing blocking or major, and the one minor was fixed in place.
+
+**What the critic caught that the builder missed:** both round-1 findings — a `show()`-convention
+violation introduced while modelling `RUN-109` on `RUN-069`'s shape (which never needed the convention,
+since `SESSION-###`'s digit count is a compile-time literal, not a caller-supplied field); an unwrapped-
+exception window the builder's own two `{ok:false}` checks read as complete without actually being so.
+**What the builder got right without a critic needing to say so:** the core collision-avoidance/scanning
+machinery itself — both rounds independently constructed their own adversarial scans, races and mutations
+against `output-ids.ts` (the piece's own stated highest-risk area) across two full passes and found
+nothing wrong in it.
+
+**Mutation evidence, hand-run and reverted.** Sibling-lane scanning removed from
+`reserveDeclaredKbOutputIds`'s own `scanRoots`: the isolated "a ready sibling lane... alone can hold the
+highest id" test fails (an earlier, single combined fixture with numbers planted in all four locations at
+once did NOT catch this mutation — noticed and rewritten into four separate, single-location-isolated
+cases before trusting it). `existsSync` liveness applied to a `pending` reservation too (the specific bug
+this piece's own design exists to avoid): two tests fail. The shared module's own `base = highest + 1`
+mutated by one: 17 of `swarm-review-step.test.ts`'s 46 pinned cases fail — proof `allocateNumber` is a
+genuine caller of the shared module, not a parallel duplicate coincidentally producing the same numbers.
+The reservation computed but never handed to `tryAssemble` (simulating "reserve after assembly"): the
+audit-prompt, release-on-refusal, and three-concurrent-steps cases in `agent.test.ts` all fail.
+
+**Left open (matches the plan's own "Discloses" list).** Non-KB id-bearing outputs keep agent-chosen
+ids; `KB-<SECTION>-####` entry files via `produces` get no reservation (`KbIdAllocator`'s own, different
+id scheme, untouched); `Diagram` is excluded (its `pathTemplate` does not start `kb/`); reservations are
+in-process per (project, run) — two supervisors over one project are already excluded by the run lock;
+the 25-id block leaves gaps between runs (`18` §18.8 forbids reuse, not gaps); a reserved id is advisory
+until P10's output check actually holds a produced artifact to its range.
+
+**Verification scope (owner-approved cost cut).** `engine/test/dispatch/output-ids.test.ts` (new, 30
+cases), `engine/test/interaction/swarm-review-step.test.ts` (46, a literal zero-line diff, confirmed by
+`git diff` not just a passing run), `agents/test/prompt/compile-prompt.test.ts` (34), `engine/test/dispatch/
+agent.test.ts` (23), `engine/test/resume/orchestrate.test.ts` (15), `core/test/errors.test.ts` (450, the
+registry-wide "every code renders" test this piece's own `RUN-109` must satisfy) — 600 cases total, all
+green; `pnpm typecheck` (21/21 packages) and `pnpm run boundaries` both clean; `eslint --max-warnings 0`
+and `prettier --check` clean on every file this piece owns. Verified in a clean `git worktree` (`pnpm
+install --offline --frozen-lockfile`) of each of the three commits before the next round began.
+
+**Files.** New `packages/engine/src/dispatch/output-ids.ts`; `packages/engine/src/{dispatch/{steps,
+assemble,index},interaction/swarm-review-step,resume/orchestrate}.ts`; `packages/agents/src/{context/
+pack-for-step,prompt/compile-prompt}.ts`; `packages/core/src/errors/codes.ts`; new
+`packages/engine/test/dispatch/output-ids.test.ts`; edits to `packages/engine/test/dispatch/agent.test.ts`,
+`packages/engine/test/resume/orchestrate.test.ts`, `packages/agents/test/prompt/compile-prompt.test.ts`,
+`packages/core/test/errors.test.ts`.

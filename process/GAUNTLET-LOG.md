@@ -14944,3 +14944,96 @@ still folds nothing back — proven, not merely stated, by round 1's own new tes
 run lock held before the merge queue exists, so `forge merge` is not excluded by it, though `forge merge`
 never syncs at all regardless (proven by both a unit-level and a real-CLI test); a project without `main`
 gets a clear `VcsError`.
+
+## M14 P8 — Declared KB outputs get a supervisor-reserved, collision-free id before prompt assembly (new `engine/dispatch/output-ids.ts`; `engine/{dispatch/{steps,assemble,index},interaction/swarm-review-step,resume/orchestrate}.ts`; `agents/{context/pack-for-step,prompt/compile-prompt}.ts`; `core/errors/codes.ts`; new `engine/test/dispatch/output-ids.test.ts`, edits to `engine/test/dispatch/agent.test.ts`, `engine/test/resume/orchestrate.test.ts`, `agents/test/prompt/compile-prompt.test.ts`, `core/test/errors.test.ts`)
+
+The `REVIEW-NNN` queue in `swarm-review-step.ts` (`PLAN-M13.md` P17, `SPEC-QUESTIONS.md` Q217) moved,
+unchanged in behaviour, to a new shared `dispatch/output-ids.ts`, parameterised by `(idPrefix, idWidth,
+scan target, count)`: two scan shapes (`directoryIdScan`, one id per file — `ADR`/`Runbook`/`ReviewReport`;
+`registerIdScan`, one id per entry inside a single shared register file — `Risk`/`Assumption`/
+`OpenQuestion`/`Environment`), a `pending`-vs-lane-bound reservation lifecycle (a reservation made before
+any lane exists is never pruned by `existsSync` liveness, unlike `REVIEW-NNN`'s own always-lane-bound
+one; it becomes liveness-governed the moment `bind()` runs, or is explicitly `release()`d if the step
+ends without ever getting a lane). `runAgentStep` now reserves an id (or a 25-id block for `many`) BEFORE
+`tryAssemble`, scanning the integration worktree, the project root, every `laneRegistry` lane and (on a
+crash-resume reroll, `resume/orchestrate.ts`) the step's own existing lane — above every reservation this
+run already holds. `StepOutputContext` gains `reservedIds`, rendered in block [5] (a single id, or a
+range with an in-order rule). Exhaustion is a new `RUN-109`, a typed `source: 'prompt'` refusal before
+any lane exists — the same code, unmodified, also covers `REVIEW-NNN` exhaustion (folded into `RUN-083`
+by `swarm-review-step.ts`'s own unchanged catch, exactly as before). `swarm-review-step.test.ts`'s 46
+pinned cases have a literal zero-line diff across both this piece's commits — confirmed by `git diff`,
+not merely by the suite passing.
+
+**Round 1 (fresh, context-free): 1 blocking, 1 major, both fixed; 0 minor left unaddressed.**
+**Blocking:** `RUN-109`'s message template interpolated `idPrefix` bare and used `idWidth` raw in
+arithmetic (`10 ** idWidth`, `'N'.repeat`), violating `codes.ts`'s own "every interpolation goes through
+`show`" rule — and, built into an isolated worktree at the commit itself, this genuinely broke
+`errors.test.ts`'s own cross-cutting "every declared code renders end to end" and "renders `<missing>`"
+tests (the shared `SAMPLE_DETAILS` fixture had no `idPrefix` key, so the message literally read
+"undefined"). Fixed: `idPrefix` through `show()`; `idWidth` validated before it drives arithmetic,
+falling back to `show(undefined)` otherwise; `idPrefix: 'ADR'` added to `SAMPLE_DETAILS`.
+**Major:** `createLaneForStep` calls `ctx.vcs.createLane` (a real worktree) then
+`ctx.telemetry.emit({type:'LaneCreated'})` UNWRAPPED (`06` §6.4 step 1's own contract: a `TelemetryError`
+there is never folded into a `StepOutcome`); `runAgentStep`'s two release sites only covered the
+CONTROLLED `{ok:false}` returns, so that one throw — after a real worktree already existed — skipped
+both and leaked the reservation for the life of the process (a `pending` entry is, by design, never
+pruned by liveness). The critic proved this with its own scratch reproduction (a telemetry wrapper
+failing only the `LaneCreated` emit) before trusting the fix. Fixed by wrapping the lane-creation-through-
+dispatch region in `try`/`finally`, releasing whenever the reservation was never actually bound; a new
+regression test in `agent.test.ts` reproduces the critic's exact scenario and was confirmed load-bearing
+by reverting the `finally`'s release call and watching it fail red (a later, unrelated step got
+`ADR-0002` instead of the freed `ADR-0001`).
+
+**Round 2 (fresh, context-free, scoped to both round-1 fixes): 0 blocking, 0 major — a genuine PASS.**
+Independently re-verified both round-1 fixes rather than trusting the commit's own prose: drove the new
+`RUN-109` message function with its own battery of adversarial `idWidth` shapes (0, -1, Infinity, NaN,
+2.5, a string, 21) directly; traced `IdReservation.bind`/`.release` end to end and confirmed they cannot
+throw; checked every OTHER `runLaneLifecycle` caller for the identical leak shape (`orchestrate.ts`'s
+reroll path always supplies `existing`, so `createLaneForStep`/`LaneCreated` never runs on it at all;
+`swarm-review-step.ts` only ever reserves *inside* `runWork`, strictly after the lane exists — so
+`runAgentStep`'s fresh path was the only place with the window, and the only place the fix touched);
+independently mutation-tested the `finally` guard in its own disposable worktree. One real minor: the
+`idWidth` guard bounded "wrong shape" but not "too large" — `idWidth: 1_000_000_000` passed it and
+`'N'.repeat` then threw `RangeError: Invalid string length`, the exact crash the round-1 fix's own
+comment claimed to have eliminated. Unreachable today (the `18` §18.7 registry only ever declares 3 or
+4), but the comment overclaimed. Fixed: `&& d.idWidth <= 15` added to the guard; a new test drives
+1e9/Infinity/16, confirming each degrades to `<missing>`, mutation-confirmed by removing the bound and
+watching the exact `RangeError` reproduce. No round 3: round 2 found nothing blocking or major, and the
+one minor was fixed.
+
+**What the critic caught that the builder missed:** both round-1 findings — a `show()`-convention
+violation the builder introduced while generalising a pattern (`RUN-069`) that never needed it, and an
+unwrapped-exception window the builder's own two `{ok:false}` release sites looked complete without
+actually covering. **What the builder got right without a critic needing to say so:** the core
+collision-avoidance/scanning machinery itself (round 1's own stated highest-risk area) — both rounds
+independently constructed their own adversarial scans, mutations and race tests against it and found
+nothing wrong across two full passes.
+
+**Mutation evidence, hand-run and reverted (this piece's own, beyond the two critic-round ones above).**
+Sibling-lane scanning removed from `reserveDeclaredKbOutputIds`'s `scanRoots`: the isolated
+"a ready sibling lane... alone can hold the highest id" test fails (a same-highest-everywhere fixture in
+an earlier draft of that test did NOT catch this — rewritten into four isolated per-location cases after
+noticing). `existsSync` liveness applied to a `pending` (no-lane) reservation too: two tests fail (the
+three-concurrent-reservations case collapses to one id; the dedicated pending-liveness case reuses a
+freed number it should not). The shared module's own numbering (`base = highest + 1`) mutated off by one:
+17 of `swarm-review-step.test.ts`'s 46 cases fail — proof `allocateNumber` is a genuine thin caller of the
+shared module, not a parallel duplicate left behind. Reservation computed but never handed to
+`tryAssemble` (simulating "reserve after assembly"): the audit-prompt, release, and three-concurrent
+`agent.test.ts` cases all fail (block [5] never carries a reserved id).
+
+**Left open (matches the plan's own "Discloses" list).** Non-KB id-bearing outputs keep agent-chosen
+ids; `KB-<SECTION>-####` entry files via `produces` get no reservation (a different id scheme,
+`KbIdAllocator`'s, untouched); `Diagram` is excluded (its `pathTemplate` does not start `kb/`);
+reservations are in-process per (project, run) — two supervisors over one project are excluded by the
+run lock, unchanged; the 25-id block leaves gaps between runs (`18` §18.8 forbids reuse, not gaps); a
+reserved id is advisory until P10's output check actually holds a produced artifact to it.
+
+**Verification scope (this piece; owner-approved cost cut, no full unscoped suite).**
+`engine/test/dispatch/output-ids.test.ts` (new, 30 cases), `engine/test/interaction/swarm-review-step.test.ts`
+(46, zero-diff), `agents/test/prompt/compile-prompt.test.ts` (34), `engine/test/dispatch/agent.test.ts`
+(23), `engine/test/resume/orchestrate.test.ts` (15), `core/test/errors.test.ts` (450) — 600 cases total,
+all green in a clean `git worktree` of the final commit with `pnpm install --offline --frozen-lockfile`;
+`pnpm typecheck` (21/21 packages) and `pnpm run boundaries` both clean in the same clean worktree;
+`eslint`/`prettier` clean on every file owned. Three commits: `efac450` (feat), `4d044b0` (critic round 1
+fix), `22d7a18` (critic round 2 fix) — each independently verified in its own clean worktree before the
+next round started.
