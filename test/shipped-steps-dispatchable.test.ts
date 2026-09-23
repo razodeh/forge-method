@@ -91,6 +91,13 @@ const FIXTURE_CONTEXT = {
   goal: 'extract a shared helper',
   interfaceName: 'orders-api',
   buildTarget: 'ios',
+  // `PLAN-M14.md` P12: `store-release.workflow.yaml`'s `prepare-release-build` step reads
+  // `config.paths.release` in its `produces` claim; unset, `compileRunPlan` fails the template
+  // outright ("did not resolve to a string, number, or boolean") rather than the friendlier RUN-106
+  // refusal `buildRunExpressionContext` gives a real `forge run` (this fixture calls `compileRunPlan`
+  // directly, bypassing that layer, the same reason `run-inputs-compile.test.ts`'s own fixture project
+  // sets `paths.release` in its `.forge/config.yaml`).
+  config: { paths: { release: ['apps/mobile/**', 'app.json'] } },
 };
 
 interface Shipped {
