@@ -20092,3 +20092,165 @@ validate --all`/`doctor --json` check above.
 **Files.** `packages/engine/src/workflow/{types,validate}.ts`; `packages/cli/src/commands/{workflow,doctor/run-doctor}.ts`;
 `packages/engine/test/workflow/validate.test.ts`; `packages/cli/test/commands/workflow.test.ts`; new
 `packages/cli/test/commands/doctor/workflow-claims.test.ts`.
+
+## Q239 — M14 P6: `docs/forge/<section>/` prefixes in `produces` follow the configured docs roots — a two-round critic loop found two real display/escaping bugs, both fixed, one deliberately left disclosed rather than guessed at
+
+**Context.** `PLAN-M14.md` P6, closing the "Relocated docs roots" gap `Q216` disclosed ("58 references
+become uncovered": a `produces` glob's own literal `docs/forge/<section>/...` prefix did not follow a
+relocated `paths.kb` etc., while the registry-derived half of the claim already did) per `Q232` decision
+3 ("engine expansion... one place, workflow YAML stays authorable").
+
+**Built.** `DocRoots` (`packages/engine/src/dispatch/types.ts`) gains a fifth key, `plans` — no `18` §18.7
+registry artifact type lives under it (verified against the real registry table: every path template
+opens with `specs/`, `kb/`, `reports/` or `sessions/`), but `docs/forge/plans/...` is a real, shipped
+`produces` root (`plan-stages.workflow.yaml`'s own `decompose-stages` step) that must follow `paths.plans`
+too — `18` §18.3 already lists it as one of the five `paths` keys. `sectionRoot` (`outputs.ts`) gains the
+matching case.
+
+`outputs.ts` adds `resolveDocsRootPrefix` (one glob: a segment-boundary rewrite of a leading
+`docs/forge/<section>/` to the project's configured root — `docs/forge/kb` never matches
+`docs/forge/kbx`, the plan's own counter-example — glob-escaped exactly as `outputGlob` already escapes a
+configured root, `!`/`#`-leading results escaped for the real claim matcher exactly as `outputClaimGlobs`
+already does, an escaping or bare-root-at-project-root configured root dropping the entry) and the newly
+exported `resolveProduces` (a whole `produces` list, `!`-prefix and `!@protected` shape preserved).
+`splitClaim` now runs on `resolveProduces`'s own output, so `resolveStepClaim`'s produces-derived globs
+and exclusions follow the configured root exactly as the registry-derived half (`outputClaimGlobs`) always
+has. Identity under the shipped default layout holds by construction (a configured root equal to its own
+default round-trips unchanged) — proven, not merely asserted, by a new `test/write-implies-claim.test.ts`
+check that reconstructs the *expected* claim independently from every real shipped step's own raw
+`produces`/`outputs` (never calling `resolveStepClaim` itself to build the expectation), for the whole
+real corpus (50+ steps).
+
+`assemble.ts` hands `packForStep` and `compilePrompt` the RESOLVED produces (computed once, reused for
+both) instead of raw `node.produces`, so block [5] (`compile-prompt.ts`'s `renderOutputContractBlock`)
+tells the agent the path it is actually held to, and the skill activation filter (`pack-for-step.ts`'s
+`matchesStepFileClaim`) matches a skill's `applies_to.paths` against it, under a relocated layout too —
+traced end to end through a real `assembleAgentSession` call, not just read (`output-claim.test.ts`'s own
+new "block [5]... traced end to end" and "the skill activation filter... matches the RESOLVED produces"
+describe blocks; the latter shadows the real `changelog-writing` `SKILL_INDEX` entry inside the fixture
+project's own `templatesPackageRoot`, since no shipped skill uses `applies_to.paths` today — a
+pre-existing, `Q216`-disclosed gap, confirmed still true). `context.ts` (`buildRunEngineContext`) and
+`debug.ts` (`forge debug`'s FIX loop) add `plans` to the `DocRoots` they build from the project's config.
+Not changed: the interval map, `globsOverlap`, briefs (the raw markdown text, as opposed to the
+*structured* `produces` field), `outputGlob`, `outputClaimGlobs`, `enforceClaim` — confirmed by diff, not
+merely claimed, in every clean-worktree verification below.
+
+`test/brief-write-paths-in-claim.test.ts`'s own default-layout-only caveat (the file's own module doc
+comment used to carry it) is lifted: its main assertion — every path a shipped brief tells the agent to
+write lies inside the step's real claim — now runs under both the shipped default layout and a fully
+relocated one (`{kb:'knowledge', specs:'spec', plans:'p', sessions:'s', reports:'r'}`), both passing for
+the entire real corpus with no relaxed exemptions. This surfaced (and fixed) a second, independent gap in
+that test file's own extractor: `resolvePath`'s own `plans` handling hard-coded the default `plans` root
+(`[PLANS_ROOT, PLANS_ROOT]`) regardless of a relocated `roots.plans`, since `DocRoots` had no `plans` field
+for it to read before this piece — now `[docs.plans, roots.plans]`, matching the claim derivation it is
+compared against.
+
+**Round 1 (fresh, context-free, dispatched with the diff and spec text, no rationale): 2 major, 4 minor,
+both majors fixed (`7e6e6fb`).**
+
+1. **Major — block [5] leaked the internal matcher escape into agent-facing text.** `resolveProduces`
+   backslash-prefixes a leading `!`/`#` so `enforceClaim`'s real minimatch call reads a configured root
+   literally, never as negation or a comment — but that same escaped string reached block [5] unchanged,
+   so a configured root of `!weird` rendered as `` `\!weird/x.md` `` — a path containing a literal
+   backslash that does not exist on disk. The critic found the precedent this new code failed to mirror
+   sitting three functions away: `declaredOutputPath` already un-escapes a registry glob before display,
+   for the identical reason. The builder's own first fix attempt (unescape before handing `produces` to
+   `compilePrompt`) introduced a NEW bug, caught by the builder's own test before any second critic round
+   ever saw it: `compile-prompt.ts`'s `paths()` classifies an entry as allowed vs. refused by
+   `startsWith('!')` (produces-DSL exclusion syntax) — unescaping first turned an ALLOWED `!weird`-rooted
+   path back into a string starting with literal `!`, so `paths()` misclassified it as refused, collapsing
+   the whole claim to empty. Fixed properly inside `compile-prompt.ts`: `paths()` now classifies on the
+   escaped form (unambiguous — a real exclusion's `!` is unescaped, a `!`-rooted allowed path's is
+   `` \ ``-prefixed) and unescapes only the displayed text, after classification, never before.
+2. **Major — `escapesRepository` ran on the raw configured root, before normalization.** Unlike its
+   sibling `outputClaimGlobs`, which checks its own already-normalized, fully-built glob.
+   `paths.specs: 'a/../../elsewhere'` does not itself start with `/` or `../`, so the raw check let it
+   through; `normalizeRoot` collapses it to `'../elsewhere'`, which does climb out. Never an enforcement
+   bypass (git never lists a path with a leading `../`, so the entry was always dead), but it contradicted
+   the code's own doc comment and would have rendered a fake writable path in block [5]. Fixed: the check
+   now runs on the normalized root.
+3. **Minor, disclosed not fixed — `resolveStepClaim`'s pre-existing dedup asymmetry** (only the
+   with-outputs branch de-duplicates) can now surface a literal duplicate glob when two docs sections are
+   configured to the same physical root, on a step declaring no `outputs`. Confirmed pre-existing by both
+   critic rounds independently (the branching logic sits outside every hunk of the diff) and cosmetic only
+   (`enforceClaim`'s matcher is a `.some()` union).
+4. **Minor, fixed as part of finding 1's real fix — `resolveProduces` was evaluated twice in `assemble.ts`**,
+   contradicting the doc comment's own "computed once and reused."
+5. **Minor, fixed — a bare `produces` entry whose configured root itself normalizes to the project root**
+   (`paths.kb: '.'`) produced the empty string as a glob, matching no real path — the same problem class as
+   an escaping root, now dropped for the identical reason.
+6. **Minor, disclosed not fixed — `DOC_ROOT_SECTIONS`'s first-match-wins ordering** assumes the five
+   default roots never mutually prefix-collide; true today, unenforced for a hypothetical future sixth
+   default root. Not exploitable now.
+
+**Round 2 (fresh, context-free, scoped to the round-1 fix commit): 0 blocking, 0 major, 2 new minor, both
+handled (`1a07217`).** Confirmed both major fixes genuinely correct under further adversarial input the
+critic constructed itself and ran (not merely reasoned about): a root that is simultaneously an exclusion
+and needs escaping, a root needing both the leading-marker escape and a glob-metacharacter escape, empty/
+whitespace roots, doubled-slash and drive-letter variants, and — explicitly checked for a false positive —
+a legitimate non-trivial root that merely contains `.`/`..` internally (`x/y/../z`, normalizing to the
+real directory `x/z`) is correctly NOT dropped. Independently re-verified round 1's two disclosed minors
+(3 and 6 above) against the actual code rather than trusting the round-1 commit's own claim, and confirmed
+both correct. Two new minors: the `assemble.ts` doc comment's "computed once" was not literally true
+(`resolveStepClaim`, called immediately after, calls `resolveProduces` again on its own, building the real
+enforcement claim on a second, argument-identical call — no drift risk, since the function is pure, but
+the wording overclaimed) — reworded to say precisely what is true. And `compile-prompt.ts`'s new
+`unescapeMatcher` is a blanket "strip every backslash," not scoped to only the root-rewrite's own escaping:
+a workflow author's OWN minimatch escape written elsewhere in a produces entry (`notes\*.md`, meaning the
+literal filename `notes*.md`) is silently stripped from block [5]'s displayed text too, showing what reads
+as a live wildcard, though enforcement and the skill filter are both unaffected (they read the real,
+still-escaped value; only display text is wrong) and no shipped brief does this (confirmed by the identity
+check's own coverage of the real corpus). Disclosed in the code rather than fixed: a precise fix needs
+`resolveProduces` to expose where its own escaping ends and the author's own glob syntax begins, which a
+flat string cannot without a broader restructuring than this piece's own scope — and a further attempted
+"quick" fix risks repeating finding 1's own first-attempt mistake (trading one wrong display for another).
+No round 3 dispatched: round 2 found nothing blocking or major, and both new minors are handled (one
+reworded, one disclosed with its own reasoning) — the loop's own convergence criterion.
+
+**Mutation evidence (the plan's own list, and more).** Rewrite disabled entirely: 11 tests fail red across
+`outputs.test.ts`/`output-claim.test.ts`; the identity test still passes (RELOCATED-layout tests are what
+catch this mutation, not the identity one — expected, since identity holds trivially under a no-op too).
+Escape-check dropped: 2 tests fail (the plan predicted one; two is stronger coverage from the extra
+integration-level test this piece added). Raw `node.produces` kept in `assemble.ts` for both consumers:
+block [5] tests fail (2); isolated to `packForStep` alone: the skill-activation-filter test fails
+specifically and uniquely while block [5] tests still pass, proving the two tests are non-redundant.
+`plans` omitted from `sectionRoot`: 2 tests fail (plan predicted one). Round-1-fix-specific: M2's
+post-normalization check reverted, 2 tests fail; M1's classify-before-unescape order reverted (both as the
+builder's own bad first attempt, and again directly for round 2's own benefit), 2 tests fail identically
+both times.
+
+**Clean-worktree verification (rule 14/15), all three commits.** `git worktree add <scratch> <sha>`,
+`pnpm install --offline --frozen-lockfile` (~5-8s), then in that worktree: `pnpm typecheck` (root
+`tsc --noEmit` + `turbo run typecheck`, 21/21 packages, 0 errors, every time); the 14-file scoped suite
+(384/384 tests, every time); `pnpm run boundaries` (clean, every time); `pnpm lint` (eslint + prettier, the
+WHOLE repo, clean every time — at the first commit this also proved the lint failures visible in the
+shared working tree at that moment belonged entirely to concurrent, uncommitted P7/P8/P9 work landing on
+the same files, not this piece).
+
+**Disclosed, not fixed (matches the plan's own "Discloses" list, each independently re-confirmed by round
+2).** The interval map still reads the literal, unrewritten `produces` (unaffected, out of scope). Brief
+TEXT (block [4]'s prose) still names the shipped default layout verbatim; only the structured `produces`
+field (feeding block [5] and the skill filter) is resolved — a relocated project's brief prose is a "wrong
+hint" to a human reader, though the enforced claim and block [5]'s own statement are both correct. Two
+layouts are proven by the test suite (default + one relocated set), not literally every configuration,
+though the rewrite logic itself is general, driven by the real `DocRoots` values passed in. A configured
+root equal to another section's own default is neither refused nor documented by this piece — two sections
+could be configured to physically collide on disk — matching the plan's own disclosed, undecided item
+verbatim.
+
+**Verification scope (owner-approved cost cut).** `packages/engine/test/dispatch/{output-claim,empty-claim,
+outputs,output-contract}.test.ts`, `packages/agents/test/{prompt/compile-prompt,context/pack-for-step}.test.ts`,
+`packages/cli/test/commands/run/{output-claim,empty-claim}.test.ts`, `packages/cli/test/commands/loop/
+lane-guard.test.ts`, `packages/engine/test/{rca/fix-scan,security/taint-grant,interaction/
+swarm-review-step}.test.ts`, `test/{write-implies-claim,brief-write-paths-in-claim}.test.ts`; `pnpm
+typecheck` (21/21), `pnpm run boundaries`, `eslint --max-warnings 0` and `prettier --check` on every file
+this piece owns (and, at each clean-worktree check, the whole repo). Verified in a clean `git worktree` of
+each of the three commits.
+
+**Files.** `packages/engine/src/dispatch/{outputs,assemble,types,index}.ts`; `packages/agents/src/{context/
+pack-for-step,prompt/compile-prompt}.ts`; `packages/cli/src/commands/{run/context,loop/debug}.ts`; new
+tests and edits across `packages/engine/test/dispatch/{outputs,output-claim,empty-claim,output-contract,
+interaction/swarm-review-step}.test.ts`, `packages/agents/test/prompt/compile-prompt.test.ts`,
+`packages/cli/test/commands/{run/output-claim,run/context,loop/lane-guard}.test.ts`,
+`packages/engine/test/{rca/fix-scan,security/taint-grant}.test.ts`, `test/{write-implies-claim,
+brief-write-paths-in-claim}.test.ts`.

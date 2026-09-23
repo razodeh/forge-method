@@ -14794,3 +14794,77 @@ check against the real built CLI binary, not just the in-process test suite.
 
 **Left open.** Nothing from this piece's own mandate; `isOwnerRoleTemplate`'s deliberately narrow scope
 (the two shapes `10` §10.5 actually ships) is disclosed in `SPEC-QUESTIONS.md` Q238, not a gap.
+
+## M14 P6 — `docs/forge/<section>/` prefixes in `produces` follow the configured docs roots (`engine/dispatch/{outputs,assemble,types,index}.ts`, `agents/{context/pack-for-step,prompt/compile-prompt}.ts`, `cli/commands/{run/context,loop/debug}.ts`)
+
+Closes `Q216`'s "58 references become uncovered" gap and `Q232` decision 3: a `produces` glob's literal
+`docs/forge/<section>/...` prefix now follows a relocated `paths.kb`/`paths.specs`/`paths.plans`/
+`paths.sessions`/`paths.reports` exactly as the registry-derived half of the claim (`outputClaimGlobs`)
+already did. `DocRoots` gains a fifth key, `plans` (no `18` §18.7 registry type lives under it, but
+`docs/forge/plans/...` is a real, shipped `produces` root). `outputs.ts` adds `resolveDocsRootPrefix`
+(segment-boundary safe: `docs/forge/kb` never matches `docs/forge/kbx`) and the exported `resolveProduces`;
+`splitClaim` runs on its output. `assemble.ts` hands `packForStep`/`compilePrompt` the RESOLVED produces,
+so block [5] and the skill activation filter see the real path under a relocated layout, traced end to end
+through a real `assembleAgentSession` call. Identity under the default layout is proven, not asserted: a
+new `test/write-implies-claim.test.ts` check reconstructs the expected claim independently from every real
+shipped step's own `produces`/`outputs`, never calling `resolveStepClaim` to build its own expectation.
+`test/brief-write-paths-in-claim.test.ts`'s own default-layout-only caveat is lifted — its main assertion
+now passes under both the default and a fully relocated layout for the whole real corpus, surfacing and
+fixing a second bug in that file's own extractor (`plans` handling hard-coded the default root).
+
+**Round 1 (fresh, context-free): 2 major, 4 minor.** **Major 1:** block [5] leaked `resolveProduces`'s own
+internal matcher-escape (a `\` before a leading `!`/`#`, needed so `enforceClaim`'s real minimatch call
+reads a configured root literally) into agent-facing text — a root of `!weird` rendered as `` `\!weird/
+x.md` ``, a path with a literal backslash that doesn't exist on disk. The precedent this failed to mirror
+sat three functions away (`declaredOutputPath` already un-escapes a registry glob for display). **The
+builder's own first fix attempt introduced a second, new bug** — caught by the builder's own test before
+any second critic round ever saw it: unescaping `produces` before handing it to `compilePrompt` broke
+`compile-prompt.ts`'s own `paths()`, which classifies allowed-vs-refused by `startsWith('!')` — unescaping
+first turned an allowed `!weird`-rooted path back into something starting with literal `!`, collapsing the
+whole claim to empty. Fixed properly inside `compile-prompt.ts`: classify on the escaped form, unescape
+only the displayed text, after classification. **Major 2:** `escapesRepository` ran on the raw configured
+root, before `normalizeRoot` collapsed `.`/`..` segments — `paths.specs: 'a/../../elsewhere'` slipped past
+the raw check but normalizes to `'../elsewhere'`, which does climb out; unlike its sibling
+`outputClaimGlobs`, which checks its own already-normalized glob. Never an enforcement bypass (git never
+lists a `../`-prefixed path), but contradicted the code's own doc comment. Fixed: check the normalized
+root. Two minors fixed alongside (a bare-root entry whose configured root normalizes to the project root
+produced an empty-string glob, now dropped; `resolveProduces` was genuinely called twice despite the doc
+comment's "once"). Two minors disclosed, confirmed pre-existing and out of scope
+(`resolveStepClaim`'s dedup asymmetry; `DOC_ROOT_SECTIONS`'s unenforced non-collision assumption).
+
+**Round 2 (fresh, context-free, scoped to the round-1 fix commit): 0 blocking, 0 major, 2 new minor.**
+Confirmed both major fixes hold under further adversarial input the critic built and ran itself (a root
+that is both an exclusion and needs escaping; a root needing both the marker escape and a metacharacter
+escape; a legitimate root merely containing `.`/`..` internally, explicitly confirmed NOT dropped). Two
+new minors: the "computed once" doc comment was still not literally true (`resolveStepClaim` calls
+`resolveProduces` again on its own, argument-identical, no drift risk) — reworded; and the new
+`unescapeMatcher` strips every backslash, not just the root-rewrite's own, so a workflow author's own
+minimatch escape elsewhere in a produces entry would be silently mis-displayed (no shipped brief does
+this; enforcement and the skill filter are unaffected, only display text) — disclosed in the code, not
+guessed at with a fix risking the same mistake round 1's own first attempt made. No round 3: nothing
+blocking or major remained, and both new minors were handled.
+
+**What the critic caught that the builder missed:** both majors. **What the builder caught before any
+critic saw it:** the second bug its own first M1 fix attempt introduced, via the very test written to
+prove that fix — never reached round 2 as a live finding.
+
+**Mutation evidence.** Rewrite disabled entirely: 11 tests fail red, identity still passes (RELOCATED-layout
+tests are what catch this, not the identity one). Escape-check dropped: 2 tests fail (plan predicted one).
+Raw `node.produces` kept for both `assemble.ts` consumers: block [5] tests fail (2); isolated to
+`packForStep` alone: the skill-filter test fails uniquely while block [5] tests still pass, proving
+non-redundant coverage. `plans` omitted from `sectionRoot`: 2 tests fail (plan predicted one). M2's
+post-normalization check reverted: 2 tests fail. M1's classify-before-unescape order reverted (both the
+builder's own bad first attempt, and again directly): 2 tests fail identically both times.
+
+**Verified in a clean `git worktree` of all three commits** (rule 14/15): `pnpm typecheck` (21/21 packages,
+0 errors, every time), the 14-file scoped suite (384/384, every time), `pnpm run boundaries` (clean, every
+time), `pnpm lint` — eslint + prettier over the WHOLE repo (clean every time; at the first commit this also
+proved the shared working tree's own lint failures at that moment belonged entirely to concurrent,
+uncommitted P7/P8/P9 work, not this piece).
+
+**Left open** (matches the plan's own "Discloses" list, `SPEC-QUESTIONS.md` Q239): the interval map still
+reads the literal, unrewritten `produces`; brief prose still names the default layout (only the structured
+`produces` field is resolved); two layouts are proven, not every configuration; a configured root equal to
+another section's own default is neither refused nor documented (two sections could physically collide);
+`compile-prompt.ts`'s display-unescape can mis-render an author's own minimatch escape syntax elsewhere in
+a produces entry (round 2, no shipped brief does this, no enforcement impact).
