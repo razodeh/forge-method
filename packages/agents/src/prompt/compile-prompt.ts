@@ -191,6 +191,20 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
   });
   const quoted = (list: readonly string[]): string => list.map((path) => `\`${path}\``).join(', ');
   const claim = paths(step.produces);
+  // `PLAN-M14.md` P8: a supervisor already reserved this output's own id (or, `cardinality: 'many'`, a
+  // contiguous block) before this prompt was assembled -- the agent is told to use it, not invent one,
+  // so a declared KB output's real id is decided once, centrally, collision-free (`08` §8.6, `18`
+  // §18.8), never guessed by a session that cannot see what a concurrent step just claimed. Absent
+  // (`undefined`/empty) for every non-KB output: this line then renders as nothing.
+  const reservedIdsLine = (ids: readonly string[] | undefined): string => {
+    if (ids === undefined || ids.length === 0) return '';
+    if (ids.length === 1) {
+      return ` -- reserved id \`${oneLine(ids[0] ?? '')}\`: use exactly this id, do not choose another`;
+    }
+    const first = oneLine(ids[0] ?? '');
+    const last = oneLine(ids[ids.length - 1] ?? '');
+    return ` -- reserved id range \`${first}\`..\`${last}\` (${String(ids.length)} ids): use them in order starting from \`${first}\`, one per new entry, never skipping or reusing one`;
+  };
   const claimLines: string[] = [];
   if (claim.allowed.length > 0) {
     claimLines.push(`- Files: only the paths in this step's claim: ${quoted(claim.allowed)}`);
@@ -218,9 +232,10 @@ function renderOutputContractBlock(agent: AgentDefinition, step: StepContext): s
     const sidecar =
       wanted.type === 'Diagram' && path !== undefined ? ` (and its sidecar \`${path}.yaml\`)` : '';
     const head = [schema, where].filter((part) => part !== '').join(', ');
+    const reserved = reservedIdsLine(wanted.reservedIds);
     return head === ''
-      ? `- ${type}: declared by this step${subtype}`
-      : `- ${type}: ${head}${cardinality}${subtype}${sidecar}`;
+      ? `- ${type}: declared by this step${subtype}${reserved}`
+      : `- ${type}: ${head}${cardinality}${subtype}${sidecar}${reserved}`;
   });
   // The step's own claim beyond its declared outputs (its `produces`) is enforced too, so it is stated too.
   return [...lines, ...claimLines].join('\n');

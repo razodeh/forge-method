@@ -89,6 +89,16 @@ export {
   type TestCommands,
   type UnavailableTestLayer,
 } from './test-command-grant.ts';
+export {
+  directoryIdScan,
+  registerIdScan,
+  reserveDeclaredKbOutputIds,
+  reserveIds,
+  type IdReservation,
+  type KbOutputReservation,
+  type ReserveIdsParams,
+  type ScanTarget,
+} from './output-ids.ts';
 export { commandWords } from './confined-command.ts';
 export {
   expandTrustedInvocation,

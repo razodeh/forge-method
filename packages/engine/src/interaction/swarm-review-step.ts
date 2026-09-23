@@ -44,17 +44,17 @@
  * @see PLAN-M13.md P17
  * @see SPEC-QUESTIONS.md Q217
  */
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import { resolveStepModel } from '@forge/agents/resolve';
-import { ProjectPaths, listDirSorted, pathExists, writeFileAtomic } from '@forge/core/fs';
+import { ProjectPaths, writeFileAtomic } from '@forge/core/fs';
 import { definitionForType } from '@forge/schemas';
 import { TelemetryError } from '@forge/telemetry/errors';
 
 import { isAssemblyRefusal, markRefusal, refusalFailure } from '../dispatch/assemble.ts';
 import { docRootsOf, documentProblems, outputPathFor } from '../dispatch/outputs.ts';
+import { directoryIdScan, reserveIds } from '../dispatch/output-ids.ts';
 import { resolveLaneBase } from '../dispatch/lane-base.ts';
 import { runLaneLifecycle, sanitizeUsageNumber } from '../dispatch/steps.ts';
 import type {
@@ -87,7 +87,6 @@ const EMPTY_SESSION = {
 
 const ID_PREFIX = 'REVIEW';
 const ID_WIDTH = 3;
-const MAX_NUMBER = 10 ** ID_WIDTH - 1;
 const REPORT_FILE = /^REVIEW-(\d{3})(?:-.*)?\.md$/;
 
 /** The step as the lane lifecycle and the output check see it: the `swarm-review` mode implies a
@@ -158,68 +157,14 @@ async function recordUsage(
 }
 
 // --- numbering ---------------------------------------------------------------------------------------
-
-const queues = new Map<string, Promise<unknown>>();
-/** The number each step of a (project, run) was last handed in this process, with the lane worktree it went
- * to. A step's earlier reservation is dropped when it allocates again (a new attempt supersedes the attempt
- * it replaces, so a re-run gets the same number instead of leaving a gap), and another step's stays only
- * while its worktree exists (a lane cleaned up takes its number with it). */
-const handedOut = new Map<
-  string,
-  Map<string, { readonly number: number; readonly lane: string }>
->();
-
-/** Runs `operation` after every earlier one under `key` has settled, in call order. The queue entry is dropped
- * once nothing is waiting behind it, so a long-lived process does not accumulate one per run. */
-function enqueue<T>(key: string, operation: () => Promise<T>): Promise<T> {
-  const previous = queues.get(key) ?? Promise.resolve();
-  const result = previous.then(operation, operation);
-  const tail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  queues.set(key, tail);
-  void tail.then(() => {
-    if (queues.get(key) === tail) queues.delete(key);
-  });
-  return result;
-}
-
-/** Forgets every reservation whose lane worktree no longer exists (and every (project, run) left with none). */
-function pruneReservations(): void {
-  for (const [key, reserved] of handedOut) {
-    for (const [stepId, entry] of reserved) {
-      if (!existsSync(entry.lane)) reserved.delete(stepId);
-    }
-    if (reserved.size === 0) handedOut.delete(key);
-  }
-}
+//
+// `PLAN-M14.md` P8 moved this queue to `dispatch/output-ids.ts`, generalised (`idPrefix`, `idWidth`,
+// scan target, count) so a declared KB output's id reserves through the identical module and rule. The
+// numbering RULE below is unchanged from `PLAN-M13.md` P17: `allocateNumber` is now a thin caller of
+// `reserveIds`, not a reimplementation -- `output-ids.ts`'s own doc comment carries the full reasoning.
 
 function reportsDirOf(ctx: ExecuteStepContext): string {
   return path.posix.dirname(outputPathFor('ReviewReport', docRootsOf(ctx), `${ID_PREFIX}-000`));
-}
-
-function reportId(number: number): string {
-  return `${ID_PREFIX}-${String(number).padStart(ID_WIDTH, '0')}`;
-}
-
-/** The `REVIEW-*.md` file names directly under `reportsDir` in the tree rooted at `root`, sorted; none when the
- * directory does not exist (or a symlink would take it out of the tree: such a path holds nothing a merge of
- * this tree could collide with). */
-async function reportFilesIn(root: string, reportsDir: string): Promise<readonly string[]> {
-  try {
-    const target = new ProjectPaths(root).resolveWithin(reportsDir);
-    if (!(await pathExists(target))) return [];
-    return (await listDirSorted(target)).filter((name) => REPORT_FILE.test(name));
-  } catch (cause) {
-    if (isForgeError(cause) && cause.code === 'CFG-003') return [];
-    throw cause;
-  }
-}
-
-/** The number of a name `reportFilesIn` already matched against `REPORT_FILE`. */
-function numberOf(fileName: string): number {
-  return Number.parseInt(fileName.slice(ID_PREFIX.length + 1, ID_PREFIX.length + 1 + ID_WIDTH), 10);
 }
 
 function isProvenance(text: string, stepId: string, runId: string): boolean {
@@ -228,44 +173,44 @@ function isProvenance(text: string, stepId: string, runId: string): boolean {
 }
 
 /**
- * The number this step's report takes: the smallest above everything visible in the trees a later merge would
- * collide with (the lane, the integration worktree, the project root, every lane still waiting to merge) and
- * above everything this run's other steps were handed and whose lane still exists. A step that allocates
- * again supersedes its own earlier reservation, so a re-run of a discarded attempt gets the same number.
- * Serialised per (project, run).
+ * The id this step's report takes: the smallest `REVIEW-NNN` above everything visible in the trees a
+ * later merge would collide with (this lane, the integration worktree, the project root, every lane
+ * still waiting to merge) and above every reservation this run's other steps already hold. A step that
+ * allocates again supersedes its own earlier reservation, so a re-run of a discarded attempt gets the
+ * same id back. Reserved already lane-bound (`lane` already exists by the time this runs, unlike a
+ * declared KB output's own id): from the moment `reserveIds` returns, the reservation is pruned by
+ * `lane.path`'s own liveness exactly as before this piece.
  */
 async function allocateNumber(
   node: StepNode,
   ctx: ExecuteStepContext,
   lane: LaneHandle,
-): Promise<number> {
-  const key = JSON.stringify([path.resolve(ctx.projectRoot), ctx.runId]);
-  const reportsDir = reportsDirOf(ctx);
-  return enqueue(key, async () => {
-    pruneReservations();
-    const reserved = handedOut.get(key) ?? new Map<string, { number: number; lane: string }>();
-    handedOut.set(key, reserved);
-    reserved.delete(node.id);
-    const roots = new Set<string>([
+): Promise<string> {
+  const reservation = await reserveIds({
+    projectRoot: ctx.projectRoot,
+    runId: ctx.runId,
+    stepId: node.id,
+    idPrefix: ID_PREFIX,
+    idWidth: ID_WIDTH,
+    count: 1,
+    roots: [
       lane.path,
       ctx.integrationPath,
       ctx.projectRoot,
       ...[...ctx.laneRegistry.values()].map((registered) => registered.path),
-    ]);
-    let highest = 0;
-    for (const root of roots) {
-      for (const name of await reportFilesIn(root, reportsDir)) {
-        highest = Math.max(highest, numberOf(name));
-      }
-    }
-    for (const entry of reserved.values()) highest = Math.max(highest, entry.number);
-    const next = highest + 1;
-    if (next > MAX_NUMBER) {
-      throw new RangeError(`all ${String(MAX_NUMBER)} ${ID_PREFIX}-NNN numbers are in use`);
-    }
-    reserved.set(node.id, { number: next, lane: lane.path });
-    return next;
+    ],
+    target: directoryIdScan(reportsDirOf(ctx), ID_PREFIX, ID_WIDTH),
+    lanePath: lane.path,
   });
+  const id = reservation.ids[0];
+  if (id === undefined) {
+    // reserveIds({count: 1, ...}) always returns exactly one id or throws -- there is no path that
+    // returns an empty array. A RangeError, not a ForgeError: this would be a bug in that function, not
+    // a caller-facing failure with a remedy to offer (the identical stance @forge/core/ids's own
+    // IdAllocator.allocate takes for the same "should never happen" guard).
+    throw new RangeError('reserveIds({count: 1}) returned no id.');
+  }
+  return id;
 }
 
 // --- the document ------------------------------------------------------------------------------------
@@ -289,8 +234,7 @@ async function writeReport(
   reviews: readonly PerspectiveReview[],
   reviewedRevision: string,
 ): Promise<WrittenReport> {
-  const number = await allocateNumber(node, ctx, lane);
-  const id = reportId(number);
+  const id = await allocateNumber(node, ctx, lane);
   const file = outputPathFor('ReviewReport', docRootsOf(ctx), id);
   const content = buildReviewReport({
     stepId: node.id,

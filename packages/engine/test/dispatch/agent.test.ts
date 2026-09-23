@@ -11,19 +11,20 @@
  * @see PLAN-M5.md P15
  * @see PLAN-M14.md P3
  */
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { ForgeError } from '@forge/core/errors';
+import { slugifyStepId } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
-import { runAgentWork } from '../../src/dispatch/steps.ts';
+import { runAgentStep, runAgentWork } from '../../src/dispatch/steps.ts';
 import { toAgentId } from '../../src/plan/index.ts';
 import { createTestContext, node, readFileInRepo } from './helpers.ts';
 
@@ -590,5 +591,219 @@ describe('the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.
       if (previous === undefined) delete process.env['FORGE_RUN_ID'];
       else process.env['FORGE_RUN_ID'] = previous;
     }
+  });
+});
+
+/** A minimal but schema-VALID ADR document (`08` §8.4) at `id`. */
+function validAdrDocument(id: string): string {
+  return [
+    '---',
+    `id: ${id}`,
+    'type: ADR',
+    'schemaVersion: 1',
+    'title: Use the reserved id',
+    'status: accepted',
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    'category: architecture',
+    'deciders: [architect]',
+    'date: 2026-01-15',
+    'reversibility: medium',
+    'blast_radius: []',
+    "revisit_trigger: 'n/a'",
+    'supersedes: []',
+    'superseded_by: null',
+    'related: []',
+    'diagrams: []',
+    "framework: 'n/a'",
+    '---',
+    '',
+    '## Context',
+    '',
+    'x',
+    '',
+    '## Options considered',
+    '',
+    'x',
+    '',
+    '## Decision',
+    '',
+    'x',
+    '',
+    '## Diagram',
+    '',
+    'x',
+    '',
+    '## Consequences',
+    '',
+    'x',
+    '',
+    '## Reversal plan',
+    '',
+    'x',
+    '',
+  ].join('\n');
+}
+
+/** A minimal, schema-valid `kb/risks.md` register file whose `risks:` array holds `count` entries
+ * (`RISK-001`..`RISK-<count>`). */
+function risksFile(count: number): string {
+  const entries = Array.from(
+    { length: count },
+    (_, index) =>
+      `  - id: RISK-${String(index + 1).padStart(3, '0')}\n` +
+      '    statement: a\n    likelihood: low\n    impact: low\n    mitigation: m\n    owner: architect',
+  ).join('\n');
+  return [
+    '---',
+    'type: Risk',
+    'schemaVersion: 1',
+    'title: Risk register',
+    'status: active',
+    'created: 2026-01-01',
+    'updated: 2026-01-01',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    'risks:',
+    entries,
+    '---',
+    '',
+    'Risk register.',
+    '',
+  ].join('\n');
+}
+
+function promptPathFor(projectRoot: string, runId: string, stepId: string): string {
+  return path.join(
+    projectRoot,
+    '.forge',
+    'state',
+    'runs',
+    runId,
+    'steps',
+    slugifyStepId(stepId),
+    'prompt.md',
+  );
+}
+
+describe('a declared KB output reserves a collision-free id before assembly (PLAN-M14.md P8)', () => {
+  function adrStep(id = 'wf:write-adr', overrides: Partial<Parameters<typeof node>[0]> = {}) {
+    return node({
+      id,
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      outputs: [{ type: 'ADR' }],
+      ...overrides,
+    });
+  }
+
+  it("the audit prompt record (prompt.md) carries the reserved id, above what's already on disk", async () => {
+    const projectRoot = await createTempRepo('kb-reserve-prompt');
+    const decisions = path.join(projectRoot, 'docs/forge/kb/decisions');
+    await mkdir(decisions, { recursive: true });
+    await writeFile(path.join(decisions, 'ADR-0002-x.md'), validAdrDocument('ADR-0002'));
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote it'],
+      writeFiles: [
+        {
+          relativePath: 'docs/forge/kb/decisions/ADR-0003-x.md',
+          content: validAdrDocument('ADR-0003'),
+        },
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-prompt' });
+
+    const outcome = await executeStep(adrStep(), ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const prompt = await readFile(promptPathFor(projectRoot, 'run-prompt', 'wf:write-adr'), 'utf8');
+    expect(prompt).toContain(
+      '- ADR: path `docs/forge/kb/decisions/ADR-*.md` -- reserved id `ADR-0003`: use exactly this id, do not choose another',
+    );
+  });
+
+  it('exhaustion is refused as a typed prompt refusal (RUN-109) before any lane exists', async () => {
+    const projectRoot = await createTempRepo('kb-reserve-exhausted');
+    await mkdir(path.join(projectRoot, 'docs/forge/kb'), { recursive: true });
+    await writeFile(path.join(projectRoot, 'docs/forge/kb/risks.md'), risksFile(999));
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-exhausted' });
+    const stepNode = node({
+      id: 'wf:write-risk',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      outputs: [{ type: 'Risk' }],
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure).toMatchObject({ source: 'prompt', code: 'RUN-109' });
+    expect(ctx.laneRegistry.has('wf:write-risk')).toBe(false);
+    await expect(
+      readdir(path.join(projectRoot, '.forge', 'state', 'worktrees')).catch(() => []),
+    ).resolves.toEqual([]);
+  });
+
+  it('releases its reservation when prompt assembly itself refuses, so the next attempt for the same step gets the same id back', async () => {
+    const projectRoot = await createTempRepo('kb-reserve-release');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['wrote it'],
+      writeFiles: [
+        {
+          relativePath: 'docs/forge/kb/decisions/ADR-0001-x.md',
+          content: validAdrDocument('ADR-0001'),
+        },
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-release' });
+    const stepNode = adrStep();
+
+    // A blank task text refuses prompt assembly (RUN-081) before any lane exists -- the identical
+    // "config-shaped refusal, nothing dispatched" class a missing agent/brief/model would also raise.
+    const refused = await runAgentStep(stepNode, ctx, { taskText: '' });
+    expect(refused.failure).toMatchObject({ source: 'prompt', code: 'RUN-081' });
+    expect(ctx.laneRegistry.has('wf:write-adr')).toBe(false);
+
+    const succeeded = await runAgentStep(stepNode, ctx);
+    expect(succeeded.status).toBe('succeeded');
+    // If the refused attempt's reservation had leaked instead of being released, this one would have
+    // been told ADR-0002, not ADR-0001.
+    const prompt = await readFile(
+      promptPathFor(projectRoot, 'run-release', 'wf:write-adr'),
+      'utf8',
+    );
+    expect(prompt).toContain('reserved id `ADR-0001`');
+    expect(prompt).not.toContain('ADR-0002');
+  });
+
+  it('three concurrent steps declaring an ADR get disjoint ids, computed before any of their lanes exist', async () => {
+    const projectRoot = await createTempRepo('kb-reserve-concurrent');
+    const adapter = new FakePlatformAdapter();
+    for (const id of ['wf:a', 'wf:b', 'wf:c']) {
+      adapter.script((request) => request.stepId === id, { text: ['wrote it'], writeFiles: [] });
+    }
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-concurrent' });
+    const steps = ['wf:a', 'wf:b', 'wf:c'].map((id) => adrStep(id));
+
+    const outcomes = await Promise.all(steps.map((stepNode) => executeStep(stepNode, ctx)));
+    // None wrote a real ADR file, so the output check fails each -- irrelevant here: what matters is
+    // the id each one's OWN prompt was told to use, decided before any of the three ever got a lane.
+    for (const outcome of outcomes) expect(outcome.status).toBe('failed');
+
+    const prompts = await Promise.all(
+      steps.map((stepNode) =>
+        readFile(promptPathFor(projectRoot, 'run-concurrent', stepNode.id), 'utf8'),
+      ),
+    );
+    const reservedIds = prompts.map((prompt) => /reserved id `(ADR-\d{4})`/.exec(prompt)?.[1]);
+    expect(new Set(reservedIds).size).toBe(3);
+    expect([...reservedIds].sort()).toEqual(['ADR-0001', 'ADR-0002', 'ADR-0003']);
   });
 });

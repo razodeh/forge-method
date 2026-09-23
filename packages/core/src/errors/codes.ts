@@ -2125,6 +2125,28 @@ export const ERROR_CODES = {
       "Remove or rewrite the flagged text; skill and MCP content cannot alter FORGE's own " +
       'operating contract.',
   },
+  'RUN-109': {
+    // `PLAN-M14.md` P8, `SPEC-QUESTIONS.md` Q232 decision 2: a declared KB output (or `mode:
+    // swarm-review`'s own `ReviewReport`) needs a supervisor-reserved, collision-free id before its
+    // prompt is even assembled (`dispatch/output-ids.ts`'s `reserveIds`), and every number of the
+    // type's own fixed digit width is already reserved or claimed somewhere this run can see. The same
+    // shape `RUN-069` already gives `SESSION-###` exhaustion, generalised to any `<prefix>-<digits>` id
+    // space this module allocates from, KB output types included. Genuinely rare in practice (thousands
+    // of ids of one type in one project) and not retried into a different outcome: the same scan finds
+    // the same exhaustion every time until a human frees numbers or widens the type's own registry
+    // `idWidth`, so this is raised as a refusal before any lane exists rather than spent on a session
+    // that could never have produced a valid id anyway.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; idPrefix: string; idWidth: number }) => {
+      const max = String(10 ** d.idWidth - 1);
+      const placeholder = 'N'.repeat(d.idWidth);
+      return `Step ${show(d.stepId)} needs a new ${d.idPrefix}-${placeholder} id, but all ${max} ${d.idPrefix}-${placeholder} numbers are in use.`;
+    },
+    remedy:
+      'Free numbers by archiving or renumbering existing documents of this type (never reusing one ' +
+      'still in use), or raise the type’s `idWidth` in the artifact type registry.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

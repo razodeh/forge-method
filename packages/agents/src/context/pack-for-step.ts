@@ -44,6 +44,12 @@ export interface StepOutputContext {
   readonly path?: string | undefined;
   /** The step's own `cardinality` for this output (the engine checks the step's, not the role's). */
   readonly cardinality?: string | undefined;
+  /** The id (`cardinality: 'one'`) or contiguous block of ids (`'many'`) a supervisor already reserved
+   * for this declared output before the prompt was assembled (`PLAN-M14.md` P8, `dispatch/
+   * output-ids.ts`'s `reserveDeclaredKbOutputIds`) -- only ever set for a KB-located type (`18` §18.7
+   * `pathTemplate` starting `kb/`); `undefined` for every other output, unchanged from before this
+   * field existed. */
+  readonly reservedIds?: readonly string[] | undefined;
 }
 
 export interface PackForStepOptions {

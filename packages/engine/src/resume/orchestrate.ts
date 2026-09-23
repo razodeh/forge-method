@@ -40,7 +40,12 @@ import { readEvents } from '@forge/telemetry/events';
 
 import type { ExecuteStepContext, StepOutcome } from '../dispatch/index.ts';
 import { readRecordedAnswers } from '../dispatch/elicit.ts';
-import { runAgentWork, runLaneLifecycle } from '../dispatch/index.ts';
+import {
+  refusalFailure,
+  reserveDeclaredKbOutputIds,
+  runAgentWork,
+  runLaneLifecycle,
+} from '../dispatch/index.ts';
 import { resumeSwarmReviewStep } from '../interaction/swarm-review-step.ts';
 import type { StepNode } from '../plan/index.ts';
 import { reconstructRunState } from './reconstruct.ts';
@@ -165,19 +170,42 @@ async function laneHandleFor(
   };
 }
 
-function runAgentAttempt(
+async function runAgentAttempt(
   node: StepNode,
   ctx: ResumeContext,
   lane: LaneHandle,
   baseSha: string,
   source: { readonly kind: 'start' } | { readonly kind: 'resume'; readonly sessionId: string },
 ): Promise<StepOutcome> {
+  const emptyDetail = { kind: 'agent' as const, session: emptySessionResult() };
+  // `'start'` here is a crash-resume reroll: a fresh assembly into a lane that already exists
+  // (`PLAN-M14.md` P8's own "the step's own existing lane"). A declared KB output reserves through the
+  // real lane directly -- already lane-bound, no `pending` phase, since the lane is already known -- so
+  // this brand-new process's own empty in-memory table still sees ids the crashed process's own lane may
+  // already hold. `'resume'` continues an existing adapter session with no fresh assembly at all, so it
+  // reserves nothing.
+  let reservedOutputIds: ReadonlyMap<string, readonly string[]> | undefined;
+  if (source.kind === 'start') {
+    try {
+      reservedOutputIds = (await reserveDeclaredKbOutputIds(node, ctx, lane.path))?.idsByType;
+    } catch (cause) {
+      return {
+        stepId: node.id,
+        status: 'failed',
+        startedAt: ctx.now(),
+        finishedAt: ctx.now(),
+        detail: emptyDetail,
+        failure: refusalFailure(cause),
+      };
+    }
+  }
   return runLaneLifecycle(
     node,
     ctx,
     ctx.now(),
-    { kind: 'agent', session: emptySessionResult() },
-    (workLane, workBaseSha) => runAgentWork(node, ctx, workLane, workBaseSha, source),
+    emptyDetail,
+    (workLane, workBaseSha) =>
+      runAgentWork(node, ctx, workLane, workBaseSha, source, { reservedOutputIds }),
     { lane, baseSha },
   );
 }

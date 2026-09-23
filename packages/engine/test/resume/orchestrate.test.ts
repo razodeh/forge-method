@@ -182,6 +182,62 @@ function agentNode(stepId: string, produces: readonly string[] = []): StepNode {
   });
 }
 
+/** A minimal but schema-VALID ADR document (`08` §8.4, `packages/templates/templates/artifacts/ADR.md`'s
+ * own shape) at `id` -- `PLAN-M14.md` P8's own resume test needs the output check (P7) to actually pass
+ * on both the reserved id's own document and a still-committed leftover one from before the crash. */
+function validAdrDocument(id: string): string {
+  return [
+    '---',
+    `id: ${id}`,
+    'type: ADR',
+    'schemaVersion: 1',
+    'title: Use the reserved id',
+    'status: accepted',
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    'category: architecture',
+    'deciders: [architect]',
+    'date: 2026-01-15',
+    'reversibility: medium',
+    'blast_radius: []',
+    "revisit_trigger: 'n/a'",
+    'supersedes: []',
+    'superseded_by: null',
+    'related: []',
+    'diagrams: []',
+    "framework: 'n/a'",
+    '---',
+    '',
+    '## Context',
+    '',
+    'x',
+    '',
+    '## Options considered',
+    '',
+    'x',
+    '',
+    '## Decision',
+    '',
+    'x',
+    '',
+    '## Diagram',
+    '',
+    'x',
+    '',
+    '## Consequences',
+    '',
+    'x',
+    '',
+    '## Reversal plan',
+    '',
+    'x',
+    '',
+  ].join('\n');
+}
+
 describe('resumeRun', () => {
   it('resumes an in-flight session without re-running any prior work, when the adapter supports resume', async () => {
     const runId = 'run-resume';
@@ -241,6 +297,83 @@ describe('resumeRun', () => {
     await expect(readFile(path.join(lane.path, 'resumed.txt'), 'utf8')).resolves.toBe(
       'finished after resume\n',
     );
+  });
+
+  it('a crash-resume reroll of a step declaring a KB output reserves above what its OWN existing lane already holds (PLAN-M14.md P8)', async () => {
+    const runId = 'run-reroll-kb';
+    const stepId = 'wf:write-adr';
+    const projectRoot = await createTempRepo('reroll-kb');
+    const laneId = `${runId}-${slugifyStepId(stepId)}`;
+    const lane = await createLaneWorktree(projectRoot, { runId, stepId, integrationBase: 'main' });
+    const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: lane.path });
+    // Leftover from before the crash: the pre-crash attempt got far enough to COMMIT an ADR to its own
+    // lane branch (`runAgentWork`'s own "partial work before an adapter session crash" path -- a real
+    // crash can land after real tool-use writes already reached the lane and were committed) before the
+    // process itself died with no `StepSucceeded`/`StepFailed` ever written. `rollbackLaneToBase(lane,
+    // 'HEAD')` keeps whatever is already committed at HEAD (it only discards UNCOMMITTED changes), so
+    // this survives the reroll's own rollback -- and a brand-new process's own empty in-memory
+    // reservation table cannot otherwise see it, which is exactly why the reservation must scan the
+    // step's own existing lane.
+    await mkdir(path.join(lane.path, 'docs/forge/kb/decisions'), { recursive: true });
+    await writeFile(
+      path.join(lane.path, 'docs/forge/kb/decisions/ADR-0004-leftover.md'),
+      validAdrDocument('ADR-0004'),
+    );
+    await execa('git', ['add', '-A'], { cwd: lane.path });
+    await execa('git', ['commit', '--quiet', '-m', 'partial work before the crash'], {
+      cwd: lane.path,
+    });
+    await writeUnresolvedStepLog(
+      projectRoot,
+      runId,
+      stepId,
+      laneId,
+      baseSha.trim(),
+      'session-invalid',
+    );
+
+    const adapter = withCapabilities({ sessionResume: false });
+    adapter.script(() => true, {
+      text: ['wrote the ADR'],
+      writeFiles: [
+        {
+          relativePath: 'docs/forge/kb/decisions/ADR-0005-x.md',
+          content: validAdrDocument('ADR-0005'),
+        },
+      ],
+    });
+
+    const steps = new Map([
+      [
+        stepId,
+        node({
+          id: stepId,
+          kind: 'agent',
+          agent: toAgentId('architect'),
+          brief: 'write the ADR',
+          outputs: [{ type: 'ADR' }],
+        }),
+      ],
+    ]);
+    const ctx: ResumeContext = { ...createTestContext({ projectRoot, adapter, runId }), steps };
+
+    const runState = await resumeRun(runId, ctx);
+
+    expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
+    // The reserved id the rerolled session's own prompt named is ABOVE the leftover ADR-0004 that only
+    // its own lane's working tree ever held -- proving the reservation scanned "the step's own existing
+    // lane", not just the project root and the integration worktree (which hold nothing here).
+    const promptPath = path.join(
+      projectRoot,
+      '.forge/state/runs',
+      runId,
+      'steps',
+      slugifyStepId(stepId),
+      'prompt.md',
+    );
+    const prompt = await readFile(promptPath, 'utf8');
+    expect(prompt).toContain('ADR-0005');
+    expect(prompt).not.toContain('ADR-0001');
   });
 
   it('rolls the lane back and re-runs from scratch when the adapter does not support session resume, discarding pre-crash content', async () => {

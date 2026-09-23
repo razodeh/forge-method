@@ -72,6 +72,13 @@ export interface AssembleInput {
    * Without it a step keeps write access only when its `StepNode` claim is non-empty (`PLAN-M13.md` P36, and for a
    * tainted step `restrictGrantForTaint`). */
   readonly callerConfinesWrites?: boolean | undefined;
+  /** The ids `reserveDeclaredKbOutputIds` (`dispatch/output-ids.ts`, `PLAN-M14.md` P8) already reserved
+   * for this step's declared KB outputs, keyed by `type` (`"ADR"`, not the artifact's own `idPrefix`) --
+   * reserved BEFORE this call, so block [5] can tell the agent the id (or block of ids) to use, before
+   * any lane exists. `undefined` for every caller but `runAgentStep`'s fresh path and a crash-resume
+   * reroll (`@forge/engine/resume`): a step with no KB output, a participant session, and a resumed
+   * (not rerolled) session all assemble with none, exactly as before this piece. */
+  readonly reservedOutputIds?: ReadonlyMap<string, readonly string[]> | undefined;
 }
 
 export interface AssembledSession {
@@ -603,6 +610,10 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
         subtype: output.subtype,
         path: declaredOutputPath(output.type, docRoots),
         cardinality: output.cardinality,
+        // The id (or block of ids) already reserved for this declared output, if any (`PLAN-M14.md` P8):
+        // `undefined` for every non-KB output, and for a KB output when the caller reserved none (every
+        // assembly but `runAgentStep`'s fresh path and a crash-resume reroll).
+        reservedIds: input.reservedOutputIds?.get(output.type),
       })),
     },
     agent,

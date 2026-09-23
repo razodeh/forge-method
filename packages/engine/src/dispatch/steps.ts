@@ -40,6 +40,7 @@ import { GateNotFoundError } from './facades.ts';
 import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
 import { resolveLaneBase } from './lane-base.ts';
+import { reserveDeclaredKbOutputIds, type KbOutputReservation } from './output-ids.ts';
 import { docRootsOf, outputGlob, resolveStepClaim, verifyDeclaredOutputs } from './outputs.ts';
 import { clearResultRecord, writeResultRecord, type ResultRecordRef } from './result-record.ts';
 import { commandStepEnvironment } from './elicit.ts';
@@ -460,6 +461,13 @@ export interface AgentWorkOptions {
   /** Overrides the key `prompt.briefs.<key>` is looked up by (see `AssembleInput.briefKey`). */
   readonly briefKey?: string | undefined;
   readonly assembled?: AssembledSession | undefined;
+  /** Forwarded to `tryAssemble` as `AssembleInput.reservedOutputIds` when this call still needs to
+   * assemble (`assembled` is `undefined`): a crash-resume reroll (`@forge/engine/resume`'s own
+   * `runAgentAttempt`) already has a real lane and reserves through it directly, so it passes this
+   * rather than going through `runAgentStep`'s own pre-lane path a second time. Ignored once `assembled`
+   * is supplied (`runAgentStep`'s own fresh path): that prompt already has whatever it was assembled
+   * with. */
+  readonly reservedOutputIds?: ReadonlyMap<string, readonly string[]> | undefined;
 }
 
 /** What `runAgentWork` is about to hand the adapter: a freshly assembled prompt, or a resume of an existing
@@ -485,7 +493,13 @@ async function prepareSession(
   }
   const result =
     options.assembled === undefined
-      ? await tryAssemble({ node, ctx, taskText: options.taskText, briefKey: options.briefKey })
+      ? await tryAssemble({
+          node,
+          ctx,
+          taskText: options.taskText,
+          briefKey: options.briefKey,
+          reservedOutputIds: options.reservedOutputIds,
+        })
       : ({ ok: true, value: options.assembled } as const);
   if (!result.ok) return result;
   try {
@@ -712,6 +726,24 @@ export async function runAgentStep(
     });
   }
 
+  // Reserved before assembly, before any lane exists (`PLAN-M14.md` P8, `SPEC-QUESTIONS.md` Q232
+  // decision 2): a declared KB output's own id must already be in block [5] of the prompt the session
+  // reads, not invented by the session itself, which two concurrent steps could pick identically.
+  // Exhaustion (`RUN-109`) is refused the identical way a missing agent/brief or an unmapped model is --
+  // as a typed, `source: 'prompt'` outcome, nothing dispatched, no worktree.
+  let reservation: KbOutputReservation | undefined;
+  try {
+    reservation = await reserveDeclaredKbOutputIds(node, ctx);
+  } catch (cause) {
+    return failed(
+      node.id,
+      startedAt,
+      ctx.now(),
+      { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      refusalFailure(cause),
+    );
+  }
+
   // Assembled before a lane is created: a step refused for a missing agent/brief, an unmapped model or a
   // grant above its ceiling must leave no worktree behind, and dispatches nothing.
   const assembled = await tryAssemble({
@@ -719,8 +751,11 @@ export async function runAgentStep(
     ctx,
     taskText: options.taskText,
     briefKey: options.briefKey,
+    reservedOutputIds: reservation?.idsByType,
   });
   if (!assembled.ok) {
+    // This attempt will never get a lane: the reservation it made (if any) is pending forever otherwise.
+    reservation?.release();
     return failed(
       node.id,
       startedAt,
@@ -729,6 +764,29 @@ export async function runAgentStep(
       assembled.failure,
     );
   }
+
+  // The lane is created HERE, not left to `runLaneLifecycle`'s own internal `createLaneForStep` call, so
+  // a reservation this call made can be bound to it (or released, if creation itself fails) before
+  // `runLaneLifecycle`'s commit/claim/output-check sequence ever runs -- `runLaneLifecycle`'s own
+  // `existing` parameter (`@forge/engine/resume`'s own crash-resume reroll path already reuses it the
+  // identical way) then runs against this exact lane rather than creating a second one.
+  const created = await createLaneForStep(node, ctx);
+  if (!created.ok) {
+    // No lane exists, and none ever will for this attempt: the reservation it made (if any) would
+    // otherwise be pending forever.
+    reservation?.release();
+    return failed(
+      node.id,
+      startedAt,
+      ctx.now(),
+      { kind: 'agent', session: EMPTY_SESSION_RESULT },
+      created.failure,
+    );
+  }
+  // From here on this reservation is governed by the lane's own liveness (`existsSync`), exactly like
+  // `REVIEW-NNN`'s always was (`output-ids.ts`'s own doc comment): "pending" ends the moment a real lane
+  // exists.
+  reservation?.bind(created.lane.path);
 
   return runLaneLifecycle(
     node,
@@ -748,6 +806,7 @@ export async function runAgentStep(
           briefKey: options.briefKey,
         },
       ),
+    { lane: created.lane, baseSha: created.baseSha },
   );
 }
 
