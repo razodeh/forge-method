@@ -2141,11 +2141,19 @@ export const ERROR_CODES = {
     message: (d: { stepId: string; idPrefix: string; idWidth: number }) => {
       // Every interpolation goes through `show` (this file's own top-of-file rule) -- `idPrefix`
       // directly, and `idWidth` guarded before it drives arithmetic/`.repeat`: a revived log line
-      // missing either key must render `<missing>`, never the literal "undefined" a bare `${d.key}`
-      // (or `NaN` from `10 ** undefined`) would produce.
+      // missing either key, or one carrying a value no real registry `idWidth` ever does (negative,
+      // fractional, non-finite, or absurdly large -- `'N'.repeat` throws past a few hundred), must
+      // render `<missing>`, never the literal "undefined" a bare `${d.key}` would produce or a raw
+      // crash (a second critic round: the upper bound is real, not merely the shape check the first
+      // round fixed). No real registry `idWidth` (`18` §18.7: always 3 or 4) is anywhere near this
+      // bound; it exists only for a revived/malformed record, the identical reason the shape checks
+      // beside it exist.
       const prefix = show(d.idPrefix);
       const validWidth =
-        typeof d.idWidth === 'number' && Number.isInteger(d.idWidth) && d.idWidth > 0;
+        typeof d.idWidth === 'number' &&
+        Number.isInteger(d.idWidth) &&
+        d.idWidth > 0 &&
+        d.idWidth <= 15;
       const placeholder = validWidth ? 'N'.repeat(d.idWidth) : show(undefined);
       const max = validWidth ? String(10 ** d.idWidth - 1) : show(undefined);
       return `Step ${show(d.stepId)} needs a new ${prefix}-${placeholder} id, but all ${max} ${prefix}-${placeholder} numbers are in use.`;

@@ -420,6 +420,22 @@ describe('every declared code renders end to end', () => {
     // absent rather than as the string "undefined".
     expect(new ForgeError('CFG-001', { path: 'x' }).message).toContain('<missing>');
   });
+
+  it('RUN-109 degrades to <missing> rather than crashing for an idWidth no real registry entry ever has (PLAN-M14.md P8, critic round 2)', () => {
+    // `18` §18.7's own registry only ever declares `idWidth: 3` or `4` -- these shapes can only reach
+    // this template from a revived/malformed record, the identical threat model the rest of this
+    // message's own guard already covers (a missing, negative, fractional or non-finite idWidth).
+    for (const idWidth of [1_000_000_000, Number.POSITIVE_INFINITY, 16]) {
+      const message = new ForgeError('RUN-109', { stepId: 'wf:x', idPrefix: 'ADR', idWidth })
+        .message;
+      expect(message, `idWidth ${String(idWidth)}`).toContain('<missing>');
+      expect(message, `idWidth ${String(idWidth)}`).not.toContain('undefined');
+    }
+    // A real registry width (18 §18.7: ADR is 4) still renders the real digits, not <missing>.
+    const real = new ForgeError('RUN-109', { stepId: 'wf:x', idPrefix: 'ADR', idWidth: 4 }).message;
+    expect(real).toContain('ADR-NNNN');
+    expect(real).not.toContain('<missing>');
+  });
 });
 
 describe('detail values of any shape render on one line', () => {
