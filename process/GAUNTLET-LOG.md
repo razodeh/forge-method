@@ -14868,3 +14868,79 @@ reads the literal, unrewritten `produces`; brief prose still names the default l
 another section's own default is neither refused nor documented (two sections could physically collide);
 `compile-prompt.ts`'s display-unescape can mis-render an author's own minimatch escape syntax elsewhere in
 a produces entry (round 2, no shipped brief does this, no enforcement impact).
+
+## M14 P9 — The integration branch is fast-forwarded to `main` at run start; a diverged branch refuses the run (`cli/commands/run/{context,run,index}.ts`, `core/errors/codes.ts`, new/edited tests in `cli/test/commands/run/{context,run,resume}.test.ts`, `cli/test/bin-run-failures.test.ts`, `core/test/errors.test.ts`)
+
+Closes `Q221`'s own disclosed item (d) per `Q232` decision 18's binding text: "The integration branch is
+fast-forwarded to `main` at run start and the run refuses if they have diverged (a typed failure naming
+the two tips)." Only the fast-forward half; the `agent` conflict-policy resolver is a separate, later
+piece (P38). New `syncIntegrationBranchToTrunk` decides one of four outcomes purely from `git merge-base
+--is-ancestor`, never from attempting a merge and reading its own exit code/message text: equal tips,
+no-op; integration behind trunk, a real `git merge --ff-only <trunk sha>` (never `git reset --hard`, the
+only `git merge` call this function ever makes, run only once the ancestor check has already proven it
+must succeed — `MERGE_HEAD` is never created under any outcome); integration ahead of trunk, no-op; a
+genuine divergence, refused with a new `RUN-107` naming the branch, the trunk, and both tips. A dirty
+integration worktree (the SEPARATE worktree, never the project's own tree) is refused first with a
+distinct `VcsError` (`VCS-INTEGRATION-DIRTY`, never the project-tree `VCS-DIRTY-TREE`/`VCS-010`), so no
+merge is ever attempted against it. `runWorkflow` calls this right after the run lock, inside the same
+`try` the lock's own `finally` covers, before the manifest or `last-run.json` are ever written — a
+refusal leaves nothing behind for the run at all. The manifest gains `integrationTipAtStart`/
+`syncedFromTrunk: sha | null`. Only `runWorkflow` syncs: `resumeWorkflow` never calls it (confirmed across
+a real crash-then-resume with main and the integration branch diverged since the crash), and `forge
+merge`/`review`/`debug`/`session`/`panel` build contexts of their own without ever calling it.
+`ensureIntegrationWorktree`'s repair behaviour, `integrationBranchFor`, `--dry-run`, and the literal trunk
+name are unchanged.
+
+**Round 1 (fresh, context-free): 2 major, 2 minor, all fixed.** **Major 1:** a test titled "run 1 lands a
+lane, a human commits directly to main, run 2's first session already sees it" did not, in fact, land a
+lane for run 1 — it silently used a lane-less workflow, because landing a REAL lane first leaves the
+integration branch one commit ahead of `main` already, so a human's subsequent direct commit to `main` is
+then a genuine structural divergence, correctly refused by `RUN-107` — the far more common real case (a
+lane already landed) was left unproven in either direction, and the misleading title asserted the
+opposite of what actually happens then. Fixed: renamed the existing test to state what it actually proves,
+and added a new test proving the companion case directly (a lane lands for real, a human commits to
+`main`, run 2 correctly refuses with `RUN-107`, no half-merge). **Major 2:** `isAncestor`'s own non-0/1
+exit-code handling (a genuine `git merge-base --is-ancestor` failure, never silently read as "not an
+ancestor") had zero test coverage — `syncIntegrationBranchToTrunk`'s real callers only ever hand it shas
+already proven to resolve, so the failure path is unreachable through the public entry point; the critic
+reproduced the real failure directly (a nonexistent ref → exit 128, not 0/1) and confirmed a mutation
+collapsing every nonzero exit into "not an ancestor" left all 88 affected tests green. Fixed: exported
+`isAncestor` (the same "directly testable" reason `isTargetRegisteredWorktree` already is) and added a
+test forcing the real failure, asserting `RUN-055`. Two minors fixed alongside: `RUN-107`'s message
+hardcoded the literal word "main" instead of the actual `trunk` parameter (added `trunk` to its details,
+genericized the static remedy); the "`forge merge` never re-syncs" guarantee was only tested by
+replicating `runMergeCommand`'s own call sequence by hand (added a real-subprocess `forge merge --all`
+test driving the actual CLI binary against a genuinely diverged branch).
+
+**Round 2 (fresh, context-free, scoped to the round-1 fix commit): 0 blocking, 0 major — a genuine PASS —
+2 minor, both fixed.** Independently re-derived, not merely re-read, all four round-1 fixes (reconstructed
+the divergence-after-a-landed-lane commit graph by hand; confirmed the bogus-sha reproduction hits
+`RUN-055` specifically, not `ENOENT`; traced `trunk` end to end through the registry and confirmed the
+"renders end to end" test could not silently pass with a missing key; traced `runMergeCommand` line by
+line to confirm the subprocess test exercises the real git-touching calls). Independently reconstructed
+every one of the plan's own guarantees fresh rather than trusting the commit's own prose, and found them
+all true. Two minors: `VCS-INTEGRATION-DIRTY`'s message joined its entire `dirtyFiles` list with no cap,
+unlike the parallel `VCS-DIRTY-TREE`/`VCS-010` path — this code has no downstream wrapper to truncate it
+for it, so the cap now happens at the throw site (reusing the same exported constant), `details.dirtyFiles`
+stays the full list, proven by a new 15-dirty-file test; a doc-comment sentence broke awkwardly across a
+line boundary from the round-1 edit, reflowed. No round 3: round 2 found nothing blocking or major, and
+both new minors were fixed.
+
+**What the critic caught that the builder missed:** both majors in round 1 (a misleading test title
+whose own construction masked what it didn't prove; an entirely untested failure-discrimination branch).
+**What the builder got right without needing a critic to say so:** every git-safety constraint the brief
+called out by name (no `reset --hard`, no bare `merge`, no `MERGE_HEAD` ever left behind), confirmed true
+by both critic rounds' own independent reconstruction rather than found wanting.
+
+**Mutation evidence, hand-run and reverted.** Sync call removed from `runWorkflow`: the hotfix-visibility
+test fails. The ancestor-branching logic replaced with a blind `git reset --hard`: the "integration ahead"
+test fails (its own extra commit discarded). The diverged refusal replaced with a real `git merge`
+(no `--ff-only`): the diverged unit test fails (`RUN-107` never thrown). The manifest write moved before
+the sync: the "nothing exists for a refused run" test fails.
+
+**Left open (matches the plan's own "Discloses" list, each independently re-confirmed by round 2).**
+Trunk stays the literal `main`; a run never merges `main` into a diverged branch on its own; `deliver`
+still folds nothing back — proven, not merely stated, by round 1's own new test; the sync runs with the
+run lock held before the merge queue exists, so `forge merge` is not excluded by it, though `forge merge`
+never syncs at all regardless (proven by both a unit-level and a real-CLI test); a project without `main`
+gets a clear `VcsError`.

@@ -20254,3 +20254,156 @@ interaction/swarm-review-step}.test.ts`, `packages/agents/test/prompt/compile-pr
 `packages/cli/test/commands/{run/output-claim,run/context,loop/lane-guard}.test.ts`,
 `packages/engine/test/{rca/fix-scan,security/taint-grant}.test.ts`, `test/{write-implies-claim,
 brief-write-paths-in-claim}.test.ts`.
+
+## Q240 — M14 P9: the integration branch is fast-forwarded to `main` at run start, a diverged branch refuses the run — a two-round critic loop found one real test-rigor gap and three genuine coverage/precision gaps, all fixed
+
+**Context.** `PLAN-M14.md` P9, closing `SPEC-QUESTIONS.md` Q221's own disclosed item (d) ("The integration
+branch is never re-synced with `main` across runs (it accumulates); lanes used to see `main`'s newer
+commits, they now see the integration branch. A fast-forward of an unmerged-into-nothing integration
+branch to `main` at run start... is the fix") per `Q232` decision 18's own binding text: "The integration
+branch is fast-forwarded to `main` at run start and the run refuses if they have diverged (a typed failure
+naming the two tips)." Only the fast-forward-at-run-start half; the `agent` conflict-policy resolver
+(`Q221`/`Q226` b) is a separate, later piece (P38), not built here.
+
+**Built.** A new `syncIntegrationBranchToTrunk(integrationPath, trunk)` (`context.ts`) decides one of four
+outcomes purely from `git merge-base --is-ancestor` (never from attempting a merge and reading its own
+exit code or message text, the same locale-fragile message-matching `ensureIntegrationWorktree`'s own
+TOCTOU recovery already avoids): equal tips, no-op; integration behind trunk, a real `git merge --ff-only
+<trunk sha>` (never `git reset --hard`, and the only `git merge` call this function ever makes, run only
+once the ancestor check has already proven it must succeed, so `MERGE_HEAD` is never created under any
+outcome); integration ahead of trunk, no-op, its own extra commits untouched; diverged (neither tip is an
+ancestor of the other), refused with a new `RUN-107` (`packages/core/src/errors/codes.ts`), naming the
+branch, the trunk, and both tips, remedy: merge by hand or delete the branch once delivered. A dirty
+integration worktree (the SEPARATE worktree, never the project's own tree — that is `assertCleanWorkingTree`'s
+job, already wired in before this) is refused first with a distinct `VcsError` (`VCS-INTEGRATION-DIRTY`,
+never the project-tree-specific `VCS-DIRTY-TREE`/`VCS-010`), so no merge is ever attempted against it.
+
+`runWorkflow` (`run.ts`) now resolves the integration branch and calls `ensureIntegrationWorktree` itself,
+right after the run lock (inside the same `try` the lock's own `finally` already covers, so a refusal
+there releases the lock rather than leaking it), then the new sync, before the manifest or `last-run.json`
+are ever written — a refusal (`RUN-107` or the dirty-worktree `VcsError`) therefore leaves nothing behind
+for the run at all: no `runs/<id>/`, no changed `last-run.json`, and, once `finally` runs, no held lock.
+The manifest gains `integrationTipAtStart`/`syncedFromTrunk: sha | null`, recording the sync's own
+outcome. Only `runWorkflow` syncs: `resumeWorkflow` continues a run against whatever the branch was synced
+to when it started (confirmed: it imports only `buildRunEngineContext`, never the new sync function, even
+across a real crash-then-resume where main and the integration branch have since diverged), and `forge
+merge`/`forge review`/`debug`/`session`/`panel` build a context of their own without ever calling it.
+`ensureIntegrationWorktree`'s own repair behaviour, `integrationBranchFor`, `--dry-run`, and the literal
+trunk name (`'main'`) are unchanged — `buildRunEngineContext` still calls `ensureIntegrationWorktree`
+itself and finds the worktree already healthy (idempotent), since `runWorkflow` already ensured and synced
+it first.
+
+**Round 1 (fresh, context-free, dispatched with the diff and spec text, no rationale): 2 major, 2 minor,
+all fixed (`d2aec9d`).**
+
+1. **Major — a misleadingly-titled test claimed to prove the wrong thing.** The test titled "run 1 lands
+   a lane, a human commits directly to main, run 2's first session already sees it" (wording lifted
+   near-verbatim from the plan's own "Tests first" bullet) did not, in fact, land a lane for run 1 — it
+   deliberately used a workflow with no lane-creating step, an adjustment the builder made silently after
+   discovering that landing a REAL lane first (the standard fixture's own merge-less `implement` lane,
+   auto-integrated by the engine the moment it succeeds, `06` §6.4) leaves the integration branch one
+   commit ahead of `main` already, so a human's subsequent direct commit to `main` is then a genuine,
+   structural divergence — correctly refused by `RUN-107`, not silently absorbed. The far more common real
+   case (a lane already landed before the human's commit) was left unproven in either direction, and the
+   test's own title asserted the opposite of what actually happens then. Fixed: renamed the existing test
+   to state accurately what it proves (nothing has landed on the integration branch yet), and added a new
+   test proving the companion case directly — a lane lands for real, a human commits `hotfix.txt` to
+   `main`, run 2 correctly refuses with `RUN-107`, the integration branch is left exactly where run 1's
+   own merge commit put it, and `git status`/`MERGE_HEAD` stay clean.
+2. **Major — `isAncestor`'s own non-0/1-exit-code handling had zero test coverage.** The distinction
+   between a real "not an ancestor" answer (exit 1) and a genuine `git merge-base --is-ancestor` failure
+   (any other exit, reported `RUN-055`, never silently read as "not an ancestor") is exactly the kind of
+   safety property this piece's own brief called out as critic bait — and nothing exercised it:
+   `syncIntegrationBranchToTrunk`'s real callers only ever hand `isAncestor` shas `resolveRevision` has
+   already proven resolve to real objects, so the failure path is not reachable through the public entry
+   point at all. The critic reproduced the real failure directly (`git merge-base --is-ancestor
+   <nonexistent-ref> HEAD` → exit 128, not 0/1) and confirmed that mutating the exit-1 branch to catch
+   every nonzero code left all 88 affected tests green. Fixed: exported `isAncestor` (the identical
+   "directly testable" reason `isTargetRegisteredWorktree` is already exported for) and added a test that
+   forces the real failure with a syntactically valid but non-existent sha, asserting `RUN-055`.
+3. **Minor, fixed — `RUN-107`'s message hardcoded the literal word "main"** instead of the actual `trunk`
+   parameter `syncIntegrationBranchToTrunk` was called with, unlike the sibling `VCS-INTEGRATION-DIRTY`
+   message a few lines above, which correctly interpolates it. Not reachable today (production always
+   passes `TRUNK`/`'main'`, an invariant this piece is explicitly forbidden from changing) but a landmine
+   for a future non-`main` trunk. Fixed: added `trunk` to `RUN-107`'s details and interpolated it into the
+   message; the remedy (a static string in this registry, never a function of details) was genericized to
+   not assume `'main'`.
+4. **Minor, fixed — the "`forge merge` never re-syncs" guarantee was tested only by replicating
+   `runMergeCommand`'s own call sequence by hand**, never by driving the real CLI entry point, so a future
+   change adding a sync call inside `runMergeCommand` itself would not have been caught. Fixed: a new
+   real-subprocess `forge merge --all` test (against the actual `forge` binary, `execFileSync`, not an
+   in-process call) drives a genuinely diverged integration branch through the real command and confirms
+   it exits cleanly with the branch left exactly where the test's own manual commit put it.
+
+**Round 2 (fresh, context-free, scoped to the round-1 fix commit): 0 blocking, 0 major — a genuine PASS —
+2 minor, both handled (`1228dd1`).** Independently re-derived, not merely re-read, all four round-1 fixes:
+reconstructed the divergence-after-a-landed-lane commit graph by hand and confirmed the test fails for the
+claimed structural reason, not an unrelated one; confirmed the bogus-sha reproduction hits `RUN-055`
+specifically (not `ENV-004`/`ENOENT`) and that `isAncestor`'s wider export reaches no code outside this
+module and the test file; traced `RUN-107`'s `trunk` end to end through `codes.ts`/`context.ts`/
+`SAMPLE_DETAILS` and confirmed the registry-wide "renders end to end" test could not silently pass with a
+missing key (`renderValue(undefined)` renders the literal string `'<missing>'`, asserted against); traced
+`runMergeCommand` line by line to confirm the new subprocess test genuinely exercises
+`integrationBranchOfRun`/`ensureIntegrationWorktree`, not an early, unrelated exit. Independently
+reconstructed the plan's own guarantees fresh (human-commits-then-sees-it in both variants, no
+`MERGE_HEAD`/clean status after a diverged refusal, the dirty-worktree `VcsError`, sync-before-manifest/
+lock ordering, `ensureIntegrationWorktree`/`integrationBranchFor`/`--dry-run`/trunk-name unchanged) and
+found them all true by direct reconstruction, not by trusting the commit's own prose. Two minors: (a)
+`VCS-INTEGRATION-DIRTY`'s message joined the entire `dirtyFiles` list with no cap, unlike the parallel
+`VCS-DIRTY-TREE`/`VCS-010` path (`vcs-refusal.ts`'s own `MAX_DIRTY_FILES_LISTED`) — this code has no such
+downstream wrapper (it falls through that function's generic branch, printed unchanged), so the cap now
+happens at the throw site, reusing the same exported constant; `details.dirtyFiles` stays the full,
+untruncated list, and a new test (15 dirty files) proves the message names the true count and "and 5
+more," never an excluded file's name, while `details` still holds all 15. (b) A doc-comment sentence broke
+awkwardly across a line boundary from the round-1 trunk-parameterization edit; reflowed. No round 3
+dispatched: round 2 found nothing blocking or major, and both new minors are fixed — the loop's own
+convergence criterion.
+
+**Mutation evidence (the plan's own list, hand-run and reverted, not merely asserted).** Sync call removed
+from `runWorkflow` (replaced with a fixed placeholder result): the hotfix-visibility test fails (the
+lane no longer contains `hotfix.txt`). The whole ancestor-branching block replaced with a blind `git reset
+--hard <trunk sha>`: the "integration ahead of trunk" test fails (its own extra commit is discarded).
+The diverged branch replaced with a real `git merge <trunk sha>` (no `--ff-only`) instead of refusing:
+the diverged unit test fails (`RUN-107` never thrown). The manifest write moved to before the sync call:
+the "nothing exists for the run" test fails (a manifest exists for a run that was refused). Each mutation
+was applied to the real source, the specific test confirmed red, then reverted and the full scoped suite
+confirmed green again before moving to the next.
+
+**Clean-worktree verification (rule 14/15), all three commits.** `git worktree add <scratch> <sha>`,
+`pnpm install --offline --frozen-lockfile` (~4-5s), then in that worktree: `pnpm typecheck` (21/21
+packages, 0 errors, every time); the scoped suite (context/lane-integration/run/resume/bin-run-failures,
+plus `errors.test.ts`, 538-545 tests depending on the commit, every relevant one green — the two `RUN-109`
+failures visible at the second commit belonged entirely to concurrent, unrelated P8 work already merged to
+`main`, independently fixed by that piece before the third commit's own clean-worktree check, at which
+point all 545 pass); `pnpm run boundaries` (clean, every time); `pnpm lint` (eslint + prettier, the whole
+repo, clean every time — the shared working tree's own live formatting warnings at each intermediate point
+belonged to this piece's own not-yet-`prettier --write`'d hunks, isolated with `npx prettier --write` on
+owned files only, never a blanket run).
+
+**Shared-file hunk isolation (rule 5/14).** `context.ts`, `context.test.ts` and `codes.ts` each briefly
+carried a concurrent M14 piece's own unrelated hunk (a `DocRoots.plans` field in `context.ts`/
+`context.test.ts`, `RUN-109` in `codes.ts`) in the same live working tree while this piece was mid-flight.
+Each commit was built by isolating this piece's own hunks with a hand-built patch (`git diff HEAD -- f`,
+the foreign hunk removed, `git apply --cached`, after `git reset HEAD -- f` when the foreign hunk had
+already been staged by its own author) rather than `git add`-ing the whole file — confirmed clean by
+`git diff --cached` showing no foreign content before each commit, and by the clean-worktree check
+afterward (which, built from committed history alone, never saw the foreign hunks at all).
+
+**Disclosed (matches the plan's own "Discloses" list).** Trunk stays the literal `main`; a run never
+merges `main` into a diverged integration branch on its own; `deliver` still folds nothing back — proven,
+not merely stated, by the round-1 fix's own new test (a landed lane's own merge commit genuinely diverges
+the integration branch from a subsequently-hotfixed `main`, correctly refused); the sync runs with the run
+lock held before the merge queue exists, so `forge merge` is not excluded by it (unaffected in practice:
+`forge merge` never syncs at all, proven end to end by both the unit-level and the new real-CLI test); a
+project without `main` gets a clear `VcsError` (`resolveRevision`'s own wrapping, exercised directly).
+
+**Verification scope (owner-approved cost cut).** `packages/cli/test/commands/run/{context,
+lane-integration,run,resume}.test.ts`, `packages/cli/test/bin-run-failures.test.ts`,
+`packages/core/test/errors.test.ts` (the registry-wide "every code renders" test this piece's own new
+`RUN-107` entry must satisfy); `pnpm typecheck` (21/21), `pnpm run boundaries`, `eslint --max-warnings 0`
+and `prettier --check` on every file this piece owns (and, at each clean-worktree check, the whole repo).
+Verified in a clean `git worktree` of each of the three commits.
+
+**Files.** `packages/cli/src/commands/run/{context,run,index}.ts`; `packages/core/src/errors/codes.ts`;
+new tests and edits across `packages/cli/test/commands/run/{context,run,resume}.test.ts`,
+`packages/cli/test/bin-run-failures.test.ts`, `packages/core/test/errors.test.ts`.
