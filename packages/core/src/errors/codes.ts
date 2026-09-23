@@ -2111,7 +2111,7 @@ export const ERROR_CODES = {
     message: (d: { max: number }) =>
       `reports/gates/ already holds the highest GateReport id this project's idWidth allows (GATE-${show(d.max)}); no id is free for a new one.`,
     remedy:
-      'Archive or remove old reports under reports/gates/ (GateReport ids are never reused once freed), ' +
+      'Remove or archive old reports under reports/gates/ (GateReport ids are never reused once freed), ' +
       "or widen the GateReport registry entry's idWidth (schemas/src/registry/artifact-types.ts) if the " +
       'project genuinely needs more than 999 gate reports.',
   },

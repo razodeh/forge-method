@@ -121,6 +121,9 @@ const SAMPLE_DETAILS = {
   // days of its own grant; an `--owner` that is not a real identifier.
   maxDays: 90,
   owner: 'radwan',
+  // `GATE-514` (`PLAN-M14.md` P17): `reports/gates/` already holds the highest `GateReport` id a
+  // 3-digit `idWidth` allows.
+  max: 999,
   // `RUN-104` (`PLAN-M14.md` P3): the claim policy an out-of-claim write violated.
   policy: 'strict',
   // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas.
