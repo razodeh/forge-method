@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import * as YAML from 'yaml';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionRequest } from '@forge/adapter-kit';
 import { ProjectPaths } from '@forge/core';
@@ -57,9 +57,19 @@ const ANSWERS = {
 } as const;
 
 const dirs: string[] = [];
-afterAll(async () => {
+/** Each test's own clone directory is removed as soon as that test finishes, not batched into one
+ * `afterAll` at the end of the file — a stray directory from an early test should not still be on
+ * disk while a much later test in the same file is still running under load. The template project
+ * `beforeAll` builds (below) is not in here: it lives for the whole file and is removed by its own
+ * `afterAll`. */
+afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
+}, 20_000);
+
+/** How many times `runInit` has actually run in this file. `M14 P45`'s guard (bottom of file) asserts
+ * this stays 1: nine separate `forge init`-equivalents, one per test, is what pushed this file's
+ * isolated duration toward the `vitest.config.ts:75-76` e2e cap under load. */
+let runInitCallCount = 0;
 
 /** One valid KB constraints entry (`08` §8.3). */
 function constraintEntry(
@@ -140,12 +150,79 @@ interface Project {
   readonly deps: RunDeps;
 }
 
+/**
+ * Builds the ONE initialised, committed base project this file's tests clone from. `runInit` does
+ * real fs + git work (`writeInitTree`, `git init`, a commit); doing that once here, in `beforeAll`,
+ * rather than once per test, is the difference between this file's isolated duration and the
+ * `vitest.config.ts:75-76` e2e cap under load (`M14-AGENT-NOTES.md`). Nothing about it varies per
+ * test: every `createProject` call below asks for the same name/level/`--yes`, and the one thing
+ * that does vary per test — `options.constraintFiles` — only shapes what the fake adapter *scripts*
+ * for `runWorkflow`, which runs later, well after `runInit` has already returned.
+ */
+async function buildTemplateProject(): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'forge-intake-template-'));
+  const adapter = new FakePlatformAdapter(
+    {},
+    { strict: { operatingContract: OPERATING_CONTRACT }, models: Object.values(TIERS) },
+  );
+  runInitCallCount += 1;
+  const result = await runInit(
+    dir,
+    { name: 'Intake Test', yes: true, level: 'L0' },
+    { candidateAdapters: [adapter], env: {}, modulesDir },
+  );
+  expect(result.kind).toBe('initialized');
+  // The fake adapter maps no tier by default (`agent-prompts-all-workflows.test.ts` explains); the user edits the
+  // tier map in `.forge/config.yaml`, so this does.
+  const written = configSchema.parse(
+    YAML.parse(await readFile(path.join(dir, '.forge/config.yaml'), 'utf8')),
+  );
+  const tiers = { ...written.models.tiers };
+  for (const tier of ['frugal', 'balanced', 'max'] as const) {
+    tiers[tier] = { ...tiers[tier], [adapter.id]: TIERS[tier] };
+  }
+  await writeFile(
+    path.join(dir, '.forge/config.yaml'),
+    YAML.stringify({ ...written, models: { ...written.models, tiers } }),
+  );
+  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: dir });
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa(
+    'git',
+    ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'],
+    { cwd: dir },
+  );
+  return dir;
+}
+
+let templateDir = '';
+let templateHead = '';
+beforeAll(async () => {
+  templateDir = await buildTemplateProject();
+  templateHead = (await execa('git', ['rev-parse', 'HEAD'], { cwd: templateDir })).stdout;
+}, 20_000);
+
+afterAll(async () => {
+  if (templateDir !== '') await rm(templateDir, { recursive: true, force: true });
+}, 20_000);
+
 async function createProject(
   prefix: string,
   options: { readonly constraintFiles?: boolean } = {},
 ): Promise<Project> {
   const dir = await mkdtemp(path.join(tmpdir(), `forge-intake-${prefix}-`));
   dirs.push(dir);
+  // A cheap local clone of the one committed template built above, not a fresh `runInit`: each test
+  // still gets its own directory and its own git history to commit onto (`.forge/config.yaml`'s
+  // level, for instance), but none of `runInit`'s own fs/git work is repeated.
+  await execa('git', ['clone', '-q', templateDir, dir]);
+  await execa('git', ['remote', 'remove', 'origin'], { cwd: dir });
+  // Each test starts on an independent, clean checkout of exactly the template's commit — not a
+  // dirty leftover from a previous test's mutations (this and every other test mutate their own
+  // clone, never the template) and not a divergent ref.
+  expect((await execa('git', ['status', '--porcelain'], { cwd: dir })).stdout).toBe('');
+  expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout).toBe(templateHead);
+
   const requests: SessionRequest[] = [];
   const adapter = new FakePlatformAdapter(
     {},
@@ -239,32 +316,9 @@ async function createProject(
     ],
   });
 
-  const result = await runInit(
-    dir,
-    { name: 'Intake Test', yes: true, level: 'L0' },
-    { candidateAdapters: [adapter], env: {}, modulesDir },
-  );
-  expect(result.kind).toBe('initialized');
-  // The fake adapter maps no tier by default (`agent-prompts-all-workflows.test.ts` explains); the user edits the
-  // tier map in `.forge/config.yaml`, so this does.
-  const written = configSchema.parse(
-    YAML.parse(await readFile(path.join(dir, '.forge/config.yaml'), 'utf8')),
-  );
-  const tiers = { ...written.models.tiers };
-  for (const tier of ['frugal', 'balanced', 'max'] as const) {
-    tiers[tier] = { ...tiers[tier], [adapter.id]: TIERS[tier] };
-  }
-  await writeFile(
-    path.join(dir, '.forge/config.yaml'),
-    YAML.stringify({ ...written, models: { ...written.models, tiers } }),
-  );
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: dir });
-  await execa('git', ['add', '-A'], { cwd: dir });
-  await execa(
-    'git',
-    ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'],
-    { cwd: dir },
-  );
+  // The template already carries the tier map, the git init and the "init" commit (`buildTemplateProject`,
+  // `beforeAll`): the fake adapter's `id` is the same fixed constant for every instance
+  // (`forge-fake-adapter`), so the tier map keyed by it there already matches this test's own adapter.
   const config = configSchema.parse(
     YAML.parse(await readFile(path.join(dir, '.forge/config.yaml'), 'utf8')),
   );
@@ -299,10 +353,6 @@ async function stepFailures(dir: string, runId: string): Promise<string[]> {
     .filter((event) => event.type === 'StepFailed')
     .map((event) => JSON.stringify(event.payload));
 }
-
-beforeAll(() => {
-  // Nothing global: every test builds its own project, so a failure leaves no shared state behind.
-});
 
 describe('the shipped intake workflow, run with --answers', () => {
   it('runs every step: elicits, agents, the level command and the KB sync', async () => {
@@ -361,7 +411,7 @@ describe('the shipped intake workflow, run with --answers', () => {
     );
     expect(handoffText).toContain('constraints-captured');
     expect(handoffText).toContain('level-proposal');
-  }, 300_000);
+  }, 20_000);
 
   it('the analyst steps see the answers as data, and only the ones they depend on', async () => {
     const project = await createProject('prompts');
@@ -393,7 +443,7 @@ describe('the shipped intake workflow, run with --answers', () => {
     expect(glossary).toContain('- "levelConfirmed": "L2"');
     // The brief that tells the agent what to do is the shipped one, resolved to text.
     expect(capture).toContain('constraints-captured');
-  }, 300_000);
+  }, 20_000);
 
   it('a run with no answers and no terminal stops at the first question, saying which and how to answer, and asks no model', async () => {
     const project = await createProject('noanswers');
@@ -418,7 +468,7 @@ describe('the shipped intake workflow, run with --answers', () => {
       YAML.parse(await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8')),
     );
     expect(config.project.level).toBe('L0');
-  }, 300_000);
+  }, 20_000);
 
   it('a capture-constraints session that writes only the handoff fails the run at verify-constraints, before any level is proposed', async () => {
     const project = await createProject('noconstraints', { constraintFiles: false });
@@ -439,7 +489,7 @@ describe('the shipped intake workflow, run with --answers', () => {
     expect(project.requests.some((request) => request.stepId === 'intake:propose-level')).toBe(
       false,
     );
-  }, 300_000);
+  }, 20_000);
 
   it('recording the level leaves the tree dirty only in .forge/config.yaml, which the run says to commit', async () => {
     const project = await createProject('dirty');
@@ -453,7 +503,7 @@ describe('the shipped intake workflow, run with --answers', () => {
     );
     const status = (await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout;
     expect(status.split('\n').filter((line) => line !== '')).toEqual([' M .forge/config.yaml']);
-  }, 300_000);
+  }, 20_000);
 
   it('an answer that is not one of the level choices fails at the question and never reaches the config or a shell', async () => {
     const project = await createProject('badlevel');
@@ -483,7 +533,7 @@ describe('the shipped intake workflow, run with --answers', () => {
       YAML.parse(await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8')),
     );
     expect(config.project.level).toBe('L0');
-  }, 300_000);
+  }, 20_000);
 });
 
 describe('the shipped replan workflow, run with --answers', () => {
@@ -518,7 +568,7 @@ describe('the shipped replan workflow, run with --answers', () => {
       'replan:re-derive': 'succeeded',
     });
     expect(result.runState.runStatus).toBe('completed');
-  }, 300_000);
+  }, 20_000);
 
   it('an approved change reaches the re-derive command (which needs `forge spec re-derive`, not wired yet: P11 D5)', async () => {
     const { project, result } = await replan('approve', 'approve');
@@ -530,12 +580,23 @@ describe('the shipped replan workflow, run with --answers', () => {
     // Dispatched: the answer selected it. Whether the command exists is another piece's business.
     expect(log).toContain('"stepId":"replan:re-derive"');
     expect(log).toContain('StepStarted');
-  }, 300_000);
+  }, 20_000);
 
   it('an answer that is neither approve nor reject fails at the question', async () => {
     const { project, result } = await replan('maybe', 'maybe');
     expect(result.runState.stepStatuses.get('replan:approve-change')).toBe('failed');
     expect((await stepFailures(project.dir, result.runId)).join('\n')).toContain('RUN-102');
     expect(result.runState.stepStatuses.get('replan:re-derive')).not.toBe('succeeded');
-  }, 300_000);
+  }, 20_000);
+});
+
+describe('test hygiene (M14 P45)', () => {
+  // Runs last (file order): every test above has already run and, through `createProject`,
+  // already had every opportunity to call `runInit`. `runInit` does the real `forge init` work
+  // (fs tree, git init, a commit) nine times over is what pushed this file toward the
+  // `vitest.config.ts:75-76` e2e cap under load; one initialised, committed base project per file,
+  // cloned cheaply per test, is what keeps it under the cap.
+  it('calls runInit exactly once for the whole file, not once per test', () => {
+    expect(runInitCallCount).toBe(1);
+  });
 });

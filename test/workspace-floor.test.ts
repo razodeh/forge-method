@@ -291,11 +291,17 @@ describe('no test file can escape collection', () => {
     ].sort();
   }
 
+  // `collectedTestFiles` shells out to `vitest list`; measured isolated duration ~24s
+  // (`M14-AGENT-NOTES.md`, `M14 P45`). The explicit timeout below is not 3x *this* test's own
+  // number: it is shared, deliberately, with the slowest of this file's 3 subprocess-heavy tests
+  // (the `tsc --listFiles` one below, ~29s measured) — one uniform, safe budget sized at 3x the
+  // slowest of the three, rounded up, capped at the `21` §21.1 e2e ceiling, rather than three
+  // separately-tuned numbers that would need re-deriving individually if any one measurement drifts.
   it('collects exactly the test files that exist, so a green run cannot mean "found nothing"', () => {
-    // Set equality, not a subset check: a subset check passes when the globs and the walk share the
-    // same blind spot, which is precisely how the previous version failed.
+    // Set equality, not a subset check: a subset check passes when the globs and the walk share
+    // the same blind spot, which is precisely how the previous version failed.
     expect(collectedTestFiles()).toEqual(findTestFiles(''));
-  });
+  }, 90_000);
 
   it('has no symlinks, which specs/02 §2.7 forbids and which this walk cannot follow', () => {
     const symlinks: string[] = [];
@@ -350,6 +356,10 @@ describe('no test file can escape collection', () => {
     }
   });
 
+  // Also shells out to `collectedTestFiles` (`vitest list`); measured isolated duration ~24s
+  // (`M14-AGENT-NOTES.md`, `M14 P45`). Shares the file's uniform timeout — see the comment on
+  // "collects exactly the test files..." above for why it isn't computed from this test's own,
+  // smaller number.
   it('collects a test planted anywhere a future piece might put one', () => {
     // PLAN-M1.md P2 and P3 add scripts under `scripts/`; a test beside one of them landed squarely
     // in the previous globs' blind spot.
@@ -383,7 +393,7 @@ describe('no test file can escape collection', () => {
         rmSync(path.join(repoRoot, directory), { recursive: true, force: true });
       }
     }
-  });
+  }, 90_000);
 });
 
 describe('production source lives where the coverage globs look', () => {
@@ -501,6 +511,10 @@ describe('every source file in the repository is typechecked', () => {
     return found.sort();
   }
 
+  // Runs a real `tsc --listFiles --noEmit` per tsconfig — real, heavyweight compiler subprocesses,
+  // the same class of cost `pnpm typecheck` itself pays. Measured isolated duration ~29s
+  // (`M14-AGENT-NOTES.md`, `M14 P45`) — the explicit timeout below is 3x that, rounded up, capped
+  // at the `21` §21.1 e2e ceiling.
   it('has no file outside the tsconfig project, since an unchecked file is outside the discipline', () => {
     // Every tsconfig in the repository, not only the root one. Requiring each file to appear in the
     // *root* project would mean the first real package (`PLAN-M1.md` P2) could not be added without
@@ -549,7 +563,7 @@ describe('every source file in the repository is typechecked', () => {
     // A file typechecked by nothing is outside the discipline this floor exists to install — which
     // is how `scripts/` and then `eslint.config.js` each slipped through in turn.
     expect(onDisk.filter((file) => !listed.has(file)).sort()).toEqual([]);
-  });
+  }, 90_000);
 });
 
 describe('every workspace package is reached by the floor commands', () => {

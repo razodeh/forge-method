@@ -72,6 +72,11 @@ async function integrationCommitCount(projectRoot: string): Promise<number> {
 }
 
 describe('E3 crash-resume', () => {
+  // 20 real, independent SIGKILL/resume cycles is inherently heavy (process spawns, git worktrees,
+  // real fs work) -- measured isolated duration ranged 49.9s-65.7s across repeated runs on this
+  // sandbox (`M14-AGENT-NOTES.md`, `M14 P45`); the timeout below is 3x the higher figure, rounded
+  // up, replacing the previous guessed `120_000`, which left under 2x headroom over the slower
+  // observed run.
   it('a real SIGKILL at 20 randomised points, each followed by resume, reaches the identical final state as an uninterrupted control run -- no duplicated commits, artifacts, or ledger entries', async () => {
     const controlProjectRoot = await createTempRepo('control');
     const controlRunId = 'run-control';
@@ -135,5 +140,5 @@ describe('E3 crash-resume', () => {
       // 20 §20.10 S12: zero orphaned worktrees/processes left behind afterward.
       expect(await listOrphanedWorktrees(projectRoot)).toEqual([]);
     }
-  }, 120_000);
+  }, 200_000);
 });

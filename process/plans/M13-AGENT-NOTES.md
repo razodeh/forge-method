@@ -29,12 +29,15 @@ right.
    `fm-*-workflow`, `live-smoke`, `determinism`), plus `pnpm typecheck`, `pnpm run boundaries`,
    `pnpm lint`. The orchestrator runs the one full-suite check at the end. State the scoping in your
    Q entry and log entry.
-3. Known load-sensitive flakes (pass in isolation; do not chase):
-   `engine/test/e2e/crash-resume.test.ts`, `scripts/verify-success-criteria.test.ts` (SC3),
-   `kb/test/adopt/survey.test.ts`, `cli/test/commands/run/resume.test.ts`,
-   `engine/test/interaction/session.test.ts`, `tui/test/*`, `run-upgrade.test.ts` idempotency,
-   `upgrade/backup.test.ts`. `pnpm lint` exits 1 on 4 pre-existing prettier warnings
-   (`cli/src/commands/overlay.ts`, `cli/test/commands/overlay.test.ts`,
+3. The load-sensitive-test list this rule used to carry (`engine/test/e2e/crash-resume.test.ts`,
+   `scripts/verify-success-criteria.test.ts`, `kb/test/adopt/survey.test.ts`,
+   `cli/test/commands/run/resume.test.ts`, `engine/test/interaction/session.test.ts`, `tui/test/*`,
+   `run-upgrade.test.ts`, `upgrade/backup.test.ts`, `test/workspace-floor.test.ts`,
+   `engine/test/adopt/verification.test.ts`) moved to `process/plans/M14-AGENT-NOTES.md` (M14 P45):
+   each file now carries a measured, explicit per-test timeout (or a documented reason none was
+   needed) instead of a bare "pass in isolation; do not chase." `pnpm lint` exits 1 on 4
+   pre-existing prettier warnings (`cli/src/commands/overlay.ts`,
+   `cli/test/commands/overlay.test.ts`,
    `cli/test/commands/doctor/{corrupt-state,rebuild-index}.test.ts`); anything else is yours.
 4. **No live model session, no API key.** Every test uses the fake/testkit adapter, which enforces a
    strict nine-block prompt (do not opt out). The owner's key lives in the gitignored `.env`; never
