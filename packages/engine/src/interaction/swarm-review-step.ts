@@ -309,7 +309,19 @@ export async function runSwarmReviewStep(
   ctx: ExecuteStepContext,
 ): Promise<StepOutcome> {
   const startedAt = ctx.now();
-  await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
+  // `PLAN-M14.md` P19: `agentId` and (when the compiled plan attached any) `payload.gateEvidence`, the
+  // identical shape `runAgentStep` (`dispatch/steps.ts`) emits and for the identical reason -- `approve.ts`'s
+  // own `GATE-511` conflict check reads this same event either way, and a `swarm-review` step is still an
+  // `agent`-kind step (`06` §6.2) whose `StepNode.gateEvidence` `attachDependentGateEvidence` populates the
+  // identical way.
+  await ctx.telemetry.emit({
+    type: 'StepStarted',
+    stepId: node.id,
+    agentId: node.agent,
+    ...(node.gateEvidence !== undefined && node.gateEvidence.length > 0
+      ? { payload: { gateEvidence: node.gateEvidence } }
+      : {}),
+  });
 
   if (node.agent === undefined) {
     throw new ForgeError('RUN-039', {

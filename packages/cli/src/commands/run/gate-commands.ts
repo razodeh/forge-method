@@ -22,6 +22,7 @@ import {
   approverRefusal,
   buildGateReport,
   evaluateGate,
+  evidenceArtifactType,
   recordChecks,
   renderGateReportFile,
   validateWaiverPolicy,
@@ -527,6 +528,62 @@ async function resolveApprover(
   }
 }
 
+/** `PLAN-M14.md` P19: whether `agentId` produced evidence FOR `definition` in THIS run (`ctx.runId`) --
+ * `readEvents` is itself scoped to one run, so evidence from a different run is never consulted (`10`
+ * §10.3 rule 6 is a same-run rule, `approve.ts`'s own doc comment). Two independent sources, either one
+ * enough:
+ *  (a) a `StepStarted` whose own `agentId` (a step this run dispatched as `agentId`, `runAgentStep`/
+ *      `runSwarmReviewStep`) carries `payload.gateEvidence` naming `definition.id` -- the compiled
+ *      `StepNode.gateEvidence` (`plan/compile.ts`'s own `attachDependentGateEvidence`: a step's own
+ *      declared `gateEvidence:` plus every `gate`-kind step that directly depends on it);
+ *  (b) an `ArtifactCreated` by that same `agentId` whose own `type` one of `definition.evidence`'s own
+ *      `artifact` entries names (`evidenceArtifactType`: the `Type(*)`/`Type(id)` grammar read as the
+ *      name before `(`, never a wildcard match).
+ * A gate with no `evidence:` of its own still refuses under (a) alone -- `evidence:` only narrows (b). */
+async function agentProducedEvidenceForGate(
+  ctx: GateCommandContext,
+  definition: GateDefinition,
+  agentId: string,
+): Promise<boolean> {
+  const evidenceTypes = new Set(
+    (definition.evidence ?? []).map((ref) => evidenceArtifactType(ref.artifact)),
+  );
+  for await (const event of readEvents(ctx.projectRoot, ctx.runId)) {
+    if (event.agentId !== agentId) continue;
+    if (event.type === 'StepStarted') {
+      const payload = event.payload;
+      const gateEvidence =
+        typeof payload === 'object' && payload !== null
+          ? (payload as { readonly gateEvidence?: unknown }).gateEvidence
+          : undefined;
+      if (Array.isArray(gateEvidence) && gateEvidence.includes(definition.id)) return true;
+    } else if (event.type === 'ArtifactCreated') {
+      const payload = event.payload;
+      const type =
+        typeof payload === 'object' && payload !== null
+          ? (payload as { readonly type?: unknown }).type
+          : undefined;
+      if (typeof type === 'string' && evidenceTypes.has(type)) return true;
+    }
+  }
+  return false;
+}
+
+/** `[definition.id]` when `approver` is an agent who produced evidence for `definition` in this run
+ * (`agentProducedEvidenceForGate`), else `[]` -- what `ApproveGateInput.producedEvidenceFor` and
+ * `gateWaive`'s own identical check both consult. A human approver is never scanned for at all: `10`
+ * §10.3's own rule never refuses one on this basis, whatever an agent of the same run produced. */
+async function producedEvidenceForThisGate(
+  ctx: GateCommandContext,
+  definition: GateDefinition,
+  approver: GateApprover,
+): Promise<readonly string[]> {
+  if (approver.kind !== 'agent') return [];
+  return (await agentProducedEvidenceForGate(ctx, definition, approver.agentId))
+    ? [definition.id]
+    : [];
+}
+
 /** `approve <id>`: evaluates the gate, refuses unless it may be approved, and only then records `GateApproved`
  * with the evaluation as its audit trail (`10` §10.3 rules 1 and 4; `approveGate` has the reasoning).
  *
@@ -534,6 +591,7 @@ async function resolveApprover(
  * reason, owner and expiry) that has not lapsed. Nothing is appended when the approval is refused: a refusal is
  * an exit code and a typed error, not an event that could be replayed as an approval.
  * @throws {ForgeError} `GATE-507` (checks failing, no valid waiver), `GATE-508` (approver not authorised),
+ * `GATE-511` (agent approver produced this run's own evidence for the gate, `PLAN-M14.md` P19),
  * `RUN-050` (unknown gate). */
 export async function gateApprove(
   ctx: GateCommandContext,
@@ -555,6 +613,15 @@ export async function gateApprove(
       approver: approver.kind === 'human' ? 'human' : `agent ${approver.agentId}`,
       detail: refusal,
     });
+  }
+  // `PLAN-M14.md` P19, `05` §5.2 / `10` §10.3 rule 6 / `20` §20.10 S6, `SPEC-QUESTIONS.md` Q232 decision
+  // 8: refused BEFORE any check command runs too, the identical "decided first" reasoning as the roles
+  // check just above -- an agent that produced this run's own evidence for the gate must not be able to
+  // make the project run its checks toward its own approval either. `approveGate` decides it again below
+  // for a caller that bypasses this (the same "computed once, enforced twice" shape `refusal` already is).
+  const producedEvidenceFor = await producedEvidenceForThisGate(ctx, definition, approver);
+  if (approver.kind === 'agent' && producedEvidenceFor.includes(gateId)) {
+    throw new ForgeError('GATE-511', { gateId, agentId: approver.agentId });
   }
   const evaluated = await evaluateFresh(ctx, definition);
   // Sampled AFTER the checks ran (they have no time limit): a waiver that lapsed while they ran has lapsed.
@@ -592,6 +659,7 @@ export async function gateApprove(
         waivedCheckIds: recorded?.coveredCheckIds,
         approver,
         now,
+        producedEvidenceFor,
       });
       usedWaiver = recorded?.waiver;
       break;
@@ -682,6 +750,17 @@ export async function gateWaive(
       approver: approver.kind === 'human' ? 'human' : `agent ${approver.agentId}`,
       detail: refusal,
     });
+  }
+  // `PLAN-M14.md` P19, `SPEC-QUESTIONS.md` Q232 decision 8: applies here too -- a waiver is what lets a
+  // failing gate be approved (`gateApprove`'s own comment above), so an agent that produced this run's own
+  // evidence for the gate must not be able to grant itself the waiver that would let it pass either.
+  // Checked before any check runs, the identical "decided first" position as the `GATE-508` refusal just
+  // above it and `GATE-510` earlier still (inside `resolveApprover`). `gateWaive` never calls `approveGate`
+  // at all (unlike `gateApprove`), so this direct check is the ONLY place this rule is enforced for
+  // waiving; there is no second, internal check to fall back on.
+  const producedEvidenceFor = await producedEvidenceForThisGate(ctx, definition, approver);
+  if (approver.kind === 'agent' && producedEvidenceFor.includes(gateId)) {
+    throw new ForgeError('GATE-511', { gateId, agentId: approver.agentId });
   }
   const evaluated = await evaluateFresh(ctx, definition);
   const waiver: Waiver = input;

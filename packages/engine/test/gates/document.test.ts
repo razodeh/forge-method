@@ -37,7 +37,40 @@ describe('validateGateDocument', () => {
       },
       openQuestionsPolicy: 'block',
       approval: { required: true, roles: ['human'], quorum: 1 },
+      evidence: [{ artifact: 'ArchitectureSpec' }],
     });
+  });
+
+  // `PLAN-M14.md` P19: `evidence:` used to be validated for shape and then dropped; it is now carried
+  // through into the definition (`approve.ts`'s own `GATE-511` conflict check reads it).
+  it('evidence entries parse into the definition, in the Type(*) form too; a misspelled artifact key is unknown-key AND a missing artifact', () => {
+    const { definition, problems } = validateGateDocument({
+      id: 'G',
+      checks: { deterministic: [CHECK] },
+      evidence: [{ artifact: 'InterfaceContract(*)' }, { artifact: 'ArchitectureSpec' }],
+    });
+    expect(problems).toEqual([]);
+    expect(definition?.evidence).toEqual([
+      { artifact: 'InterfaceContract(*)' },
+      { artifact: 'ArchitectureSpec' },
+    ]);
+
+    const bad = validateGateDocument({
+      id: 'G',
+      checks: { deterministic: [CHECK] },
+      evidence: [{ artefact: 'InterfaceContract' }],
+    });
+    expect(bad.definition).toBeUndefined();
+    expect(bad.problems.map((p) => p.code)).toEqual(['unknown-key', 'invalid-value']);
+    expect(bad.problems.map((p) => p.key)).toEqual([
+      'evidence[0].artefact',
+      'evidence[0].artifact',
+    ]);
+  });
+
+  it('a gate with no evidence: at all carries no evidence field (not an empty array)', () => {
+    const { definition } = validateGateDocument({ id: 'G', checks: { deterministic: [CHECK] } });
+    expect(definition).not.toHaveProperty('evidence');
   });
 
   it('a misspelled checks key is an unknown-key problem with a did-you-mean AND a no-deterministic-checks problem', () => {
@@ -76,7 +109,12 @@ describe('validateGateDocument', () => {
     expect(keys({ ...base, extra: 1 })).toEqual(['extra']);
     expect(keys({ ...base, approval: { quorom: 2 } })).toEqual(['approval.quorom']);
     expect(keys({ ...base, onReject: { act: 'x' } })).toEqual(['onReject.act']);
-    expect(keys({ ...base, evidence: [{ artefact: 'x' }] })).toEqual(['evidence[0].artefact']);
+    // `PLAN-M14.md` P19: `evidence[0]`'s own required `artifact` field is now also validated (present,
+    // non-blank) -- the misspelled key is BOTH an unknown key of its own AND a missing `artifact`.
+    expect(keys({ ...base, evidence: [{ artefact: 'x' }] })).toEqual([
+      'evidence[0].artefact',
+      'evidence[0].artifact',
+    ]);
     expect(keys({ id: 'G', checks: { deterministic: [{ ...CHECK, faliOn: 'x' }] } })).toEqual([
       'checks.deterministic[0].faliOn',
     ]);

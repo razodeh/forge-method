@@ -12,14 +12,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
+import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { dryRunWorkflow, handleSigterm, runWorkflow } from '../../../src/commands/run/run.ts';
+import { gateApprove, type GateCommandContext } from '../../../src/commands/run/gate-commands.ts';
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
 import { currentLauncher, type LauncherSpec } from '../../../src/commands/run/launcher-shim.ts';
 import { runLanes } from '../../../src/commands/run/status.ts';
 import {
+  AGENTS_ROOT,
   CHECKS_ROOT,
   FIXTURE_GATE_ID,
   FIXTURE_ITEM_ID,
@@ -567,6 +570,167 @@ describe('runWorkflow', () => {
     // No CLI-appended `GateApproved`: this fixture declares no `gate` step of its own, so any
     // `GateApproved` in the log could only be the refused command's own -- there is none.
     expect(events.some((event) => event.type === 'GateApproved')).toBe(false);
+  });
+
+  // `PLAN-M14.md` P19, `SPEC-QUESTIONS.md` Q232 decision 8: end to end -- a REAL run's own `agent` step
+  // durably writes `StepStarted` with a real `agentId` and `payload.gateEvidence` (`runAgentStep`,
+  // `dispatch/steps.ts`, not a hand-built event as `gate-commands.test.ts`'s own unit tests use), and a
+  // same-run `forge gate approve` attempt by that identical agent, under the real FORGE session marker
+  // (`PLAN-M14.md` P15), is refused `GATE-511` -- while a human, over the identical run and gate, is not.
+  it("a real run's own StepStarted carries the real agentId/gateEvidence, and a same-run approval attempt by that agent is refused GATE-511 (05 section 5.2, 10 section 10.3 rule 6)", async () => {
+    const project = await createTestProject();
+    const workflowId = 'cli-fixture-evidence-conflict';
+    const runId = 'run-p19-evidence';
+
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${workflowId}.workflow.yaml`),
+      `id: ${workflowId}\n` +
+        'name: CLI fixture (an agent step produces evidence for a gate it might later be asked to approve)\n' +
+        'version: 1.0.0\n' +
+        'description: PLAN-M14.md P19 end-to-end.\n' +
+        '\n' +
+        'steps:\n' +
+        '  - id: propose\n' +
+        '    kind: agent\n' +
+        '    agent: sre\n' +
+        '    brief: briefs/propose.md\n' +
+        `    produces: [ "${FIXTURE_ITEM_ID}-sre.txt" ]\n` +
+        '    gateEvidence: [ G-Evidence ]\n',
+    );
+
+    await mkdir(path.join(project.dir, '.forge', 'briefs'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge', 'briefs', 'propose.md'),
+      'Propose the design.\n',
+    );
+
+    // A real `.forge/agents/sre.yaml`, `may_approve: [G-Evidence]` -- `sre` (not `architect`: the
+    // roster loader refuses ANY non-empty `may_approve` for that one id outright, `05` §5.2's own
+    // roster rule, `@forge/agents/schema/load.ts`, unrelated to this test's own GATE-511 refusal).
+    await mkdir(path.join(project.dir, AGENTS_ROOT), { recursive: true });
+    await writeFile(
+      path.join(project.dir, AGENTS_ROOT, 'sre.yaml'),
+      `id: sre
+name: SRE
+version: 1.0.0
+tier: core
+mandate: Fixture mandate for sre.
+decisions_owned: []
+persona:
+  voice: terse
+  stance: pragmatic
+  disagreement_style: direct
+inputs:
+  required: []
+  optional: []
+outputs:
+  - type: X
+    schema: x.schema.json
+    path: x.md
+kb_write: []
+kb_propose: []
+tools:
+  read: true
+  write: true
+  exec: []
+  network: false
+  git_commit: none
+  deploy: false
+model:
+  tier: balanced
+  thinking: medium
+limits:
+  max_turns: 10
+  wall_clock_ms: 600000
+  max_cost_usd: 2.0
+parallel_safety:
+  file_ownership: []
+  exclusive: false
+gates:
+  produces_evidence_for: []
+  may_approve: [G-Evidence]
+prompt:
+  system: prompts/sre.system.md
+`,
+    );
+    await mkdir(path.join(project.dir, '.forge', 'prompts'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge', 'prompts', 'sre.system.md'),
+      'Fixture role instructions for sre.\n',
+    );
+
+    await mkdir(path.join(project.dir, CHECKS_ROOT), { recursive: true });
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, 'G-Evidence.gate.yaml'),
+      'id: G-Evidence\n' +
+        'checks:\n' +
+        '  deterministic:\n' +
+        '    - id: always-ok\n' +
+        `      run: "echo '{\\"ok\\":true}'"\n` +
+        '      failOn: "!ok"\n' +
+        '  advisory: []\n' +
+        'openQuestionsPolicy: warn\n' +
+        'approval:\n' +
+        '  roles: [human, sre]\n',
+    );
+
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add P19 evidence-conflict fixtures'], {
+      cwd: project.dir,
+    });
+
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.includes('propose'), {
+      text: ['proposed the design'],
+      writeFiles: [{ relativePath: `${FIXTURE_ITEM_ID}-sre.txt`, content: 'note\n' }],
+    });
+
+    const result = await runWorkflow(testRunDeps(project, adapter), {
+      workflowId,
+      expressionContext: fixtureExpressionContext(),
+      runId,
+      host: 'test-host',
+    });
+    expect(result.kind).toBe('run');
+    if (result.kind !== 'run') throw new Error('unreachable');
+    expect(result.runState.runStatus).toBe('completed');
+
+    // The real, engine-emitted StepStarted for this run's own `propose` step -- proven directly before
+    // the refusal below, so a failure here clearly names which half broke.
+    const events: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) events.push(event);
+    const started = events.find((event) => event.type === 'StepStarted');
+    expect(started).toMatchObject({
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Evidence'] },
+    });
+
+    const gateCtx: GateCommandContext = {
+      paths: project.paths,
+      projectRoot: project.dir,
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+      runId,
+      marker: { runId, stepId: 'design', agentId: 'sre' },
+    };
+    await expect(gateApprove(gateCtx, 'G-Evidence', 'looks fine')).rejects.toMatchObject({
+      code: 'GATE-511',
+      details: { gateId: 'G-Evidence', agentId: 'sre' },
+    });
+    const afterRefusal: ForgeEvent[] = [];
+    for await (const event of readEvents(project.dir, runId)) afterRefusal.push(event);
+    expect(afterRefusal.some((event) => event.type === 'GateApproved')).toBe(false);
+
+    // A human, over the identical run and gate, is unaffected by the agent's own evidence.
+    const humanCtx: GateCommandContext = {
+      paths: project.paths,
+      projectRoot: project.dir,
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+      runId,
+    };
+    const summary = await gateApprove(humanCtx, 'G-Evidence', 'fine');
+    expect(summary.approver).toBe('human');
   });
 
   it('derives a deterministic runId from the injected clock when none is given', async () => {

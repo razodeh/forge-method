@@ -8,6 +8,7 @@
 export {
   approveGate,
   approverRefusal,
+  evidenceArtifactType,
   recordChecks,
   type ApprovedCheckRecord,
   type ApproveGateInput,
@@ -46,6 +47,7 @@ export type {
   GateApprovalPolicy,
   GateDefinition,
   GateEvaluationResult,
+  GateEvidenceRef,
   GateReport,
   Waiver,
 } from './types.ts';

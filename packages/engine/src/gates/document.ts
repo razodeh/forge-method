@@ -35,6 +35,7 @@ import type {
   DeterministicCheck,
   GateApprovalPolicy,
   GateDefinition,
+  GateEvidenceRef,
 } from './types.ts';
 
 export type GateDocumentProblemCode =
@@ -317,25 +318,46 @@ function readAdvisory(raw: unknown, out: Collector): readonly AdvisoryCheck[] {
   return checks;
 }
 
+/** `evidence:` entries actually kept, in document order — one `GateEvidenceRef` per well-shaped entry
+ * (a mapping with only the known `artifact` key, and a non-blank `artifact` string; `PLAN-M14.md` P19 is
+ * this array's first real reader, `approve.ts`'s own `agentProducedEvidenceForGate`-shaped callers). An
+ * entry that is not a mapping, names an unknown key, or has a blank/missing `artifact` contributes no
+ * `GateEvidenceRef` (its own problem is still reported, exactly as a malformed `checks.deterministic`
+ * entry is by `readDeterministic` above) rather than silently carrying a garbage reference through into a
+ * definition later code trusts. */
+function readEvidence(raw: unknown, out: Collector): readonly GateEvidenceRef[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    out.add('invalid-value', 'evidence', `must be a list, found ${describe(raw)}`);
+    return [];
+  }
+  const refs: GateEvidenceRef[] = [];
+  raw.forEach((entry: unknown, index) => {
+    const at = `evidence[${String(index)}]`;
+    if (!isRecord(entry)) {
+      out.add('invalid-value', at, `must be a mapping, found ${describe(entry)}`);
+      return;
+    }
+    out.strictKeys(entry, EVIDENCE_KEYS, at);
+    const artifact = entry['artifact'];
+    if (!isNonBlankString(artifact)) {
+      out.add(
+        'invalid-value',
+        `${at}.artifact`,
+        `must be a non-blank string, found ${describe(artifact)}`,
+      );
+      return;
+    }
+    refs.push({ artifact });
+  });
+  return refs;
+}
+
 function validateEvidenceAndReject(
   record: Readonly<Record<string, unknown>>,
   out: Collector,
-): void {
-  const evidence = record['evidence'];
-  if (evidence !== undefined && evidence !== null) {
-    if (!Array.isArray(evidence)) {
-      out.add('invalid-value', 'evidence', `must be a list, found ${describe(evidence)}`);
-    } else {
-      evidence.forEach((entry: unknown, index) => {
-        const at = `evidence[${String(index)}]`;
-        if (!isRecord(entry)) {
-          out.add('invalid-value', at, `must be a mapping, found ${describe(entry)}`);
-          return;
-        }
-        out.strictKeys(entry, EVIDENCE_KEYS, at);
-      });
-    }
-  }
+): readonly GateEvidenceRef[] {
+  const evidence = readEvidence(record['evidence'], out);
   const onReject = record['onReject'];
   if (onReject !== undefined && onReject !== null) {
     if (!isRecord(onReject)) {
@@ -344,6 +366,7 @@ function validateEvidenceAndReject(
       out.strictKeys(onReject, ON_REJECT_KEYS, 'onReject');
     }
   }
+  return evidence;
 }
 
 /** Reads a parsed gate document (the result of `YAML.parse`, untrusted) into a definition, or says everything
@@ -384,7 +407,7 @@ export function validateGateDocument(raw: unknown): GateDocumentResult {
   }
 
   const approval = readApproval(raw['approval'], out);
-  validateEvidenceAndReject(raw, out);
+  const evidence = validateEvidenceAndReject(raw, out);
 
   const checks = raw['checks'];
   let deterministic: readonly DeterministicCheck[] = [];
@@ -430,6 +453,7 @@ export function validateGateDocument(raw: unknown): GateDocumentResult {
     openQuestionsPolicy: policy === 'block' ? 'block' : 'warn',
     ...(approval === undefined ? {} : { approval }),
     ...(typeof autonomy === 'string' ? { autonomyOverride: autonomy } : {}),
+    ...(evidence.length === 0 ? {} : { evidence }),
   };
   return { definition, problems: out.problems };
 }

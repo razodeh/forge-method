@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { approveGate, approverRefusal } from '../../src/gates/approve.ts';
+import { approveGate, approverRefusal, evidenceArtifactType } from '../../src/gates/approve.ts';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { GateDefinition, GateEvaluationResult, Waiver } from '../../src/gates/types.ts';
 
@@ -217,6 +217,79 @@ describe('approveGate: who may approve', () => {
   });
 });
 
+// `PLAN-M14.md` P19, `SPEC-QUESTIONS.md` Q232 decision 8, `05` §5.2 / `10` §10.3 rule 6 / `20` §20.10 S6:
+// an agent that produced this run's own evidence for the gate it is trying to approve is refused
+// (`GATE-511`), even when the ordinary role/quorum/`may_approve` checks above would otherwise clear it.
+describe('approveGate: same-run conflict of interest (producedEvidenceFor)', () => {
+  const approval = { required: true, roles: ['human', 'pm'], quorum: 1 };
+  const AGENT_PM = { kind: 'agent', agentId: 'pm', mayApprove: ['G-T'] } as const;
+
+  it('GATE-511 when the approving agent produced evidence for THIS gate in this run', async () => {
+    const definition = gate({ approval });
+    const result = await evaluated(definition);
+    expect(() =>
+      approveGate({
+        definition,
+        evaluated: result,
+        approver: AGENT_PM,
+        now: NOW,
+        producedEvidenceFor: ['G-X', 'G-T'],
+      }),
+    ).toThrow(
+      expect.objectContaining({ code: 'GATE-511', details: { gateId: 'G-T', agentId: 'pm' } }),
+    );
+  });
+
+  it('approved when producedEvidenceFor names only OTHER gates, not this one', async () => {
+    const definition = gate({ approval });
+    const summary = approveGate({
+      definition,
+      evaluated: await evaluated(definition),
+      approver: AGENT_PM,
+      now: NOW,
+      producedEvidenceFor: ['G-Y'],
+    });
+    expect(summary.approver).toBe('agent pm');
+  });
+
+  it('approved when producedEvidenceFor is absent entirely (the ordinary, no-conflict case)', async () => {
+    const definition = gate({ approval });
+    const summary = approveGate({
+      definition,
+      evaluated: await evaluated(definition),
+      approver: AGENT_PM,
+      now: NOW,
+    });
+    expect(summary.approver).toBe('agent pm');
+  });
+
+  it('a human approver ignores producedEvidenceFor entirely, whatever it names', async () => {
+    const definition = gate();
+    const summary = approveGate({
+      definition,
+      evaluated: await evaluated(definition),
+      approver: HUMAN,
+      now: NOW,
+      producedEvidenceFor: ['G-T'],
+    });
+    expect(summary.approver).toBe('human');
+  });
+
+  it('checked after the ordinary authorisation refusal: an agent not in approval.roles at all still gets GATE-508, not GATE-511', async () => {
+    const definition = gate({ approval: { required: true, roles: ['human'], quorum: 1 } });
+    const result = await evaluated(definition);
+    expect(() =>
+      approveGate({
+        definition,
+        evaluated: result,
+        approver: { kind: 'agent', agentId: 'pm', mayApprove: ['G-T'] },
+        now: NOW,
+        producedEvidenceFor: ['G-T'],
+      }),
+    ).toThrow(expect.objectContaining({ code: 'GATE-508' }));
+  });
+});
+
 describe('approveGate does not trust the evaluation flag', () => {
   it('an evaluation that says passed while a check verdict failed, or that lacks a declared check, is not approvable', async () => {
     const definition = gate();
@@ -322,5 +395,18 @@ describe('a check with no verdict is never approvable, waiver or not', () => {
         approverRefusal(gate({ approval: { required: true, roles: ['human'], quorum } }), HUMAN),
       ).toContain('quorum');
     }
+  });
+});
+
+// `PLAN-M14.md` P19, Discloses: "the Type(*)/Type(id) grammar is parsed as the name before (, never a
+// wildcard."
+describe('evidenceArtifactType', () => {
+  it('reads the text before the first "(" as the type name', () => {
+    expect(evidenceArtifactType('InterfaceContract(*)')).toBe('InterfaceContract');
+    expect(evidenceArtifactType('ADR(*)')).toBe('ADR');
+    expect(evidenceArtifactType('ADR(ADR-0011)')).toBe('ADR');
+  });
+  it('a bare type name with no "(" at all is returned unchanged', () => {
+    expect(evidenceArtifactType('ArchitectureSpec')).toBe('ArchitectureSpec');
   });
 });

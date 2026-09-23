@@ -259,7 +259,12 @@ onReject:
    person's own shell: with no marker, or one naming a different run than the one being approved, it is a person
    (`human`), and `--owner` is the person's own word regardless; naming this run and an agent id, `may_approve`
    and `alwaysHuman` bind that agent; naming this run with no agent id at all — a run's own `command` step, not a
-   session — it is refused outright. `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
+   session — it is refused outright. When this run's own event log shows the bound agent produced
+   evidence for the gate (a step it ran named the gate in its own compiled evidence list, or created an
+   artifact the gate's `evidence:` names), it is refused even where `approval.roles` and `may_approve`
+   would otherwise allow it: a person may still approve it (`05` §5.2's separation of duties; `--owner`
+   stays the person's own word regardless), and evidence from a different run is never consulted.
+   `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
    check, is a load error, never an empty gate that passes.
 
 **Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows

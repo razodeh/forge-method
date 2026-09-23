@@ -34,11 +34,28 @@
  * "blocking open questions must be resolved" is `G-Product`'s deterministic `blocking-open-questions` check,
  * not something this decides.
  *
+ * **Same-run conflict of interest (`PLAN-M14.md` P19, `SPEC-QUESTIONS.md` Q232 decision 8).** Even an
+ * agent approver `approverRefusal` above would otherwise clear (a real role, a real `may_approve` entry,
+ * not `alwaysHuman`) is refused (`GATE-511`, nothing appended) when `ApproveGateInput.producedEvidenceFor`
+ * — the gate ids this run's own event log shows the approving agent produced evidence for, computed by the
+ * caller (`gate-commands.ts`'s own `agentProducedEvidenceForGate`, over `readEvents(projectRoot, runId)`,
+ * never a different run) — names this gate: `05` §5.2's separation-of-duties rule and `10` §10.3 rule 6
+ * read together, an agent cannot mark its own work done. A human approver is never refused this way
+ * (`--owner` stays the person's own word regardless, `10` §10.3), and `gates.may_approve` is otherwise
+ * unchanged (rule 8's other half: `pm`/`po` keep it). A sibling invariant to `20` §20.10 S6 ("a tainted
+ * step cannot approve a gate") — that one is `@forge/engine/security`'s own `assertGateApprovalAllowed`,
+ * a *different*, already-shipped mechanism (external-content taint, not same-run evidence) this piece
+ * does not touch; the two invariants are cited together because both restrict who may approve a gate,
+ * not because they share an implementation.
+ *
  * @see specs/10 §10.3
+ * @see specs/05 §5.2
  * @see specs/05 §5.9
  * @see specs/03 §3.6
+ * @see specs/20 §20.10 S6
  * @see PLAN-M13.md P41
  * @see PLAN-M14.md P15
+ * @see PLAN-M14.md P19
  */
 import { createHash } from 'node:crypto';
 
@@ -47,6 +64,18 @@ import { ForgeError } from '@forge/core/errors';
 import { sanitizedCheckText } from './report.ts';
 import type { GateDefinition, GateEvaluationResult, Waiver } from './types.ts';
 import { applyWaiver, isApproved } from './waiver.ts';
+
+/** The artifact *type name* an `evidence:`/`gateEvidence` reference names, reading `10` §10.1's own
+ * `Type(*)`/`Type(id)` grammar (`plan/dependencies.ts`'s own `ARTIFACT_REFERENCE` reads the identical
+ * grammar for a different mini-DSL) as the text before the first `(` — never a wildcard match: `(*)` is
+ * read as "the type", not "any id of it", because nothing in this reference shape carries a *specific* id
+ * to match against here (`document.ts`'s own worked-example entries are bare type names or `Type(*)`,
+ * never `Type(id)` in practice, but the grammar is read the same way either way). A bare type name with no
+ * `(` at all (`10` §10.3's own `- artifact: ArchitectureSpec`) is returned unchanged. */
+export function evidenceArtifactType(ref: string): string {
+  const openParen = ref.indexOf('(');
+  return openParen === -1 ? ref : ref.slice(0, openParen);
+}
 
 /** Who is approving. `human` is a person at the terminal; `agent` carries the agent's role id and the
  * `gates.may_approve` list of its (immutable) definition. */
@@ -176,12 +205,19 @@ export interface ApproveGateInput {
    * the waiver recorded none, and it covers nothing. */
   readonly waivedCheckIds?: readonly string[] | undefined;
   readonly approver: GateApprover;
+  /** `PLAN-M14.md` P19: the gate ids this run's event log shows the approving agent produced evidence
+   * for (see this module's own doc comment, "Same-run conflict of interest"). Caller-computed — this
+   * module reads only whether `definition.id` is a member, never the event log itself. Absent or not
+   * containing `definition.id`: no conflict, the ordinary rules above decide alone. Only ever consulted
+   * for `approver.kind === 'agent'`: a human approver ignores it, whatever it contains. */
+  readonly producedEvidenceFor?: readonly string[] | undefined;
   /** Epoch milliseconds, injected (`21` §21.1: no ambient clock in the engine). */
   readonly now: number;
 }
 
 /** Decides the approval and returns what its event records.
- * @throws {ForgeError} `GATE-502` for a definition with no deterministic check; `GATE-508` when the approver may not approve this gate; `GATE-507` when a deterministic
+ * @throws {ForgeError} `GATE-502` for a definition with no deterministic check; `GATE-508` when the approver may not approve this gate; `GATE-511` when an agent
+ * approver produced evidence for this gate in this run; `GATE-507` when a deterministic
  * check failed and no valid waiver covers it; `GATE-504`/`GATE-505` for a waiver that is malformed or lapsed. */
 export function approveGate(input: ApproveGateInput): GateApprovalSummary {
   const { definition, evaluated, approver } = input;
@@ -197,6 +233,15 @@ export function approveGate(input: ApproveGateInput): GateApprovalSummary {
       approver: describeApprover(approver),
       detail: refusal,
     });
+  }
+  // `PLAN-M14.md` P19: checked right after the ordinary authorisation refusal above and before any
+  // check-result reasoning below — role/quorum/`alwaysHuman`/`may_approve` are prerequisites (only an
+  // approver those already clear can even reach a conflict-of-interest question), and whether the checks
+  // themselves pass is irrelevant to it (a clean gate is refused this way exactly as a failing one is).
+  // Never for a human approver, whatever `producedEvidenceFor` contains (see this module's own doc
+  // comment, "Same-run conflict of interest").
+  if (approver.kind === 'agent' && (input.producedEvidenceFor ?? []).includes(definition.id)) {
+    throw new ForgeError('GATE-511', { gateId: definition.id, agentId: approver.agentId });
   }
 
   // A waiver is consulted only when a check failed: a gate that passed needs none, and a stale one lying around

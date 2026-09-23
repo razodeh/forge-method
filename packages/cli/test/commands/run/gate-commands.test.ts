@@ -525,6 +525,180 @@ describe('gateApprove evaluates the gate (10 section 10.3 rule 1)', () => {
   });
 });
 
+// `PLAN-M14.md` P19, `SPEC-QUESTIONS.md` Q232 decision 8, `05` §5.2 / `10` §10.3 rule 6 / `20` §20.10 S6:
+// an agent never approves (or waives) a gate that a step it ran produced evidence for in the same run --
+// enforced under the real FORGE session marker (`PLAN-M14.md` P15) the identical way GATE-508/510 are,
+// before any check command runs. Every gate below passes its own deterministic check (`errors:0`): the
+// point is that GATE-511 fires independently of whether the checks themselves would allow approval,
+// including for `gateWaive`, which would otherwise hit GATE-509 ("nothing to waive") on a passing gate.
+describe('an agent never approves a gate it produced evidence for in the same run (PLAN-M14.md P19)', () => {
+  const evidenceGate = (id: string, evidenceType: string, roles = '[human, sre]'): string =>
+    `id: ${id}\n` +
+    'checks:\n' +
+    '  deterministic:\n' +
+    '    - id: t\n' +
+    `      run: "echo '{\\"errors\\":0}'"\n` +
+    '      failOn: "errors > 0"\n' +
+    `approval:\n  roles: ${roles}\n` +
+    `evidence:\n  - artifact: ${evidenceType}\n`;
+
+  it('GATE-511 via the StepStarted gateEvidence source, for both approve and waive; no event appended', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev1', evidenceGate('G-Ev1', 'InterfaceContract'));
+    await writeAgent(project, 'sre', ['G-Ev1']);
+    await appendEvent(project.dir, 'run-p19a', {
+      type: 'StepStarted',
+      runId: 'run-p19a',
+      ts: '2026-01-01T00:00:00.000Z',
+      stepId: 'wf:propose',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Ev1'] },
+    });
+    const marker = { runId: 'run-p19a', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19a', marker), 'G-Ev1')).rejects.toMatchObject({
+      code: 'GATE-511',
+      details: { gateId: 'G-Ev1', agentId: 'sre' },
+    });
+    await expect(
+      gateWaive(ctx(project, 'run-p19a', marker), 'G-Ev1', WAIVER),
+    ).rejects.toMatchObject({ code: 'GATE-511', details: { gateId: 'G-Ev1', agentId: 'sre' } });
+    const events = await collectEvents(project, 'run-p19a');
+    expect(events.some((e) => e.type === 'GateApproved' || e.type === 'GateWaived')).toBe(false);
+  });
+
+  it('GATE-511 via the ArtifactCreated source, matching the gate\'s own "evidence:" type', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev2', evidenceGate('G-Ev2', 'ArchitectureSpec'));
+    await writeAgent(project, 'sre', ['G-Ev2']);
+    await appendEvent(project.dir, 'run-p19b', {
+      type: 'ArtifactCreated',
+      runId: 'run-p19b',
+      ts: '2026-01-01T00:00:00.000Z',
+      stepId: 'wf:propose',
+      agentId: 'sre',
+      payload: { type: 'ArchitectureSpec', id: 'ARCH-001' },
+    });
+    const marker = { runId: 'run-p19b', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19b', marker), 'G-Ev2')).rejects.toMatchObject({
+      code: 'GATE-511',
+    });
+  });
+
+  it('the Type(*) grammar matches by name only: an ArtifactCreated of type ADR conflicts with evidence "ADR(*)"', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev3', evidenceGate('G-Ev3', 'ADR(*)'));
+    await writeAgent(project, 'sre', ['G-Ev3']);
+    await appendEvent(project.dir, 'run-p19c', {
+      type: 'ArtifactCreated',
+      runId: 'run-p19c',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { type: 'ADR', id: 'ADR-0011' },
+    });
+    const marker = { runId: 'run-p19c', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19c', marker), 'G-Ev3')).rejects.toMatchObject({
+      code: 'GATE-511',
+    });
+  });
+
+  it('a DIFFERENT agent (not the one who produced evidence) still approves the identical gate', async () => {
+    const project = await createTestProject();
+    await writeGate(
+      project,
+      'G-Ev4',
+      evidenceGate('G-Ev4', 'InterfaceContract', '[human, sre, platform]'),
+    );
+    await writeAgent(project, 'sre', ['G-Ev4']);
+    await writeAgent(project, 'platform', ['G-Ev4']);
+    await appendEvent(project.dir, 'run-p19d', {
+      type: 'StepStarted',
+      runId: 'run-p19d',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Ev4'] },
+    });
+    const otherMarker = { runId: 'run-p19d', stepId: 'design', agentId: 'platform' };
+    await expect(
+      gateApprove(ctx(project, 'run-p19d', otherMarker), 'G-Ev4'),
+    ).resolves.toMatchObject({ approver: 'agent platform' });
+  });
+
+  it('a human approver ignores the same-run evidence entirely', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev5', evidenceGate('G-Ev5', 'InterfaceContract', '[human]'));
+    await appendEvent(project.dir, 'run-p19e', {
+      type: 'StepStarted',
+      runId: 'run-p19e',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Ev5'] },
+    });
+    const summary = await gateApprove(ctx(project, 'run-p19e'), 'G-Ev5');
+    expect(summary.approver).toBe('human');
+  });
+
+  it('evidence recorded in ANOTHER run is not consulted', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev6', evidenceGate('G-Ev6', 'InterfaceContract'));
+    await writeAgent(project, 'sre', ['G-Ev6']);
+    await appendEvent(project.dir, 'run-other-p19', {
+      type: 'StepStarted',
+      runId: 'run-other-p19',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Ev6'] },
+    });
+    const marker = { runId: 'run-p19f', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19f', marker), 'G-Ev6')).resolves.toMatchObject({
+      approver: 'agent sre',
+    });
+  });
+
+  it('neither source present: the agent approves normally', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev7', evidenceGate('G-Ev7', 'InterfaceContract'));
+    await writeAgent(project, 'sre', ['G-Ev7']);
+    const marker = { runId: 'run-p19g', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19g', marker), 'G-Ev7')).resolves.toMatchObject({
+      approver: 'agent sre',
+    });
+  });
+
+  it('a StepStarted naming a DIFFERENT gate in its own gateEvidence does not conflict with THIS gate', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev8', evidenceGate('G-Ev8', 'InterfaceContract'));
+    await writeAgent(project, 'sre', ['G-Ev8']);
+    await appendEvent(project.dir, 'run-p19h', {
+      type: 'StepStarted',
+      runId: 'run-p19h',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Other'] },
+    });
+    const marker = { runId: 'run-p19h', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19h', marker), 'G-Ev8')).resolves.toMatchObject({
+      approver: 'agent sre',
+    });
+  });
+
+  it('checked after the ordinary role/may_approve authorisation: an agent not in approval.roles at all still gets GATE-508, not GATE-511', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev9', evidenceGate('G-Ev9', 'InterfaceContract', '[human]'));
+    await writeAgent(project, 'sre', ['G-Ev9']);
+    await appendEvent(project.dir, 'run-p19i', {
+      type: 'StepStarted',
+      runId: 'run-p19i',
+      ts: '2026-01-01T00:00:00.000Z',
+      agentId: 'sre',
+      payload: { gateEvidence: ['G-Ev9'] },
+    });
+    const marker = { runId: 'run-p19i', stepId: 'design', agentId: 'sre' };
+    await expect(gateApprove(ctx(project, 'run-p19i', marker), 'G-Ev9')).rejects.toMatchObject({
+      code: 'GATE-508',
+    });
+  });
+});
+
 // `PLAN-M14.md` P15, `SPEC-QUESTIONS.md` Q232 decision 9: `forge gate approve|waive` under the real
 // FORGE session marker (`@forge/core/session-marker`) is refused unless the gate names agents and
 // `may_approve` lists it -- `resolveApprover` (`gate-commands.ts`) reads `ctx.marker`.

@@ -240,6 +240,54 @@ describe('runAgentStep', () => {
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
+  // `PLAN-M14.md` P19: `approve.ts`'s own same-run conflict check (`GATE-511`) reads exactly these two
+  // fields off this event -- `agentId` (the top-level field, `telemetry/src/events.ts:104`) and
+  // `payload.gateEvidence` (the compiled `StepNode.gateEvidence`).
+  it("StepStarted carries the step's own agentId and, when the compiled plan attached any, payload.gateEvidence", async () => {
+    const projectRoot = await createTempRepo('agent-gate-evidence');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['done'] });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-evidence' });
+    const stepNode = node({
+      id: 'wf:review-design',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'do work',
+      gateEvidence: ['G-Design', 'G-Verify'],
+    });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-evidence')) events.push(event);
+    const started = events.find((event) => event.type === 'StepStarted');
+    expect(started).toMatchObject({
+      agentId: 'engineer',
+      payload: { gateEvidence: ['G-Design', 'G-Verify'] },
+    });
+  });
+
+  it('StepStarted carries no payload at all when the compiled plan attached no gateEvidence (an absent key, not an empty array)', async () => {
+    const projectRoot = await createTempRepo('agent-no-gate-evidence');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['done'] });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-no-evidence' });
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'do work',
+    });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-no-evidence')) events.push(event);
+    const started = events.find((event) => event.type === 'StepStarted');
+    expect(started?.agentId).toBe('engineer');
+    expect(started).not.toHaveProperty('payload');
+  });
+
   it("StepStarted survives (fsync'd) even when the adapter session itself fails to even start -- proven by injecting a failure between the event write and the session start", async () => {
     const projectRoot = await createTempRepo('agent-crash');
     // An adapter whose startSession always throws -- simulates a crash between the StepStarted write

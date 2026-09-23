@@ -940,6 +940,30 @@ describe('the engine records what it wrote', () => {
     expect(text).toContain(`- Lane base: \` ${head} \``);
   });
 
+  // `PLAN-M14.md` P19: a `swarm-review` step is still an `agent`-kind step (`06` §6.2), so its own
+  // `StepStarted` carries `agentId`/`payload.gateEvidence` the identical way `runAgentStep`'s does
+  // (`approve.ts`'s own `GATE-511` conflict check reads either).
+  it("StepStarted carries the reviewer's own agentId and, when the compiled plan attached any, payload.gateEvidence", async () => {
+    const projectRoot = await createTempRepo('started-evidence');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, 'wf:review', cleanPerspectives());
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+    expect(
+      (await executeStep(reviewNode('wf:review', { gateEvidence: ['G-Review'] }), ctx)).status,
+    ).toBe('succeeded');
+    const started = (await eventsOf(projectRoot, 'run-test')).find(
+      (event) => event.type === 'StepStarted',
+    );
+    expect(started).toMatchObject({
+      agentId: 'reviewer',
+      payload: { gateEvidence: ['G-Review'] },
+    });
+  });
+
   it('does not log an artifact for a step whose merged verdict is blocked (PLAN-M14.md P14): the event is only ever for a step that succeeded', async () => {
     const projectRoot = await createTempRepo('artifact-event-blocked');
     const adapter = new FakePlatformAdapter();

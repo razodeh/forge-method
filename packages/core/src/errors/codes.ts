@@ -2096,6 +2096,23 @@ export const ERROR_CODES = {
       'Run `forge gate approve`/`waive` from a person at a terminal, or from an agent step whose own ' +
       "session carries a real agent id -- never from a run's own command step.",
   },
+  // `forge gate approve`/`waive` under the real FORGE session marker, refusing an AGENT approver the gate's
+  // own `approval.roles`/`gates.may_approve` would otherwise clear (`PLAN-M14.md` P19, `SPEC-QUESTIONS.md`
+  // Q232 decision 8, `05` §5.2 separation of duties / `10` §10.3 rule 6 / `20` §20.10 S6): this run's own
+  // event log shows the agent produced evidence for this very gate (a step it ran named the gate in its
+  // compiled `gateEvidence`, or it created an artifact the gate's own `evidence:` names) -- an agent cannot
+  // mark its own work done, whatever `gates.may_approve` says. Never for a human approver, and never across
+  // runs (evidence from a different run is not consulted). Nothing is appended when this fires.
+  'GATE-511': {
+    severity: 'error',
+    exitCode: EXIT_CODES.gateFailed,
+    message: (d: { gateId: string; agentId: string }) =>
+      `Agent ${show(d.agentId)} produced evidence for gate ${show(d.gateId)} in this run and may not also ` +
+      `approve it (05 §5.2 separation of duties, 10 §10.3 rule 6).`,
+    remedy:
+      'Choose an approver who produced no evidence for this gate in this run -- a human, or a different ' +
+      'agent -- or approve it from a later run.',
+  },
   // `forge gate waive` refusing an `--expires` later than its own grant plus `gates.waiverMaxDays` days
   // (default 90, `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10): an unbounded waiver is a
   // silent, permanent policy change dressed up as a temporary exception. Nothing is appended when this

@@ -759,7 +759,24 @@ export async function runAgentStep(
   } = {},
 ): Promise<StepOutcome> {
   const startedAt = ctx.now();
-  await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
+  // `PLAN-M14.md` P19: `agentId` and (when the compiled plan attached any) `payload.gateEvidence` --
+  // `approve.ts`'s own "same-run conflict of interest" refusal (`GATE-511`) reads exactly these two
+  // fields back off this event (`telemetry/src/events.ts:104`'s own top-level `agentId`, and
+  // `StepNode.gateEvidence`, `plan/compile.ts`'s own `attachDependentGateEvidence`) to tell whether the
+  // agent this step ran as produced evidence for a gate it might later be asked to approve. Emitted
+  // unconditionally with `agentId: node.agent` (undefined here only for a malformed node about to fail
+  // `RUN-039` below, in which case the field is simply absent, matching every other `agentId`-bearing
+  // event this function emits later for the same node); the payload key itself is omitted rather than an
+  // empty array when the compiled plan attached none, so a reader can tell "declared, empty" apart from
+  // "nothing declared" without special-casing an empty list.
+  await ctx.telemetry.emit({
+    type: 'StepStarted',
+    stepId: node.id,
+    agentId: node.agent,
+    ...(node.gateEvidence !== undefined && node.gateEvidence.length > 0
+      ? { payload: { gateEvidence: node.gateEvidence } }
+      : {}),
+  });
 
   if (node.agent === undefined) {
     throw new ForgeError('RUN-039', {

@@ -69,6 +69,11 @@ export interface GateDefinition {
   /** `10` §10.3's `autonomyOverride` (`null` or `'alwaysHuman'`; `03` §3.6 also names the three levels). `null`
    * and absent mean "no override". */
   readonly autonomyOverride?: string | null;
+  /** `10` §10.3's `evidence:` block, when the gate document carries one (`document.ts` reads and validates
+   * it — `PLAN-M13.md` P41's own loader used to drop it after checking its shape; `PLAN-M14.md` P19 is the
+   * first piece that needs the parsed values, not only their shape). Absent or empty: this gate names no
+   * evidence, so an agent approver can never be refused `GATE-511` for it (`approve.ts`). */
+  readonly evidence?: readonly GateEvidenceRef[] | undefined;
 }
 
 /** `10` §10.3's `approval:` block: who may approve (`roles`, `human` or an agent role) and how many distinct
@@ -77,6 +82,16 @@ export interface GateApprovalPolicy {
   readonly required: boolean;
   readonly roles: readonly string[];
   readonly quorum: number;
+}
+
+/** One `evidence:` entry (`10` §10.3's worked example: `- artifact: ArchitectureSpec`, `- artifact: ADR(*)`):
+ * the artifact type this gate treats as evidence of the work it gates, optionally in the `Type(*)`/`Type(id)`
+ * form the `inputs`/`outputs` mini-DSL elsewhere in `10` §10.1 also uses. `PLAN-M14.md` P19 is this field's
+ * first real reader (`approve.ts`'s own `evidenceArtifactType`, matching an `ArtifactCreated.payload.type`
+ * against it, name only — the `(*)`/`(id)` suffix is never treated as a wildcard match, `document.ts`'s own
+ * doc comment on why). */
+export interface GateEvidenceRef {
+  readonly artifact: string;
 }
 
 /** The caller-supplied seam for actually running a declared command — a real `execa` wrapper in
