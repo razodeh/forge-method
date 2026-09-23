@@ -20659,3 +20659,115 @@ all green; `pnpm typecheck` (21/21 packages), `pnpm run boundaries` and `eslint`
 Three commits: `ec3049e` (feat; landed as `cd862397`, see Records), `c1ce7ba` (critic round 1 fix),
 `49f9b7e` (critic round 2 fix) — re-verified together in a clean `git worktree` of the final commit with
 `pnpm install --offline --frozen-lockfile` before this entry was written.
+
+## Q243 — M14 P10: the output check holds a produced KB output to its reserved id range — a three-round critic loop found one blocking, two major and two minor issues, all fixed except one out-of-scope design gap disclosed instead
+
+**Context.** `PLAN-M14.md` P10, `SPEC-QUESTIONS.md` Q232 decision 2's enforcement half (P8, Q241, already
+landed, built the reservation half). Block [5] of a declared-KB-output step's prompt tells the agent
+"use exactly this id" (or, for `cardinality: 'many'`, a contiguous range in order) — before P10 nothing
+ever checked that the session actually did.
+
+**Built.** `OutputCheckInput` (`engine/dispatch/outputs.ts`) gains `reservedIds` (the step's own
+reservation from P8's `reserveDeclaredKbOutputIds`, keyed by declared output `type`) and
+`priorAttemptContent` (what a lane already held, committed, before this attempt's own session ran). A new
+`kbRangeProblems`/`newKbIds` pair, wired into `checkOne`, requires that for a KB-located declared output
+(`ADR`, `Runbook`, `Risk`, `Assumption`, `OpenQuestion`, `Environment` — every `18` §18.7 registry type
+whose `pathTemplate` starts `kb/`): every produced id whose value differs from that same artifact's own
+id at the base revision, and from `priorAttemptContent`'s, is "new" and must be exactly the reservation's
+own ids, used contiguously from its own base, in order, never repeated; an id unchanged from base (or
+from `priorAttemptContent`) is an update to an existing artifact, exempt regardless of the reservation.
+A mismatch is `RUN-083` naming the wrong id(s) and the reservation, within `MAX_PROBLEM_CHARS`. Must-not-
+change items held: non-KB types, `RUN-084`, claim enforcement are all untouched by this diff.
+`runLaneLifecycle` (`engine/dispatch/steps.ts`) threads `reservedIds` straight from whichever caller held
+it before assembly into `verifyDeclaredOutputs`, never recomputing it at check time (a rescan after the
+session already wrote its output would see that output as already claimed and reject it).
+`priorAttemptContent` is a plain pass-through, not internally derived: `runAgentStep`'s own fresh path
+always supplies an `existing` lane too (P8's own pre-created-lane pattern, so a reservation can be bound
+before dispatch), but is provably never a crash-resume reroll, so it never computes this; `orchestrate.ts`'s
+`runAgentAttempt` — the one call site that genuinely can be non-empty — computes it itself, gated on
+`source.kind === 'start'` and a real reservation (the identical condition it already uses for the
+reservation call itself).
+
+**Round 1 (fresh, context-free): 1 blocking, 1 major, both fixed.**
+**Blocking:** the per-file (`ADR`/`Runbook`) exemption compared file PATHS ("does a file already exist at
+this path"), not the artifact's own `id` field — so a session could rewrite an EXISTING artifact's file,
+unchanged path, with front matter declaring a DIFFERENT, never-reserved id, and the range rule never even
+looked at it. Confirmed live: seeding `ADR-0007`, a session overwriting that same file with `id: ADR-0009`
+reported `succeeded`, no `RUN-083` at all — directly defeating the guarantee this whole piece exists to
+enforce. The register (collection) branch was unaffected (it already compared entry ids, never paths).
+Fixed: a new `documentId` helper parses each file's own front-matter `id` (the current file's, the base
+revision's, and any `priorAttemptContent`'s), and the exemption now compares those directly — a same-path
+edit is an update only when the id itself is unchanged. A new regression test
+(`output-contract.test.ts`, "an id swapped at an already-existing path is NOT exempt") reproduces the
+critic's exact scenario, confirmed load-bearing by reverting the fix to path comparison and watching it
+fail red.
+**Major:** `priorAttemptContent` was computed unconditionally inside `runLaneLifecycle` whenever
+`existing !== undefined && reservedIds !== undefined` — but `runAgentStep`'s own ordinary, non-crash path
+ALWAYS supplies `existing`, so every fresh KB-output step paid three extra git subprocess calls and a new
+pre-session failure surface, silently contradicting the doc comment's own "zero extra calls for the
+overwhelming majority of steps" claim. Confirmed by an instrumented spy: `changedFiles` called twice
+instead of once on a plain, uncrashed ADR step. Fixed by making `priorAttemptContent` a plain caller-
+supplied parameter instead of something `runLaneLifecycle` derives from `existing` (which conflates
+P8's own "pre-created, provably fresh" lane shape with P19's own "possibly already has prior commits"
+reroll shape): `runAgentStep` now passes nothing; `orchestrate.ts`'s `runAgentAttempt` computes it,
+gated the same way its own reservation call already is.
+
+**Round 2 (fresh, context-free): 1 major, 2 minor; major and one minor fixed, one minor addressed anyway.**
+**Major:** `kbRangeProblems` deduplicated the produced ids (`new Set(newIds)`) BEFORE comparing against
+the reservation, so two DIFFERENT files (or two register entries) sharing one new id silently passed as
+though only one had been produced — a real, exploitable same-commit id collision, confirmed live over a
+real git lane for both the per-file and register branches, contradicting the function's own doc comment
+("not merely 'some id in the reserved set'... a `many` block used out of order, or with a gap, is still
+wrong" — a repeated id is exactly as wrong). Fixed: duplicates are detected in the undeduplicated list
+FIRST, failing with a dedicated "produced more than once" message before the range comparison runs
+(which no longer dedupes either — removing the `Set` call alone already makes a duplicate fail the
+length/elementwise comparison, since `reserved` is always distinct; the explicit check exists for a
+precise diagnostic on top of that). **Minor (fixed):** the wrong-id message named only one of the two
+exemption reasons (base revision), omitting `priorAttemptContent`; now names both. **Minor (addressed
+rather than left, since it was cheap):** the round-2 exploit itself was covered only by new fast stub
+tests in `outputs.test.ts`, not end to end; two real-lane tests (per-file and register) were added after
+round 3 confirmed the underlying logic was already correct.
+
+**Round 3 (fresh, context-free, scoped to `outputs.ts`/`outputs.test.ts`, the files changed since round
+2): 0 blocking, 0 major found in this round's own diff.** Independently re-probed both prior fixes with
+real adversarial execution the shipped tests do not themselves run (a three-way duplicate; a duplicate id
+also outside the reserved range; the exact round-2 exploit over a real lane rather than only the stub;
+traced whether the register branch has any analogue of round 1's path-vs-id confusion and found it
+structurally cannot — a register entry's `id` is its only identity, so "keep the identity, change the id"
+is not an expressible case there) and found nothing new wrong with the diff itself. It surfaced one MAJOR
+but explicitly pre-existing, out-of-file-scope design gap on its own fresh sweep (see Discloses) and
+confirmed the two minor items from round 2 were either already fixed or (a specific "stale doc comment"
+claim) not actually present on inspection of the file. Judged: this diff done, no further round needed —
+closing the loop at the 3-round cap with the final round finding nothing new to fix within its own scope.
+
+**Mutation evidence (self-verified, each reverted after observing red, before any commit).** Range rule
+dropped entirely: the wrong-id and duplicate cases lose their check (this is exactly what both critic
+rounds' own live exploits demonstrated). Rule applied to every type instead of gated on
+`pathTemplate.startsWith('kb/')`: the Epic-not-held case flips from pass to a false `RUN-083`.
+`reservedIds`/`priorAttemptContent` never threaded through: every dependent case loses its check, and the
+pre-existing P8 crash-resume regression test (`orchestrate.test.ts`, real leftover content from a crashed
+attempt) starts failing a legitimate reroll. The id-vs-path fix reverted to path comparison: the new "id
+swapped at an existing path" test fails red (`succeeded` instead of `failed`). The duplicate-detection
+block disabled: both new "same id twice" tests fail red.
+
+**Verification scope (this piece; owner-approved cost cut, no full unscoped suite).**
+`engine/test/dispatch/{outputs,output-contract,output-claim,output-ids,agent}.test.ts`,
+`engine/test/resume/{output-contract-resume,orchestrate}.test.ts`,
+`cli/test/commands/run/{kb-output-ids,output-contract,output-claim}.test.ts` — 246 cases total, all
+green in a clean `git worktree` of the final commit with `pnpm install --offline --frozen-lockfile`;
+`pnpm typecheck` (21/21 packages, force-executed, not cache-replayed) and `pnpm run boundaries` both
+clean in the same clean worktree; `eslint --max-warnings 0`/`prettier --check` clean on every file owned.
+
+**Discloses.** A KB artifact committed with a WRONG id, whose session then crashes (for any reason) after
+the write lands but before the output check ever runs (`work.failure !== undefined` makes
+`runLaneLifecycle` return before ever reaching `verifyDeclaredOutputs`), is permanently exempted via
+`priorAttemptContent` on every later reroll of the same step — round 3's own fresh sweep found this,
+unprompted, while re-tracing the `priorAttemptContent` machinery a second time. Not a collision risk
+(`output-ids.ts`'s reservation scan always sits above whatever is actually on disk, unchanged by this
+piece), but it does mean the narrower promise ("the id used was the one block [5] actually named") is not
+re-verified once a check has been skipped this way. No test exercises it — `output-contract-resume.test.ts`'s
+own crash-resume case has the crash land before any commit at all, so `priorAttemptContent` is empty
+there. A real fix needs the crash-recovery/retry layer (`steps.ts`/`orchestrate.ts`) to durably record
+what a lane was actually told to use, not just this piece's own range comparison against whatever
+happens to already be committed — left for an owner call rather than guessed at, matching this piece's
+own `Size: S` scope and the 3-round critic cap already reached without touching it.
