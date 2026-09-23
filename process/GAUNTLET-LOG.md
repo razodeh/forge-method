@@ -15871,3 +15871,128 @@ the single-lane-merge shape this piece's one new `produces` entry on `draft-cont
 {freeze-contracts,draft-contract,model-data,plan-migration,critique-integration}.md`; new
 `test/gate-declarations-authored.test.ts`; edits to `test/workflows.test.ts`, `packages/cli/test/
 commands/spec/integration-rules.test.ts`.
+
+## M14 P18 — `runMergeStep` reads each swarm-review lane's committed `verdict` (`engine/dispatch/{facades,integrate,steps,types}.ts`, `engine/failures/classify.ts`, `vcs/merge-queue.ts`; new/edited tests in `engine/test/dispatch/merge.test.ts`, `engine/test/failures/classify.test.ts`, `vcs/test/merge-queue.test.ts`, `cli/test/commands/run/swarm-review-report.test.ts`)
+
+**Context.** `PLAN-M14.md` P18, depending on the already-landed P14 (`verdict` front matter on every
+engine-written `ReviewReport`, `parseReviewVerdict`, `RUN-108`/`classifyFailure`'s policy mapping). Before
+this piece, `runMergeStep` landed every predecessor lane in its `mergeLandingScope` regardless of a
+`swarm-review` node's own bound verdict: a review that merely succeeded as a step (`incomplete`, no
+findings and nothing checked) still landed its own lane, and nothing at merge time re-read what P14 had
+already bound into the front matter.
+
+**Built.** For every lane in `mergeLandingScope` whose node has `interactionMode === 'swarm-review'`,
+`runMergeStep` now resolves every such lane's own committed verdict in one pass (`resolveSwarmReviewLanding`,
+`steps.ts`) BEFORE any lane in the merge's own scope is touched. A new `VcsFacade.listFilesAtRevision`
+(`types.ts`/`facades.ts`, `git ls-tree -r` against the lane's own `HEAD`) locates the reports directory's
+committed content, since `LaneHandle` carries no base sha for `changedFiles`'s own two-revision diff the
+way `resumeSwarmReviewStep` uses; the match is kept in step with that same function's own exact-dirname
+rule (round-1 fix, below). `parseReviewVerdict` (P14, unmodified) reads the bound verdict back.
+`incomplete`, `blocked`, or a missing/unparseable field refuses the lane with `MERGE-REVIEW-INCOMPLETE`
+(classified `policy` in `classify.ts`, the identical "this run's own state lacks something no retry can
+supply" reasoning `VCS-MISSING-CONFLICT-RESOLVER` already gives), names the report (or its absence), the
+review step, and `forge resume` in its remedy, and keeps the lane in `laneRegistry`. Every downstream lane
+is refused through the pre-existing, generic `MERGE-DEPENDENCY-NOT-LANDED`/`blockedBy` path, unchanged.
+The reverse rule (every lane upstream of the refused review, within this merge's own landing scope, is
+also not landed) went through a real correction across the gauntlet rounds — see round 2, below.
+`concerns` lands; `detail.merges[]` entries gain `reviewVerdict`/`reviewReportId` for any landed review
+lane (`concerns` or `clear`); the merge commit gains a `Forge-Review-Verdict: <verdict> (<id>)` trailer
+(`vcs/merge-queue.ts`'s `formatMergeCommitMessage`) only for `concerns` (never `clear` — a deliberate,
+mandate-specified asymmetry: the metadata is attached either way, the trailer is not), guarded by the
+identical `assertSingleLine` newline check `stepId`/`runId`/`laneId` already get (`reviewReportId` comes
+from a document on a lane branch this package does not fully trust, `SPEC-QUESTIONS.md` Q229's threat
+model). `MergeOutcome` itself, and `landLane`'s check/conflict-handling semantics, are unchanged.
+
+**Round 1 (fresh, context-free): 6 findings — 2 real and fixed, 2 disclosed as documented limitations, 1
+accepted as already matching an established convention, 1 accepted as a brief-permitted tradeoff.**
+1. **Minor, fixed.** `readReviewLookup`'s file lookup matched `REVIEW-*.md` recursively under the reports
+   root, while the already-landed `resumeSwarmReviewStep` requires the file's own dirname to equal the
+   reports directory exactly. Fixed: added the identical dirname check; a new test proves a nested
+   `<reportsDir>/sub/REVIEW-001.md` is not read as the report.
+2. **Minor, fixed.** `detail.merges[]` carrying `reviewVerdict`/`reviewReportId` for a `clear`-landed lane
+   too (not only `concerns`) was true of the code but untested. Fixed: the `clear`-verdict test now
+   asserts both fields directly.
+3. **Minor, disclosed.** The "reverse rule" used the review's own direct `dependsOn` only, not
+   `resolveLaneBase`'s fuller P38-stacking computation — judged a defensible approximation at the time
+   (both shipped review steps declare exactly one direct dependency). This judgment was wrong; see round
+   2.
+4. **Minor, disclosed.** The check only ever runs for lanes inside an explicit `merge` step's own
+   `mergeLandingScope` (the brief's own literal scope) — a `swarm-review` lane the engine integrates
+   automatically (`integrateLane`, no `merge` step ever claims it) never runs this check at all. Not
+   reachable by any shipped workflow (both always route review through an explicit `merge`); disclosed in
+   a code comment rather than expanded beyond the brief's own authorized scope.
+5. **Minor, accepted.** A genuine infrastructure failure while reading the report and "the report is
+   genuinely missing" both collapse into the identical `MERGE-REVIEW-INCOMPLETE`/`policy` failure —
+   confirmed this matches `readAtRevision`'s own already-established "any git-level failure reads as
+   absent" convention in the same file, not a new inconsistency; documented with a comment, no behavior
+   change.
+6. **Minor, accepted.** `REVIEW_REPORT_FILE`/the reports-dir computation duplicate (rather than import)
+   the private, non-exported equivalents in `swarm-review-step.ts` (outside this piece's own Surface) —
+   confirmed behaviorally identical; the brief explicitly permits either approach.
+
+**Round 2 (fresh, context-free): 1 BLOCKING finding, fixed; independently re-confirmed every round-1 item
+except the one it overturned.** Reproduced empirically, against real `executeStep`/`runMergeStep` (not
+mocked): for the shipped `implement-story.workflow.yaml` — `green -> refactor -> self-verify -> review
+(dependsOn: [self-verify]) -> document -> commit -> merge` — the round-1 "reverse rule" blocked only
+`self-verify` (review's one direct dependency, itself a content-less `forge story verify` command step
+with no code of its own); `green`'s and `refactor`'s own separate stacked lanes, several hops further
+upstream and holding the actual reviewed code, landed into the integration branch regardless, even though
+the merge step's own outcome was `failed`. This directly defeated the Mandate's own explicit requirement
+for the single most common real workflow shape. **Fixed:** the reverse-rule loop now walks
+`upstreamOf(stepGraph, predecessorId)` — the same helper `runMergeStep`'s own symmetric downstream
+`blockedBy` check already uses — giving the review's full transitive `dependsOn` closure, still filtered
+to `inScope` (this merge's own `mergeLandingScope` output, so it can never reach a lane already integrated
+behind an earlier `gate`/`merge` checkpoint). A new test reproduces the exact scenario
+(`"reproduces implement-story.workflow.yaml's own multi-hop chain..."`, `merge.test.ts`), asserting
+`green`/`refactor`'s own lanes stay registered and their files never reach the integration branch.
+Mutation-tested directly: reverting to `reviewNode.dependsOn` alone breaks exactly this one new test,
+nothing else. Round 2 otherwise re-confirmed round 1's five other items unchanged (its finding is what
+round 1 had accepted as item 3's documented tradeoff, now understood to be a live bug, not a future-only
+risk).
+
+**Round 3 (fresh, context-free, full re-pass, not merely a checklist replay): 0 new findings.**
+Independently re-derived the round-2 fix's correctness by reading `upstreamOf` directly (a plain
+transitive `dependsOn` walk with no concept of checkpoints) and hand-tracing the `inScope` filter's own
+checkpoint safety through both shipped workflows (`build-stage.workflow.yaml`'s `contracts-gate`/
+`freeze-contracts` chain confirmed structurally unreachable regardless of `upstreamOf`'s own
+checkpoint-blindness). Two non-blocking observations, neither requiring action: a theoretical future
+over-blocking case for two independent review chains sharing a non-checkpoint ancestor (not reachable by
+anything shipped) and a pre-existing (not P18-introduced) stale doc comment in `classify.ts`'s
+`classifyMergeFailure` ("the three real merge-sourced codes," now six, the extra three from earlier
+pieces). No round 4.
+
+**Mutation evidence (real, not narrated).** Verdict-read logic disabled entirely (forced `refused`/
+`landable` empty): the three refusal test cases (incomplete, missing-verdict, blocked) and the `concerns`
+trailer test all failed as expected; restored, all green. Reverse-propagation loop removed: only the
+"stacked implement lane not landed" assertion failed; restored, all green. `assertSingleLine` guard on
+`reviewReportId` removed in `vcs/merge-queue.ts`: only the newline-rejection vcs test failed (the
+candidate proceeded to `already-integrated` instead of throwing); restored, all green. Round-2's own fix
+(`upstreamOf` reverted to `reviewNode.dependsOn`): only the new multi-hop reproduction test failed;
+restored, all green.
+
+**Verification.** `pnpm typecheck` clean across all 21 packages; `pnpm run boundaries` clean. Scoped:
+`engine/test/dispatch/merge.test.ts` (25), `vcs/test/merge-queue.test.ts` (27),
+`engine/test/failures/classify.test.ts` (32), `cli/test/commands/run/swarm-review-report.test.ts` (5),
+`engine/test/run/stacked-lanes.test.ts` (29, unaffected P38-stacking regression check) — 118 tests, all
+green. Root workflow suite (`agent-prompts-all-workflows`, `build-stage-compiles`, `determinism`,
+`fm-{mobile,service}-workflow`, `live-smoke`, `output-contract-known-gaps`, `workflows`) green.
+`test/workspace-floor.test.ts` failed on an unrelated, already-committed, pre-existing defect
+(`modules/fm-mobile/workflows/store-release.workflow.yaml`'s `{{config.paths.release}}` template does not
+resolve, confirmed present at `main`'s own HEAD before this piece touched anything) — not this piece's
+own file, not caused by this piece. Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check
+.`) run on the actual final commit in a clean `git worktree` alongside the scoped suite above, per Rule
+14/15.
+
+**Discloses (per the plan's own Discloses list).** A run fails at the merge for an `incomplete`/`blocked`
+review with the remedy pointing at the review step and `forge resume`, as decided. A refused lane stays
+registered and is retried by the next merge that scopes it. A hand-edited lane branch could still forge
+`verdict:` (`SPEC-QUESTIONS.md` Q229's own threat model; unchanged by this piece, which reads the same
+field P14 already trusts). No gate check added. Two further items surfaced across the gauntlet rounds,
+disclosed rather than fixed (out of this piece's own authorized scope): a `swarm-review` lane no `merge`
+step ever claims (`integrateLane`'s own automatic-integration path) runs no verdict check at all — not
+reachable by any shipped workflow, since both always route review through an explicit `merge`; and a
+theoretical future workflow with two independent review chains sharing a common, non-checkpoint ancestor
+inside one merge's scope could have one review's failure hold back a lane a sibling, passing review also
+needed — not reachable by anything shipped today.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q250`.
