@@ -15,11 +15,7 @@ import * as YAML from 'yaml';
 
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 
-import {
-  configGet,
-  configSet,
-  CONFIG_REL_PATH,
-} from '../../../src/commands/config.ts';
+import { configGet, configSet, CONFIG_REL_PATH } from '../../../src/commands/config.ts';
 import {
   formatGateApproval,
   formatGateReport,

@@ -321,7 +321,7 @@ describe('waiverExceedsCap', () => {
     expect(waiverExceedsCap(w, grantedLongAgo, 90)).toBe(false);
   });
 
-  it('does not itself reject an expiresAt that fails to parse -- that is applyWaiver/GATE-504\'s own job', () => {
+  it("does not itself reject an expiresAt that fails to parse -- that is applyWaiver/GATE-504's own job", () => {
     expect(waiverExceedsCap(waiver({ expiresAt: 'not a date' }), NOW, 90)).toBe(false);
   });
 });
@@ -370,7 +370,7 @@ describe('validateWaiverPolicy', () => {
     if (caught instanceof ForgeError) expect(caught.code).toBe('GATE-513');
   });
 
-  it('leaves applyWaiver/GATE-504/GATE-505 untouched -- a blank owner still reaches applyWaiver\'s own distinct refusal when that is the function actually called', () => {
+  it("leaves applyWaiver/GATE-504/GATE-505 untouched -- a blank owner still reaches applyWaiver's own distinct refusal when that is the function actually called", () => {
     expect(() => applyWaiver(result({ passed: false }), waiver({ owner: '' }), NOW)).toThrow(
       expect.objectContaining({ code: 'GATE-504' }),
     );
