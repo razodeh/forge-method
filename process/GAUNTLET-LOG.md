@@ -17361,3 +17361,124 @@ through `vetProposedCommand`'s own return value, which would be a `confined-comm
 this piece's declared Surface.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q261`.
+
+## M14 P28 — `forge kb verify` and `forge adopt` verification run stored commands through the confined runner (`engine/dispatch/confined-command.ts`, `engine/dispatch/index.ts`, `engine/adopt/verification.ts`, `cli/commands/kb.ts`, `cli/commands/adopt.ts`, `cli/bin.ts`, `cli/commands/doctor/run-doctor.ts`; new/edited tests in `engine/test/dispatch/confined-command.test.ts`, `engine/test/adopt/verification.test.ts`, `cli/test/commands/{kb-verify,kb,kb-rules,adopt}.test.ts`, `cli/test/commands/doctor/{project,rebuild-index,corrupt-state}.test.ts`, `cli/test/e2e/init.test.ts`, `cli/test/bin.test.ts`, `test/shell-sinks-inventory.test.ts`)
+
+**Context.** `PLAN-M14.md` P28; depends on none. `SPEC-QUESTIONS.md` Q222 §8 (M13 P28's own "left open"
+list) named two untrusted-source sinks that ran with no grant, no denylist and no scrub: `forge kb
+verify`'s stored `## Verification` command (`cli/commands/kb.ts`, `execa(command, { shell: true })`
+against the live project tree with the whole parent environment) and `forge adopt` phase 5's CI/
+package.json-detected build/test command (`engine/adopt/verification.ts`, identical shape, in a
+sandboxed clone). Both traced back to text a third party wrote — a KB entry an agent or `forge adopt`
+itself authored, or the target repository's own `package.json`/CI config — never vetted the way a live
+model-proposed command already was.
+
+**Built.** A new `vetStoredCommand(command, root)` (`confined-command.ts`) composes the two checks a
+model-proposed command is already held to: `vetConfiguredCommand` (the syntax/network/package-manager/
+git/argument stages under `network: none`, the identical vet `execution.testCommands` is held to before
+a pattern is derived from it) then `vetProposedCommand` with a grant of exactly the one command asked
+for (`exec: [command]`) — nothing wider, since a stored command has no exec pattern of its own to be one
+of, and this is what runs the path-containment stage (secret files, `.git/` internals, a `..` escape)
+the first stage alone does not. A new `STORED_COMMAND_LIMITS` (300 s / 8 MB, between `PROPOSED_COMMAND_
+LIMITS` and `ENGINE_COMMAND_LIMITS`) bounds the confined run. Both exported from `dispatch/index.ts`.
+
+`kb.ts`'s `runStoredVerificationCommand` and `verification.ts`'s `runCommandCheck` both now vet before
+running, and run through `runConfinedCommand` (scrubbed environment, closed stdin, a timeout, an output
+cap, whole-process-group kill) instead of a bare `execa(..., { shell: true })`. A refused command never
+spawns a process at all: for `kb verify` it is a new `KbVerifyOutcome` value `'refused'` (never `fail` —
+it disproved nothing — and never `skipped` — it is real, actionable drift), with a detail starting
+`refused (<reason>)` and a script remedy; for `forge adopt` it is an `inconclusive` `RawVerificationCheck`
+whose detail starts the same way. `bin.ts`'s `kb verify` exit-code filter now treats `refused` as
+failing, matching `fail`/`timeout`/`error`. `KbCommandContext.env`/`VerificationPhaseInput.env`/
+`AdoptContext.env` are new REQUIRED fields (R10: no ambient `process.env` read in any of these three
+files) — `bin.ts`'s `buildKbContext` supplies `realEnvSnapshot()` for `kb verify` (`forge adopt` has no
+real CLI composition root yet, confirmed by grep: nothing in `bin.ts` dispatches it, so `AdoptContext.env`
+is supplied by whatever future piece wires it up, the identical stance `AdoptContext.runCartography`/
+`runInference` already take for their own missing composition root). `run-doctor.ts` threads its own
+pre-existing `DoctorOptions.env` into the two `KbCommandContext` sites it builds. `test/shell-sinks-
+inventory.test.ts`'s two `open` rows for `kb.ts` and `adopt/verification.ts` are removed — neither
+starts a shell directly any more, the sink is `confined-command.ts`, already listed `confined`.
+
+Deliberately NOT built, confirmed by real hostile runs rather than merely asserted: no blanket refusal
+of `node -e`/`python -c` (the composition is exactly the two existing checks, unchanged, so
+`execution.testCommands`'s own existing `node -e "process.exitCode=1"` acceptance — pinned by
+`test-command-grant.test.ts` — is untouched; a plain `node -e "1"` still passes `vetStoredCommand`, only
+a payload that resolves to a secret-shaped path segment like `.ssh` is caught, via the existing path-
+containment stage applied to the whole argument word, the identical mechanism that catches `cat
+../../.ssh/id_rsa`). `ConfinedCommandResult` no longer distinguishes a signal-kill from an ordinary exit
+code for a stored command (ratifying the simplification `forge debug`'s own RCA loop already accepted
+from this shared runner) — an honest, disclosed behaviour change (two tests renamed/adjusted for it),
+not a silently weakened assertion.
+
+**Critic round 1 (fresh, context-free, real hostile subprocess runs against the live code, not a read):
+one real, serious bug, found and fixed; everything else held up.** `vetNetworkAndArguments`'s own
+`program` lookup (`confined-command.ts`) compared an UN-lowercased `path.posix.basename(first)` against
+the lowercase-only `NETWORK_PROGRAMS` set, the `program === 'git'` gate, and `dangerousArgument`'s
+`rg`/`tree` checks — unlike every OTHER program-name comparison in the same module
+(`configuredProgramRefusal`'s own `programKey` helper, already correct). On a case-insensitive
+filesystem (macOS, Windows) the real OS resolves `GIT`/`CURL`/`SSH`/`PING`/`NC`/`WGET`/`RG`/`TREE` (any
+case) to the real binary regardless, so a stored command naming one of these in any other case ran
+completely unrefused — `vetStoredCommand`'s own `exec: [command]` grant is always self-satisfying
+whatever case the stored text used, so this was, for a stored command, the only remaining line of
+defense for the shapes it names. Proven destructively through the real, public `kbVerify()` entry point:
+a KB entry naming `` Command: `Git reset --hard` `` silently discarded real uncommitted work in a live
+project tree and reported `outcome: 'pass'`. Fixed by reusing the existing, already-correct `programKey`
+helper. 14 new regression tests (12 in `confined-command.test.ts`'s `vetStoredCommand` matrix — `GIT
+push`, `Git reset --hard`, `CURL`/`Curl`, `SSH`, `PING`, `NC`, `WGET`, `RG --pre=sh`, `TREE -o`, each in
+a varied case — 2 in `kb-verify.test.ts` including the real `Git reset --hard` destructive-proof end to
+end, asserting the uncommitted file survives byte-identical). Everything else the critic tried against
+the real, live code held up: real env/secret exfiltration attempts (fake `ANTHROPIC_API_KEY`/`AWS_
+SECRET_ACCESS_KEY`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`/`NODE_OPTIONS` canaries injected into `parentEnv`,
+confirmed absent from the child, reconfirmed end to end through `kbVerify` with `ctx.env`); a symlink
+inside a lane pointing outside it; `.env`/glob secret-file access; the two-stage composition claim
+(`vetProposedCommand` alone, skipping `vetConfiguredCommand`, does let `sh -c`/`npx` through — proving
+the composition is genuinely load-bearing, not redundant); refused-command-never-spawns; timeout/
+output-cap/stdin-closed/process-group-kill; zero ambient `process.env` reads in `kb.ts`/`verification.ts`/
+`confined-command.ts` (grepped); zero vacuous or weakened assertions across every diffed test file. Full
+regression run (`node scripts/run-tests.mjs`, never bare vitest): all green, plus a clean, full-monorepo
+`pnpm typecheck`.
+
+**Mutation evidence (real: mutate, run scoped tests, confirm failure, restore via `git checkout --`,
+re-confirm green).** `execa` restored in either sink (bypassing the vet and the confined runner
+entirely): every hostile row in `kb-verify.test.ts`'s hostile-command describe block failed (a chained
+`curl | sh` and a bare `git push` both actually RAN instead of being refused; the canary test flipped
+from `pass` to `fail` as its own env-check script correctly detected the leak); in `verification.test.ts`
+a hard-denylisted `curl ... | sh` CI-detected command was silently reported `pass` (curl's own connection
+failure left `sh` an empty script, which exits 0 — a real, concrete illustration of exactly the risk an
+unvetted stored command carries), the canary test flipped to `fail`, and the two behaviour-change tests
+(invalid-timeout, non-zero-exit-honesty) reverted to their pre-fix shape, confirming they genuinely
+exercise the new code path. `vetConfiguredCommand` skipped inside `vetStoredCommand` (reusing only
+`vetProposedCommand`): exactly the `npx`/`sh -c`/`bash -c` rows failed, plus the dedicated
+load-bearing-composition test. A stale `open` row kept in the shell-sinks inventory even though the file
+no longer starts a shell: both the stale-row test and the "no sink left open" test failed. The round-1
+critic fix reverted (`programKey` → bare `path.posix.basename`): all 14 of its own new regression tests
+failed exactly as expected, including the real `Git reset --hard` destructive-work-survives proof.
+
+**Shared working tree.** Exact-file `git add` throughout; `dispatch/index.ts` (a concurrent piece
+independently adding `trustedCommandFilterFlag` to the same file) isolated via a hand-built patch
+(`git diff -- f > x.patch`, edited to drop their hunk, `git apply --cached`) rather than touched with a
+whole-file rewrite. `vcs/merge-queue.ts`/`dispatch/{facades,steps,types}.ts`/`gates/*`/`rca/*`/
+`resume/*`/`run/run-engine.ts` and others were dirty throughout this piece's own work from other
+concurrent agents (P34 and others); never read, added or reverted. `test/shell-sinks-inventory.test.ts`'s
+own module doc comment and `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` (this entry) were both appended to
+after a separate concurrent piece (M14 P24) had already appended its own content immediately above —
+confirmed additions-only (`git diff --stat`, zero deletions) before appending this entry beneath theirs.
+
+**Discloses.** Still needs an OS sandbox: the vet reads the command LINE, not what the program does once
+running — an ACCEPTED command (`npm test`) still runs whatever the project's own test suite does, with
+the network open and the real `HOME`; `network: none` is a text match, not an OS-level block.
+`revertCheckScript` (unrelated file, unrelated to this piece) remains unguarded, as Q222 already
+disclosed. A legitimate chained stored command (`build && test`) now gets refused with the script remedy
+— a real, intended behaviour change for any KB entry that happened to write one, not merely a gap. A
+real, pre-existing, broader gap the round-1 critic found and this piece deliberately did NOT fix, out of
+Surface (`@forge/adapter-kit`, not `@forge/engine`/`@forge/cli`): `isHardDenylisted`'s own `commandName()`
+(`grants/denylist.ts`) and `matchesExecPattern` (`grants/exec.ts`) have the identical un-lowercased
+program-name comparison, affecting every caller of `isExecAllowed`, not only stored commands — verified
+by direct construction NOT to be exploitable via `vetStoredCommand` specifically today (every hard-
+denylist shape a case-varied spelling could dodge there — `rm`/`sudo`/`chmod` — is independently caught
+by `configuredProgramRefusal`'s own already-correct `NOT_A_TEST_PROGRAMS` check, which every stored
+command's first vet stage always runs, and a case-varied forced git push is still caught by the
+network-policy check this piece's own fix restores), but real and worth a dedicated follow-up piece for
+the model-proposed path under an `exec: ['*']` grant.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q262`.
