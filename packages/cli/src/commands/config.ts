@@ -27,6 +27,7 @@ import {
 import {
   assertGitAvailable,
   commitPaths,
+  errorMessage,
   formatConfigCommitMessage,
   getDirtyFiles,
   VcsError,
@@ -301,7 +302,21 @@ export async function configSet(
       // bytes here keeps this function's own CFG-055 promise — "a refused --commit leaves the file
       // byte-for-byte as it found it" — true for a downstream commit failure too, not only the pre-check
       // refusal (`commitPaths` itself already un-stages its own half-staged index on this same failure).
-      await writeFileAtomic(configPath, originalText);
+      try {
+        await writeFileAtomic(configPath, originalText);
+      } catch (restoreCause) {
+        // A round-2 critic finding, reproduced live (a mocked second failure on the restore write
+        // itself): an unguarded restore here would let a second, unrelated failure (disk full, .forge
+        // removed concurrently — narrow, but real) silently REPLACE `cause` — the original commit
+        // failure the caller actually needs to see — with no trace of it left anywhere, not even as a
+        // `cause` chain. Both are real and both are named, rather than one silently winning.
+        throw new Error(
+          `configSet: the commit failed (${errorMessage(cause)}) and restoring ` +
+            `${CONFIG_REL_PATH} to its original content also failed (${errorMessage(restoreCause)}) — ` +
+            `it may now be left in an inconsistent state.`,
+          { cause },
+        );
+      }
       throw cause;
     }
   }
