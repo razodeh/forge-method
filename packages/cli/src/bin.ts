@@ -2557,8 +2557,16 @@ async function runSpecCommand(
 
 const ADR_SUBCOMMANDS = ['new', 'list', 'show', 'supersede', 'accept', 'reject'] as const;
 
+/** The real FORGE session marker (`@forge/core/session-marker`, `PLAN-M14.md` P4/P31), read once from
+ * `realEnvSnapshot()` (this file's own one ambient environment read, R10) and reused as-is: the same
+ * `{runId, stepId?, agentId?}` shape `GateCommandContext.marker` already carries, so `gateCommandMarker`
+ * -- itself a plain env-to-object reader with no gate-specific semantics -- is reused directly rather
+ * than duplicated. Absent `FORGE_RUN_ID`: `undefined`, a real human's own shell never carries this
+ * marker, and `adrAccept`/`adrReject`/`adrSupersede` (`refuseUnderMarker`) behave exactly as they did
+ * before this piece. */
 function buildAdrContext(paths: ProjectPaths): AdrCommandContext {
-  return { paths, kbRoot: KB_ROOT };
+  const marker = gateCommandMarker(realEnvSnapshot());
+  return { paths, kbRoot: KB_ROOT, ...(marker === undefined ? {} : { marker }) };
 }
 
 async function runAdrCommand(

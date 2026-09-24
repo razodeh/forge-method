@@ -28,6 +28,7 @@ import { classifyFailure, decideRetry } from '../../src/failures/index.ts';
 import { toAgentId, type StepNode, type StepNodeRetryPolicy } from '../../src/plan/index.ts';
 import {
   adrText,
+  DEFAULT_SOURCE,
   epicMissingGoalText,
   epicText,
   risksFileText,
@@ -52,6 +53,10 @@ interface Scenario {
   readonly agentWrites?: boolean;
   readonly runId?: string;
   readonly docRoots?: NonNullable<ExecuteStepContext['docRoots']>;
+  /** `PLAN-M14.md` P31: `undefined` (every existing scenario) is byte-identical to before this field
+   * existed; `'external'` marks the compiled step tainted, the one signal `taintedAdrStatusProblem`
+   * (`dispatch/outputs.ts`) reads. */
+  readonly taint?: StepNode['taint'];
 }
 
 async function runScenario(scenario: Scenario) {
@@ -88,6 +93,7 @@ async function runScenario(scenario: Scenario) {
     brief: 'do the work',
     outputs: scenario.outputs,
     produces: scenario.produces ?? ['docs/forge/**'],
+    ...(scenario.taint === undefined ? {} : { taint: scenario.taint }),
   });
   const outcome = await executeStep(stepNode, ctx);
   const events: ForgeEvent[] = [];
@@ -884,5 +890,84 @@ describe('sources and never-removed (PLAN-M14.md P11), end to end over a real la
     expect(outcome.failure?.code).toBe('RUN-083');
     expect(outcome.failure?.message).toContain('RISK-001');
     expect(outcome.failure?.message).toContain('08 §8.6');
+  });
+});
+
+describe('a tainted step writes ADRs only as status: proposed (PLAN-M14.md P31, 20 §20.5 point 3)', () => {
+  const DECISIONS = 'docs/forge/kb/decisions';
+
+  it('a tainted step producing an "accepted" ADR fails, naming the file and the remedy', async () => {
+    const { outcome } = await runScenario({
+      outputs: [{ type: 'ADR' }],
+      writes: [{ relativePath: `${DECISIONS}/ADR-0001-x.md`, content: adrText('ADR-0001') }],
+      taint: 'external',
+      runId: 'run-p31-tainted-accepted',
+    });
+    const failure = expectFailed(outcome);
+    expect(failure.code).toBe('RUN-083');
+    expect(failure.message).toContain(`${DECISIONS}/ADR-0001-x.md`);
+    expect(failure.message).toContain('status: proposed');
+    expect(failure.message).toContain('forge adr accept');
+  });
+
+  it('the identical tainted step producing a "proposed" ADR succeeds', async () => {
+    const { outcome } = await runScenario({
+      outputs: [{ type: 'ADR' }],
+      writes: [
+        {
+          relativePath: `${DECISIONS}/ADR-0001-x.md`,
+          content: adrText('ADR-0001', 'A decision', DEFAULT_SOURCE, 'proposed'),
+        },
+      ],
+      taint: 'external',
+      runId: 'run-p31-tainted-proposed',
+    });
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it('control: the identical UNTAINTED step producing an "accepted" ADR succeeds -- proves the refusal above is attributable to taint, not to the status itself', async () => {
+    const { outcome } = await runScenario({
+      outputs: [{ type: 'ADR' }],
+      writes: [{ relativePath: `${DECISIONS}/ADR-0001-x.md`, content: adrText('ADR-0001') }],
+      runId: 'run-p31-untainted-accepted',
+    });
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it('every OTHER real ADR status (rejected, superseded, deprecated) is refused too, not only accepted', async () => {
+    for (const status of ['rejected', 'superseded', 'deprecated']) {
+      const { outcome } = await runScenario({
+        outputs: [{ type: 'ADR' }],
+        writes: [
+          {
+            relativePath: `${DECISIONS}/ADR-0001-x.md`,
+            content: adrText('ADR-0001', 'A decision', DEFAULT_SOURCE, status),
+          },
+        ],
+        taint: 'external',
+        runId: `run-p31-tainted-${status}`,
+      });
+      expect(outcome.status, `status ${status}`).toBe('failed');
+      expect(outcome.failure?.code, `status ${status}`).toBe('RUN-083');
+    }
+  });
+
+  it('cardinality: many -- EVERY produced ADR is checked, not merely the first one that happens to be proposed', async () => {
+    const { outcome } = await runScenario({
+      outputs: [{ type: 'ADR', cardinality: 'many' }],
+      writes: [
+        {
+          relativePath: `${DECISIONS}/ADR-0001-x.md`,
+          content: adrText('ADR-0001', 'One', DEFAULT_SOURCE, 'proposed'),
+        },
+        // Still 'accepted' -- the default.
+        { relativePath: `${DECISIONS}/ADR-0002-x.md`, content: adrText('ADR-0002', 'Two') },
+      ],
+      taint: 'external',
+      runId: 'run-p31-cardinality-many',
+    });
+    const failure = expectFailed(outcome);
+    expect(failure.code).toBe('RUN-083');
+    expect(failure.message).toContain(`${DECISIONS}/ADR-0002-x.md`);
   });
 });

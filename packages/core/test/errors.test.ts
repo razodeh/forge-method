@@ -93,6 +93,9 @@ const SAMPLE_DETAILS = {
   detail: 'unrecognised operator $appand',
   phase: 'INTAKE',
   id: 'review',
+  // `KB-017` (`PLAN-M14.md` P31): `forge adr accept|reject|supersede` refused under the real FORGE
+  // session marker.
+  command: 'accept',
   role: 'reviewer',
   gateId: 'G-Verify',
   checkId: 'coverage.min',

@@ -86,11 +86,14 @@ export function epicMissingGoalText(id = 'EPIC-001'): string {
  * `packages/engine/test/dispatch/agent.test.ts`'s own `validAdrDocument` (`PLAN-M14.md` P8) uses, so a
  * document either builds validates against the identical schema the same way. `sources` defaults to
  * `DEFAULT_SOURCE` (`PLAN-M14.md` P11); pass `[]` to build a document the output check's sources rule
- * rejects. */
+ * rejects. `status` defaults to `'accepted'` -- every existing call site keeps getting exactly what it
+ * got before P31 added this parameter; pass `'proposed'` (or any other `adrSchema` status) to build the
+ * document P31's own tainted-step rule (`dispatch/outputs.ts`'s `taintedAdrStatusProblem`) cares about. */
 export function adrText(
   id: string,
   title = 'A decision',
   sources: readonly SourceFixture[] = DEFAULT_SOURCE,
+  status = 'accepted',
 ): string {
   return [
     '---',
@@ -98,7 +101,7 @@ export function adrText(
     'type: ADR',
     'schemaVersion: 1',
     `title: ${title}`,
-    'status: accepted',
+    `status: ${status}`,
     'created: 2026-01-15',
     'updated: 2026-01-15',
     'revision: 1',

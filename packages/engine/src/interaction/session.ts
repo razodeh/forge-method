@@ -725,22 +725,48 @@ async function mergeDecideLane(
 ): Promise<StepOutcome['failure']> {
   const lane = ctx.laneRegistry.get(laneId);
   if (lane === undefined) return undefined;
-  const resolved = resolveLaneChecks(ctx, {
-    pre: ctx.mergeChecks?.pre,
-    post: ctx.mergeChecks?.post,
-    preSource: 'execution.mergeChecks.pre',
-    postSource: 'execution.mergeChecks.post',
-  });
-  if (!resolved.ok) return resolved.failure;
-  const result = await landLane(ctx, {
-    eventStepId: node.id,
-    laneStepId: laneId,
-    lane,
-    conflictPolicy: ctx.conflictPolicy ?? 'abort',
-    checks: resolved.value.checks,
-    skippedLayers: resolved.value.skipped,
-  });
-  return result.failure;
+  try {
+    await ctx.telemetry.emit({ type: 'MergeQueued', stepId: node.id, laneId: lane.laneId });
+    await ctx.telemetry.emit({ type: 'MergeStarted', stepId: node.id, laneId: lane.laneId });
+    const outcome = await ctx.mergeQueue.process(
+      {
+        handle: lane,
+        stepId: laneId,
+        runId: ctx.runId,
+        declaredClaim: [],
+        conflictPolicy: 'abort',
+      },
+      {},
+    );
+    if (outcome.kind === 'clean' || outcome.kind === 'conflict-resolved') {
+      await ctx.telemetry.emit({
+        type: 'MergeCompleted',
+        stepId: node.id,
+        laneId: lane.laneId,
+        payload: { mergeCommitSha: outcome.mergeCommitSha },
+      });
+      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
+      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
+      ctx.laneRegistry.delete(laneId);
+      return undefined;
+    }
+    if (outcome.kind === 'already-integrated') {
+      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
+      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
+      ctx.laneRegistry.delete(laneId);
+      return undefined;
+    }
+    return {
+      source: 'merge',
+      message: `DECIDE-phase lane for step ${node.id} could not be merged into integration (${outcome.kind}).`,
+    };
+  } catch (cause) {
+    return {
+      source: 'merge',
+      message: `DECIDE-phase lane for step ${node.id} failed to merge: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause,
+    };
+  }
 }
 
 /** The project's own resolved agent roster (`.forge/agents/<id>.yaml`, what `forge init`/`forge compile`
@@ -1060,6 +1086,17 @@ async function writeAdrBack(
   ownerRole: string,
   decisionText: string,
   clock: Clock,
+  /** Whether the DECIDE-phase node this write-back is FOR (`deciderNode`, the caller's own real
+   * dispatch target -- never re-derived from `node`, the outer session step's own compiled node, which
+   * can never itself carry `taint` at all, `plan/types.ts`'s own `StepNode.taint` doc comment) was
+   * dispatched tainted (`PLAN-M14.md` P31, `20` §20.5 point 3: "cannot ... write ADRs without human
+   * confirmation"). Pins `status: 'proposed'` instead of `'accepted'` when true -- a person then
+   * confirms it with `forge adr accept <id>`, itself refused from inside a run (`PLAN-M14.md` P4's
+   * marker, `KB-017`). No real caller passes `true` today (`session.ts`'s own DECIDE dispatch never
+   * taints `deciderNode`, `SPEC-QUESTIONS.md`'s own Q203 D8 disclosure) -- this is the correct,
+   * forward-looking shape regardless, matching `dispatch/outputs.ts`'s own identical rule for an
+   * agent-authored ADR. */
+  tainted: boolean,
 ): Promise<string> {
   return enqueueForProject(ctx.projectRoot, async () => {
     const paths = new ProjectPaths(ctx.projectRoot);
@@ -1085,7 +1122,7 @@ async function writeAdrBack(
       type: 'ADR' as const,
       schemaVersion: 1,
       title: `Session decision -- ${node.id}`,
-      status: 'accepted' as const,
+      status: tainted ? ('proposed' as const) : ('accepted' as const),
       category: 'architecture' as const,
       deciders: [ownerRole],
       date: today,
@@ -1229,9 +1266,13 @@ async function writeSessionArtifactBack(
   ownerRole: string,
   decisionText: string,
   clock: Clock,
+  /** `writeAdrBack`'s own `tainted` (`PLAN-M14.md` P31) -- threaded through unchanged; every other
+   * write-back branch below ignores it, the identical "not this rule's concern" stance `writeRiskBack`/
+   * `writeKbDecisionBack` already take for every OTHER type P31 does not name. */
+  tainted: boolean,
 ): Promise<string> {
   if (sessionType === 'design-review' || sessionType === 'tradeoff') {
-    return writeAdrBack(ctx, node, ownerRole, decisionText, clock);
+    return writeAdrBack(ctx, node, ownerRole, decisionText, clock, tainted);
   }
   if (sessionType === 'premortem' || sessionType === 'war-room') {
     return writeRiskBack(ctx, node, ownerRole, decisionText, clock);
@@ -1880,6 +1921,10 @@ export async function runSessionStep(
       humanInput.owner ?? HUMAN_ROLE,
       humanInput.decision,
       clock,
+      // A person's own directly-supplied decision (`16` §16.7 point 5's "outranks" rule, just above):
+      // no agent session was ever dispatched for it, tainted or not, so `PLAN-M14.md` P31's rule -- a
+      // TAINTED STEP'S OWN SESSION may write an ADR only as `proposed` -- has nothing to say about it.
+      false,
     );
     decideInput = {
       humanDecision: {
@@ -1954,6 +1999,14 @@ export async function runSessionStep(
         owner.id,
         decideSession.finalText,
         clock,
+        // `deciderNode`'s OWN taint (`PLAN-M14.md` P31), never `node`'s (the outer session step can
+        // never itself carry `taint` at all -- see `writeAdrBack`'s own doc comment): today this is
+        // always `false` (`phaseNode` spreads `node`'s own `taint`, which `kind: session` steps can
+        // never author, and no peer-output tainting is applied to a solo DECIDE dispatch the way
+        // `dispatchPanel`/`dispatchDebate`'s own synthesis/decider steps get, `dispatch-agent-step.ts`'s
+        // `taintedByPeerOutput`) -- pinned correctly regardless, so a future signal that DOES taint this
+        // node is honoured without another change here (`SPEC-QUESTIONS.md` Q203 D8's own disclosure).
+        deciderNode.taint === 'external',
       );
       decideInput = {
         decisions: [{ decision: decideSession.finalText, owner: owner.id, artifactRef }],

@@ -131,3 +131,75 @@ describe('adrSupersede', () => {
     expect(list).toEqual([]);
   });
 });
+
+describe('adrAccept / adrReject / adrSupersede refuse under the real FORGE session marker (PLAN-M14.md P31)', () => {
+  const MARKER = { runId: 'run-001', stepId: 'wf:decide', agentId: 'architect' };
+
+  it('adrAccept refuses under the marker, and writes nothing (the ADR keeps its own prior status)', async () => {
+    const project = await createTestProject();
+    const created = await adrNew(ctx(project), 'To be accepted');
+    const id = created.get(['id']) as string;
+
+    await expect(
+      adrAccept({ ...ctx(project), marker: MARKER }, id),
+    ).rejects.toMatchObject({ code: 'KB-017' });
+
+    const shown = await adrShow(ctx(project), id);
+    expect(shown.get(['status'])).toBe('proposed');
+    expect(shown.get(['revision'])).toBe(1);
+  });
+
+  it('adrReject refuses under the marker', async () => {
+    const project = await createTestProject();
+    const created = await adrNew(ctx(project), 'To be rejected');
+    const id = created.get(['id']) as string;
+
+    await expect(
+      adrReject({ ...ctx(project), marker: MARKER }, id),
+    ).rejects.toMatchObject({ code: 'KB-017' });
+
+    const shown = await adrShow(ctx(project), id);
+    expect(shown.get(['status'])).toBe('proposed');
+  });
+
+  it('adrSupersede refuses under the marker, and writes no replacement ADR at all (checked before adrNew runs)', async () => {
+    const project = await createTestProject();
+    const original = await adrNew(ctx(project), 'The original decision');
+    const originalId = original.get(['id']) as string;
+
+    await expect(
+      adrSupersede({ ...ctx(project), marker: MARKER }, originalId, 'The replacement'),
+    ).rejects.toMatchObject({ code: 'KB-017' });
+
+    // Only the one original ADR exists -- no stray, unlinked replacement was allocated or written.
+    const list = await adrList(ctx(project));
+    expect(list).toHaveLength(1);
+    const shown = await adrShow(ctx(project), originalId);
+    expect(shown.get(['status'])).toBe('proposed');
+  });
+
+  it('a bare run/step marker (no agentId) refuses too -- presence alone is the whole test, unlike a gate command', async () => {
+    const project = await createTestProject();
+    const created = await adrNew(ctx(project), 'To be accepted');
+    const id = created.get(['id']) as string;
+
+    await expect(
+      adrAccept({ ...ctx(project), marker: { runId: 'run-001' } }, id),
+    ).rejects.toMatchObject({ code: 'KB-017' });
+  });
+
+  it("control: with no marker at all (a real person's own terminal), accept/reject/supersede work exactly as before", async () => {
+    const project = await createTestProject();
+    const created = await adrNew(ctx(project), 'To be accepted');
+    const id = created.get(['id']) as string;
+
+    const accepted = await adrAccept(ctx(project), id);
+    expect(accepted.get(['status'])).toBe('accepted');
+  });
+
+  it("control: adrNew is unaffected by the marker -- creating a fresh, proposed ADR is not this rule's concern", async () => {
+    const project = await createTestProject();
+    const doc = await adrNew({ ...ctx(project), marker: MARKER }, 'A fresh decision');
+    expect(doc.get(['status'])).toBe('proposed');
+  });
+});

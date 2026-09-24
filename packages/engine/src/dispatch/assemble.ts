@@ -25,7 +25,9 @@
  *
  * @see specs/05 §5.3, §5.4, §5.8
  * @see specs/07 §7.2
+ * @see specs/20 §20.5 point 3
  * @see PLAN-M13.md P5
+ * @see PLAN-M14.md P31
  * @see SPEC-QUESTIONS.md Q203
  */
 import path from 'node:path';
@@ -340,11 +342,20 @@ export const NO_CLAIM_WRITE_NOTE = 'no write: this step declares no outputs or p
 export const PROTECTED_WRITE_NOTE =
   'writing to a protected path (any such write is reverted): `.git/`, `.forge/`, `.env` files, CI and hook configuration, package manifests and test-runner configuration, credentials, editor and agent-tool configuration, and the project document roots';
 
+/** Block [6]'s statement of `20` §20.5 point 3's own ADR-status rule for a tainted step (`PLAN-M14.md`
+ * P31): "cannot ... write ADRs without human confirmation". Told up front, before the session works --
+ * `dispatch/outputs.ts`'s own `taintedAdrStatusProblem` is what actually enforces it, after the
+ * session ends; `forge adr accept <id>` (refused from inside a run itself, `PLAN-M14.md` P4's marker,
+ * `KB-017`) is the remedy a person runs afterward. */
+export const TAINTED_ADR_STATUS_NOTE =
+  'writing an ADR with any status other than `proposed` (a person confirms it afterward with `forge adr accept <id>`, 20 §20.5 point 3)';
+
 function forbiddenActionsFor(
   grant: ToolGrant,
   deploys: boolean,
   noClaim: boolean,
   protectedPaths: boolean,
+  tainted: boolean,
 ): readonly string[] {
   const actions: string[] = [];
   if (protectedPaths && grant.write) actions.push(PROTECTED_WRITE_NOTE);
@@ -361,6 +372,7 @@ function forbiddenActionsFor(
   else if (grant.network === 'allowlist')
     actions.push('network access to hosts outside the allowlist');
   if (!deploys) actions.push('deploying or releasing');
+  if (tainted) actions.push(TAINTED_ADR_STATUS_NOTE);
   return actions;
 }
 
@@ -391,6 +403,11 @@ function constraintsFor(
       !readOnly && agent.tools.deploy,
       noClaim,
       protectedPaths,
+      // Read straight off `node.taint`, never off the `readOnly` param above (which this function's
+      // own caller already folds `tainted` into, `assembleAgentSession`'s own `readOnly || tainted`) --
+      // a plain read-only participant session is never tainted merely by being read-only, and must not
+      // be told a rule that names something it can never write in the first place.
+      node.taint === 'external',
     ),
     // The limits the session request actually enforces, not the agent's own declared defaults.
     budget: {

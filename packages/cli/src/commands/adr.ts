@@ -20,6 +20,32 @@ export interface AdrCommandContext {
   readonly paths: ProjectPaths;
   readonly kbRoot: string;
   readonly clock?: Clock;
+  /** The real FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4/P31) -- read
+   * once by `bin.ts`'s own `realEnvSnapshot()` and passed down here, mirroring `GateCommandContext.marker`
+   * (`run/gate-commands.ts`). Absent when `FORGE_RUN_ID` itself is unset: a real human's own shell never
+   * carries this marker. Consulted by `adrAccept`/`adrReject`/`adrSupersede` only (`refuseUnderMarker`,
+   * below): confirming, rejecting or superseding an ADR is a person's own act (`20` §20.5 point 3), so
+   * ANY marker at all -- an agent id, or a bare run/step only -- refuses. Unlike a gate's own
+   * `resolveApprover`, there is no "the run this command targets" for an ADR command to compare the
+   * marker's `runId` against (`forge adr` takes no `--run`), so presence alone is the whole test.
+   * `adrNew`/`adrList`/`adrShow` never consult it: creating, listing or reading an ADR is not this
+   * rule's concern. */
+  readonly marker?: {
+    readonly runId: string;
+    readonly stepId?: string;
+    readonly agentId?: string;
+  };
+}
+
+/** `adrAccept`/`adrReject`/`adrSupersede`'s own shared refusal (`PLAN-M14.md` P31, `KB-017`) -- called
+ * before any read, allocation or write those three functions make, so a marker refusal never leaves a
+ * stray, half-made change behind (the identical "check before doing any work" ordering `adrSupersede`'s
+ * own doc comment already establishes for its `KB-015` existence check). `command` is the exact `forge
+ * adr <command>` word, so the error names what was actually refused. */
+function refuseUnderMarker(ctx: AdrCommandContext, command: string, id: string): void {
+  if (ctx.marker !== undefined) {
+    throw new ForgeError('KB-017', { command, id });
+  }
 }
 
 async function findAdrPath(ctx: AdrCommandContext, id: string): Promise<string> {
@@ -104,6 +130,7 @@ async function transition(
 }
 
 export async function adrAccept(ctx: AdrCommandContext, id: string): Promise<ArtifactDocument> {
+  refuseUnderMarker(ctx, 'accept', id);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   return transition(
     ctx,
@@ -117,6 +144,7 @@ export async function adrAccept(ctx: AdrCommandContext, id: string): Promise<Art
 }
 
 export async function adrReject(ctx: AdrCommandContext, id: string): Promise<ArtifactDocument> {
+  refuseUnderMarker(ctx, 'reject', id);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   return transition(
     ctx,
@@ -134,15 +162,18 @@ export async function adrReject(ctx: AdrCommandContext, id: string): Promise<Art
  * as it does to a fresh `new`), and cross-links both documents (`superseded_by` on the old one,
  * `supersedes` on the new one), matching `adrSchema`'s own mutual-consistency check.
  *
- * Checks `id` resolves to a real ADR *before* allocating an id or writing anything — a gauntlet
- * critic found the original ordering called `adrNew` (a real, unconditional id allocation and file
- * write) first, so a typo'd `id` still left a stray, unlinked replacement ADR on disk before the
- * `KB-015` for the nonexistent original ever fired. */
+ * Checks the real FORGE session marker (`PLAN-M14.md` P31, `refuseUnderMarker`), then that `id`
+ * resolves to a real ADR, *before* allocating an id or writing anything — a gauntlet critic found the
+ * original ordering called `adrNew` (a real, unconditional id allocation and file write) first, so a
+ * typo'd `id` still left a stray, unlinked replacement ADR on disk before the `KB-015` for the
+ * nonexistent original ever fired; the marker check joins that same ordering, first of all, so a
+ * refused call under the marker never even reaches that `KB-015` check, let alone `adrNew`. */
 export async function adrSupersede(
   ctx: AdrCommandContext,
   id: string,
   newTitle: string,
 ): Promise<{ readonly superseded: ArtifactDocument; readonly replacement: ArtifactDocument }> {
+  refuseUnderMarker(ctx, 'supersede', id);
   await findAdrPath(ctx, id); // throws KB-015 before anything is allocated or written
 
   const clock = ctx.clock ?? SYSTEM_CLOCK;

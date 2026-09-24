@@ -19,6 +19,7 @@ import { slugifyStepId } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
+import { TAINTED_ADR_STATUS_NOTE } from '../../src/dispatch/assemble.ts';
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { createVcsFacade } from '../../src/dispatch/facades.ts';
 import { resolveStepClaim } from '../../src/dispatch/outputs.ts';
@@ -211,6 +212,40 @@ describe('an agent step marked taint: external, through the real dispatch path',
     const text = requests[0]?.systemPrompt.text ?? '';
     expect(text).not.toContain('git *');
     expect(text).not.toContain('ls*');
+  });
+
+  it("block [6] states PLAN-M14.md P31's own ADR-status rule for a tainted step, and only for one", async () => {
+    const projectRoot = await repo('adr-note');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, { loadAgent: () => Promise.resolve(CAPABLE) }),
+    });
+    await executeStep(
+      node({
+        id: 'wf:tainted-note',
+        kind: 'agent',
+        agent: toAgentId('po'),
+        brief: 'rule on it',
+        taint: 'external',
+      }),
+      ctx,
+    );
+    expect(requests[0]?.systemPrompt.text ?? '').toContain(TAINTED_ADR_STATUS_NOTE);
+
+    const control = await repo('adr-note-control');
+    const controlRequests: SessionRequest[] = [];
+    const controlCtx = createTestContext({
+      projectRoot: control,
+      adapter: recorder(controlRequests),
+      assembly: createFixtureAssembly(control, { loadAgent: () => Promise.resolve(CAPABLE) }),
+    });
+    await executeStep(
+      node({ id: 'wf:untainted-note', kind: 'agent', agent: toAgentId('po'), brief: 'rule on it' }),
+      controlCtx,
+    );
+    expect(controlRequests[0]?.systemPrompt.text ?? '').not.toContain(TAINTED_ADR_STATUS_NOTE);
   });
 });
 

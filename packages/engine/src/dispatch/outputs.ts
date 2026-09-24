@@ -62,8 +62,9 @@
  * @see specs/06 §6.8
  * @see specs/08 §8.6
  * @see specs/18 §18.6, §18.7
+ * @see specs/20 §20.5 point 3
  * @see PLAN-M13.md P7
- * @see PLAN-M14.md P8, P10, P11
+ * @see PLAN-M14.md P8, P10, P11, P31
  * @see SPEC-QUESTIONS.md Q208
  */
 import { posix } from 'node:path';
@@ -430,7 +431,11 @@ const BOM = String.fromCharCode(0xfeff);
 const BASE_KEYS: readonly string[] = Object.keys(baseFrontMatterShape.shape);
 
 export interface OutputCheckInput {
-  readonly node: Pick<StepNode, 'id' | 'agent' | 'outputs'>;
+  /** `taint` (`PLAN-M14.md` P31, `20` §20.5 point 3: "cannot ... write ADRs without human
+   * confirmation"): a tainted step's own session may write a produced ADR only as `status: proposed`
+   * -- `taintedAdrStatusProblem`, below, is what actually reads it. `undefined` (the default every
+   * untainted step and every pre-existing caller/fixture already has) never triggers that rule. */
+  readonly node: Pick<StepNode, 'id' | 'agent' | 'outputs' | 'taint'>;
   readonly vcs: Pick<VcsFacade, 'changedFiles' | 'readAtRevision'>;
   readonly lane: LaneHandle;
   /** The sha the lane branched from: what "produced by this session" is measured against. */
@@ -652,13 +657,36 @@ function kbDocumentSourceProblem(path: string, text: string): string | undefined
   );
 }
 
-/** Validates one produced file of `definition`'s type; `base` is its content at the base revision. */
+/** `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P31: "a tainted step ... cannot ... write ADRs
+ * without human confirmation" -- a tainted step's own session may produce an ADR only as
+ * `status: proposed`; moving it further (`accepted`, `rejected`, `superseded`, `deprecated`) is a
+ * person's own act, `forge adr accept|reject|supersede` (`adr.ts`), which itself refuses to run from
+ * inside a FORGE-spawned session or command (`PLAN-M14.md` P4's marker, `KB-017`). Called only after
+ * `documentProblems` has already confirmed `text` parses and validates against `adrSchema` (so
+ * `status` is one of its five real values and this second, cheap parse cannot itself fail) -- the same
+ * stance `kbDocumentSourceProblem`, just above, already takes for the identical reason. Returns the
+ * bare problem text (`checkOne` already prefixes it with the file's own path). */
+function taintedAdrStatusProblem(path: string, text: string): string | undefined {
+  const status = frontMatterOf(ArtifactDocument.parse(text, path))['status'];
+  if (status === 'proposed') return undefined;
+  return (
+    `a tainted step's session may write an ADR only as status: proposed (20 §20.5 point 3: "cannot ` +
+    `... write ADRs without human confirmation"); this one is ${JSON.stringify(status)} -- a person ` +
+    'must run `forge adr accept <id>` (or `reject`/`supersede`) to move it further'
+  );
+}
+
+/** Validates one produced file of `definition`'s type; `base` is its content at the base revision.
+ * `tainted`: whether the STEP that produced it is tainted (`OutputCheckInput.node.taint === 'external'`,
+ * `PLAN-M14.md` P31) -- consulted only for a produced `ADR` (`taintedAdrStatusProblem`), the one type
+ * this rule names; every other type ignores it. */
 async function validateFile(
   definition: ArtifactTypeDefinition,
   path: string,
   text: string,
   readBase: () => Promise<string | undefined>,
   readSidecar: () => Promise<string | undefined>,
+  tainted: boolean,
 ): Promise<{ readonly problems: readonly string[]; readonly valid?: ValidFile }> {
   const type = definition.id;
   const register = REGISTER_SCHEMAS[type];
@@ -813,6 +841,14 @@ async function validateFile(
   if (definition.pathTemplate.startsWith(KB_PATH_TEMPLATE_PREFIX)) {
     const sourceProblem = kbDocumentSourceProblem(path, text);
     if (sourceProblem !== undefined) return { problems: [sourceProblem] };
+  }
+  // `PLAN-M14.md` P31: a tainted step's own produced ADR is held to `20` §20.5 point 3's
+  // `status: proposed`-only rule -- the one type this rule names, so gated on `type === 'ADR'`
+  // directly rather than on the broader `kb/`-rooted predicate just above (`Runbook`, the prefix's
+  // other per-file type, is unaffected).
+  if (tainted && type === 'ADR') {
+    const statusProblem = taintedAdrStatusProblem(path, text);
+    if (statusProblem !== undefined) return { problems: [statusProblem] };
   }
   return { problems: [], valid: { path, producedText: text, sessionType: checked.sessionType } };
 }
@@ -1126,6 +1162,7 @@ async function checkOne(
         files.committed.includes(`${file.path}.yaml`)
           ? vcs.readAtRevision(lane, 'HEAD', `${file.path}.yaml`)
           : Promise.resolve(undefined),
+      input.node.taint === 'external',
     );
     if (result.valid !== undefined) valid.push(result.valid);
     else {

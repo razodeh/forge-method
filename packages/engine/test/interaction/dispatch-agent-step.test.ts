@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import { dispatchAgentStep } from '../../src/interaction/dispatch-agent-step.ts';
 import { toAgentId } from '../../src/plan/index.ts';
+import { adrText } from '../dispatch/artifact-fixtures.ts';
 import { createTestContext, node } from '../dispatch/helpers.ts';
 import type { AgentDefinition } from '@forge/agents/schema';
 
@@ -368,6 +369,67 @@ describe('dispatchAgentStep', () => {
 
     // Conceded on round 1: exactly one proposer + one critic turn, not the full 3-round cap.
     expect(result.participants).toHaveLength(2);
+  });
+
+  it('PLAN-M14.md P31: a debate decider (real taintedByPeerOutput dispatch) writing an "accepted" ADR fails the output contract, naming the remedy', async () => {
+    const projectRoot = await createTempRepo('debate-adr-tainted');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.includes(':debate:proposer:'), {
+      text: ['I propose X'],
+    });
+    adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['CONCEDE'] });
+    adapter.script((request) => request.stepId === 'wf:debate', {
+      text: ['ruling: X'],
+      writeFiles: [
+        { relativePath: 'docs/forge/kb/decisions/ADR-0001-x.md', content: adrText('ADR-0001') },
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+      outputs: [{ type: 'ADR' }],
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate');
+
+    expect(result.outcome.status).toBe('failed');
+    expect(result.outcome.failure?.source).toBe('output');
+    expect(result.outcome.failure?.code).toBe('RUN-083');
+    expect(result.outcome.failure?.message).toContain('status: proposed');
+    expect(result.outcome.failure?.message).toContain('forge adr accept');
+  });
+
+  it('negative control: the identical debate decider writing the ADR as "proposed" succeeds', async () => {
+    const projectRoot = await createTempRepo('debate-adr-tainted-proposed');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.includes(':debate:proposer:'), {
+      text: ['I propose X'],
+    });
+    adapter.script((request) => request.stepId.includes(':debate:critic:'), { text: ['CONCEDE'] });
+    adapter.script((request) => request.stepId === 'wf:debate', {
+      text: ['ruling: X'],
+      writeFiles: [
+        {
+          relativePath: 'docs/forge/kb/decisions/ADR-0001-x.md',
+          content: adrText('ADR-0001', 'A decision', undefined, 'proposed'),
+        },
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:debate',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'settle it',
+      outputs: [{ type: 'ADR' }],
+    });
+
+    const result = await dispatchAgentStep(stepNode, testAgent(), ctx, 'debate');
+
+    expect(result.outcome.status).toBe('succeeded');
   });
 
   it('debate clamps a caller-supplied maxDebateRounds above 3 down to 3', async () => {

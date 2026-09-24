@@ -1,8 +1,25 @@
 /**
- * `20` §20.5 point 3 / `15` §15.5.4's own three named privileged actions a tainted step (one whose
- * context includes untrusted MCP/fetched/brownfield content, `@forge/agents`'s own
- * `markExternalContent`) may never perform: approve a gate, escalate a tool grant, or target a
- * production environment. `20` §20.10 S6 is the adversarial-test obligation for exactly this.
+ * `20` §20.10 S6's own adversarial-test obligation table names three per-step runtime actions a
+ * tainted step (one whose context includes untrusted MCP/fetched/brownfield content, `@forge/agents`'s
+ * own `markExternalContent`) may never perform: approve a gate, escalate a tool grant, or target a
+ * production environment. This module's own three guard functions below are exactly those three, no
+ * more. `15` §15.5.4 (verbatim) and `20` §20.5 point 3 each name a LONGER list of consequences for the
+ * identical `taint: external` marker: `15` §15.5.4 adds "write ADRs without human confirmation" as a
+ * fourth (S6's own three, plus this one, are ALL four `15` §15.5.4 names); `20` §20.5 point 3 restates
+ * those four and adds "perform destructive operations" as a fifth. **This module does not implement
+ * every consequence either spec names, only S6's own three** -- read the list above precisely as S6's
+ * own scope, not the fuller spec text's. The ADR-writing consequence is real and enforced, just not
+ * here: a tainted step's own session may write a produced ADR only as `status: proposed`
+ * (`dispatch/outputs.ts`'s `taintedAdrStatusProblem`, stated up front in the prompt by `assemble.ts`'s
+ * block [6], `TAINTED_ADR_STATUS_NOTE`), and the engine's own DECIDE write-back
+ * (`interaction/session.ts`'s `writeAdrBack`) pins the identical rule when its own decider node is
+ * tainted -- `PLAN-M14.md` P31, which also gives `forge adr accept|reject|supersede` a real refusal
+ * under the P4 session marker, since moving an ADR past `proposed` is a person's own act. The fifth
+ * consequence, "destructive operations," remains genuinely unimplemented and out of scope here, for the
+ * identical "no live call site to wire a guard into without inventing new, disproportionate runtime
+ * behaviour" reason this file's own "Grant escalation"/"Production targeting" sections below already
+ * give for their own two guards (`20` §20.3's own destructive-operations flow is a separate, existing
+ * mechanism this module does not touch).
  *
  * `PLAN-M11.md` P10's own direct investigation (before writing any test, per this piece's own mandate)
  * found no `taint` concept anywhere in `@forge/engine`'s step/plan/dispatch model at all — not merely
@@ -80,6 +97,7 @@
  * @see specs/20 §20.10 S6
  * @see PLAN-M11.md P9
  * @see PLAN-M11.md P10
+ * @see PLAN-M14.md P31
  */
 import type { ToolGrant } from '@forge/adapter-kit';
 

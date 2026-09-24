@@ -55,11 +55,12 @@
  * @see PLAN-M11.md P9
  * @see PLAN-M11.md P10
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -72,7 +73,19 @@ import {
 } from '../../src/security/taint-guard.ts';
 import { parseWorkflow } from '../../src/workflow/index.ts';
 import type { GateDefinition } from '../../src/gates/index.ts';
-import { createTestContext, node } from '../dispatch/helpers.ts';
+import { adrText, DEFAULT_SOURCE } from '../dispatch/artifact-fixtures.ts';
+import { createFixtureAssembly, createTestContext, fixtureAgent, node } from '../dispatch/helpers.ts';
+
+/** The real, shipped `adopt` workflow (`packages/templates/templates/workflows/`), read directly by
+ * path rather than through `@forge/templates` -- `@forge/engine` has no dependency edge to that
+ * package (`taint-grant.test.ts`'s own identical `ADOPT_SOURCE`/`REPO` established this pattern first;
+ * duplicated here rather than imported since neither file has a dependency edge to the other's own
+ * test-only module). */
+const S6_REPO = path.resolve(import.meta.dirname, '../../../..');
+const S6_ADOPT_SOURCE = await readFile(
+  path.join(S6_REPO, 'packages/templates/templates/workflows/adopt.workflow.yaml'),
+  'utf8',
+);
 
 let dir: string | undefined;
 
@@ -266,5 +279,98 @@ describe('S6: gate-approval guard function itself, independent of runGateStep', 
   it('assertGateApprovalAllowed is the exact predicate runGateStep consults -- refuses tainted, allows untainted', () => {
     expect(assertGateApprovalAllowed('external').refused).toBe(true);
     expect(assertGateApprovalAllowed(undefined).refused).toBe(false);
+  });
+});
+
+// `PLAN-M14.md` P31, `20` §20.5 point 3: "cannot ... write ADRs without human confirmation" -- not one
+// of S6's own three named surfaces (gate approval, grant escalation, production targeting), but the
+// identical structural discipline: a REAL compiled tainted step (`adopt:reverse-derive-specs`, not a
+// hand-built `node()`), proving the output-contract check's own `taintedAdrStatusProblem`
+// (`dispatch/outputs.ts`) fires for a real compiler output, not only a synthetic fixture -- the same
+// "real compiled plan" proof `S6 surface 1 of 3`'s own last test already gives gate approval.
+describe('S6 (extended): a compiled tainted adopt step writes an ADR only as status: proposed', () => {
+  it('adopt:reverse-derive-specs (real compiled taint: external) writing an "accepted" ADR is refused, naming the remedy', async () => {
+    const parsed = parseWorkflow(S6_ADOPT_SOURCE);
+    if (!parsed.success) throw new Error(`failed to parse: ${JSON.stringify(parsed.issues)}`);
+    const plan = compilePlan(parsed.workflow, {});
+    if (!plan.success) throw new Error(`failed to compile: ${JSON.stringify(plan.issues)}`);
+    const compiled = plan.nodes.find((candidate) => candidate.id === 'adopt:reverse-derive-specs');
+    if (compiled === undefined) throw new Error('no compiled adopt:reverse-derive-specs node');
+    expect(compiled.taint).toBe('external');
+
+    const projectRoot = await tempRepo('adr-status-tainted');
+    const decisions = 'docs/forge/kb/decisions';
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['reverse-derived a decision'],
+      writeFiles: [{ relativePath: `${decisions}/ADR-0001-x.md`, content: adrText('ADR-0001') }],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-s6-adr-status-tainted',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () =>
+          Promise.resolve(
+            fixtureAgent('architect', {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    // `outputs` narrowed to just the `ADR` declaration this test cares about (the real compiled node
+    // also declares `DataModel`, unrelated to this rule) -- everything else (`taint`, `produces`,
+    // limits, retry, `dependsOn`) is the real compiler's own output, unchanged.
+    const outcome = await executeStep(
+      { ...compiled, outputs: [{ type: 'ADR', cardinality: 'many' }] },
+      ctx,
+    );
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.source).toBe('output');
+    expect(outcome.failure?.code).toBe('RUN-083');
+    expect(outcome.failure?.message).toContain('status: proposed');
+    expect(outcome.failure?.message).toContain('forge adr accept');
+  });
+
+  it('negative control: the identical real compiled step writing the ADR as "proposed" succeeds -- proves the refusal above is attributable to the status, not to being tainted at all', async () => {
+    const parsed = parseWorkflow(S6_ADOPT_SOURCE);
+    if (!parsed.success) throw new Error(`failed to parse: ${JSON.stringify(parsed.issues)}`);
+    const plan = compilePlan(parsed.workflow, {});
+    if (!plan.success) throw new Error(`failed to compile: ${JSON.stringify(plan.issues)}`);
+    const compiled = plan.nodes.find((candidate) => candidate.id === 'adopt:reverse-derive-specs');
+    if (compiled === undefined) throw new Error('no compiled adopt:reverse-derive-specs node');
+
+    const projectRoot = await tempRepo('adr-status-tainted-proposed');
+    const decisions = 'docs/forge/kb/decisions';
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['reverse-derived a decision'],
+      writeFiles: [
+        {
+          relativePath: `${decisions}/ADR-0001-x.md`,
+          content: adrText('ADR-0001', 'A decision', DEFAULT_SOURCE, 'proposed'),
+        },
+      ],
+    });
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      runId: 'run-s6-adr-status-tainted-proposed',
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () =>
+          Promise.resolve(
+            fixtureAgent('architect', {
+              tools: { read: true, write: true, network: false, git_commit: 'lane', deploy: false },
+            }),
+          ),
+      }),
+    });
+    const outcome = await executeStep(
+      { ...compiled, outputs: [{ type: 'ADR', cardinality: 'many' }] },
+      ctx,
+    );
+
+    expect(outcome.status).toBe('succeeded');
   });
 });

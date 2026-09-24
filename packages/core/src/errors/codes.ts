@@ -417,6 +417,29 @@ export const ERROR_CODES = {
     remedy:
       "Reduce the entry's confidence to the allowed ceiling, or use a write path with no ceiling if the higher value is genuinely earned.",
   },
+  // `forge adr accept|reject|supersede` under the real FORGE session marker (`@forge/core/session-
+  // marker`, `PLAN-M14.md` P4/P31, `20` §20.5 point 3: "cannot ... write ADRs without human
+  // confirmation"): confirming, rejecting or superseding an ADR is a person's own act -- a tainted
+  // step may only ever WRITE one as `status: proposed` (`dispatch/outputs.ts`'s own output-contract
+  // check enforces that half; `assemble.ts`'s own block [6] states it up front). This is the other
+  // half, refusing to move an ADR past `proposed` from inside ANY FORGE-spawned session or run-spawned
+  // command, whatever the marker names (an agent id, or a bare run/step only) -- unlike a gate's own
+  // `resolveApprover` (`gate-commands.ts`), there is no "the run this command targets" for an ADR
+  // command to compare the marker's `runId` against (`forge adr` takes no `--run`), so presence of the
+  // marker alone is the whole test: a real human's own terminal never carries it at all (`session-
+  // marker.ts`'s own doc comment). `forge adr new` is unaffected -- creating a fresh, `proposed` ADR is
+  // not this rule's concern. Nothing is written when this fires.
+  'KB-017': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { command: string; id: string }) =>
+      `forge adr ${show(d.command)} ${show(d.id)} cannot run from inside a FORGE-spawned session or ` +
+      `command (the FORGE_RUN_ID marker is set): confirming, rejecting or superseding an ADR is a ` +
+      `person's own act (20 §20.5 point 3).`,
+    remedy:
+      'Run this forge adr command from a person at their own terminal, outside any run -- never from ' +
+      'inside an agent session or a run-spawned command.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',
