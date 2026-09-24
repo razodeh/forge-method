@@ -297,8 +297,10 @@ async function runStoredVerificationCommand(
  * clone rationale is for a repository nobody has decided to adopt yet, not a project you already run
  * `npm test`/`npm run build` against directly yourself), but it is no longer unvetted: a chained, network-
  * reaching or secret-reading command is refused, never run, and the child that does run sees a scrubbed
- * environment. Still disclosed, not fixed by this piece (Q222): a refused command's own remaining
- * exec allowlist still lets a granted test runner run whatever project code it runs.
+ * environment. Still disclosed, not fixed by this piece (Q222, `confined-command.ts`'s own module doc
+ * comment): the vet reads the command LINE, not what the program does once running — a command that
+ * passes (`npm test`) still runs whatever the project's own test suite does, on disk, with the network
+ * open, since nothing here is an OS-level sandbox.
  */
 export async function kbVerify(ctx: KbCommandContext): Promise<readonly KbVerifyFinding[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
