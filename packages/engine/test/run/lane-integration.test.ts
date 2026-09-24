@@ -423,7 +423,8 @@ describe('conflicting lanes follow the configured policy', () => {
     // `cf:b:resolve-conflict`), even though the merge itself never resolved.
     expect(
       events.some(
-        (event) => event.type === 'UsageRecorded' && event.agentId === 'engineer' && event.stepId === 'cf:b',
+        (event) =>
+          event.type === 'UsageRecorded' && event.agentId === 'engineer' && event.stepId === 'cf:b',
       ),
     ).toBe(true);
   });
@@ -503,9 +504,7 @@ describe('conflicting lanes follow the configured policy', () => {
 
     // Usage against the LANE's own step id (never the `:resolve-conflict` suffix) -- the same step whose
     // ceiling it was checked and spent against, so a second resolution on the same lane would see it.
-    const usage = events.find(
-      (event) => event.type === 'UsageRecorded' && event.stepId === 'cf:b',
-    );
+    const usage = events.find((event) => event.type === 'UsageRecorded' && event.stepId === 'cf:b');
     expect(usage).toBeDefined();
     expect(usage?.agentId).toBe('engineer');
 
@@ -591,7 +590,7 @@ describe('conflicting lanes follow the configured policy', () => {
       await writeFile(path.join(conflict.worktreePath, 'same.txt'), 'from constructor resolver\n');
       return 'resolved';
     };
-    const { project, state } = await conflictingRun('conflict-constructor-fallback', {
+    const { state } = await conflictingRun('conflict-constructor-fallback', {
       conflictPolicy: 'agent',
       resolver: constructorResolver,
     });

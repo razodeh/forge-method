@@ -121,8 +121,7 @@ function readOnlyFailure(node: StepNode, agent: AgentDefinition): VcsError {
   return new VcsError({
     code: 'MERGE-RESOLVER-READ-ONLY',
     message: `Agent "${agent.id}" for step "${node.id}" has tools.write: false -- it cannot run a writable conflict-resolution session.`,
-    remedy:
-      "Resolve the conflict by hand, or assign a writable agent to this step's lane.",
+    remedy: "Resolve the conflict by hand, or assign a writable agent to this step's lane.",
   });
 }
 
@@ -395,10 +394,10 @@ async function buildTaskText(
     `Resolve a real merge conflict for step ${JSON.stringify(node.id)} while its lane lands into the ` +
       'integration branch.',
     '',
-    "Original brief for this step:",
+    'Original brief for this step:',
     briefText,
     '',
-    "The other side of every conflict below is the CURRENT integration branch (not a named lane). The " +
+    'The other side of every conflict below is the CURRENT integration branch (not a named lane). The ' +
       'following paths are in conflict:',
     ...pathLines,
     '',
@@ -619,7 +618,7 @@ async function resolveOneConflict(
   // malformed `StepNode` of any other kind that happened to carry an `agent` field (which `compilePlan`'s
   // own invariant should never itself produce, but this module has no way to verify that on its own) would
   // still get a full confined session run against it.
-  if (node === undefined || node.kind !== 'agent' || node.agent === undefined) {
+  if (node?.kind !== 'agent' || node.agent === undefined) {
     throw noStepFailure(description);
   }
 
@@ -631,7 +630,7 @@ async function resolveOneConflict(
     // missing node, not a distinct refusal code of its own.
     throw noStepFailure(description);
   }
-  if (agent.tools.write !== true) throw readOnlyFailure(node, agent);
+  if (!agent.tools.write) throw readOnlyFailure(node, agent);
 
   const remainingUsd = await remainingBudgetFor(ctx, node);
   if (remainingUsd <= 0) throw budgetFailure(node, remainingUsd);
@@ -649,7 +648,7 @@ async function resolveOneConflict(
     allowed,
   );
   const session = await runResolverSession(ctx, node, agent, description, remainingUsd);
-  if (session === undefined || !session.ok) return 'unresolved';
+  if (!session?.ok) return 'unresolved';
 
   // (c) Verify -- only a session that both ended ok AND passes every check is ever reported resolved.
   const resolved = await verifyResolution(node, description, headBefore, fingerprintsBefore);

@@ -152,7 +152,9 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
     conflictPolicy: 'abort',
     ...(options.testCommands === undefined ? {} : { testCommands: options.testCommands }),
     ...(options.mergeChecks === undefined ? {} : { mergeChecks: options.mergeChecks }),
-    ...(options.conflictResolver === undefined ? {} : { conflictResolver: options.conflictResolver }),
+    ...(options.conflictResolver === undefined
+      ? {}
+      : { conflictResolver: options.conflictResolver }),
   };
 }
 
@@ -765,7 +767,7 @@ describe('which predecessor a lane stacks on', () => {
     ).toBe(false);
   });
 
-  it('under the agent policy: with only the constructor-bound knobs (no per-call resolver of the test\'s own), PLAN-M14.md P38\'s own shipped default now always wins the per-call slot and refuses a join (MERGE-RESOLVER-NO-STEP: a join conflict has no stepId at all); with a per-call resolver, a trailer-carrying join commit and the step proceeds', async () => {
+  it("under the agent policy: with only the constructor-bound knobs (no per-call resolver of the test's own), PLAN-M14.md P38's own shipped default now always wins the per-call slot and refuses a join (MERGE-RESOLVER-NO-STEP: a join conflict has no stepId at all); with a per-call resolver, a trailer-carrying join commit and the step proceeds", async () => {
     // `PLAN-M14.md` P38: `runEngine` sets `ctx.conflictResolver` (`createAgentConflictResolver`)
     // whenever the caller left it unset (`run-engine.ts`), and `createLaneForStep`'s own `mergeIntoLane`
     // call, like `landLane`'s, always prefers that PER-CALL resolver over `createVcsFacade`'s own

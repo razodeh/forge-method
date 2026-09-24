@@ -14,7 +14,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import type { PlatformAdapter, SessionHandle, SessionRequest, SessionResult } from '@forge/adapter-kit';
+import type {
+  PlatformAdapter,
+  SessionHandle,
+  SessionRequest,
+  SessionResult,
+} from '@forge/adapter-kit';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
 import { createLaneWorktree, processMergeCandidate, type MergeCandidate } from '@forge/vcs';
@@ -70,7 +75,10 @@ async function conflictWorktree(prefix: string): Promise<string> {
   return dir;
 }
 
-function describeConflict(worktreePath: string, stepId: string | undefined): MergeConflictDescription {
+function describeConflict(
+  worktreePath: string,
+  stepId: string | undefined,
+): MergeConflictDescription {
   return {
     laneId: 'lane-1',
     stepId,
@@ -85,10 +93,11 @@ function describeConflict(worktreePath: string, stepId: string | undefined): Mer
 function emptyHandle(sessionId: string, result: SessionResult): SessionHandle {
   return {
     sessionId,
-    // eslint-disable-next-line @typescript-eslint/require-await -- an empty async generator, no await needed
-    events: (async function* () {})(),
-    stop: async () => undefined,
-    result: async () => result,
+    events: (async function* () {
+      // No events to yield -- these hostile-adapter tests only inspect the resolver's own reaction.
+    })(),
+    stop: () => Promise.resolve(),
+    result: () => Promise.resolve(result),
   };
 }
 
@@ -136,7 +145,7 @@ async function contextWithStep(
 }
 
 describe('createAgentConflictResolver -- (a) refusals, no session run', () => {
-  it('no stepId at all (an in-lane join\'s own JoinConflictDescription, or a DECIDE lane not in the compiled plan): MERGE-RESOLVER-NO-STEP', async () => {
+  it("no stepId at all (an in-lane join's own JoinConflictDescription, or a DECIDE lane not in the compiled plan): MERGE-RESOLVER-NO-STEP", async () => {
     const worktreePath = await conflictWorktree('no-step');
     let calls = 0;
     const adapter = adapterWithStartSession((req) => {
@@ -154,12 +163,15 @@ describe('createAgentConflictResolver -- (a) refusals, no session run', () => {
 
   it('a stepId not present in ctx.stepGraph: MERGE-RESOLVER-NO-STEP', async () => {
     const worktreePath = await conflictWorktree('unknown-step');
-    const ctx = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter: new FakePlatformAdapter() });
+    const ctx = createTestContext({
+      projectRoot: await freshProjectRoot('x'),
+      adapter: new FakePlatformAdapter(),
+    });
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:decide')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-NO-STEP' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:decide'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-NO-STEP',
+    });
   });
 
   it('a read-only agent (tools.write: false): MERGE-RESOLVER-READ-ONLY, and startSession is never called', async () => {
@@ -184,9 +196,9 @@ describe('createAgentConflictResolver -- (a) refusals, no session run', () => {
     const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:step')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-READ-ONLY' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:step'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-READ-ONLY',
+    });
     expect(calls).toBe(0);
   });
 
@@ -204,13 +216,17 @@ describe('createAgentConflictResolver -- (a) refusals, no session run', () => {
       kind: 'agent',
       limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 0 },
     });
-    const base = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter, runId: 'run-budget' });
+    const base = createTestContext({
+      projectRoot: await freshProjectRoot('x'),
+      adapter,
+      runId: 'run-budget',
+    });
     const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:step')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-BUDGET' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:step'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-BUDGET',
+    });
     expect(calls).toBe(0);
   });
 });
@@ -479,9 +495,9 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
     const ctx = await contextWithStep(adapter);
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:step')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-OUT-OF-CLAIM' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:step'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-OUT-OF-CLAIM',
+    });
     await expect(readFile(path.join(worktreePath, 'secret.env'), 'utf8')).rejects.toThrow();
   });
 
@@ -562,18 +578,25 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
 
     const adapter = adapterWithStartSession(async (req) => {
       await writeFile(path.join(req.cwd, 'same.txt'), 'merged\n');
-      await writeFile(path.join(req.cwd, 'other.txt'), 'a DIFFERENT tampered value, but re-staged\n');
+      await writeFile(
+        path.join(req.cwd, 'other.txt'),
+        'a DIFFERENT tampered value, but re-staged\n',
+      );
       await execa('git', ['add', 'other.txt'], { cwd: req.cwd }); // keeps its status at "M ", not "MM"
       return emptyHandle('s', OK_RESULT);
     });
     const stepNode = baseNode({ id: 'wf:step', kind: 'agent' });
-    const base = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter, runId: 'run-x' });
+    const base = createTestContext({
+      projectRoot: await freshProjectRoot('x'),
+      adapter,
+      runId: 'run-x',
+    });
     const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(dir, 'wf:step')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-OUT-OF-CLAIM' });
+    await expect(resolver(describeConflict(dir, 'wf:step'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-OUT-OF-CLAIM',
+    });
     // Restored from HEAD (`revertOutOfClaimPath`'s own doc comment: what the lane worktree looked like
     // right before this conflicting change was even attempted) -- not the intermediate, already-staged
     // value that existed just before the session ran.
@@ -584,7 +607,10 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
     const worktreePath = await conflictWorktree('symlink-escape');
     const outsideDir = await mkdtemp(path.join(tmpdir(), 'conflict-resolver-outside-'));
     const outsideFile = path.join(outsideDir, 'external-target.txt');
-    await writeFile(outsideFile, 'clean content, no markers, lives outside the worktree entirely\n');
+    await writeFile(
+      outsideFile,
+      'clean content, no markers, lives outside the worktree entirely\n',
+    );
 
     const adapter = adapterWithStartSession(async (req) => {
       const target = path.join(req.cwd, 'same.txt');
@@ -595,9 +621,9 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
     const ctx = await contextWithStep(adapter);
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:step')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-INVALID-CONTENT' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:step'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-INVALID-CONTENT',
+    });
   });
 
   it('a hand-built stepGraph node whose kind is not "agent" (but which carries an agent field anyway -- a malformed/adversarial shape no real compiler output produces) is refused MERGE-RESOLVER-NO-STEP, no session dispatched', async () => {
@@ -614,13 +640,20 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
       agent: toAgentId('engineer'),
       brief: 'not actually an agent step',
     });
-    const base = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter, runId: 'run-kind' });
-    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[malformedNode.id, malformedNode]]) };
+    const base = createTestContext({
+      projectRoot: await freshProjectRoot('x'),
+      adapter,
+      runId: 'run-kind',
+    });
+    const ctx: ExecuteStepContext = {
+      ...base,
+      stepGraph: new Map([[malformedNode.id, malformedNode]]),
+    };
     const resolver = createAgentConflictResolver(ctx);
 
-    await expect(
-      resolver(describeConflict(worktreePath, 'wf:gate')),
-    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-NO-STEP' });
+    await expect(resolver(describeConflict(worktreePath, 'wf:gate'))).rejects.toMatchObject({
+      code: 'MERGE-RESOLVER-NO-STEP',
+    });
     expect(sawSession).toBe(false);
   });
 
@@ -645,7 +678,9 @@ describe('createAgentConflictResolver -- critic round 1: content tampering the g
     };
     await expect(resolver(description)).resolves.toBe('unresolved');
     expect(sawSession).toBe(false);
-    await expect(readFile(path.join(worktreePath, 'same.txt'), 'utf8')).resolves.toContain('<<<<<<<');
+    await expect(readFile(path.join(worktreePath, 'same.txt'), 'utf8')).resolves.toContain(
+      '<<<<<<<',
+    );
   });
 
   it('DISCLOSED, not fixed: worktreePath/stepId are trusted as a paired fact with no cross-check against ctx.laneRegistry -- a mismatched pair still runs a real session and spends real budget (true of every real caller in this codebase today, which always builds the pair correctly; recorded so this is a documented limitation, not a silent gap)', async () => {
