@@ -714,8 +714,9 @@ async function cleanupPhaseLane(ctx: ExecuteStepContext, phaseNodeId: string): P
  * `ctx.mergeChecks` (`execution.mergeChecks`) now applies too -- the DECIDE lane gets the same
  * pre/post-check treatment `integrateLane` already gives every other auto-integrated lane, resolved once,
  * before the lane is ever touched (`resolveLaneChecks`, `MERGE-CHECKS-UNCONFIGURED` as data, no merge
- * event recorded, exactly as `landLane`'s own doc comment promises). Omitted, no checks run, matching this
- * function's own pre-`landLane` behaviour and `integrateLane`'s.
+ * event recorded, exactly as `resolveLaneChecks`'s own doc comment promises, not `landLane`'s -- the
+ * latter never mentions merge events at all). Omitted, no checks run, matching this function's own
+ * pre-`landLane` behaviour and `integrateLane`'s.
  *
  * Returns the real failure, never swallows one -- `landLane`'s own header contract ("a failure is
  * returned as data, never thrown") means this function needs no `try`/`catch` of its own any more (a
