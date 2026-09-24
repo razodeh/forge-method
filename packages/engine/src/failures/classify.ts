@@ -79,6 +79,17 @@ function classifyVcsFailure(failure: StepFailureInfo): FailureClass {
   // landing-time conflict.
   if (failure.code === 'LANE-JOIN-CONFLICT') return 'conflict';
   if (failure.code?.startsWith('VCS-INVALID-') === true) return 'validation';
+  // `PLAN-M14.md` P38: `createAgentConflictResolver`'s own five refusal/guardrail codes
+  // (`MERGE-RESOLVER-NO-STEP`/`-READ-ONLY`/`-BUDGET`/`-TREE-MOVED`/`-OUT-OF-CLAIM`, `dispatch/
+  // conflict-resolver.ts`) are thrown as `VcsError`s (the identical "no registry, no ForgeError" shape
+  // `VCS-MISSING-CONFLICT-RESOLVER` already has -- `MERGE` is not one of `codes.ts`'s own ten closed
+  // prefixes), so they reach this function through `failure.code` exactly the same way. Deliberately left
+  // to fall through to `transient` below rather than given a dedicated `policy` mapping of their own: this
+  // classifier's own established stance for a VCS-shaped code with no test coverage yet (the paragraph
+  // above, for `VCS-NOT-A-REPO`/`VCS-DIRTY-TREE`) applies here too, and P16's own retry loop has no
+  // production caller regardless (this file's own `prompt`-case comment below has the fuller "why this
+  // still matters only for `06` §6.8's classification, not a live retry, today" reasoning) -- verified,
+  // not silently unconsidered (`packages/engine/test/failures/classify.test.ts`).
   return 'transient';
 }
 

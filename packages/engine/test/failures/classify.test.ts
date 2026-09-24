@@ -112,6 +112,19 @@ describe('classifyFailure', () => {
       expect(generic).toBe('transient');
       expect(unknown).toBe('transient');
     });
+
+    it("PLAN-M14.md P38: createAgentConflictResolver's own five refusal/guardrail codes (thrown as VcsErrors, conflict-resolver.ts) are verified, not silently unconsidered -- they default to 'transient', the identical fallback every other unmapped VCS-shaped code above already gets", () => {
+      for (const code of [
+        'MERGE-RESOLVER-NO-STEP',
+        'MERGE-RESOLVER-READ-ONLY',
+        'MERGE-RESOLVER-BUDGET',
+        'MERGE-RESOLVER-TREE-MOVED',
+        'MERGE-RESOLVER-OUT-OF-CLAIM',
+      ]) {
+        const result = classifyFailure(outcome({ failure: { source: 'vcs', code, message: 'x' } }));
+        expect(result).toBe('transient');
+      }
+    });
   });
 
   describe('output-sourced failures', () => {

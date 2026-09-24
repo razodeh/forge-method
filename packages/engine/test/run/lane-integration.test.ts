@@ -21,8 +21,9 @@ import path from 'node:path';
 
 import { execa } from 'execa';
 import { FAKE_MODEL_ID, FakePlatformAdapter, type FakeSessionScript } from '@forge/testkit';
-import type { PlatformAdapter, ToolGrant } from '@forge/adapter-kit';
+import type { PlatformAdapter, SessionRequest, ToolGrant } from '@forge/adapter-kit';
 import { readEvents } from '@forge/telemetry/events';
+import { slugifyStepId } from '@forge/vcs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -404,22 +405,136 @@ describe('conflicting lanes follow the configured policy', () => {
     expect(events.some((event) => event.type === 'MergeConflict')).toBe(true);
   });
 
-  it('agent with no resolver configured: the integration fails as data (no throw), the tree is clean', async () => {
+  it('PLAN-M14.md P38: with no conflictResolver of its own AND no script for the resolve-conflict session, the shipped default still runs one confined session, which leaves the conflict markers untouched -- unresolved as data, no throw, the tree is clean', async () => {
+    // `conflictingRun` supplies no `resolver`/`conflictResolver` at all -- `runEngine` itself now always
+    // supplies `createAgentConflictResolver` as the default (`run-engine.ts`); its one real session here
+    // matches no script in `conflictingRun`'s own fixed adapter, so it runs the fake adapter's own minimal
+    // default response (no `writeFiles`), leaving `same.txt`'s real git conflict markers exactly as the
+    // rebase itself wrote them -- `verifyResolution`'s own marker check reports `'unresolved'`, the
+    // identical outcome as before this piece, just for a different, now-real reason (a session that tried
+    // and left markers, not "no resolver was even configured").
     const { project, state } = await conflictingRun('conflict-agent', { conflictPolicy: 'agent' });
 
     expect(state.runStatus).toBe('failed');
     expect(state.stepStatuses.get('cf:b')).toBe('failed');
     expect(await git(project.integrationPath, 'status', '--porcelain')).toBe('');
+    const events = await eventsOf(project, 'run-lane');
+    // The default resolver's own session really ran (SessionStarted/SessionEnded/UsageRecorded for
+    // `cf:b:resolve-conflict`), even though the merge itself never resolved.
+    expect(
+      events.some(
+        (event) => event.type === 'UsageRecorded' && event.agentId === 'engineer' && event.stepId === 'cf:b',
+      ),
+    ).toBe(true);
+  });
+
+  it("PLAN-M14.md P38: the shipped default resolver (createAgentConflictResolver, no caller-supplied resolver at all) runs ONE confined session of the losing lane's own agent, in its own worktree, with write on and exec off, and a real fix lands", async () => {
+    const project = await createProject('conflict-default-agent');
+    let resolverRequest: SessionRequest | undefined;
+    const { adapter } = scriptedAdapter(
+      {
+        a: [{ relativePath: 'same.txt', content: 'from a\n' }],
+        b: [{ relativePath: 'same.txt', content: 'from b\n' }],
+      },
+      [],
+    );
+    let resolveConflictSessions = 0;
+    // First-registered, matches every request but never claims one (this file's own `scriptedAdapter`
+    // convention above) -- lets the real resolve-conflict request be inspected without taking it over.
+    adapter.script((request) => {
+      if (request.stepId.endsWith(':resolve-conflict')) {
+        resolveConflictSessions += 1;
+        resolverRequest = request;
+      }
+      return false;
+    }, {});
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['resolved the conflict'],
+      writeFiles: [{ relativePath: 'same.txt', content: 'resolved\n' }],
+    });
+    const source = workflowOf('cf', [
+      agent('a', { produces: ['a.txt'] }),
+      agent('b', { produces: ['b.txt'] }),
+    ]);
+
+    const state = await runEngine(
+      source,
+      {},
+      contextFor(project, { adapter, claimPolicy: 'warn', conflictPolicy: 'agent' }),
+    );
+
+    expect(state.runStatus).toBe('completed');
+    expect(await git(project.integrationPath, 'show', 'HEAD:same.txt')).toBe('resolved');
+    expect(resolveConflictSessions).toBe(1);
+
+    // `cwd` is the LANE's own worktree, never the integration path.
+    expect(resolverRequest?.cwd).not.toBe(project.integrationPath);
+    expect(resolverRequest?.cwd).toBeDefined();
+    // `write: true` (the taint clamp's own `callerConfinesWrites` escape hatch), `exec: false` (taint
+    // strips it regardless of the fixture agent's own grant) -- the structural guarantee no prompt text
+    // could ever substitute for: this session cannot run a shell command, `git commit` included, through
+    // its own granted tools at all.
+    expect(resolverRequest?.tools.write).toBe(true);
+    expect(resolverRequest?.tools.exec).toBe(false);
+    expect(resolverRequest?.model).toBe(FAKE_MODEL_ID);
+    expect(resolverRequest?.stepId).toBe('cf:b:resolve-conflict');
+    // Names the conflicted path and its real porcelain status -- `AA` (both sides ADDED it: `same.txt`
+    // never existed before either lane's own commit, unlike this file's own hand-built `UU` unit-test
+    // fixtures in `conflict-resolver.test.ts`) -- block [4], compiled into the SYSTEM prompt (`05` §5.3),
+    // never the bare user-turn `prompt`.
+    expect(resolverRequest?.systemPrompt.text).toContain('same.txt');
+    expect(resolverRequest?.systemPrompt.text).toContain('AA');
+    // The diff arrives fenced as untrusted content in the user turn, not bare in the system prompt.
+    expect(resolverRequest?.prompt).toContain('FORGE_UNTRUSTED_CONTENT');
+    expect(resolverRequest?.systemPrompt.text).not.toContain('FORGE_UNTRUSTED_CONTENT');
+
+    const events = await eventsOf(project, 'run-lane');
+    const mergeEvents = events.filter(
+      (event) =>
+        event.stepId === 'cf:b' &&
+        (event.type === 'MergeConflict' || event.type === 'MergeCompleted'),
+    );
+    expect(mergeEvents.map((event) => event.type)).toEqual(['MergeConflict', 'MergeCompleted']);
+    const conflictPayload = mergeEvents[0]?.payload as
+      { reason?: string; resolvedBy?: string; files?: readonly string[] } | undefined;
+    expect(conflictPayload?.reason).toBe('resolved');
+    expect(conflictPayload?.resolvedBy).toBe('agent');
+    expect(conflictPayload?.files).toEqual(['same.txt']);
+
+    // Usage against the LANE's own step id (never the `:resolve-conflict` suffix) -- the same step whose
+    // ceiling it was checked and spent against, so a second resolution on the same lane would see it.
+    const usage = events.find(
+      (event) => event.type === 'UsageRecorded' && event.stepId === 'cf:b',
+    );
+    expect(usage).toBeDefined();
+    expect(usage?.agentId).toBe('engineer');
+
+    // The prompt record is persisted under the resolve-conflict session's own slugified step key.
+    const promptRecordPath = path.join(
+      project.projectRoot,
+      '.forge',
+      'state',
+      'runs',
+      'run-lane',
+      'steps',
+      slugifyStepId('cf:b:resolve-conflict'),
+      'prompt.md',
+    );
+    expect(existsSync(promptRecordPath)).toBe(true);
   });
 
   it('agent with a resolver: a resolved conflict integrates the lane and the run completes', async () => {
-    const resolver: ContextOptions['resolver'] = async (conflict) => {
+    // `PLAN-M14.md` P38: `conflictResolver` (per-call), not `resolver` (constructor-bound) -- through
+    // `runEngine`, the shipped default now always occupies the per-call slot (the test right below this
+    // one), so only a per-call override (this test's own real point: a resolved conflict completes the
+    // run) still reaches a caller-supplied resolver at all.
+    const conflictResolver: ContextOptions['conflictResolver'] = async (conflict) => {
       await writeFile(path.join(conflict.worktreePath, 'same.txt'), 'resolved\n');
       return 'resolved';
     };
     const { project, state } = await conflictingRun('conflict-resolved', {
       conflictPolicy: 'agent',
-      resolver,
+      conflictResolver,
     });
 
     expect(state.runStatus).toBe('completed');
@@ -469,7 +584,7 @@ describe('conflicting lanes follow the configured policy', () => {
     );
   });
 
-  it('PLAN-M14.md P35: with no per-call resolver set, the facade falls back to its own constructor-bound resolver unchanged', async () => {
+  it("PLAN-M14.md P38: through runEngine, with no per-call resolver of the caller's own, the shipped default (createAgentConflictResolver) now always wins the per-call slot -- a merely constructor-bound resolver is never reached this way any more, superseding P35's own pre-P38 fallback (facades.ts's own preference logic is unchanged; a hand-built context that never goes through runEngine at all, merge.test.ts's own 'merge-agent-policy-no-resolver' and 'merge-per-call-resolver' cases, still reaches it)", async () => {
     let constructorResolverCalls = 0;
     const constructorResolver: ContextOptions['resolver'] = async (conflict) => {
       constructorResolverCalls += 1;
@@ -481,11 +596,17 @@ describe('conflicting lanes follow the configured policy', () => {
       resolver: constructorResolver,
     });
 
-    expect(state.runStatus).toBe('completed');
-    expect(constructorResolverCalls).toBe(1);
-    expect(await git(project.integrationPath, 'show', 'HEAD:same.txt')).toBe(
-      'from constructor resolver',
-    );
+    // `runEngine` itself sets `ctx.conflictResolver` (`createAgentConflictResolver`) whenever the caller
+    // did not (`run-engine.ts`'s own doc comment on `runCtx`) -- landLane always passes THAT through as
+    // the per-call `options.conflictResolver`, which `MergeQueueFacade.process` prefers unconditionally
+    // over its own constructor-bound one (`facades.ts`, unchanged). The constructor-bound resolver here
+    // is therefore never even reached; the shipped default's own real session runs instead, and -- with
+    // no script in this fixture's adapter matching its `:resolve-conflict` stepId -- leaves the real
+    // conflict markers untouched, so the conflict stays unresolved and the run fails, the identical
+    // outcome this file's own "no script for the resolve-conflict session" test above already pins.
+    expect(constructorResolverCalls).toBe(0);
+    expect(state.runStatus).toBe('failed');
+    expect(state.stepStatuses.get('cf:b')).toBe('failed');
   });
 });
 

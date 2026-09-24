@@ -31,6 +31,7 @@ import {
   type BudgetConfig,
 } from '../budget/index.ts';
 import type { BudgetState } from '../budget/types.ts';
+import { createAgentConflictResolver } from '../dispatch/conflict-resolver.ts';
 import { readRecordedAnswers } from '../dispatch/elicit.ts';
 import { executeStep } from '../dispatch/execute.ts';
 import { integrateLane, resolveLaneChecks } from '../dispatch/integrate.ts';
@@ -472,10 +473,20 @@ export async function runEngine(
     seedScheduler(scheduler, nodes, resumeFrom, answers);
   }
 
-  const runCtx: RunEngineContext = {
+  // `PLAN-M14.md` P38: `stepGraph` is set first, into its own local, so the default resolver below can
+  // close over a context that already resolves `ctx.stepGraph.get(stepId)` -- a caller-supplied
+  // `ctx.conflictResolver` (every test that builds one, and any future real caller) always wins; this is
+  // only the shipped default so `conflictPolicy: 'agent'` works with no caller-supplied resolver at all
+  // (`06` §6.5 step 2's own `agent` bullet, `SPEC-QUESTIONS.md` Q77's own "nothing calls this yet" gap,
+  // finally closed).
+  const stepGraphCtx: RunEngineContext = {
     ...ctx,
     stepGraph: new Map(nodes.map((node) => [node.id, node] as const)),
     answers,
+  };
+  const runCtx: RunEngineContext = {
+    ...stepGraphCtx,
+    conflictResolver: ctx.conflictResolver ?? createAgentConflictResolver(stepGraphCtx),
   };
   await driveToCompletion(nodes, scheduler, runCtx, refreshBudget);
 

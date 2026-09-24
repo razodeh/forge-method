@@ -198,6 +198,14 @@ export async function landLane(
           payload: {
             reason: 'resolved',
             files: resolution.files,
+            // `PLAN-M14.md` P38: which conflict policy actually resolved this — `@forge/vcs`'s own
+            // `MergeResolution` (`merge.resolutions`, above) carries no such field (it is a plain git-level
+            // fact with no concept of "agent" or "human"; this whole file's own "re-declared, not imported"
+            // stance is why it never gains one), so this is computed here, from `landLane`'s own
+            // `conflictPolicy` argument, not read off `resolution`. Always `'agent'` or `'human'` in
+            // practice: `'abort'` never reaches this branch (it never resolves a conflict at all,
+            // `merge-queue.ts`'s own `conflictPolicy === 'abort'` dispatch).
+            resolvedBy: conflictPolicy,
             ...(resolution.commit === undefined ? {} : { commit: resolution.commit }),
           },
         });

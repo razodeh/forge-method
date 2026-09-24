@@ -59,7 +59,9 @@ export interface AssembleInput {
    * that is loaded here. */
   readonly taskText?: string | undefined;
   /** Distinguishes one participant session of a step from another (`panel:security`, ...): part of the
-   * session's own step id and prompt-record location. Absent for the step's own session. */
+   * session's own step id and prompt-record location. Absent for the step's own session.
+   * `PLAN-M14.md` P38: `conflict-resolver.ts`'s own confined resolution session uses `'resolve-conflict'`,
+   * giving it the stepKey `<stepId>:resolve-conflict`. */
   readonly role?: string | undefined;
   /** The key an agent's `prompt.briefs.<key>` is looked up by, when the task text is prose rather than a
    * `briefs/<name>.md` reference: an interaction-mode participant passes its mode name (`swarm-review`),
@@ -68,7 +70,9 @@ export interface AssembleInput {
   /** Participant sessions read the primary author's lane and never write (`dispatch-agent-step.ts`). */
   readonly readOnly?: boolean | undefined;
   /** For a node with no claim of its own (`produces`, declared outputs): the caller confines the session's writes
-   * itself, so the session keeps the agent's `write` (`forge debug`'s FIX scans its diff against an exclusion set).
+   * itself, so the session keeps the agent's `write` (`forge debug`'s FIX scans its diff against an exclusion set;
+   * `PLAN-M14.md` P38's own confined conflict-resolution session verifies its diff against the declared
+   * conflicted set afterward, `conflict-resolver.ts`'s own `verifyResolution`).
    * Without it a step keeps write access only when its `StepNode` claim is non-empty (`PLAN-M13.md` P36, and for a
    * tainted step `restrictGrantForTaint`). */
   readonly callerConfinesWrites?: boolean | undefined;

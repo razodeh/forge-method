@@ -7,6 +7,7 @@
  * @see PLAN-M5.md P15
  */
 export { executeStep } from './execute.ts';
+export { createAgentConflictResolver } from './conflict-resolver.ts';
 export {
   createGateEvaluator,
   createMergeQueueFacade,

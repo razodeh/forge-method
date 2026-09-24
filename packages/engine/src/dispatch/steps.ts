@@ -340,8 +340,18 @@ export async function createLaneForStep(
   let baseSha = tipSha;
   for (const head of heads) {
     const message = buildJoinCommitMessage(ctx, head.id);
+    // `PLAN-M14.md` P38: the identical per-call resolver `landLane` already threads to the merge queue
+    // (`integrate.ts`) also flows here -- `MergeConflictResolver` (dispatch/types.ts) is structurally
+    // wider than `JoinConflictResolver` (every field `JoinConflictDescription` lacks is optional on
+    // `MergeConflictDescription`), so no cast or adapter is needed. In practice the shipped default
+    // (`createAgentConflictResolver`) always refuses a join conflict with `MERGE-RESOLVER-NO-STEP` (a
+    // join's own `JoinConflictDescription` never carries a `stepId`, `join.ts`'s own
+    // `describeJoinConflict`) -- still strictly better than the untyped `VCS-MISSING-CONFLICT-RESOLVER` a
+    // join under `conflictPolicy: 'agent'`/`'human'` would throw with none supplied at all
+    // (`mergeIntoLane`'s own doc comment), and leaves room for a future, real join-aware resolver with no
+    // further wiring here.
     const joinResult = await runVcsStep(node.id, () =>
-      ctx.vcs.mergeIntoLane(lane, head.sha, message),
+      ctx.vcs.mergeIntoLane(lane, head.sha, message, ctx.conflictResolver),
     );
     if (!joinResult.ok) {
       await removeHalfMadeLane(ctx, lane);

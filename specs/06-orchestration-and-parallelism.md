@@ -139,8 +139,13 @@ Per candidate:
 
 1. `git fetch` (no-op locally) + rebase lane branch onto current integration head.
 2. **Conflict?** → `conflict resolution policy`:
-   - `agent` (default): spawn a `merge-resolver` step with both lanes' intents, the conflicting
-     hunks, and the relevant specs; the resolver must produce a build-and-test-passing resolution.
+   - `agent` (default): one confined session of the conflicting lane's own agent, in the lane
+     worktree, shown the conflicted paths' own status and last-touching step, the step's own brief,
+     and the diff (fenced as untrusted data) — it may edit only those paths and never commits; the
+     queue verifies afterward that HEAD did not move and nothing outside those paths changed
+     (reverting anything that did) before staging the resolution and continuing. Refuses outright,
+     with no session run, when the step has no writable agent in the run's own compiled plan or no
+     cost budget remains; a session that still leaves conflict markers is not treated as resolved.
    - `human`: surface the conflict modal.
    - `abort`: fail the lane and replan.
 3. Run the **pre-merge check set** (fast subset: typecheck, lint, affected unit tests) inside the

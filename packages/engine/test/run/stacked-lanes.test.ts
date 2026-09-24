@@ -102,6 +102,21 @@ interface ContextOptions {
     readonly diff: string;
     readonly worktreePath: string;
   }) => Promise<'resolved' | 'unresolved'>;
+  /** `PLAN-M14.md` P38: `ExecuteStepContext.conflictResolver` -- the PER-CALL resolver `runEngine` itself
+   * now always populates by default (`createAgentConflictResolver`) whenever the caller leaves it unset,
+   * and which `landLane`/`createLaneForStep`'s own `mergeIntoLane` call both prefer unconditionally over
+   * `landingConflictResolver`/`joinConflictResolver` above (both merely constructor-bound). A test that
+   * wants a caller-supplied resolver to actually run a real session for EITHER scope through `runEngine`
+   * must set this, not the constructor-bound ones -- see "under the agent policy with no resolver" below
+   * for the full story (why the constructor-bound knobs stayed as parameters here regardless: documenting
+   * the now-superseded configuration shape, not because they still resolve anything through `runEngine`). */
+  readonly conflictResolver?: (conflict: {
+    readonly laneId: string;
+    readonly declaredClaim: readonly string[];
+    readonly conflictedFiles: readonly { readonly path: string; readonly status: string }[];
+    readonly diff: string;
+    readonly worktreePath: string;
+  }) => Promise<'resolved' | 'unresolved'>;
 }
 
 function contextFor(project: Project, options: ContextOptions): RunEngineContext {
@@ -137,6 +152,7 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
     conflictPolicy: 'abort',
     ...(options.testCommands === undefined ? {} : { testCommands: options.testCommands }),
     ...(options.mergeChecks === undefined ? {} : { mergeChecks: options.mergeChecks }),
+    ...(options.conflictResolver === undefined ? {} : { conflictResolver: options.conflictResolver }),
   };
 }
 
@@ -749,7 +765,20 @@ describe('which predecessor a lane stacks on', () => {
     ).toBe(false);
   });
 
-  it('under the agent policy with no resolver: VCS-MISSING-CONFLICT-RESOLVER; with a fake resolver: a trailer-carrying join commit and the step proceeds', async () => {
+  it('under the agent policy: with only the constructor-bound knobs (no per-call resolver of the test\'s own), PLAN-M14.md P38\'s own shipped default now always wins the per-call slot and refuses a join (MERGE-RESOLVER-NO-STEP: a join conflict has no stepId at all); with a per-call resolver, a trailer-carrying join commit and the step proceeds', async () => {
+    // `PLAN-M14.md` P38: `runEngine` sets `ctx.conflictResolver` (`createAgentConflictResolver`)
+    // whenever the caller left it unset (`run-engine.ts`), and `createLaneForStep`'s own `mergeIntoLane`
+    // call, like `landLane`'s, always prefers that PER-CALL resolver over `createVcsFacade`'s own
+    // constructor-bound one (`facades.ts`, unchanged) -- so `joinConflictResolver` alone (below, with no
+    // `conflictResolver` override) is no longer enough to reach ANY resolver but the shipped default
+    // through `runEngine`. The shipped default itself always refuses a join specifically
+    // (`MERGE-RESOLVER-NO-STEP`): a join's own `JoinConflictDescription` never carries a `stepId`
+    // (`join.ts`'s `describeJoinConflict`, `conflict-resolver.ts`'s own doc comment) -- so this is now
+    // the real, typed outcome for "agent policy, no caller override" through `runEngine`, in place of the
+    // old, less specific `VCS-MISSING-CONFLICT-RESOLVER` (still reachable at the facade layer directly,
+    // `join.ts`'s own unit tests, and through `runEngine` only when a real per-call `conflictResolver` is
+    // never installed at all -- which no `runEngine` call can arrange any more, `createAgentConflictResolver`
+    // is unconditional).
     const noResolverProject = await createProject('join-conflict-agent-no-resolver');
     const noResolverAdapter = scriptedAdapter(
       {
@@ -769,7 +798,7 @@ describe('which predecessor a lane stacks on', () => {
     const noResolverFailure = (await eventsOf(noResolverProject)).find(
       (event) => event.type === 'StepFailed' && event.stepId === 'cf:c',
     )?.payload as { code?: string } | undefined;
-    expect(noResolverFailure?.code).toBe('VCS-MISSING-CONFLICT-RESOLVER');
+    expect(noResolverFailure?.code).toBe('MERGE-RESOLVER-NO-STEP');
 
     const resolvedProject = await createProject('join-conflict-agent-resolved');
     const { adapter, seen } = scriptedAdapter(
@@ -795,8 +824,12 @@ describe('which predecessor a lane stacks on', () => {
       contextFor(resolvedProject, {
         adapter,
         joinConflictPolicy: 'agent',
+        // Kept (now dead through `runEngine`, `.conflictResolver` below is what actually runs) so this
+        // fixture still documents both the old, constructor-bound shape and the new, per-call one side by
+        // side, matching this file's own `ContextOptions.conflictResolver` doc comment.
         joinConflictResolver: resolveToVersion,
         landingConflictResolver: resolveToVersion,
+        conflictResolver: resolveToVersion,
       }),
     );
 
