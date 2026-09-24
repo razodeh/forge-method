@@ -703,7 +703,13 @@ async function cleanupPhaseLane(ctx: ExecuteStepContext, phaseNodeId: string): P
  * the run's own configured policy and resolver like any other auto-integrated lane, not a policy of its
  * own. Omitted, `'abort'`: needs no resolver at all and merges cleanly whenever the decider's own lane
  * genuinely does not conflict with `ctx.integrationBase` (the overwhelmingly common case), only aborting
- * (never removing the lane) on a real, rare conflict.
+ * (never removing the lane) on a real, rare conflict. A `'agent'`/`'human'` policy with the real,
+ * confined-session resolver (`PLAN-M14.md` P38's `createAgentConflictResolver`) still refuses a genuine
+ * DECIDE-lane conflict typed (`MERGE-RESOLVER-NO-STEP`, `conflict-resolver.ts`'s own `noStepFailure`,
+ * which names "a DECIDE lane" outright): the DECIDE lane's synthetic `<node.id>:decide` id is never a key
+ * in `ctx.stepGraph` (it names no compiled `StepNode` of its own), so no writable, agent-bearing step can
+ * be found to run a confined resolver session against. Disclosed, not fixed here (`PLAN-M14.md` P39's own
+ * Discloses) -- a conflicting DECIDE lane still fails as data, now with real checks, same as before.
  *
  * `ctx.mergeChecks` (`execution.mergeChecks`) now applies too -- the DECIDE lane gets the same
  * pre/post-check treatment `integrateLane` already gives every other auto-integrated lane, resolved once,
