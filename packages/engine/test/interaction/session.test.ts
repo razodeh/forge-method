@@ -667,7 +667,7 @@ describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landL
     expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
   });
 
-  it("a failing pre-check aborts the DECIDE lane's merge before any merge attempt, fails MERGE-PRE-CHECK-FAILED, and never queues the lane at all", async () => {
+  it("a failing pre-check aborts the DECIDE lane's merge before any merge attempt is made, failing MERGE-PRE-CHECK-FAILED", async () => {
     const projectRoot = await createTempRepo('decide-lane-precheck-fail');
     await withRealAgentRoster(projectRoot);
     const adapter = new FakePlatformAdapter();
@@ -706,7 +706,7 @@ describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landL
     expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
   });
 
-  it("execution.mergeChecks naming a layer with no configured command fails the DECIDE lane MERGE-CHECKS-UNCONFIGURED, naming the key, before the lane is ever queued -- no Merge* event at all, and the decider's own write survives untouched in the lane's own worktree", async () => {
+  it('execution.mergeChecks naming a layer with no configured command fails the DECIDE lane MERGE-CHECKS-UNCONFIGURED, naming the key, before the lane is ever queued -- no Merge* event at all', async () => {
     const projectRoot = await createTempRepo('decide-lane-checks-unconfigured');
     await withRealAgentRoster(projectRoot);
     const adapter = new FakePlatformAdapter();
@@ -735,11 +735,22 @@ describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landL
     expect(result.outcome.failure?.source).toBe('merge');
     expect(result.outcome.failure?.code).toBe('MERGE-CHECKS-UNCONFIGURED');
     expect(result.outcome.failure?.message).toContain('execution.mergeChecks.pre');
-    // Refused before the lane is ever touched -- no Merge* event recorded at all (`landLane`'s own doc
-    // comment: "the caller fails the step with it and no merge event is recorded").
+    // Refused before the lane is ever touched -- no Merge* event recorded at all (`resolveLaneChecks`'s
+    // own doc comment, `integrate.ts`: "the caller fails the step with it and no merge event is
+    // recorded").
     expect(events.some((event) => event.type.startsWith('Merge'))).toBe(false);
-    // The lane itself is untouched -- still registered, its own content never even offered to the queue.
-    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
+    // The lane itself is untouched -- still registered, its own content never even offered to the
+    // queue, verified by actually reading the decider's own write back from the lane's own worktree
+    // (not merely inferring it from the absence of a Merge* event).
+    const laneId = [...ctx.laneRegistry.keys()].find((id) => id.includes(':decide'));
+    expect(laneId).toBeDefined();
+    const lane = laneId === undefined ? undefined : ctx.laneRegistry.get(laneId);
+    expect(lane).toBeDefined();
+    if (lane !== undefined) {
+      await expect(readFileInRepo(lane.path, 'decide-note.txt')).resolves.toBe(
+        'a real decider commit\n',
+      );
+    }
   });
 
   it("ctx.conflictPolicy/ctx.conflictResolver reach the merge queue for the DECIDE lane -- an agent-policy conflict a fake resolver resolves lands cleanly, proving mergeDecideLane forwards the run's own policy rather than a hardcoded 'abort'", async () => {
