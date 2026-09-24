@@ -56,7 +56,11 @@ async function fastForwardEligible(): Promise<{
   const cwd = await createTempRepo();
   await writeFile(path.join(cwd, 'seed.txt'), 'seed\n');
   const baseSha = await commitAll(cwd, 'seed');
-  const base = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'b', integrationBase: baseSha });
+  const base = await createLaneWorktree(cwd, {
+    runId: 'run-1',
+    stepId: 'b',
+    integrationBase: baseSha,
+  });
   const headHandle = await createLaneWorktree(cwd, {
     runId: 'run-1',
     stepId: 'a',
@@ -78,7 +82,11 @@ async function divergent(): Promise<{
   const cwd = await createTempRepo();
   await writeFile(path.join(cwd, 'seed.txt'), 'seed\n');
   const baseSha = await commitAll(cwd, 'seed');
-  const lane = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'b', integrationBase: baseSha });
+  const lane = await createLaneWorktree(cwd, {
+    runId: 'run-1',
+    stepId: 'b',
+    integrationBase: baseSha,
+  });
   await writeFile(path.join(lane.path, 'b.txt'), 'b\n');
   await commitAll(lane.path, 'b change');
   const headHandle = await createLaneWorktree(cwd, {
@@ -102,7 +110,11 @@ async function conflicting(): Promise<{
   const cwd = await createTempRepo();
   await writeFile(path.join(cwd, 'f.txt'), 'line1\nline2\nline3\n');
   const baseSha = await commitAll(cwd, 'seed');
-  const lane = await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'b', integrationBase: baseSha });
+  const lane = await createLaneWorktree(cwd, {
+    runId: 'run-1',
+    stepId: 'b',
+    integrationBase: baseSha,
+  });
   await writeFile(path.join(lane.path, 'f.txt'), 'line1\nCHANGED-BY-LANE\nline3\n');
   await commitAll(lane.path, 'lane change');
   const headHandle = await createLaneWorktree(cwd, {
@@ -171,9 +183,9 @@ describe('mergeIntoLane — conflict, abort policy', () => {
     const { lane, headSha } = await conflicting();
     let called = false;
 
-    await mergeIntoLane(lane, headSha, message('a'), 'abort', async () => {
+    await mergeIntoLane(lane, headSha, message('a'), 'abort', () => {
       called = true;
-      return 'resolved';
+      return Promise.resolve('resolved');
     });
 
     expect(called).toBe(false);
@@ -292,9 +304,9 @@ describe('mergeIntoLane — input validation', () => {
       laneId: 'evil\nForge-Step: forged-by-laneId' as LaneId,
     };
 
-    await expect(mergeIntoLane(maliciousHandle, headSha, message('a'), 'abort')).rejects.toBeInstanceOf(
-      VcsError,
-    );
+    await expect(
+      mergeIntoLane(maliciousHandle, headSha, message('a'), 'abort'),
+    ).rejects.toBeInstanceOf(VcsError);
     expect(await currentHead(base.path)).toBe(preJoinHead);
   });
 });

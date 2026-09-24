@@ -711,7 +711,7 @@ describe('the shipped build-stage inner loop, end to end (runEngine, stacked lan
 // (`stage-plan.ts`'s own "every step where B's work begins gains a dependsOn edge to every step where A's
 // work ends"), two genuinely unmerged, unrelated lanes at once.
 
-describe("a story depending on two others sees both before the merge (PLAN-M14.md P34, an in-lane join)", () => {
+describe('a story depending on two others sees both before the merge (PLAN-M14.md P34, an in-lane join)', () => {
   const stories = [
     story('STORY-001', [], ['src/story-001/**', 'tests/story-001/**']),
     story('STORY-002', [], ['src/story-002/**', 'tests/story-002/**']),
@@ -752,7 +752,9 @@ describe("a story depending on two others sees both before the merge (PLAN-M14.m
       seed: 'seed',
     };
 
-    await runEngine(source, buildStageRunContext(workflow, 'mvp', stories), ctx).catch(() => undefined);
+    await runEngine(source, buildStageRunContext(workflow, 'mvp', stories), ctx).catch(
+      () => undefined,
+    );
 
     // `generate-tests:STORY-003` (S3's own first step) sees BOTH S1's and S2's code and tests, via the
     // in-lane join of their unmerged `implement`/`review` lanes -- neither predecessor contains the other,
@@ -778,7 +780,7 @@ describe("a story depending on two others sees both before the merge (PLAN-M14.m
       .filter((id) => id !== '');
     const counts = new Map<string, number>();
     for (const id of trailers) counts.set(id, (counts.get(id) ?? 0) + 1);
-    for (const [id, count] of counts) expect(count, `${id} landed ${count} times`).toBe(1);
+    for (const [id, count] of counts) expect(count, `${id} landed ${String(count)} times`).toBe(1);
     expect(fixture.ctx.laneRegistry.size).toBe(0);
   });
 });
