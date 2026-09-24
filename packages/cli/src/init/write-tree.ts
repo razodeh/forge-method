@@ -238,7 +238,10 @@ export interface RegenerableFilePlanEntry {
  *   body's own hash no longer matches its own recorded header, so a real run goes through `03` §3.3's
  *   own `keep-mine`/`take-theirs`/`merge`/`show-diff` resolution, never a silent overwrite.
  * - `current`: not drifted, and the header's own recorded `hash=` already equals
- *   `sha256(shippedContent)` — this exact copy is what a fresh write would produce again, byte for byte.
+ *   `sha256(shippedContent)` — the real *body* a fresh write would produce again is byte for byte what
+ *   is already on disk (a fresh write may still re-stamp the header's own `v=` field to today's
+ *   running version — see `writeRegenerableContent`'s own doc comment on the old, fixed `v=1` bug —
+ *   so "current" is a real claim about the body only, never a promise the whole file is untouched).
  * - `stale`: not drifted (a human never touched it), but the shipped content has itself changed since
  *   this copy was generated — `writeGenerated` never treats an undrifted file as a conflict, whatever
  *   its header's own recorded hash is, so a real run overwrites it silently, exactly like `missing`.

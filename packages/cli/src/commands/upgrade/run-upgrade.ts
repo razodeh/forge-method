@@ -100,12 +100,22 @@ export async function runUpgrade(
   const editedFiles = contentPlan
     .filter((file) => file.status === 'edited')
     .map((file) => file.path);
-  const hasMissingRegenerable = contentPlan.some((file) => file.status === 'missing');
+  // Critic round 1 finding: `missing` drove `regenerated` from day one of this piece, but with no
+  // named array a real `regenerated: true` caused *only* by missing files (the realistic case: an
+  // existing project upgrading past a version that introduced a brand-new content kind) showed the
+  // user nothing beyond the bare version-pair line — invisible, not merely untested. `missingFiles`
+  // fixes both: a real field to assert on, and something `bin.ts` can actually print.
+  const missingFiles = contentPlan
+    .filter((file) => file.status === 'missing')
+    .map((file) => file.path);
+  // Edited files are deliberately excluded here: `03` §3.3's own conflict path may resolve to
+  // `keep-mine` (nothing written at all), so an edit alone must never force `regenerated: true` the
+  // way a real, unconditional silent overwrite (stale/missing) does.
   const regenerated =
     migratedDocuments.some((doc) => doc.stepCount > 0) ||
     compareVersions(targetVersion, installedVersion) > 0 ||
     staleFiles.length > 0 ||
-    hasMissingRegenerable;
+    missingFiles.length > 0;
 
   if (options.dryRun === true) {
     return {
@@ -117,6 +127,7 @@ export async function runUpgrade(
       regenerated,
       staleFiles,
       editedFiles,
+      missingFiles,
     };
   }
 
@@ -156,6 +167,7 @@ export async function runUpgrade(
     regeneratedFiles,
     staleFiles,
     editedFiles,
+    missingFiles,
     doctor,
   };
 }

@@ -322,7 +322,7 @@ describe('forge (real subprocess dispatch)', () => {
   // helper only captures stdout on a status-0 exit (`stderr: ''` is hardcoded there for a successful
   // run, by every other test in this file's own design) -- exit 0 despite seven real findings is the
   // real, intended "warnings exit 0" contract this test proves either way.
-  it('runs `forge agent validate --all --json` for real, exiting 0 with only Q224\'s seven warnings (no error)', async () => {
+  it("runs `forge agent validate --all --json` for real, exiting 0 with only Q224's seven warnings (no error)", async () => {
     const dir = await realProject();
     const result = run(['agent', 'validate', '--all', '--json', '-C', dir]);
     expect(result.status).toBe(0);
@@ -1476,6 +1476,34 @@ describe('forge upgrade (real subprocess dispatch, PLAN-M12.md P2)', () => {
     expect(parsed.report.regenerated).toBe(true);
     // A real dry run: the file on disk is untouched either way.
     expect(await readFile(filePath, 'utf8')).toBe(staleContent);
+  });
+
+  it('a real, missing regenerable file reports as missingFiles and forces regenerated: true in `--dry-run --json`, with a visible human-readable count (critic round 1 finding, PLAN-M14.md P43)', async () => {
+    const dir = await realProject();
+    const relPath = '.forge/workflows/intake.workflow.yaml';
+    await rm(path.join(dir, relPath));
+
+    const jsonResult = run(['upgrade', '--dry-run', '--json', '-C', dir]);
+    expect(jsonResult.status).toBe(0);
+    const parsed = JSON.parse(jsonResult.stdout) as {
+      readonly report: {
+        readonly staleFiles: readonly string[];
+        readonly editedFiles: readonly string[];
+        readonly missingFiles: readonly string[];
+        readonly regenerated: boolean;
+      };
+    };
+    expect(parsed.report.missingFiles).toEqual([relPath]);
+    expect(parsed.report.staleFiles).toEqual([]);
+    expect(parsed.report.editedFiles).toEqual([]);
+    expect(parsed.report.regenerated).toBe(true);
+
+    // Without a named `missingFiles`/human line, `regenerated: true` here would have no visible cause
+    // at all beyond the bare version-pair line (critic round 1 finding).
+    const humanResult = run(['upgrade', '--dry-run', '-C', dir]);
+    expect(humanResult.status).toBe(0);
+    expect(humanResult.stdout).toContain('0 stale, 0 edited, 1 missing');
+    expect(humanResult.stdout).toContain(`missing: ${relPath}`);
   });
 
   it('a real, hand-edited regenerable file reports as editedFiles (not staleFiles) in `--dry-run --json`, and the human line names its count and path (PLAN-M14.md P43)', async () => {

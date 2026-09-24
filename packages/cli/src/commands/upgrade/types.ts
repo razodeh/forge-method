@@ -83,11 +83,18 @@ export interface UpgradeReport {
   /** The identical plan's own `'edited'` files: a real, detected local edit (the file's own body no
    * longer matches its recorded header hash) that a real run resolves through `03` §3.3's own
    * `keep-mine`/`take-theirs`/`merge`/`show-diff` conflict path, never a silent overwrite. Always
-   * present, empty when nothing has been hand-edited. */
+   * present, empty when nothing has been hand-edited. Deliberately excluded from `regenerated` below:
+   * the conflict path may resolve to `keep-mine` (nothing written), so an edit alone never forces it. */
   readonly editedFiles: readonly string[];
+  /** The identical plan's own `'missing'` files: nothing real on disk yet at that regenerable path (a
+   * brand-new content kind a newer version introduced, or a file a human deleted outright) — a real
+   * run creates these silently, exactly like `staleFiles`. Always present, empty when nothing is
+   * missing. Critic round 1 finding (M14 P43): without this field a real `regenerated: true` caused
+   * *only* by missing files was invisible everywhere (no report field, nothing for `bin.ts` to print). */
+  readonly missingFiles: readonly string[];
   /** Whether the regenerable directories were (real run) or would be (dry run, when any document
-   * needs migrating, the module/template version itself has drifted, or `staleFiles`/a real `missing`
-   * file exists in the plan above — `PLAN-M14.md` P43: real, whatever the version pair) rewritten. */
+   * needs migrating, the module/template version itself has drifted, or `staleFiles`/`missingFiles` is
+   * non-empty in the plan above — `PLAN-M14.md` P43: real, whatever the version pair) rewritten. */
   readonly regenerated: boolean;
   /** Every regenerable file step 5 actually touched, `WrittenFile.conflict` naming the real
    * resolution mode wherever a hash drift was found. Present only for a real (non-dry-run) upgrade —

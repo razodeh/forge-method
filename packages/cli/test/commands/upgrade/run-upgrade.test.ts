@@ -239,7 +239,7 @@ describe('runUpgrade', () => {
     expect(report.migratedDocuments.some((doc) => doc.stepCount > 0)).toBe(true);
   });
 
-  describe('`PLAN-M14.md` P43: staleFiles/editedFiles classification, decoupled from the version pair', () => {
+  describe('`PLAN-M14.md` P43: staleFiles/editedFiles/missingFiles classification, decoupled from the version pair', () => {
     const WORKFLOW_REL_PATH = '.forge/workflows/intake.workflow.yaml';
 
     /** A real, undrifted copy of an *older* shipped body, stamped with the real, currently-running
@@ -272,6 +272,7 @@ describe('runUpgrade', () => {
       expect(report.installedVersion).toBe(report.targetVersion);
       expect(report.staleFiles).toEqual([]);
       expect(report.editedFiles).toEqual([]);
+      expect(report.missingFiles).toEqual([]);
       expect(report.regenerated).toBe(false);
     });
 
@@ -291,7 +292,7 @@ describe('runUpgrade', () => {
       expect(report.regenerated).toBe(true);
     });
 
-    it('classifies a hand-edited file as editedFiles, not staleFiles', async () => {
+    it('classifies a hand-edited file as editedFiles, not staleFiles, and does NOT force regenerated: true on its own', async () => {
       const project = await createTestProject();
       const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
       await writeFile(filePath, `${await readFile(filePath, 'utf8')}\n# hand-edited\n`, 'utf8');
@@ -304,6 +305,35 @@ describe('runUpgrade', () => {
       );
       expect(report.editedFiles).toEqual([WORKFLOW_REL_PATH]);
       expect(report.staleFiles).toEqual([]);
+      expect(report.missingFiles).toEqual([]);
+      // Critic round 1 finding: an edit's own resolution can be `keep-mine` (nothing written), so
+      // `editedFiles` alone must never force `regenerated: true` the way stale/missing do.
+      expect(report.regenerated).toBe(false);
+    });
+
+    it('a real, missing regenerable file reports as missingFiles and forces regenerated: true, at an equal version pair, with staleFiles/editedFiles empty (critic round 1 finding)', async () => {
+      const project = await createTestProject();
+      await rm(path.join(project.dir, WORKFLOW_REL_PATH));
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { dryRun: true },
+        baseDeps(project),
+      );
+      expect(report.installedVersion).toBe(report.targetVersion);
+      expect(report.missingFiles).toEqual([WORKFLOW_REL_PATH]);
+      expect(report.staleFiles).toEqual([]);
+      expect(report.editedFiles).toEqual([]);
+      expect(report.regenerated).toBe(true);
+
+      // A real run creates it silently, exactly like a stale file — no conflict resolution.
+      const realReport = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      const created = realReport.regeneratedFiles?.find((file) => file.path === WORKFLOW_REL_PATH);
+      expect(created?.conflict).toBeUndefined();
+      await expect(readFile(path.join(project.dir, WORKFLOW_REL_PATH), 'utf8')).resolves.toContain(
+        'forge:generated',
+      );
     });
 
     it('a real run regenerates the stale file silently, and a second dry run reports none', async () => {
