@@ -557,7 +557,7 @@ describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
   // diagnosably instead of throwing. `PLAN-M14.md` P22 closes that gap for real: a fresh `forge init`
   // project (which ships the real `G-Verify` gate `device-matrix.check.yaml`'s own `appliesTo.gates`
   // names, `10` §10.3's own catalogue) now attaches fm-mobile's check cleanly, with zero findings.
-  it("installing a real shipped module (fm-mobile) attaches cleanly, zero findings, now that PLAN-M14.md P22 gives it a real appliesTo/severity", async () => {
+  it('installing a real shipped module (fm-mobile) attaches cleanly, zero findings, now that PLAN-M14.md P22 gives it a real appliesTo/severity', async () => {
     const project = await createProject();
     await writeFileAtomic(
       project.paths.resolveWithin('.forge/manifest.yaml'),
@@ -582,9 +582,14 @@ describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
       project.paths.resolveWithin('.forge/manifest.yaml'),
       'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
     );
-    await mkdir(project.paths.resolveWithin('.forge/modules/fm-mobile/checks'), { recursive: true });
+    await mkdir(project.paths.resolveWithin('.forge/modules/fm-mobile/checks'), {
+      recursive: true,
+    });
     const real = YAML.parse(
-      await readFile(path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'), 'utf8'),
+      await readFile(
+        path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'),
+        'utf8',
+      ),
     ) as Record<string, unknown>;
     const { appliesTo: _appliesTo, severity: _severity, ...withoutEither } = real;
     await writeFileAtomic(

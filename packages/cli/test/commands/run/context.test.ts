@@ -699,7 +699,10 @@ checks:
 
   it("supplies the run's own integrationTipAtStart as FORGE_BASE_REF to a real spawned check", async () => {
     const project = await createTestProject();
-    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`),
+      BASE_REF_GATE_YAML,
+    );
     const { stdout: sha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir });
     const tip = sha.trim();
     await writeManifest(project, 'run-base-ref', tip);
@@ -722,7 +725,10 @@ checks:
 
   it('leaves FORGE_BASE_REF unset (the check fails on its own stated reason) when the manifest has no integrationTipAtStart', async () => {
     const project = await createTestProject();
-    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`),
+      BASE_REF_GATE_YAML,
+    );
     await writeManifest(project, 'run-no-tip', undefined);
 
     const ctx = await buildRunEngineContext({
@@ -742,7 +748,10 @@ checks:
 
   it('leaves FORGE_BASE_REF unset for a runId with no manifest at all (forge review/debug/session/panel never write one)', async () => {
     const project = await createTestProject();
-    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`),
+      BASE_REF_GATE_YAML,
+    );
 
     const ctx = await buildRunEngineContext({
       paths: project.paths,

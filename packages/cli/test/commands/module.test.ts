@@ -25,8 +25,17 @@ import {
   type InstallOptions,
   type ModuleCommandContext,
 } from '../../src/commands/module.ts';
-import { gateCheck, gateList, type GateCommandContext } from '../../src/commands/run/gate-commands.ts';
-import { cleanupAll, createTestProject, registerCleanup, type TestProject } from './upgrade/helpers.ts';
+import {
+  gateCheck,
+  gateList,
+  type GateCommandContext,
+} from '../../src/commands/run/gate-commands.ts';
+import {
+  cleanupAll,
+  createTestProject,
+  registerCleanup,
+  type TestProject,
+} from './upgrade/helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -763,7 +772,7 @@ describe('a real shipped module attaches its checks through a real gate (PLAN-M1
     };
   }
 
-  it("forge module add fm-web attaches a11y:audit/bundle:size to the real G-Verify gate -- gate list shows both with source, gate check runs both (each fails with its own reason on a project with no dist/)", async () => {
+  it('forge module add fm-web attaches a11y:audit/bundle:size to the real G-Verify gate -- gate list shows both with source, gate check runs both (each fails with its own reason on a project with no dist/)', async () => {
     const project = await createTestProject();
     // fm-web's own module.yaml declares `requires: [fm-core]`.
     await moduleAdd(
@@ -783,7 +792,10 @@ describe('a real shipped module attaches its checks through a real gate (PLAN-M1
     const verify = gates.find((gate) => gate.id === 'G-Verify');
     const a11y = verify?.checks.deterministic.find((check) => check.id === 'a11y:audit');
     const bundle = verify?.checks.deterministic.find((check) => check.id === 'bundle:size');
-    expect(a11y).toMatchObject({ id: 'a11y:audit', source: 'modules/fm-web/checks/a11y.check.yaml' });
+    expect(a11y).toMatchObject({
+      id: 'a11y:audit',
+      source: 'modules/fm-web/checks/a11y.check.yaml',
+    });
     expect(bundle).toMatchObject({
       id: 'bundle:size',
       source: 'modules/fm-web/checks/bundle-size.check.yaml',
@@ -841,10 +853,12 @@ describe('a real shipped module attaches its checks through a real gate (PLAN-M1
     const verify = gates.find((gate) => gate.id === 'G-Verify');
     const deliver = gates.find((gate) => gate.id === 'G-Deliver');
     expect(verify?.checks.deterministic.some((check) => check.id === 'bundle:size')).toBe(false);
-    expect(deliver?.checks.deterministic.find((check) => check.id === 'bundle:size')).toMatchObject({
-      id: 'bundle:size',
-      source: 'modules/fm-web/checks/bundle-size.check.yaml',
-    });
+    expect(deliver?.checks.deterministic.find((check) => check.id === 'bundle:size')).toMatchObject(
+      {
+        id: 'bundle:size',
+        source: 'modules/fm-web/checks/bundle-size.check.yaml',
+      },
+    );
     // `a11y:audit` is untouched: still on G-Verify, proving the mutation is isolated to bundle:size alone.
     expect(verify?.checks.deterministic.some((check) => check.id === 'a11y:audit')).toBe(true);
   });

@@ -254,7 +254,9 @@ describe('the seven shipped module check files (PLAN-M14.md P22)', () => {
       const checksDir = path.join(modulesRoot, module, 'checks');
       let names: readonly string[];
       try {
-        names = readdirSync(checksDir).filter((name) => name.endsWith('.check.yaml')).sort();
+        names = readdirSync(checksDir)
+          .filter((name) => name.endsWith('.check.yaml'))
+          .sort();
       } catch {
         continue;
       }
@@ -289,12 +291,15 @@ describe('the seven shipped module check files (PLAN-M14.md P22)', () => {
     },
   );
 
-  it('the seven ids/gates/severities match this piece\'s own content proposal exactly', () => {
+  it("the seven ids/gates/severities match this piece's own content proposal exactly", () => {
     const byId = new Map(
       shippedCheckFiles().map((file) => {
         const { document } = validateCheckDocument(file.raw);
         if (document === undefined) throw new Error(`${file.relPath} did not parse`);
-        return [document.id, { gates: [...document.appliesTo.gates].sort(), severity: document.severity }];
+        return [
+          document.id,
+          { gates: [...document.appliesTo.gates].sort(), severity: document.severity },
+        ];
       }),
     );
     expect(Object.fromEntries(byId)).toEqual({

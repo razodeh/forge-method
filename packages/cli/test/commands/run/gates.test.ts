@@ -403,7 +403,7 @@ describe('*.check.yaml attachment through appliesTo', () => {
   // `loadGateRegistry` refuse every gate, not merely leave the new check unattached. `PLAN-M14.md` P22
   // closes that: this is the real, positive proof the real, shipped `fm-mobile` check now attaches for
   // real once the project it installs into has the `G-Verify` gate it names.
-  it("installing a real shipped module (fm-mobile) attaches its own check for real, now that PLAN-M14.md P22 gives it an appliesTo/severity", async () => {
+  it('installing a real shipped module (fm-mobile) attaches its own check for real, now that PLAN-M14.md P22 gives it an appliesTo/severity', async () => {
     const project = await createTestProject();
     // The real gate `device-matrix.check.yaml`'s own shipped `appliesTo.gates` names (`10` §10.3's own
     // catalogue; this fixture project's own `CHECKS_ROOT` otherwise carries only `FIXTURE_GATE_ID`).
@@ -446,7 +446,10 @@ describe('*.check.yaml attachment through appliesTo', () => {
     );
     await mkdir(path.join(project.dir, '.forge/modules/fm-mobile/checks'), { recursive: true });
     const real = YAML.parse(
-      await readFile(path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'), 'utf8'),
+      await readFile(
+        path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'),
+        'utf8',
+      ),
     ) as Record<string, unknown>;
     // Parsed and re-serialized (never a text-based strip): the real file's own doc comments legitimately
     // mention "appliesTo" in prose, so a text match for its absence would be meaningless; the real check
