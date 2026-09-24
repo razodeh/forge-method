@@ -15,9 +15,12 @@
  * `createLaneWorktree`/lane machinery — that machinery manages worktrees *of FORGE's own project
  * repository* for parallel lane execution, a genuinely different operation from cloning an arbitrary
  * *target* repository being adopted for a one-shot, read-only build/test run with no lane, no branch, and
- * no commit. `execa`'s own `timeout` option (not a hand-rolled `setTimeout`/`kill`) is the real timeout
- * `17` §17.2 phase 5 requires — a build or test command that hangs is killed and reported as
- * `inconclusive`, never left to hang the whole adoption run.
+ * no commit. The real timeout `17` §17.2 phase 5 requires — a build or test command that hangs is killed
+ * and reported as `inconclusive`, never left to hang the whole adoption run — is `runConfinedCommand`'s
+ * own (`PLAN-M14.md` P28, `@forge/engine/dispatch/confined-command.ts`): a hand-rolled `setTimeout` that
+ * kills the whole process group, not `execa`'s own `timeout` option (which this file used before P28,
+ * and `createSandboxClone`'s own plain `git clone` still does — that one call is never vetted or
+ * confined, since its arguments are FORGE's own fixed argv, not text a third party wrote).
  *
  * The clone lives under `<sourceRoot>/.forge/state/adopt-verify/`, not the OS temp directory: `QUALITY-
  * BAR.md` R10 forbids reading an ambient host fact such as `os.tmpdir()` from production code (a real
