@@ -79,6 +79,7 @@ import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import { dispatchAgentStep, runParticipantSession } from './dispatch-agent-step.ts';
 import type { InteractionParticipant } from './types.ts';
 import { markRefusal } from '../dispatch/assemble.ts';
+import { landLane, resolveLaneChecks } from '../dispatch/integrate.ts';
 import type { ExecuteStepContext, SessionBounds, StepOutcome } from '../dispatch/types.ts';
 import { toAgentId, type StepNode } from '../plan/index.ts';
 
@@ -672,34 +673,50 @@ async function cleanupPhaseLane(ctx: ExecuteStepContext, phaseNodeId: string): P
 }
 
 /**
- * Merges the DECIDE-phase decider's own real lane into `ctx.integrationBase`, the same way a real,
- * dedicated `merge`-kind step (`06` §6.5, `runMergeStep`) would for any other agent step's own
- * predecessor lane -- reused directly here because a `kind: 'session'` step is monolithic (`10` §10.1
- * gives it no way to name a *separate*, later `merge` step over its own synthetic `${node.id}:decide`
- * lane id), so nothing else in a compiled workflow will ever pick this lane up. A fresh critic round
- * found an earlier draft left this exact lane (unlike the DIVERGE/CONVERGE reconciliation lanes,
- * already cleaned up by `cleanupPhaseLane`) registered and unmerged for the rest of the run's own
- * lifetime -- worse than the reconciliation-lane leak, since this lane holds the decider's own real,
- * meaningful commit (`05` §5.3's own "the decider... can genuinely write a real ADR file"), so simply
- * discarding it the way `cleanupPhaseLane` discards a reconciliation lane would silently lose real
- * work, not merely reclaim disk space.
+ * Merges the DECIDE-phase decider's own real lane into `ctx.integrationBase`, through the identical
+ * `resolveLaneChecks` + `landLane` seam (`dispatch/integrate.ts`) `runMergeStep` (an explicit `merge`
+ * step, `06` §6.5) and `integrateLane` (the engine's own automatic integration, `06` §6.4 rule 4) both
+ * already land every other lane through (`PLAN-M14.md` P39) -- reused directly here because a
+ * `kind: 'session'` step is monolithic (`10` §10.1 gives it no way to name a *separate*, later `merge`
+ * step over its own synthetic `${node.id}:decide` lane id), so nothing else in a compiled workflow will
+ * ever pick this lane up. A fresh critic round found an earlier draft left this exact lane (unlike the
+ * DIVERGE/CONVERGE reconciliation lanes, already cleaned up by `cleanupPhaseLane`) registered and
+ * unmerged for the rest of the run's own lifetime -- worse than the reconciliation-lane leak, since this
+ * lane holds the decider's own real, meaningful commit (`05` §5.3's own "the decider... can genuinely
+ * write a real ADR file"), so simply discarding it the way `cleanupPhaseLane` discards a reconciliation
+ * lane would silently lose real work, not merely reclaim disk space.
  *
- * `conflictPolicy: 'abort'` deliberately, not `'agent'`/`'human'`: `@forge/vcs`'s own
- * `processMergeCandidate` refuses any non-`'abort'` policy outright when no `conflictResolver` is
- * configured, which is every real policy in this milestone's own scope (`SPEC-QUESTIONS.md` Q77) --
- * `'abort'` needs no resolver at all and merges cleanly whenever the decider's own lane genuinely does
- * not conflict with `ctx.integrationBase` (the overwhelmingly common case: a fresh lane branched from
- * the same base, touching files nothing else in this one step's own execution has touched), only
- * aborting (never removing the lane) on a real, rare conflict.
+ * Deliberately `landLane`, never `integrateLane`: `integrateLane`'s own `laneStepId` doubles as its
+ * `eventStepId` (`integrate.ts`'s own `integrateLane`, "a lane no `merge` step lands" -- it has no
+ * separate step of its own to key events by), which for this lane would re-key every `Merge*` event to
+ * `${node.id}:decide` -- a synthetic id nothing else in a compiled workflow ever names, invisible to a
+ * reader (or `forge status`) looking for this session step's own events. `mergeDecideLane` passes
+ * `eventStepId: node.id` explicitly instead: the outer session step already IS this lane's real
+ * identity, the one every other event this whole session emits (`ElicitationRequested`, `StepStarted`,
+ * ...) is already keyed by.
  *
- * Returns the real failure, never swallows one: a fresh critic round found an earlier draft checked
- * only `outcome.kind === 'clean' || 'conflict-resolved'` to decide whether to clean up, then simply
- * fell through for every other outcome with no signal at all reaching its own caller -- a real merge
- * conflict (or a thrown `VcsError`) left the decider's own committed content stranded in an unmerged
- * lane while `runSessionStep`'s own `StepOutcome` still reported `'succeeded'`, the identical
- * "fabricated success" failure class a prior round already fixed for the *dispatch*-failure case,
- * reopened here for the *merge*-failure case. The caller folds this into `decideFailure` exactly the
- * same way.
+ * `conflictPolicy: ctx.conflictPolicy ?? 'abort'`, never a hardcoded `'abort'`: `PLAN-M14.md` P35 gave
+ * `ExecuteStepContext` a real, run-level conflict policy (`.forge/config.yaml`'s own
+ * `execution.conflictPolicy`) and a real per-call resolver (`ctx.conflictResolver`, `PLAN-M14.md` P38's
+ * `agent` resolver its first real value) for the identical "a lane no `merge` step lands" case
+ * `integrateLane` already reads both fields for -- the DECIDE lane is exactly that case too, so it gets
+ * the run's own configured policy and resolver like any other auto-integrated lane, not a policy of its
+ * own. Omitted, `'abort'`: needs no resolver at all and merges cleanly whenever the decider's own lane
+ * genuinely does not conflict with `ctx.integrationBase` (the overwhelmingly common case), only aborting
+ * (never removing the lane) on a real, rare conflict.
+ *
+ * `ctx.mergeChecks` (`execution.mergeChecks`) now applies too -- the DECIDE lane gets the same
+ * pre/post-check treatment `integrateLane` already gives every other auto-integrated lane, resolved once,
+ * before the lane is ever touched (`resolveLaneChecks`, `MERGE-CHECKS-UNCONFIGURED` as data, no merge
+ * event recorded, exactly as `landLane`'s own doc comment promises). Omitted, no checks run, matching this
+ * function's own pre-`landLane` behaviour and `integrateLane`'s.
+ *
+ * Returns the real failure, never swallows one -- `landLane`'s own header contract ("a failure is
+ * returned as data, never thrown") means this function needs no `try`/`catch` of its own any more (a
+ * fresh critic round confirmed the prior draft's was already dead weight around a callee that cannot
+ * throw): every real conflict, failed check, or unconfigured-checks refusal reaches this function as
+ * `LandLaneResult.failure`/`resolveLaneChecks`'s own failure branch, returned straight through. The
+ * caller folds this into `decideFailure` exactly the same way it always did.
  */
 async function mergeDecideLane(
   ctx: ExecuteStepContext,
@@ -708,54 +725,22 @@ async function mergeDecideLane(
 ): Promise<StepOutcome['failure']> {
   const lane = ctx.laneRegistry.get(laneId);
   if (lane === undefined) return undefined;
-  try {
-    await ctx.telemetry.emit({ type: 'MergeQueued', stepId: node.id, laneId: lane.laneId });
-    await ctx.telemetry.emit({ type: 'MergeStarted', stepId: node.id, laneId: lane.laneId });
-    const outcome = await ctx.mergeQueue.process(
-      {
-        handle: lane,
-        stepId: laneId,
-        runId: ctx.runId,
-        declaredClaim: [],
-        conflictPolicy: 'abort',
-      },
-      {},
-    );
-    if (outcome.kind === 'clean' || outcome.kind === 'conflict-resolved') {
-      await ctx.telemetry.emit({
-        type: 'MergeCompleted',
-        stepId: node.id,
-        laneId: lane.laneId,
-        payload: { mergeCommitSha: outcome.mergeCommitSha },
-      });
-      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
-      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
-      ctx.laneRegistry.delete(laneId);
-      return undefined;
-    }
-    if (outcome.kind === 'already-integrated') {
-      // Nothing was left to merge (its content is already in the integration branch): only the lane is removed.
-      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
-      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
-      ctx.laneRegistry.delete(laneId);
-      return undefined;
-    }
-    // Every other outcome (a real conflict aborted, or a pre/post-check failure -- neither policy nor
-    // checks this module configures) retains the lane rather than losing it -- discoverable by the
-    // next run's own orphan-reclaim (`@forge/engine/resume`'s own `reclaimOrphanedWorktrees`), the
-    // identical disclosed fallback `cleanupPhaseLane`'s own doc comment already names -- but the real
-    // failure is still reported to the caller, not silently absorbed here.
-    return {
-      source: 'merge',
-      message: `DECIDE-phase lane for step ${node.id} could not be merged into integration (${outcome.kind}).`,
-    };
-  } catch (cause) {
-    return {
-      source: 'merge',
-      message: `DECIDE-phase lane for step ${node.id} failed to merge: ${cause instanceof Error ? cause.message : String(cause)}`,
-      cause,
-    };
-  }
+  const resolved = resolveLaneChecks(ctx, {
+    pre: ctx.mergeChecks?.pre,
+    post: ctx.mergeChecks?.post,
+    preSource: 'execution.mergeChecks.pre',
+    postSource: 'execution.mergeChecks.post',
+  });
+  if (!resolved.ok) return resolved.failure;
+  const result = await landLane(ctx, {
+    eventStepId: node.id,
+    laneStepId: laneId,
+    lane,
+    conflictPolicy: ctx.conflictPolicy ?? 'abort',
+    checks: resolved.value.checks,
+    skippedLayers: resolved.value.skipped,
+  });
+  return result.failure;
 }
 
 /** The project's own resolved agent roster (`.forge/agents/<id>.yaml`, what `forge init`/`forge compile`

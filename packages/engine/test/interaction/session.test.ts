@@ -6,7 +6,8 @@
  * @see specs/16 §16.6
  * @see PLAN-M10.md P10
  */
-import { mkdtemp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -28,7 +29,7 @@ import {
   DEFAULT_SESSION_BOUNDS,
   type SessionStepResult,
 } from '../../src/interaction/session.ts';
-import { createTestContext, createTestClock, node } from '../dispatch/helpers.ts';
+import { createTestContext, createTestClock, node, readFileInRepo } from '../dispatch/helpers.ts';
 
 /** `SessionStepResult.record` is only absent for a domain refusal (FRAME/CONVERGE) this test file's
  * own happy-path tests never trigger -- a small, explicit guard beats a forbidden `!` assertion
@@ -97,6 +98,22 @@ async function withRealAgentRoster(projectRoot: string): Promise<void> {
   const paths = new ProjectPaths(projectRoot);
   const target = paths.resolveWithin('.forge/agents/architect.yaml');
   await writeFileAtomic(target, ARCHITECT_AGENT_YAML);
+}
+
+/** A test command (a `node -e` one-liner, cheap and deterministic) that records the directory it ran in
+ * -- the identical technique `test/run/stacked-lanes.test.ts`'s own `recordingCommand` uses, duplicated
+ * here rather than imported (a small, local helper per test file, this package's own established
+ * convention). The marker path is absolute (embedded literally, not resolved against the check's own
+ * cwd), so it works identically whichever directory (the DECIDE lane's own worktree, or the tree) the
+ * command actually runs in. */
+function recordingCommand(marker: string, label: string): string {
+  return `node -e 'require("fs").appendFileSync(${JSON.stringify(marker)}, ${JSON.stringify(label)} + " " + process.cwd() + "\\n")'`;
+}
+
+async function markerLines(marker: string): Promise<readonly string[]> {
+  return existsSync(marker)
+    ? (await readFile(marker, 'utf8')).split('\n').filter((line) => line !== '')
+    : [];
 }
 
 /** Wraps a real `FakePlatformAdapter`, recording every `startSession` request's own `stepId` -- the
@@ -491,8 +508,211 @@ describe('runSessionStep — critic muted in DIVERGE, unmuted in CONVERGE', () =
     // Not fabricated success: the decider's own content never actually reached integration.
     expect(result.outcome.status).toBe('failed');
     expect(result.outcome.failure?.source).toBe('merge');
+    // `landLane`'s own typed code for this outcome (`PLAN-M14.md` P39) -- an `abort`-policy conflict,
+    // never masked behind a generic message.
+    expect(result.outcome.failure?.code).toBe('MERGE-CONFLICT-UNRESOLVED');
     // The lane is retained (not silently discarded) for the next run's own orphan-reclaim.
     expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
+  });
+});
+
+describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landLane with the run's checks, policy and resolver (PLAN-M14.md P39)", () => {
+  it("with no execution.mergeChecks configured, the DECIDE lane still lands through MergeQueued/MergeStarted/MergeCompleted/LaneRemoved -- every one keyed by the session step's own stepId, never the decide lane's synthetic `<id>:decide` one (NOT integrateLane, which would re-key them)", async () => {
+    const projectRoot = await createTempRepo('decide-lane-events-no-checks');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    // A real, committed change in the DECIDE lane -- without it the lane never diverges from its own
+    // base and `landLane`'s own `isIntegrated` shortcut removes it with only a `LaneRemoved`, proving
+    // nothing about the MergeQueued/MergeStarted/MergeCompleted sequence this test is actually about.
+    adapter.script((req) => req.stepId.includes(':decide'), {
+      text: ['Ship the edge cache.'],
+      writeFiles: [{ relativePath: 'decide-note.txt', content: 'a real decider commit\n' }],
+    });
+    const clock = createTestClock();
+    const { telemetry, events } = recordingTelemetry(projectRoot, 'run-test', clock);
+    const ctx = createTestContext({ projectRoot, adapter, now: clock, telemetry });
+    const stepNode = node({
+      id: 'wf:brainstorm-events-no-checks',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we shorten setup time',
+      // The DECIDE-phase dispatch's own write grant is `claim.globs.length > 0` (`assemble.ts`'s own
+      // "an EMPTY claim means no write"), and `deciderNode`'s claim is built from THIS outer step's own
+      // `produces` (`phaseNode`'s spread) -- with no `produces` at all the scripted `writeFiles` above
+      // would be silently refused (never applied), and the lane would hold nothing to land, proving
+      // nothing about this test's own MergeQueued/MergeStarted/MergeCompleted sequence.
+      produces: ['decide-note.txt'],
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    // DIVERGE/CONVERGE's own reconciliation lanes (`cleanupPhaseLane`) emit their own `LaneRemoved`
+    // events too, under their own, different `stepId`s -- isolating the DECIDE lane's own four events by
+    // the `laneId` its `MergeQueued` names, rather than by event type alone, keeps this assertion honest
+    // about which lane it is actually checking.
+    const queued = events.find((event) => event.type === 'MergeQueued');
+    const decideLaneId = queued?.laneId;
+    expect(decideLaneId).toBeDefined();
+    const mergeEventTypes = new Set(['MergeQueued', 'MergeStarted', 'MergeCompleted', 'LaneRemoved']);
+    const mergeEvents = events.filter(
+      (event) => mergeEventTypes.has(event.type) && event.laneId === decideLaneId,
+    );
+    expect(mergeEvents.map((event) => event.type)).toEqual([
+      'MergeQueued',
+      'MergeStarted',
+      'MergeCompleted',
+      'LaneRemoved',
+    ]);
+    for (const event of mergeEvents) expect(event.stepId).toBe(stepNode.id);
+    const started = mergeEvents.find((event) => event.type === 'MergeStarted');
+    // No mergeChecks configured -- the old, pre-P39 shape: no payload key at all, not an empty object.
+    expect(started?.payload).toBeUndefined();
+  });
+
+  it("execution.mergeChecks runs the DECIDE lane's own pre-check in its own worktree and the post-check in the tree, and MergeStarted names the labels it ran", async () => {
+    const projectRoot = await createTempRepo('decide-lane-checks');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    adapter.script((req) => req.stepId.includes(':decide'), {
+      text: ['Ship the edge cache.'],
+      writeFiles: [{ relativePath: 'decide-note.txt', content: 'a real decider commit\n' }],
+    });
+    const marker = path.join(projectRoot, '.forge', 'state', 'decide-checks-marker.txt');
+    const clock = createTestClock();
+    const { telemetry, events } = recordingTelemetry(projectRoot, 'run-test', clock);
+    // `createTestContext` itself has no `testCommands`/`mergeChecks` override parameter (unlike
+    // `conflictPolicy`/`conflictResolver`) -- every other caller in this package that needs them
+    // (`dispatch/merge.test.ts`'s own tests) spreads the built context afterward instead, the identical
+    // technique used here.
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, now: clock, telemetry }),
+      testCommands: { unit: recordingCommand(marker, 'unit') },
+      mergeChecks: { pre: 'unit', post: 'unit' },
+    };
+    const stepNode = node({
+      id: 'wf:brainstorm-checks',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we shorten setup time',
+      // See the identical note in the test above -- without a claim covering it, the scripted write is
+      // refused outright and the lane never diverges from its base.
+      produces: ['decide-note.txt'],
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    const lines = await markerLines(marker);
+    expect(lines).toHaveLength(2);
+    const dirs = lines.map((line) => line.slice(line.indexOf(' ') + 1));
+    const inLaneWorktree = (dir: string) => dir.includes(path.join('.forge', 'state', 'worktrees'));
+    // One ran in the DECIDE lane's own worktree (the pre-check, before any merge attempt)...
+    expect(dirs.filter(inLaneWorktree)).toHaveLength(1);
+    // ...and the other ran in the tree (the post-check, once the merge actually landed).
+    expect(dirs.filter((dir) => !inLaneWorktree(dir))).toHaveLength(1);
+
+    const started = events.find((event) => event.type === 'MergeStarted');
+    expect(started?.stepId).toBe(stepNode.id);
+    // Labels only -- never the command text itself (it may hold secrets, `integrate.ts`'s own
+    // `describeChecks`).
+    expect(started?.payload).toEqual({
+      preChecks: ['execution.testCommands.unit'],
+      postChecks: ['execution.testCommands.unit'],
+    });
+  });
+
+  it("a failing post-check reverts the DECIDE lane's merge, fails MERGE-POST-CHECK-FAILED, and leaves the decider's own written file off the branch", async () => {
+    const projectRoot = await createTempRepo('decide-lane-postcheck-fail');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    adapter.script((req) => req.stepId.includes(':decide'), {
+      text: ['Ship the edge cache.'],
+      writeFiles: [{ relativePath: 'decide-note.txt', content: 'a real decider commit\n' }],
+    });
+    const clock = createTestClock();
+    const { telemetry, events } = recordingTelemetry(projectRoot, 'run-test', clock);
+    // See the identical note in the test above -- `testCommands`/`mergeChecks` are added by spreading
+    // the built context, not as `createTestContext` override parameters.
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, now: clock, telemetry }),
+      testCommands: { unit: 'exit 1' },
+      mergeChecks: { post: 'unit' },
+    };
+    const stepNode = node({
+      id: 'wf:brainstorm-postcheck-fail',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we shorten setup time',
+      // See the identical note two tests above -- without a claim covering it, the scripted write is
+      // refused outright and the lane never diverges from its base.
+      produces: ['decide-note.txt'],
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('failed');
+    expect(result.outcome.failure?.source).toBe('merge');
+    expect(result.outcome.failure?.code).toBe('MERGE-POST-CHECK-FAILED');
+    // The revert restores the pre-merge tree exactly -- the file the merge briefly introduced is gone.
+    await expect(readFileInRepo(projectRoot, 'decide-note.txt')).rejects.toThrow();
+    const reverted = events.find((event) => event.type === 'MergeReverted');
+    expect(reverted?.stepId).toBe(stepNode.id);
+    // The lane is retained -- a failed post-check does not remove it (the next run's orphan-reclaim).
+    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
+  });
+
+  it("ctx.conflictPolicy/ctx.conflictResolver reach the merge queue for the DECIDE lane -- an agent-policy conflict a fake resolver resolves lands cleanly, proving mergeDecideLane forwards the run's own policy rather than a hardcoded 'abort'", async () => {
+    const projectRoot = await createTempRepo('decide-lane-agent-policy');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    let capturedPolicy: string | undefined;
+    let resolverVerdict: string | undefined;
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      conflictPolicy: 'agent',
+      conflictResolver: () => Promise.resolve('resolved'),
+      // A stubbed mergeQueue, the identical technique the 'abort' conflict test above already uses --
+      // this test is about mergeDecideLane's own wiring (does the run's real policy/resolver actually
+      // reach `MergeQueueFacade.process`?), not `@forge/vcs`'s own conflict-resolution mechanics
+      // (already covered by `merge.test.ts`'s P35 case and `conflict-resolver.test.ts`'s P38 ones).
+      mergeQueue: {
+        process: async (candidate, _checks, options) => {
+          capturedPolicy = candidate.conflictPolicy;
+          if (options?.conflictResolver !== undefined) {
+            resolverVerdict = await options.conflictResolver({
+              laneId: candidate.handle.laneId,
+              declaredClaim: candidate.declaredClaim,
+              conflictedFiles: [{ path: 'decide-note.txt', status: 'UU' }],
+              diff: '--- a/decide-note.txt\n+++ b/decide-note.txt\n',
+              worktreePath: candidate.handle.path,
+            });
+          }
+          return {
+            kind: 'conflict-resolved',
+            mergeCommitSha: 'deadbeef',
+            resolutions: [],
+          } as const;
+        },
+      },
+    });
+    const stepNode = node({
+      id: 'wf:brainstorm-agent-policy',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How do we shorten setup time',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    // Not the hardcoded 'abort' the pre-P39 body always passed -- the run's own configured policy.
+    expect(capturedPolicy).toBe('agent');
+    // The fake resolver was genuinely invoked, proving `landLane` threaded `ctx.conflictResolver`
+    // through to `MergeQueueFacade.process`'s own per-call `options.conflictResolver`.
+    expect(resolverVerdict).toBe('resolved');
+    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(false);
   });
 });
 
@@ -1124,6 +1344,9 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
     const text = await readTextFile(paths.resolveWithin(`kb/decisions/${adrFile}`));
     expect(text).toMatch(/^id:\s*ADR-\d{4}/m);
     expect(text).toMatch(/^type:\s*ADR\s*$/m);
+    // `PLAN-M14.md` P31: the real, ordinary (untainted) case is pinned `status: accepted`, unchanged
+    // from before P31.
+    expect(text).toMatch(/^status:\s*accepted\s*$/m);
     // The real provenance marker `writeAdrBack` records -- proof this ADR really was produced by this
     // exact session step, not a coincidentally pre-existing one.
     expect(text).toContain(`session:${stepNode.id}`);
@@ -1133,6 +1356,37 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
       `docs/forge/kb/architecture/session-${stepNode.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`,
     );
     await expect(readTextFile(kbFile)).rejects.toThrow();
+  });
+
+  it('PLAN-M14.md P31: a hand-tainted DECIDE node (taint: external, standing in for a future real signal -- SPEC-QUESTIONS.md Q203 D8) writes the ADR back as status: proposed instead of accepted', async () => {
+    const projectRoot = await createTempRepo('adr-writeback-tainted');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+    // `kind: 'session'` steps can never author `taint:` in real workflow YAML (`plan/types.ts`'s own
+    // `StepNode.taint` doc comment) -- a hand-built node bypasses that authoring restriction the same
+    // way `taint-grant.test.ts`'s own fixtures do, to prove the write-back rule itself is correct and
+    // ready for a future real signal, not merely untested dead code.
+    const stepNode = node({
+      id: 'wf:design-review-adr-tainted',
+      kind: 'session',
+      sessionType: 'design-review',
+      brief: 'Should we ship the new payments migration path',
+      taint: 'external',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+    expect(requireRecord(result).status).toBe('complete');
+
+    const paths = new ProjectPaths(projectRoot);
+    const files = await listDirSorted(paths.resolveWithin('kb/decisions'));
+    expect(files).toHaveLength(1);
+    const adrFile = files[0];
+    if (adrFile === undefined) throw new Error('expected exactly one ADR file');
+    const text = await readTextFile(paths.resolveWithin(`kb/decisions/${adrFile}`));
+    expect(text).toMatch(/^status:\s*proposed\s*$/m);
   });
 
   it('a premortem decision writes back a real Risk register entry in kb/risks.md, verified by re-reading it from disk', async () => {
