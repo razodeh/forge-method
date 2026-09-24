@@ -25143,3 +25143,125 @@ and no gate is actually involved), not a bug, but a minor cross-family inconsist
 style might flag later.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P31`.
+
+## Q275 — M14 P39: `mergeDecideLane` lands the DECIDE lane through `landLane` with the run's checks, policy and resolver — a three-round critic loop (the maximum) found one real doc/coverage gap in round 1, three test-self-documentation issues in round 2, one final pre-existing doc-comment misattribution in round 3, all fixed; a self-caused shared-working-tree incident mid-mutation-testing, caught and corrected
+
+`mergeDecideLane` (`engine/interaction/session.ts`) used to hand-roll its own `MergeQueued`/
+`MergeStarted`/`MergeCompleted`/`LaneRemoved` events against `ctx.mergeQueue.process({...,
+conflictPolicy: 'abort'}, {})` — a hardcoded `'abort'` policy and an always-empty check set, whatever
+the run actually configured. It now composes `resolveLaneChecks` + `landLane` (`dispatch/integrate.ts`),
+the identical seam `runMergeStep` (an explicit `merge` step) and `integrateLane` (the engine's own
+automatic integration, `PLAN-M13.md` P38) already land every other lane through: `eventStepId: node.id`
+(the session step's own id — deliberately NOT `integrateLane`, whose `laneStepId` doubles as its
+`eventStepId` and would re-key every `Merge*` event to the DECIDE lane's synthetic `<node.id>:decide`
+id instead), `laneStepId: laneId`, `conflictPolicy: ctx.conflictPolicy ?? 'abort'` (P35's field,
+previously ignored entirely), and `checks`/`skippedLayers` resolved from `ctx.mergeChecks`
+(`execution.mergeChecks`). The DECIDE lane now gets real pre/post checks, the run's own conflict policy
+and resolver, and `landLane`'s own typed failures (`MERGE-CONFLICT-UNRESOLVED`,
+`MERGE-POST-CHECK-FAILED`, `MERGE-PRE-CHECK-FAILED`, `MERGE-CHECKS-UNCONFIGURED`) instead of one generic
+message — the function's own `try`/`catch`, now dead weight around a callee whose own header contract
+is "a failure is returned as data, never thrown," is removed. `already-integrated` stays a no-op
+removal, unchanged; `cleanupPhaseLane`, outcome folding and the `:decide` id are untouched.
+
+**Tests** (`session.test.ts`, real tmp-dir git repos, a real `FakePlatformAdapter` scripted to write a
+real file into the DECIDE lane's own worktree — `produces: ['decide-note.txt']` on the outer session
+step is required for this: `mergeDecideLane`'s own claim, per `assemble.ts`'s "an EMPTY claim means no
+write," is built from the outer step's `produces`, and without it the scripted write is silently
+refused and the lane never diverges from its base): no `execution.mergeChecks` configured still lands
+through `MergeQueued`/`MergeStarted`/`MergeCompleted`/`LaneRemoved`, every one keyed by the session
+step's own `stepId` (never the decide lane's), `MergeStarted` carrying no payload; `execution.mergeChecks:
+{pre, post}` runs the pre-check in the lane's own worktree and the post-check in the tree, `MergeStarted`
+naming the labels; a failing post-check reverts and fails `MERGE-POST-CHECK-FAILED` with the write off
+the branch; a failing pre-check aborts before any merge attempt, `MERGE-PRE-CHECK-FAILED`; a named layer
+with no configured command fails `MERGE-CHECKS-UNCONFIGURED` before the lane is ever queued, no `Merge*`
+event at all, the write verified still sitting untouched in the lane's own worktree
+(`ctx.laneRegistry`'s own `LaneHandle.path`); `ctx.conflictPolicy`/`ctx.conflictResolver` reach the real
+merge queue (a stubbed `mergeQueue.process` captures the `conflictPolicy` argument and genuinely invokes
+`options.conflictResolver` — proving the wiring, not re-testing `@forge/vcs`'s own conflict mechanics,
+already covered by P35/P38's own tests) — an `agent`-policy conflict a fake resolver resolves lands
+cleanly, never the hardcoded `'abort'` the pre-P39 body always passed; the pre-existing `abort`-policy
+conflict test gains an explicit `MERGE-CONFLICT-UNRESOLVED` code assertion.
+
+**Round 1** (fresh, context-free). No functional bugs (independently traced every `landLane` outcome
+branch, confirmed `integrateLane` really does re-key `eventStepId` the doc comment claims, confirmed
+`conflictPolicy: ctx.conflictPolicy ?? 'abort'` matches `run-engine.ts`'s own identical inline default,
+confirmed removing the `try`/`catch` is genuinely safe — and, unprompted, that the old blanket `catch`
+would itself have silently swallowed a `TelemetryError` past `execute.ts`'s own documented "must
+propagate uncaught" policy, a latent bug the new code incidentally also fixes). Real findings:
+1. (worth fixing) `mergeDecideLane`'s own doc comment omitted a real, pre-existing limitation the
+   plan's own Discloses text already named: the real `agent`/`human` resolver
+   (`createAgentConflictResolver`, P38) always refuses a genuine DECIDE-lane conflict typed
+   `MERGE-RESOLVER-NO-STEP`, since the DECIDE lane's synthetic id is never a key in `ctx.stepGraph`
+   (`conflict-resolver.ts`'s own `noStepFailure` remedy already names "a DECIDE lane" outright). Added a
+   one-paragraph caveat citing it directly.
+2. (worth fixing, low severity) Two branches newly reachable through this piece's own composition had
+   no DECIDE-lane-specific test: `resolveLaneChecks`'s own `MERGE-CHECKS-UNCONFIGURED` refusal and
+   `landLane`'s `pre-check-failed` outcome. Neither was required by the plan's own Tests-first/Mutation-
+   evidence text (structurally identical to `integrateLane`'s own already-tested equivalents), but both
+   cheap to add — closed with the two tests described above.
+3. (commit-hygiene note, disclosed not fixed — see Discloses) Confirmed this piece's own first commit
+   bundled two test additions belonging to the concurrently-landing P31 (an ADR-taint assertion and a
+   whole new test), never mentioned in this commit's own message.
+
+**Round 2.** No functional bugs (independently re-verified `MERGE-RESOLVER-NO-STEP` traces correctly
+through `merge-queue.ts`/`conflict-resolver.ts` for the real shipped resolver regardless of `'agent'` vs
+`'human'`; confirmed neither new test duplicates existing coverage; confirmed via a real
+`node scripts/run-tests.mjs run`, `pnpm --filter @forge/engine typecheck`, and a full 21-package
+`pnpm typecheck` that everything is green). Three real, self-documentation-only findings in round 1's
+own two new tests:
+1. The pre-check test's title claimed the lane is "never queued at all," directly contradicted by its
+   own passing assertion that `MergeQueued` does fire (`06` §6.5 step 3). Retitled.
+2. The unconfigured-checks test's inline comment misattributed a direct quote to `landLane`'s own doc
+   comment; the quote is actually `resolveLaneChecks`'s (a different doc comment, same file).
+   Corrected.
+3. The unconfigured-checks test's own title claimed the decider's write "survives untouched in the
+   lane's own worktree" without ever reading it back — only inferred from the absence of a `Merge*`
+   event. Added a real `readFileInRepo(lane.path, 'decide-note.txt')` assertion, reading the file back
+   from the lane's own still-on-disk worktree (`ctx.laneRegistry`'s own `LaneHandle.path`) — verified,
+   not merely inferred, matching the adjacent pre-check test's own already-real standard.
+
+**Round 3 (final, the 3-round cap).** The round-2 fix independently re-verified clean on all three
+points (quoted `resolveLaneChecks`'s real doc-comment text and `landLane`'s, confirming the correction
+is right; traced that the lane is genuinely still registered and its worktree genuinely still on disk
+when the new file-read-back assertion runs, since `resolveLaneChecks`'s failure returns before `landLane`
+— the only place that removes a lane — is ever reached), and a full 8-test read of the whole P39
+describe block found no further redundancy or contradiction. One real, final finding: `mergeDecideLane`'s
+own doc comment had the IDENTICAL misattribution class round 2 just fixed in the test file — but in the
+production code, predating every critic round (introduced in the original feature commit): "exactly as
+`landLane`'s own doc comment promises" should read `resolveLaneChecks`'s, not `landLane`'s (`landLane`'s
+own doc comment never mentions merge events at all). Fixed; the loop converges here.
+
+**Mutation evidence.** All three named in the brief, run against the real committed state, each broken,
+tests run red with the exact reported symptom, restored: the whole `landLane`-based body replaced by the
+pre-P39 hand-rolled one (hardcoded `'abort'`, `checks: {}` unconditionally) — 4 tests fail (the
+mergeChecks-labels test, the post-check-revert test, the agent-policy test, and the pre-existing
+abort-conflict test's new `.code` assertion, since the old generic failure object carries none);
+`eventStepId: laneId` (simulating `integrateLane`'s own re-keying) — exactly the 3 `stepId`-keyed
+assertions fail, each showing the lane's synthetic `<id>:decide` id where the session step's own id was
+expected; the `conflictPolicy` argument hardcoded back to the literal `'abort'` — exactly the one
+agent-policy test fails (`capturedPolicy` reads `'abort'`, not `'agent'`). The two round-1 coverage
+additions were also empirically checked against a `checks: {}`/`skippedLayers: undefined` mutation
+(simulating checks silently ignored): both fail with the merge succeeding cleanly instead of the
+expected typed refusal. Every mutation restored via `Edit`/`git checkout --` (never `stash`) and
+re-verified green before the next.
+
+**Discloses.** A conflicting DECIDE lane under `conflictPolicy: 'agent'`/`'human'` still fails typed
+`MERGE-RESOLVER-NO-STEP` (the plan's own Discloses text, now also in the function's own doc comment) —
+data, not a bug; a future piece giving the DECIDE lane a real compiled `StepNode` of its own (or
+`ctx.stepGraph` a synthetic entry for it) would be the fix, out of this piece's own scope. Two
+self-caused shared-working-tree incidents, both caught and corrected, neither destructive:
+(1) mid mutation-testing (deliberately reverting `mergeDecideLane` to its old body to prove the new
+tests catch it), a concurrent agent's own commit (`f2c8fa1`, M14 P31) ran `git add` on this same shared
+file while the reverted body was sitting in the working tree, sweeping it into their own commit instead
+of this piece's real implementation — caught immediately via the next `git worktree`-based verification
+pass (which uses only committed content, not the live shared tree), fixed with a scoped follow-up commit
+touching only `mergeDecideLane`'s own region, re-verified in a fresh clean worktree. (2) This piece's own
+first commit (`4841353`) itself, symmetrically, appears to have swept two of P31's own concurrent,
+uncommitted test additions (an ADR-taint assertion and a new test) into its `git add` of the whole test
+file — confirmed by `f2c8fa1`'s own diff touching no test file at all despite adding real test coverage
+for its own feature. Functionally harmless (every test still passes, attributed to the right piece in
+substance if not in commit message), left as-is rather than rewritten (rewriting shared git history live
+against other agents' own concurrent work is a strictly worse risk than a commit-message attribution
+gap) — disclosed here for the record.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P39`.

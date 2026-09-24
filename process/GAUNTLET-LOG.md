@@ -18731,3 +18731,94 @@ method, final re-verification) in `SPEC-QUESTIONS.md` `Q274`; the final state wa
 `tsc --noEmit` on `@forge/engine` directly) after both incidents resolved.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q274`.
+
+## M14 P39 — `mergeDecideLane` lands the DECIDE lane through `landLane` with the run's checks, policy and resolver (`engine/src/interaction/session.ts`; edited `engine/test/interaction/session.test.ts`)
+
+**Context.** `PLAN-M14.md` P39, depends on the already-landed P35 (`ExecuteStepContext.conflictPolicy`/
+`conflictResolver`); sequenced alongside the already-landed P38 (the real `agent` conflict resolver) and
+P40 (`forge merge`'s own `landLane` caller) — the third and final real caller of the `landLane` seam.
+
+**Built.** `mergeDecideLane` used to hand-roll its own `MergeQueued`/`MergeStarted`/`MergeCompleted`/
+`LaneRemoved` events against `ctx.mergeQueue.process({..., conflictPolicy: 'abort'}, {})` directly — a
+hardcoded `'abort'` policy and an always-empty check set, regardless of what the run actually configured.
+It now composes `resolveLaneChecks` + `landLane` (`dispatch/integrate.ts`), the identical seam
+`runMergeStep`/`integrateLane` already land every other lane through: `eventStepId: node.id` (the
+session step's own id — deliberately NOT `integrateLane`, whose `laneStepId` doubles as its
+`eventStepId` and would re-key every `Merge*` event to the DECIDE lane's synthetic `<node.id>:decide`
+id instead, invisible to a reader or `forge status` looking for this session step's own events),
+`laneStepId: laneId`, `conflictPolicy: ctx.conflictPolicy ?? 'abort'`, `checks`/`skippedLayers` resolved
+from `ctx.mergeChecks`. The DECIDE lane now gets real pre/post checks, the run's own conflict policy and
+resolver, and `landLane`'s own typed failures instead of one generic message. The function's own
+`try`/`catch` is removed: `landLane`'s own header contract is "a failure is returned as data, never
+thrown," so nothing left in this function can throw — a fresh critic round independently confirmed this,
+and unprompted found the OLD `catch` would itself have silently swallowed a `TelemetryError` past
+`execute.ts`'s own documented "must propagate uncaught" policy, a latent bug the new code incidentally
+also fixes. `already-integrated` stays a no-op removal, unchanged; `cleanupPhaseLane`, outcome folding
+and the `:decide` id are untouched.
+
+**Tests first.** `session.test.ts`, real tmp-dir git repos, a real `FakePlatformAdapter` scripted to
+write a real file into the DECIDE lane's own worktree (`produces: ['decide-note.txt']` on the outer
+session step is required: `mergeDecideLane`'s claim, per `assemble.ts`'s "an EMPTY claim means no
+write," is built from the outer step's own `produces`, and without it the scripted write is silently
+refused): no `execution.mergeChecks` lands through `MergeQueued`/`MergeStarted`/`MergeCompleted`/
+`LaneRemoved`, every one keyed by the session step's own `stepId`, `MergeStarted` carrying no payload;
+`execution.mergeChecks: {pre, post}` runs the pre-check in the lane's own worktree and the post-check in
+the tree, `MergeStarted` naming the labels; a failing post-check reverts and fails
+`MERGE-POST-CHECK-FAILED` with the write off the branch; a failing pre-check aborts before any merge
+attempt, `MERGE-PRE-CHECK-FAILED`; an unconfigured named layer fails `MERGE-CHECKS-UNCONFIGURED` before
+the lane is ever queued, no `Merge*` event at all, the write verified still sitting untouched in the
+lane's own worktree; `ctx.conflictPolicy`/`ctx.conflictResolver` reach the real merge queue (a stubbed
+`mergeQueue.process` captures the `conflictPolicy` argument and genuinely invokes
+`options.conflictResolver` — proving the wiring, not re-testing `@forge/vcs`'s own conflict mechanics,
+already covered elsewhere) — an `agent`-policy conflict a fake resolver resolves lands cleanly, never
+the hardcoded `'abort'` the old body always passed; the pre-existing `abort`-policy conflict test gains
+an explicit `MERGE-CONFLICT-UNRESOLVED` code assertion.
+
+**Mutation evidence.** All three named in the brief, each broken against the real committed state, tests
+run red, restored: the whole body replaced by the pre-P39 hand-rolled one (hardcoded `'abort'`,
+`checks: {}` unconditionally) — 4 tests fail; `eventStepId: laneId` (simulating `integrateLane`'s own
+re-keying) — exactly the 3 `stepId`-keyed assertions fail; the `conflictPolicy` argument hardcoded back
+to the literal `'abort'` — exactly the one agent-policy test fails. The two round-1 coverage additions
+were also checked against a `checks: {}`/`skippedLayers: undefined` mutation: both fail with the merge
+succeeding cleanly instead of the expected typed refusal. Every mutation restored (`Edit`/
+`git checkout --`, never `stash`) and re-verified green before the next.
+
+**Critic round 1** (fresh, context-free). No functional bugs — independently traced every `landLane`
+outcome branch, confirmed `integrateLane` really does re-key `eventStepId`, confirmed
+`conflictPolicy: ctx.conflictPolicy ?? 'abort'` matches `run-engine.ts`'s own identical default,
+confirmed the `try`/`catch` removal is genuinely safe. Real findings, both fixed: (1) the function's own
+doc comment omitted the plan's own already-disclosed `MERGE-RESOLVER-NO-STEP` limitation for a genuine
+DECIDE-lane conflict under `'agent'`/`'human'` — added a caveat citing `conflict-resolver.ts`'s own
+`noStepFailure` directly; (2) two branches newly reachable through this piece's own composition
+(`MERGE-CHECKS-UNCONFIGURED`, `pre-check-failed`) had no DECIDE-lane-specific test — closed with two new
+tests. Also disclosed, not fixed: this piece's own first commit appears to have bundled two of a
+concurrently-landing piece's (M14 P31) own test additions (see Discloses).
+
+**Critic round 2.** No functional bugs — independently re-verified `MERGE-RESOLVER-NO-STEP` traces
+correctly for the real shipped resolver, confirmed neither new test duplicates existing coverage, ran the
+real suite/typecheck green. Three real, self-documentation-only findings in round 1's own two new tests,
+all fixed: a test title contradicted its own body ("never queues the lane" vs. a passing assertion that
+`MergeQueued` does fire); an inline comment misattributed a direct quote to `landLane`'s doc comment
+(actually `resolveLaneChecks`'s); a test title claimed a write "survives untouched" without ever reading
+it back — added a real `readFileInRepo(lane.path, ...)` assertion.
+
+**Critic round 3 (final, the 3-round cap).** The round-2 fix independently re-verified clean on all three
+points, and a full read of the whole P39 describe block found no further redundancy. One real, final
+finding, fixed: `mergeDecideLane`'s own doc comment had the identical misattribution class round 2 just
+fixed in the test file, but in the production code, predating every critic round — corrected. The loop
+converges here.
+
+**Discloses.** A conflicting DECIDE lane under `conflictPolicy: 'agent'`/`'human'` still fails typed
+`MERGE-RESOLVER-NO-STEP` — data, not a bug, now in the function's own doc comment too. Two self-caused
+shared-working-tree incidents, both caught and corrected, neither destructive: (1) mid mutation-testing,
+a concurrent agent's own commit (M14 P31) ran `git add` on this same shared file while this piece's own
+deliberately-reverted-old-body sat in the working tree, sweeping it into their commit instead of this
+piece's real implementation — caught via the next clean-worktree verification pass, fixed with a scoped
+follow-up commit, re-verified. (2) Symmetrically, this piece's own first commit appears to have swept two
+of that same concurrent piece's own uncommitted test additions into its `git add` of the whole test file
+— confirmed by the other commit's own diff touching no test file despite adding real coverage for its own
+feature. Functionally harmless (every test passes; every one attributed to the right piece in substance),
+left as a disclosed commit-message attribution gap rather than rewriting shared git history live against
+other agents' own concurrent work.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q275`.
