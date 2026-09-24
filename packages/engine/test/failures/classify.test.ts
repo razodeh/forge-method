@@ -95,6 +95,13 @@ describe('classifyFailure', () => {
       expect(result).toBe('validation');
     });
 
+    it("LANE-JOIN-CONFLICT (PLAN-M14.md P34: an in-lane join conflicted) classifies as 'conflict'", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'vcs', code: 'LANE-JOIN-CONFLICT', message: 'x' } }),
+      );
+      expect(result).toBe('conflict');
+    });
+
     it("a generic wrapper code (or none at all) defaults to 'transient'", () => {
       const generic = classifyFailure(
         outcome({ failure: { source: 'vcs', code: 'VCS-GIT-OPERATION-FAILED', message: 'x' } }),

@@ -221,14 +221,56 @@ function claimFailure(
   };
 }
 
+/** `PLAN-M14.md` P34: `Forge-Step`/`Forge-Run` trailers on an in-lane join commit — the identical
+ * "conventional-commit trailer format" `buildCommitMessage` above already gives lane work commits,
+ * applied to a join instead: `headStepId` is the predecessor whose head is being merged in. */
+function buildJoinCommitMessage(ctx: ExecuteStepContext, headStepId: string): string {
+  return [`Join ${headStepId}`, '', `Forge-Step: ${headStepId}`, `Forge-Run: ${ctx.runId}`].join('\n');
+}
+
+/** `PLAN-M14.md` P34: `LANE-JOIN-CONFLICT` (class `conflict`, `classify.ts`) — the join's own analogue of
+ * `landLane`'s `MERGE-CONFLICT-UNRESOLVED` (`integrate.ts`), for the identical reason: naming the files, the
+ * predecessor head and the lane a human needs to look at. `listClaimFailurePaths` bounds and sanitises the
+ * (git-reported, workflow-influenced) path list the identical way it already does for a claim failure. */
+function laneJoinConflictFailure(
+  node: StepNode,
+  lane: LaneHandle,
+  headStepId: string,
+  files: readonly string[],
+): StepFailureInfo {
+  return {
+    source: 'vcs',
+    code: 'LANE-JOIN-CONFLICT',
+    message:
+      `Lane ${lane.laneId} for ${node.id} could not be joined with ${headStepId}'s lane: ` +
+      `conflict on ${listClaimFailurePaths(files)}.`,
+  };
+}
+
+/** A lane a join failed to complete is not `LaneCreated` and never will be: removed unconditionally
+ * (`retain: false`, `PLAN-M14.md` P34's own "the half-made lane removed"), never left for inspection the
+ * way a step's own real failure leaves its lane — there is no real work in it yet, only a partial or
+ * aborted join. Best-effort: a lane that resists removal is still not `LaneCreated`, so it is picked up by
+ * the next resume's own orphan reclamation exactly like a crash mid-join already would be. */
+async function removeHalfMadeLane(ctx: ExecuteStepContext, lane: LaneHandle): Promise<void> {
+  try {
+    await ctx.vcs.removeLane(lane, false);
+  } catch {
+    // See this function's own doc comment: a resume's orphan reclamation is the backstop either way.
+  }
+}
+
 /**
- * `06` §6.4 lifecycle step 1: creates the step's lane and records `LaneCreated` with the base it was created from.
- * The base is the sha of the lane's predecessor when the step builds on an unmerged lane of the same merge
- * (`lane-base.ts`, `PLAN-M13.md` P38: a stacked lane), else the integration tip. It is resolved to a sha once and
- * the lane is created FROM THAT SHA, not from the branch name again: the integration branch moves during a run
- * (lanes are integrated into it, `PLAN-M13.md` P19), and a lane created from a tip newer than the `baseSha` its
- * claim is enforced against would show other lanes' files as its own out-of-claim writes. Shared by
- * `runLaneLifecycle` and by a step that needs its lane before its work starts (`swarm-review`).
+ * `06` §6.4 lifecycle step 1: creates the step's lane — from the integration tip, joining in every
+ * unmerged, same-scope predecessor head in plan order (`lane-base.ts`, `PLAN-M14.md` P34) — and records
+ * `LaneCreated` with the base it ends up at. `LaneCreated` is emitted only AFTER every join has completed
+ * (or immediately, when there are none): a half-made lane a join conflict or failure leaves behind is
+ * removed and never becomes `LaneCreated` (`removeHalfMadeLane`). `payload.baseSha` is resolved to a sha
+ * once and the lane is created FROM THAT SHA, not from the branch name again: the integration branch moves
+ * during a run (lanes are integrated into it, `PLAN-M13.md` P19), and a lane created from a tip newer than
+ * the `baseSha` its claim is enforced against would show other lanes' files as its own out-of-claim writes.
+ * Shared by `runLaneLifecycle` and by a step that needs its lane before its work starts (`swarm-review`,
+ * which instead calls `resolveLaneBase` directly, before any lane of its own exists).
  */
 export async function createLaneForStep(
   node: StepNode,
@@ -239,21 +281,51 @@ export async function createLaneForStep(
 > {
   const base = await resolveLaneBase(node, ctx);
   if (!base.ok) return base;
-  const { sha, stackedOn, unstackedPredecessors } = base.value;
-  const laneResult = await runVcsStep(node.id, () => ctx.vcs.createLane(node.id, sha));
+  const { tipSha, heads } = base.value;
+  const laneResult = await runVcsStep(node.id, () => ctx.vcs.createLane(node.id, tipSha));
   if (!laneResult.ok) return laneResult;
   const lane = laneResult.value;
+
+  // `stackedOn` when exactly one head fast-forwarded (byte-identical to the old stacking rule);
+  // `joinedFrom` names every head a real merge commit was needed for. With more than one head, EVERY one
+  // goes into `joinedFrom` regardless of whether that particular join happened to fast-forward (the first
+  // of several can, trivially, when the lane is still at the untouched tip) — the overall lane is a join
+  // of several predecessors' work, not simply one predecessor's own lane, so `stackedOn`'s "this IS that
+  // one lane" meaning (`swarm-review-step.ts`'s own use of it) never applies then.
+  let stackedOn: string | undefined;
+  const joinedFrom: string[] = [];
+  let baseSha = tipSha;
+  for (const head of heads) {
+    const message = buildJoinCommitMessage(ctx, head.id);
+    const joinResult = await runVcsStep(node.id, () => ctx.vcs.mergeIntoLane(lane, head.sha, message));
+    if (!joinResult.ok) {
+      await removeHalfMadeLane(ctx, lane);
+      return joinResult;
+    }
+    if (joinResult.value.kind === 'conflict') {
+      await removeHalfMadeLane(ctx, lane);
+      return {
+        ok: false,
+        failure: laneJoinConflictFailure(node, lane, head.id, joinResult.value.files),
+      };
+    }
+    baseSha = joinResult.value.sha;
+    if (heads.length === 1 && joinResult.value.kind === 'fast-forward') stackedOn = head.id;
+    else joinedFrom.push(head.id);
+  }
+
   await ctx.telemetry.emit({
     type: 'LaneCreated',
     stepId: node.id,
     laneId: lane.laneId,
     payload: {
-      baseSha: sha,
+      baseSha,
+      integrationTip: tipSha,
       ...(stackedOn === undefined ? {} : { stackedOn }),
-      ...(unstackedPredecessors === undefined ? {} : { unstackedPredecessors }),
+      ...(joinedFrom.length === 0 ? {} : { joinedFrom }),
     },
   });
-  return { ok: true, lane, baseSha: sha };
+  return { ok: true, lane, baseSha };
 }
 
 /** `06` §6.4's own lane lifecycle, steps 1-3 plus claim enforcement (`Q62`'s own sixth note: enforcement

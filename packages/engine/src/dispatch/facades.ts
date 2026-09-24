@@ -19,11 +19,13 @@ import {
   createLaneWorktree,
   diffLaneChanges,
   enforceClaim,
+  mergeIntoLane,
   processMergeCandidate,
   removeLaneWorktree,
   resolveRevision,
   VcsError,
   wrapGitFailure,
+  type JoinConflictPolicy,
   type LaneHandle as VcsLaneHandle,
   type MergeCandidate,
   type MergeConflictResolver,
@@ -34,6 +36,7 @@ import { evaluateGate, buildGateReport, type GateDefinition } from '../gates/ind
 import { runShellCommand, type ShellLimits } from './shell.ts';
 import type {
   GateEvaluator,
+  JoinConflictResolver,
   LaneHandle,
   MergeCandidateLike,
   MergeCheckCommand,
@@ -61,7 +64,34 @@ function asVcsLaneHandle(handle: LaneHandle): VcsLaneHandle {
 /** The largest artifact file `readAtRevision` will return (8 MiB): far beyond any real document. */
 const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
-export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
+/** `JoinConflictResolver` (dispatch/types.ts) is structurally identical to `@forge/vcs`'s own
+ * `MergeConflictResolver` (`JoinConflictDescription` mirrors `MergeConflictDescription` field for field) --
+ * the identical "re-declared, not imported" bridge `asVcsLaneHandle` already provides for `LaneHandle`. */
+function asVcsConflictResolver(resolver: JoinConflictResolver): MergeConflictResolver {
+  return resolver as unknown as MergeConflictResolver;
+}
+
+/** `PLAN-M14.md` P34: `createVcsFacade`'s own conflict policy/resolver for `mergeIntoLane`, bound once at
+ * construction -- an ordinary `agent`/`command` step has no conflict policy of its own to supply per call
+ * the way a `merge` step's `mergePolicy` does, so this mirrors `createMergeQueueFacade`'s own
+ * constructor-bound resolver (not yet a per-call override, `PLAN-M14.md` P35's own later scope).
+ * `conflictPolicy` omitted defaults `'abort'`: the same safe, no-caller-supplied-resolver-needed default
+ * `RunEngineContext.conflictPolicy`'s own doc comment already documents for the analogous landing-conflict
+ * case, and matches `SPEC-QUESTIONS.md` Q226 open item (b) (`conflictPolicy: agent` still has no resolver
+ * anywhere in this milestone's own wiring). */
+export interface VcsFacadeOptions {
+  readonly conflictPolicy?: JoinConflictPolicy | undefined;
+  readonly conflictResolver?: JoinConflictResolver | undefined;
+}
+
+export function createVcsFacade(
+  projectRoot: string,
+  runId: string,
+  options: VcsFacadeOptions = {},
+): VcsFacade {
+  const conflictPolicy = options.conflictPolicy ?? 'abort';
+  const boundResolver =
+    options.conflictResolver === undefined ? undefined : asVcsConflictResolver(options.conflictResolver);
   return {
     async createLane(stepId, integrationBase) {
       return createLaneWorktree(projectRoot, { runId, stepId, integrationBase });
@@ -71,6 +101,15 @@ export function createVcsFacade(projectRoot: string, runId: string): VcsFacade {
     },
     async commit(handle, message, sign) {
       return commitInLane(asVcsLaneHandle(handle), { message, sign });
+    },
+    async mergeIntoLane(handle, sha, message, resolver) {
+      return mergeIntoLane(
+        asVcsLaneHandle(handle),
+        sha,
+        message,
+        conflictPolicy,
+        resolver === undefined ? boundResolver : asVcsConflictResolver(resolver),
+      );
     },
     async resolveRevision(ref) {
       return resolveRevision(projectRoot, ref);

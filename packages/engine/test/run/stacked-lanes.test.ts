@@ -1,13 +1,17 @@
 /**
- * Stacked lanes and merge checks (`PLAN-M13.md` P38, `06` §6.4-§6.5, `10` §10.1, `SPEC-QUESTIONS.md` Q221 open
- * items and Q226).
+ * Stacked lanes, in-lane joins and merge checks (`PLAN-M13.md` P38, `PLAN-M14.md` P34, `06` §6.4-§6.5, `10`
+ * §10.1, `SPEC-QUESTIONS.md` Q221 open items and Q226).
  *
- * A lane a `merge` step lands is not integrated before that merge (review before merge), so before P38 a step that
- * builds on such a lane could not see it: `implement` did not see the tests `generate-tests` wrote, a review did
- * not see the code it reviewed. A lane whose sole unmerged predecessor is in the same merge's scope is now created
- * from that predecessor's head; the merge lands the chain in dependency order. And the merge's own
- * `preChecks`/`postChecks` are check-set NAMES (`fast`, `full`) that resolve to the project's configured test
- * commands instead of being run as shell commands (`fast: command not found`).
+ * A lane a `merge` step lands is not integrated before that merge (review before merge), so before P38 a step
+ * that builds on such a lane could not see it: `implement` did not see the tests `generate-tests` wrote, a
+ * review did not see the code it reviewed. A step's own lane is always created from the integration tip, and
+ * every unmerged, same-scope predecessor's head is then merged into it (P34): a fast-forward for the common
+ * single-predecessor, tip-unmoved case (byte-identical to the old stacking rule — the branch simply moves),
+ * a real merge commit otherwise, including a genuine join of several unrelated predecessors (Q226 open item
+ * (a), previously an unbuilt blind spot) and a single predecessor whose lane missed something the engine
+ * integrated after it was created (Q226 open item (e)). The merge lands the lanes in dependency order. And
+ * the merge's own `preChecks`/`postChecks` are check-set NAMES (`fast`, `full`) that resolve to the project's
+ * configured test commands instead of being run as shell commands (`fast: command not found`).
  *
  * Everything runs the real engine (`runEngine`) over a real git repository laid out the way `forge run` lays one
  * out; only the model sessions are the fake adapter's (strict prompt checking stays on).
@@ -15,6 +19,7 @@
  * @see specs/06 §6.4, §6.5
  * @see specs/10 §10.1
  * @see PLAN-M13.md P38
+ * @see PLAN-M14.md P34
  */
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -76,6 +81,26 @@ interface ContextOptions {
   readonly mergeChecks?: { readonly pre?: string; readonly post?: string };
   readonly laneRegistry?: Map<string, LaneHandle>;
   readonly checkLimits?: { readonly timeoutMs?: number; readonly maxOutputBytes?: number };
+  /** `PLAN-M14.md` P34: the in-lane join's own conflict policy (default `abort`, matching `conflictPolicy`
+   * below, which governs only merge-*landing*); a test that wants a real conflict resolver for a JOIN
+   * passes both. */
+  readonly joinConflictPolicy?: 'agent' | 'human' | 'abort';
+  readonly joinConflictResolver?: (conflict: {
+    readonly laneId: string;
+    readonly declaredClaim: readonly string[];
+    readonly conflictedFiles: readonly { readonly path: string; readonly status: string }[];
+    readonly diff: string;
+    readonly worktreePath: string;
+  }) => Promise<'resolved' | 'unresolved'>;
+  /** The merge QUEUE's own (landing-time) conflict resolver -- a distinct policy/resolver from the
+   * in-lane join's own above: a `merge` step's `mergePolicy.conflict` governs landing, never the join. */
+  readonly landingConflictResolver?: (conflict: {
+    readonly laneId: string;
+    readonly declaredClaim: readonly string[];
+    readonly conflictedFiles: readonly { readonly path: string; readonly status: string }[];
+    readonly diff: string;
+    readonly worktreePath: string;
+  }) => Promise<'resolved' | 'unresolved'>;
 }
 
 function contextFor(project: Project, options: ContextOptions): RunEngineContext {
@@ -84,11 +109,14 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
   const gateRegistry = new Map();
   return {
     adapter: options.adapter,
-    vcs: createVcsFacade(project.projectRoot, RUN_ID),
+    vcs: createVcsFacade(project.projectRoot, RUN_ID, {
+      conflictPolicy: options.joinConflictPolicy,
+      conflictResolver: options.joinConflictResolver,
+    }),
     telemetry: createTelemetryFacade(project.projectRoot, RUN_ID, now),
     gates: createGateEvaluator(gateRegistry),
     gateRegistry,
-    mergeQueue: createMergeQueueFacade(project.integrationPath, undefined, {
+    mergeQueue: createMergeQueueFacade(project.integrationPath, options.landingConflictResolver, {
       checkLimits: options.checkLimits,
     }),
     runId: RUN_ID,
@@ -262,6 +290,12 @@ describe('a chain inside one merge sees its predecessor before the merge (stacke
     expect(payloadOf('st:gen')).not.toHaveProperty('stackedOn');
     expect(payloadOf('st:impl')).toMatchObject({ stackedOn: 'st:gen' });
     expect(payloadOf('st:review')).toMatchObject({ stackedOn: 'st:impl' });
+    // `PLAN-M14.md` P34: `integrationTip` is recorded on every `LaneCreated`, stacked or not, and never
+    // `unstackedPredecessors` (which no longer exists).
+    for (const step of ['st:gen', 'st:impl', 'st:review']) {
+      expect(payloadOf(step)).toHaveProperty('integrationTip');
+      expect(payloadOf(step)).not.toHaveProperty('unstackedPredecessors');
+    }
   });
 
   it('the merge lands the stacked chain in dependency order, every lane cleanly, each commit once, and every lane is gone', async () => {
@@ -481,7 +515,7 @@ describe('which predecessor a lane stacks on', () => {
     expect(created?.payload).not.toHaveProperty('stackedOn');
   });
 
-  it('a join of two unmerged lanes that do not contain each other branches from the integration tip and says so; both still land', async () => {
+  it('PLAN-M14.md P34: a join of two unmerged lanes that do not contain each other is built on an in-lane merge of both, not just the tip; both still land', async () => {
     const project = await createProject('join');
     const { adapter, seen } = scriptedAdapter(
       {
@@ -501,14 +535,308 @@ describe('which predecessor a lane stacks on', () => {
     const state = await runEngine(source, {}, contextFor(project, { adapter }));
 
     expect(state.runStatus).toBe('completed');
-    // The conservative reading: it does not see either, and the event log says which it does not build on.
-    expect(seen.get('jn:c')).toEqual([]);
+    // The in-lane join: c's session sees BOTH x.txt and y.txt, not neither.
+    expect(seen.get('jn:c')).toEqual(['x.txt', 'y.txt']);
     const created = (await eventsOf(project)).find(
       (event) => event.type === 'LaneCreated' && event.stepId === 'jn:c',
     );
-    expect(created?.payload).toMatchObject({ unstackedPredecessors: ['jn:x', 'jn:y'] });
+    expect(created?.payload).toMatchObject({ joinedFrom: ['jn:x', 'jn:y'] });
     expect(created?.payload).not.toHaveProperty('stackedOn');
+    expect(created?.payload).not.toHaveProperty('unstackedPredecessors');
+    expect(created?.payload).toHaveProperty('integrationTip');
+    expect(created?.payload).toHaveProperty('baseSha');
     expect(await mergedStepOrder(project)).toEqual(['jn:x', 'jn:y', 'jn:c']);
+    expect(await filesOnIntegration(project)).toEqual(
+      expect.arrayContaining(['x.txt', 'y.txt', 'c.txt']),
+    );
+  });
+
+  it('a three-way join: every unmerged, same-scope predecessor is joined, all in plan order', async () => {
+    const project = await createProject('join-three');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        x: [{ relativePath: 'x.txt', content: 'x\n' }],
+        y: [{ relativePath: 'y.txt', content: 'y\n' }],
+        z: [{ relativePath: 'z.txt', content: 'z\n' }],
+        c: [{ relativePath: 'c.txt', content: 'c\n' }],
+      },
+      ['x.txt', 'y.txt', 'z.txt'],
+    );
+    const source = workflowOf('tw', [
+      agent('x', { produces: ['x.txt'] }),
+      agent('y', { produces: ['y.txt'] }),
+      agent('z', { produces: ['z.txt'] }),
+      agent('c', { dependsOn: ['x', 'y', 'z'], produces: ['c.txt'] }),
+      mergeStep(['c']),
+    ]);
+
+    const state = await runEngine(source, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('completed');
+    expect(seen.get('tw:c')).toEqual(['x.txt', 'y.txt', 'z.txt']);
+    const created = (await eventsOf(project)).find(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'tw:c',
+    );
+    expect(created?.payload).toMatchObject({ joinedFrom: ['tw:x', 'tw:y', 'tw:z'] });
+    expect(created?.payload).not.toHaveProperty('stackedOn');
+    expect(await filesOnIntegration(project)).toEqual(
+      expect.arrayContaining(['x.txt', 'y.txt', 'z.txt', 'c.txt']),
+    );
+  });
+
+  it("dependsOn: ['y', 'x'] still joins in plan order (x is declared first): joinedFrom is ['ro:x', 'ro:y'], never dependsOn's own order", async () => {
+    const project = await createProject('join-reversed');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        x: [{ relativePath: 'x.txt', content: 'x\n' }],
+        y: [{ relativePath: 'y.txt', content: 'y\n' }],
+        c: [{ relativePath: 'c.txt', content: 'c\n' }],
+      },
+      ['x.txt', 'y.txt'],
+    );
+    const source = workflowOf('ro', [
+      agent('x', { produces: ['x.txt'] }),
+      agent('y', { produces: ['y.txt'] }),
+      agent('c', { dependsOn: ['y', 'x'], produces: ['c.txt'] }),
+      mergeStep(['c']),
+    ]);
+
+    const state = await runEngine(source, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('completed');
+    expect(seen.get('ro:c')).toEqual(['x.txt', 'y.txt']);
+    const created = (await eventsOf(project)).find(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'ro:c',
+    );
+    expect(created?.payload).toMatchObject({ joinedFrom: ['ro:x', 'ro:y'] });
+  });
+
+  it("Q226 (e): a chain a -> b sees what the engine integrated of an unrelated step between a's lane and b's own (the tip moved): b sees both, joinedFrom (not stackedOn, since the join is no longer a fast-forward)", async () => {
+    const project = await createProject('join-moved-tip');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        a: [{ relativePath: 'a.txt', content: 'a\n' }],
+        x: [{ relativePath: 'x.txt', content: 'x\n' }],
+        b: [{ relativePath: 'b.txt', content: 'b\n' }],
+      },
+      ['a.txt', 'x.txt'],
+    );
+    // `x` has no dependency on `a`/`b`, no merge lands it, so the engine auto-integrates it as soon as it
+    // succeeds -- between the tick `a` and `x` finish in and the tick `b` starts in, moving the tip.
+    const source = workflowOf('me', [
+      agent('a', { produces: ['a.txt'] }),
+      agent('x', { produces: ['x.txt'] }),
+      agent('b', { dependsOn: ['a'], produces: ['b.txt'] }),
+      mergeStep(['b']),
+    ]);
+
+    const state = await runEngine(source, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('completed');
+    // `b` sees the engine-integrated `x.txt` (via the moved tip) AND `a.txt` (via the join).
+    expect(seen.get('me:b')).toEqual(expect.arrayContaining(['a.txt', 'x.txt']));
+    const created = (await eventsOf(project)).find(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'me:b',
+    );
+    expect(created?.payload).toMatchObject({ joinedFrom: ['me:a'] });
+    expect(created?.payload).not.toHaveProperty('stackedOn');
+    // `x` lands via the engine's own automatic integration (a real merge commit of its own, tagged the
+    // identical way), before `a`/`b` ever reach the explicit merge step.
+    expect(await mergedStepOrder(project)).toEqual(['me:x', 'me:a', 'me:b']);
+    expect(await filesOnIntegration(project)).toEqual(
+      expect.arrayContaining(['a.txt', 'x.txt', 'b.txt']),
+    );
+  });
+
+  it('different scopes are not joined: a predecessor sharing no merge scope with the step is never offered to the join', async () => {
+    const project = await createProject('join-different-scopes');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        p: [{ relativePath: 'p.txt', content: 'p\n' }],
+        q: [{ relativePath: 'q.txt', content: 'q\n' }],
+        r: [{ relativePath: 'r.txt', content: 'r\n' }],
+        s: [{ relativePath: 's.txt', content: 's\n' }],
+      },
+      ['p.txt', 'r.txt'],
+    );
+    // `s` depends on `q` (its own merge's scope) and `r` (a DIFFERENT merge's scope): only `q` is a real
+    // join candidate. `r`'s own lane is landed by its own merge before `s` ever starts, so `s` sees it via
+    // the tip regardless -- the join itself must not also try to merge `r`'s (already-landed, gone) lane.
+    const source = workflowOf('ds', [
+      agent('p', { produces: ['p.txt'] }),
+      mergeStep(['p'], '{ conflict: abort }', 'merge-p'),
+      agent('r', { dependsOn: ['merge-p'], produces: ['r.txt'] }),
+      mergeStep(['r'], '{ conflict: abort }', 'merge-r'),
+      agent('q', { dependsOn: ['merge-r'], produces: ['q.txt'] }),
+      agent('s', { dependsOn: ['q', 'r'], produces: ['s.txt'] }),
+      mergeStep(['s'], '{ conflict: abort }', 'merge-s'),
+    ]);
+
+    const state = await runEngine(source, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('completed');
+    expect(seen.get('ds:s')).toEqual(['p.txt', 'r.txt']);
+    const created = (await eventsOf(project)).find(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'ds:s',
+    );
+    expect(created?.payload).toMatchObject({ stackedOn: 'ds:q' });
+  });
+
+  // `x`/`y` each declare a distinct `produces` glob that both happen to cover `shared.txt` --
+  // `share[ad].txt`/`share[bd].txt` (both match the literal path; neither string is `===` the other, and
+  // neither is a literal match of the other's pattern, `dependencies.ts`'s own `globsOverlap` two real,
+  // deliberately-limited checks) -- so the compiler's own claim-overlap serialisation (`06` §6.2 rule 3)
+  // does NOT add an implicit `dependsOn` edge between them (confirmed the hard way: an identical literal
+  // `produces: ['shared.txt']` on both DOES get such an edge, which stacks `y` on `x` before `c` ever sees
+  // either, and the join this describe block is about never triggers at all). `x`/`y` genuinely run
+  // independently and both really do write the same real path, so joining their heads into `c`'s own new
+  // lane genuinely conflicts.
+  const CONFLICTING_HEADS = workflowOf('cf', [
+    agent('x', { produces: ['share[ad].txt'] }),
+    agent('y', { produces: ['share[bd].txt'] }),
+    agent('c', { dependsOn: ['x', 'y'], produces: ['c.txt'] }),
+    mergeStep(['c']),
+  ]);
+  // The identical fixture, but the merge step's own LANDING conflict policy is also `agent`: `x` and `y`
+  // conflict with each other at landing too (the same real diffs, met again once each is rebased onto the
+  // other's already-landed content) -- a genuinely distinct conflict from the join's own, resolved by its
+  // own (landing) resolver, never the join's.
+  const CONFLICTING_HEADS_AGENT_LANDING = workflowOf('cf', [
+    agent('x', { produces: ['share[ad].txt'] }),
+    agent('y', { produces: ['share[bd].txt'] }),
+    agent('c', { dependsOn: ['x', 'y'], produces: ['c.txt'] }),
+    mergeStep(['c'], '{ conflict: agent }'),
+  ]);
+
+  it('conflicting heads under the abort policy: LANE-JOIN-CONFLICT, no session, no LaneCreated, no worktree or branch left for the joining step, x and y untouched, classified conflict', async () => {
+    const project = await createProject('join-conflict-abort');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        x: [{ relativePath: 'shared.txt', content: 'x-version\n' }],
+        y: [{ relativePath: 'shared.txt', content: 'y-version\n' }],
+      },
+      [],
+    );
+
+    const state = await runEngine(CONFLICTING_HEADS, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('failed');
+    expect(seen.has('cf:c')).toBe(false);
+    const events = await eventsOf(project);
+    expect(events.some((event) => event.type === 'LaneCreated' && event.stepId === 'cf:c')).toBe(
+      false,
+    );
+    const failure = events.find((event) => event.type === 'StepFailed' && event.stepId === 'cf:c')
+      ?.payload as { code?: string; message?: string } | undefined;
+    expect(failure?.code).toBe('LANE-JOIN-CONFLICT');
+    expect(failure?.message).toContain('shared.txt');
+    // `LANE-JOIN-CONFLICT` classifies as `conflict` -- `classify.test.ts`'s own dedicated unit test pins
+    // the mapping directly; here only the code itself (what that mapping keys off) is asserted.
+    // No worktree or branch was left behind for the joining step -- only x's and y's own.
+    const worktrees = await git(project.projectRoot, 'worktree', 'list', '--porcelain');
+    expect(worktrees).not.toContain(`forge/${RUN_ID}/c-`);
+    const branches = await git(project.projectRoot, 'branch', '--list', `forge/${RUN_ID}/c-*`);
+    expect(branches.trim()).toBe('');
+    // x and y's own lanes are untouched: still registered, no LaneAbandoned/LaneRemoved for either.
+    expect(
+      events.some(
+        (event) =>
+          (event.type === 'LaneAbandoned' || event.type === 'LaneRemoved') &&
+          (event.stepId === 'cf:x' || event.stepId === 'cf:y'),
+      ),
+    ).toBe(false);
+  });
+
+  it('under the agent policy with no resolver: VCS-MISSING-CONFLICT-RESOLVER; with a fake resolver: a trailer-carrying join commit and the step proceeds', async () => {
+    const noResolverProject = await createProject('join-conflict-agent-no-resolver');
+    const noResolverAdapter = scriptedAdapter(
+      {
+        x: [{ relativePath: 'shared.txt', content: 'x-version\n' }],
+        y: [{ relativePath: 'shared.txt', content: 'y-version\n' }],
+      },
+      [],
+    ).adapter;
+
+    const stateNoResolver = await runEngine(
+      CONFLICTING_HEADS,
+      {},
+      contextFor(noResolverProject, { adapter: noResolverAdapter, joinConflictPolicy: 'agent' }),
+    );
+
+    expect(stateNoResolver.runStatus).toBe('failed');
+    const noResolverFailure = (await eventsOf(noResolverProject)).find(
+      (event) => event.type === 'StepFailed' && event.stepId === 'cf:c',
+    )?.payload as { code?: string } | undefined;
+    expect(noResolverFailure?.code).toBe('VCS-MISSING-CONFLICT-RESOLVER');
+
+    const resolvedProject = await createProject('join-conflict-agent-resolved');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        x: [{ relativePath: 'shared.txt', content: 'x-version\n' }],
+        y: [{ relativePath: 'shared.txt', content: 'y-version\n' }],
+        c: [{ relativePath: 'c.txt', content: 'c\n' }],
+      },
+      ['shared.txt'],
+    );
+    const resolverCalls: string[][] = [];
+    const resolveToVersion = async (conflict: {
+      readonly conflictedFiles: readonly { readonly path: string }[];
+      readonly worktreePath: string;
+    }): Promise<'resolved'> => {
+      resolverCalls.push(conflict.conflictedFiles.map((f) => f.path));
+      await writeFile(path.join(conflict.worktreePath, 'shared.txt'), 'resolved-version\n');
+      return 'resolved';
+    };
+    const state = await runEngine(
+      CONFLICTING_HEADS_AGENT_LANDING,
+      {},
+      contextFor(resolvedProject, {
+        adapter,
+        joinConflictPolicy: 'agent',
+        joinConflictResolver: resolveToVersion,
+        landingConflictResolver: resolveToVersion,
+      }),
+    );
+
+    expect(state.runStatus).toBe('completed');
+    // The join's own resolver is called once (for c's own lane); the landing's own resolver separately
+    // for whichever of x/y's own lanes conflicts when landed after the other -- both real, both counted.
+    expect(resolverCalls.length).toBeGreaterThanOrEqual(1);
+    expect(resolverCalls).toContainEqual(['shared.txt']);
+    const created = (await eventsOf(resolvedProject)).find(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'cf:c',
+    );
+    expect(created?.payload).toMatchObject({ joinedFrom: ['cf:x', 'cf:y'] });
+    expect(seen.get('cf:c')).toEqual(['shared.txt']);
+    expect(await filesOnIntegration(resolvedProject)).toContain('c.txt');
+    await expect(
+      readFile(path.join(resolvedProject.integrationPath, 'shared.txt'), 'utf8'),
+    ).resolves.toBe('resolved-version\n');
+  });
+
+  it('a strict claim on the joining step reverts nothing that the join itself brought in', async () => {
+    const project = await createProject('join-claim');
+    const { adapter, seen } = scriptedAdapter(
+      {
+        x: [{ relativePath: 'x.txt', content: 'x\n' }],
+        y: [{ relativePath: 'y.txt', content: 'y\n' }],
+        c: [{ relativePath: 'c.txt', content: 'c\n' }],
+      },
+      ['x.txt', 'y.txt'],
+    );
+    const source = workflowOf('sc', [
+      agent('x', { produces: ['x.txt'] }),
+      agent('y', { produces: ['y.txt'] }),
+      agent('c', { dependsOn: ['x', 'y'], produces: ['c.txt'] }),
+      mergeStep(['c']),
+    ]);
+
+    const state = await runEngine(source, {}, contextFor(project, { adapter }));
+
+    expect(state.runStatus).toBe('completed');
+    expect(seen.get('sc:c')).toEqual(['x.txt', 'y.txt']);
+    const events = await eventsOf(project);
+    expect(events.some((event) => event.type === 'PolicyViolation')).toBe(false);
     expect(await filesOnIntegration(project)).toEqual(
       expect.arrayContaining(['x.txt', 'y.txt', 'c.txt']),
     );

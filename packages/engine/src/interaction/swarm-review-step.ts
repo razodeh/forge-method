@@ -335,18 +335,31 @@ export async function runSwarmReviewStep(
     return failed(node, startedAt, ctx.now(), emptyDetail, noPerspectives(node));
   }
 
-  // What the perspectives are about to read (`PLAN-M13.md` P38, Q226). A review stacked on the lane it reviews (its
-  // predecessor's unmerged lane in the same merge, `lane-base.ts`) reads THAT lane's worktree, so the diff under
-  // review is there; otherwise the project checkout as of now, as before. Either way it is resolved before any
-  // session runs, and no lane of the review's own exists yet (a refused or failed perspective leaves none behind).
+  // What the perspectives are about to read (`PLAN-M13.md` P38, Q226, `PLAN-M14.md` P34). A review whose
+  // sole unmerged predecessor's lane would fast-forward into the review's own new lane (`base.value.stackedOn`,
+  // `lane-base.ts`) reads THAT predecessor lane's worktree, so the diff under review is there; otherwise the
+  // project checkout as of now, as before -- including a review whose base would be an in-lane JOIN of
+  // several predecessors, or a fast-forward `resolveLaneBase` cannot yet predict without ever creating a lane
+  // (`isAncestor` unavailable): no shipped workflow reviews a join, and this module does not create one of
+  // its own lane's just to find out. Either way it is resolved before any session runs, and no lane of the
+  // review's own exists yet (a refused or failed perspective leaves none behind).
   const base = await resolveLaneBase(node, ctx);
   if (!base.ok) return failed(node, startedAt, ctx.now(), emptyDetail, base.failure);
-  const reviewedLane =
-    base.value.stackedOn === undefined ? undefined : ctx.laneRegistry.get(base.value.stackedOn);
+  // `heads[0]` is always defined here: `stackedOn` is only ever set alongside exactly one `heads` entry
+  // (`lane-base.ts`'s own doc comment) -- the same "a plain `as`, not `!`, for a business invariant TS
+  // cannot itself prove" exception this codebase already uses elsewhere (`run-engine.ts`'s own `outcomes`
+  // index, `lanes.ts`'s own `parseLaneWorktrees`).
+  const stackedHead =
+    base.value.stackedOn === undefined
+      ? undefined
+      : (base.value.heads[0] as { readonly id: string; readonly sha: string });
+  const reviewedLane = stackedHead === undefined ? undefined : ctx.laneRegistry.get(stackedHead.id);
   let reviewedRevision: string;
   try {
     reviewedRevision =
-      reviewedLane === undefined ? await ctx.vcs.resolveRevision('HEAD') : base.value.sha;
+      stackedHead === undefined || reviewedLane === undefined
+        ? await ctx.vcs.resolveRevision('HEAD')
+        : stackedHead.sha;
   } catch (cause) {
     return failed(node, startedAt, ctx.now(), emptyDetail, {
       source: 'vcs',
@@ -405,7 +418,9 @@ export async function runSwarmReviewStep(
   // carried into the integration branch under the implementer's step, unreviewed. Checked before anything is
   // recorded, and failed closed.
   if (reviewedLane !== undefined) {
-    const dirtied = await ctx.vcs.hasChanges(reviewedLane, base.value.sha).catch(() => true);
+    // `reviewedRevision` is exactly `stackedHead.sha` here (computed above, in the identical branch this
+    // `reviewedLane !== undefined` check mirrors): reused rather than re-derived.
+    const dirtied = await ctx.vcs.hasChanges(reviewedLane, reviewedRevision).catch(() => true);
     if (dirtied) {
       return failed(
         node,

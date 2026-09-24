@@ -702,6 +702,87 @@ describe('the shipped build-stage inner loop, end to end (runEngine, stacked lan
   });
 });
 
+// ---------------------------------------------------------------------------------------------------------
+// `PLAN-M14.md` P34: a step built on several unmerged predecessors is built on an in-lane merge of their
+// heads onto the integration tip, not just the tip alone (the pre-P34 conservative "branch from the tip and
+// say so" reading of Q226 open item (a)). `STORY-003` depends on both `STORY-001` and `STORY-002`, which are
+// otherwise unrelated (disjoint `filesExpected`, so the compiler adds no implicit ordering edge between
+// them): `generate-tests:STORY-003`'s own predecessors are `review:STORY-001` and `review:STORY-002`
+// (`stage-plan.ts`'s own "every step where B's work begins gains a dependsOn edge to every step where A's
+// work ends"), two genuinely unmerged, unrelated lanes at once.
+
+describe("a story depending on two others sees both before the merge (PLAN-M14.md P34, an in-lane join)", () => {
+  const stories = [
+    story('STORY-001', [], ['src/story-001/**', 'tests/story-001/**']),
+    story('STORY-002', [], ['src/story-002/**', 'tests/story-002/**']),
+    story('STORY-003', ['STORY-001', 'STORY-002'], ['src/story-003/**', 'tests/story-003/**']),
+  ];
+  const WATCHED = [
+    'src/story-001/story-001.ts',
+    'tests/story-001/story-001.test.ts',
+    'src/story-002/story-002.ts',
+    'tests/story-002/story-002.test.ts',
+  ];
+
+  it('S3 (dependsOn S1, S2) sees both S1 and S2 before the merge, and every lane lands exactly once', async () => {
+    const workflow = shippedBuildStage();
+    const source = readFileSync(
+      path.join(repoRoot, 'packages', 'templates', WORKFLOW_INDEX['build-stage']),
+      'utf8',
+    );
+    const seen = new Map<string, readonly string[]>();
+    const adapter = adapterFor(stories, (request) => {
+      seen.set(
+        request.stepId,
+        WATCHED.filter((file) => existsSync(path.join(request.cwd, file))),
+      );
+    });
+    adapter.script((request) => request.stepId === `${P}freeze-contracts`, {
+      text: ['froze the contracts'],
+      writeFiles: [{ relativePath: CONTRACT_PATH, content: CONTRACT }],
+    });
+    const fixture = await createFixture(stories, undefined, {
+      branch: 'forge/integration/mvp',
+      adapter,
+      gateRegistry: trivialGates('G-Design', 'G-Verify'),
+    });
+    const ctx: RunEngineContext = {
+      ...fixture.ctx,
+      limits: { global: 100, perAgent: new Map(), perResourceClass: new Map() },
+      seed: 'seed',
+    };
+
+    await runEngine(source, buildStageRunContext(workflow, 'mvp', stories), ctx).catch(() => undefined);
+
+    // `generate-tests:STORY-003` (S3's own first step) sees BOTH S1's and S2's code and tests, via the
+    // in-lane join of their unmerged `implement`/`review` lanes -- neither predecessor contains the other,
+    // so before P34 this step would have branched from the tip alone and seen neither.
+    expect(seen.get('build-stage:generate-tests:STORY-003')).toEqual(
+      expect.arrayContaining(WATCHED),
+    );
+    const files = await filesOnIntegration(fixture);
+    for (const file of [
+      ...WATCHED,
+      'src/story-003/story-003.ts',
+      'tests/story-003/story-003.test.ts',
+    ]) {
+      expect(files).toContain(file);
+    }
+    // Every step's own lane lands exactly once: no duplicate merge commit for any step id.
+    const { stdout } = await execa('git', ['log', '--merges', '--format=%B%x00'], {
+      cwd: fixture.integrationPath,
+    });
+    const trailers = stdout
+      .split('\0')
+      .flatMap((message) => [...message.matchAll(/Forge-Step: (\S+)/g)].map((m) => m[1] ?? ''))
+      .filter((id) => id !== '');
+    const counts = new Map<string, number>();
+    for (const id of trailers) counts.set(id, (counts.get(id) ?? 0) + 1);
+    for (const [id, count] of counts) expect(count, `${id} landed ${count} times`).toBe(1);
+    expect(fixture.ctx.laneRegistry.size).toBe(0);
+  });
+});
+
 const HANDOFF_PATH = 'docs/forge/reports/handoffs.md';
 const HANDOFF = [
   '---',

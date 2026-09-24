@@ -98,23 +98,31 @@ Lane lifecycle:
   by `08` §8.6's `KbWriter` invariants — sources, never reused or removed — checked by the output
   contract instead of by `KbWriter` itself (`08` §8.6).
 - A lane whose step succeeded and which no `merge` step lands is enqueued in the merge queue by the engine
-  as soon as the step succeeds (between scheduling ticks, in plan order), and lanes are created from the
-  integration branch tip (a stacked lane excepted, below), so a later step, an inline step and a gate see it. A `merge` step lands the lanes
+  as soon as the step succeeds (between scheduling ticks, in plan order), and lanes are always created from the
+  integration branch tip (an in-lane join, below, may then merge in more), so a later step, an inline step and a gate see it. A `merge` step lands the lanes
   of the steps in its dependency closure (not only its direct predecessors), stopping at a `gate` or another
   `merge`, which are integration checkpoints (a step upstream of a checkpoint is integrated before it, so
   what a gate reads is there); it batches and orders them and is never bypassed. A lane no `merge` lands is
   checked by the run's `execution.mergeChecks` (§6.5 steps 3 and 5; each optional, none configured means none
   run). An inline step runs in the integration worktree, serialised with the merge queue, and must leave it
   unchanged.
-- A lane a `merge` lands is not integrated before that merge, so a step that builds on one is **stacked**: when
-  exactly one of a step's dependencies has a lane that is still waiting for the same `merge` (a dependency whose
-  lane is contained in another such lane's adds nothing), the step's lane is created from that lane's head, not
-  from the integration tip, and the step starts from the predecessor's committed output. The merge lands the
-  lanes in dependency order; the successor's lane holds the predecessor's commits, so once the predecessor has
-  landed the successor's rebase replays only its own. A step that depends on several such lanes none of which
-  contains the others branches from the integration tip and does not see them (`LaneCreated` lists them as
-  `unstackedPredecessors`). The base is recorded as the lane's `baseSha`, which resume restores. A `swarm-review`
-  step stacked on the lane it reviews runs its perspective sessions in that lane's worktree.
+- A lane a `merge` lands is not integrated before that merge, so a step that builds on one or more such lanes
+  sees them through an **in-lane join**: the step's own lane is always created from the integration tip, and
+  every one of its dependencies whose lane is still waiting for the same `merge` (a dependency whose lane is
+  contained in another such lane's adds nothing) is then merged into it, in the compiled plan's own step
+  order — `git merge`, fast-forward when the lane's own tip already contains the predecessor's head (the
+  common, one-predecessor case, byte-identical to the old stacking rule: the branch simply moves, no merge
+  commit), a real merge commit tagged `Forge-Step`/`Forge-Run` otherwise. The merge lands the lanes in
+  dependency order; a joined lane holds its predecessors' commits, so once a predecessor has landed the
+  successor's rebase replays only its own. `LaneCreated` records the lane's HEAD once every join has
+  completed as `baseSha` (what resume restores and claim enforcement diffs against), the resolved integration
+  tip as `integrationTip`, `stackedOn` naming the one predecessor when its own join fast-forwarded, and
+  `joinedFrom` naming every predecessor a real merge commit was needed for. A join that conflicts follows the
+  run's conflict policy exactly like the merge queue below: `abort` fails the step and leaves no lane; `agent`/
+  `human` need a resolver, and one missing fails the step the identical way the merge queue does. A
+  `swarm-review` step whose sole predecessor's lane would fast-forward into its own runs its perspective
+  sessions in that predecessor lane's worktree; otherwise (several predecessors, or none) it reads the project
+  checkout, as before.
 - `.gitignore` MUST exclude `.forge/state/`. Worktrees live there, so they never self-reference.
 - Non-git projects: FORGE requires git. `init` offers to `git init`. If refused, parallelism is
   disabled and lanes degrade to sequential in-place execution with a loud warning.

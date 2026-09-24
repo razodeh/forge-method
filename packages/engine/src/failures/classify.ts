@@ -73,6 +73,11 @@ function classifyVcsFailure(failure: StepFailureInfo): FailureClass {
   if (failure.code === 'VCS-MISSING-CONFLICT-RESOLVER') return 'policy';
   // A lane whose merge was reverted cannot be merged again in this run (`PLAN-M13.md` P38): a retry fails identically.
   if (failure.code === 'VCS-LANE-REVERTED') return 'policy';
+  // `PLAN-M14.md` P34: an in-lane join (`createLaneForStep`, `lane-base.ts`) that conflicted under the
+  // `abort` policy -- `06` §6.8's own `conflict` example verbatim ("contradictory inputs"), the identical
+  // mapping `classifyMergeFailure`'s own `MERGE-CONFLICT-UNRESOLVED` already gives for the analogous
+  // landing-time conflict.
+  if (failure.code === 'LANE-JOIN-CONFLICT') return 'conflict';
   if (failure.code?.startsWith('VCS-INVALID-') === true) return 'validation';
   return 'transient';
 }

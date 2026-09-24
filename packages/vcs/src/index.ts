@@ -48,6 +48,7 @@ export {
   wrapGitFailure,
   type RepoSnapshot,
 } from './git.ts';
+export { mergeIntoLane, type JoinConflictPolicy, type JoinOutcome } from './join.ts';
 export { createAnnotatedTag, resolveTagCommit, tagExists } from './tag.ts';
 export {
   clearStaleRepoLocks,

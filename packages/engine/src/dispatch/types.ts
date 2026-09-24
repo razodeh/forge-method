@@ -52,10 +52,47 @@ export interface LaneHandle {
  * a different one — but every real test in this package still exercises a real tmp-dir git repository
  * through the real implementation, matching this piece's own Checks text ("a real tmp-dir lane"), not a
  * hand-rolled fake of git itself. */
+/** `@forge/vcs`'s own `MergeConflictDescription`/`MergeConflictResolver` (`merge-queue.ts`), re-declared
+ * structurally for the identical "do not force every consumer of `@forge/engine/dispatch` to also resolve
+ * `@forge/vcs`'s own types" reason `LaneHandle` above already gives. */
+export interface JoinConflictDescription {
+  readonly laneId: string;
+  readonly declaredClaim: readonly string[];
+  readonly conflictedFiles: readonly { readonly path: string; readonly status: string }[];
+  readonly diff: string;
+  readonly worktreePath: string;
+}
+export type JoinConflictResolver = (
+  conflict: JoinConflictDescription,
+) => Promise<'resolved' | 'unresolved'>;
+
+/** `@forge/vcs`'s own `JoinOutcome` (`join.ts`, `PLAN-M14.md` P34), re-declared structurally for the
+ * identical reason. */
+export type JoinOutcome =
+  | { readonly kind: 'fast-forward'; readonly sha: string }
+  | { readonly kind: 'merge'; readonly sha: string }
+  | { readonly kind: 'conflict'; readonly files: readonly string[] };
+
 export interface VcsFacade {
   createLane(stepId: string, integrationBase: string): Promise<LaneHandle>;
   removeLane(handle: LaneHandle, retain: boolean): Promise<void>;
   commit(handle: LaneHandle, message: string, sign: boolean): Promise<{ readonly sha: string }>;
+  /** `PLAN-M14.md` P34: joins `sha` into `handle`'s own current HEAD -- `git merge sha -m message`,
+   * fast-forward when `handle`'s HEAD is already an ancestor of `sha` (byte-identical to the old
+   * stacking rule), a real merge commit otherwise. A conflict follows the facade's own bound conflict
+   * policy (`createVcsFacade`'s own construction argument, not a per-call one here -- an ordinary
+   * `agent`/`command` step has no conflict policy of its own the way a `merge` step's `mergePolicy` does):
+   * `abort` (the facade's own default when none was supplied) returns `{kind:'conflict', files}`;
+   * `agent`/`human` calls `resolver` when one is supplied here or bound at construction (else throws
+   * `VCS-MISSING-CONFLICT-RESOLVER`), returning the same `{kind:'conflict', files}` for an unresolved
+   * outcome, or committing the resolution with `message`'s own trailers otherwise. `resolver` here, when
+   * supplied, overrides the facade's own bound one for this call only. */
+  mergeIntoLane(
+    handle: LaneHandle,
+    sha: string,
+    message: string,
+    resolver?: JoinConflictResolver,
+  ): Promise<JoinOutcome>;
   resolveRevision(ref: string): Promise<string>;
   /** Whether `ancestor` is reachable from (or equal to) `descendant` (`git merge-base --is-ancestor`), both
    * resolvable revisions of the project's repository. Used to tell a lane that already contains another (a
