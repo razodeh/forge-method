@@ -173,11 +173,9 @@ async function collectRegenerableGroups(modulesDir: string): Promise<readonly Re
     },
     // `PLAN-M13.md` P1's own two new regenerable content kinds — real workflow/gate step brief text and
     // real agent prompt text, indexed exactly like the five above (`BRIEF_INDEX`/`PROMPT_INDEX`,
-    // `@forge/templates`). Both are `[]` today (`SPEC-QUESTIONS.md` Q197: the two indexes are still
-    // empty, pending `PLAN-M13.md` P2/P3's own content-authoring pieces) — only the real, permanent
-    // mechanism every later brief/prompt file will flow through, `writeGeneratedDir`'s own
-    // hash-drift/conflict-resolution treatment (and `planRegenerableContent`'s own classification)
-    // included.
+    // `@forge/templates`; real content since `PLAN-M13.md` P2/P3, `SPEC-QUESTIONS.md` Q197) — the
+    // identical `writeGeneratedDir`'s own hash-drift/conflict-resolution treatment (and
+    // `planRegenerableContent`'s own classification) as every other category here.
     { destDir: '.forge/briefs', files: briefs },
     { destDir: '.forge/prompts', files: prompts },
     // `PLAN-M14.md` P29: `16` §16.4's technique library, materialised the identical regenerable-directory
