@@ -1,11 +1,16 @@
 /**
  * `forge config <get|set|list|explain|edit>`.
  */
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
+
+import { ProjectPaths } from '@forge/core';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 
 import {
   configEdit,
@@ -14,9 +19,41 @@ import {
   configList,
   configSet,
 } from '../../src/commands/config.ts';
-import { cleanupAll, createTestProject } from './upgrade/helpers.ts';
+import {
+  cleanupAll,
+  createTestProject,
+  registerCleanup,
+  type TestProject,
+} from './upgrade/helpers.ts';
 
 afterEach(cleanupAll);
+
+/** A project with a real `.forge/config.yaml` but NO git repository at all (`CFG-055`'s "not a
+ * git repository" case, `PLAN-M14.md` P37). */
+async function nonGitProject(): Promise<{ readonly dir: string; readonly paths: ProjectPaths }> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-config-commit-nogit-'));
+  registerCleanup(dir);
+  await mkdir(path.join(dir, '.forge'), { recursive: true });
+  await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(DEFAULT_CONFIG), 'utf8');
+  return { dir, paths: new ProjectPaths(dir) };
+}
+
+/** `createTestProject`'s own real `runInit` only ever runs `git init` (`run-init.ts`'s `ensureGit`) —
+ * it makes no commit at all, so a fresh `createTestProject()` project is itself already the "untracked"
+ * `CFG-055` case (`.forge/config.yaml`, like everything else `forge init` wrote, sits on an unborn
+ * `HEAD`, wholly untracked). A real project commits that first tree itself, outside `forge init`
+ * (`test/intake-workflow.test.ts`'s own `buildTemplateProject` does exactly this) — this helper mirrors
+ * that, once, so the `--commit` happy-path tests below start from a real, clean, committed baseline. */
+async function committedProject(): Promise<TestProject> {
+  const project = await createTestProject();
+  await execa('git', ['add', '-A'], { cwd: project.dir });
+  await execa(
+    'git',
+    ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'],
+    { cwd: project.dir },
+  );
+  return project;
+}
 
 describe('configGet / configSet', () => {
   it('reads a real, currently-effective value at a real dot-path', async () => {
@@ -208,6 +245,125 @@ describe('gates.waiverMaxDays (PLAN-M14.md P16, SPEC-QUESTIONS.md Q232 decision 
     ).rejects.toMatchObject({ code: 'CFG-001' });
     const value = await configGet({ paths: project.paths }, 'gates.waiverMaxDays');
     expect(value).toBe(90);
+  });
+});
+
+describe('configSet --commit (PLAN-M14.md P37)', () => {
+  it(
+    'commits exactly .forge/config.yaml, leaving git status --porcelain empty, subject ' +
+      '"forge(config): set project.level"',
+    async () => {
+      const project = await committedProject();
+      const ctx = { paths: project.paths, projectRoot: project.dir };
+      const result = await configSet(ctx, 'project.level', 'L2', { commit: true });
+      expect(result.config.project.level).toBe('L2');
+      expect(result.committed).not.toBeNull();
+      expect(result.committed?.sha).toMatch(/^[0-9a-f]{40}$/);
+      const status = (await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout;
+      expect(status).toBe('');
+      const subject = (
+        await execa('git', ['log', '-1', '--format=%s'], { cwd: project.dir })
+      ).stdout.trim();
+      expect(subject).toBe('forge(config): set project.level');
+    },
+  );
+
+  it('carries Forge-Step/Forge-Run trailers, and no Co-Authored-By, from ctx.marker', async () => {
+    const project = await committedProject();
+    const ctx = {
+      paths: project.paths,
+      projectRoot: project.dir,
+      marker: { runId: 'run-intake-full', stepId: 'intake:record-level' },
+    };
+    // A genuinely different value: `createTestProject`'s own real, resolved default (`fixture-mod`'s
+    // own level) is not pinned here, so this reads it rather than risking a same-value no-op.
+    const current = await configGet(ctx, 'project.level');
+    const target = current === 'L4' ? 'L3' : 'L4';
+    await configSet(ctx, 'project.level', target, { commit: true });
+    const body = (
+      await execa('git', ['log', '-1', '--format=%B'], { cwd: project.dir })
+    ).stdout.trim();
+    expect(body).toBe(
+      'forge(config): set project.level\n\n' +
+        'Forge-Step: intake:record-level\n' +
+        'Forge-Run: run-intake-full',
+    );
+  });
+
+  it('makes no commit at all — the plain, unchanged behaviour — when --commit is not given', async () => {
+    const project = await committedProject();
+    const before = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+    const result = await configSet(
+      { paths: project.paths, projectRoot: project.dir },
+      'project.level',
+      'L2',
+    );
+    expect(result.committed).toBeNull();
+    const after = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+    expect(after).toBe(before);
+    const status = (await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout;
+    expect(status.trim()).toBe('M .forge/config.yaml');
+  });
+
+  it('reports committed: null and makes no new commit when re-set to the value already stored', async () => {
+    const project = await committedProject();
+    const ctx = { paths: project.paths, projectRoot: project.dir };
+    const current = await configGet(ctx, 'project.level');
+    const before = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+    const result = await configSet(ctx, 'project.level', String(current), { commit: true });
+    expect(result.committed).toBeNull();
+    const after = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+    expect(after).toBe(before);
+  });
+
+  it('CFG-055, nothing written, when the project is not a git repository', async () => {
+    const project = await nonGitProject();
+    const ctx = { paths: project.paths, projectRoot: project.dir };
+    const before = await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8');
+    await expect(configSet(ctx, 'project.level', 'L2', { commit: true })).rejects.toMatchObject({
+      code: 'CFG-055',
+    });
+    const after = await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8');
+    expect(after).toBe(before);
+  });
+
+  it('CFG-055, nothing written, when .forge/config.yaml is untracked (a fresh forge init: runInit itself never commits)', async () => {
+    const project = await createTestProject();
+    const ctx = { paths: project.paths, projectRoot: project.dir };
+    const before = await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8');
+    await expect(configSet(ctx, 'project.level', 'L2', { commit: true })).rejects.toMatchObject({
+      code: 'CFG-055',
+    });
+    const after = await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8');
+    expect(after).toBe(before);
+    // `-uall` (`--untracked-files=all`, matching `getDirtyFiles`'s own real behaviour) so the new
+    // `.forge/` directory is listed file by file, not collapsed to one entry — proof this really is
+    // `.forge/config.yaml` specifically, not merely "something in .forge/ is untracked".
+    const status = (
+      await execa('git', ['status', '--porcelain', '-uall'], { cwd: project.dir })
+    ).stdout;
+    expect(status).toContain('.forge/config.yaml');
+  });
+
+  it('CFG-055, nothing written, when .forge/config.yaml already differs from HEAD', async () => {
+    const project = await committedProject();
+    const configPath = path.join(project.dir, '.forge/config.yaml');
+    const dirty = `${await readFile(configPath, 'utf8')}\n# a pending human edit\n`;
+    await writeFile(configPath, dirty);
+    const ctx = { paths: project.paths, projectRoot: project.dir };
+    await expect(configSet(ctx, 'project.level', 'L2', { commit: true })).rejects.toMatchObject({
+      code: 'CFG-055',
+    });
+    const after = await readFile(configPath, 'utf8');
+    expect(after).toBe(dirty);
+  });
+
+  it('validates before checking git: an invalid value is still CFG-001, even in a non-git directory (order)', async () => {
+    const project = await nonGitProject();
+    const ctx = { paths: project.paths, projectRoot: project.dir };
+    await expect(
+      configSet(ctx, 'project.level', 'not-a-level', { commit: true }),
+    ).rejects.toMatchObject({ code: 'CFG-001' });
   });
 });
 

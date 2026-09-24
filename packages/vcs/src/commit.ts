@@ -7,6 +7,8 @@
  * @see specs/18 §18.3
  * @see PLAN-M5.md P3
  */
+import path from 'node:path';
+
 import { execa } from 'execa';
 
 import { VcsError } from './errors.ts';
@@ -97,6 +99,42 @@ export function formatCommitMessage(options: CommitMessageOptions): string {
   ].join('\n');
 }
 
+/** `formatCommitMessage`'s own sibling for a commit the FORGE CLI makes directly, on its own behalf,
+ * rather than a lane commit an agent's session produced (`forge config set <key> <value> --commit`,
+ * `PLAN-M14.md` P37): the identical `forge(<scope>): <subject>` header, and the identical
+ * `Forge-Step`/`Forge-Run` trailer lines when they apply, built through the same `assertSingleLine`
+ * check `formatCommitMessage` already uses (so a `stepId` that could forge a trailer line is rejected
+ * here exactly as it would be there) — but no `Co-Authored-By` trailer at all (there is no agent role:
+ * this is a plain CLI write, not lane work an agent produced), and the trailer paragraph itself is
+ * OPTIONAL, present only when `marker` is. `configSet --commit`'s own real caller passes `ctx.marker`
+ * (`bin.ts`'s `gateCommandMarker(realEnvSnapshot())`, P4/P15's identical shape): absent for a human
+ * typing the command at their own shell (no trailer paragraph at all), `{runId, stepId}` inside a
+ * run-spawned `command` step (`intake:record-level`). */
+export interface ConfigCommitMessageOptions {
+  readonly scope: string;
+  readonly subject: string;
+  /** The real FORGE run/step marker, `bin.ts`'s `GateCommandContext['marker']`-shaped: `stepId` is
+   * itself optional even when `runId` is present (a session-level marker, not a `command` step's own),
+   * the identical shape `gateCommandMarker` already returns. */
+  readonly marker?: { readonly runId: string; readonly stepId?: string };
+}
+
+export function formatConfigCommitMessage(options: ConfigCommitMessageOptions): string {
+  assertSingleLine('scope', options.scope);
+  assertSingleLine('subject', options.subject);
+  const header = `forge(${options.scope}): ${options.subject}`;
+  if (options.marker === undefined) return header;
+
+  const trailers: string[] = [];
+  if (options.marker.stepId !== undefined) {
+    assertSingleLine('stepId', options.marker.stepId);
+    trailers.push(`Forge-Step: ${options.marker.stepId}`);
+  }
+  assertSingleLine('runId', options.marker.runId);
+  trailers.push(`Forge-Run: ${options.marker.runId}`);
+  return [header, '', ...trailers].join('\n');
+}
+
 /** Stages everything in the lane worktree (`git add -A` — new, modified and deleted files alike; `06`
  * §6.4 step 3 says only "the agent commits," not "the agent stages, then commits") and commits it with
  * `message`, optionally signed (`sign`, wiring `18` §18.3's own `vcs.signCommits`). Returns the new
@@ -143,4 +181,110 @@ export async function commitInLane(
     `resolving the new commit's sha in the lane worktree at "${handle.path}"`,
   );
   return { sha: stdout.trim() };
+}
+
+export interface CommitPathsOptions {
+  /** Paths relative to `cwd`, staged and committed EXACTLY as given — never widened by any real git
+   * default. Every real caller today (`configSet --commit`, P37) passes exactly one, but nothing here
+   * assumes that: the property this function exists for ("commits exactly the named paths, nothing
+   * else") has to hold for whatever a caller passes. */
+  readonly paths: readonly string[];
+  readonly message: string;
+  readonly sign: boolean;
+}
+
+export interface CommitPathsResult {
+  readonly sha: string;
+  /** `false` for a real no-op: none of `paths` were dirty, nothing was staged or committed, and `sha`
+   * is simply `cwd`'s own already-current `HEAD` — never a fabricated "new" sha for a commit that never
+   * happened. `configSet --commit` (P37) reports this case as its own `committed: null`, not `sha`. */
+  readonly committed: boolean;
+}
+
+/** Throws `VCS-COMMIT-PATH-ESCAPES-REPO` if `relativePath` is absolute, or resolves outside `cwd` via
+ * `..` — `git add`/`git commit`'s own pathspec resolution is relative to the process's *working
+ * directory*, not the repository root, and neither rejects an absolute path or a `..`-escaping one on
+ * its own; without this check, a caller-supplied path could stage or commit something entirely outside
+ * `cwd`, which is exactly the "stages/commits EXACTLY the named paths" contract `commitPaths` exists to
+ * hold (this piece's own single most important correctness property, per its own build brief). */
+function assertPathWithinRepo(cwd: string, relativePath: string): void {
+  if (path.isAbsolute(relativePath)) {
+    throw new VcsError({
+      code: 'VCS-COMMIT-PATH-ESCAPES-REPO',
+      message: `Commit path "${relativePath}" is absolute; commitPaths only accepts paths relative to the repository root.`,
+      remedy: 'Pass a path relative to the repository root, not an absolute path.',
+    });
+  }
+  const resolved = path.resolve(cwd, relativePath);
+  const relativeToCwd = path.relative(cwd, resolved);
+  if (relativeToCwd.startsWith('..') || path.isAbsolute(relativeToCwd)) {
+    throw new VcsError({
+      code: 'VCS-COMMIT-PATH-ESCAPES-REPO',
+      message: `Commit path "${relativePath}" resolves outside the repository at "${cwd}".`,
+      remedy: 'Pass a path inside the repository, not one that escapes it via "..".',
+    });
+  }
+}
+
+/**
+ * Stages and commits EXACTLY `options.paths` — `git add -- <paths>` then `git commit -m <message> --
+ * <paths>`, deliberately never `git add -A` the way `commitInLane` above does: `commitInLane`'s own
+ * unconditional stage-everything is right for a lane worktree, whose whole tree is that one step's own
+ * isolated work, but `commitPaths`'s own real caller (`configSet --commit`, P37) can run directly
+ * against the checked-out project root — a real user's own working tree, potentially holding unrelated
+ * dirty state this call must never sweep into its commit. Both the `git add` and the `git commit`
+ * themselves are still pathspec-scoped (`-- <paths>`, not only the earlier `git add`), so even a file
+ * some OTHER process staged between the two calls is not accidentally included.
+ *
+ * A real no-op (none of `paths` are dirty) returns the repository's current `HEAD` with `committed:
+ * false` rather than a raw `git commit` failure ("nothing to commit") — the identical idempotency
+ * `commitInLane` already established for a lane, here for an explicit path set instead of a whole
+ * worktree. Honours `sign` (`vcs.signCommits`, `18` §18.3) and needs no special case for an unborn
+ * `HEAD`: once staging is already correct, the first real commit in a brand-new repository is not
+ * something `git commit -- <paths>` needs help with.
+ *
+ * @throws {VcsError} `VCS-COMMIT-PATH-ESCAPES-REPO` — see `assertPathWithinRepo`.
+ */
+export async function commitPaths(
+  cwd: string,
+  options: CommitPathsOptions,
+): Promise<CommitPathsResult> {
+  for (const relativePath of options.paths) {
+    assertPathWithinRepo(cwd, relativePath);
+  }
+
+  const dirtyFiles = await getDirtyFiles(cwd);
+  const dirty = new Set(dirtyFiles);
+  const anyDirty = options.paths.some((relativePath) => dirty.has(relativePath));
+  if (!anyDirty) {
+    const { stdout } = await wrapGitFailure(
+      () => execa('git', ['rev-parse', 'HEAD'], { cwd }),
+      `resolving the repository's own current HEAD (nothing to commit) at "${cwd}"`,
+    );
+    return { sha: stdout.trim(), committed: false };
+  }
+
+  await wrapGitFailure(
+    () => execa('git', ['add', '--', ...options.paths], { cwd }),
+    `staging ${options.paths.join(', ')} at "${cwd}"`,
+  );
+
+  const commitArgs = [
+    'commit',
+    '-m',
+    options.message,
+    ...(options.sign ? ['-S'] : []),
+    '--',
+    ...options.paths,
+  ];
+  await wrapGitFailure(
+    () => execa('git', commitArgs, { cwd }),
+    `committing ${options.paths.join(', ')} at "${cwd}"`,
+  );
+
+  const { stdout } = await wrapGitFailure(
+    () => execa('git', ['rev-parse', 'HEAD'], { cwd }),
+    `resolving the new commit's sha at "${cwd}"`,
+  );
+  return { sha: stdout.trim(), committed: true };
 }

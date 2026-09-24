@@ -15,8 +15,13 @@ export {
 export {
   assertSingleLine,
   commitInLane,
+  commitPaths,
   formatCommitMessage,
+  formatConfigCommitMessage,
   type CommitMessageOptions,
+  type CommitPathsOptions,
+  type CommitPathsResult,
+  type ConfigCommitMessageOptions,
 } from './commit.ts';
 export { SYSTEM_CLOCK, type VcsClock } from './clock.ts';
 export { VcsError, type VcsErrorInit } from './errors.ts';

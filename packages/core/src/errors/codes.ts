@@ -1963,6 +1963,23 @@ export const ERROR_CODES = {
     remedy:
       'Provide agent, grant, reason, approvedBy, approvedAt and expires on each entry (see 15 §15.3.2), or remove it, then retry.',
   },
+  'CFG-055': {
+    // `forge config set <key> <value> --commit` (`PLAN-M14.md` P37): before ANY write, the one path
+    // `commitPaths` is about to commit (`.forge/config.yaml`) must itself already be exactly at `HEAD`
+    // -- not a git repository at all, the file untracked, or the file already differing from `HEAD`
+    // each refuse the same way, before the schema-revalidated value is ever written to disk. Without
+    // this, the commit `--commit` makes would silently fold in whatever OTHER, unrelated pending state
+    // already sat on that one file (a human's own half-finished manual edit, an untracked config.yaml
+    // nobody committed yet) alongside the one key this call is setting. Checked with `getDirtyFiles`
+    // (`@forge/vcs`).
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { key: string; reason: string }) =>
+      `Cannot commit .forge/config.yaml after setting ${show(d.key)}: ${show(d.reason)}.`,
+    remedy:
+      'Run `git init` if this project is not yet a git repository, or commit or stash the pending ' +
+      'change to .forge/config.yaml first, then retry `forge config set ... --commit`.',
+  },
   // `15` §15.10's twelve compile-time invariants (`PLAN-M2.md` P8). I1–I6, I10–I12 use the exact
   // codes the table itself gives; I7–I9's own `SEC-*` codes do not exist in this closed prefix union
   // (`SPEC-QUESTIONS.md` Q40) and are folded under `CFG-507`–`CFG-509` — one slot higher than the

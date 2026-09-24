@@ -24,10 +24,24 @@ import {
   TEST_COMMAND_LAYERS,
   type TestCommandLayer,
 } from '@forge/engine/dispatch';
+import { commitPaths, formatConfigCommitMessage, getDirtyFiles } from '@forge/vcs';
 import * as YAML from 'yaml';
 
 export interface ConfigCommandContext {
   readonly paths: ProjectPaths;
+  /** The real project root as a plain filesystem path — `commitPaths`'/`getDirtyFiles`'s own `cwd`,
+   * distinct from `paths` (`ProjectPaths`'s own containment-checked resolver, which returns a branded
+   * `AbsolutePath`, not a bare string a git subprocess call can take directly). Optional so every
+   * existing, `--commit`-unaware caller of this context (`configGet`/`configList`/`configExplain`, and
+   * every `configSet` call that never passes `{commit: true}`) keeps working with only `{paths}` — in
+   * practice required only when `configSet`'s own `options.commit` is `true` (`PLAN-M14.md` P37):
+   * `configSet` throws a plain internal error if it is missing then, never silently skips the commit. */
+  readonly projectRoot?: string;
+  /** The real FORGE run/step marker (`bin.ts`'s own `gateCommandMarker(realEnvSnapshot())`, P4/P15's
+   * identical shape), read once at the CLI boundary and passed down here — never read from
+   * `process.env` in this file (R10). Absent for a human's own shell; `{runId, stepId}` inside a
+   * run-spawned `command` step (`intake:record-level`, P37's own real caller). */
+  readonly marker?: { readonly runId: string; readonly stepId?: string };
 }
 
 // Exported so `adopt.ts` can locate the same, single real config file to write its own
@@ -156,15 +170,60 @@ export async function configGet(ctx: ConfigCommandContext, key: string): Promise
   return getByPath(config, key);
 }
 
+export interface ConfigSetOptions {
+  /** `--commit` (`PLAN-M14.md` P37): commit the write, `commitPaths`-scoped to EXACTLY
+   * `.forge/config.yaml`, once it passes schema revalidation. Requires `ctx.projectRoot`. */
+  readonly commit?: boolean;
+}
+
+export interface ConfigSetResult {
+  readonly config: ForgeConfig;
+  /** The commit `commitPaths` made for this write, or `null` when `options.commit` was not `true`, or
+   * was `true` but the write changed nothing a real commit needed to record (`commitPaths`'s own
+   * `committed: false` — an unchanged value re-set to itself, say). `forge config set --commit`'s own
+   * `--json` line (`bin.ts`) reports this directly, never a fabricated sha for a commit that never
+   * happened. */
+  readonly committed: { readonly sha: string } | null;
+}
+
+/** Before ANY write, refuses `--commit` (`CFG-055`) unless `.forge/config.yaml` is already exactly at
+ * `HEAD` in `projectRoot` — not a git repository at all, the file untracked, or the file already
+ * differing from `HEAD` each mean the commit `commitPaths` is about to make would silently fold in
+ * some OTHER, unrelated pending state on that one file, not only the value this call is setting.
+ * Checked with `getDirtyFiles` (`@forge/vcs`) before `configSchema`'s own already-revalidated value is
+ * ever written to disk, so a refused `--commit` leaves the file byte-for-byte as it found it. */
+async function assertCommittable(projectRoot: string, key: string): Promise<void> {
+  let dirtyFiles: readonly string[];
+  try {
+    dirtyFiles = await getDirtyFiles(projectRoot);
+  } catch {
+    throw new ForgeError('CFG-055', { key, reason: 'this project is not a git repository' });
+  }
+  if (dirtyFiles.includes(CONFIG_REL_PATH)) {
+    throw new ForgeError('CFG-055', {
+      key,
+      reason: `${CONFIG_REL_PATH} already has an uncommitted change (untracked or modified)`,
+    });
+  }
+}
+
 /** `set <key> <value>` — writes a real, schema-revalidated `.forge/config.yaml`. `value` is parsed as
  * real YAML scalar/collection syntax (`YAML.parse` on the raw string) rather than always treated as a
  * bare string, so `forge config set execution.concurrency 4` sets a real number, not the string
- * `"4"`, which `configSchema`'s own `z.number()` field would otherwise reject outright. */
+ * `"4"`, which `configSchema`'s own `z.number()` field would otherwise reject outright.
+ *
+ * `options.commit` (`PLAN-M14.md` P37) validates FIRST — the `CFG-001`/`USR-002` refusals below are
+ * entirely unchanged, checked before `--commit`'s own `CFG-055` precondition, so a bad value is always
+ * `CFG-001`, even outside a git repository at all (`test/command-steps.test.ts`'s own order case). Only
+ * once the value is schema-valid does `assertCommittable` run, then the write, then — only on success —
+ * `commitPaths` stages and commits EXACTLY `.forge/config.yaml`, never anything else a project's own
+ * working tree might also hold dirty. */
 export async function configSet(
   ctx: ConfigCommandContext,
   key: string,
   rawValue: string,
-): Promise<ForgeConfig> {
+  options: ConfigSetOptions = {},
+): Promise<ConfigSetResult> {
   assertRealKey(key);
   const config = await readConfig(ctx.paths);
   const layer = testCommandLayerOf(key);
@@ -187,8 +246,33 @@ export async function configSet(
   if (!result.success) {
     throw new ForgeError('CFG-001', { path: CONFIG_REL_PATH, line: 0 });
   }
+
+  if (options.commit === true) {
+    const projectRoot = ctx.projectRoot;
+    if (projectRoot === undefined) {
+      // A programmer-error guard, not a user-facing refusal: every real caller that ever passes
+      // `{commit: true}` (`bin.ts`'s own `runConfigCommand`) always builds `ctx.projectRoot` alongside
+      // it (`ConfigCommandContext`'s own doc comment) — this can only fire if a future call site adds
+      // `--commit` support without wiring `projectRoot` through too.
+      throw new Error('configSet: options.commit requires ctx.projectRoot');
+    }
+    await assertCommittable(projectRoot, key);
+    await writeFileAtomic(ctx.paths.resolveWithin(CONFIG_REL_PATH), YAML.stringify(result.data));
+    const message = formatConfigCommitMessage({
+      scope: 'config',
+      subject: `set ${key}`,
+      ...(ctx.marker === undefined ? {} : { marker: ctx.marker }),
+    });
+    const { sha, committed } = await commitPaths(projectRoot, {
+      paths: [CONFIG_REL_PATH],
+      message,
+      sign: result.data.vcs.signCommits,
+    });
+    return { config: result.data, committed: committed ? { sha } : null };
+  }
+
   await writeFileAtomic(ctx.paths.resolveWithin(CONFIG_REL_PATH), YAML.stringify(result.data));
-  return result.data;
+  return { config: result.data, committed: null };
 }
 
 export interface ConfigListEntry {

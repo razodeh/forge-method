@@ -491,18 +491,55 @@ describe('the shipped intake workflow, run with --answers', () => {
     );
   }, 20_000);
 
-  it('recording the level leaves the tree dirty only in .forge/config.yaml, which the run says to commit', async () => {
-    const project = await createProject('dirty');
+  it('records the level and commits .forge/config.yaml alone, with Forge-Step/Forge-Run trailers, leaving the tree clean (PLAN-M14.md P37)', async () => {
+    const project = await createProject('committed');
     const ask = createAskPort({
       answers: await readAnswersFile(await answersFile(project.dir, { ...ANSWERS })),
       interactive: false,
     });
-    await runWorkflow(
+    const runId = 'run-intake-committed';
+    const result = await runWorkflow(
       { ...project.deps, ask },
-      { workflowId: 'intake', expressionContext: {}, host: 'test', runId: 'run-intake-dirty' },
+      { workflowId: 'intake', expressionContext: {}, host: 'test', runId },
     );
+
+    if (result.kind !== 'run') throw new Error('expected a real run');
     const status = (await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout;
-    expect(status.split('\n').filter((line) => line !== '')).toEqual([' M .forge/config.yaml']);
+    expect(status.split('\n').filter((line) => line !== '')).toEqual([]);
+    const body = (
+      await execa('git', ['log', '-1', '--format=%B'], { cwd: project.dir })
+    ).stdout.trim();
+    expect(body).toContain('Forge-Step: intake:record-level');
+    expect(body).toContain(`Forge-Run: ${runId}`);
+    const subject = (
+      await execa('git', ['log', '-1', '--format=%s'], { cwd: project.dir })
+    ).stdout.trim();
+    expect(subject).toBe('forge(config): set project.level');
+    const config = configSchema.parse(
+      YAML.parse(await readFile(path.join(project.dir, '.forge/config.yaml'), 'utf8')),
+    );
+    expect(config.project.level).toBe('L2');
+
+    // The commit lands on the checked-out branch (the project root) while intake's other outputs sit
+    // on the integration branch (Discloses); no lane or inline step ever touches .forge/config.yaml, so
+    // the two merge cleanly.
+    const worktrees = (
+      await execa('git', ['worktree', 'list', '--porcelain'], { cwd: project.dir })
+    ).stdout;
+    const integration = worktrees
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+      .find((worktree) => path.basename(worktree).startsWith('integration-'));
+    if (integration === undefined) throw new Error(`no integration worktree in:\n${worktrees}`);
+    const integrationBranch = (
+      await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: integration })
+    ).stdout.trim();
+    const merge = await execa('git', ['merge', '--no-edit', integrationBranch], {
+      cwd: project.dir,
+      reject: false,
+    });
+    expect(merge.exitCode, merge.stderr).toBe(0);
   }, 20_000);
 
   it('an answer that is not one of the level choices fails at the question and never reaches the config or a shell', async () => {

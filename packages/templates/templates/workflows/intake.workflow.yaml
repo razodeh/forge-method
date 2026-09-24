@@ -65,12 +65,14 @@ steps:
   # Recording the level is a compiled step, not an onComplete hook (those are never compiled, P11 register D11). The
   # answer reaches the command as data in the environment, never in the command text (elicit, PLAN-M13.md P20), and
   # `forge config set` validates it against L0..L4. It runs against the project root: `.forge/config.yaml` there is
-  # the file every later `forge run` reads, and this step itself runs in the integration worktree.
+  # the file every later `forge run` reads, and this step itself runs in the integration worktree. `--commit`
+  # (PLAN-M14.md P37) commits exactly that one file itself, with Forge-Step/Forge-Run trailers from this step's own
+  # FORGE_STEP_ID/FORGE_RUN_ID, so the tree is clean afterward instead of leaving the level recorded but uncommitted.
   - id: record-level
     kind: command
     dependsOn: [confirm-level]
     inline: true
-    run: 'cd "$FORGE_PROJECT_ROOT" && forge config set project.level "$FORGE_ANSWER_levelConfirmed" && echo "project.level recorded in .forge/config.yaml: commit that file before the next forge run"'
+    run: 'cd "$FORGE_PROJECT_ROOT" && forge config set project.level "$FORGE_ANSWER_levelConfirmed" --commit'
 
   - id: seed-glossary
     kind: agent
