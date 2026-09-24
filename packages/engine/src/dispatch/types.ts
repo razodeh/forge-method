@@ -599,6 +599,24 @@ export interface ExecuteStepContext {
    * whatever the facade was constructed with, if anything" — this piece adds the seam; nothing yet supplies
    * a real resolver through it (`Discloses`). */
   readonly conflictResolver?: MergeConflictResolver | undefined;
+  /** `PLAN-M14.md` P30: KB entry/ADR/Runbook ids AND their own KB-relative paths whose `sources` carry
+   * `kind: 'external'` provenance (`08` §8.3, `@forge/cli`'s own `collectExternalKbIds`) -- the identical
+   * set `@forge/engine/plan`'s own `compileRunPlan`/`compilePlan` used, at compile time, to decide
+   * `node.taint` (`plan/types.ts`'s own `StepNode.taint` doc comment). Declared here (not only on
+   * `@forge/engine/run`'s own `RunEngineContext`, which inherits this rather than redeclaring it -- the
+   * identical "moved here so a plain `ExecuteStepContext` fixture can set it" reason `conflictPolicy`'s
+   * own doc comment above already gives) because `dispatch/assemble.ts`'s own `resolveDeclaredInputs`
+   * needs it too, at ASSEMBLY time: a round-1 gauntlet critic finding (`PLAN-M14.md` P30) that a step's
+   * own declared `kb:<id>` input, when that id is a member of this set, compiled `node.taint: 'external'`
+   * correctly (the grant clamp, `20` §20.5 point 3/4, was never in question) but its full text still
+   * packed as an ORDINARY, unlabelled "Declared inputs" entry -- `20` §20.5 point 1 ("delimit and label")
+   * was satisfied only for the `mcp:`/`fetch:` half of this same piece's own taint sources, not this one.
+   * `resolveDeclaredInputs` now also lists such an id in `StepContext.externalInputs` (block [4] names it
+   * explicitly, alongside its full text still being available in block [3]'s own "Declared inputs"
+   * section under its id, unlike an `mcp:`/`fetch:` reference, which is never packed there at all because
+   * there is nothing to read without exec/network) -- see `assemble.ts`'s own `classifyDeclaredInput` for
+   * the exact rule. Omitted, no declared KB input is labelled this way (every caller before this fix). */
+  readonly externalKbIds?: ReadonlySet<string> | undefined;
 }
 
 /** The `paths` config keys a `18` §18.7 artifact path template's first segment (`specs/...`, `kb/...`,

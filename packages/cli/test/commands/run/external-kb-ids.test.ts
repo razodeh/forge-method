@@ -1,7 +1,9 @@
 /**
- * `collectExternalKbIds` — `PLAN-M14.md` P30: the ids of every KB entry/ADR/Runbook whose own
- * `sources` carries `kind: 'external'` provenance, read from a real KB tree on disk (never a mocked
- * `parseKbTree`).
+ * `collectExternalKbIds` — `PLAN-M14.md` P30: the ids AND KB-relative paths of every KB entry/ADR/
+ * Runbook whose own `sources` carries `kind: 'external'` provenance, read from a real KB tree on disk
+ * (never a mocked `parseKbTree`). Both go into the one returned set (a round-1 gauntlet critic finding:
+ * the first version returned ids only, so a step declaring a glob `kb:<pattern>` input could never
+ * taint from KB provenance at all) -- see this function's own doc comment for the full reasoning.
  *
  * @see specs/08 §8.3
  * @see specs/20 §20.5 point 3
@@ -69,7 +71,7 @@ A test statement.
 }
 
 describe('collectExternalKbIds', () => {
-  it('collects a kb-entry whose sources include kind: external', async () => {
+  it('collects a kb-entry whose sources include kind: external -- both its id and its KB-relative path', async () => {
     const paths = freshProject();
     write(
       paths.resolveWithin('.'),
@@ -81,7 +83,7 @@ describe('collectExternalKbIds', () => {
       ),
     );
     const ids = await collectExternalKbIds(paths, 'docs/forge/kb');
-    expect(ids).toEqual(new Set(['KB-ARCH-0001']));
+    expect(ids).toEqual(new Set(['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md']));
   });
 
   it('does not collect a kb-entry whose sources are all decision/human/code', async () => {
@@ -121,7 +123,14 @@ describe('collectExternalKbIds', () => {
       ),
     );
     const ids = await collectExternalKbIds(paths, 'docs/forge/kb');
-    expect(ids).toEqual(new Set(['KB-ARCH-0001', 'KB-DATA-0001']));
+    expect(ids).toEqual(
+      new Set([
+        'KB-ARCH-0001',
+        'architecture/KB-ARCH-0001.md',
+        'KB-DATA-0001',
+        'data/KB-DATA-0001.md',
+      ]),
+    );
   });
 
   it('returns an empty set for a project with no KB tree at all (never throws)', async () => {
@@ -146,6 +155,21 @@ describe('collectExternalKbIds', () => {
       ),
     );
     const ids = await collectExternalKbIds(paths, 'docs/forge/kb');
-    expect(ids).toEqual(new Set(['KB-ARCH-0001']));
+    expect(ids).toEqual(new Set(['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md']));
+  });
+
+  it('a glob-shaped kb: workflow input (10 §10.1: kb:architecture/**) can be tested for overlap against the returned path -- proves the shape this piece exists to enable, at the collection layer', async () => {
+    const paths = freshProject();
+    write(
+      paths.resolveWithin('.'),
+      'docs/forge/kb/architecture/KB-ARCH-0001.md',
+      kbEntryDoc(
+        'KB-ARCH-0001',
+        'architecture',
+        '  - kind: external\n    ref: mcp:confluence/get_page',
+      ),
+    );
+    const ids = await collectExternalKbIds(paths, 'docs/forge/kb');
+    expect([...ids].some((entry) => entry.startsWith('architecture/'))).toBe(true);
   });
 });

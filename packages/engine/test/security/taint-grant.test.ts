@@ -16,6 +16,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import type { SessionRequest, ToolGrant } from '@forge/adapter-kit';
 import { slugifyStepId } from '@forge/vcs';
+import { kbEntrySchema, type KbTree } from '@forge/kb';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { describe, expect, it } from 'vitest';
 
@@ -23,7 +24,7 @@ import { TAINTED_ADR_STATUS_NOTE } from '../../src/dispatch/assemble.ts';
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { createVcsFacade } from '../../src/dispatch/facades.ts';
 import { resolveStepClaim } from '../../src/dispatch/outputs.ts';
-import type { LaneHandle } from '../../src/dispatch/types.ts';
+import type { KbAccess, LaneHandle } from '../../src/dispatch/types.ts';
 import { dispatchAgentStep } from '../../src/interaction/dispatch-agent-step.ts';
 import { compilePlan, toAgentId, type StepNode } from '../../src/plan/index.ts';
 import { restrictGrantForTaint } from '../../src/security/taint-guard.ts';
@@ -52,13 +53,18 @@ const MIGRATE_SOURCE = await readFile(
 
 /** The real, compiled `StepNode` for `stepId`, from the real shipped `source` text — `parseWorkflow`
  * then `compilePlan`, the same real pipeline `forge run` itself goes through (`PLAN-M14.md` P27), not a
- * hand-built `node()`. */
-function compiledStep(source: string, stepId: string): StepNode {
+ * hand-built `node()`. `externalKbIds` (`PLAN-M14.md` P30) is threaded through to `compilePlan`'s own
+ * third argument, identically to how a real `forge run` would (`RunEngineContext.externalKbIds`). */
+function compiledStep(
+  source: string,
+  stepId: string,
+  externalKbIds?: ReadonlySet<string>,
+): StepNode {
   const parsed = parseWorkflow(source);
   if (!parsed.success) {
     throw new Error(`failed to parse: ${parsed.issues.map((issue) => issue.message).join('; ')}`);
   }
-  const plan = compilePlan(parsed.workflow, {});
+  const plan = compilePlan(parsed.workflow, {}, { taint: { externalKbIds } });
   if (!plan.success) throw new Error(`failed to compile: ${JSON.stringify(plan.issues)}`);
   const found = plan.nodes.find((candidate) => candidate.id === stepId);
   if (found === undefined) {
@@ -523,5 +529,115 @@ describe('a step tainted by its own declared mcp: input, compiled through the re
     expect(request.tools).toEqual({ read: true, write: false, exec: false, network: 'none' });
     expect(request.systemPrompt.text).toContain('External inputs for this step');
     expect(request.systemPrompt.text).toContain('mcp:jira/search_issues');
+  });
+});
+
+describe('a step tainted by a declared kb: input whose id carries external provenance (PLAN-M14.md P30, 20 §20.5 point 1: content is labelled, not only the grant restricted)', () => {
+  const KB_INPUT_WORKFLOW = [
+    'id: extwf',
+    'name: External-provenance KB input workflow',
+    'version: 1.0.0',
+    'description: d',
+    'steps:',
+    '  - id: summarize',
+    '    kind: agent',
+    '    agent: po',
+    "    brief: 'summarize the incident'",
+    "    inputs: [ 'kb:KB-ARCH-0001' ]",
+    '',
+  ].join('\n');
+
+  function kbAccessWithExternalEntry(): KbAccess {
+    const entry = kbEntrySchema.parse({
+      id: 'KB-ARCH-0001',
+      type: 'knowledge',
+      section: 'architecture',
+      title: 'An incident summary pulled from Confluence',
+      status: 'active',
+      confidence: 'high',
+      owner: 'architect',
+      sources: [{ kind: 'external', ref: 'mcp:confluence/get_page' }],
+      created: '2026-01-05',
+      updated: '2026-01-05',
+      review_by: '2026-04-05',
+      supersedes: [],
+      superseded_by: null,
+      related: [],
+      diagrams: [],
+      tags: [],
+      applies_to: [],
+      body: '## Statement\nThe incident root cause was a stale cache.',
+    });
+    const tree: KbTree = {
+      entries: [{ path: 'architecture/KB-ARCH-0001.md', kind: 'kb-entry', value: entry }],
+      errors: [],
+    };
+    return {
+      backend: {
+        upsertEntry: () => undefined,
+        upsertLinks: () => undefined,
+        search: () => [],
+        expand: () => [],
+        clear: () => undefined,
+        close: () => undefined,
+      },
+      tree,
+      parseErrorCount: 0,
+      close: () => undefined,
+    };
+  }
+
+  it('taints (grant: exec false, network none), packs the entry\'s full text AND labels it "EXTERNALLY SOURCED" in block [4] -- not merely an unlabelled ordinary "Declared inputs" entry', async () => {
+    const projectRoot = await repo('kb-provenance-input');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () => Promise.resolve(CAPABLE),
+        openKb: () => Promise.resolve(kbAccessWithExternalEntry()),
+      }),
+      // The identical set `collectExternalKbIds` would have produced for this one entry (id + path).
+      externalKbIds: new Set(['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md']),
+    });
+    const stepNode = compiledStep(KB_INPUT_WORKFLOW, 'extwf:summarize', ctx.externalKbIds);
+    expect(stepNode.taint).toBe('external');
+
+    await executeStep(stepNode, ctx);
+
+    const request = requests.find((candidate) => candidate.stepId === 'extwf:summarize');
+    if (request === undefined) throw new Error('no session dispatched for extwf:summarize');
+    expect(request.tools).toEqual({ read: true, write: false, exec: false, network: 'none' });
+    // The entry's own full text is still packed (unlike an mcp:/fetch: reference, this one IS real,
+    // local, already-on-disk project data) -- 20 §20.5 point 1 asks for it to be labelled, not withheld.
+    expect(request.systemPrompt.text).toContain('The incident root cause was a stale cache.');
+    expect(request.systemPrompt.text).toContain('External inputs for this step');
+    expect(request.systemPrompt.text).toContain('kb:KB-ARCH-0001');
+    expect(request.systemPrompt.text).toContain('EXTERNALLY SOURCED');
+  });
+
+  it('a step declaring the identical kb: input, when its id is NOT in externalKbIds, is untainted and carries no external label at all (control)', async () => {
+    const projectRoot = await repo('kb-provenance-control');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () => Promise.resolve(CAPABLE),
+        openKb: () => Promise.resolve(kbAccessWithExternalEntry()),
+      }),
+      // No externalKbIds at all: the identical KB entry, but nothing marks it external.
+    });
+    const stepNode = compiledStep(KB_INPUT_WORKFLOW, 'extwf:summarize');
+    expect('taint' in stepNode).toBe(false);
+
+    await executeStep(stepNode, ctx);
+
+    const request = requests.find((candidate) => candidate.stepId === 'extwf:summarize');
+    if (request === undefined) throw new Error('no session dispatched for extwf:summarize');
+    expect(request.tools).toMatchObject({ exec: ['git *', 'ls*'], network: 'allowlist' });
+    expect(request.systemPrompt.text).toContain('The incident root cause was a stale cache.');
+    expect(request.systemPrompt.text).not.toContain('EXTERNALLY SOURCED');
+    expect(request.systemPrompt.text).not.toContain('External inputs for this step');
   });
 });

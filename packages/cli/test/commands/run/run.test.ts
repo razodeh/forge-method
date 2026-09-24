@@ -12,6 +12,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
+import { compileRunPlan } from '@forge/engine/plan';
+import { parseWorkflow } from '@forge/engine/workflow';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -316,7 +318,93 @@ A test statement.
         'utf8',
       ),
     ) as { externalKbIds: readonly string[] };
-    expect(manifest.externalKbIds).toEqual(['KB-ARCH-0001']);
+    // Both the id and its own KB-relative path (`collectExternalKbIds`'s own doc comment: needed so a
+    // glob-shaped `kb:` input can also taint from KB provenance, PLAN-M14.md P30 round-1 critic finding).
+    expect(manifest.externalKbIds).toEqual(['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md'].sort());
+  });
+
+  // `PLAN-M14.md` P30: "dry run and real run agree" (this piece's own mandate text), proved directly --
+  // a round-1 gauntlet critic finding that the claim was asserted (a shared computation in `runWorkflow`)
+  // but never verified through the two real artifacts each mode actually produces. The `implement` step
+  // declares a `kb:` input naming this test's own real, external-provenance KB entry; `--dry-run` taints
+  // it; the recorded manifest names the identical `externalKbIds` a real run computed independently
+  // (a SEPARATE `runWorkflow` call, not the dry-run's own in-memory value); recompiling with exactly
+  // that manifest value reproduces the identical taint the dry-run already showed.
+  it('dry run and a real run of the identical workflow agree on which step taints, via the two real artifacts each mode produces (manifest vs. dry-run plan)', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, 'docs/forge/kb/architecture'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, 'docs/forge/kb/architecture/KB-ARCH-0001.md'),
+      `---
+id: KB-ARCH-0001
+type: knowledge
+section: architecture
+title: A test entry citing an MCP server
+status: active
+confidence: high
+owner: architect
+sources:
+  - kind: external
+    ref: mcp:confluence/get_page
+created: 2026-01-05
+updated: 2026-01-05
+review_by: 2026-04-05
+supersedes: []
+superseded_by: null
+related: []
+diagrams: []
+tags: []
+applies_to: []
+---
+
+## Statement
+A test statement.
+`,
+    );
+    const workflowWithKbInput = FIXTURE_WORKFLOW_SOURCE.replace(
+      'brief: briefs/implement.md',
+      "brief: briefs/implement.md\n    inputs: [ 'kb:KB-ARCH-0001' ]",
+    );
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      workflowWithKbInput,
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add a kb: input and its external KB entry'], {
+      cwd: project.dir,
+    });
+
+    const dryResult = await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      dryRun: true,
+      host: 'test-host',
+    });
+    expect(dryResult.kind).toBe('dry-run');
+    if (dryResult.kind !== 'dry-run' || !dryResult.plan.success) throw new Error('unreachable');
+    const dryTaint = dryResult.plan.nodes.find(
+      (node) => node.id === FIXTURE_STEP_IMPLEMENT_ID,
+    )?.taint;
+    expect(dryTaint).toBe('external');
+
+    await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-parity',
+      host: 'test-host',
+    });
+    const manifest = JSON.parse(
+      await readFile(path.join(project.dir, '.forge/state/runs/run-parity/manifest.json'), 'utf8'),
+    ) as { externalKbIds: readonly string[] };
+
+    const parsed = parseWorkflow(workflowWithKbInput);
+    if (!parsed.success) throw new Error('unreachable');
+    const recompiled = compileRunPlan(parsed.workflow, fixtureExpressionContext(), {
+      taint: { externalKbIds: new Set(manifest.externalKbIds) },
+    });
+    if (!recompiled.success) throw new Error('unreachable');
+    const realTaint = recompiled.nodes.find((node) => node.id === FIXTURE_STEP_IMPLEMENT_ID)?.taint;
+    expect(realTaint).toBe(dryTaint);
   });
 
   it('20 §20.10 S8: refuses to start a real, non-dry-run run against a dirty working tree, before acquiring the lock or writing any run state', async () => {

@@ -69,14 +69,10 @@ export interface RunEngineContext extends ExecuteStepContext {
   readonly budget?: BudgetConfig;
   // `conflictPolicy` moved to `ExecuteStepContext` (`PLAN-M14.md` P35, `dispatch/types.ts`'s own doc
   // comment on it) -- inherited from there, not redeclared here. `ctx.conflictPolicy` below is unchanged.
-  /** `PLAN-M14.md` P30: KB entry/ADR/Runbook ids whose own `sources` carry `kind: 'external'` provenance
-   * (`08` §8.3) -- computed once by the CLI from the project's real KB tree (`collectExternalKbIds`) and
-   * handed straight to `compileRunPlan`'s own `taint.externalKbIds` option below, so a step whose
-   * declared `inputs:` names one of these ids compiles tainted (`20` §20.5 point 3), the second of the
-   * two taint sources `plan/types.ts`'s own `StepNode.taint` doc comment describes (the first, an
-   * authored `mcp:`/`fetch:https:` input, needs no option at all). Omitted, no step taints this way --
-   * every caller before this piece, and any caller with no KB open (a fixture, a unit test). */
-  readonly externalKbIds?: ReadonlySet<string> | undefined;
+  // `externalKbIds` (`PLAN-M14.md` P30) likewise lives on `ExecuteStepContext` now, not redeclared here
+  // (a round-1 gauntlet critic finding: `dispatch/assemble.ts` needs the identical set too, at assembly
+  // time, not only this module's own compile-time use below) -- `dispatch/types.ts`'s own doc comment on
+  // it has the full reasoning; `ctx.externalKbIds` below is unchanged.
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {

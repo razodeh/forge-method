@@ -134,6 +134,34 @@ describe('compilePlan -- input-derived taint (PLAN-M14.md P30, 20 §20.5 point 3
     expect(findNode(nodes, 'w:a').taint).toBe('external');
   });
 
+  it('the mcp:/fetch: scheme match is case-insensitive (RFC 3986 §3.1: a scheme name is case-insensitive) -- a critic round found the first version case-sensitive, silently leaving a differently-cased reference untainted', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['MCP:jira/search_issues'] }),
+          agentStep({ id: 'b', brief: 'briefs/b.md', inputs: ['Fetch:HTTPS://example.com/page'] }),
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
+    expect(findNode(nodes, 'w:b').taint).toBe('external');
+  });
+
+  it('an insecure fetch: scheme is still refused regardless of case (Fetch:HTTP://...)', () => {
+    const issues = expectFail(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['Fetch:HTTP://example.com/page'] }),
+        ]),
+        {},
+      ),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'insecure-fetch-input-scheme', stepId: 'w:a' }),
+    );
+  });
+
   it('fetch:http:// (not https) is refused -- never silently accepted, and never silently left untainted', () => {
     const issues = expectFail(
       compilePlan(
@@ -187,6 +215,49 @@ describe('compilePlan -- input-derived taint (PLAN-M14.md P30, 20 §20.5 point 3
     );
     expect(findNode(nodes, 'w:a').taint).toBe('external');
     expect('taint' in findNode(nodes, 'w:b')).toBe(false);
+  });
+
+  it("a glob-shaped kb: input (10 §10.1's own worked kb:architecture/**) taints when its pattern overlaps a known-external PATH -- a round-1 gauntlet critic finding: exactKbIdOf alone can never resolve a glob to one id, so this needs externalKbIds to also carry paths, not just ids", () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:architecture/**'] }),
+    ]);
+    const nodes = expectOk(
+      compilePlan(wf, {}, { taint: { externalKbIds: ['architecture/KB-ARCH-0001.md'] } }),
+    );
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
+  });
+
+  it('the identical glob input does NOT taint when externalKbIds holds only a path under a different section', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:architecture/**'] }),
+    ]);
+    const nodes = expectOk(
+      compilePlan(wf, {}, { taint: { externalKbIds: ['data/KB-DATA-0001.md'] } }),
+    );
+    expect('taint' in findNode(nodes, 'w:a')).toBe(false);
+  });
+
+  it('a bare external id never falsely satisfies an unrelated glob (ids and paths share one set, but never cross-match)', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:architecture/**'] }),
+    ]);
+    // Only the bare id is present (no path) -- a glob can never structurally match a `/`-free id.
+    const nodes = expectOk(compilePlan(wf, {}, { taint: { externalKbIds: ['KB-ARCH-0001'] } }));
+    expect('taint' in findNode(nodes, 'w:a')).toBe(false);
+  });
+
+  it('an exact kb: id reference is unaffected by mixing paths into externalKbIds: it still matches by id', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:KB-ARCH-0001'] }),
+    ]);
+    const nodes = expectOk(
+      compilePlan(
+        wf,
+        {},
+        { taint: { externalKbIds: ['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md'] } },
+      ),
+    );
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
   });
 });
 

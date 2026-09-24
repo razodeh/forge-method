@@ -179,6 +179,11 @@ export function createTestContext(
     ...(overrides.conflictResolver === undefined
       ? {}
       : { conflictResolver: overrides.conflictResolver }),
+    // `PLAN-M14.md` P30: absent unless a test overrides it, the identical "opt-in only" shape every
+    // other optional field above already has -- omitting this line would silently drop a test's own
+    // `externalKbIds` override (the exact class of bug a fresh `run-engine.test.ts` fixture helper was
+    // separately caught making, this same piece, this same round).
+    ...(overrides.externalKbIds === undefined ? {} : { externalKbIds: overrides.externalKbIds }),
   };
 }
 

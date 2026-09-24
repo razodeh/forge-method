@@ -38,11 +38,13 @@ import {
 } from '../expr/index.ts';
 import type { ExpressionContext } from '../expr/index.ts';
 import type { AgentStep, FanoutStep, Workflow, WorkflowStep } from '../workflow/index.ts';
+import { globsOverlap } from './dependencies.ts';
 import {
   exactKbIdOf,
   isExternalSchemeInputReference,
   isFetchInputReference,
   isSecureFetchInputReference,
+  kbInputPattern,
 } from './input-refs.ts';
 import {
   toAgentId,
@@ -60,12 +62,16 @@ import {
  * `plan/types.ts`'s own `StepNode.taint` doc comment describes -- an authored `mcp:`/`fetch:` input
  * scheme is always detected from the reference text alone (no option needed for that half), but "a KB
  * entry carrying `external` provenance" can only be recognised by matching a step's declared `kb:`/
- * `artifact:` input id against a set `compilePlan` itself has no way to compute (it never opens the KB).
+ * `artifact:` input against a set `compilePlan` itself has no way to compute (it never opens the KB).
  * The caller (`@forge/cli`, via `collectExternalKbIds`) supplies that set here. Omitted entirely (every
  * call site before this piece, and any call site with no KB open), no step taints this way -- only the
  * scheme-derived half still applies, unchanged. */
 export interface CompilePlanTaintOptions {
-  /** KB entry / ADR / Runbook ids whose own `sources` carry `kind: 'external'` provenance (`08` §8.3). */
+  /** KB entry / ADR / Runbook ids **and their own KB-relative paths** whose own `sources` carry
+   * `kind: 'external'` provenance (`08` §8.3) -- both go in the one set (`collectExternalKbIds`'s own
+   * doc comment has the full reasoning): an exact `kb:<id>`/`artifact:Type(<id>)` reference matches by
+   * id, a glob-shaped `kb:<pattern>` reference (`10` §10.1's own worked `kb:architecture/**`) matches by
+   * `globsOverlap`-ing its pattern against a path. */
   readonly externalKbIds?: ReadonlySet<string> | readonly string[] | undefined;
 }
 
@@ -580,17 +586,27 @@ function buildLeafNode(
   }
   // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P30: the second of the two taint sources
   // `plan/types.ts`'s own `StepNode.taint` doc comment describes -- present when this agent step's own
-  // (resolved) `inputs:` names an external scheme directly (`mcp:`/`fetch:https:`), or names a KB id the
-  // caller's own `externalKbIds` set marks as carrying `external` provenance (`08` §8.3). `agentStep`
-  // guards this the same way the authored-taint spread below already does: only an `'agent'`-kind step
-  // ever has real `inputs:` to derive this from (every other kind's `inputs` field is always `[]`, so
-  // `resolvedInputs` is empty and this is trivially `false`).
+  // (resolved) `inputs:` names an external scheme directly (`mcp:`/`fetch:https:`), names a KB id the
+  // caller's own `externalKbIds` set marks as carrying `external` provenance (`08` §8.3), OR (a round-1
+  // gauntlet critic finding) is a GLOB-shaped `kb:<pattern>` reference (`10` §10.1's own worked
+  // `kb:architecture/**`) whose pattern `globsOverlap`s one of `externalKbIds`' own path-shaped entries
+  // -- `exactKbIdOf` alone would silently miss every glob, since a glob never resolves to one exact id.
+  // `agentStep` guards this the same way the authored-taint spread below already does: only an
+  // `'agent'`-kind step ever has real `inputs:` to derive this from (every other kind's `inputs` field
+  // is always `[]`, so `resolvedInputs` is empty and this is trivially `false`).
   const derivedTaint =
     agentStep !== undefined &&
     resolvedInputs.some((ref) => {
       if (isExternalSchemeInputReference(ref)) return true;
       const id = exactKbIdOf(ref);
-      return id !== undefined && env.externalKbIds.has(id);
+      if (id !== undefined) return env.externalKbIds.has(id);
+      const pattern = kbInputPattern(ref);
+      if (pattern === undefined) return false;
+      // `[...Set]` once per glob reference: `env.externalKbIds` is a compile-wide constant, and no
+      // shipped workflow declares more than a handful of `kb:` glob inputs per step, so this is nowhere
+      // near the pathological-input territory `globsOverlap`'s own bounded length/bracket-count guards
+      // already exist to cap on the OTHER side of each individual comparison.
+      return [...env.externalKbIds].some((known) => globsOverlap(pattern, known));
     });
 
   const node: StepNode = {

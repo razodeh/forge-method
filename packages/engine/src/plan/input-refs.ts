@@ -35,15 +35,36 @@ export function exactKbIdOf(reference: string): string | undefined {
   return undefined;
 }
 
+/** The raw text after `kb:`, whatever shape it is -- unlike `exactKbIdOf`, never refuses a glob
+ * (`kb:architecture/**`, `10` §10.1's own worked example). `undefined` for anything not a `kb:`
+ * reference at all. `plan/compile.ts`'s own derived-taint check uses this as its fallback when
+ * `exactKbIdOf` cannot resolve one exact id, to glob-match against a KB-relative *path* instead
+ * (`PLAN-M14.md` P30, a round-1 gauntlet critic finding: a glob-shaped `kb:` input previously never
+ * tainted from KB provenance at all, since there was no exact id for it to look up). */
+export function kbInputPattern(reference: string): string | undefined {
+  return KB_REFERENCE.exec(reference)?.[1];
+}
+
 /** `mcp:<server>[/<tool>]` -- `15` §15.5.1's own server/tool id shapes are left open (no closed pattern
  * given anywhere in the spec pack for either), so this accepts the same permissive identifier character
- * set the rest of this codebase uses for similar free-form ids: letters, digits, `_`, `-`, `.`. */
-const MCP_INPUT_REFERENCE = /^mcp:[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/;
+ * set the rest of this codebase uses for similar free-form ids: letters, digits, `_`, `-`, `.`. Case
+ * *insensitive on the scheme itself* (the `i` flag; a round-1 gauntlet critic finding, `PLAN-M14.md`
+ * P30): a URI scheme name is case-insensitive by RFC 3986 §3.1 ("interpreted as lowercase"), and this
+ * is the one place in this mini-DSL where scheme-matching failing open is a real, security-relevant
+ * consequence -- a step whose `inputs:` reads `MCP:jira/search_issues` must not silently keep its full,
+ * untainted grant merely because a workflow author (or a future resolver with its own, independently
+ * case-insensitive matching) wrote the scheme in a different case. `kb:`/`artifact:`/`taint:` stay
+ * deliberately case-*sensitive* elsewhere in this codebase (a typo there is caught as a visible,
+ * non-security-relevant "unresolved input" or schema error, never a silent grant); `mcp:`/`fetch:` are
+ * not analogous, since a mismatch here silently changes what the step is *permitted to do*. */
+const MCP_INPUT_REFERENCE = /^mcp:[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)?$/i;
 
 /** `fetch:<https-url>` -- the only `fetch:` form `10` §10.1 allows; a plain `http:` (or any other)
  * fetch scheme is a compile-time refusal (`plan/compile.ts`'s `buildLeafNode`), never silently accepted
- * or silently treated as non-external. */
-const FETCH_HTTPS_INPUT_REFERENCE = /^fetch:https:\/\/.+$/;
+ * or silently treated as non-external. Case-insensitive on both scheme names (`fetch:`/`https:`), for
+ * the identical RFC 3986 reason `MCP_INPUT_REFERENCE` above gives. */
+const FETCH_HTTPS_INPUT_REFERENCE = /^fetch:https:\/\/.+$/i;
+const FETCH_SCHEME_REFERENCE = /^fetch:/i;
 
 export function isMcpInputReference(reference: string): boolean {
   return MCP_INPUT_REFERENCE.test(reference);
@@ -52,7 +73,7 @@ export function isMcpInputReference(reference: string): boolean {
 /** Any `fetch:` reference, secure or not -- used to detect (and refuse) a non-`https:` one; never used
  * alone to decide taint (see `isExternalSchemeInputReference`). */
 export function isFetchInputReference(reference: string): boolean {
-  return reference.startsWith('fetch:');
+  return FETCH_SCHEME_REFERENCE.test(reference);
 }
 
 export function isSecureFetchInputReference(reference: string): boolean {

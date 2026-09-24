@@ -210,18 +210,26 @@ export interface StepNode {
    * decision 15) are the two shipped workflows, and the exactly five steps
    * (`test/tainted-steps.test.ts`), that declare it today.
    *
-   * This is still only *one* of the two taint sources `20` §20.5 point 3 describes, not the whole
-   * signal: `PLAN-M14.md` P30 (depends on this piece) additionally taints a step whose own declared
-   * `inputs:` names an `mcp:`/`fetch:` reference or a KB entry carrying `external` provenance — a fact
-   * `compilePlan` cannot read off `AgentStep.taint` alone, since it depends on what a *run* actually
-   * resolves an input to, not merely what the workflow author wrote on the step itself.
-   * `markExternalContent` itself still has zero production callers (confirmed by grep, unchanged by
-   * this piece): every real tainted `StepNode` in this codebase today is *authored*, not
-   * runtime-detected from actually-packed content. The existing consumers of this field
-   * (`restrictGrantForTaint`, `assertGateApprovalAllowed`, `context.json`'s `externalContent`) were
-   * already real and already wired before this piece — see `taint-guard.ts`'s own doc comment — this
-   * piece is what finally gives them a real, compiled step to fire on (`adopt`/`migrate`'s own compiled
-   * plans), not only a hand-built `StepNode` in a test. */
+   * **This was only *one* of the two taint sources `20` §20.5 point 3 describes; `PLAN-M14.md` P30
+   * (depended on this piece, now landed) added the second.** `compilePlan` also taints an `'agent'`
+   * step whose own (template-resolved) `inputs:` names an `mcp:<server>[/<tool>]` reference, a
+   * `fetch:<https-url>` reference, or a `kb:`/`artifact:` id present in the caller's own
+   * `CompilePlanOptions.taint.externalKbIds` set (`@forge/cli`'s `collectExternalKbIds`, run once per
+   * `forge run`/`resume`/`--dry-run` against the project's real KB tree, threading through
+   * `RunEngineContext.externalKbIds`, a `RunManifest.externalKbIds` snapshot for `forge resume`, and
+   * `compileRunPlan`/`compileStageRunPlan`'s own identical `taint` option) — a fact `compilePlan` could
+   * not read off `AgentStep.taint` alone, since a declared-external-provenance KB id is project state,
+   * not something the workflow author wrote on the step itself. A `fetch:http://...` (or any other
+   * non-`https:` `fetch:` scheme) is refused outright at compile time (`insecure-fetch-input-scheme`),
+   * never silently accepted or silently treated as non-external. `markExternalContent` itself still has
+   * zero production callers (confirmed by grep, unchanged by P30 too): every real tainted `StepNode` in
+   * this codebase today is *compile-time derived* (from an author's `taint: external`, an author's
+   * `mcp:`/`fetch:https:` input, or a KB id's own recorded provenance), never runtime-detected from
+   * actually-packed content. The existing consumers of this field (`restrictGrantForTaint`,
+   * `assertGateApprovalAllowed`, `context.json`'s `externalContent`) were already real and already wired
+   * before `PLAN-M14.md` P27 — see `taint-guard.ts`'s own doc comment — P27 is what first gave them a
+   * real, compiled step to fire on (`adopt`/`migrate`'s own compiled plans), and P30 widened *why* a
+   * step can compile that way, not merely a hand-built `StepNode` in a test. */
   readonly taint?: 'external' | undefined;
 }
 
