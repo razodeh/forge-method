@@ -23183,3 +23183,145 @@ defensive hedge whose condition never actually fires for this shape of crash, no
 real, pre-existing, and out of this piece's declared Surface — not fixed here.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P26`.
+
+## Q261 — M14 P24: `forge debug` REPRODUCE/PROVE run a defect's own test through `<command> <path>` — a two-round critic loop found one real-but-minor finding in round 1 (fixed with an honest disclosure comment, the underlying race re-derived and confirmed bounded-safe), zero new findings in round 2
+
+**Context.** `PLAN-M14.md` P24; depends on the already-landed P5 (`dispatch/test-path.ts`'s
+`validateTestPath`/`expandTrustedInvocation`, `confined-command.ts`'s `VetOptions.
+allowTrustedPathExtension`, built gated OFF for every existing caller — including `forge debug`'s own
+`createRcaShell`, deliberately, so P5's own landing changed no live behaviour). Q230's own numbered
+decisions (5, 6, 10) already describe the mechanism this piece extends: `forge debug` builds the RCA
+shell's grant from `deriveTestExec`/`grantWithTestExec` and passes the derived commands as
+`trustedCommands` (5); `vetProposedCommand` accepts a proposal equal to one of them exactly (6); a
+trusted command runs under `ENGINE_COMMAND_LIMITS`, not a model's tighter ad-hoc budget (10) — and Q230's
+own "whole-layer reproduction" gap (decision 14, later) named the fix as a validated `{path}` extension,
+which P5 built and gated off for this exact piece to turn on.
+
+**Built.** `createRcaShell` (`engine/rca/shell.ts`) is now the ONE caller that sets
+`allowTrustedPathExtension: true` on every `vetProposedCommand` call, and forwards a new
+`RcaShellOptions.testRoots` (from `execution.testRoots`) into it. A REPRODUCE/PROVE proposal that is one
+of `trustedCommands`, verbatim, followed by one real, validated test file (and, for a recognised
+runner, its own `-t`/`-g`/`-k` filter token) now runs narrowed to that file instead of the whole layer,
+and gets the identical `ENGINE_COMMAND_LIMITS` a bare configured command already got (re-derived via a
+second `expandTrustedInvocation` call in `shell.ts`, since `vetProposedCommand`'s own accept path returns
+no signal a caller can read; documented, see the mutation/critic notes below). A path that fails
+validation (an escape, a symlink, outside a configured `execution.testRoots`) is refused with reason
+`test-path`, exactly like every other refusal: it lands in `refusedCommands` and is named in the next
+REPRODUCE attempt's prompt through the loop's own existing, unmodified plumbing (nothing in `loop.ts`'s
+REPRODUCE/PROVE control flow needed to change — a proposed command was already treated as an opaque
+string end to end, so `state.reproductionCommand` already recorded the expanded string, and PROVE
+already re-ran that identical variable).
+
+`RcaLoopDeps.runnableCommands` (`engine/rca/types.ts`) changes shape, `readonly string[]` to a new
+`readonly RunnableCommand[]` (`{command, filterFlag?}`), so `runnableCommandsNote` (`engine/rca/loop.ts`)
+can state the `<command> <path>` shape and mention a filter flag ONLY for a command actually flagged as
+a recognised table runner — never claimed for a plain wrapper such as `pnpm test`, which the vet would
+never accept a filter token for. `debug.ts` computes each command's `filterFlag` via a new export,
+`trustedCommandFilterFlag` (`dispatch/test-path.ts`), a thin wrapper around the identical private
+`runnerFlagFor`/`RUNNER_FILTER_FLAGS` table `expandTrustedInvocation` itself consults — never a second,
+hand-copied list that could drift and make the note overclaim or underclaim what the vet will actually
+accept.
+
+**Surface additions beyond the plan's own literal list.** The plan's Surface line names
+`rca/{shell,loop,types}.ts`, `loop/debug.ts`. Two small, deliberate, additive exports were needed beyond
+that list, both already-exported-adjacent and non-breaking: `trustedCommandFilterFlag` (`dispatch/
+test-path.ts`, plus its one-line re-export in `dispatch/index.ts`), for the reason above (single source
+of truth for the runner table, rather than a second hand-copied list in `debug.ts` that could silently
+drift — the exact "note claiming `-t` for all" failure mode this piece's own mutation evidence targets).
+`shell.ts`'s own limit-selection logic uses only ALREADY-exported functions (`expandTrustedInvocation`,
+`commandWords`), so `confined-command.ts` itself needed no change at all.
+
+**Tests first.** `rca/test-command.test.ts` (real loop, real confined runner, a fake test command
+extended to record its own argv to a file): REPRODUCE proposes `<command> <path>`, runs once with that
+path as its own argv, the fix makes it pass, PROVE re-runs the IDENTICAL string (both real runs' argv
+equal), and the RCA record's `reproduction` field holds the expanded string; a proposed path that fails
+validation is refused as `test-path` (not `not-in-grant`), recorded in `refusedCommands`, and named in
+the next REPRODUCE attempt's `prior-attempts` untrusted block; `execution.testRoots` narrows the
+extension (a path outside the one configured root is refused even though it matches the built-in
+`isTestPath` fallback by name); the note distinguishes a `filterFlag`-bearing `RunnableCommand` from one
+without. `rca/shell.test.ts`: a proposal accepted via the path extension gets `ENGINE_COMMAND_LIMITS`,
+not the tighter proposed-command budget (a real script, a forced 200 ms proposed timeout vs. a 5 s
+engine one, proven not to time out); the same accepted-shape proposal is refused as `not-in-grant` when
+`trustedCommands` is empty (the extension never widens an untrusted grant). `rca/
+trusted-path-extension-gate.test.ts` rewritten (its entire pre-existing purpose was proving the
+extension was OFF for `createRcaShell`; this piece deliberately flips that): still proves the opened
+gate stays narrow — a real path now runs, a path outside `testRoots` or a `..` escape is refused as
+`test-path` (never silently `not-in-grant`), an unrelated proposal is still refused as ordinary
+`not-in-grant`, and the bare configured command is unaffected. `dispatch/test-path.test.ts`:
+`trustedCommandFilterFlag` returns the right flag for vitest/jest/mocha/pytest (including `npx
+jest`/`python -m pytest` word-order cases) and `undefined` for a wrapper, and a cross-check test proves
+its answer agrees with what `expandTrustedInvocation` itself actually accepts. `cli/test/commands/loop/
+debug-test-command.test.ts` (real `debugSymptom`, a real lane, the real confined runner, only the model
+faked): `execution.testRoots` narrows the extension end to end through the real CLI wiring; a real
+ten-phase loop against a real, installed vitest (needed specifically because PROVE's own `forge test
+run` layer re-check shells a genuinely SEPARATE `forge` subprocess via a real binary shim, which cannot
+see the test's in-memory `DebugDeps.config` — a real, committed `.forge/config.yaml` is required for
+that subprocess to see `execution.testCommands` at all, confirmed the hard way after an early draft of
+this exact test escalated for a reason that had nothing to do with this piece's own extension) proves
+PROVE never runs the bare layer alone once a path was proposed: the recorded RCA's `reproduction` field
+is the expanded string, never the bare `REAL_VITEST_CMD`. The pre-existing "no exec → no placeholder
+offered" case was already covered by an existing control test in the same CLI file (asserting the note
+text is entirely absent), re-verified green under this piece's changed note wording.
+
+**Mutation evidence (real: mutate, run scoped tests, confirm real failure, restore, re-confirm green).**
+PROVE re-running a stripped-down (bare) command instead of the identical expanded
+`state.reproductionCommand`: 5 of `test-command.test.ts`'s own tests failed exactly as predicted.
+`testRoots` hard-coded to `undefined` inside `createRcaShell` (simulating it never reaching the vet):
+both the engine-level and the `trusted-path-extension-gate.test.ts` narrowing tests failed exactly as
+predicted (a path outside the configured root that should have been refused was silently accepted).
+`runnableCommandsNote` mutated to claim `-t` for every command regardless of `filterFlag`: the
+note-distinguishing test failed exactly as predicted. Each mutation was applied with `Edit`, confirmed
+red, then reverted — the first restore attempt used `git checkout --`, which (correctly, per the
+standing rule) discards uncommitted work wholesale, not just a mutation; it silently wiped this piece's
+OWN legitimate, not-yet-committed `loop.ts` changes along with the mutation. Caught immediately (the
+diff stat dropped from the expected ~24 lines to 0) and recovered from a pre-mutation file backup taken
+before applying the mutation, re-verified against the full scoped `rca/` suite (green). The two later
+mutations were reverted via a plain `Edit` (restoring the exact original text) instead, precisely to
+avoid repeating this.
+
+**Critic rounds (fresh subagent each, given the diff and the plan/spec text, not the rationale).**
+Round 1 (0 blocking, 1 real-but-minor, 1 informational): a narrow, same-process TOCTOU between
+`vetProposedCommand`'s own internal `expandTrustedInvocation` call (which decides ALLOW/REFUSE) and
+`shell.ts`'s own second, independent call to the same function (used only to pick `ENGINE_COMMAND_LIMITS`
+vs. the tighter proposed-command budget) — if the test file is deleted or replaced in the narrow window
+between the two calls, the second check can wrongly pick the tighter limit for a command that was
+genuinely accepted as trusted, but can never grant execution to something refused or a looser limit than
+intended (fixed: an honest disclosure comment added at the call site, naming exactly why the race is
+bounded-safe in only one direction). The informational finding — `dispatch/index.ts`'s working-tree diff,
+at review time, bundled an unrelated concurrent piece's own export additions alongside this piece's own
+one-line `trustedCommandFilterFlag` re-export — was already independently identified and planned for
+(the concurrent piece landed its own commit before this piece's own commit, which left the file's diff
+holding only this piece's own line by commit time; no isolation patch was needed in the end). Round 2
+(re-verified the round-1 fix's own claim by independently re-deriving the TOCTOU's direction from the
+code, ran the full lint/format/typecheck/test suite again for real): zero new findings; the disclosed
+comment's claim confirmed accurate; two nitpicks noted as already covered by pre-existing P5 disclosure
+comments (`validateTestPath`'s directory-scoped `testRoots` matching; `installForgeShim`'s global `PATH`
+mutation, an exact reuse of `debug.test.ts`'s own established, already-restored-in-`finally` pattern).
+
+**Shared working tree.** Exact-file `git add` throughout; `dispatch/index.ts` was, for part of this
+piece's own build, shared with a concurrent piece's (P28) own export additions to the same file (a
+different, non-adjacent hunk once viewed with zero context) — a hand-built isolated `git apply --cached`
+patch was prepared and verified as a fallback, but P28 committed its own hunk before this piece's own
+final commit, leaving `dispatch/index.ts`'s working-tree diff holding only this piece's own one-line
+addition by the time of `git add`, confirmed directly before staging. `pnpm lint`'s one full run during
+this piece's own build was blocked by an untracked, unrelated scratch test file
+(`packages/engine/test/run/zzz-debug-p35.test.ts`, another concurrent agent's own debris, never `git
+add`ed, never touched); it was gone (cleaned up by its own owner) by the next run, confirmed via `git
+log -1` showing no history for the path before treating it as not-this-piece's-problem. The self-caused
+`git checkout --` mistake during mutation-evidence testing (above) is the one real incident this piece
+caused itself, caught and recovered with no data loss.
+
+**Discloses.** Agent sessions outside `forge debug`'s own RCA loop still run whole layers (only
+`createRcaShell` opts in; `forge story verify`'s own P26 already wires `testRoots` for its own,
+unrelated, non-command-proposal use of `validateTestPath` and does not touch this extension). A runner
+rejecting a positional file argument (a project whose configured command is a wrapper the vet correctly
+never adds a filter flag for, but that itself refuses an unexpected trailing argument) would waste a
+reproduction attempt; exit 2/64 are not specifically classified as `inconclusive` unless a real runner is
+shown to use them for that (unchanged from P5's own disclosure). `revertCheckScript` (`loop.ts`) stays
+unguarded against a proposed command's own shell metacharacters beyond what `vetProposedCommand` already
+refused before either REPRODUCE or PROVE could reach it (unchanged; out of this piece's own scope). The
+narrow, direction-bounded TOCTOU in `shell.ts`'s own limit-selection re-check (above) is left as a
+documented, accepted risk rather than plumbed through `vetProposedCommand`'s own return value, which
+would be a `confined-command.ts` change outside this piece's declared Surface.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P24`.
