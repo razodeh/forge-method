@@ -252,11 +252,7 @@ function restoreFailureNote(
   restoreOutcome: ReviewedLaneRestoreOutcome | undefined,
 ): string {
   if (reviewedLane === undefined || restoreOutcome === undefined) return message;
-  if (
-    restoreOutcome.dirtyPaths !== undefined &&
-    restoreOutcome.dirtyPaths.length === 0 &&
-    restoreOutcome.resetOk
-  ) {
+  if (restoreOutcome.dirtyPaths?.length === 0 && restoreOutcome.resetOk) {
     return message;
   }
   return `${message} -- ${describeRestoreOutcome(reviewedLane, restoreOutcome)}`;
@@ -550,7 +546,11 @@ export async function runSwarmReviewStep(
   // `.catch(() => true)` was: known dirty, OR unknown (could not even be listed), OR the reset attempt itself
   // did not provably succeed, all fail the step here (typed `RUN-083`, never silently accepted) rather than
   // trusting an unconfirmed-clean lane. Only a lane confirmed clean AND confirmed reset lets the step succeed.
-  if (reviewedLane !== undefined && restoreOutcome !== undefined && reviewedLaneNeedsAttention(restoreOutcome)) {
+  if (
+    reviewedLane !== undefined &&
+    restoreOutcome !== undefined &&
+    reviewedLaneNeedsAttention(restoreOutcome)
+  ) {
     return failed(
       node,
       startedAt,

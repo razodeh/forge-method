@@ -1778,23 +1778,9 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     const adapter = new FakePlatformAdapter();
     scriptPerspectives(adapter, REVIEW, cleanPerspectives());
     const stepGraph = graphOf();
-    const real = createVcsFacade(projectRoot, 'run-test');
-    // Only the reviewed (implement) lane's own inspection is made to fail -- everything else (including the
-    // review's own later lane, if this ever got that far) still goes through the real implementation.
-    let reviewedLaneId: string | undefined;
-    const vcs: ExecuteStepContext['vcs'] = {
-      ...real,
-      changedFiles: async (handle, baseSha) => {
-        if (handle.laneId === reviewedLaneId) {
-          throw new Error('simulated: cannot list changes in this worktree');
-        }
-        return real.changedFiles(handle, baseSha);
-      },
-    };
     const base = createTestContext({
       projectRoot,
       adapter,
-      vcs,
       assembly: reviewerAssembly(projectRoot),
       integrationBase: 'main',
     });
@@ -1802,9 +1788,23 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
     const implementLane = ctx.laneRegistry.get(IMPL);
     if (implementLane === undefined) throw new Error('the implement step left no lane');
-    reviewedLaneId = implementLane.laneId;
 
-    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+    // Built only now that the implement lane's real id is known (a `const`, not a closure over a mutable
+    // outer variable set later): only the reviewed (implement) lane's own inspection is made to fail --
+    // everything else still goes through the real implementation `ctx.vcs` already is.
+    const real = ctx.vcs;
+    const vcs: ExecuteStepContext['vcs'] = {
+      ...real,
+      changedFiles: async (handle, baseSha) => {
+        if (handle.laneId === implementLane.laneId) {
+          throw new Error('simulated: cannot list changes in this worktree');
+        }
+        return real.changedFiles(handle, baseSha);
+      },
+    };
+    const reviewCtx = { ...ctx, vcs };
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, reviewCtx);
 
     // No perspective ever wrote anything here -- the lane genuinely was clean. The step still fails,
     // because whether it was clean could never be confirmed: the pre-existing guard treated the identical
@@ -1813,7 +1813,7 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     const failure = failureOf(outcome);
     expect(failure.code).toBe('RUN-083');
     expect(failure.message).toContain('could not be confirmed');
-    expect(ctx.laneRegistry.has(REVIEW)).toBe(false);
+    expect(reviewCtx.laneRegistry.has(REVIEW)).toBe(false);
   });
 
   it('when resetting the reviewed lane itself fails, the failure message never claims the lane was restored, and the dirty file is genuinely still there (PLAN-M14.md P36 critic round)', async () => {
@@ -1829,21 +1829,9 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     };
     scriptPerspectives(fake, REVIEW, cleanPerspectives());
     const stepGraph = graphOf();
-    const real = createVcsFacade(projectRoot, 'run-test');
-    let reviewedLaneId: string | undefined;
-    const vcs: ExecuteStepContext['vcs'] = {
-      ...real,
-      resetLane: async (handle, targetRevision) => {
-        if (handle.laneId === reviewedLaneId) {
-          throw new Error('simulated: git reset failed (stale lock)');
-        }
-        return real.resetLane(handle, targetRevision);
-      },
-    };
     const base = createTestContext({
       projectRoot,
       adapter: fake,
-      vcs,
       assembly: reviewerAssembly(projectRoot),
       integrationBase: 'main',
     });
@@ -1851,16 +1839,27 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
     const implementLane = ctx.laneRegistry.get(IMPL);
     if (implementLane === undefined) throw new Error('the implement step left no lane');
-    reviewedLaneId = implementLane.laneId;
 
-    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+    const real = ctx.vcs;
+    const vcs: ExecuteStepContext['vcs'] = {
+      ...real,
+      resetLane: async (handle, targetRevision) => {
+        if (handle.laneId === implementLane.laneId) {
+          throw new Error('simulated: git reset failed (stale lock)');
+        }
+        return real.resetLane(handle, targetRevision);
+      },
+    };
+    const reviewCtx = { ...ctx, vcs };
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, reviewCtx);
 
     const failure = failureOf(outcome);
     expect(failure.code).toBe('RUN-083');
     expect(failure.message).toContain('stray.txt');
     expect(failure.message).not.toContain('restored:');
     expect(failure.message).toContain('resetting it back also failed');
-    expect(ctx.laneRegistry.has(REVIEW)).toBe(false);
+    expect(reviewCtx.laneRegistry.has(REVIEW)).toBe(false);
     // The message's honesty is not merely textual: the file really is still there, because the reset
     // genuinely never ran (the fake `resetLane` above throws instead of delegating).
     const stillThere = await readFile(path.join(implementLane.path, 'src', 'stray.txt'), 'utf8');
