@@ -836,23 +836,81 @@ function roleFromDebateParticipant(role: string, proposerRole: string): string {
   return role;
 }
 
-/** `05` §5.3's own `decisions_owned` field, read literally: the first of this session's own real,
- * non-critic, non-facilitator agent roles that both (a) resolves to a real, registered
- * `AgentDefinition` and (b) actually owns at least one decision -- `16` §16.3 step 4's own "the
- * decision owner (the role whose mandate covers it, per `decisions_owned`) rules." `undefined` when no
- * participant role resolves this way, the real, honest "nobody here owns this" case DECIDE's own
+/** The lower-cased words of `question`, split on any run of non-alphanumeric characters (ordinary
+ * English punctuation/whitespace) -- what `topicNamedIn` below checks a `decisions_owned` topic's own
+ * `.`/`_`/`-`-separated words against. A real, deliberately LEXICAL split (`Discloses`): no stemming, no
+ * synonyms, so "decompose" never matches a topic word spelled "decomposition". */
+function questionWords(question: string): ReadonlySet<string> {
+  return new Set(
+    question
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 0),
+  );
+}
+
+/** One `decisions_owned` topic (e.g. `data.consistency`) "names itself" in the framed question when any
+ * one of its own `.`/`_`/`-`-separated words also appears there -- `data.consistency` matches "...gives
+ * us consistency for the order model?" on the word "consistency" alone; it need not match every word. */
+function topicNamedIn(topic: string, words: ReadonlySet<string>): boolean {
+  return topic
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0)
+    .some((word) => words.has(word));
+}
+
+/** `resolveDecisionOwner`'s own real result: the resolved owner, plus -- when a real lexical match is
+ * what won it -- which one of its own `decisions_owned` topics the framed question actually named.
+ * `topic` is `undefined` on the fallback path (no candidate's own topics matched, or two or more tied
+ * for the most matches): the owner was picked by roster order alone, not because the question named
+ * anything of theirs, and the DECIDE brief below must not claim otherwise. */
+interface DecisionOwnerResolution {
+  readonly owner: AgentDefinition;
+  readonly topic?: string;
+}
+
+/** `05` §5.3's own `decisions_owned` field, read against the framed question (`16` §16.3 step 4's own
+ * "the decision owner (the role whose mandate covers it, per `decisions_owned`) rules"): among this
+ * session's own real, non-critic, non-facilitator agent roles that resolve to a real, registered
+ * `AgentDefinition` declaring at least one decision, the one whose own `decisions_owned` topics the
+ * question names the most (`PLAN-M14.md` P32, `topicNamedIn` above, lexical matching only). A tie among
+ * the top scorers, or no real match at all, falls back to today's original rule -- the first such role,
+ * in roster order, that owns at least one decision -- exactly as before this piece: `undefined` when no
+ * participant role resolves at all, the real, honest "nobody here owns this" case DECIDE's own
  * human-input fallback exists for. */
 function resolveDecisionOwner(
   agentRoles: readonly string[],
   facilitatorRole: string,
   registry: ReadonlyMap<string, AgentDefinition>,
-): AgentDefinition | undefined {
+  question: string,
+): DecisionOwnerResolution | undefined {
+  const candidates: AgentDefinition[] = [];
   for (const role of agentRoles) {
     if (role === facilitatorRole || role === CRITIC_ROLE) continue;
     const agent = registry.get(role);
-    if (agent !== undefined && agent.decisions_owned.length > 0) return agent;
+    if (agent !== undefined && agent.decisions_owned.length > 0) candidates.push(agent);
   }
-  return undefined;
+  const [firstCandidate] = candidates;
+  if (firstCandidate === undefined) return undefined;
+
+  const words = questionWords(question);
+  let best: DecisionOwnerResolution | undefined;
+  let bestScore = 0;
+  let tie = false;
+  for (const agent of candidates) {
+    const matched = agent.decisions_owned.filter((topic) => topicNamedIn(topic, words));
+    const topic = matched[0];
+    if (topic !== undefined && matched.length > bestScore) {
+      bestScore = matched.length;
+      best = { owner: agent, topic };
+      tie = false;
+    } else if (topic !== undefined && matched.length === bestScore) {
+      tie = true;
+    }
+  }
+  if (best !== undefined && !tie) return best;
+  return { owner: firstCandidate };
 }
 
 /** `id: (\S+)` on the first matching line of a KB entry's own YAML front matter -- deliberately a
@@ -1791,7 +1849,14 @@ export async function runSessionStep(
   // already fired would defeat the bound's own purpose. The session still reaches a real, honest
   // record (`inconclusive` in substance, `truncated` in `status` -- `assemble.ts`'s own
   // `resolveStatus` gives `truncated` precedence), never a fabricated decision.
-  const owner = resolveDecisionOwner(agentRoles, facilitatorRole, registry);
+  //
+  // `16` §16.3 step 1's own real, one-sentence framed question -- FRAME never dispatches (this file's
+  // own top-of-file doc comment), so `state.framing.question` is always `node.brief` verbatim on a
+  // fresh (non-resumed) run; a resumed run carries the prior run's own real framing forward instead
+  // (`resumeFrom`'s own doc comment above). `resolveDecisionOwner` reads this same text to find which
+  // candidate's own `decisions_owned` topic it actually names (`PLAN-M14.md` P32).
+  const framedQuestion = state.framing?.question ?? node.brief ?? '';
+  const resolution = resolveDecisionOwner(agentRoles, facilitatorRole, registry, framedQuestion);
   let decideSession: SessionResult = NO_AGENT_SESSION;
   let decideInput: DecideInput;
   // Set only when the DECIDE-phase dispatch itself genuinely failed (a crashed/timed-out adapter
@@ -1838,7 +1903,7 @@ export async function runSessionStep(
         artifactRef,
       },
     };
-  } else if (owner === undefined) {
+  } else if (resolution === undefined) {
     await ctx.telemetry.emit({
       type: 'ElicitationRequested',
       stepId: node.id,
@@ -1846,7 +1911,7 @@ export async function runSessionStep(
         reason:
           'DECIDE-phase owner unresolved: no participant agent both exists in the project ' +
           'roster and declares a decisions_owned entry.',
-        question: state.framing?.question ?? node.brief ?? '',
+        question: framedQuestion,
       },
     });
     decideInput = {
@@ -1856,12 +1921,20 @@ export async function runSessionStep(
         'wait for it synchronously.',
     };
   } else {
+    const { owner, topic } = resolution;
+    // `topic` names the one real `decisions_owned` entry the framed question actually matched
+    // (`resolveDecisionOwner`'s own doc comment); `undefined` on the fallback path, where the owner was
+    // picked by roster order alone and the brief must not claim the question named anything of theirs.
+    const topicClause =
+      topic === undefined
+        ? ''
+        : ` The framed question names your own "${topic}" topic directly, which is why you rule here.`;
     const deciderNode: StepNode = {
       ...phaseNode(node, 'decide', owner.id),
       brief:
         `${node.brief ?? ''}\n\nYou are ${owner.name}, the resolved decision owner for this ` +
-        `${sessionType} session (decisions_owned: ${owner.decisions_owned.join(', ')}). Rule on the ` +
-        'framed question and state your decision in one clear paragraph.',
+        `${sessionType} session (decisions_owned: ${owner.decisions_owned.join(', ')}).${topicClause} ` +
+        'Rule on the framed question and state your decision in one clear paragraph.',
     };
     const decideOutcome = await dispatchAgentStep(deciderNode, owner, ctx, 'solo');
     decideSession =

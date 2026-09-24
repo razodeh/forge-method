@@ -27,13 +27,12 @@ import {
 import { listResolvableContentReferences } from '@forge/agents/prompt';
 import { loadAgentDefinition } from '@forge/agents/schema';
 import type { AgentDefinition, AgentIssue } from '@forge/agents/schema';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import { globsOverlap } from '@forge/engine/plan';
 import { FRAMEWORK_INDEX, SKILL_INDEX } from '@forge/templates';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import type { InstalledAsset } from '@forge/adapter-kit/types';
 import * as YAML from 'yaml';
-
-import { loadProjectAgent } from './loop/agent-loader.ts';
 
 export interface AgentCommandContext {
   readonly paths: ProjectPaths;
@@ -63,7 +62,7 @@ export async function agentList(ctx: AgentCommandContext): Promise<readonly stri
 
 /** `show <id>` — one real, materialized agent definition. */
 export async function agentShow(ctx: AgentCommandContext, id: string): Promise<AgentDefinition> {
-  return loadProjectAgent(ctx.paths, ctx.agentsRoot, id);
+  return readProjectAgent(ctx.paths, ctx.agentsRoot, id);
 }
 
 const AGENT_TEMPLATE = (id: string, name: string): string =>

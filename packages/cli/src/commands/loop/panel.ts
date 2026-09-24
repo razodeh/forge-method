@@ -21,11 +21,11 @@ import { ForgeError } from '@forge/core/errors';
 import { SYSTEM_CLOCK, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import { dispatchAgentStep, type InteractionOutcome } from '@forge/engine/interaction';
 import type { ForgeConfig } from '@forge/schemas/config';
 
-import { buildAdHocStepNode } from './ad-hoc-step.ts';
-import { loadProjectAgent } from './agent-loader.ts';
+import { agentStepLimits, buildAdHocStepNode } from './ad-hoc-step.ts';
 import { buildRunEngineContext } from '../run/context.ts';
 
 export interface PanelDeps {
@@ -52,7 +52,7 @@ export async function panelQuestion(
     throw new ForgeError('USR-002', { flag: '--roles', value: '' });
   }
   const clock = options.clock ?? SYSTEM_CLOCK;
-  const agent = await loadProjectAgent(deps.paths, deps.agentsRoot, primaryRole);
+  const agent = await readProjectAgent(deps.paths, deps.agentsRoot, primaryRole);
 
   const runId = `panel-${clock.now().replace(/[^0-9]/g, '')}`;
   const ctx = await buildRunEngineContext({
@@ -66,7 +66,7 @@ export async function panelQuestion(
     clock,
   });
 
-  const node = buildAdHocStepNode(runId, primaryRole, question);
+  const node = buildAdHocStepNode(runId, primaryRole, question, agentStepLimits(agent));
 
   return dispatchAgentStep(node, agent, ctx, 'panel', { perspectives: roles });
 }

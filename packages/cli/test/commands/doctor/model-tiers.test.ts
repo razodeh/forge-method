@@ -4,16 +4,16 @@
  *
  * @see specs/05 §5.8
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveStepModel } from '@forge/agents/resolve';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentNew } from '../../../src/commands/agent.ts';
 import { checkModelTiers } from '../../../src/commands/doctor/model-tiers.ts';
-import { loadProjectAgent } from '../../../src/commands/loop/agent-loader.ts';
 import { stubAdapter } from '../../init/tier-stubs.ts';
 import { cleanupAll, createTestProject, type TestProject } from './helpers.ts';
 
@@ -78,7 +78,7 @@ describe('checkModelTiers', () => {
       for (const id of ['a', 'b', 'c']) {
         try {
           resolveStepModel(
-            await loadProjectAgent(project.paths, '.forge/agents', id),
+            await readProjectAgent(project.paths, '.forge/agents', id),
             config.models,
             'x',
           );
@@ -261,6 +261,18 @@ describe('checkModelTiers', () => {
     expect(check.message).toContain('could not be read');
     expect(check.message).toContain('broken');
     expect(check.message).not.toContain('no agents are installed');
+  });
+
+  it('names a schema-valid file whose own declared id disagrees with its file name as unreadable too (readProjectAgent refuses both the same way, PLAN-M14.md P32)', async () => {
+    const project = await createTestProject();
+    await installAgent(project, 'dev');
+    const validYaml = await readFile(path.join(project.dir, '.forge/agents/dev.yaml'), 'utf8');
+    // A real, schema-valid agent file -- parses cleanly on its own -- squatting under a file name that
+    // does not match its own declared `id`.
+    await writeFile(path.join(project.dir, '.forge/agents/impostor.yaml'), validYaml);
+    const check = await checkModelTiers(project.paths, withModels(project, 'x', {}));
+    expect(check.message).toContain('could not be read');
+    expect(check.message).toContain('impostor');
   });
 
   it('a hostile override value cannot smuggle terminal escapes into the message', async () => {

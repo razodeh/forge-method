@@ -762,6 +762,23 @@ describe('forge debug sends every session through real prompt assembly (the stri
 });
 
 describe('forge debug audit records and limits, end to end', () => {
+  it("every RCA session (read-only phases and FIX) requests the diagnostician's own declared limits, never the fixed AD_HOC_LIMITS (PLAN-M14.md P32)", async () => {
+    // The fixture diagnostician (`loop/helpers.ts`'s own `agentYaml`) declares max_turns: 10,
+    // wall_clock_ms: 600000, max_cost_usd: 2.0 -- deliberately a different maxTurns than the old fixed
+    // AD_HOC_LIMITS (20/600000/2.0), so a regression back to the fixed constant is caught, not masked by
+    // the two limits happening to share the other two fields.
+    const { requests } = await recordedHappyRun();
+    const debugRequests = requests.filter((r) => r.stepId.startsWith('debug:'));
+    expect(debugRequests.length).toBeGreaterThan(8);
+    for (const request of debugRequests) {
+      expect(request.limits, request.stepId).toEqual({
+        maxTurns: 10,
+        wallClockMs: 600_000,
+        maxCostUsd: 2,
+      });
+    }
+  }, 60_000);
+
   it('marks phases that carry untrusted input as externalContent in context.json, and PREVENT-free of it', async () => {
     const project = await createTestProject();
     await writeFixtureAgent(project.dir, 'diagnostician', 'Diagnostician', {

@@ -11,6 +11,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import type { PlatformAdapter, SessionRequest } from '@forge/adapter-kit/types';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -46,6 +47,44 @@ function reviewDeps(project: Awaited<ReturnType<typeof createTestProject>>): Rev
   };
 }
 
+/** The identical fixture `reviewDeps` builds, but with every real `startSession` request also
+ * recorded, for assertions that inspect the request itself (`request.limits`, `PLAN-M14.md` P32)
+ * rather than only the outcome. */
+function recordingReviewDeps(project: Awaited<ReturnType<typeof createTestProject>>): {
+  readonly deps: ReviewDeps;
+  readonly requests: readonly SessionRequest[];
+} {
+  const adapter = new FakePlatformAdapter();
+  adapter.script(() => true, {
+    text: ['looks fine'],
+    structured: { findings: [{ summary: 'a real finding', severity: 'minor' }], checked: ['x'] },
+  });
+  const requests: SessionRequest[] = [];
+  const wrapped: PlatformAdapter = {
+    id: adapter.id,
+    displayName: adapter.displayName,
+    capabilities: () => adapter.capabilities(),
+    preflight: () => adapter.preflight(),
+    listModels: () => adapter.listModels(),
+    startSession: (req: SessionRequest) => {
+      requests.push(req);
+      return adapter.startSession(req);
+    },
+    resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+  };
+  return {
+    deps: {
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      adapter: wrapped,
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    },
+    requests,
+  };
+}
+
 describe('reviewChange', () => {
   it('drives all eight real F-REVIEW-1 perspective sessions against a real git diff and merges real findings', async () => {
     const project = await createTestProject();
@@ -76,6 +115,22 @@ describe('reviewChange', () => {
     const { rm } = await import('node:fs/promises');
     await rm(path.join(project.dir, AGENTS_ROOT, 'reviewer.yaml'));
     await expect(reviewChange(reviewDeps(project))).rejects.toMatchObject({ code: 'RUN-056' });
+  });
+
+  it("every perspective session requests the reviewer agent's own declared limits, never a fixed AD_HOC_LIMITS (PLAN-M14.md P32)", async () => {
+    const project = await createTestProject();
+    await writeFile(path.join(project.dir, 'changed.txt'), 'real content\n');
+    await execa('git', ['add', 'changed.txt'], { cwd: project.dir });
+    const { deps, requests } = recordingReviewDeps(project);
+
+    await reviewChange(deps);
+
+    expect(requests.length).toBe(8);
+    // The fixture reviewer (`loop/helpers.ts`'s own `agentYaml`) declares max_turns: 10, distinct from
+    // the old fixed AD_HOC_LIMITS' own max_turns: 20 -- a regression back to the fixed constant fails.
+    for (const request of requests) {
+      expect(request.limits).toEqual({ maxTurns: 10, wallClockMs: 600_000, maxCostUsd: 2 });
+    }
   });
 
   describe('CFG-501 — a reviewer may not approve a change it authored', () => {

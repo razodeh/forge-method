@@ -44,7 +44,6 @@ import type { ProjectPaths } from '@forge/core/fs';
 import { wrapUntrustedContent } from '@forge/adapter-kit/control-tokens';
 import type {
   PlatformAdapter,
-  SessionLimits,
   SessionRequest,
   SessionResult,
   ToolGrant,
@@ -86,18 +85,13 @@ import {
   resolveRevision,
 } from '@forge/vcs';
 
-import { AD_HOC_LIMITS, buildAdHocStepNode } from './ad-hoc-step.ts';
+import { agentStepLimits, buildAdHocStepNode } from './ad-hoc-step.ts';
 import { collectLaneChanges, createLaneGuard, type LaneGuard } from './lane-guard.ts';
 import { buildRunEngineContext } from '../run/context.ts';
 import { getSharedIdAllocator, readArtifactTemplate } from '../shared.ts';
 
 const DIAGNOSTICIAN_AGENT_ID = 'diagnostician';
 const DEBUG_LANE_STEP_ID = 'debug-fix';
-
-/** Every session in a `forge debug` invocation requests the ad-hoc limits (the loop has no workflow step to
- * source them from, and its own bounds in `@forge/engine/rca` are what stop it). The node built for assembly
- * carries the same object, so block [6] tells the agent exactly what the request enforces. */
-const SESSION_LIMITS: SessionLimits = AD_HOC_LIMITS;
 
 type OutputSchema = NonNullable<SessionRequest['outputSchema']>;
 
@@ -294,7 +288,12 @@ async function assembleDebugSession(
   readOnly: boolean,
   preflight = false,
 ): Promise<AssembledSession> {
-  const base = buildAdHocStepNode(`debug:${request.phase}`, agent.id, request.prompt);
+  const base = buildAdHocStepNode(
+    `debug:${request.phase}`,
+    agent.id,
+    request.prompt,
+    agentStepLimits(agent),
+  );
   // Tainted when the phase carries untrusted data (`20` §20.5 point 3), and the FIX phase ALWAYS is: it acts on a root
   // cause a model wrote, and its grant must not depend on whether the loop happened to attach data to the request. The
   // preflight is the one exception: it exists to read the diagnostician's own resolved grant (`preflightDebug`).
@@ -512,7 +511,7 @@ async function runReadOnlySession(
     thinking: assembled.thinking,
     tools: assembled.tools,
     permissionMode: 'deny-unlisted',
-    limits: SESSION_LIMITS,
+    limits: agentStepLimits(agent),
     // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4): the
     // diagnostician's every read-only phase session carries it, composed from `ctx`/`stepId`/`agent`,
     // never `process.env` (R10). `rca/shell.ts`'s own `createRcaShell` -- what REPRODUCE/PROVE
@@ -681,7 +680,7 @@ async function runFixSession(
     thinking: assembled.thinking,
     tools: assembled.tools,
     permissionMode: 'accept-edits',
-    limits: SESSION_LIMITS,
+    limits: agentStepLimits(agent),
     // The FORGE run/step/agent marker (`@forge/core/session-marker`, `PLAN-M14.md` P4) -- see
     // `runReadOnlySession`'s own identical comment; the FIX session itself is never tainted, but the
     // shell command PROVE later runs through `createRcaShell` still never sees this marker.

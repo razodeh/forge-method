@@ -271,6 +271,119 @@ describe('the session roster is .forge/agents', () => {
     expect(deciding).not.toContain('architect agent, the resolved decision owner');
   });
 
+  it('topic matching: the owner is whichever participant\'s own decisions_owned topic the framed question actually names, even out of roster order ("which storage gives us consistency for the order model?" -> data-architect, data.consistency named)', async () => {
+    const root = await tempRepo();
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'architect.yaml',
+      agentYaml('architect', ['architecture.decomposition']),
+    );
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'data-architect.yaml',
+      agentYaml('data-architect', ['data.consistency']),
+    );
+    const { wrapped, decide } = promptsOf(new FakePlatformAdapter());
+    const questionNode = node({
+      id: 'wf:roster-topic-match',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'Which storage gives us consistency for the order model?',
+    });
+
+    await runSessionStep(
+      questionNode,
+      createTestContext({ projectRoot: root, adapter: wrapped }),
+      undefined,
+      ['architect', 'data-architect'],
+    );
+
+    const deciding = decide();
+    expect(deciding).toContain('You are data-architect agent, the resolved decision owner');
+    expect(deciding).not.toContain('You are architect agent, the resolved decision owner');
+    expect(deciding).toContain('names your own "data.consistency" topic directly');
+  });
+
+  it('topic matching: no candidate\'s own topic is lexically named ("decompose" != "decomposition") -- falls back to the first participant with any topic ("how should we decompose the interfaces?" -> architect, no match -> first with any topic)', async () => {
+    const root = await tempRepo();
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'architect.yaml',
+      agentYaml('architect', ['architecture.decomposition']),
+    );
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'data-architect.yaml',
+      agentYaml('data-architect', ['data.consistency']),
+    );
+    const { wrapped, decide } = promptsOf(new FakePlatformAdapter());
+    const questionNode = node({
+      id: 'wf:roster-no-topic-match',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'How should we decompose the interfaces?',
+    });
+
+    await runSessionStep(
+      questionNode,
+      createTestContext({ projectRoot: root, adapter: wrapped }),
+      undefined,
+      ['architect', 'data-architect'],
+    );
+
+    const deciding = decide();
+    expect(deciding).toContain('You are architect agent, the resolved decision owner');
+    expect(deciding).not.toContain('You are data-architect agent, the resolved decision owner');
+    // The fallback path never claims the question named anything of the owner's own topics.
+    expect(deciding).not.toContain('names your own');
+  });
+
+  it('topic matching: a TIE for the top score (two different candidates each match one topic) also falls back to the first participant with any topic, never an arbitrary pick between the tied candidates', async () => {
+    const root = await tempRepo();
+    // `ux` is first in roster order and owns something, but its own topic does not match at all; both
+    // `data-architect` and `ops-architect` match the question equally (one topic each, on the shared
+    // word "consistency") -- a real tie for the top score, not a clear winner.
+    await writeAgent(root, '.forge/agents', 'ux.yaml', agentYaml('ux', ['ux.flow']));
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'data-architect.yaml',
+      agentYaml('data-architect', ['data.consistency']),
+    );
+    await writeAgent(
+      root,
+      '.forge/agents',
+      'ops-architect.yaml',
+      agentYaml('ops-architect', ['ops.consistency']),
+    );
+    const { wrapped, decide } = promptsOf(new FakePlatformAdapter());
+    const questionNode = node({
+      id: 'wf:roster-topic-tie',
+      kind: 'session',
+      sessionType: 'brainstorm',
+      brief: 'Which service needs consistency?',
+    });
+
+    await runSessionStep(
+      questionNode,
+      createTestContext({ projectRoot: root, adapter: wrapped }),
+      undefined,
+      ['ux', 'data-architect', 'ops-architect'],
+    );
+
+    const deciding = decide();
+    // The tie between data-architect and ops-architect resolves to the fallback rule (first-with-any),
+    // not to either tied matcher -- `ux`, even though its own topic never matched the question at all.
+    expect(deciding).toContain('You are ux agent, the resolved decision owner');
+    expect(deciding).not.toContain('You are data-architect agent, the resolved decision owner');
+    expect(deciding).not.toContain('You are ops-architect agent, the resolved decision owner');
+    expect(deciding).not.toContain('names your own');
+  });
+
   it('a roster where nobody owns a decision falls back to the human, exactly as a project with no roster does', async () => {
     const root = await tempRepo();
     await writeAgent(root, '.forge/agents', 'pm.yaml', agentYaml('pm', []));

@@ -31,11 +31,11 @@ import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import { resolveStepModel } from '@forge/agents/resolve';
 import { ForgeError } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { sanitizeOneLine } from '../../init/tier-map.ts';
 import { agentList } from '../agent.ts';
-import { loadProjectAgent } from '../loop/agent-loader.ts';
 import type { DoctorCheck } from './types.ts';
 
 const AGENTS_ROOT = '.forge/agents';
@@ -96,7 +96,7 @@ export async function checkModelTiers(
   for (const agentId of agentIds) {
     let agent;
     try {
-      agent = await loadProjectAgent(paths, AGENTS_ROOT, agentId);
+      agent = await readProjectAgent(paths, AGENTS_ROOT, agentId);
     } catch {
       // A broken agent file is `forge agent validate`'s finding, not this check's; named, not fatal.
       unreadable.push(agentId);

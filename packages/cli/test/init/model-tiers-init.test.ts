@@ -26,13 +26,13 @@ import { MODEL_TIER_NAMES, type PlatformAdapter } from '@forge/adapter-kit/types
 import { resolveStepModel } from '@forge/agents/resolve';
 import { ForgeError } from '@forge/core/errors';
 import { ProjectPaths } from '@forge/core/fs';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import { configSchema, type ForgeConfig } from '@forge/schemas/config';
 import { FakePlatformAdapter } from '@forge/testkit';
 
 import { agentList } from '../../src/commands/agent.ts';
 import { checkModelTiers } from '../../src/commands/doctor/model-tiers.ts';
 import { runDoctor } from '../../src/commands/doctor/run-doctor.ts';
-import { loadProjectAgent } from '../../src/commands/loop/agent-loader.ts';
 import { runInit } from '../../src/init/run-init.ts';
 import type { InitOptions, RunInitDeps } from '../../src/init/types.ts';
 
@@ -116,7 +116,7 @@ async function readConfig(dir: string): Promise<ForgeConfig> {
 async function installedAgents(dir: string) {
   const paths = new ProjectPaths(dir);
   const ids = await agentList({ paths, agentsRoot: '.forge/agents' });
-  return Promise.all(ids.map((id) => loadProjectAgent(paths, '.forge/agents', id)));
+  return Promise.all(ids.map((id) => readProjectAgent(paths, '.forge/agents', id)));
 }
 
 describe('fresh init with the real adapter', () => {

@@ -8,6 +8,7 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { PlatformAdapter, SessionRequest } from '@forge/adapter-kit/types';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -26,6 +27,41 @@ function panelDeps(project: Awaited<ReturnType<typeof createTestProject>>): Pane
     adapter,
     checksRoot: CHECKS_ROOT,
     agentsRoot: AGENTS_ROOT,
+  };
+}
+
+/** The identical fixture `panelDeps` builds, but with every real `startSession` request also recorded,
+ * for assertions that inspect the request itself (`request.limits`, `PLAN-M14.md` P32) rather than only
+ * the outcome. */
+function recordingPanelDeps(project: Awaited<ReturnType<typeof createTestProject>>): {
+  readonly deps: PanelDeps;
+  readonly requests: readonly SessionRequest[];
+} {
+  const adapter = new FakePlatformAdapter();
+  adapter.script(() => true, { text: ['a real independent answer'] });
+  const requests: SessionRequest[] = [];
+  const wrapped: PlatformAdapter = {
+    id: adapter.id,
+    displayName: adapter.displayName,
+    capabilities: () => adapter.capabilities(),
+    preflight: () => adapter.preflight(),
+    listModels: () => adapter.listModels(),
+    startSession: (req: SessionRequest) => {
+      requests.push(req);
+      return adapter.startSession(req);
+    },
+    resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+  };
+  return {
+    deps: {
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      adapter: wrapped,
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    },
+    requests,
   };
 }
 
@@ -57,5 +93,19 @@ describe('panelQuestion', () => {
     await expect(
       panelQuestion(panelDeps(project), 'question', ['architect', 'security']),
     ).rejects.toMatchObject({ code: 'RUN-056' });
+  });
+
+  it("every real session (both perspectives and the reconciling synthesis) requests the primary role's own declared limits, never a fixed AD_HOC_LIMITS (PLAN-M14.md P32)", async () => {
+    const project = await createTestProject();
+    const { deps, requests } = recordingPanelDeps(project);
+
+    await panelQuestion(deps, 'should we use Postgres or Mongo?', ['architect', 'security']);
+
+    expect(requests.length).toBe(3); // 2 perspectives + 1 reconciling synthesis
+    // The fixture architect (`loop/helpers.ts`'s own `agentYaml`) declares max_turns: 10, distinct from
+    // the old fixed AD_HOC_LIMITS' own max_turns: 20 -- a regression back to the fixed constant fails.
+    for (const request of requests) {
+      expect(request.limits).toEqual({ maxTurns: 10, wallClockMs: 600_000, maxCostUsd: 2 });
+    }
   });
 });

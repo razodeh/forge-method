@@ -733,10 +733,11 @@ export const ERROR_CODES = {
     remedy: 'Fix the underlying repository state named above, then retry.',
   },
   'RUN-056': {
-    // `@forge/cli`'s own `loadProjectAgent` (`forge review`/`forge panel`, `03` §3.2.5/§3.2.6):
-    // `.forge/agents/<id>.yaml` is `forge init`'s own real write target (`readResolvedAgents`) -- a
-    // missing or corrupt file here means the project's own roster was never written, or was hand-edited
-    // into an invalid shape, not a code bug in this piece.
+    // `@forge/engine/dispatch`'s own `readProjectAgent` -- the one reader `forge agent show`/`forge
+    // debug`/`forge review`/`forge panel`/`forge doctor`/dispatch itself all go through (`PLAN-M14.md`
+    // P32): `.forge/agents/<id>.yaml` is `forge init`'s own real write target (`readResolvedAgents`) --
+    // a missing, mis-named or corrupt file here means the project's own roster was never written, or was
+    // hand-edited into an invalid shape, not a code bug in this piece.
     severity: 'error',
     exitCode: EXIT_CODES.prerequisiteMissing,
     message: (d: { agentId: string; path: string }) =>

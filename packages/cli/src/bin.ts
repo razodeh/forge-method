@@ -522,7 +522,7 @@ async function buildRunDepsForProject(paths: ProjectPaths, projectRoot: string):
 
 /** The identical real `paths`/`projectRoot`/`config`/`adapter`/`checksRoot` shape `RunDeps` already
  * builds, plus `agentsRoot` — the one extra field `forge debug`/`forge review`/`forge panel` each need
- * (`loadProjectAgent`) that `RunDeps` itself has no reason to carry (`runWorkflow` never loads an agent
+ * (`readProjectAgent`) that `RunDeps` itself has no reason to carry (`runWorkflow` never loads an agent
  * directly). Structurally assignable to `SessionCommandDeps` too (a strict subset of this shape), so
  * `forge session` reuses the identical builder rather than a fifth, near-duplicate one. */
 async function buildLoopDepsForProject(

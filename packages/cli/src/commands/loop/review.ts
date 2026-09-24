@@ -33,11 +33,11 @@ import { execa } from 'execa';
 import { SYSTEM_CLOCK, type Clock } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
+import { readProjectAgent } from '@forge/engine/dispatch';
 import { dispatchAgentStep, type InteractionOutcome } from '@forge/engine/interaction';
 import type { ForgeConfig } from '@forge/schemas/config';
 
-import { buildAdHocStepNode } from './ad-hoc-step.ts';
-import { loadProjectAgent } from './agent-loader.ts';
+import { agentStepLimits, buildAdHocStepNode } from './ad-hoc-step.ts';
 import { buildRunEngineContext } from '../run/context.ts';
 
 /** `13` §13.3's own F-REVIEW-1 table, verbatim — `forge review` has no `--perspectives`/`--roles` flag
@@ -151,7 +151,7 @@ export async function reviewChange(
   const clock = options.clock ?? SYSTEM_CLOCK;
   const range = options.diff ?? 'HEAD';
   const diff = await realDiff(deps.projectRoot, range);
-  const agent = await loadProjectAgent(deps.paths, deps.agentsRoot, REVIEWER_AGENT_ID);
+  const agent = await readProjectAgent(deps.paths, deps.agentsRoot, REVIEWER_AGENT_ID);
   const authoringAgentIds = await realAuthoringAgentIds(deps.projectRoot, range);
 
   const runId = `review-${clock.now().replace(/[^0-9]/g, '')}`;
@@ -167,7 +167,7 @@ export async function reviewChange(
   });
 
   const brief = `Review the following real diff:\n\n\`\`\`diff\n${diff}\n\`\`\``;
-  const node = buildAdHocStepNode(runId, REVIEWER_AGENT_ID, brief);
+  const node = buildAdHocStepNode(runId, REVIEWER_AGENT_ID, brief, agentStepLimits(agent));
 
   return dispatchAgentStep(node, agent, ctx, 'swarm-review', {
     perspectives: [...DEFAULT_REVIEW_PERSPECTIVES],
