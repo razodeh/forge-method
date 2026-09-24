@@ -22159,3 +22159,438 @@ now does (round 2, above) — left for a later piece, since that file is not in 
 `methods/test/fixtures/dod-profiles.ts`, `cli/test/commands/story.test.ts`,
 `cli/test/bin-story-verify.test.ts`, `test/{workflows,command-steps,command-steps-in-claim,
 build-stage-lane-landing}.test.ts`.
+
+## Q255 — M14 P27: plan compilation sets `StepNode.taint` from an authored `taint: external`; adopt/migrate carry it — a two-round critic loop found one real doc-rot finding and one minor style nit in round 1 (both fixed), zero new findings in round 2, no round 3
+
+**Context.** `PLAN-M14.md` P27, depending on nothing, feeding P30 later (`compilePlan` gains a second,
+input-derived taint source that piece adds on top of this one). Before this piece, `StepNode.taint`
+existed as a field (`plan/types.ts`) and its three real consumers — `restrictGrantForTaint`,
+`assertGateApprovalAllowed`, `context.json`'s `externalContent` — were already real and already wired
+(M11 P9/P10), but nothing in this codebase's real compile pipeline ever set it: every real, compiled
+`StepNode` carried `taint: undefined`, always, and `20` §20.5 point 6's own "[`forge adopt`'s] analysis
+steps run tainted... by construction" was aspirational prose, not a real property of any compiled plan.
+
+**Built.** `AgentStep.taint?: 'external'` (`workflow/types.ts`); `agentStepSchema` accepts only that
+one literal inside its own `.strict()` object (`workflow/schema.ts`), so `taint: internal` is a real,
+located schema error and `taint:` on any other step kind is a real "unrecognised key" schema error —
+both at real `parseWorkflow` time, before any `Workflow` object exists. `compilePlan`'s `buildLeafNode`
+(`plan/compile.ts`) copies `agentStep?.taint` onto the compiled `StepNode`, present only when the
+workflow author declared it (no `taint` key at all otherwise, matching `gateEvidence`/
+`interactionMode`'s own "present only when non-empty" shape) — every non-agent step's own `agentStep`
+binding is `undefined`, so nothing else ever reaches this spread, by construction, not by a runtime
+check. `StepNode.taint`'s own doc comment (`plan/types.ts`) is rewritten in full: the old text
+("Additive: no compiler in this package sets it yet... every real, compiled `StepNode` in this
+codebase has `taint: undefined` today") is no longer true and the new text says so, naming the five
+real tainted steps and disclosing precisely what remains true (`markExternalContent` itself still has
+zero production callers; every real tainted step today is *authored*, not runtime-detected from
+actually-packed content; P30's own second taint source is still unbuilt).
+
+`workflow/validate.ts` gains `checkTaintOnlyOnAgentSteps`, a new `validateStructure` check refusing a
+`taint` field on any non-`agent` step with a new `taint-on-non-agent-step` `ValidationIssue`. This is
+real defense in depth, not dead code: the real YAML/`parseWorkflow` path already refuses this earlier,
+at the schema layer (an "unrecognised key" schema error, confirmed by reading both real call sites of
+`validateStructure` in `packages/cli/src/commands/workflow.ts`, both of which go through
+`readWorkflow` → `parseWorkflow` first) — but `validateStructure` is also directly callable against a
+hand-built `Workflow` object that bypasses `parseWorkflow` entirely (this file's own top-of-file doc
+comment already establishes this as a real, intentional second path other checks in the same file
+guard against), and nothing else in this codebase would catch a non-agent step carrying a stray
+`taint` field constructed that way. Its own doc comment and its own test both say plainly that the real
+YAML path is unreachable this way — not overclaimed as live production behaviour it is not.
+
+`adopt`'s `reverse-derive-specs`/`gap-analysis` and `migrate`'s `plan-migration`/`expand`/`contract` —
+exactly the five real agent steps across all 20 shipped workflows whose own inputs are an existing,
+FORGE-did-not-write codebase (`17` §17.2's CARTOGRAPHY phase; `20` §20.5 point 6;
+`SPEC-QUESTIONS.md` Q232 decision 15: "until provenance exists on KB entries, `adopt` and `migrate`
+steps whose inputs are the scanned codebase are tainted") — now declare `taint: external`, cited to
+that exact decision, in both the shipped `packages/templates/templates/workflows/{adopt,
+migrate}.workflow.yaml` and the regenerated `fixtures/greenfield-service/.forge/workflows/{adopt,
+migrate}.workflow.yaml`. The fixture regeneration is real, not hand-typed: a scratch test invoked the
+real `runInit` against a temp directory with the real `modules/` roster, and the two resulting
+`.forge/workflows/{adopt,migrate}.workflow.yaml` files were copied verbatim into the fixture location;
+their `# forge:generated v=0.0.0 hash=...` headers were independently re-verified afterward by
+recomputing `sha256` over the header-stripped body by hand and comparing to the recorded `hash=`
+value for both files — both match exactly. The regeneration incidentally also picked up two small,
+pre-existing pieces of unrelated drift already present in the fixture (a stale `migrate:plan-migration`
+produces list missing `docs/forge/kb/data/migrations.yaml`, a missing comment on
+`adopt:inventory-codebase`) that predate this piece; carried along by the real regeneration process
+this piece was already running for its own reason, not separately authored.
+
+The existing, already-wired consumers now fire on real steps, proved end to end rather than merely
+asserted: `adopt:reverse-derive-specs`, dispatched through the real `executeStep` over its own real
+`compilePlan`-produced `StepNode` (not a hand-built `node()` test fixture), gets a real, restricted
+grant `{read: true, write: true, exec: false, network: 'none'}` (its own architect agent's real,
+undeclared-taint grant carries `exec: ['git log*', 'git diff*', 'ls*', 'rg*', 'cat*', 'tree*']`,
+`network: true`) and `externalContent: true` in its real, on-disk `context.json`, with no
+`testCommands` key present at all (`assemble.ts`'s own `restricted.exec === false` short-circuit).
+`migrate:expand` (backend, real `exec: ['git *']`) gets `exec: false` the identical real way. A small
+real workflow, authored as YAML text and compiled through the real `parseWorkflow` + `compilePlan`
+pipeline (not a hand-built `Workflow` object), whose agent step carries the authored taint and whose
+gate step directly depends on it, is refused gate approval through the real `runGateStep` →
+`assertGateApprovalAllowed` path — the compiled gate node used is the real compiler's own output
+(real retry policy, limits, `dependsOn`, idempotency key), with `taint: 'external'` merged onto it by
+hand to stand in for a real propagation mechanism this codebase does not have (nothing anywhere
+propagates an upstream agent step's own taint onto a dependent gate node's own compiled `taint`, a
+real, disclosed gap this piece does not close, since nothing in its own Mandate asks it to), disclosed
+plainly in the test's own comment rather than silently assumed away. `forge workflow validate --all`
+against a real, `forge init`-produced project with the real, shipped roster is clean for both `adopt`
+and `migrate` (no findings of any kind) and reports zero `taint-on-non-agent-step` findings across
+every real shipped workflow. `forge run <wf> --dry-run --json` prints each node's `taint` because
+`printWorkflowDispatchResult` (`bin.ts`, untouched by this piece) already `JSON.stringify`s the whole
+compiled plan verbatim — proved with a new unit test on `dryRunWorkflow` itself rather than a full
+subprocess CLI test, since the pass-through itself is pre-existing, unmodified behaviour.
+
+`restrictGrantForTaint`, `taintedByPeerOutput`, `forge debug`'s FIX taint, and every untainted step's
+grant are all genuinely untouched by this diff (confirmed both by reading it and by the full, real
+dispatch suite `test/agent-prompts-all-workflows.test.ts` staying green start to finish).
+
+**A real, pre-existing test broke as a correct, not incidental, consequence of this piece — fixed by
+making it taint-aware, not by loosening it.** `test/agent-prompts-all-workflows.test.ts` dispatches
+every real agent/session step of every shipped workflow through the real dispatcher against a strict
+adapter, and independently, by hand (`expectedGrant`, deliberately never calling the real resolver),
+asserts the real request grant the adapter received equals the agent's own declared grant. Once
+`adopt`/`migrate`'s five real steps carried real taint for the first time, their real, restricted
+request grant legitimately stopped matching their own agent's undeclared-taint grant — running the
+full suite surfaced this immediately as 30 real failures (one per affected assertion across the five
+steps), not a false alarm. Fixed by threading the step's own `taint` into `expectedGrant` (a `tainted`
+parameter, hand-derived to drop `exec`/`network` the identical way `restrictGrantForTaint` does,
+preserving the function's own "never call production code, hand-derive the expectation" discipline)
+and its two call sites inside `checkAgentStep`.
+
+**Round 1 (fresh, context-free): 1 real finding, fixed; 1 minor style nit, fixed; 2 items judged
+worth disclosing but genuinely out of this piece's own scope; 1 stale-patch-snapshot note, confirmed
+not a real bug in the live tree.**
+1. **Real.** `packages/engine/src/security/taint-guard.ts` — genuinely pre-existing, not in this
+   piece's own Surface list, untouched by the original diff — carries a doc comment whose own general,
+   parenthetical claim ("nothing in this codebase's real compile/dispatch pipeline populates `taint` on
+   any real `StepNode` yet") is now stale: this piece's `compilePlan` populates it for real, and
+   `restrictGrantForTaint` (a different real consumer the same file documents a few lines further down)
+   now fires for real on five real, shipped steps. Read narrowly, about the specific *gate-node* claim
+   it is nested under, the sentence still holds (nothing propagates an agent step's taint onto a
+   dependent gate node even after this piece), but the sentence as literally written is broader than
+   that and is no longer accurate. Given this exact file's own demonstrated discipline about precisely
+   this failure mode (its own text already recounts an earlier gauntlet critic catching an earlier draft
+   overclaiming enforcement the opposite direction), leaving it stale was judged a real problem a future
+   reader could reasonably be misled by — especially since this piece's own new `plan/types.ts` doc
+   comment explicitly points a reader there ("see `taint-guard.ts`'s own doc comment") as if it still
+   described the current, accurate state. Fixed with a short, precisely-scoped addendum in
+   `taint-guard.ts` distinguishing what P27 changed (the general claim, now false) from what still holds
+   (the gate-node-specific claim), cross-referencing `plan/types.ts`.
+2. **Minor.** `workflow/validate.ts`'s `checkTaintOnlyOnAgentSteps` used a double cast through
+   `unknown` (`(step as unknown as Readonly<Record<'taint', unknown>>).taint`) where a single, lighter
+   cast is sufficient and equally correct. Simplified to `(step as { readonly taint?: unknown }).taint`;
+   re-typechecked and re-tested clean.
+3. **Worth disclosing, judged out of this piece's own scope, not fixed.** `20` §20.5 point 6's own text
+   — "[`forge adopt`'s] analysis steps run tainted and read-only by construction" — is in real,
+   concretely observable tension (for the first time, now that real taint exists) with the fact
+   `adopt:reverse-derive-specs`'s real, compiled, restricted grant genuinely keeps `write: true`,
+   because the step already carried a real `produces`/`outputs` claim before this diff and
+   `restrictGrantForTaint`'s own unchanged semantics keep `write` alive whenever a claim exists. Judged
+   a defensible reading of the spec text, not a contradiction this piece introduces or must resolve:
+   "read-only" most plausibly means "never modifies the codebase under analysis" (true of every real
+   write this step's grant permits — all land under `docs/forge/kb/`, never the target repository being
+   adopted), not "produces zero output," but that reading is not spelled out anywhere in `17`/`20`'s own
+   text, so it is recorded here rather than left for a future reader to work out unaided.
+4. **Worth disclosing, judged out of this piece's own scope, not fixed — and already independently
+   planned.** `20` §20.5 point 3's own "cannot... write ADRs without human confirmation" restriction has
+   no enforcement anywhere in this codebase today, and this piece is what makes that gap concretely
+   observable for the first time rather than theoretical: `adopt:reverse-derive-specs` is now genuinely
+   tainted and genuinely declares `outputs: [{type: ADR, cardinality: many}, {type: DataModel}]`, and
+   nothing anywhere checks a produced ADR's own `status` against its step's taint. Confirmed this is not
+   an oversight this piece should have closed itself: `PLAN-M14.md` P31 ("A tainted step writes ADRs
+   only as `status: proposed`; `forge adr accept` by a person confirms") is exactly this fix, already
+   planned in the same milestone, and its own `Depends on` line names this piece (P27) explicitly by
+   number; its own Surface list even re-touches `security/taint-guard.ts:5-30 (doc)`, the identical file
+   round 1's own real finding above already touched once.
+5. **Not a real bug, confirmed and resolved.** The diff snapshot handed to round 1 for
+   `test/agent-prompts-all-workflows.test.ts` carried one extra hunk (threading an unused `node:
+   StepNode` parameter through `agentPromptProblems`) the live working tree did not have. Traced to a
+   snapshot taken moments before a same-session `eslint --max-warnings 0` run caught that exact
+   parameter as genuinely unused (`agentPromptProblems` only ever checks block [2]'s role/mandate text
+   and block [6]'s `- write:` line — both taint-blind by construction, since the grant they read is
+   already the real, already-restricted one — never `node` itself) and removed it; not a change silently
+   dropped after the fact. Round 1 independently re-confirmed the live, smaller diff is correct and
+   self-consistent on its own terms, not merely "matches what was intended."
+
+**Round 2 (fresh, context-free; independently re-verified both round-1 fixes and did its own fresh
+read of the full diff rather than trusting round 1's summary): zero new findings, both fixes
+confirmed correct.** Every factual claim in the `taint-guard.ts` addendum was independently
+re-verified against live code line by line (the exact `compile.ts:577` copy line; the exact five
+tainted steps, re-confirmed in both the templates and the regenerated fixtures; `markExternalContent`'s
+zero production callers, re-confirmed by a fresh grep; `gateStepSchema`'s own `.strict()` shape,
+confirming a `gate` step can never author `taint`, so `assertGateApprovalAllowed`'s own real call site
+only ever sees a non-`undefined` taint when a test constructs one by hand). The `validate.ts` cast
+simplification was confirmed a plain, behaviourally-identical upcast (re-ran `pnpm typecheck`, 21/21
+packages clean, and `validate.test.ts`, 61/61 green). Both doc comments were re-checked against each
+other and found to agree on every fact, not merely not-contradict. Also ran, independently,
+`workflow.test.ts` (22/22, including the new real-roster taint test, confirming zero false positives
+from `checkTaintOnlyOnAgentSteps` against any real shipped workflow) and, since
+`cli/test/commands/run/run.test.ts` was still concurrently owned by another agent at the time, the
+isolated P27 test inside it via `-t "PLAN-M14.md P27"` rather than the whole file (1/1, 17 unrelated
+tests correctly skipped). Round 1's own provenance-mismatch note was independently re-checked and
+confirmed a real non-issue: `checkAgentStep`'s own `node` parameter already existed before this piece;
+the live diff never threads a new one anywhere. No round 3 needed.
+
+**Mutation evidence (real, not narrated — each broken by hand, the named test(s) run and shown to fail
+with the real diagnostic quoted below, then restored via a hand-reverting `Edit` and re-verified
+green).**
+- `compilePlan`'s taint-copy line (`plan/compile.ts`, `...(agentStep?.taint === undefined ? {} :
+  {taint: agentStep.taint})`) replaced with a no-op spread: `compile.test.ts`'s two new taint tests
+  failed (`expected undefined to be 'external'`, both the plain and fanout-expanded cases);
+  `taint-grant.test.ts`'s two new real-compiled-workflow tests failed identically, on their own first
+  assertion (`expect(stepNode.taint).toBe('external')`), before either test even reached dispatch.
+  `test/tainted-steps.test.ts` does NOT catch this specific mutation — confirmed directly, it stayed
+  green — because it operates at the raw-parsed-authoring level (`parseWorkflow` alone, never
+  `compilePlan`), a real, deliberate separation of concerns from the compile-time copy this mutation
+  breaks. The Mandate's own "Field not copied: the pin fails for five" is realised by
+  `compile.test.ts`/`taint-grant.test.ts` together, not by `tainted-steps.test.ts` alone, a distinction
+  recorded here rather than left implicit or silently papered over.
+- `agentStepSchema`'s `taint: z.literal('external').optional()` replaced with `taint:
+  z.string().optional()`: `parse.test.ts`'s `rejects "taint: internal"` test failed
+  (`expected true to be false` — the mutated schema now wrongly accepts it as valid).
+- `taint: external` removed from `migrate:expand` in the shipped template
+  (`packages/templates/templates/workflows/migrate.workflow.yaml`): 4 real failures across 2 files —
+  `test/tainted-steps.test.ts`'s "exactly the expected five" and "migrate alone" assertions (down to
+  four tainted steps, `migrate:expand` missing from both), and `taint-grant.test.ts`'s own
+  `migrate:expand` test failed twice over (first on `stepNode.taint`, since the test throws before
+  reaching the grant assertion at all).
+
+**Rule 14/15 (clean `git worktree` at the final commit `620b30c`).** `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 packages clean), `pnpm run boundaries` (clean). Scoped, in
+that worktree: `packages/engine/test/{workflow,plan,security}` (23 files, 538 tests),
+`packages/cli/test/commands/workflow.test.ts` (22), `packages/cli/test/commands/run/run.test.ts` (18,
+including this piece's own P27 dry-run test), `test/tainted-steps.test.ts` (7),
+`test/workflows.test.ts` (45), `test/greenfield-fixture-generated.test.ts` (6),
+`test/agent-prompts-all-workflows.test.ts` (11, its own single, whole-suite real-dispatch test) —
+680/680 green. Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`), run as the
+exact `pnpm lint` script, clean across the entire repository at this commit.
+
+**Shared working tree.** Four other M14 pieces were concurrently active in this same tree during this
+piece's own work: P15 (gate approve/waive under the session marker) had already landed before this
+piece started; P19 (an agent never approves a gate it produced evidence for in the same run), P25 (the
+DoD `verify`/`done` split), and P29 (techniques materialised into `.forge/techniques/`) were all still
+in flight when this piece began and all landed (`002b524`, `eedae4d`, and P29 still in flight as of
+this piece's own final commit) before or during this piece's own final verification.
+`test/workflows.test.ts` (P25's own structural `implement-story` changes) and
+`fixtures/greenfield-service/.forge/techniques/` (P29's own regenerable-content addition) were read
+directly for context where needed but never edited; `git status`/`git diff` were re-checked clean of
+this piece's own edits before every commit. `packages/cli/test/commands/run/run.test.ts` carried both
+this piece's own one new dry-run-taint test and P19's own, unrelated, concurrently in-progress
+gate-conflict-of-interest tests mixed in the same working-tree file for the whole of this piece's own
+work, oscillating between staged and unstaged as P19 worked (tracked via a background monitor rather
+than manual `git status` polling). This piece never ran `git add` or `git apply --cached` on that file
+while P19 owned it, specifically to avoid interfering with another agent's own live staging of it — so
+this piece's own first commit (`958d7a3`) does not touch it. Once P19's own commit (`eedae4d`) landed
+without this piece's own hunk (P19's own gauntlet log records catching and deliberately isolating it
+out, `SPEC-QUESTIONS.md` Q253: "one real, self-caught shared-working-tree contamination incident (an
+unrelated P27 test hunk swept into a staged file, isolated out before commit)" — independent
+confirmation from the other side of the same incident), the remaining working-tree diff for that file
+was re-verified to be exactly this piece's own one hunk and nothing else, and it was committed
+separately, isolated by explicit pathspec (`620b30c`), after re-running that file's own full suite
+(18/18) and lint/prettier against the new HEAD. `packages/engine/test/gates/*.test.ts` and
+`packages/core/src/errors/codes.ts` were seen dirty at various points (P19's own `GATE-511` work) but
+never touched by this piece and never overlapped a file this piece owns. Both this piece's own commits
+were made with an explicit pathspec (`git commit -F <msgfile> -- <exact files>`), not a bare `git
+commit` after `git add`, specifically because the shared index at times held other agents' own staged
+changes simultaneously (confirmed directly via `git status` before the first commit) — a bare commit
+at that moment would have swept them in; the pathspec form commits only the named paths' own current
+content regardless of anything else staged, verified correct by inspecting `git show --stat` on both
+resulting commits.
+
+**Discloses (per the plan's own Discloses list, plus round 1's two out-of-scope findings above).**
+`migrate:expand`/`:contract` lose exec and derived test commands (the briefs already say the next
+command step runs the suite); a pre-M14 materialised `adopt.workflow.yaml` runs untainted until `forge
+upgrade` (P43 names it stale); `forge doctor --security` unbuilt. Plus: `20` §20.5 point 6's
+"read-only by construction" reading (item 3 above) and the unenforced, already-P31-planned
+ADR-confirmation gap (item 4 above). `test/tainted-steps.test.ts` checks authored taint at the
+raw-parse level, not the compiled level, by deliberate design — see Mutation evidence above for why
+that is a disclosed scope line, not a gap in coverage.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P27`.
+
+## Q253 — M14 P19: an agent never approves a gate that a step it ran produced evidence for in the same run — a two-round critic loop found zero real bugs, one nitpick (fixed) and two design concerns (both resolved) in round 1, two nitpicks (both fixed) in round 2, and one real, self-caught shared-working-tree contamination incident (an unrelated P27 test hunk swept into a staged file, isolated out before commit)
+
+**Context.** `PLAN-M14.md` P19, closing `SPEC-QUESTIONS.md` Q232 decision 8 ("`pm`/`po` keep
+`may_approve`; an agent never approves a gate it produced evidence for in the same run"), depending on
+P15 (already landed on `main`: `1b2fb0b`, `89cc425`, independently verified — the session marker
+`FORGE_RUN_ID`/`FORGE_STEP_ID`/`FORGE_AGENT_ID`, `resolveApprover`, and `GATE-510` machinery this piece
+builds on). Before this piece, an agent whose own step wrote the exact evidence a gate's `approval`
+block would accept it from — its own `ArchitectureSpec`, its own `ADR`, its own step naming the gate in
+`gateEvidence:` — could still turn around, under the identical marker-authenticated session, and approve
+that same gate itself: `05` §5.2's separation-of-duties principle ("reviewer/critic/diagnostician/
+test-architect MUST never be the same session instance as the author of the work under review") had no
+analogue for gate approval specifically.
+
+**Built.** `approveGate` (`engine/gates/approve.ts`) is refused with a new `GATE-511` (nothing appended)
+when its agent approver produced this run's own evidence for the gate being approved — checked strictly
+after the ordinary `approverRefusal` (`GATE-508`) authorisation and strictly before any check-result
+reasoning (a passing gate is refused this way exactly as a failing one is), and never for a human
+approver. `ApproveGateInput` gains `producedEvidenceFor?: readonly string[]` — the gate ids the caller
+has determined the approving agent produced evidence for; `approveGate` itself never reads the event
+log, only whether `definition.id` is a member.
+
+The CLI (`cli/commands/run/gate-commands.ts`) computes that list once per `gateApprove`/`gateWaive` call
+via a new `agentProducedEvidenceForGate(ctx, definition, agentId)`, scanning `readEvents(ctx.projectRoot,
+ctx.runId)` (itself scoped to exactly one run, so evidence from a different run is never consulted) for
+either of two independent sources:
+- a `StepStarted` whose own top-level `agentId` matches and whose `payload.gateEvidence` names the
+  gate — the compiled `StepNode.gateEvidence` (`plan/compile.ts`'s pre-existing `attachDependentGateEvidence`:
+  a step's own authored `gateEvidence:` plus every `gate`-kind step that directly depends on it), now
+  actually reaching the event log: `runAgentStep` (`dispatch/steps.ts`) and `runSwarmReviewStep`
+  (`interaction/swarm-review-step.ts`) previously emitted a bare `{type: 'StepStarted', stepId}` with
+  neither `agentId` nor `payload` at all;
+- an `ArtifactCreated` by that same agent whose own `payload.type` one of the gate's `evidence:` entries
+  names, read through a new pure `evidenceArtifactType(ref)` (`engine/gates/approve.ts`) that takes the
+  `10` §10.1 `Type(*)`/`Type(id)` grammar's text before the first `(` — never a wildcard match, matching
+  the identical grammar `plan/dependencies.ts`'s own `ARTIFACT_REFERENCE` already reads for a different
+  mini-DSL.
+
+`GateDefinition` gains `evidence?: readonly {artifact: string}[]` (`engine/gates/types.ts`, a new
+`GateEvidenceRef`); `document.ts`'s gate-document loader — which since `PLAN-M13.md` P41 already
+validated `evidence:`'s shape (mapping, only the `artifact` key) before dropping it — now also validates
+`artifact` itself (present, non-blank string, reported `invalid-value` if not) and carries the parsed
+array through into the built definition instead of discarding it, attached only when non-empty. The CLI
+applies the identical `GATE-511` check directly in `gateWaive` too, before any check runs (`gateWaive`
+never calls `approveGate` at all, so this direct check is the only place the rule is enforced for
+waiving — no second, internal backstop the way `gateApprove` has).
+
+New `GATE-511` (`core/errors/codes.ts`), pre-assigned to this piece in `PLAN-M14.md`'s own
+error-code-allocation table (`` `GATE-510`..`GATE-513` (P15, P16, P19) ``): `severity: 'error'`,
+`exitCode: EXIT_CODES.gateFailed` (matching its sibling authorisation-refusal codes GATE-507/508/510,
+not the `usage` family GATE-509/512/513 use). Remedy opens with the approved imperative "Choose"
+(already in `errors.test.ts`'s own `IMPERATIVE_VERBS`); no new `SAMPLE_DETAILS` entries were needed —
+`gateId`/`agentId` already existed in that shared bag from other codes.
+
+**Spec text changed** (`specs/10-workflow-engine-and-lifecycle.md` §10.3 rule 6) — authorised explicitly
+by this piece's own Surface line ("specs 05 §5.5, 10 §10.3 rule 6"). `05` §5.5's own word-for-word-tested
+operating-contract prompt block was left unreworded (it has no other content to amend); `docs/
+method-guide.md`'s own gate-rules section states only rules 1-5 of `10` §10.3 (rule 6, including P15's
+own session-marker half, was never stated there at all), so per the Surface's own "if it states the
+rule" qualifier, it needed no change either. Before (the sentence rule 6 ends on):
+> ...naming this run with no agent id at all — a run's own `command` step, not a session — it is
+> refused outright. `forge gate check` shows the newest waiver on record. A gate document with an
+> unknown key, or with no deterministic check, is a load error, never an empty gate that passes.
+
+After:
+> ...naming this run with no agent id at all — a run's own `command` step, not a session — it is
+> refused outright. When this run's own event log shows the bound agent produced evidence for the gate
+> (a step it ran named the gate in its own compiled evidence list, or created an artifact the gate's
+> `evidence:` names), it is refused even where `approval.roles` and `may_approve` would otherwise allow
+> it: a person may still approve it (`05` §5.2's separation of duties; `--owner` stays the person's own
+> word regardless), and evidence from a different run is never consulted. `forge gate check` shows the
+> newest waiver on record. A gate document with an unknown key, or with no deterministic check, is a
+> load error, never an empty gate that passes.
+
+Rules 1-5 are untouched.
+
+**Round 1 (fresh, context-free): zero real bugs; one nitpick, fixed; two design concerns, both
+resolved.**
+- Nitpick: `run.test.ts`'s new end-to-end fixture's `.forge/agents/sre.yaml` carried a copy-pasted
+  `name: Architect` field despite `id: sre` (the id chosen specifically because `@forge/agents`'
+  loader hard-refuses any non-empty `may_approve` for the literal id `architect`, `05` §5.2's own
+  roster rule) — confusing given the file's own comment explains exactly that substitution. Fixed:
+  `name: SRE`.
+- Design concern: `approve.ts`'s doc comment cited `specs/20 §20.10 S6` ("a tainted step cannot approve
+  a gate") alongside this piece's own new rule without distinguishing them — S6 is `@forge/engine/
+  security`'s own, already-shipped, untouched `assertGateApprovalAllowed` (external-content taint), a
+  materially different mechanism from this piece's same-run-evidence check. Fixed: a clarifying sentence
+  naming both as sibling invariants restricting who may approve a gate, not one mechanism.
+- Design concern (self-resolved mid-round, before the critic finished): no spec text had been amended
+  despite the Surface line naming `10 §10.3 rule 6`; the amendment above was written during round 1's own
+  review and the critic verified the added text against the actual code behaviour once it landed.
+- Also surfaced, not a code issue: round 1's own review incidentally caught that `run.test.ts` had picked
+  up an unrelated `PLAN-M14.md P27` test (`dryRunWorkflow`'s taint-in-`--json`-output test) in the staged
+  diff — traced to this piece's own `git add packages/cli/test/commands/run/run.test.ts` sweeping in a
+  different, concurrently-running piece's uncommitted hunk in this shared working tree (the file had two
+  unrelated hunks at the time; only the hunk *count* was checked before staging, not each hunk's actual
+  content). Fixed by re-staging with a hand-isolated `git apply --cached` patch containing only this
+  piece's own two hunks (the import additions and the new end-to-end test), leaving the P27 hunk
+  unstaged in the working tree for its own owner to commit. Confirmed via `git show
+  :packages/cli/test/commands/run/run.test.ts | grep` that the P27 test text is absent from the staged
+  blob, and the full P19 test suite re-run green afterward.
+
+**Round 2 (fresh, context-free; independently re-verified round 1's three fixes by direct code reading,
+re-ran the full affected test suites itself, plus `pnpm typecheck` and `eslint`): zero real bugs; two
+nitpicks, both fixed; explicitly confirmed the diff contamination-free.**
+1. The amended `10` §10.3 rule 6 sentence was grammatically dense (a trailing "when" clause reading more
+   naturally moved earlier). Fixed: reworded, no content change.
+2. `gateWaive`'s own comment said the `GATE-511` check was "checked before any check runs, like
+   `GATE-510` just above it" — the line immediately above is actually the `GATE-508` refusal (from
+   `approverRefusal`); `GATE-510` is thrown a few lines earlier still, inside `resolveApprover`. True in
+   spirit, imprecise in the literal "just above" claim. Fixed: names both codes and their real relative
+   positions.
+
+**Mutation evidence (real, not narrated — each broken on the live working-tree file, the named test(s)
+run and shown to fail, then restored via `git checkout --` and re-verified green).**
+- `approveGate`'s own `GATE-511` throw removed (engine case): `approve.test.ts`'s "GATE-511 when the
+  approving agent produced evidence for THIS gate in this run" failed — `expected function to throw an
+  error, but it didn't` — the other 34 tests in the file unaffected.
+- `gate-commands.ts`'s `producedEvidenceFor` computation and both `GATE-511` throws removed, in both
+  `gateApprove` and `gateWaive` (CLI case; `producedEvidenceFor` hardcoded to `[]` rather than merely
+  deleting the throw, so `approveGate`'s own internal backstop check — still active and unmutated — had
+  nothing to catch either, proving the CLI's own computation is genuinely load-bearing, not a redundant
+  early-exit over an already-safe engine): 3 of 66 `gate-commands.test.ts` tests failed (the StepStarted-
+  source test's approve half, the ArtifactCreated-source test, the `Type(*)`-grammar test), all others
+  green.
+- `runAgentStep`'s own `payload.gateEvidence` emission removed (`payload not emitted: the gateEvidence
+  case`): `agent.test.ts`'s own direct StepStarted-shape assertion failed, and `run.test.ts`'s real
+  end-to-end test failed too (the refusal never fired since the real emitted event carried no
+  `gateEvidence`); every other test, including the independent `ArtifactCreated`-source tests, stayed
+  green — confirming the two evidence sources are genuinely independent.
+- `document.ts`'s evidence parsing dropped (built but never attached to the definition): 2
+  `document.test.ts` tests failed (`evidence` parsing, `evidence` absence) and 2 `gate-commands.test.ts`
+  tests failed (the `ArtifactCreated`-source test, the `Type(*)`-grammar test, both of which need
+  `definition.evidence` to have anything to match against) — the `StepStarted`-source tests, which never
+  read `definition.evidence`, stayed green.
+- `agentProducedEvidenceForGate`'s run scoping ignored (mutated to scan every run directory under
+  `.forge/state/runs/` instead of only `ctx.runId`): exactly the one targeted "evidence recorded in
+  ANOTHER run is not consulted" test failed — a promise that should have resolved (human-independent
+  approval) instead rejected `GATE-511` — all 65 other `gate-commands.test.ts` tests stayed green.
+
+**Rule 14/15 (clean `git worktree` at the final commit `eedae4d`).** `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 packages clean), `pnpm run boundaries` clean, the exact
+combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`, full repo, not scoped) clean.
+Scoped, in that worktree: `engine/test/gates/` (10 files), `engine/test/dispatch/agent.test.ts`,
+`engine/test/interaction/swarm-review-step.test.ts`, `cli/test/commands/run/` (all files), plus the
+FULL `core/test/errors.test.ts` (464, this milestone's own standing rule for a piece adding a new error
+code) and `test/workflows.test.ts` (45) — 40 files, 1308/1308 green.
+
+**Shared working tree.** `gate-commands.ts` and `codes.ts` were the identified concurrency-risk files
+per this piece's own dispatch brief; `codes.ts` genuinely was concurrently touched (M14 P29 was adding
+its own error-code detail there at the same time) — isolated with a hand-built, single-hunk
+`git apply --cached` patch, verified afterward (`git show :codes.ts | grep`) that the committed blob
+carries this piece's own `GATE-511` entry and none of P29's own uncommitted `RUN-065` changes.
+`gate-commands.ts` itself turned out untouched by any other concurrent piece (confirmed by reading its
+own full `git diff` before every edit and immediately before staging). A REAL incident happened on a
+file the dispatch brief had NOT flagged: `cli/test/commands/run/run.test.ts` had two unrelated hunks at
+staging time (this piece's own, and an uncommitted `PLAN-M14.md P27` test) — only the hunk *count* was
+checked before the first `git add <file>`, not each hunk's content, so the P27 hunk was swept in
+alongside this piece's own. Caught by round 1's own critic (see below), fixed by re-staging with a
+hand-isolated patch before commit; P27 landed its own, unrelated commit (`620b30c`) cleanly on top of
+this piece's own (`eedae4d`) shortly after, confirming the isolation was correct — P27's own commit
+needed no rebase or conflict resolution against this piece's. Lesson applied to every other file this
+piece staged: after this incident, every remaining file's FULL diff content (not just hunk count) was
+read before staging, and re-confirmed a second time after the two small round-1/round-2 nitpick fixes.
+A second, genuine mid-work incident: this file (`SPEC-QUESTIONS.md`) itself was reset to its pre-edit
+`HEAD` state by an unknown external actor partway through drafting this very entry (the earlier draft,
+including a filled-in Rule 14/15 section, vanished from the working tree entirely — confirmed via `git
+status --short` showing this file suddenly clean while `GAUNTLET-LOG.md`'s own concurrent edit survived
+intact) — recovered by reconstructing this entry from this session's own record of what it had written
+and re-applying it in one edit; the standing rule against touching another agent's dirty files was not
+knowingly violated by this piece itself, and no attempt was made to identify or blame a specific other
+piece for the reset.
+
+**Discloses (per the plan's own Discloses list).** `ArtifactCreated` is still emitted only by the
+`swarm-review` step (`interaction/swarm-review-step.ts`); `verifyDeclaredOutputs`/`dispatch/outputs.ts`
+does NOT gain a new emission in this piece (Surface scope stayed to `gates/{types,document,approve}.ts`,
+`steps.ts`, `swarm-review-step.ts`, `gate-commands.ts`, `codes.ts` only) — so evidence source (b) is, as
+shipped, reachable only through a `swarm-review` step's own `ReviewReport` artifact, and since no real,
+shipped gate's own `evidence:` block names `ReviewReport` (every real gate names things like
+`ArchitectureSpec`/`ADR(*)`/`Capability(*)`/`Environment(*)`, confirmed by round 2's own grep of every
+shipped template gate), source (b) is currently unreachable for any real gate in this repo today — a
+genuine, disclosed scope limitation, not a hidden gap: source (a) (declared/inherited `gateEvidence:`)
+is fully live for every real agent step. The `Type(*)`/`Type(id)` grammar is parsed as the name before
+`(`, never a wildcard, exactly as the plan's own Discloses text names. The rule is observed, not
+declared: `produces_evidence_for` (an agent's own YAML) stays documentary, genuinely untouched by this
+diff. Cross-run evidence is not refused, proven directly by mutation evidence above.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P19`.
