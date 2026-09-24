@@ -22068,3 +22068,94 @@ this piece's scope and surface) or accepting the identical fragility one layer u
 gate-commands.ts`, `engine/gates/approve.ts`, `core/errors/codes.ts`, `specs/
 10-workflow-engine-and-lifecycle.md`, `cli/test/commands/run/gate-commands.test.ts`, `cli/test/
 bin.test.ts`, `cli/test/commands/run/run.test.ts`.
+
+## Q254 — M14 P25: `forge story verify` runs the `09` §9.8 `verify` DoD list by default, `--phase done` runs `done`, the lane commit runs a new `done-check` step — a three-round critic loop found one real gap in round 1 (fixed), one real bug plus one genuinely out-of-Surface gap in round 2 (the bug fixed with a proven regression test, the gap disclosed rather than silently left or scope-crept into), zero new findings in round 3
+
+**Decision.** Decision 13's code half (`SPEC-QUESTIONS.md` Q232) was in no group's own drafts; the
+orchestrator added it to `PLAN-M14.md` as P25, depending on P1 (already landed, independently
+verified: `09` §9.8's spec text split a single nine-item `done` DoD list into a six-item `verify`
+list — "what the story itself can already show … runs at the self-verify step" — and a three-item
+`done` list — "what only review and the merge can show … runs at commit … and again in the merge
+queue"). This piece is that split, in code: `dodPhaseSchema` (`packages/methods/src/dod/schema.ts`)
+gains an optional `verify: z.array(dodCheckSchema)` beside the required `ready`/`done`, so a pre-M14
+profile still loads; `forge story verify <storyId> [--phase verify|done] [--json]`
+(`packages/cli/src/commands/story.ts`, `bin.ts`) runs `verify` by default and `--phase done` runs
+`done`; `implement-story.workflow.yaml`'s `self-verify` step is textually unchanged and now runs
+`verify`; a new `done-check` command step (`forge story verify {{storyId}} --phase done --json`) sits
+between `document` and the `commit` checkpoint, so `done` runs after review, at the lane commit (`10`
+§10.6 step 9) — matching decision 13's own text verbatim.
+
+**The "kb lint" warning, read against a Surface constraint.** The Mandate's own words: "a profile
+without `verify` is a `kb lint` warning naming the split." The piece's `Surface` list names
+`packages/methods/src/dod/{schema,types,load,evaluate}.ts`, `story.ts`, `bin.ts` and the workflow/brief
+files — no `packages/kb/*` file, no `kb.ts`/`kb-rules.ts`/`kb-rule-command.ts`, appears anywhere in it
+(confirmed: `forge kb lint` reads only `parseKbTree`'s own recognised file kinds, none of which is
+`dod-profiles.yaml`; wiring this into the real `forge kb lint` subcommand would mean touching files
+outside this piece's own Surface). Read as: the DATA LAYER (`loadDodProfile`, in Surface) computes the
+advisory and returns it on a successful parse (never a load failure — a pre-M14 profile is real,
+loadable data); `story.ts` (in Surface) is the one real, in-Surface consumer, and surfaces it on
+`forge story verify`'s own stderr and `--json` envelope. Not literal `forge kb lint` command wiring,
+which stays out of scope for a later piece.
+
+**A three-round gauntlet loop, all fresh and context-free.**
+
+Round 1 found the "kb lint" warning was computed (`loadDodProfile`'s new `warnings` array) but never
+read by either of this package's two real callers (`story.ts`, `spec/validate-rules.ts`) — a warning
+nobody ever sees is not a warning, and the Mandate's own text was not actually delivered. Fixed:
+`story.ts` threads `profiles.warnings` (scoped to the story's own `dod_profile`) into
+`StoryVerifyReport.warnings: readonly string[]`; `renderStoryVerify` prints each as `forge: warning:
+...` on stderr in both text and `--json` modes (never affecting `passed`/`errors`/`exitCode`) and
+includes the array in the `--json` envelope. Proven with a real subprocess test that deliberately uses
+a FAILING check, since the test harness's own `forge()` helper only captures real child-process stderr
+on a non-zero exit (`execFileSync`'s return value on a clean exit carries stdout only) — so the
+assertion cannot be accidentally vacuous on the untested passing path.
+
+Round 2 found two things in that fix. First, a real bug: the scoping filter,
+`warning.path.endsWith(\`profiles.${story.dod_profile}\`)`, is a substring test, and DoD profile ids are
+schema-unrestricted strings (`z.record(z.string().min(1), …)`, dots included) — a profile literally
+named e.g. `a.profiles.backend-default` missing its own `verify` list would falsely leak its warning
+onto an unrelated story whose real `dod_profile` is plain `backend-default`. Fixed: replaced with an
+exact match against the identical full path `verifyWarnings`/`withSourceContext` build
+(`` `${ctx.kbRoot}/${DOD_PROFILES_RELATIVE_PATH}: profiles.${story.dod_profile}` ``, the same string
+`loadProfiles` already computes as `sourcePath`). A new regression test uses exactly that adversarial
+profile id; confirmed genuinely non-vacuous by temporarily restoring the old `.endsWith` form and
+watching it fail for the real reason (the other profile's warning leaking in), then restoring the fix.
+Second, a genuinely out-of-Surface gap, disclosed rather than silently left or fixed by scope-creeping
+into a file this piece was never asked to touch: `spec/validate-rules.ts`'s
+`validateDefinitionOfReady` (`forge spec validate --rule definition-of-ready`) is the other real
+caller of `loadDodProfile`/`readDodProfile`, loads the identical `dod-profiles.yaml` for the same
+project, and does not read `.warnings` either. Documented directly on `DodParseResult`'s own doc
+comment (`packages/methods/src/dod/types.ts`), named again in this piece's own Discloses list below.
+
+Round 3 (final) independently re-traced both round-2 fixes against the real call path by hand, ran the
+full scoped test set plus a full `pnpm typecheck` across all 21 packages, and found zero new real
+findings — one repeated cosmetic nitpick (`implement-story.workflow.yaml`'s own top-level
+`description:` prose still lists only the nine pre-existing steps, not `done-check`; read by no test
+and no engine logic), left as is in both rounds it was raised.
+
+**Mutation evidence** (each constructed for real, run through the exact scoped tests, confirmed a real
+failure, then reverted). `verify` made required (`.optional()` removed from `schema.ts`): 4 real
+`load.test.ts` failures (the pre-M14-profile and mixed-profiles cases). `phase` ignored (`story.ts`'s
+`profile[phase]` hardcoded to `profile['done']`): 25 of 42 `story.test.ts` failures (every
+phase-dependent case). `done-check` removed from `implement-story.workflow.yaml` (step deleted,
+`commit`'s `dependsOn` reverted to `[document]`): 4 real failures across `test/workflows.test.ts`'s
+step-order pin and `test/command-steps-in-claim.test.ts`'s claim-coverage enumeration (14 → 15 pinned
+steps). The round-2 scoping fix itself (`.endsWith` restored in place of the exact match): the new
+adversarial regression test failed for the real, predicted reason.
+
+**Depends on.** M14 P1 (landed, independently verified).
+
+**Discloses.** `done` is run by a command step, not by the merge queue (decision 13 says "the
+merge/commit path"; the queue's own named check sets stay `fast`/`full`, per Q226, untouched here);
+`review:blocking-findings == 0` still has no deterministic implementation until a review verdict is
+readable by a check (an open question, unchanged by this piece); `spec/validate-rules.ts`'s
+`validateDefinitionOfReady` does not yet surface the same missing-`verify` warning `forge story verify`
+now does (round 2, above) — left for a later piece, since that file is not in this piece's own
+`Surface`.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P25`. Files: `methods/dod/{schema,types,load}.ts`,
+`cli/commands/story.ts`, `cli/bin.ts`, `templates/workflows/implement-story.workflow.yaml`,
+`templates/briefs/scaffold-project.md`, `methods/test/dod/{load,spec-block}.test.ts`,
+`methods/test/fixtures/dod-profiles.ts`, `cli/test/commands/story.test.ts`,
+`cli/test/bin-story-verify.test.ts`, `test/{workflows,command-steps,command-steps-in-claim,
+build-stage-lane-landing}.test.ts`.

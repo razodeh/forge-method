@@ -16243,3 +16243,215 @@ changing `runCommandStep`'s own persisted-event shape (out of this piece's scope
 identical fragility one layer up.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q252`.
+
+## M14 P25 — The DoD `verify` phase in code: `forge story verify` runs `verify`; the lane commit runs `done` (`methods/dod/{schema,types,load}.ts`, `cli/commands/story.ts`, `cli/bin.ts`, `templates/workflows/implement-story.workflow.yaml`, `templates/briefs/scaffold-project.md`; new/edited tests in `methods/test/dod/{load,spec-block}.test.ts`, `methods/test/fixtures/dod-profiles.ts`, `cli/test/commands/story.test.ts`, `cli/test/bin-story-verify.test.ts`, `test/{workflows,command-steps,command-steps-in-claim,build-stage-lane-landing}.test.ts`)
+
+**Context.** `PLAN-M14.md` P25. Decision 13's code half was in no group's own drafts; added by the
+orchestrator, surface independently verified. Depends on M14 P1 (already landed, independently
+verified), which amended `09` §9.8's own worked `dod-profiles.yaml` example: the old, single nine-item
+`done` list split into a six-item `verify` list ("what the story itself can already show … runs at the
+self-verify step") and a three-item `done` list ("what only review and the merge can show … runs at
+commit … and again in the merge queue"). P1 amended the spec text only; `dodPhaseSchema` still modelled
+only `ready`/`done` and `forge story verify` still ran a single `done` list unconditionally. This piece
+is the code half.
+
+**Built.** `dodPhaseSchema` (`packages/methods/src/dod/schema.ts`) gains `verify:
+z.array(dodCheckSchema).optional()` beside the required `ready`/`done` (`.strict()` unchanged), so a
+pre-M14 profile with only `ready`/`done` still loads with zero schema issues. `DodPhase.verify?:
+readonly DodCheck[] | undefined` (`types.ts`) carries the explicit `| undefined` `exactOptionalPropertyTypes`
+requires to accept zod's own inferred optional-field type. `loadDodProfile` (`load.ts`) gains a new
+`verifyWarnings` pass: a profile with no `verify` list is not a schema failure (it genuinely still
+loads) but earns one `DodIssue`-shaped entry in a new `warnings` array on the successful `DodParseResult`
+branch, naming the split — the Mandate's own "a profile without `verify` is a `kb lint` warning naming
+the split," read (given the Surface list excludes every `packages/kb/*`/`kb-rule-command.ts` file) as an
+advisory the DATA LAYER computes, for `story.ts` (in Surface) to surface, not literal wiring into the
+`forge kb lint` subcommand itself.
+
+`forge story verify <storyId> [--phase verify|done] [--json]` (`story.ts`, a new exported `StoryPhase`/
+`STORY_PHASES`/`isStoryPhase`; `bin.ts`'s new `STORY_VERIFY_FLAGS = { '--phase': true }`) runs the
+`verify` list by default (`phase: 'verify'` in the report and `--json` envelope) and `--phase done` runs
+`done`; an unrecognised `--phase` value is a usage error before the project is even read, matching every
+sibling command. `StoryVerifyReport.phase` widened from the literal `'done'` to `StoryPhase`;
+`storyVerify`'s internal `profile.done` references became `profile[phase] ?? []` throughout (the empty-
+list "(profile) unverifiable, nothing was verified" case now also covers an ABSENT `verify` list, the
+same reading). The `evaluateDodProfile` call for plain-expression checks keeps its own synthetic,
+single-list wrapper literally unchanged (`{ ready: [], done: expressions }`, phase argument `'done'`
+always) — it is reused purely for its per-check evaluation, so `evaluate.ts` itself is untouched by this
+diff, exactly as the Mandate's own "must not change" line requires. A `story.dod_profile`'s own missing-
+`verify` warning (scoped by an EXACT match of the warning's full source-context path, never a substring
+one) prints on stderr as `forge: warning: ...` in both text and `--json` modes and rides along in the
+`--json` envelope's own `warnings: readonly string[]` array, without ever affecting `passed`/`errors`/
+`exitCode` (advisory only).
+
+`implement-story.workflow.yaml`'s `self-verify` step (`forge story verify {{storyId}} --json`) is
+byte-identical in text and now runs `verify` (the new default); a new `done-check` command step
+(`forge story verify {{storyId}} --phase done --json`) sits between `document` and the `commit`
+checkpoint, so `done` runs after review, at the lane commit (`10` §10.6 step 9) — matching decision 13's
+own text verbatim ("`forge story verify` runs `verify`, the merge/commit path runs `done`").
+`packages/methods/test/fixtures/dod-profiles.ts` (the shared verbatim `09` §9.8 worked example) and
+`briefs/scaffold-project.md` both follow the amended block.
+
+**Round 1 (fresh, context-free): 1 real finding, fixed.**
+1. **Major.** `loadDodProfile`'s new `warnings` were computed correctly but never read by either real
+   caller (`story.ts`, `spec/validate-rules.ts`) — a warning nobody ever sees is not a warning, and
+   nothing disclosed the gap. Fixed: `story.ts` threads `profiles.warnings` (filtered to just this
+   story's own `dod_profile`) through `StoryVerifyReport.warnings`; `renderStoryVerify` prints each as
+   `forge: warning: ...` on stderr in both text and `--json` modes and includes the array in the `--json`
+   envelope. Proven with a real subprocess test in `bin-story-verify.test.ts` that deliberately uses a
+   FAILING check (the harness's own `forge()` helper only captures real child-process stderr on a
+   non-zero exit; `execFileSync`'s return value on success carries stdout only) so the assertion is not
+   accidentally vacuous on the untested success path.
+
+**Round 2 (fresh, context-free): 2 real findings; 1 fixed with a proven regression test, 1 disclosed
+(genuinely out of this piece's own Surface, not silently left unmentioned).**
+1. **Major.** The round-1 fix's own scoping filter, `warning.path.endsWith(\`profiles.${story.dod_profile}\`)`,
+   is a substring test — and a DoD profile id is schema-unrestricted (`z.record(z.string().min(1), …)`,
+   any non-empty string, dots included). A profile literally named e.g. `a.profiles.backend-default`
+   missing its own `verify` list would falsely leak its warning onto an unrelated story whose real
+   `dod_profile` is plain `backend-default`. Fixed: replaced with an exact match against the full path
+   `verifyWarnings`/`withSourceContext` actually build (`` `${ctx.kbRoot}/${DOD_PROFILES_RELATIVE_PATH}:
+   profiles.${story.dod_profile}` ``, the identical string `loadProfiles` already passes as `sourcePath`).
+   A new regression test uses exactly that adversarial profile id; confirmed genuinely non-vacuous by
+   temporarily restoring the `.endsWith` form and watching the new test fail for the real reason (the
+   OTHER profile's warning leaking in), then restoring the fix and re-confirming green.
+2. **Disclosed, not fixed.** `spec/validate-rules.ts`'s `validateDefinitionOfReady` (`forge spec validate
+   --rule definition-of-ready`) is the other real caller of `loadDodProfile`/`readDodProfile` in this
+   codebase and loads the identical `dod-profiles.yaml` for the same project, but does not read
+   `.warnings` either — that file is not in this piece's own `Surface` list. Documented directly on
+   `DodParseResult`'s own doc comment (`types.ts`) rather than left silently unmentioned, so a reader
+   cannot mistake "only one of two real callers surfaces it" for a miss.
+
+**Round 3 (fresh, context-free, final round; independently re-verified rounds 1-2's fixes by hand-tracing
+`verifyWarnings`/`withSourceContext`/`expectedWarningPath`'s exact string construction against the real
+call path, re-ran the full scoped test set, and ran a full `pnpm typecheck` across all 21 packages):
+zero new findings.** One repeated cosmetic nitpick, not fixed in either round: `implement-story.workflow.yaml`'s
+own top-level `description:` prose still lists only the nine pre-existing steps, not `done-check` —
+read by no test and no engine logic, left as is.
+
+**Mutation evidence.** `verify` made required (schema.ts, `.optional()` removed): 4 real `load.test.ts`
+failures (the pre-M14-profile and mixed-profiles cases), restored. `phase` ignored (`story.ts`'s
+`profile[phase]` hardcoded to `profile['done']`): 25 of 42 `story.test.ts` failures (every phase-
+dependent case), restored. `done-check` removed from `implement-story.workflow.yaml` (step deleted,
+`commit`'s `dependsOn` reverted to `[document]`): 4 real failures across `test/workflows.test.ts`'s
+step-order pin and `test/command-steps-in-claim.test.ts`'s claim-coverage enumeration, restored. The
+round-2 scoping-filter regression (`.endsWith` restored in place of the exact match): the new adversarial
+regression test failed for the real reason (the other profile's warning leaking in), restored.
+
+**Discloses.** `done` is run by a command step, not by the merge queue (decision 13 says "the
+merge/commit path"; the queue's named sets stay `fast`/`full`, per Q226, untouched here);
+`review:blocking-findings == 0` still has no deterministic implementation until a review verdict is
+readable by a check (recorded as an open question, unchanged by this piece); `spec/validate-rules.ts`
+does not yet surface the same `verify`-missing warning (round 2, above).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q254`.
+
+## M14 P19 — An agent never approves a gate that a step run by that agent produced evidence for in the same run (`engine/gates/{types,document,approve}.ts`, `engine/dispatch/steps.ts`, `engine/interaction/swarm-review-step.ts`, `cli/commands/run/gate-commands.ts`, `core/errors/codes.ts`, `specs/10-workflow-engine-and-lifecycle.md`; new/edited tests in `engine/test/gates/{document,approve}.test.ts`, `engine/test/dispatch/agent.test.ts`, `engine/test/interaction/swarm-review-step.test.ts`, `cli/test/commands/run/{gate-commands,run}.test.ts`)
+
+**Built.** `approveGate` (`engine/gates/approve.ts`) refuses a new `GATE-511` (nothing appended) when
+its agent approver produced this run's own evidence for the gate being approved — checked right after
+the ordinary `approverRefusal` (`GATE-508`) authorisation and before any check-result reasoning, never
+for a human. `ApproveGateInput` gains `producedEvidenceFor?: readonly string[]`, caller-computed; the
+function itself never reads the event log, only whether the gate id is a member.
+
+`cli/commands/run/gate-commands.ts`'s new `agentProducedEvidenceForGate(ctx, definition, agentId)`
+computes that list once per `gateApprove`/`gateWaive` call, scanning `readEvents(ctx.projectRoot,
+ctx.runId)` (scoped to exactly one run) for either of two independent sources: (a) a `StepStarted` whose
+own `agentId` matches and whose `payload.gateEvidence` names the gate — the compiled
+`StepNode.gateEvidence` (`plan/compile.ts`'s pre-existing `attachDependentGateEvidence`), now actually
+reaching the event log for the first time (`runAgentStep`/`runSwarmReviewStep` previously emitted a bare
+`{type: 'StepStarted', stepId}` with neither `agentId` nor `payload`); (b) an `ArtifactCreated` by that
+agent whose `payload.type` one of the gate's own `evidence:` entries names, via a new pure
+`evidenceArtifactType(ref)` reading the `10` §10.1 `Type(*)`/`Type(id)` grammar as the text before the
+first `(` (never a wildcard). `GateDefinition` gains `evidence?: readonly {artifact: string}[]`
+(`document.ts`'s loader now carries `evidence:` through instead of validating-then-dropping it, and also
+validates `artifact` itself is present and non-blank). The identical `GATE-511` check is applied
+directly in `gateWaive` too, before any check runs — `gateWaive` never calls `approveGate`, so this is
+the only enforcement point for waiving.
+
+`pm`/`po` keep `may_approve` unchanged; the taint guard, `reconstructRunState`'s `StepStarted` handling,
+and `produces_evidence_for` are all untouched. New `GATE-511` (`core/errors/codes.ts`), pre-assigned in
+`PLAN-M14.md`'s own allocation table (`GATE-510..GATE-513` for P15/P16/P19): `exitCode:
+EXIT_CODES.gateFailed`, remedy opens with the already-approved imperative "Choose," no new
+`SAMPLE_DETAILS` keys needed. `specs/10` §10.3 rule 6 amended (Surface-authorised) with the new refusal;
+`05` §5.5's own word-for-word-tested operating contract left unreworded; `docs/method-guide.md` states
+only rules 1-5 of `10` §10.3 already, so needed no edit either (its own "if it states the rule"
+qualifier).
+
+**Round 1 (fresh, context-free): zero real bugs; one nitpick, fixed; two design concerns, resolved.**
+- A copy-pasted `name: Architect` on the `run.test.ts` end-to-end fixture's `sre.yaml` (the id chosen
+  specifically because the roster loader hard-refuses any non-empty `may_approve` for the literal id
+  `architect`) — fixed to `name: SRE`.
+- `approve.ts`'s doc comment cited `specs/20 §20.10 S6` (the pre-existing, unrelated taint guard)
+  alongside this piece's own new rule without distinguishing the two mechanisms — fixed with a
+  clarifying sentence.
+- No spec text had been amended when round 1 started; written during the same round, then verified by
+  the critic once it landed.
+- Also surfaced: `run.test.ts` had picked up an unrelated `PLAN-M14.md P27` test in the staged diff —
+  this piece's own `git add <file>` had swept in a different, concurrently-running piece's uncommitted
+  hunk in this shared working tree (two unrelated hunks were present; only the hunk *count* had been
+  checked before staging, not each hunk's content). Fixed by re-staging with a hand-isolated
+  `git apply --cached` patch containing only this piece's own two hunks, leaving the P27 hunk unstaged
+  for its own owner — which landed its own commit (`620b30c`) cleanly on top of this piece's
+  (`eedae4d`) shortly afterward, with no conflict, confirming the isolation was correct.
+
+**Round 2 (fresh, context-free; independently re-verified round 1's fixes by direct code reading and
+its own full test/typecheck/lint run): zero real bugs; two nitpicks, both fixed; explicitly confirmed
+the diff contamination-free.**
+1. The amended rule 6 sentence read grammatically dense — reworded, no content change.
+2. `gateWaive`'s own comment said the check was "checked before any check runs, like `GATE-510` just
+   above it" — the line immediately above is actually the `GATE-508` refusal, not `GATE-510` (thrown
+   earlier still, inside `resolveApprover`). Fixed: names both codes and their real relative positions.
+
+**Mutation evidence (real, each broken on the live working-tree file, the named test(s) shown to fail,
+then restored via `git checkout --` and re-verified green).**
+- `approveGate`'s own `GATE-511` throw removed (engine case): the one targeted `approve.test.ts` test
+  failed to throw; the other 34 tests in the file unaffected.
+- `gate-commands.ts`'s `producedEvidenceFor` computation and both `GATE-511` throws removed, in both
+  `gateApprove` and `gateWaive` (CLI case — `producedEvidenceFor` hardcoded to `[]` rather than merely
+  deleting the throw, so `approveGate`'s own still-active internal backstop had nothing to catch either,
+  proving the CLI's own computation is genuinely load-bearing): 3 of 66 `gate-commands.test.ts` tests
+  failed, all others green.
+- `runAgentStep`'s own `payload.gateEvidence` emission removed: the direct StepStarted-shape test failed,
+  and the real end-to-end `run.test.ts` test failed too; every `ArtifactCreated`-source test stayed
+  green, confirming the two evidence sources are genuinely independent.
+- `document.ts`'s evidence parsing dropped (built but never attached to the definition): the 2
+  document-parsing tests and the 2 `ArtifactCreated`/`Type(*)`-source `gate-commands.test.ts` tests
+  failed; the `StepStarted`-source tests, which never read `definition.evidence`, stayed green.
+- `agentProducedEvidenceForGate`'s run scoping ignored (mutated to scan every run directory instead of
+  only `ctx.runId`): exactly the one targeted "evidence recorded in ANOTHER run is not consulted" test
+  failed; all 65 other `gate-commands.test.ts` tests stayed green.
+
+**Rule 14/15 (clean `git worktree` at the final commit `eedae4d`).** `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 packages clean), `pnpm run boundaries` clean, the exact
+combined `pnpm lint` (full repo) clean. Scoped, in that worktree: `engine/test/gates/` (10 files),
+`engine/test/dispatch/agent.test.ts`, `engine/test/interaction/swarm-review-step.test.ts`,
+`cli/test/commands/run/` (all files), plus the FULL `core/test/errors.test.ts` (464) and
+`test/workflows.test.ts` (45) — 40 files, 1308/1308 green.
+
+**Shared working tree.** `codes.ts` was genuinely concurrently touched (M14 P29 adding its own error
+detail there at the same time) — isolated with a hand-built, single-hunk `git apply --cached` patch,
+verified afterward against the committed blob. `gate-commands.ts` turned out untouched by any other
+concurrent piece. The one real incident was on a file the dispatch brief had not flagged at all
+(`run.test.ts`, see round 1 above) — root-caused to checking a file's hunk *count* rather than its full
+content before staging; every other file this piece staged was re-verified by full diff content, not
+just hunk count, after that incident. A second incident, this time not this piece's own doing: both
+`SPEC-QUESTIONS.md` and this file were each independently reset to their pre-edit `HEAD` state at least
+once while this entry and `SPEC-QUESTIONS.md`'s own `Q253` were being drafted — apparently lost-update
+races against another concurrently-committing piece (M14 P25) writing to these same two append-only
+files at nearly the same time. Recovered each time by re-appending this session's own already-drafted
+content to whatever the file's current tail actually was; no attempt was made to reorder or fix up the
+resulting entry sequence (`SPEC-QUESTIONS.md` now has `## Q254` physically before `## Q253`, both
+internally consistent and complete) since `SPEC-QUESTIONS.md`/`GAUNTLET-LOG.md` are append-only logs and
+rewriting another piece's already-landed position in them was never attempted.
+
+**Discloses (per the plan's own Discloses list).** `ArtifactCreated` is still emitted only by the
+`swarm-review` step; `verifyDeclaredOutputs`/`dispatch/outputs.ts` does NOT gain a new emission in this
+piece (Surface scope stayed to the files named above) — so evidence source (b) is, as shipped, reachable
+only through a `swarm-review` step's own `ReviewReport` artifact, and since no real, shipped gate's own
+`evidence:` block names `ReviewReport`, source (b) is currently unreachable for any real gate in this
+repo today — a genuine, disclosed scope limitation: source (a) (declared/inherited `gateEvidence:`) is
+fully live for every real agent step. The `Type(*)`/`Type(id)` grammar is parsed as the name before `(`,
+never a wildcard. `produces_evidence_for` stays documentary, genuinely untouched. Cross-run evidence is
+not refused, proven directly by mutation evidence above.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q253`.
