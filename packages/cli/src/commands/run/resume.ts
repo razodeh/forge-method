@@ -27,7 +27,7 @@ import {
 } from './lock.ts';
 import { installRunSignalHandlers, type RunDeps } from './run.ts';
 
-interface RunManifest {
+export interface RunManifest {
   readonly workflowId: string;
   readonly expressionContext: ExpressionContext;
 }
@@ -41,12 +41,24 @@ async function readLastRunId(paths: ProjectPaths): Promise<string> {
   return runId;
 }
 
-async function readManifest(paths: ProjectPaths, runId: string): Promise<RunManifest> {
+/** Exported (`PLAN-M14.md` P40) so `@forge/cli`'s own `commands/run/merge.ts` can recompile a run's plan
+ * the identical way `resumeWorkflow` below does, from the identical durable source (`workflowId` +
+ * `expressionContext`) -- rather than a second, drifting copy of this same read. `merge.ts` checks the
+ * manifest exists itself before ever calling this (its own "no manifest at all" case tolerates that and
+ * falls back; this function's own missing-file throw below is for `resumeWorkflow`, which has nothing to
+ * resume without one). A manifest that exists but cannot be read or parsed is `RUN-054` with the parse/read
+ * failure as `cause` -- the identical "missing is a guess, corrupt is not" distinction
+ * `context.ts`'s own `integrationBranchOfRun` already draws for the identical file. */
+export async function readManifest(paths: ProjectPaths, runId: string): Promise<RunManifest> {
   const manifestPath = paths.resolveState(`runs/${runId}/manifest.json`);
   if (!(await pathExists(manifestPath))) {
     throw new ForgeError('RUN-054', { runId });
   }
-  return JSON.parse(await readTextFile(manifestPath)) as RunManifest;
+  try {
+    return JSON.parse(await readTextFile(manifestPath)) as RunManifest;
+  } catch (cause) {
+    throw new ForgeError('RUN-054', { runId }, { cause });
+  }
 }
 
 export interface ResumeOptions {

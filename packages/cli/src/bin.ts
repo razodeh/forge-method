@@ -1219,7 +1219,14 @@ async function runGateSubcommand(
   return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
 }
 
-const MERGE_FLAGS = { '--lane': true, '--all': false, '--abort': false, '--run': true } as const;
+const MERGE_FLAGS = {
+  '--lane': true,
+  '--all': false,
+  '--abort': false,
+  '--run': true,
+  '--pre-checks': true,
+  '--post-checks': true,
+} as const;
 
 async function runMergeCommand(
   paths: ProjectPaths,
@@ -1251,27 +1258,42 @@ async function runMergeCommand(
     integrationBranch,
     'main',
   );
-  const ctx: MergeContext = { paths, projectRoot, runId, integrationPath };
+  // `PLAN-M14.md` P40: the checks a landed lane's own merge-check commands spawn carry the identical FORGE
+  // run marker (`PLAN-M14.md` P4) a live run's own merge step would give them — the same shim pattern
+  // `runGateCommand` above already uses for gate checks.
+  const env = realEnvSnapshot();
+  const shim = await createLauncherShimOrWarn(
+    currentLauncher(env),
+    (message) => {
+      console.error(message);
+    },
+    runId,
+  );
+  const overrides = { pre: values.get('--pre-checks'), post: values.get('--post-checks') };
+  try {
+    const ctx: MergeContext = {
+      paths,
+      projectRoot,
+      runId,
+      integrationPath,
+      config,
+      workflowsRoot: WORKFLOWS_ROOT,
+      commandEnv: shim?.commandEnv,
+    };
 
-  if (all) {
-    const results = await mergeAllReady(ctx);
-    console.log(json ? JSON.stringify({ v: 1, results }) : JSON.stringify(results, null, 2));
-    const anyFailed = results.some(
-      (result) =>
-        result.outcome.kind !== 'clean' &&
-        result.outcome.kind !== 'conflict-resolved' &&
-        result.outcome.kind !== 'already-integrated',
-    );
-    return anyFailed ? EXIT_CODES.failure : EXIT_CODES.success;
+    if (all) {
+      const results = await mergeAllReady(ctx, overrides);
+      console.log(json ? JSON.stringify({ v: 1, results }) : JSON.stringify(results, null, 2));
+      const anyFailed = results.some(({ result }) => result.failure !== undefined);
+      return anyFailed ? EXIT_CODES.failure : EXIT_CODES.success;
+    }
+    // `laneId` is real here: `all` is `false` and the guard above already refused the only other case.
+    const result = await mergeLane(ctx, laneId ?? '', overrides);
+    console.log(json ? JSON.stringify({ v: 1, result }) : JSON.stringify(result, null, 2));
+    return result.failure === undefined ? EXIT_CODES.success : EXIT_CODES.failure;
+  } finally {
+    await shim?.cleanup();
   }
-  // `laneId` is real here: `all` is `false` and the guard above already refused the only other case.
-  const outcome = await mergeLane(ctx, laneId ?? '');
-  console.log(json ? JSON.stringify({ v: 1, outcome }) : JSON.stringify(outcome, null, 2));
-  return outcome.kind === 'clean' ||
-    outcome.kind === 'conflict-resolved' ||
-    outcome.kind === 'already-integrated'
-    ? EXIT_CODES.success
-    : EXIT_CODES.failure;
 }
 
 function isValidateRuleId(value: string | undefined): value is ValidateRuleId {

@@ -15,13 +15,42 @@ import type {
   ExecuteStepContext,
   LaneHandle,
   MergeCandidateChecks,
+  MergeConflictResolver,
   MergeOutcome,
+  MergeQueueFacade,
   StepFailureInfo,
+  TelemetryFacade,
+  VcsFacade,
 } from './types.ts';
 import { runVcsStep } from './vcs-step.ts';
 
 /** `MergePolicy.conflict` and the config's `execution.conflictPolicy` (`18` §18.3) share this vocabulary. */
 export type ConflictPolicy = 'agent' | 'human' | 'abort';
+
+/**
+ * The eight real fields `resolveLaneChecks`/`landLane`/`integrateLane` ever read off `ExecuteStepContext`
+ * (`telemetry`, `vcs`, `mergeQueue`, `laneRegistry`, `retainLaneWorktrees`, `runId`, `testCommands`,
+ * `mergeChecks`), plus the optional per-call `conflictResolver` `landLane` passes straight through
+ * (`PLAN-M14.md` P35) -- narrow enough that a caller with no real run in flight (`forge merge`,
+ * `@forge/cli`'s `commands/run/merge.ts`, `PLAN-M14.md` P40) can build one directly from the real facades
+ * (`createVcsFacade`/`createTelemetryFacade`/`createMergeQueueFacade`), never `buildRunEngineContext`'s
+ * wider run-driving shape (an adapter, a gate registry, prompt assembly, session bounds, ...) it has no
+ * use for. `ExecuteStepContext` itself already satisfies this shape structurally (a strict superset), so
+ * every existing `runMergeStep`/`integrateLane` call site -- which still passes a real `ExecuteStepContext`
+ * -- needs no change at all for `resolveLaneChecks`/`landLane` to accept this narrower type instead. */
+export interface LandLaneDeps {
+  readonly telemetry: TelemetryFacade;
+  readonly vcs: VcsFacade;
+  readonly mergeQueue: MergeQueueFacade;
+  readonly laneRegistry: Map<string, LaneHandle>;
+  readonly retainLaneWorktrees: boolean;
+  readonly runId: string;
+  readonly testCommands?: Readonly<Partial<Record<string, string>>> | undefined;
+  readonly mergeChecks?:
+    | { readonly pre?: string | undefined; readonly post?: string | undefined }
+    | undefined;
+  readonly conflictResolver?: MergeConflictResolver | undefined;
+}
 
 /** A pre/post check pair, resolved from the names a merge policy (or `execution.mergeChecks`) declares into the
  * commands that will run, and what a named set skipped for want of a configured layer. */
@@ -37,7 +66,7 @@ export interface ResolvedLaneChecks {
  * with it and no merge event is recorded.
  */
 export function resolveLaneChecks(
-  ctx: ExecuteStepContext,
+  ctx: LandLaneDeps,
   declared: {
     readonly pre: string | undefined;
     readonly post: string | undefined;
@@ -114,7 +143,7 @@ export function contentLanded(outcome: MergeOutcome | undefined): boolean {
  * unconfigured resolver, a git failure. A lane that did not land is kept for inspection, exactly as
  * an explicit merge step always kept it. */
 export async function landLane(
-  ctx: ExecuteStepContext,
+  ctx: LandLaneDeps,
   options: LandLaneOptions,
 ): Promise<LandLaneResult> {
   const { eventStepId, laneStepId, lane, conflictPolicy, checks, skippedLayers } = options;
@@ -304,7 +333,7 @@ function describeChecks(
  * that is not retried) over a leftover worktree. The lane is forgotten (it must not be landed again), kept on
  * disk for the next run's orphan reclamation, and a `LaneAbandoned` event records why. */
 async function removeIntegratedLane(
-  ctx: ExecuteStepContext,
+  ctx: LandLaneDeps,
   eventStepId: string,
   laneStepId: string,
   lane: LaneHandle,

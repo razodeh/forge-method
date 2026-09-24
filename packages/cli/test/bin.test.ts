@@ -887,6 +887,16 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
     expect(parsed.results).toEqual([]);
   });
 
+  it('exits 2 for `forge merge --lane <id> --pre-checks` with no value — a real, named flag missing its argument (PLAN-M14.md P40)', async () => {
+    const dir = await realRunProject();
+    const started = run(['run', RUN_WORKFLOW_ID, '-C', dir]);
+    expect(started.status).toBe(0);
+
+    const result = run(['merge', '--lane', 'no-such-lane', '-C', dir, '--pre-checks']);
+
+    expect(result.status).toBe(2);
+  });
+
   it('exits 2 for a real, misspelled `forge run` flag, rather than silently dropping it', async () => {
     // A fresh critic round found the first draft of `--stage`/`--epic`/`--story` parsing silently
     // ignored an unrecognised flag instead of erroring — `forge run wf --epci foo` (a typo of

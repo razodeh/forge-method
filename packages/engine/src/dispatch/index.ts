@@ -76,6 +76,17 @@ export {
 } from './merge-checks.ts';
 export { checkElicitAnswer, sanitizeAnswer } from './elicit.ts';
 export {
+  contentLanded,
+  integrateLane,
+  landLane,
+  resolveLaneChecks,
+  type ConflictPolicy,
+  type LandLaneDeps,
+  type LandLaneOptions,
+  type LandLaneResult,
+  type ResolvedLaneChecks,
+} from './integrate.ts';
+export {
   AGENT_RUN_LAYERS,
   checkTestCommand,
   deriveTestExec,
