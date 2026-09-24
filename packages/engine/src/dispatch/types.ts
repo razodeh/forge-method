@@ -220,7 +220,14 @@ export interface TelemetryFacade {
  * `payload` defaults to `undefined` when omitted — `@forge/telemetry`'s own `parseEventLine` doc comment
  * already documents this as a legitimate, anticipated case ("a caller-supplied undefined payload is
  * serialised... as an absent key entirely"), not a gap this module needs to fill with an empty object at
- * every call site that has nothing meaningful to report. Every optional field spells out `| undefined`
+ * every call site that has nothing meaningful to report. A `type: 'SessionEvent'` payload is not one
+ * fixed shape: `steps.ts`'s own crash-resume continuation uses `{sessionId}` alone, and `PLAN-M14.md`
+ * P44's own `FORGE_REQUEST_CONTEXT:` expansion loop (`context-expansion.ts`'s own
+ * `ContextRequestEventPayload`) uses `{kind: 'context-request', query, served, reason?, sessionId?}` --
+ * a new fact riding on an existing event type's own untyped `payload`, never a new `EventType` of its
+ * own, the same precedent the first shape already set; `@forge/engine/resume`'s own `reconstructRunState`
+ * reads only a `sessionId` string field off whichever shape it finds, so the two coexist without either
+ * needing to know about the other. Every optional field spells out `| undefined`
  * explicitly, not just `?:` alone — required under this project's own `exactOptionalPropertyTypes`
  * whenever a caller (`steps.ts`) passes an already-optional upstream value (`StepNode.agent?: AgentId`)
  * straight through, rather than only ever omitting the key outright. */

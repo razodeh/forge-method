@@ -163,6 +163,48 @@ function renderStepBriefBlock(step: StepContext, roleSpecificGuidance: string | 
   return `${withGuidance}${renderExternalInputsNote(step.externalInputs)}`;
 }
 
+/** One rendered context-pack entry: `renderContextEntries`' own input shape, structurally compatible
+ * with both `AgentContextPack.declaredInputs` (no `score`) and `.retrieved` (`score` present). */
+export interface ContextEntryLike {
+  readonly id: string;
+  readonly content: string;
+  readonly score?: number | undefined;
+}
+
+/**
+ * Renders context-pack entries the one way block [3] ever has: `### <id>` (or, when `score` is present
+ * — a retrieved entry, never a declared one — `### <id> (score: <n>)`), then the entry's full content,
+ * one entry after another with no separating blank line (matching this function's own pre-P44 inline
+ * form exactly, byte for byte). Exported so `@forge/engine/dispatch`'s own `FORGE_REQUEST_CONTEXT:`
+ * mid-session continuation (`PLAN-M14.md` P44) renders a freshly resolved entry identically to how it
+ * would have appeared had it been packed into this same block from the start, instead of inventing a
+ * second, independently-maintained rendering that could drift from this one.
+ */
+export function renderContextEntries(entries: readonly ContextEntryLike[]): string {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    const heading =
+      entry.score === undefined ? entry.id : `${entry.id} (score: ${String(entry.score)})`;
+    lines.push(`### ${heading}`, entry.content);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * `PLAN-M14.md` P44 (`05` §5.4 point 4, §5.5 rule 2): every agent step's own block [3] tells the model
+ * the one mid-session expansion protocol `05` §5.4 point 4 and 12 shipped briefs already instruct it to
+ * use but that, before this piece, nothing on the engine side ever read (`steps.ts`/`session.ts`/
+ * `swarm-review-step.ts`/`orchestrate.ts` all discarded `SessionResult.controlTokens` into an empty
+ * constant). Fixed text, appended once, at the very end of the block — never per entry, and never
+ * defanged twice (`compilePrompt` defangs the whole rendered block once, after this line is already
+ * part of it).
+ */
+export const CONTEXT_REQUEST_PROTOCOL_LINE =
+  'Need more context than what is packed above? Ask for it mid-session with a line of the form ' +
+  '`FORGE_REQUEST_CONTEXT: <kb-id-or-query>` (a real KB id from this pack works best; a free-text ' +
+  'query falls back to the same retrieval that built this pack) -- up to 3 such requests per session, ' +
+  'each answered as a continuation before you carry on.';
+
 function renderContextPackBlock(pack: AgentContextPack): string {
   const lines: string[] = ['Pinned core:'];
   for (const [key, value] of Object.entries(pack.pinnedCore)) {
@@ -170,15 +212,12 @@ function renderContextPackBlock(pack: AgentContextPack): string {
     lines.push(`- ${key}: ${String(value)}`);
   }
   lines.push('', 'Declared inputs:');
-  if (pack.declaredInputs.length === 0) lines.push('(none)');
-  for (const entry of pack.declaredInputs) {
-    lines.push(`### ${entry.id}`, entry.content);
-  }
+  lines.push(
+    pack.declaredInputs.length === 0 ? '(none)' : renderContextEntries(pack.declaredInputs),
+  );
   lines.push('', 'Retrieved:');
-  if (pack.retrieved.length === 0) lines.push('(none)');
-  for (const entry of pack.retrieved) {
-    lines.push(`### ${entry.id} (score: ${String(entry.score)})`, entry.content);
-  }
+  lines.push(pack.retrieved.length === 0 ? '(none)' : renderContextEntries(pack.retrieved));
+  lines.push('', CONTEXT_REQUEST_PROTOCOL_LINE);
   return lines.join('\n');
 }
 

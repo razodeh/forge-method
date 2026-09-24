@@ -12,7 +12,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { StepContext } from '../../src/context/pack-for-step.ts';
 import type { AgentContextPack } from '../../src/context/types.ts';
-import { compilePrompt, neutralizeBlockHeadings } from '../../src/prompt/compile-prompt.ts';
+import {
+  CONTEXT_REQUEST_PROTOCOL_LINE,
+  compilePrompt,
+  neutralizeBlockHeadings,
+  renderContextEntries,
+} from '../../src/prompt/compile-prompt.ts';
 import { OPERATING_CONTRACT } from '../../src/prompt/operating-contract.ts';
 import type { PromptConstraints } from '../../src/prompt/types.ts';
 import type { AgentDefinition } from '../../src/schema/types.ts';
@@ -215,6 +220,48 @@ describe('compilePrompt', () => {
     expect(prompt.blocks[7]?.content).toBe('(none)');
     expect(prompt.blocks[2]?.content).toContain('Declared inputs:\n(none)');
     expect(prompt.blocks[2]?.content).toContain('Retrieved:\n(none)');
+  });
+
+  it('block [3] ends with the FORGE_REQUEST_CONTEXT protocol line, unconditionally (PLAN-M14.md P44)', () => {
+    const empty = compilePrompt(BASE_STEP, baseAgent(), basePack(), BASE_CONSTRAINTS, []);
+    expect(empty.blocks[2]?.content.endsWith(CONTEXT_REQUEST_PROTOCOL_LINE)).toBe(true);
+    // Not merely present -- the LAST thing in the block, even when declared/retrieved entries follow
+    // it in the render order (05 §5.4 point 4's own protocol line comes after the pack, not before it).
+    const populated = compilePrompt(
+      BASE_STEP,
+      baseAgent(),
+      basePack({
+        declaredInputs: [{ id: 'KB-ARCH-0001', content: 'Invoices never total negative.' }],
+        retrieved: [{ id: 'KB-ARCH-0002', score: 3, content: 'Retrieved body.' }],
+      }),
+      BASE_CONSTRAINTS,
+      [],
+    );
+    expect(populated.blocks[2]?.content.endsWith(CONTEXT_REQUEST_PROTOCOL_LINE)).toBe(true);
+    expect(populated.blocks[2]?.content).toContain('### KB-ARCH-0001');
+    expect(populated.blocks[2]?.content).toContain('### KB-ARCH-0002 (score: 3)');
+    expect(populated.blocks[2]?.content.indexOf('### KB-ARCH-0002')).toBeGreaterThan(
+      populated.blocks[2]?.content.indexOf('### KB-ARCH-0001') ?? -1,
+    );
+    expect(populated.blocks[2]?.content.indexOf(CONTEXT_REQUEST_PROTOCOL_LINE)).toBeGreaterThan(
+      populated.blocks[2]?.content.indexOf('Retrieved body.') ?? -1,
+    );
+  });
+
+  it('renderContextEntries renders a declared-shaped entry (no score) and a retrieved-shaped one (with score) the identical way block [3] does', () => {
+    expect(renderContextEntries([])).toBe('');
+    expect(renderContextEntries([{ id: 'KB-X', content: 'body text' }])).toBe(
+      '### KB-X\nbody text',
+    );
+    expect(renderContextEntries([{ id: 'KB-Y', content: 'body two', score: 0.5 }])).toBe(
+      '### KB-Y (score: 0.5)\nbody two',
+    );
+    expect(
+      renderContextEntries([
+        { id: 'a', content: 'A' },
+        { id: 'b', content: 'B', score: 1 },
+      ]),
+    ).toBe('### a\nA\n### b (score: 1)\nB');
   });
 
   it('block [9] is "(none)" when no house style or appended guidance is supplied', () => {

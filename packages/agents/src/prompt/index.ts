@@ -9,7 +9,10 @@ export { OPERATING_CONTRACT } from './operating-contract.ts';
 export {
   compilePrompt,
   neutralizeBlockHeadings,
+  renderContextEntries,
+  CONTEXT_REQUEST_PROTOCOL_LINE,
   type CompilePromptOptions,
+  type ContextEntryLike,
 } from './compile-prompt.ts';
 export {
   isWellFormedContentReference,

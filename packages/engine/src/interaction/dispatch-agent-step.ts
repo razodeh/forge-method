@@ -19,7 +19,8 @@ import { isWellFormedContentReference } from '@forge/agents/prompt';
 import type { AgentDefinition } from '@forge/agents/schema';
 import type { InteractionMode } from '@forge/agents/interaction';
 
-import { assembleAgentSession, markRefusal } from '../dispatch/assemble.ts';
+import { assembleAgentSession, markRefusal, promptRecordDirName } from '../dispatch/assemble.ts';
+import { expandRequestedContext } from '../dispatch/context-expansion.ts';
 import { runAgentStep } from '../dispatch/steps.ts';
 import type { ExecuteStepContext } from '../dispatch/types.ts';
 import type { StepNode } from '../plan/index.ts';
@@ -124,7 +125,30 @@ export async function runParticipantSession(
     payload: { role },
   });
   const handle = await ctx.adapter.startSession(request);
-  const session = await handle.result();
+  let session = await handle.result();
+  // `PLAN-M14.md` P44: the identical `FORGE_REQUEST_CONTEXT:` expansion loop `runAgentWork` (`steps.ts`)
+  // runs, reused here so a read-only participant (a reviewer, a panelist, a debate turn, a swarm-review
+  // perspective) can ask for more KB context mid-turn too -- `05` §5.4 point 4 makes no exception for a
+  // non-authoring session, and `resumeSession` carries this session's own grant forward unchanged (the
+  // adapter's own resumed-session contract, `07` §7.2), so a continuation here is exactly as read-only as
+  // the turn it continues. An unexpected internal failure (never a rejecting `resumeSession`, which the
+  // loop itself already recovers from) leaves `session` at the last leg that completed, the same
+  // "proceed with what was already obtained" fallback `runAgentWork`'s own identical try/catch uses.
+  try {
+    const expanded = await expandRequestedContext(
+      {
+        ctx,
+        nodeLimits: node.limits,
+        telemetryStepId: node.id,
+        agentId: node.agent,
+        dirName: promptRecordDirName(assembled.stepKey),
+      },
+      session,
+    );
+    session = expanded.session;
+  } catch {
+    // See the doc comment above: `session` is left as the last leg that completed.
+  }
   await ctx.telemetry.emit({
     type: 'SessionEnded',
     stepId: node.id,

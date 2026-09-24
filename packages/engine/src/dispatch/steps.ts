@@ -25,7 +25,7 @@ import path from 'node:path';
 import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ArtifactDocument } from '@forge/core/artifacts';
 import { ForgeError, isForgeError } from '@forge/core/errors';
-import type { SessionRequest } from '@forge/adapter-kit';
+import type { SessionRequest, SessionResult } from '@forge/adapter-kit';
 import { artifactTypeById } from '@forge/schemas';
 import { minimatch } from 'minimatch';
 
@@ -41,6 +41,7 @@ import {
   tryResolveSessionModel,
   type AssembledSession,
 } from './assemble.ts';
+import { expandRequestedContext } from './context-expansion.ts';
 import { GateNotFoundError } from './facades.ts';
 import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
@@ -730,6 +731,7 @@ export async function runAgentWork(
   }
   const plan = prepared.value;
   const model = plan.kind === 'start' ? plan.assembled.model : plan.model;
+  const dirName = promptRecordDirName(plan.kind === 'start' ? plan.assembled.stepKey : node.id);
   // Anything assembly noticed that a reader of the event log needs (`05` §5.4 point 2: declared inputs
   // that could not be packed; KB files that failed to parse) rides on this event, so a step that ran
   // without them is visible outside the prompt text.
@@ -746,6 +748,12 @@ export async function runAgentWork(
   });
   const abortController = new AbortController();
   let session;
+  // Every real leg this attempt's own session actually ran -- `[session]` alone for the overwhelmingly
+  // common case (no `FORGE_REQUEST_CONTEXT:` ever asked), one entry per real adapter result when
+  // `expandRequestedContext` (`PLAN-M14.md` P44) ran a real continuation. Populated below, read after
+  // `SessionEnded` to emit `UsageRecorded` (once per leg, summed by nothing here -- each is its own
+  // real, distinct spend).
+  let legs: readonly SessionResult[] = [];
   try {
     const handle =
       plan.kind === 'start'
@@ -781,6 +789,36 @@ export async function runAgentWork(
       payload: { sessionId: handle.sessionId },
     });
     session = await handle.result();
+    legs = [session];
+    // `PLAN-M14.md` P44: an agent step whose session ended with a `FORGE_REQUEST_CONTEXT:` control
+    // token gets a real continuation instead of that token being silently discarded (`05` §5.4 point 4).
+    // A session with no such token (the overwhelmingly common case) returns unchanged after one cheap
+    // scan; `session` below is then this loop's own aggregate outcome (`expandRequestedContext`'s own
+    // doc comment), and `legs` every real adapter result it took to reach it, for `UsageRecorded` below.
+    // Its own inner failures (a rejecting `resumeSession`, an unsupported adapter) are already handled
+    // inside the loop itself without throwing; this try/catch is only for a genuinely unexpected failure
+    // (a KB read error, a disk write failure recording the request) -- one that must not discard the
+    // real, already-obtained `session` above and report it as an adapter crash it never was
+    // (`Discloses`: "a crash between request and continuation rerolls" describes a genuine engine
+    // crash-resume, not this narrower, already-recovered-from case).
+    try {
+      const expanded = await expandRequestedContext(
+        {
+          ctx,
+          nodeLimits: node.limits,
+          telemetryStepId: node.id,
+          laneId: lane.laneId,
+          agentId: node.agent,
+          dirName,
+        },
+        session,
+      );
+      session = expanded.session;
+      legs = expanded.legs;
+    } catch {
+      // `session`/`legs` stay at the last leg that completed before this unexpected failure; the step
+      // proceeds with it exactly as it would have if the agent had never asked for more context at all.
+    }
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     await ctx.telemetry.emit({
@@ -791,11 +829,7 @@ export async function runAgentWork(
       payload: { message },
     });
     // This attempt produced no answer: an earlier attempt's `result.md` must not stand in for it.
-    await clearResultRecord(
-      ctx.assembly.paths,
-      ctx.runId,
-      promptRecordDirName(plan.kind === 'start' ? plan.assembled.stepKey : node.id),
-    ).catch(() => undefined);
+    await clearResultRecord(ctx.assembly.paths, ctx.runId, dirName).catch(() => undefined);
     // A crash can land here after real tool-use writes already reached the lane worktree (a
     // session dropped mid-stream, not just one that never started) -- checked for real via
     // hasChanges rather than assumed false, so those writes still get committed and claim-enforced
@@ -812,12 +846,7 @@ export async function runAgentWork(
   let resultRef: ResultRecordRef | undefined;
   let resultFailure: StepFailureInfo | undefined;
   try {
-    resultRef = await writeResultRecord(
-      ctx.assembly.paths,
-      ctx.runId,
-      promptRecordDirName(plan.kind === 'start' ? plan.assembled.stepKey : node.id),
-      session.finalText,
-    );
+    resultRef = await writeResultRecord(ctx.assembly.paths, ctx.runId, dirName, session.finalText);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     resultFailure = {
@@ -839,28 +868,30 @@ export async function runAgentWork(
   // emitted one for a real session. `forge cost`, `attributedSpend`, and `@forge/engine/budget`'s own
   // `canAdmit` were all real and correct, and all permanently fed an empty ledger in every real run --
   // the identical "the mechanism is real, the wiring to a real call site is not" shape `PLAN-M11.md`
-  // P10 already found for S5's control-token stripping. Emitted here, once per real session that
-  // actually produced a result (a crash before `handle.result()` ever resolves -- the `catch` block
-  // above -- genuinely has no usage figure to report; emitting a fabricated `0` there would misrepresent
-  // "unknown" as "free", not merely round down). `estimated: true` unconditionally: `07` §7.3's own
-  // "adapter-reported figures are client-side estimates, never presented as an invoice" applies to
-  // every real adapter this codebase can construct today, not a caller-decided flag this module has any
-  // basis to vary.
-  await ctx.telemetry.emit({
-    type: 'UsageRecorded',
-    stepId: node.id,
-    agentId: node.agent,
-    payload: {
-      model,
-      platform: ctx.adapter.id,
-      inputTokens: sanitizeUsageNumber(session.usage.inputTokens),
-      outputTokens: sanitizeUsageNumber(session.usage.outputTokens),
-      cacheReadTokens: 0,
-      costUsd: session.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(session.usage.costUsd),
-      estimated: true,
-      durationMs: sanitizeUsageNumber(session.durationMs),
-    },
-  });
+  // P10 already found for S5's control-token stripping. One per real adapter result this attempt
+  // actually produced (`legs`, above) -- `[session]` alone for the overwhelmingly common case, and
+  // (`PLAN-M14.md` P44) one more per real `FORGE_REQUEST_CONTEXT:` continuation leg, so the ledger sees
+  // every real spend this attempt made, not merely the merged/summed total on the outcome's own
+  // `session.usage`. `estimated: true` unconditionally: `07` §7.3's own "adapter-reported figures are
+  // client-side estimates, never presented as an invoice" applies to every real adapter this codebase
+  // can construct today, not a caller-decided flag this module has any basis to vary.
+  for (const leg of legs) {
+    await ctx.telemetry.emit({
+      type: 'UsageRecorded',
+      stepId: node.id,
+      agentId: node.agent,
+      payload: {
+        model,
+        platform: ctx.adapter.id,
+        inputTokens: sanitizeUsageNumber(leg.usage.inputTokens),
+        outputTokens: sanitizeUsageNumber(leg.usage.outputTokens),
+        cacheReadTokens: 0,
+        costUsd: leg.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(leg.usage.costUsd),
+        estimated: true,
+        durationMs: sanitizeUsageNumber(leg.durationMs),
+      },
+    });
+  }
 
   const detail: StepOutcomeDetail = { kind: 'agent', session };
   if (!session.ok) {
