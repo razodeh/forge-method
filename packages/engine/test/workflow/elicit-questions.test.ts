@@ -288,4 +288,43 @@ describe('an elicit question can `show` a register entry an earlier step produce
     expect(validateStructure(workflow)).toEqual([]);
     expect(compilePlan(workflow, {}).success).toBe(true);
   });
+
+  it('an elicit step with no id of its own (a bare fanout templated child) still has its own `show` checked by validateStructure, not silently skipped', () => {
+    const workflow = parse([
+      [
+        '  - id: fan',
+        '    kind: fanout',
+        "    over: '[]'",
+        '    step:',
+        '      kind: elicit',
+        '      questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    const structureIssues = validateStructure(workflow);
+    const found = structureIssues.find((issue) => issue.code === 'elicit-show-not-produced');
+    expect(found).toBeDefined();
+    // No id of its own: the issue still fires, just without a stepId to name.
+    expect(found?.stepId).toBeUndefined();
+    expect(found?.message).toContain('(unidentified)');
+  });
+
+  it('the fanout case above is clean when the templated child really does depend on a real producer', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord', 'level-proposal'),
+      [
+        '  - id: fan',
+        '    kind: fanout',
+        "    over: '[]'",
+        '    step:',
+        '      kind: elicit',
+        '      dependsOn: [propose]',
+        '      questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    expect(
+      validateStructure(workflow).filter((issue) => issue.code.startsWith('elicit-show')),
+    ).toEqual([]);
+  });
 });

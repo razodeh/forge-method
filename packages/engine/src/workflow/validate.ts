@@ -244,17 +244,21 @@ function stepDeclaresOutput(
   );
 }
 
-/** Every step id `stepId` depends on, directly or through others, over `dependsOn` exactly as authored
- * (unqualified ids; a value matching no known step's own id is simply not an edge — `checkNoCycles`'s
- * own "silently not an edge" convention, identical here). Iterative (an explicit stack, no recursion) so
- * a real cycle in the graph cannot loop this forever: each id is visited once, `checkNoCycles`'s own
+/** Every step id reachable from `startDependsOn`, directly or through others, over `dependsOn` exactly
+ * as authored (unqualified ids; a value matching no known step's own id is simply not an edge —
+ * `checkNoCycles`'s own "silently not an edge" convention, identical here). Takes the starting
+ * `dependsOn` array directly rather than a step id to look up: a `fanout`'s own templated child (or an
+ * `onComplete`/escalation `do` step) has no `id` of its own by design (`types.ts`'s own
+ * `WorkflowStepBase` doc comment) and so could never be found via `byId`, but still authors a real
+ * `dependsOn` of its own that this must still walk. Iterative (an explicit stack, no recursion) so a
+ * real cycle in the graph cannot loop this forever: each id is visited once, `checkNoCycles`'s own
  * cycle-detection already reports a cycle as its own separate issue. */
 function transitiveDependsOn(
-  stepId: string,
+  startDependsOn: readonly string[],
   byId: ReadonlyMap<string, WorkflowStep>,
 ): ReadonlySet<string> {
   const seen = new Set<string>();
-  const pending = [...(byId.get(stepId)?.dependsOn ?? [])];
+  const pending = [...startDependsOn];
   for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
     if (seen.has(id)) continue;
     seen.add(id);
@@ -269,15 +273,25 @@ function transitiveDependsOn(
  * *unexpanded* graph -- `compilePlan`'s own `checkPlanConsistency` repeats this over the real, expanded
  * one, the identical two-file split `duplicate-elicit-question` already has, since `forge run` does not
  * call `validateStructure` first) on a step that declares producing that type (and, when given, that
- * exact subtype) among its own `outputs` (`elicit-show-not-produced`). Only over `addressable`, matching
- * `checkNoCycles`'s own choice: a `dependsOn` value only ever resolves against a real, addressable id. */
-function checkElicitShow(addressable: readonly WorkflowStep[]): readonly ValidationIssue[] {
+ * exact subtype) among its own `outputs` (`elicit-show-not-produced`).
+ *
+ * `steps` (every reachable step, `allSteps`) is what is CHECKED, matching `checkUniqueElicitQuestions`'s
+ * own choice, not `checkNoCycles`'s: an `elicit` step sitting directly as a `fanout`'s own templated
+ * child (no `id` of its own) is real, checkable structure whose `show` must not go silently unchecked
+ * just because it is not itself independently addressable — a round-2 self-review found the first
+ * version of this function used `addressable` for both roles and so never saw one. `byId` (what
+ * `dependsOn` values resolve AGAINST) is still built from `addressable` alone: only a real, addressable
+ * id can ever be a valid `dependsOn` target. */
+function checkElicitShow(
+  steps: readonly WorkflowStep[],
+  addressable: readonly WorkflowStep[],
+): readonly ValidationIssue[] {
   const byId = new Map<string, WorkflowStep>();
   for (const step of addressable) {
     if (step.id !== undefined) byId.set(step.id, step);
   }
   const issues: ValidationIssue[] = [];
-  for (const step of addressable) {
+  for (const step of steps) {
     if (step.kind !== 'elicit') continue;
     for (const question of step.questions) {
       const { show } = question;
@@ -294,8 +308,7 @@ function checkElicitShow(addressable: readonly WorkflowStep[]): readonly Validat
         });
         continue;
       }
-      const ancestors =
-        step.id === undefined ? new Set<string>() : transitiveDependsOn(step.id, byId);
+      const ancestors = transitiveDependsOn(step.dependsOn ?? [], byId);
       const produced = [...ancestors].some((id) => {
         const ancestor = byId.get(id);
         return ancestor !== undefined && stepDeclaresOutput(ancestor, show.type, show.subtype);
@@ -489,7 +502,7 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
     ...checkNoCycles(addressable),
     ...checkProducesGlobs(allSteps),
     ...checkUniqueElicitQuestions(allSteps),
-    ...checkElicitShow(addressable),
+    ...checkElicitShow(allSteps, addressable),
     ...checkTaintOnlyOnAgentSteps(allSteps),
     ...(addressableExceeded || allExceeded ? [excessiveDepthIssue('excessive-nesting-depth')] : []),
   ];
