@@ -22,6 +22,19 @@ const question = (name: string, extra = ''): string =>
     '\n',
   );
 
+/** An `agent` step that declares producing `type` (and, when given, `subtype`) among its own `outputs`
+ * -- what `checkElicitShow`/`elicitShowIssues` (`PLAN-M14.md` P41) treat as a real producer. */
+const producer = (id: string, type: string, subtype?: string, dependsOn?: string): string =>
+  [
+    `  - id: ${id}`,
+    '    kind: agent',
+    '    agent: analyst',
+    ...(dependsOn === undefined ? [] : [`    dependsOn: [${dependsOn}]`]),
+    '    outputs:',
+    `      - type: ${type}`,
+    ...(subtype === undefined ? [] : [`        subtype: ${subtype}`]),
+  ].join('\n');
+
 function parse(steps: readonly string[]) {
   const parsed = parseWorkflow(workflowYaml(steps));
   if (!parsed.success) throw new Error(`does not parse: ${JSON.stringify(parsed.issues)}`);
@@ -130,5 +143,152 @@ describe('a command reads an answer from its environment, not from a placeholder
     ]);
     const compiled = compilePlan(workflow, {});
     expect(compiled.success && compiled.nodes[1]?.run).toBe(run);
+  });
+});
+
+describe('an elicit question can `show` a register entry an earlier step produced (PLAN-M14.md P41)', () => {
+  it('parses and compiles cleanly when the producer is a real ancestor', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord', 'level-proposal'),
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    dependsOn: [propose]',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow)).toEqual([]);
+    const compiled = compilePlan(workflow, {});
+    expect(compiled.success).toBe(true);
+  });
+
+  it('accepts `show` with no subtype, narrowed to type alone', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord'),
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    dependsOn: [propose]',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord }'),
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow)).toEqual([]);
+    expect(compilePlan(workflow, {}).success).toBe(true);
+  });
+
+  it.each([
+    ['Epic', 'a real registry type that is not collection: true'],
+    ['NotARealType', 'a name the registry does not know at all'],
+  ])('`show.type` %s (%s) is refused as not a register', (type) => {
+    const workflow = parse([
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    questions:',
+        question('level', `        show: { type: ${type} }`),
+      ].join('\n'),
+    ]);
+    const structureIssues = validateStructure(workflow);
+    expect(structureIssues.map((issue) => issue.code)).toContain('elicit-show-not-a-register');
+    expect(structureIssues.find((issue) => issue.code === 'elicit-show-not-a-register')?.stepId).toBe(
+      'confirm',
+    );
+    const compiled = compilePlan(workflow, {});
+    expect(compiled.success).toBe(false);
+    if (compiled.success) return;
+    expect(compiled.issues.map((issue) => issue.code)).toContain('elicit-show-not-a-register');
+  });
+
+  it('a register type with no producing ancestor at all is refused as not produced', () => {
+    const workflow = parse([
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    const structureIssues = validateStructure(workflow);
+    expect(structureIssues.map((issue) => issue.code)).toContain('elicit-show-not-produced');
+    const compiled = compilePlan(workflow, {});
+    expect(compiled.success).toBe(false);
+    if (compiled.success) return;
+    expect(compiled.issues.map((issue) => issue.code)).toContain('elicit-show-not-produced');
+  });
+
+  it('an ancestor that produces the type but a different subtype is still not produced', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord', 'constraints-captured'),
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    dependsOn: [propose]',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow).map((issue) => issue.code)).toContain(
+      'elicit-show-not-produced',
+    );
+  });
+
+  it('a real producer that this step does not depend on (a sibling, not an ancestor) is still not produced', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord', 'level-proposal'),
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow).map((issue) => issue.code)).toContain(
+      'elicit-show-not-produced',
+    );
+  });
+
+  it('a producer reached transitively, through an intermediate step, is a real ancestor', () => {
+    const workflow = parse([
+      producer('propose', 'HandoffRecord', 'level-proposal'),
+      [
+        '  - id: between',
+        '    kind: command',
+        '    dependsOn: [propose]',
+        '    run: "true"',
+      ].join('\n'),
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    dependsOn: [between]',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow)).toEqual([]);
+    expect(compilePlan(workflow, {}).success).toBe(true);
+  });
+
+  it('compilePlan refuses it too, over the real compiled graph: forge run does not call validateStructure', () => {
+    const workflow = parse([
+      [
+        '  - id: confirm',
+        '    kind: elicit',
+        '    questions:',
+        question('level', '        show: { type: HandoffRecord, subtype: level-proposal }'),
+      ].join('\n'),
+    ]);
+    const compiled = compilePlan(workflow, {});
+    expect(compiled.success).toBe(false);
+    if (compiled.success) return;
+    const found = compiled.issues.find((issue) => issue.code === 'elicit-show-not-produced');
+    expect(found?.stepId).toBe('w:confirm');
+  });
+
+  it('a question with no `show` at all is unaffected', () => {
+    const workflow = parse([elicit('one', question('a'))]);
+    expect(validateStructure(workflow)).toEqual([]);
+    expect(compilePlan(workflow, {}).success).toBe(true);
   });
 });

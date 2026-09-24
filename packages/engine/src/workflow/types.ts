@@ -128,6 +128,16 @@ export interface ElicitQuestion {
    * value that reaches a command or a config key is one the workflow author listed, not free text
    * (`PLAN-M13.md` P20). Absent, any non-blank answer is accepted. */
   readonly choices?: readonly string[] | undefined;
+  /** `PLAN-M14.md` P41: before asking, show the human a register entry an earlier step produced --
+   * `type` names a `18` §18.7 artifact type (a bare string, matching `OutputContract.type` above, not a
+   * closed union: an unrecognised or non-register value is a structure/plan issue, never a runtime
+   * guess), `subtype` (optional) narrows to an entry that carries it, the identical
+   * `carriesSubtype`/`subtypeText` word-match rule the output contract check already applies per file
+   * (`dispatch/outputs.ts`), applied here per entry. Fail-closed: `validateStructure`/`compilePlan`
+   * refuse a `show` naming a type that is not `collection: true` (`elicit-show-not-a-register`) or one
+   * this step does not transitively depend on a producer of (`elicit-show-not-produced`); not found at
+   * run time fails the step `RUN-105`, before `ElicitationRequested`. */
+  readonly show?: { readonly type: string; readonly subtype?: string | undefined } | undefined;
 }
 
 export interface ElicitStep extends WorkflowStepBase {

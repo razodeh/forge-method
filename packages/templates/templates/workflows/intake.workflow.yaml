@@ -61,6 +61,9 @@ steps:
       - name: levelConfirmed
         prompt: "Which scale level should this project use? The analyst's proposal and reasoning are the level-proposal entry in the handoff records (docs/forge/reports/handoffs.md on the integration branch): enter that level to confirm it, or another to override it."
         choices: [L0, L1, L2, L3, L4]
+        # PLAN-M14.md P41: shows the level-proposal handoff entry itself before asking, so the human reads the
+        # analyst's actual reasoning here instead of having to go open docs/forge/reports/handoffs.md by hand.
+        show: { type: HandoffRecord, subtype: level-proposal }
 
   # Recording the level is a compiled step, not an onComplete hook (those are never compiled, P11 register D11). The
   # answer reaches the command as data in the environment, never in the command text (elicit, PLAN-M13.md P20), and

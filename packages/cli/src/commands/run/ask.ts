@@ -207,6 +207,15 @@ function promptLine(request: AskRequest): string {
   return `[${sanitizeRefusalText(position)}] ${sanitizeRefusalText(question.prompt)}${choices}\n> `;
 }
 
+/** `request.context` (`PLAN-M14.md` P41, `question.show`), printed one sanitised line at a time before
+ * `promptLine`: the register entry an earlier step produced, for a human to read before answering. Each
+ * line is untrusted, agent-produced text sanitised exactly as `promptLine` already sanitises the
+ * workflow's own `prompt`/`choices` (`sanitizeRefusalText`: no escape, bare CR, or newline can repaint
+ * the terminal or fake extra lines). `''` for a request with no context (nothing is written). */
+function contextLines(request: AskRequest): string {
+  return (request.context ?? []).map((line) => `${sanitizeRefusalText(line)}\n`).join('');
+}
+
 /** Why the step would refuse `line` (`RUN-102`), or `undefined` when it would take it: the engine's own check
  * (`checkElicitAnswer`), so a line the port accepts is one the step accepts and a warning is never wrong. */
 function refusalOf(request: AskRequest, line: string): string | undefined {
@@ -226,6 +235,9 @@ export function createAskPort(options: AskPortOptions): CliAskPort {
   const askTerminal = async (request: AskRequest): Promise<string | undefined> => {
     queue ??= new LineQueue(options.input ?? process.stdin, output);
     queue.beginQuestion();
+    // Printed once, before the first prompt -- not repeated on a retry after a refused answer, which
+    // would otherwise reprint a whole register entry for the sake of one bad line.
+    output.write(contextLines(request));
     let last: string | undefined;
     try {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {

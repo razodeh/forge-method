@@ -22,16 +22,25 @@
  *   question as the workflow now states it, and a step whose record no longer passes is asked again.
  * - **No secrets.** An answer that looks like a credential is refused (`RUN-102`): it would reach an agent's prompt
  *   and its record on disk, and the event log redacts it (so a resume could not read it back).
+ * - **`show`.** (`PLAN-M14.md` P41) A question's `show: {type, subtype?}` names a register entry an earlier step
+ *   produced; before asking, this step reads it from `ctx.integrationPath` (the identical tree the output check
+ *   validates a produced register against) and hands its fields to the `AskPort` as `AskRequest.context`, so a human
+ *   sees what the workflow author is asking them to confirm rather than having to go read a file by hand. Read only,
+ *   never replayed (a step whose answers are already recorded reads no register at all); a lookup that finds nothing
+ *   fails the step `RUN-105`, before `ElicitationRequested`, so the event never records "this was requested" for
+ *   something that was never actually shown.
  *
  * @see specs/10 §10.1
  * @see specs/18 §18.4
  * @see PLAN-M13.md P20
+ * @see PLAN-M14.md P41
  */
 import { FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ForgeError } from '@forge/core/errors';
 import { readEvents } from '@forge/telemetry/events';
 
 import { ELICIT_QUESTION_NAME } from '../workflow/schema.ts';
+import { docRootsOf, readRegisterEntries } from './outputs.ts';
 import { sanitizeResultText } from './result-record.ts';
 import type { StepNode } from '../plan/index.ts';
 import type { ElicitQuestion } from '../workflow/index.ts';
@@ -158,6 +167,33 @@ function coversEveryQuestion(
   );
 }
 
+/** A register entry `readRegisterEntries` found, narrowed to the one shape `show` needs: a real `id` (an
+ * entry with none cannot be shown -- treated as not found, `RUN-105`, just as an empty result is). */
+interface ShownEntry {
+  readonly id: string;
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/** `entry.fields` (`PLAN-M14.md` P41) as terminal lines for a `show` question's own `AskRequest.context`:
+ * one line per scalar field (`"key: value"`, `id` moved first so a person knows which entry this is
+ * before reading the rest of it), one line per item of an array field (`"key: item"`), an absent, empty
+ * or blank field contributing no line. Deterministic (the entry's own key order, `id` aside). Never
+ * sanitised here: the entry is agent-produced, untrusted text, and the port that actually prints it
+ * (`@forge/cli`'s own terminal `AskPort`) already sanitises every line before writing it -- the identical
+ * raw-here/sanitised-at-the-port split `question.prompt`/`choices` already have. */
+function renderEntryLines(fields: Readonly<Record<string, unknown>>): readonly string[] {
+  const lines: string[] = [];
+  const keys = ['id', ...Object.keys(fields).filter((key) => key !== 'id')];
+  for (const key of keys) {
+    if (!Object.hasOwn(fields, key)) continue;
+    for (const item of Array.isArray(fields[key]) ? fields[key] : [fields[key]]) {
+      if (item === undefined || item === null || item === '') continue;
+      lines.push(`${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+    }
+  }
+  return lines;
+}
+
 /** One elicit step at a time per port: two independent `elicit` steps admitted in one tick would otherwise write
  * their prompts one after the other and take each other's answers from the one terminal. */
 const portQueues = new WeakMap<AskPort, Promise<unknown>>();
@@ -199,7 +235,7 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
     };
   }
 
-  const refuse = (code: 'RUN-101' | 'RUN-102', question: string, reason: string): StepOutcome => {
+  const refuse = (code: 'RUN-101' | 'RUN-102' | 'RUN-105', question: string, reason: string): StepOutcome => {
     const error = new ForgeError(code, { stepId: node.id, question, reason });
     return {
       stepId: node.id,
@@ -217,15 +253,53 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
     return refuse('RUN-101', first?.name ?? '', 'this run has no way to ask a question');
   }
 
+  // `PLAN-M14.md` P41: resolve every question's `show` BEFORE anything is requested -- a lookup that
+  // finds nothing fails the step RUN-105 right here, so `ElicitationRequested` never records "this was
+  // requested" for a register entry that was, in fact, never actually shown.
+  const shown = new Map<string, ShownEntry>();
+  for (const question of questions) {
+    const { show } = question;
+    if (show === undefined) continue;
+    const found = await readRegisterEntries(
+      ctx.integrationPath,
+      show.type,
+      docRootsOf(ctx),
+      show.subtype,
+    );
+    const withId = found.flatMap((entry) => (entry.id === undefined ? [] : [{ ...entry, id: entry.id }]));
+    const entry = withId.at(-1);
+    if (entry === undefined) {
+      const subtypeText = show.subtype === undefined ? '' : ` (subtype ${show.subtype})`;
+      return refuse(
+        'RUN-105',
+        question.name,
+        `no ${show.type}${subtypeText} register entry was found on the integration branch for it to show`,
+      );
+    }
+    shown.set(question.name, entry);
+  }
+
   await ctx.telemetry.emit({
     type: 'ElicitationRequested',
     stepId: node.id,
     payload: {
-      questions: questions.map((question) => ({
-        name: question.name,
-        prompt: question.prompt,
-        ...(question.choices === undefined ? {} : { choices: question.choices }),
-      })),
+      questions: questions.map((question) => {
+        const entry = question.show === undefined ? undefined : shown.get(question.name);
+        return {
+          name: question.name,
+          prompt: question.prompt,
+          ...(question.choices === undefined ? {} : { choices: question.choices }),
+          ...(question.show === undefined || entry === undefined
+            ? {}
+            : {
+                shown: {
+                  type: question.show.type,
+                  ...(question.show.subtype === undefined ? {} : { subtype: question.show.subtype }),
+                  id: entry.id,
+                },
+              }),
+        };
+      }),
     },
   });
 
@@ -233,6 +307,7 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
   const altered: string[] = [];
   for (const [position, question] of questions.entries()) {
     let raw: string | undefined;
+    const entry = shown.get(question.name);
     try {
       raw = await ask.ask({
         stepId: node.id,
@@ -243,6 +318,7 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
         },
         index: position + 1,
         total: questions.length,
+        ...(entry === undefined ? {} : { context: renderEntryLines(entry.fields) }),
       });
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);

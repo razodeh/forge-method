@@ -23,6 +23,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionRequest } from '@forge/adapter-kit';
 import { ProjectPaths } from '@forge/core';
+import type { AskPort, AskRequest } from '@forge/engine/dispatch';
 import { configSchema } from '@forge/schemas/config';
 import { FakePlatformAdapter } from '@forge/testkit';
 
@@ -343,6 +344,21 @@ async function answersFile(dir: string, answers: Record<string, string>): Promis
   return file;
 }
 
+/** Wraps a real `AskPort`, recording every `AskRequest` it is handed (`PLAN-M14.md` P41's own `show` /
+ * `AskRequest.context` still passes through the real port unchanged -- the wrapper only observes). */
+function recordingAskPort(inner: AskPort): { readonly port: AskPort; readonly requests: AskRequest[] } {
+  const requests: AskRequest[] = [];
+  return {
+    requests,
+    port: {
+      ask(request) {
+        requests.push(request);
+        return inner.ask(request);
+      },
+    },
+  };
+}
+
 /** The `StepFailed` payloads of a run, read from its event log (`.forge/state/runs/<id>/events.ndjson`). */
 async function stepFailures(dir: string, runId: string): Promise<string[]> {
   const text = await readFile(path.join(dir, '.forge/state/runs', runId, 'events.ndjson'), 'utf8');
@@ -411,6 +427,50 @@ describe('the shipped intake workflow, run with --answers', () => {
     );
     expect(handoffText).toContain('constraints-captured');
     expect(handoffText).toContain('level-proposal');
+  }, 20_000);
+
+  it('confirm-level shows the human the level-proposal handoff entry propose-level actually wrote (PLAN-M14.md P41)', async () => {
+    const project = await createProject('show');
+    const inner = createAskPort({
+      answers: await readAnswersFile(await answersFile(project.dir, { ...ANSWERS })),
+      interactive: false,
+    });
+    const { port: ask, requests } = recordingAskPort(inner);
+
+    const result = await runWorkflow(
+      { ...project.deps, ask },
+      { workflowId: 'intake', expressionContext: {}, host: 'test', runId: 'run-intake-show' },
+    );
+
+    if (result.kind !== 'run') throw new Error('expected a real run');
+    expect(await stepFailures(project.dir, result.runId)).toEqual([]);
+    expect(result.runState.runStatus).toBe('completed');
+
+    const confirmRequest = requests.find(
+      (request) => request.stepId === 'intake:confirm-level' && request.question.name === 'levelConfirmed',
+    );
+    if (confirmRequest === undefined) throw new Error('confirm-level was never asked');
+    // The scripted LEVEL_HANDOFF's own real text (its id and the analyst's scripted reasoning line)
+    // reached the request -- read from the real integration worktree, not a stub.
+    const context = confirmRequest.context ?? [];
+    expect(context.some((line) => line.includes('HO-0002'))).toBe(true);
+    expect(context.some((line) => line.includes('L2: a new capability'))).toBe(true);
+
+    const events = await readFile(
+      path.join(project.dir, '.forge/state/runs', result.runId, 'events.ndjson'),
+      'utf8',
+    );
+    const requested = events
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as { type: string; stepId?: string; payload?: unknown })
+      .find((event) => event.type === 'ElicitationRequested' && event.stepId === 'intake:confirm-level');
+    const payload = requested?.payload as { questions?: readonly { shown?: unknown }[] } | undefined;
+    expect(payload?.questions?.[0]?.shown).toEqual({
+      type: 'HandoffRecord',
+      subtype: 'level-proposal',
+      id: 'HO-0002',
+    });
   }, 20_000);
 
   it('the analyst steps see the answers as data, and only the ones they depend on', async () => {

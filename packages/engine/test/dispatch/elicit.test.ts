@@ -10,7 +10,7 @@
  * answer as data from its environment and an answer that looks like shell code is never run.
  */
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -65,6 +65,50 @@ async function eventsOf(projectRoot: string, runId: string) {
   const events = [];
   for await (const event of readEvents(projectRoot, runId)) events.push(event);
   return events;
+}
+
+/** A `reports/handoffs.md` register (`18` §18.7): no wrapper schema exists for `HandoffRecord`
+ * (`SPEC-QUESTIONS.md` Q23), so this builds the front matter by hand rather than through a schema. */
+function handoffsRegister(
+  entries: readonly {
+    readonly id: string;
+    readonly step: string;
+    readonly delivered: readonly string[];
+  }[],
+): string {
+  return [
+    '---',
+    'type: HandoffRecord',
+    'handoffs:',
+    ...entries.flatMap((entry) => [
+      `  - id: ${entry.id}`,
+      '    from: test-architect',
+      '    to: sdet',
+      `    step: ${entry.step}`,
+      "    timestamp: '2026-01-15T10:00:00Z'",
+      `    delivered: [${entry.delivered.map((item) => `'${item}'`).join(', ')}]`,
+      '    open_questions: []',
+      '    assumptions: []',
+      '    constraints_for_receiver: []',
+      '    acceptance_for_receiver: []',
+    ]),
+    '---',
+    '',
+  ].join('\n');
+}
+
+/** Writes `docs/forge/reports/handoffs.md` under `root` (`readRegisterEntries`'s own default docRoots). */
+async function writeHandoffs(
+  root: string,
+  entries: readonly {
+    readonly id: string;
+    readonly step: string;
+    readonly delivered: readonly string[];
+  }[],
+): Promise<void> {
+  const dir = path.join(root, 'docs/forge/reports');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'handoffs.md'), handoffsRegister(entries));
 }
 
 const IDEA = node({
@@ -365,6 +409,142 @@ describe('replay: an answered step is not asked again', () => {
       greenfield: 'greenfield',
     });
     expect(recorded.has('wf:broken')).toBe(false);
+  });
+});
+
+describe('`show`: an elicit question can show a register entry an earlier step produced (PLAN-M14.md P41)', () => {
+  const CONFIRM = node({
+    id: 'intake:confirm-level',
+    kind: 'elicit',
+    questions: [
+      {
+        name: 'levelConfirmed',
+        prompt: 'Which level?',
+        choices: ['L0', 'L1', 'L2'],
+        show: { type: 'HandoffRecord', subtype: 'level-proposal' },
+      },
+    ],
+  });
+
+  it('resolves the last matching entry, hands its fields to the port as context, and records shown.id', async () => {
+    const projectRoot = await createTempRepo('show-found');
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0001', step: 'capture-constraints', delivered: ['subtype: constraints-captured'] },
+      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal', 'L2: a new capability'] },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(asked).toHaveLength(1);
+    const context = asked[0]?.context ?? [];
+    expect(context.some((line) => line.includes('HO-0002'))).toBe(true);
+    expect(context.some((line) => line.includes('L2: a new capability'))).toBe(true);
+    // Only the LAST matching (level-proposal) entry is shown, not the earlier, non-matching one.
+    expect(context.some((line) => line.includes('HO-0001'))).toBe(false);
+    expect(context.some((line) => line.includes('constraints-captured'))).toBe(false);
+
+    const requested = (await eventsOf(projectRoot, ctx.runId)).find(
+      (event) => event.type === 'ElicitationRequested',
+    );
+    const payload = requested?.payload as { questions?: readonly unknown[] } | undefined;
+    expect(payload?.questions).toEqual([
+      {
+        name: 'levelConfirmed',
+        prompt: 'Which level?',
+        choices: ['L0', 'L1', 'L2'],
+        shown: { type: 'HandoffRecord', subtype: 'level-proposal', id: 'HO-0002' },
+      },
+    ]);
+  });
+
+  it('no matching entry fails the step RUN-105, before ElicitationRequested, and the port is never asked', async () => {
+    const projectRoot = await createTempRepo('show-missing');
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0001', step: 'capture-constraints', delivered: ['subtype: constraints-captured'] },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-105');
+    expect(outcome.failure?.message).toContain('levelConfirmed');
+    expect(asked).toEqual([]);
+    const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
+    expect(types).not.toContain('ElicitationRequested');
+    expect(types).toContain('StepFailed');
+  });
+
+  it('an entry that exists only in the project root, not the integration tree, fails RUN-105', async () => {
+    const projectRoot = await createTempRepo('show-root-only');
+    const integrationPath = await createTempRepo('show-integration');
+    // Written under the PROJECT root only -- `runElicit` reads `ctx.integrationPath`, a separate tree here.
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal'] },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, integrationPath, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-105');
+    expect(asked).toEqual([]);
+  });
+
+  it('a replayed step reads nothing: no register file exists at all, yet the step still succeeds', async () => {
+    const projectRoot = await createTempRepo('show-replay');
+    const { port, asked } = scriptedAsk({});
+    const answers = new Map<string, Readonly<Record<string, string>>>([
+      [CONFIRM.id, { levelConfirmed: 'L2' }],
+    ]);
+    const ctx = createTestContext({ projectRoot, ask: port, answers });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(asked).toEqual([]);
+    const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
+    expect(types.filter((type) => type.startsWith('Elicitation'))).toEqual([]);
+  });
+
+  it('a `show.type` that is not a register at run time (defense in depth beyond compile-time validation) also fails RUN-105', async () => {
+    const projectRoot = await createTempRepo('show-not-register');
+    const notARegister = node({
+      id: 'wf:ask',
+      kind: 'elicit',
+      questions: [
+        {
+          name: 'x',
+          prompt: 'x?',
+          // A hand-built node bypassing validateStructure/compilePlan entirely -- the identical "driven
+          // on its own" path every other RUN-039/RUN-101 test in this file already exercises.
+          show: { type: 'Epic' },
+        },
+      ],
+    });
+    const { port, asked } = scriptedAsk({ x: 'y' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(notARegister, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-105');
+    expect(asked).toEqual([]);
+  });
+
+  it('a question with no `show` at all carries no context and records no `shown`', async () => {
+    const projectRoot = await createTempRepo('show-none');
+    const { port, asked } = scriptedAsk({ ideaSummary: 'x', greenfield: 'greenfield' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    await executeStep(IDEA, ctx);
+
+    expect(asked.every((request) => request.context === undefined)).toBe(true);
   });
 });
 

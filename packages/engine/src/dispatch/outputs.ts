@@ -70,6 +70,7 @@ import { posix } from 'node:path';
 
 import { ArtifactDocument, parseFrontMatterYaml, validateArtifact } from '@forge/core/artifacts';
 import { ForgeError } from '@forge/core/errors';
+import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import {
   assumptionsFileSchema,
   baseFrontMatterShape,
@@ -1200,6 +1201,64 @@ export async function checkDeclaredOutputs(
  * project's configured ones, else the default layout (never skipped: a mis-wired context fails loudly). */
 export function docRootsOf(ctx: Pick<ExecuteStepContext, 'docRoots'>): DocRoots {
   return ctx.docRoots ?? DEFAULT_CONFIG.paths;
+}
+
+/** One entry `readRegisterEntries` found: its own `id` (an entry with none, which the register schemas
+ * above do not allow but a hand-built fixture might, cannot be `show`n -- `runElicit` treats it as not
+ * found) and its raw front-matter fields, the shape a `show` question renders into `AskRequest.context`
+ * (`dispatch/elicit.ts`, `PLAN-M14.md` P41). */
+export interface RegisterEntry {
+  readonly id: string | undefined;
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Every entry of `type`'s register file (`18` §18.7, `collection: true`) found under `tree` -- a real
+ * filesystem root, `ctx.integrationPath` for `runElicit`'s own call (`PLAN-M14.md` P41) -- located the
+ * identical way the output check locates a produced one (`outputGlob`), in file order, narrowed to
+ * entries that carry `subtype` as a hyphenated word when it is given (P7's own per-file rule,
+ * `subtypeText`/`carriesSubtype`, reused here per ENTRY rather than across a whole produced set --
+ * `subtypeSatisfied` above judges a whole file's subtype satisfaction with the identical match; this is
+ * the same rule, asked of one entry at a time).
+ *
+ * `[]`, never a throw: `type` is not a register this module knows how to read entries from (neither
+ * `REGISTER_SCHEMAS` nor `ENTRY_ONLY_SCHEMAS` has it, which also covers a type that is not
+ * `collection: true` at all -- `validateStructure`'s own `elicit-show-not-a-register` already refuses
+ * this at author time, so a real caller only ever reaches an empty result here for a genuine run-time
+ * miss), the register file does not exist under `tree`, or it does not parse. A caller (`runElicit`)
+ * decides what an empty result means (`RUN-105`, before `ElicitationRequested`); this function only ever
+ * describes what it found.
+ */
+export async function readRegisterEntries(
+  tree: string,
+  type: string,
+  roots: DocRoots,
+  subtype?: string,
+): Promise<readonly RegisterEntry[]> {
+  const definition = artifactTypeById(type);
+  if (definition === undefined || definition.collection !== true) return [];
+  const register = REGISTER_SCHEMAS[definition.id];
+  const entrySchema = ENTRY_ONLY_SCHEMAS[definition.id];
+  if (register === undefined && entrySchema === undefined) return [];
+
+  const relative = outputGlob(definition.id, roots);
+  const paths = new ProjectPaths(tree);
+  const absolute = paths.resolveWithin(relative);
+  if (!(await pathExists(absolute))) return [];
+
+  let frontMatter: Record<string, unknown>;
+  try {
+    frontMatter = frontMatterOf(ArtifactDocument.parse(await readTextFile(absolute), relative));
+  } catch {
+    return [];
+  }
+
+  const entries = registerEntries(frontMatter, register?.key).filter(isRecord);
+  const narrowed =
+    subtype === undefined
+      ? entries
+      : entries.filter((entry) => carriesSubtype(subtypeText([entry]), subtype));
+  return narrowed.map((entry) => ({ id: entryId(entry), fields: entry }));
 }
 
 /** Whether the step's agent is barred from writing files by its own definition (`tools.write: false`). That

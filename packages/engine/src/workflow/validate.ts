@@ -12,6 +12,7 @@
  * @see specs/10 §10.1
  * @see PLAN-M5.md P8
  */
+import { artifactTypeById } from '@forge/schemas';
 import { minimatch } from 'minimatch';
 
 import type { Workflow, WorkflowExistenceOracle, WorkflowStep, ValidationIssue } from './types.ts';
@@ -227,6 +228,87 @@ function checkUniqueElicitQuestions(steps: readonly WorkflowStep[]): readonly Va
   return issues;
 }
 
+/** Whether `step` declares producing `type` (and, when given, exactly `subtype`) among its own
+ * `outputs` — the workflow author's OWN declared contract (`AgentStep.outputs`, exact string equality),
+ * never the fuzzy per-entry text match `dispatch/outputs.ts`' own `carriesSubtype` applies to real
+ * produced content at run time: that is a different question (is what was actually written the right
+ * shape), asked by a different piece of code, at a different time. */
+function stepDeclaresOutput(step: WorkflowStep, type: string, subtype: string | undefined): boolean {
+  if (step.kind !== 'agent') return false;
+  return (step.outputs ?? []).some(
+    (output) => output.type === type && (subtype === undefined || output.subtype === subtype),
+  );
+}
+
+/** Every step id `stepId` depends on, directly or through others, over `dependsOn` exactly as authored
+ * (unqualified ids; a value matching no known step's own id is simply not an edge — `checkNoCycles`'s
+ * own "silently not an edge" convention, identical here). Iterative (an explicit stack, no recursion) so
+ * a real cycle in the graph cannot loop this forever: each id is visited once, `checkNoCycles`'s own
+ * cycle-detection already reports a cycle as its own separate issue. */
+function transitiveDependsOn(
+  stepId: string,
+  byId: ReadonlyMap<string, WorkflowStep>,
+): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const pending = [...(byId.get(stepId)?.dependsOn ?? [])];
+  for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    pending.push(...(byId.get(id)?.dependsOn ?? []));
+  }
+  return seen;
+}
+
+/** `PLAN-M14.md` P41: an `elicit` question's `show` is fail-closed two ways -- `show.type` must be a
+ * `18` §18.7 `collection: true` register (`elicit-show-not-a-register`; an unrecognised type is treated
+ * the same way, since it cannot be one either), and the step must transitively depend (`dependsOn`, this
+ * *unexpanded* graph -- `compilePlan`'s own `checkPlanConsistency` repeats this over the real, expanded
+ * one, the identical two-file split `duplicate-elicit-question` already has, since `forge run` does not
+ * call `validateStructure` first) on a step that declares producing that type (and, when given, that
+ * exact subtype) among its own `outputs` (`elicit-show-not-produced`). Only over `addressable`, matching
+ * `checkNoCycles`'s own choice: a `dependsOn` value only ever resolves against a real, addressable id. */
+function checkElicitShow(addressable: readonly WorkflowStep[]): readonly ValidationIssue[] {
+  const byId = new Map<string, WorkflowStep>();
+  for (const step of addressable) {
+    if (step.id !== undefined) byId.set(step.id, step);
+  }
+  const issues: ValidationIssue[] = [];
+  for (const step of addressable) {
+    if (step.kind !== 'elicit') continue;
+    for (const question of step.questions) {
+      const { show } = question;
+      if (show === undefined) continue;
+      const label = `Step "${step.id ?? '(unidentified)'}"'s question "${question.name}"`;
+      const stepId = step.id === undefined ? {} : { stepId: step.id };
+      const definition = artifactTypeById(show.type);
+      if (definition === undefined || definition.collection !== true) {
+        issues.push({
+          code: 'elicit-show-not-a-register',
+          severity: 'error',
+          message: `${label} shows ${JSON.stringify(show.type)}, which is not a collection: true register type (18 §18.7).`,
+          ...stepId,
+        });
+        continue;
+      }
+      const ancestors = step.id === undefined ? new Set<string>() : transitiveDependsOn(step.id, byId);
+      const produced = [...ancestors].some((id) => {
+        const ancestor = byId.get(id);
+        return ancestor !== undefined && stepDeclaresOutput(ancestor, show.type, show.subtype);
+      });
+      if (!produced) {
+        const subtypeText = show.subtype === undefined ? '' : ` (subtype ${JSON.stringify(show.subtype)})`;
+        issues.push({
+          code: 'elicit-show-not-produced',
+          severity: 'error',
+          message: `${label} shows ${JSON.stringify(show.type)}${subtypeText}, but no step it depends on declares producing it in its own outputs.`,
+          ...stepId,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 /** Cycle detection over the *static*, unexpanded graph only (`PLAN-M5.md` P8's own mandate, verbatim):
  * a `dependsOn` entry that does not exactly match a known step id — the shape `10` §10.1's own worked
  * example uses for a per-item fanout dependency (`"generate-tests:{{item.id}}"`) always takes — is
@@ -401,6 +483,7 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
     ...checkNoCycles(addressable),
     ...checkProducesGlobs(allSteps),
     ...checkUniqueElicitQuestions(allSteps),
+    ...checkElicitShow(addressable),
     ...checkTaintOnlyOnAgentSteps(allSteps),
     ...(addressableExceeded || allExceeded ? [excessiveDepthIssue('excessive-nesting-depth')] : []),
   ];

@@ -27,6 +27,7 @@
  * @see PLAN-M5.md P10
  */
 import { ForgeError } from '@forge/core/errors';
+import { artifactTypeById } from '@forge/schemas';
 
 import {
   evaluate,
@@ -891,6 +892,72 @@ export function expandFanout(
  * other names a real, schedulable node), and nothing here needs to detect a group id colliding with a
  * node id — no evidence anywhere this can occur outside of a deliberately-contrived fixture, since a
  * group and a leaf can never occupy the same id-producing position in the tree this module walks. */
+/** `PLAN-M14.md` P41: `@forge/engine/workflow`'s own `validateStructure`/`checkElicitShow` fail-closed
+ * checks for an `elicit` question's `show`, repeated here over the real, EXPANDED graph -- the identical
+ * two-file split `duplicate-elicit-question` already has just above, and for the identical reason
+ * (`elicit-questions.test.ts`: "compilePlan refuses it too: forge run does not call validateStructure").
+ * Only called once `byId` is unambiguous (`checkPlanConsistency`'s own `duplicateIds.size === 0` gate,
+ * matching `dangling-dependency`'s identical precondition): `node.dependsOn` here is already the real,
+ * fully-qualified compiled id a fanout/parallel/sequence expansion produced, so this can see a producer
+ * `validateStructure`'s own *unexpanded* walk has no way to. */
+function elicitShowIssues(
+  nodes: readonly StepNode[],
+  byId: ReadonlyMap<string, StepNode>,
+): readonly CompileIssue[] {
+  const issues: CompileIssue[] = [];
+  const ancestorsOf = (id: string): ReadonlySet<string> => {
+    const seen = new Set<string>();
+    const pending = [...(byId.get(id)?.dependsOn ?? [])];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      pending.push(...(byId.get(next)?.dependsOn ?? []));
+    }
+    return seen;
+  };
+  for (const node of nodes) {
+    for (const question of node.questions ?? []) {
+      const { show } = question;
+      if (show === undefined) continue;
+      const definition = artifactTypeById(show.type);
+      if (definition === undefined || definition.collection !== true) {
+        issues.push(
+          issue(
+            'elicit-show-not-a-register',
+            `Step "${node.id}"'s question "${question.name}" shows ${JSON.stringify(show.type)}, which is not a collection: true register type (18 §18.7).`,
+            node.id,
+          ),
+        );
+        continue;
+      }
+      const produced = [...ancestorsOf(node.id)].some((id) => {
+        const ancestor = byId.get(id);
+        return (
+          ancestor !== undefined &&
+          ancestor.kind === 'agent' &&
+          ancestor.outputs.some(
+            (output) =>
+              output.type === show.type &&
+              (show.subtype === undefined || output.subtype === show.subtype),
+          )
+        );
+      });
+      if (!produced) {
+        const subtypeText =
+          show.subtype === undefined ? '' : ` (subtype ${JSON.stringify(show.subtype)})`;
+        issues.push(
+          issue(
+            'elicit-show-not-produced',
+            `Step "${node.id}"'s question "${question.name}" shows ${JSON.stringify(show.type)}${subtypeText}, but no step it depends on declares producing it in its own outputs.`,
+            node.id,
+          ),
+        );
+      }
+    }
+  }
+  return issues;
+}
+
 function checkPlanConsistency(
   nodes: readonly StepNode[],
   groupIds: readonly string[],
@@ -938,6 +1005,8 @@ function checkPlanConsistency(
         }
       }
     }
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    issues.push(...elicitShowIssues(nodes, byId));
   }
   return issues;
 }

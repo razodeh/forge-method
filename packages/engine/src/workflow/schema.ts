@@ -46,6 +46,17 @@ const stepLimitsSchema = z
  * underscores, starting with a letter. */
 export const ELICIT_QUESTION_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 
+/** `PLAN-M14.md` P41: an `elicit` question's `show` -- what register entry to display before asking.
+ * `type` is a bare, non-blank string (matching `outputContractSchema.type` above: real-type checking is
+ * `validateStructure`/`compilePlan`'s job, not this schema's, the same split `duplicate-elicit-question`
+ * already draws for question names). */
+const showSchema = z
+  .object({
+    type: nonBlank(),
+    subtype: nonBlank().optional(),
+  })
+  .strict();
+
 const elicitQuestionSchema = z
   .object({
     name: z.string().regex(ELICIT_QUESTION_NAME),
@@ -62,6 +73,7 @@ const elicitQuestionSchema = z
         message: 'a choice is listed twice',
       })
       .optional(),
+    show: showSchema.optional(),
   })
   .strict();
 

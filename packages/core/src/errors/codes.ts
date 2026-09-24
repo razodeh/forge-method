@@ -1281,6 +1281,23 @@ export const ERROR_CODES = {
     remedy:
       'Add each reverted path to the step’s `produces` (or, for a registry artifact, declare it in `outputs`), or make the session write only what the step already claims. `forge logs` names the step and shows the reverted paths; the `PolicyViolation` event carries the complete, unbounded list.',
   },
+  'RUN-105': {
+    // `PLAN-M14.md` P41: an `elicit` question's `show` names a register entry an earlier step produced
+    // (`type`, optionally `subtype`) -- `validateStructure`/`compilePlan` already refused a `show` no
+    // ancestor step's own `outputs` declares producing (`elicit-show-not-produced`) before the run ever
+    // started, so this is the honest run-time gap that check cannot close: the declared producer's own
+    // session did not actually write a matching entry, or wrote one the register file no longer holds
+    // (an unparseable file counts the same as an absent one), or it only ever landed on the project root
+    // rather than being committed to the integration branch this step reads from. Raised before
+    // `ElicitationRequested`: the event must never claim a question was asked with something shown that,
+    // in fact, was not.
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; question: string; reason: string }) =>
+      `Step ${show(d.stepId)}'s question ${show(d.question)} could not show its register entry: ${show(d.reason)}`,
+    remedy:
+      'Verify the step this question depends on really produced that register entry (its own declared `outputs` type and subtype) and that the entry is committed on the integration branch before this step runs; if the workflow itself is wrong, fix the question’s `show.type`/`show.subtype` to match what is actually produced, or remove `show`.',
+  },
   'RUN-106': {
     // `PLAN-M14.md` P12, `SPEC-QUESTIONS.md` Q216 / Q232 decision 4: `prepare-release-build` used to
     // guess at the app's own layout with six hard-coded globs (`**/ios/**`, `app.json`, ...); it now

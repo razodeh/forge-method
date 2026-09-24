@@ -424,6 +424,12 @@ export interface AskRequest {
   /** 1-based position of this question in its step, and how many the step asks. */
   readonly index: number;
   readonly total: number;
+  /** `PLAN-M14.md` P41: the register entry `question.show` names, rendered as lines for a human to read
+   * before answering -- untrusted, agent-produced text (a port prints it sanitised, one line at a time,
+   * before the prompt itself; `@forge/cli`'s own terminal port, `sanitizeRefusalText`). Absent for a
+   * question with no `show`; never consulted by an answer taken from `--answers` (`createAskPort`'s own
+   * `ask` returns a file answer as given, without ever looking at this field). */
+  readonly context?: readonly string[] | undefined;
 }
 
 /**

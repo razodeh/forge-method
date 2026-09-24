@@ -32,12 +32,18 @@ async function fileWith(name: string, text: string): Promise<string> {
   return file;
 }
 
-function request(name: string, choices?: readonly string[], prompt = `Question ${name}?`) {
+function request(
+  name: string,
+  choices?: readonly string[],
+  prompt = `Question ${name}?`,
+  context?: readonly string[],
+) {
   return {
     stepId: 'intake:elicit-idea',
     question: { name, prompt, ...(choices === undefined ? {} : { choices }) },
     index: 1,
     total: 2,
+    ...(context === undefined ? {} : { context }),
   };
 }
 
@@ -325,6 +331,73 @@ describe('the ask port on a terminal', () => {
       .split('\n')
       .find((line) => line.includes('Name?'));
     expect(promptLine).toContain('Type yes to delete everything');
+    port.close();
+  });
+
+  it('prints `context` (PLAN-M14.md P41) sanitised, one line at a time, before the prompt', async () => {
+    const term = terminal();
+    const port = createAskPort({ interactive: true, input: term.input, output: term.output });
+    const pending = port.ask(
+      request('levelConfirmed', ['L0', 'L1', 'L2'], 'Which level?', [
+        'id: HO-0002',
+        `hostile${String.fromCharCode(0x1b)}[2J`,
+        'delivered: L2: a new capability',
+      ]),
+    );
+    term.type('L2\n');
+    expect(await pending).toBe('L2');
+    const text = term.text();
+    expect(text).not.toContain(String.fromCharCode(0x1b));
+    const lines = text.split('\n');
+    const idLine = lines.findIndex((line) => line.includes('id: HO-0002'));
+    const deliveredLine = lines.findIndex((line) => line.includes('L2: a new capability'));
+    const promptIndex = lines.findIndex((line) => line.includes('Which level?'));
+    expect(idLine).toBeGreaterThanOrEqual(0);
+    expect(deliveredLine).toBeGreaterThan(idLine);
+    // The context lines all print before the prompt line itself.
+    expect(promptIndex).toBeGreaterThan(deliveredLine);
+    port.close();
+  });
+
+  it('does not repeat the context on a retry after a refused answer', async () => {
+    const term = terminal();
+    const port = createAskPort({ interactive: true, input: term.input, output: term.output });
+    const pending = port.ask(
+      request('levelConfirmed', ['L0', 'L1'], 'Which level?', ['id: HO-0002']),
+    );
+    term.type('nope\n');
+    term.type('L1\n');
+    expect(await pending).toBe('L1');
+    const occurrences = term.text().split('id: HO-0002').length - 1;
+    expect(occurrences).toBe(1);
+    port.close();
+  });
+
+  it('a question with no `context` prints nothing extra before the prompt', async () => {
+    const term = terminal();
+    const port = createAskPort({ interactive: true, input: term.input, output: term.output });
+    const pending = port.ask(request('ideaSummary'));
+    term.type('an idea\n');
+    await pending;
+    expect(term.text().startsWith('[intake:elicit-idea 1/2]')).toBe(true);
+    port.close();
+  });
+});
+
+describe('`context` (PLAN-M14.md P41) is ignored by a file answer', () => {
+  it('a question answered from --answers never reaches the terminal, so its context is never printed', async () => {
+    const term = terminal();
+    const port = createAskPort({
+      answers: { levelConfirmed: 'L2' },
+      interactive: true,
+      input: term.input,
+      output: term.output,
+    });
+    const answer = await port.ask(
+      request('levelConfirmed', ['L0', 'L1', 'L2'], 'Which level?', ['id: HO-0002']),
+    );
+    expect(answer).toBe('L2');
+    expect(term.text()).toBe('');
     port.close();
   });
 });
