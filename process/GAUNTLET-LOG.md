@@ -18216,3 +18216,201 @@ lane, but nothing here repairs a worktree that is itself broken beyond what `git
 -fd` can fix.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q269`.
+
+## M14 P43 — `forge upgrade` classifies every materialised regenerable file, current/stale/edited/missing (`cli/src/init/write-tree.ts`, `cli/src/commands/upgrade/{run-upgrade,types}.ts`, `cli/src/init/{content,index}.ts`, `cli/src/bin.ts`; new `cli/test/init/plan-regenerable.test.ts`; edited `cli/test/commands/upgrade/run-upgrade.test.ts`, `cli/test/bin.test.ts`)
+
+**Mandate.** `runUpgrade` (`03` §3.4 step 5) now plans before acting: a new, read-only
+`planRegenerableContent(target, modulesDir)` (`init/write-tree.ts`) shares the identical content
+readers and traversal order `writeRegenerableContent` already uses (factored into one shared
+`collectRegenerableGroups(modulesDir)` helper both call, so the two can never independently diverge on
+*which* files either one touches — a structural guarantee, not a second hand-written copy of the same
+nine-category list). It classifies every real, already-materialised regenerable file into exactly the
+four states `03` §3.3/§3.4 distinguish: `current` (undrifted; the header's own recorded `hash=` equals
+`sha256` of the real, currently-shipped body), `stale` (undrifted, but the shipped body has changed
+since this copy was generated), `edited` (the on-disk body no longer matches its own recorded header —
+the real conflict path), or `missing` (nothing on disk yet). `UpgradeReport` gains `staleFiles`/
+`editedFiles`/`missingFiles` (always present, on both the dry-run and real-run return paths, computed
+once before the branch); `regenerated` is now `true` whenever any file is stale or missing, independent
+of the installed/target version pair, in addition to the pre-existing migration/version triggers.
+`bin.ts`'s `forge upgrade` prints the count and first few paths per category
+(`UPGRADE_PLAN_PREVIEW_LIMIT`, sanitized through the same `sanitizeForTerminal` the existing
+`regeneratedFiles` path already used); `--json` always carries the full, untruncated arrays. The real
+write step itself is unchanged: `writeRegenerableContent`/`writeGenerated` already wrote stale/missing
+files silently and edited files through `03` §3.3's own `keep-mine`/`take-theirs`/`merge`/`show-diff`
+conflict path before this piece; this piece only adds the read-only classification and the report
+fields — the header format, conflict modes, `.forge/config.yaml` write, and the manifest rebuild are
+all untouched.
+
+**Tests first.** A hand-crafted "materialised from an older body" regenerable file (a real, undrifted
+copy whose header still matches its own on-disk body, stamped with today's real, currently-running
+version, but whose body is not what the content readers ship today) reports `staleFiles` naming it and
+`regenerated: true` at an *equal* installed/target version pair (red before this piece: `regenerated:
+false`, since the old formula only ever looked at the version pair and migration step counts). A
+hand-edited file reports `editedFiles`, never `staleFiles`. A freshly `forge init`-produced project
+reports all three arrays empty and `regenerated: false`. A real (non-dry-run) run regenerates the stale
+file silently (no `conflict` field) and a second dry run then reports `staleFiles: []`. A new
+`plan-regenerable.test.ts` proves the plan names exactly the same path set `writeRegenerableContent`
+itself would touch (a real file deleted first, so "the plan silently wrote it back" would have been
+directly observable — it wasn't) while writing nothing at all itself. `forge upgrade --dry-run --json`
+carries the full `staleFiles`/`editedFiles`/`missingFiles` arrays; the human line names the count.
+
+**One-round critic (fresh, context-free; read the full diff plus `generated-header.ts`/`hash.ts`/
+`content.ts` directly, traced the classification logic by hand against CRLF normalization, front-matter
+header placement, empty `BRIEF_INDEX`/`PROMPT_INDEX`, and basename collisions) found one real MAJOR gap
+and two real MINOR gaps, all fixed and independently re-verified with real mutation evidence.**
+
+1 (MAJOR, real coverage + observability gap). `missing` files already drove `regenerated` from this
+   piece's first commit (an internal `hasMissingRegenerable` boolean), exactly matching the mandate's
+   "whatever the version pair" — but no test anywhere (library-level or the real CLI subprocess level)
+   ever deleted a materialised regenerable file and checked `regenerated`, so a mutant dropping that
+   OR-arm would have passed the whole suite; and with no named array, a real `regenerated: true` caused
+   *only* by a missing file (the realistic case: an existing project upgrading past a version that
+   introduced a brand-new content kind, e.g. `.forge/techniques/` for a pre-P29 project) showed the user
+   nothing beyond the bare version-pair line anywhere — not `--json`, not the human line. Fixed:
+   `UpgradeReport` gains `missingFiles: readonly string[]`, populated from the identical plan and
+   present on both return paths exactly like `staleFiles`/`editedFiles`; `bin.ts` sanitizes and prints
+   it the same way. New tests at both the `runUpgrade` level and a real `forge upgrade --dry-run --json`/
+   human-line CLI subprocess level prove a missing file alone forces `regenerated: true` with
+   `staleFiles`/`editedFiles` empty, and that the human line and `--json` both name it.
+2 (MINOR, real but untested exclusion). `editedFiles` is deliberately excluded from the `regenerated`
+   OR-chain (an edit's own conflict resolution can be `keep-mine`, writing nothing, so an edit alone
+   must never force `regenerated: true` the way an unconditional silent overwrite does) — correct, but
+   nothing asserted it. Fixed: the existing hand-edited-file test now also asserts `regenerated: false`.
+3 (MINOR, doc-comment overclaim). `classifyRegenerableFile`'s `current` bullet claimed a fresh write
+   would reproduce the on-disk file "byte for byte" — true of the real body only: `writeGenerated`
+   always re-stamps the header's own `v=` field to today's running version even for an unchanged body
+   (see this same file's own `v=1`-bug doc comment a few lines above), so a version bump with an
+   unchanged shipped body is correctly `current` by the mandate's own literal body-hash definition, but
+   is not byte-identical to what a fresh write produces. Fixed: reworded to name the body specifically.
+
+Disclosed, not fixed (genuinely out of scope for this piece): every real (non-dry-run) `forge upgrade`
+now runs `collectRegenerableGroups` (all nine content readers) twice — once via `planRegenerableContent`
+for the report fields, once inside `writeRegenerableContent` for the real write — doubling real
+filesystem/parse work per real upgrade; not a correctness risk (both calls read the same static,
+non-user-editable content within one process lifetime) but a real, disclosed cost a future piece could
+remove by threading the already-computed groups through. `classifyRegenerableFile` also re-parses the
+same header line `hasGeneratedFileDrifted` already parsed internally, an already-documented, acceptable
+double-parse for code-sharing clarity.
+
+**Mutation evidence (real: mutate, run the affected test, confirm real failure, restore via
+`git checkout --` against a real prior commit, re-confirm green).** Body-vs-header comparison replaced
+with a raw disk-content-vs-shipped-content comparison (ignoring the header entirely): every freshly
+materialised file misclassified `stale` instead of `current` — the "classifies every real, freshly
+materialised regenerable file as current" test failed. A real, detected edit misclassified `stale`
+instead of `edited`: both the `plan-regenerable.test.ts` and `run-upgrade.test.ts` hand-edited-file
+tests failed. `regenerated` reverted to the pre-piece formula (migrations/version pair only, dropping
+`staleFiles`/`missingFiles`): the equal-version-pair stale-file test failed (`regenerated: false`
+instead of `true`). `planRegenerableContent`'s own traversal truncated to skip the last three content
+categories (briefs/prompts/techniques) while the writer kept touching them: the plan-names-exactly-the-
+writer's-paths test failed, naming every missing path in the diff. Critic-round fix: `missingFiles`
+dropped from the `regenerated` OR-chain: the new missing-file test failed (`regenerated: false` instead
+of `true`). Critic-round fix: `editedFiles` added into the `regenerated` OR-chain (the exclusion this
+piece deliberately makes): the new "does NOT force regenerated" assertion failed (`true` instead of
+`false`). Six mutations, six confirmed real failures, all restored with `git checkout --` against the
+real, already-committed source; `git diff --stat` empty after each final restore.
+
+**Shared working tree.** Exact-file `git add` throughout; `git status`/`git diff` on `bin.ts` (shared
+with P37/P42's own Surface) re-checked immediately before every stage and commit — every diff on it
+stayed isolated to this piece's own hunks the whole way through, no incident. One accidental
+cross-agent index collision: a `git add <exact files>` followed moments later by `git status` showed
+several files from concurrent agents' own in-flight work also staged (the shared index is one file per
+working tree; another agent's own concurrent `git add` interleaved with the check, not with the add
+itself) — caught before committing, fixed with a plain `git reset` (unstages only, touches no working-
+tree file) and an immediate re-add-then-verify-then-commit with no gap between the verify and the
+commit. Three commits: `6f97699` (feat, the piece itself), `1869791` (fix, a stale "briefs/prompts are
+still empty" doc comment carried forward while relocating it — found to already be false, since
+`PLAN-M13.md` P2/P3 populated both indexes before this piece started), `247b5f4` (fix, the critic
+round's `missingFiles` gap).
+
+**Rule 14/15.** Verified twice in one distinctly-named scratch worktree (`wt-p43-verify-radwan`, removed
+afterward, then recreated fresh at the final commit and removed again): `pnpm install --offline
+--frozen-lockfile`, the full monorepo `pnpm typecheck` (21/21 packages), `packages/cli/test/init/
+plan-regenerable.test.ts` (5/5), the full `run-upgrade.test.ts` (23/23), and the `forge upgrade` subset
+of `bin.test.ts` (12/12, vitest `-t "forge upgrade"` — the full file was not re-run in the worktree a
+second time given the cost-cut rule and that this subset already exercises every changed code path in
+`bin.ts`) — all green at the final commit.
+
+**Scoped tests (main tree, not the verification worktree).** `pnpm typecheck` (21/21), `pnpm run
+boundaries` (clean), `packages/cli/test/init/{plan-regenerable,content,generated-header,hash,run-init}
+.test.ts` (25+5+8+3+9 = 25 for run-init alone, 22 for the other four — all green), the full `run-upgrade
+.test.ts` (23/23, run alone per the documented load-flake note — no flake observed), the full `forge
+upgrade` subset of `bin.test.ts` (12/12; the full 700+-test file was not run unscoped, per the cost-cut
+rule — this subset covers every line this piece touched in `bin.ts`). `pnpm lint`'s combined command
+(`eslint . --max-warnings 0 && prettier --check .`) fails on this shared tree, but exclusively on
+content outside this piece's own Surface: `eslint` on four `prefer-optional-chain` errors in
+`packages/engine/src/{dispatch/outputs,plan/compile,workflow/validate}.ts`, traced via `git log -1` to
+commit `0de9176` ("M14 P41") — not this piece's own commit or working-tree state; `prettier --check .`
+separately flags nine files, all concurrent agents' own uncommitted working-tree edits (P42's
+`agent.ts`/`agent.test.ts`/`init.test.ts`, P41's `elicit.ts`/`elicit.test.ts`/
+`elicit-questions.test.ts`, and others), none in this piece's own Surface. `eslint`/`prettier --check`
+scoped to exactly this piece's own nine files: clean, zero warnings, zero errors.
+
+**Decision.** Ship as built, with the one-round critic's MAJOR finding and two MINOR findings fixed and
+independently re-verified with real mutation evidence for both the original piece and the critic-round
+fix itself.
+
+**Discloses.** Overrides in `.forge/overrides/agents` stay untouched and uncompared by this plan (`05`
+§5.10, as the mandate names) — a real, disclosed gap this piece does not close. No `forge doctor` rule
+reads this plan (decision 21 names `upgrade`, not `doctor`, as the owner of this check). Real,
+double-reading cost on every non-dry-run upgrade (`collectRegenerableGroups` called twice; see the
+critic-round findings above) — a real, accepted trade-off for a `Size: S` piece, not fixed here.
+`run-upgrade.test.ts`/`backup.test.ts` are documented load flakes when not run alone (`M14-AGENT-NOTES
+.md`); no flake was observed in this piece's own runs, alone or in the clean worktree.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q271`.
+
+## M14 P42 — `forge agent validate` gains `output-ownership-overlap` and `unregistered-output-type`; the roster's `file_ownership` reconciled (`cli/src/commands/agent.ts`, `modules/fm-core/agents/{architect,orchestrator,em,integration-architect}.agent.yaml`, `modules/fm-service/agents/integration-architect.agent.yaml`, `specs/05-agent-system.md`; edited `agents/test/content/{a2-roster,a3-roster}.test.ts`, `agents/test/fixtures/architect.ts`, `cli/test/commands/agent.test.ts`, `cli/test/e2e/init.test.ts`, `test/output-contract-known-gaps.test.ts`; regenerated `fixtures/greenfield-service/.forge/agents/{architect,orchestrator,em}.yaml`)
+
+**Mandate.** `agentValidateAll` (`05` §5.9) gains two checks the spec already named in prose but never
+enforced: `output-ownership-overlap` (error) — a registered output type one agent declares whose `18`
+§18.7 registry sample path lies inside another agent's `exclusive: true` `file_ownership` claim — and
+`unregistered-output-type` (warning) — a declared output type naming neither a registered artifact type
+nor `Code`. Recomputing the first against the shipped roster found architect's own exclusive claim over
+`docs/forge/kb/decisions/**`/`docs/forge/specs/interfaces/**` a real, unconditional violation against
+every other role declaring `ADR` or `InterfaceContract`; both globs are dropped (architect's own real
+claim is `produces` plus declared `outputs`, not `file_ownership`, enforced nowhere at run time except
+by this validator). `orchestrator`'s/`em`'s own stale, never-matching `file_ownership` globs are dropped
+in the same reconciliation pass. `test/output-contract-known-gaps.test.ts`'s `OWNERSHIP_ONLY_STEPS`
+ratchet gains the four architect steps this narrows (`shape-solution:select-architecture`/`select-stack`,
+`migrate:plan-migration`, `build-stage:freeze-contracts`) — still not gaps, the identical reason every
+other entry isn't. `fixtures/greenfield-service/.forge/agents/{architect,orchestrator,em}.yaml`
+regenerated to match. `a3-roster.test.ts` gains two new whole-roster invariants (no stale glob; no
+exclusive glob covers another role's declared output sample, hand-rolled since `packages/agents` has no
+`@forge/engine` dependency). Against the real, materialized roster: zero `output-ownership-overlap`
+errors, exactly seven `unregistered-output-type` warnings — the same COUNT `Q224` already reached for a
+differently-composed set (see `SPEC-QUESTIONS.md` for the full recount). `specs/05-agent-system.md` §5.9
+documents both checks normatively.
+
+**Mutation evidence.** All four named in the brief, each broken against the real committed state via a
+real `runInit`+`agentValidateAll` script and the affected test files, run red, restored via `git checkout
+--`: `docs/forge/kb/decisions/**`/`docs/forge/specs/interfaces/**` restored — 12 real errors (6 pairs × 2)
+reappear; orchestrator's stale glob restored — the new stale-glob test fails; the `Code` exemption
+dropped — 6 more real warnings appear on the deduped roster (not 9: the brief's own figure counts raw,
+pre-materialization module-file duplicates).
+
+**Critic round 1** (fresh, context-free; independently re-derived and re-ran the key checks). Found three
+real accuracy defects, all fixed: a stale comment in `integration-architect.agent.yaml`'s own
+`parallel_safety:` block the main commit's own diff never touched, still asserting the pre-fix premise;
+a `specs/05-agent-system.md` bullet overclaiming an unimplemented "module registers itself" exemption; a
+"seven" framing (commit message, two test comments) that overstated identity with `Q224`'s own set rather
+than a coincidence of count. Also independently caught: a "32 -> 36" arithmetic slip in a ratchet doc
+comment (real count 33 -> 37; the pinned array and its own test were already correct). Everything else —
+both validator functions, the fixture tests' non-vacuity, the roster fix's completeness, the three
+worked-example transcriptions, the four ratchet additions, the regenerated fixtures' header hashes — the
+critic confirmed clean. No round 2: every finding was documentation/comment-only, independently
+re-verified fixed.
+
+**Discloses.** A wildcard-section type (`Diagram`) is never inside a section glob under this check's own
+"* as a literal x" sampling (the `sre`/`delivery/views/**` case stays open, confirmed real not
+hypothetical); how the validator would learn which modules are installed stays unresolved
+(`ComponentSpec` is a real, confirmed false warning as a direct result); dropping architect's exclusive
+claim lets two ADR-declaring roles' lanes run without this validator flagging a conflict, but
+`file_ownership` was never a run-time serialization mechanism either way — P10's own reserved-id-range
+mechanism is the real thing preventing an id collision; `Story.interfaces`/`kb_write` stay unenforced.
+`packages/cli/test/bin.test.ts`'s own matching real-subprocess test landed already committed inside a
+concurrent piece's own commit (M14 P43, `6f97699`, a whole-file `git add` on a file both pieces had in
+flight) — present at HEAD, reverified at the final Rule 14/15 worktree check, not re-committed (would be
+a no-op/conflicting commit); its own test title still reads "Q224's seven warnings," left as-is rather
+than editing a file mid-flight under a concurrent piece's own commit.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q270`.
