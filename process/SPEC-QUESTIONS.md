@@ -24411,3 +24411,91 @@ and its porcelain status for such a path, with no "last touched by" note. `descr
 see `.gitignore`d tampering (the critic round, above).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P38`.
+
+## Q269 — M14 P36: the swarm-review guard restores the reviewed lane on every path, not only the success
+path — a one-round critic (fresh, context-free) found two real gaps (a fail-open regression on unknown
+dirt, and a reset failure misreported as success), both fixed and independently re-verified with real
+mutation evidence
+
+**Context.** `PLAN-M14.md` P36. The read-only guard that checks whether a swarm-review perspective left
+the lane it reviews dirty (`swarm-review-step.ts`, stacked review reading a predecessor's own unmerged
+lane, `PLAN-M13.md` P38, Q226) used to run only once `dispatchAgentStep` had already returned: a
+perspective session that threw straight out of it (an adapter crash mid-write) skipped the guard
+entirely, and a dirty lane the guard DID catch on the success path was reported (`RUN-083`) but never
+cleaned, so a retry of the identical step read the identical dirty lane and failed the identical way
+forever.
+
+**Fix.** A new `VcsFacade.resetLane` (`dispatch/types.ts`, `dispatch/facades.ts`) wraps `@forge/vcs`'s
+own real `resetLaneWorktree` (`vcs/src/lanes.ts:415`, `git reset --hard` + `git clean -fd`, ignored files
+untouched) — the identical mechanism `resume/rollback.ts`'s own `rollbackLaneToBase` already uses. A new
+`restoreReviewedLane` runs in a `finally` around the one `dispatchAgentStep` call, on every path it can
+end on (a clean return, a participant that ended `ok: false`, or a throw), reading `changedFiles` first
+(to name what was dirtied) and then resetting unconditionally (a no-op on an already-clean lane). The
+success path still fails typed `RUN-083` when there was anything to restore; the adapter-failure path
+names what was found and restored. Q226 (g) (a skipped merge-check layer never fails a set by itself,
+left open) is pinned unchanged — `merge-checks.test.ts` gained a regression test citing it explicitly.
+
+**One-round critic (fresh, context-free; read the full diff and the module, no test execution of its
+own) found two real findings, both fixed and independently re-verified with real mutation evidence.**
+
+1 (real, fail-open regression). The first version returned `undefined` for the dirty-paths list whenever
+   `changedFiles` itself threw (a gone worktree, a transient git/I/O error), and the success-path check
+   only failed `RUN-083` for a *known*, non-empty list — "cannot tell" silently fell through as "nothing
+   to restore," letting the step succeed on an unconfirmed-clean lane. The pre-existing guard's own
+   `hasChanges(...).catch(() => true)` treated the identical uncertainty as dirty; this was a genuine
+   regression from that fail-closed stance (and the new doc comment's own claim to preserve it was
+   simply wrong). Fixed: `restoreReviewedLane` returns `{dirtyPaths, resetOk}` instead of a bare paths
+   array; `reviewedLaneNeedsAttention` fails closed on `dirtyPaths === undefined`.
+2 (real, honesty gap). A `resetLane` failure was swallowed (`.catch(() => undefined)`) and the caller
+   still reported "restored: ..." regardless — true only when the reset call actually completed. Fixed:
+   `resetOk` is tracked and read explicitly; the failure message only ever says "restored" when `resetOk`
+   is `true`, and the success-path check also fails on `!resetOk` (an unconfirmed reset is not proof of a
+   clean lane either).
+
+Two new tests reproduce each gap directly: a `changedFiles` override that throws only for the reviewed
+lane (built as a `const` after the lane's real id is known, layered onto a second context object sharing
+the same `laneRegistry`, not a mutable closure variable — the shape the lint round below fixed) still
+fails `RUN-083` though nothing was ever actually written; a `resetLane` override that throws after a real
+stray write fails `RUN-083` without ever claiming "restored," with the stray file's continued presence on
+disk checked directly (`readFile`), not just the message text.
+
+**Mutation evidence (real: mutate, run the affected test, confirm real failure, restore via
+`git checkout --` against a real prior commit, re-confirm green).** Restore skipped entirely (the
+`finally`'s `restoreReviewedLane` call replaced with a no-op): all four dirty-lane tests failed — the
+RUN-083 case unexpectedly *succeeded* (a stray write that was never committed is invisible to a fresh
+lane branched from the predecessor's own branch tip), and the adapter-failure case's message lost its
+restored-paths note. Reset detected but not applied (the `resetLaneWorktree` call removed from
+`restoreReviewedLane`, dirt-listing kept): all four dirty-lane tests failed on their own `git status
+--porcelain`/`rev-parse HEAD` assertions — the lane was still genuinely dirty. `git clean -fd` → `-fdx`
+(in the pre-existing, unchanged `vcs/src/lanes.ts`): the ignored-file test failed — `debug.log` was
+deleted, proving that test is genuinely tied to real `-fd` semantics. Critic-round fix reverted
+(`reviewedLaneNeedsAttention` back to `dirtyPaths.length > 0` alone, ignoring `undefined`/`!resetOk`):
+the "cannot even be inspected" test failed (`succeeded` instead of `failed`). `resetOk` swallowed into
+always-`true`: the "resetting itself fails" test failed (the message wrongly contained `restored:`).
+Every mutation was restored with `git checkout --` against the real, already-committed source and the
+affected test(s) re-confirmed green before moving on; `git diff --stat` was empty after each restore.
+
+**Shared working tree.** Exact-file `git add` throughout, three commits: `bc75181` (fix, the piece
+itself), `b6ff7ff` (fix, the critic round's two findings, `swarm-review-step.{ts,test.ts}` only),
+`b3541c1` (fix, lint — one `prefer-optional-chain` and two `prefer-const`, the latter fixed by building
+each new test's overridden `VcsFacade` only after the reviewed lane's real id was known rather than
+closing over a mutable `let` set later). `packages/engine/src/dispatch/types.ts` carried a concurrent,
+unrelated hunk from another running piece (`AskRequest.context`, P41) at various points in this shared
+tree's history; never staged or touched beyond this piece's own already-committed `resetLane` addition.
+
+**Rule 14/15.** Verified three times in three distinctly-named scratch worktrees (`wt-p36-verify-
+swarmreview`, `wt-p36-verify-swarmreview-2`, `wt-p36-verify-final`; all removed afterward): `pnpm install
+--offline --frozen-lockfile`, the full monorepo `pnpm typecheck` (21/21) plus a cache-bypassed direct
+`tsc --noEmit` on `packages/engine`, the scoped tests (68/68 at the final commit), `pnpm run boundaries`,
+and (this piece's own files) `eslint --max-warnings 0`/`prettier --check` — all clean at `b3541c1`.
+
+**Decision.** Ship as built.
+
+**Discloses.** Q226 (f) second half (a merge landing or removing a reviewed lane mid-review) stays
+unserialised and unreachable in shipped workflows, unchanged. Q226 (g)/(h)/(i) untouched. A lane this
+cannot actually clean (both `changedFiles` and `resetLane` failing, or some other structural breakage) is
+Q226 (f)'s own remaining, disclosed gap, not a new failure mode this piece invents — the step still fails
+typed (`RUN-083`) rather than silently accepting an unconfirmed lane, but nothing here repairs a worktree
+broken beyond what `git reset --hard`/`git clean -fd` can fix.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P36`.
