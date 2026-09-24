@@ -66,9 +66,10 @@ const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
 
 /** `JoinConflictResolver` (dispatch/types.ts) is structurally identical to `@forge/vcs`'s own
  * `MergeConflictResolver` (`JoinConflictDescription` mirrors `MergeConflictDescription` field for field) --
- * the identical "re-declared, not imported" bridge `asVcsLaneHandle` already provides for `LaneHandle`. */
+ * the identical "re-declared, not imported" bridge `asVcsLaneHandle` already provides for `LaneHandle`, so
+ * no cast is even needed here: TypeScript already accepts one in place of the other structurally. */
 function asVcsConflictResolver(resolver: JoinConflictResolver): MergeConflictResolver {
-  return resolver as unknown as MergeConflictResolver;
+  return resolver;
 }
 
 /** `PLAN-M14.md` P34: `createVcsFacade`'s own conflict policy/resolver for `mergeIntoLane`, bound once at
@@ -91,7 +92,9 @@ export function createVcsFacade(
 ): VcsFacade {
   const conflictPolicy = options.conflictPolicy ?? 'abort';
   const boundResolver =
-    options.conflictResolver === undefined ? undefined : asVcsConflictResolver(options.conflictResolver);
+    options.conflictResolver === undefined
+      ? undefined
+      : asVcsConflictResolver(options.conflictResolver);
   return {
     async createLane(stepId, integrationBase) {
       return createLaneWorktree(projectRoot, { runId, stepId, integrationBase });

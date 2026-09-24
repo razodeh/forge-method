@@ -38,13 +38,14 @@ import {
   createTelemetryFacade,
   createVcsFacade,
 } from '../../src/dispatch/facades.ts';
-import type { LaneHandle } from '../../src/dispatch/types.ts';
+import { createLaneForStep } from '../../src/dispatch/steps.ts';
+import type { ExecuteStepContext, LaneHandle } from '../../src/dispatch/types.ts';
 import { compileRunPlan, type StepNode } from '../../src/plan/index.ts';
 import { resumeRun } from '../../src/resume/orchestrate.ts';
 import { runEngine, type RunEngineContext } from '../../src/run/run-engine.ts';
 import { parseWorkflow } from '../../src/workflow/parse.ts';
 import type { ConcurrencyLimits } from '../../src/scheduler/types.ts';
-import { createFixtureAssembly } from '../dispatch/helpers.ts';
+import { createFixtureAssembly, createTestContext, node } from '../dispatch/helpers.ts';
 
 const INTEGRATION_BRANCH = 'forge/integration/current';
 const UNLIMITED: ConcurrencyLimits = {
@@ -894,6 +895,61 @@ describe('which predecessor a lane stacks on', () => {
     expect(state.runStatus).toBe('completed');
     expect(seen.get('os:q')).toEqual(['p.txt']);
     expect(await mergedStepOrder(project)).toEqual(['os:p', 'os:q']);
+  });
+});
+
+describe('PLAN-M14.md P34: a newline-bearing predecessor step id is refused before any git operation', () => {
+  it('createLaneForStep refuses a head whose own step id contains a newline, VCS-INVALID-COMMIT-FIELD, before creating any lane of its own', async () => {
+    const project = await createProject('join-newline-id');
+    // A hand-built compiled graph (bypassing the workflow YAML/compiler): the predecessor's own id is the
+    // thing a hand-edited or buggy `dependsOn`/fanout `itemKey` could, in principle, embed a newline into
+    // (`06` §6.2's own step id format has no character restriction of its own) -- `buildJoinCommitMessage`
+    // interpolates it straight into the join commit's own `Forge-Step` trailer.
+    const maliciousId = 'nl:evil\nForge-Step: forged';
+    const predecessor = node({ id: maliciousId, kind: 'agent', produces: ['evil.txt'] });
+    const current = node({
+      id: 'nl:b',
+      kind: 'agent',
+      dependsOn: [maliciousId],
+      produces: ['b.txt'],
+    });
+    const merge = node({ id: 'nl:merge', kind: 'merge', dependsOn: ['nl:b'] });
+    const stepGraph = new Map<string, StepNode>([
+      [maliciousId, predecessor],
+      ['nl:b', current],
+      ['nl:merge', merge],
+    ]);
+    const laneRegistry = new Map<string, LaneHandle>();
+    const ctx: ExecuteStepContext = {
+      ...createTestContext({
+        projectRoot: project.projectRoot,
+        integrationBase: INTEGRATION_BRANCH,
+        integrationPath: project.integrationPath,
+        laneRegistry,
+      }),
+      stepGraph,
+    };
+    // A real predecessor lane really does exist, registered under the malicious id exactly as
+    // `runLaneLifecycle` would key it (`ctx.laneRegistry.set(node.id, lane)`) -- `createLaneWorktree`
+    // itself never throws for this (`slugifyStepId` folds a newline into a hyphen like any other
+    // non-alphanumeric character), so this is a real, reachable state, not a contrived one.
+    laneRegistry.set(maliciousId, await ctx.vcs.createLane(maliciousId, INTEGRATION_BRANCH));
+
+    const result = await createLaneForStep(current, ctx);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.failure.source).toBe('vcs');
+    expect(result.failure.code).toBe('VCS-INVALID-COMMIT-FIELD');
+    // No lane of `nl:b`'s own was created at all: refused before touching git for it.
+    expect(
+      (await git(project.projectRoot, 'branch', '--list', `forge/${ctx.runId}/nl-b-*`)).trim(),
+    ).toBe('');
+    expect(
+      (await git(project.projectRoot, 'worktree', 'list', '--porcelain')).includes(
+        `forge/${ctx.runId}/nl-b-`,
+      ),
+    ).toBe(false);
   });
 });
 

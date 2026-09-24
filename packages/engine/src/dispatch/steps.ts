@@ -225,7 +225,36 @@ function claimFailure(
  * "conventional-commit trailer format" `buildCommitMessage` above already gives lane work commits,
  * applied to a join instead: `headStepId` is the predecessor whose head is being merged in. */
 function buildJoinCommitMessage(ctx: ExecuteStepContext, headStepId: string): string {
-  return [`Join ${headStepId}`, '', `Forge-Step: ${headStepId}`, `Forge-Run: ${ctx.runId}`].join('\n');
+  return [`Join ${headStepId}`, '', `Forge-Step: ${headStepId}`, `Forge-Run: ${ctx.runId}`].join(
+    '\n',
+  );
+}
+
+/** `headStepId`/`ctx.runId` are interpolated into an in-lane join's own commit trailers
+ * (`buildJoinCommitMessage`'s own `Forge-Step`/`Forge-Run`) — a bare newline in either would forge a
+ * second trailer line into the permanent join-commit audit trail, the identical concern `@forge/vcs`'s
+ * own `assertSingleLine` (`commit.ts`) already guards the landing-time analogue against
+ * (`processMergeCandidate`'s own `stepId`/`runId`/`laneId` checks). This module never imports
+ * `@forge/vcs` directly (only through `ctx.vcs`, this file's own established convention — every real
+ * git call goes through the facade) so the check is duplicated locally rather than imported, the same
+ * "duplicated here rather than imported" precedent `CLAIM_FAILURE_CONTROL_CHARS` above already sets for
+ * the identical reason. `ctx.runId` is never attacker-influenced in practice (a FORGE-generated id) but
+ * is checked anyway, the identical belt-and-braces stance `processMergeCandidate` already takes for it. */
+function hasNewline(value: string): boolean {
+  return value.includes('\n') || value.includes('\r');
+}
+
+/** Reuses `VCS-INVALID-COMMIT-FIELD` — the identical code `assertSingleLine` itself throws for the
+ * landing-time analogue — so `classifyFailure`'s own existing `VCS-INVALID-*` → `validation` mapping
+ * (`classify.ts`) already covers this without a new rule of its own. */
+function invalidJoinFieldFailure(fieldName: string): StepFailureInfo {
+  return {
+    source: 'vcs',
+    code: 'VCS-INVALID-COMMIT-FIELD',
+    message:
+      `Commit message field "${fieldName}" contains a newline or carriage return, which would ` +
+      "corrupt an in-lane join commit's conventional-commit structure and could forge a trailer.",
+  };
 }
 
 /** `PLAN-M14.md` P34: `LANE-JOIN-CONFLICT` (class `conflict`, `classify.ts`) — the join's own analogue of
@@ -282,6 +311,18 @@ export async function createLaneForStep(
   const base = await resolveLaneBase(node, ctx);
   if (!base.ok) return base;
   const { tipSha, heads } = base.value;
+
+  // Checked before any git operation at all (not merely before each join's own message is built): the
+  // identical "reject before touching git" discipline `resolveRevision`'s own doc comment already
+  // establishes for a flag-shaped ref, applied here to a newline instead of a flag.
+  if (hasNewline(ctx.runId)) {
+    return { ok: false, failure: invalidJoinFieldFailure('runId') };
+  }
+  const badHead = heads.find((head) => hasNewline(head.id));
+  if (badHead !== undefined) {
+    return { ok: false, failure: invalidJoinFieldFailure('headStepId') };
+  }
+
   const laneResult = await runVcsStep(node.id, () => ctx.vcs.createLane(node.id, tipSha));
   if (!laneResult.ok) return laneResult;
   const lane = laneResult.value;
@@ -297,7 +338,9 @@ export async function createLaneForStep(
   let baseSha = tipSha;
   for (const head of heads) {
     const message = buildJoinCommitMessage(ctx, head.id);
-    const joinResult = await runVcsStep(node.id, () => ctx.vcs.mergeIntoLane(lane, head.sha, message));
+    const joinResult = await runVcsStep(node.id, () =>
+      ctx.vcs.mergeIntoLane(lane, head.sha, message),
+    );
     if (!joinResult.ok) {
       await removeHalfMadeLane(ctx, lane);
       return joinResult;

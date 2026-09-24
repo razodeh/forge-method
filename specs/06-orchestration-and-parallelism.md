@@ -117,9 +117,12 @@ Lane lifecycle:
   successor's rebase replays only its own. `LaneCreated` records the lane's HEAD once every join has
   completed as `baseSha` (what resume restores and claim enforcement diffs against), the resolved integration
   tip as `integrationTip`, `stackedOn` naming the one predecessor when its own join fast-forwarded, and
-  `joinedFrom` naming every predecessor a real merge commit was needed for. A join that conflicts follows the
-  run's conflict policy exactly like the merge queue below: `abort` fails the step and leaves no lane; `agent`/
-  `human` need a resolver, and one missing fails the step the identical way the merge queue does. A
+  `joinedFrom` naming every predecessor a real merge commit was needed for. A join that conflicts is dispatched
+  on a conflict policy exactly the way the merge queue below dispatches on one: `abort` fails the step and
+  leaves no lane; `agent`/`human` need a resolver, and one missing fails the step the identical way the merge
+  queue does. No caller configures anything but `abort` for a join yet (`agent`/`human` there needs a real
+  resolver wired to a real conflict-resolving session, the identical still-open gap `SPEC-QUESTIONS.md` Q226
+  already records for the merge queue's own resolver). A
   `swarm-review` step whose sole predecessor's lane would fast-forward into its own runs its perspective
   sessions in that predecessor lane's worktree; otherwise (several predecessors, or none) it reads the project
   checkout, as before.
