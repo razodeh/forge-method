@@ -71,6 +71,10 @@ export interface BuildRunContextInput {
    * `session` and `panel` build a context too, integrate nothing, and want the code as it is on `main`, not on
    * an integration branch that only moves when a run lands lanes: they leave this off. */
   readonly lanesFromIntegration?: boolean;
+  /** `PLAN-M14.md` P30: forwarded verbatim to `RunEngineContext.externalKbIds` -- see that field's own
+   * doc comment. Absent for every caller that does not run a workflow (`forge review`/`debug`/`session`/
+   * `panel`), which never compile a plan at all. */
+  readonly externalKbIds?: ReadonlySet<string> | undefined;
 }
 
 /** The trunk the integration branch is first created from (never an integration branch itself), and the
@@ -752,5 +756,6 @@ export async function buildRunEngineContext(
       dailyUsd: input.config.budget.dailyUsd,
       onBreach: input.config.budget.onBreach,
     },
+    externalKbIds: input.externalKbIds,
   };
 }

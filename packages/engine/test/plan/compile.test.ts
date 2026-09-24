@@ -107,6 +107,89 @@ describe('compilePlan -- StepNode.taint (PLAN-M14.md P27, 20 §20.5 point 3)', (
   });
 });
 
+describe('compilePlan -- input-derived taint (PLAN-M14.md P30, 20 §20.5 point 3)', () => {
+  it('an mcp: input taints the step and is not treated as a KB id', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['mcp:jira/search_issues'] }),
+        ]),
+        {},
+      ),
+    );
+    const node = findNode(nodes, 'w:a');
+    expect(node.taint).toBe('external');
+    expect(node.inputs).toEqual(['mcp:jira/search_issues']);
+  });
+
+  it('a fetch:https:// input taints', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['fetch:https://example.com/page'] }),
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
+  });
+
+  it('fetch:http:// (not https) is refused -- never silently accepted, and never silently left untainted', () => {
+    const issues = expectFail(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['fetch:http://example.com/page'] }),
+        ]),
+        {},
+      ),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'insecure-fetch-input-scheme', stepId: 'w:a' }),
+    );
+  });
+
+  it('an externalKbIds hit taints: a declared kb: input naming an id the caller marks external provenance', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:KB-ARCH-0007'] }),
+    ]);
+    const nodes = expectOk(compilePlan(wf, {}, { taint: { externalKbIds: ['KB-ARCH-0007'] } }));
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
+  });
+
+  it('the identical kb: input does NOT taint when its id is not in externalKbIds', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:KB-ARCH-0007'] }),
+    ]);
+    const nodes = expectOk(compilePlan(wf, {}, { taint: { externalKbIds: ['KB-OTHER-0001'] } }));
+    expect('taint' in findNode(nodes, 'w:a')).toBe(false);
+  });
+
+  it('compiled ids are identical with and without the externalKbIds option -- only taint differs', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:KB-ARCH-0007'] }),
+    ]);
+    const without = expectOk(compilePlan(wf, {}));
+    const withSet = expectOk(compilePlan(wf, {}, { taint: { externalKbIds: ['KB-ARCH-0007'] } }));
+    expect(withSet.map((n) => n.id)).toEqual(without.map((n) => n.id));
+    expect('taint' in findNode(without, 'w:a')).toBe(false);
+    expect(findNode(withSet, 'w:a').taint).toBe('external');
+  });
+
+  it('taint never leaks onto a sibling step that declares no external/tainting input of its own', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['mcp:jira/search_issues'] }),
+          agentStep({ id: 'b', brief: 'briefs/b.md' }),
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:a').taint).toBe('external');
+    expect('taint' in findNode(nodes, 'w:b')).toBe(false);
+  });
+});
+
 describe('compilePlan -- run inputs for block [4] (M13 P5)', () => {
   it("an agent step carries the run's values for the workflow's declared inputs, and a fanout child also its item", () => {
     const nodes = expectOk(

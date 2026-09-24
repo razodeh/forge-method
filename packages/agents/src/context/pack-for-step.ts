@@ -36,6 +36,14 @@ export interface StepContext {
    * check will look in (`outputGlob`, under the project's configured docs roots). When non-empty, block [5] of the
    * compiled prompt lists exactly these, at that path, and not the role's whole `outputs[]`. */
   readonly outputs?: readonly StepOutputContext[] | undefined;
+  /** `PLAN-M14.md` P30 (`20` §20.5 point 3, `15` §15.5.4): this step's own declared `inputs:` that name an
+   * external scheme (`mcp:<server>[/<tool>]` or `fetch:<https-url>`) rather than a KB id -- never resolved
+   * into `declaredInputIds` (there is no KB entry to look up), and rendered separately into block [4]
+   * (`compile-prompt.ts`'s own `renderStepBriefBlock`) so the agent sees them named apart from the KB
+   * entries actually packed. `packForStep` itself never reads this field (the same "carried through,
+   * consumed only by `compile-prompt.ts`'s own block renderer" shape `outputs` above already has); present
+   * only when non-empty. */
+  readonly externalInputs?: readonly string[] | undefined;
 }
 
 export interface StepOutputContext {

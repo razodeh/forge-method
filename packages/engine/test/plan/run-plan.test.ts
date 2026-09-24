@@ -166,3 +166,39 @@ describe('compileRunPlan — full pipeline', () => {
     }
   });
 });
+
+describe('compileRunPlan — taint options threaded through the full pipeline (PLAN-M14.md P30)', () => {
+  it('an externalKbIds hit taints the compiled step, surviving contract-freeze/claim-overlap/critical-path unchanged', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['kb:KB-ARCH-0007'], produces: ['a.md'] }),
+      agentStep({ id: 'b', brief: 'briefs/b.md', produces: ['b.md'] }),
+    ]);
+    const result = compileRunPlan(wf, {}, { taint: { externalKbIds: ['KB-ARCH-0007'] } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.nodes.find((n) => n.id === 'w:a')?.taint).toBe('external');
+      expect('taint' in (result.nodes.find((n) => n.id === 'w:b') ?? {})).toBe(false);
+    }
+  });
+
+  it('an mcp: input taints with no options argument at all (the scheme-derived half needs none)', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['mcp:jira/search_issues'] }),
+    ]);
+    const result = compileRunPlan(wf, {});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.nodes.find((n) => n.id === 'w:a')?.taint).toBe('external');
+  });
+
+  it('a fetch:http:// input still fails the whole pipeline (the P10-level refusal propagates unchanged)', () => {
+    const wf = workflow([
+      agentStep({ id: 'a', brief: 'briefs/a.md', inputs: ['fetch:http://example.com'] }),
+    ]);
+    const result = compileRunPlan(wf, {});
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ code: 'insecure-fetch-input-scheme' }),
+      );
+  });
+});

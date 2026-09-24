@@ -118,6 +118,18 @@ describe('lintKb — kb:dangling-ref', () => {
       [],
     );
   });
+
+  it("does not flag sources: [{ kind: 'external' }] (PLAN-M14.md P30, 20 §20.5 point 3): an mcp:/fetch: ref is not a KB-tree id and is never checked against knownIds", () => {
+    const tree = treeOf([
+      {
+        kind: 'kb-entry',
+        value: kbEntry({ sources: [{ kind: 'external', ref: 'mcp:confluence/get_page' }] }),
+      },
+    ]);
+    expect(findingsOf('kb:dangling-ref', lintKb(tree, NO_SPEC_ARTIFACTS, 'L1', CLEAN_NOW))).toEqual(
+      [],
+    );
+  });
 });
 
 describe('lintKb — kb:supersession-cycle', () => {

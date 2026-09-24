@@ -60,6 +60,7 @@ import {
   shellFacingInputs,
 } from './inputs.ts';
 import { ownerRoleProblem, readImplementationRoles } from '../implementation-roles.ts';
+import { collectExternalKbIds } from './external-kb-ids.ts';
 import { planStageForRun } from './run-plan.ts';
 import { readStoryRunInputs } from './story-inputs.ts';
 import { readWorkflowSource, type RunDeps } from './run.ts';
@@ -155,6 +156,12 @@ export async function buildRunExpressionContext(
   const parsed = parseWorkflow(source);
   if (!parsed.success) return { context: legacyContext(flags), warnings: [] };
   const workflow = parsed.workflow;
+  // `PLAN-M14.md` P30: read once here and handed to both `planStageForRun` (the stage's own nested
+  // compile, below) and `assertPlannable`'s own compile, so a step tags identically in this pre-flight
+  // check as it will in the real run that follows it (`runWorkflow`'s own identical, independent read of
+  // the same project KB, `run.ts`'s own doc comment on why "dry run and real run agree" means one shared
+  // computation per invocation, not that every caller must read the KB in lockstep with every other).
+  const externalKbIds = await collectExternalKbIds(deps.paths, deps.config.paths.kb);
 
   const declared = new Map((workflow.inputs ?? []).map((input) => [input.name, input]));
   const values = new Map<string, unknown>();
@@ -261,6 +268,7 @@ export async function buildRunExpressionContext(
       stageId,
       workflow,
       { ...inputValues, ...(runValues === undefined ? {} : { run: runValues }), vars },
+      { externalKbIds },
     );
     const refusals = plan.findings
       .filter((f) => f.severity === 'error' || RUN_REFUSED_WARNINGS.has(f.code))
@@ -333,7 +341,7 @@ export async function buildRunExpressionContext(
     typeof ownerForRoles === 'string'
       ? await readImplementationRoles(deps.paths, deps.agentsRoot)
       : undefined;
-  assertPlannable(workflow, workflowId, context, roles, values.get('storyId'));
+  assertPlannable(workflow, workflowId, context, roles, values.get('storyId'), externalKbIds);
   return { context, warnings };
 }
 
@@ -391,8 +399,9 @@ function assertPlannable(
   context: RunExpressionContext,
   implementationRoles: readonly string[] | undefined,
   storyId: unknown,
+  externalKbIds: ReadonlySet<string> | undefined,
 ): void {
-  const compiled = compileRunPlan(workflow, context);
+  const compiled = compileRunPlan(workflow, context, { taint: { externalKbIds } });
   if (!compiled.success) {
     const unsupplied = referencedRunInputs(workflow).filter(
       (name) => !Object.hasOwn(context, name),

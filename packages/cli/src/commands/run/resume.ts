@@ -30,6 +30,15 @@ import { installRunSignalHandlers, type RunDeps } from './run.ts';
 export interface RunManifest {
   readonly workflowId: string;
   readonly expressionContext: ExpressionContext;
+  /** `PLAN-M14.md` P30: the KB entry/ADR/Runbook ids `runWorkflow` found carrying `external` provenance
+   * (`collectExternalKbIds`) when THIS run started -- a snapshot, not re-derived here from whatever the
+   * KB says at resume time: a KB entry written or edited to carry `sources: [{kind: 'external', ...}]`
+   * after this run started must not retroactively change which of the run's own steps compiled tainted,
+   * and `resumeWorkflow` recompiles the *same* plan the crashed/paused run was already partway through,
+   * not a fresh one. Absent for a manifest `runWorkflow` wrote before this piece (an old run resumed
+   * after an upgrade): `resumeWorkflow` then recompiles with an empty set, the identical "no step taints
+   * this way" behaviour every caller had before this piece existed. */
+  readonly externalKbIds?: readonly string[] | undefined;
 }
 
 async function readLastRunId(paths: ProjectPaths): Promise<string> {
@@ -88,6 +97,11 @@ export async function resumeWorkflow(
   await acquireRunLock(deps.paths, lock);
   const removeSignalHandlers = installRunSignalHandlers();
 
+  // `PLAN-M14.md` P30: the run's own snapshot, never a fresh KB read -- see `RunManifest.externalKbIds`'s
+  // own doc comment for why. `undefined` (a pre-P30 manifest) becomes an empty set, exactly this run's
+  // pre-P30 behaviour.
+  const externalKbIds = new Set(manifest.externalKbIds ?? []);
+
   let shim: LauncherShim | undefined;
   try {
     // `runId` is real by this point (the resumed run's own id), so every shell command a resumed run
@@ -112,6 +126,7 @@ export async function resumeWorkflow(
       // The integration branch the run started on (`forge run --stage`): its lanes and merges are there.
       expressionContext: manifest.expressionContext,
       lanesFromIntegration: true,
+      externalKbIds,
     });
     // `resumeRun`'s own `ResumeContext` needs the compiled plan's real `StepNode`s (keyed by id) to
     // turn a bare, resumed `stepId` back into something re-dispatchable — re-compiled fresh from the
@@ -123,7 +138,9 @@ export async function resumeWorkflow(
         issues: parsed.issues.map((issue) => issue.message).join('; '),
       });
     }
-    const compiled = compileRunPlan(parsed.workflow, manifest.expressionContext);
+    const compiled = compileRunPlan(parsed.workflow, manifest.expressionContext, {
+      taint: { externalKbIds },
+    });
     if (!compiled.success) {
       throw new ForgeError('RUN-045', {
         issues: compiled.issues.map((issue) => issue.message).join('; '),

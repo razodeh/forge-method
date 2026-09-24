@@ -42,6 +42,7 @@ import type { AgentDefinition } from '@forge/agents/schema';
 import { artifactTypeById } from '@forge/schemas';
 import { slugifyStepId } from '@forge/vcs';
 
+import { exactKbIdOf, isExternalSchemeInputReference } from '../plan/index.ts';
 import type { StepNode } from '../plan/index.ts';
 import { restrictGrantForTaint } from '../security/taint-guard.ts';
 import { answersVisibleTo } from './elicit.ts';
@@ -171,44 +172,69 @@ function kbEntryIds(kb: KbAccess): ReadonlySet<string> {
   return ids;
 }
 
-const GLOB_CHARS = /[*?[\]{}]/;
-
-/** A workflow `inputs:` reference (`10` §10.1's mini-DSL: `kb:<id>`, `artifact:<Type>(<id>)`,
- * `diff:lane`) as the one KB id it names exactly, or `undefined` when it is a glob, a whole type, or not a
- * KB-resolvable kind at all. Expanding those needs the input-DSL resolver no piece has built
- * (`SPEC-QUESTIONS.md` Q203); they are listed, not dropped. */
-function exactKbIdOf(reference: string): string | undefined {
-  const kb = /^kb:(.+)$/.exec(reference);
-  if (kb?.[1] !== undefined && !GLOB_CHARS.test(kb[1])) return kb[1];
-  const artifact = /^artifact:[^(]+\((.+)\)$/.exec(reference);
-  if (artifact?.[1] !== undefined && !GLOB_CHARS.test(artifact[1])) return artifact[1];
-  return undefined;
-}
-
 interface DeclaredInputs {
   readonly resolvedIds: readonly string[];
   readonly unresolved: readonly string[];
+  /** `PLAN-M14.md` P30: this step's own declared `inputs:` that name an external scheme (`mcp:<server>
+   * [/<tool>]`, `fetch:<https-url>`) rather than a KB id -- never matched against `known` (there is no
+   * KB entry to find), and never folded into `unresolved` either, so the two stay disjoint. Becomes
+   * `StepContext.externalInputs`. */
+  readonly external: readonly string[];
   readonly section: string;
+}
+
+/** Classifies one `node.inputs` reference for `resolveDeclaredInputs`. `exactKbIdOf`/
+ * `isExternalSchemeInputReference` both come from `@forge/engine/plan` (`input-refs.ts`) -- the same
+ * definitions `compilePlan` itself used to derive `node.taint` (`PLAN-M14.md` P30) -- so this never
+ * disagrees with why the step compiled tainted in the first place; a `mcp:`/`fetch:https:` reference is
+ * always external regardless of `known` (there is nothing to look up), checked first so it can never
+ * also match `exactKbIdOf`'s own `kb:`/`artifact:` patterns (it structurally cannot: neither scheme
+ * starts with either prefix). */
+function classifyDeclaredInput(
+  reference: string,
+  known: ReadonlySet<string>,
+):
+  | { readonly kind: 'external' }
+  | { readonly kind: 'resolved'; readonly id: string }
+  | { readonly kind: 'unresolved' } {
+  if (isExternalSchemeInputReference(reference)) return { kind: 'external' };
+  const id = exactKbIdOf(reference);
+  if (id !== undefined && known.has(id)) return { kind: 'resolved', id };
+  return { kind: 'unresolved' };
 }
 
 function resolveDeclaredInputs(node: StepNode, kb: KbAccess): DeclaredInputs {
   const known = kbEntryIds(kb);
   const resolvedIds: string[] = [];
   const unresolved: string[] = [];
+  const external: string[] = [];
   const lines: string[] = [];
   for (const reference of node.inputs) {
-    const id = exactKbIdOf(reference);
-    if (id !== undefined && known.has(id)) {
-      resolvedIds.push(id);
-      lines.push(`- ${reference} (full text in the project context pack as ${id})`);
-    } else {
-      unresolved.push(reference);
-      lines.push(`- ${reference} (declared for this step but NOT included in the context pack)`);
+    const classified = classifyDeclaredInput(reference, known);
+    switch (classified.kind) {
+      case 'external':
+        external.push(reference);
+        // Not "NOT included in the context pack" (the `unresolved` wording below): that phrasing implies
+        // a lookup that failed, and there was no KB lookup here to fail. Block [4] also lists these
+        // separately via `StepContext.externalInputs` (`compile-prompt.ts`'s own render); this line is
+        // this step's own "Declared inputs" text staying a complete, non-misleading list of every
+        // `inputs:` entry it named, external ones included.
+        lines.push(`- ${reference} (external: read live, if at all, never from the project KB)`);
+        break;
+      case 'resolved':
+        resolvedIds.push(classified.id);
+        lines.push(`- ${reference} (full text in the project context pack as ${classified.id})`);
+        break;
+      case 'unresolved':
+        unresolved.push(reference);
+        lines.push(`- ${reference} (declared for this step but NOT included in the context pack)`);
+        break;
     }
   }
   return {
     resolvedIds,
     unresolved,
+    external,
     section: lines.length === 0 ? '' : `Declared inputs for this step:\n${lines.join('\n')}`,
   };
 }
@@ -653,6 +679,10 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
         // assembly but `runAgentStep`'s fresh path and a crash-resume reroll).
         reservedIds: input.reservedOutputIds?.get(output.type),
       })),
+      // Block [4] (`PLAN-M14.md` P30, `compile-prompt.ts`'s own `renderStepBriefBlock`): this step's
+      // declared `mcp:`/`fetch:https:` inputs, named separately from the KB entries actually packed.
+      // Present only when non-empty, matching `outputs`/`gateEvidence` above.
+      ...(declared.external.length === 0 ? {} : { externalInputs: declared.external }),
     },
     agent,
     pack,
@@ -696,6 +726,10 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
           unresolvedDeclaredInputs: declared.unresolved,
           kbParseErrors: kb.parseErrorCount,
           externalContent: node.taint === 'external',
+          // `PLAN-M14.md` P30: which of this step's declared inputs were external (`mcp:`/`fetch:https:`)
+          // rather than a KB id -- `18` §18.2's own "context pack manifest" reproducibility requirement,
+          // the same reason `unresolvedDeclaredInputs` is recorded here. Present only when non-empty.
+          ...(declared.external.length === 0 ? {} : { externalInputs: declared.external }),
           // The exec the derivation added to the agent's own (`PLAN-M13.md` P23): the audit record says which exact commands
           // this session could run beyond its agent's declared patterns, and which needed layers had none.
           ...(testCommands === undefined ? {} : { testCommands }),

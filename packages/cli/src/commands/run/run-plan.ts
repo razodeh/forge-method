@@ -23,6 +23,7 @@ import { pathExists, readTextFile, type ProjectPaths } from '@forge/core/fs';
 import { isTestPath } from '@forge/engine/dispatch';
 import {
   compileStageRunPlan,
+  type CompilePlanTaintOptions,
   type OutsideStageStatus,
   type StageRunPlan,
   type StageRunPlanFinding,
@@ -121,8 +122,13 @@ function compileStageReport(
   outsideStage: ReadonlyMap<string, OutsideStageStatus>,
   inputFindings: readonly StageRunPlanFinding[],
   extraContext?: ExpressionContext,
+  taint?: CompilePlanTaintOptions,
 ): StageRunPlanReport {
-  const plan = compileStageRunPlan(workflow, stageId, stories, { outsideStage, extraContext });
+  const plan = compileStageRunPlan(workflow, stageId, stories, {
+    outsideStage,
+    extraContext,
+    taint,
+  });
   const findings = [...inputFindings, ...plan.findings];
   return { ...plan, findings, ok: !findings.some((f) => f.severity === 'error') };
 }
@@ -345,15 +351,26 @@ export async function readStageStories(ctx: RunPlanContext, stageId: string): Pr
 }
 
 /** The stage's run plan against an arbitrary workflow (the one being run, which need not be `build-stage`):
- * the same story graph and findings `planRunPlan` reports, and the context the run compiles against. */
+ * the same story graph and findings `planRunPlan` reports, and the context the run compiles against.
+ * `taint` (`PLAN-M14.md` P30): forwarded to `compileStageRunPlan`, so `expression-context.ts`'s own
+ * pre-flight stage compile tags a step exactly as the real run that follows it will. */
 export async function planStageForRun(
   ctx: RunPlanContext,
   stageId: string,
   workflow: Workflow,
   extraContext?: ExpressionContext,
+  taint?: CompilePlanTaintOptions,
 ): Promise<StageRunPlanReport> {
   const { stories, outsideStage, inputFindings } = await readStageStories(ctx, stageId);
-  return compileStageReport(workflow, stageId, stories, outsideStage, inputFindings, extraContext);
+  return compileStageReport(
+    workflow,
+    stageId,
+    stories,
+    outsideStage,
+    inputFindings,
+    extraContext,
+    taint,
+  );
 }
 
 /** The `--json` body: the report under the standard `{ v: 1 }` envelope, with the numeric `errors`/`warnings`

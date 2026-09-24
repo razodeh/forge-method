@@ -69,6 +69,14 @@ export interface RunEngineContext extends ExecuteStepContext {
   readonly budget?: BudgetConfig;
   // `conflictPolicy` moved to `ExecuteStepContext` (`PLAN-M14.md` P35, `dispatch/types.ts`'s own doc
   // comment on it) -- inherited from there, not redeclared here. `ctx.conflictPolicy` below is unchanged.
+  /** `PLAN-M14.md` P30: KB entry/ADR/Runbook ids whose own `sources` carry `kind: 'external'` provenance
+   * (`08` §8.3) -- computed once by the CLI from the project's real KB tree (`collectExternalKbIds`) and
+   * handed straight to `compileRunPlan`'s own `taint.externalKbIds` option below, so a step whose
+   * declared `inputs:` names one of these ids compiles tainted (`20` §20.5 point 3), the second of the
+   * two taint sources `plan/types.ts`'s own `StepNode.taint` doc comment describes (the first, an
+   * authored `mcp:`/`fetch:https:` input, needs no option at all). Omitted, no step taints this way --
+   * every caller before this piece, and any caller with no KB open (a fixture, a unit test). */
+  readonly externalKbIds?: ReadonlySet<string> | undefined;
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {
@@ -314,7 +322,9 @@ export async function runEngine(
   const parsed = parseWorkflow(workflowSource);
   if (!parsed.success) throw new ForgeError('RUN-045', { issues: formatIssues(parsed.issues) });
 
-  const compiled = compileRunPlan(parsed.workflow, context);
+  const compiled = compileRunPlan(parsed.workflow, context, {
+    taint: { externalKbIds: ctx.externalKbIds },
+  });
   if (!compiled.success) throw new ForgeError('RUN-045', { issues: formatIssues(compiled.issues) });
   // The per-step cost ceiling is resolved here, once, before the scheduler or any dispatch sees a node
   // (`PLAN-M13.md` P12): admission control's reservation, block [6] of the compiled prompt and the cap

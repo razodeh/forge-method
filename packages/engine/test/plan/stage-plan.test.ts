@@ -564,3 +564,33 @@ describe('compilePlan — a whole-entry placeholder naming a list of globs', () 
     ).toEqual(['src/S1/**']);
   });
 });
+
+describe('compileStageRunPlan — StageRunPlanOptions.taint (PLAN-M14.md P30)', () => {
+  // The `tests` step alone declares an `inputs:`, so only its own compiled per-story steps can taint.
+  const TAINT_STAGE_WORKFLOW = STAGE_WORKFLOW.replace(
+    'brief: briefs/write-failing-tests.md',
+    "brief: briefs/write-failing-tests.md\n      inputs: [ 'kb:KB-ARCH-0007' ]",
+  );
+
+  function taintWorkflow() {
+    const parsed = parseWorkflow(TAINT_STAGE_WORKFLOW);
+    if (!parsed.success) throw new Error(JSON.stringify(parsed.issues));
+    return parsed.workflow;
+  }
+
+  it("an externalKbIds hit taints the matching compiled step, forwarded through both of this module's own compileRunPlan calls", () => {
+    const plan = compileStageRunPlan(taintWorkflow(), 'mvp', [story('STORY-001')], {
+      taint: { externalKbIds: ['KB-ARCH-0007'] },
+    });
+    expect(plan.ok).toBe(true);
+    expect(plan.stepPlan).toBe('compiled');
+    expect(node(plan, 'stagewf:tests:STORY-001').taint).toBe('external');
+    expect('taint' in node(plan, 'stagewf:implement:STORY-001')).toBe(false);
+  });
+
+  it('the identical workflow with no taint option compiles the same node graph, untainted', () => {
+    const plan = compileStageRunPlan(taintWorkflow(), 'mvp', [story('STORY-001')]);
+    expect(plan.ok).toBe(true);
+    expect('taint' in node(plan, 'stagewf:tests:STORY-001')).toBe(false);
+  });
+});

@@ -14,7 +14,7 @@ import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
 import { FAKE_MODEL_ID, FakePlatformAdapter } from '@forge/testkit';
 import type { ToolGrant } from '@forge/adapter-kit';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createGateEvaluator,
@@ -24,6 +24,7 @@ import {
 } from '../../src/dispatch/facades.ts';
 import type { LaneHandle } from '../../src/dispatch/types.ts';
 import { createFixtureAssembly } from '../dispatch/helpers.ts';
+import * as planIndexModule from '../../src/plan/index.ts';
 import type { StepNode } from '../../src/plan/index.ts';
 import {
   runEngine,
@@ -116,6 +117,7 @@ function fixtureContext(
     gateRegistry,
     limits: overrides.limits ?? UNLIMITED,
     seed: overrides.seed ?? 'seed-1',
+    externalKbIds: overrides.externalKbIds,
   };
 }
 
@@ -214,6 +216,45 @@ describe('runEngine', () => {
 
     expect(caught).toBeInstanceOf(ForgeError);
     expect((caught as ForgeError).code).toBe('RUN-045');
+  });
+
+  // `PLAN-M14.md` P30: `RunEngineContext.externalKbIds` is the real compile site (`run-engine.ts`'s own
+  // `compileRunPlan` call) -- this is what the mandate's own mutation-evidence text calls out by name
+  // ("set not passed at run-engine.ts:320: dry-run passes, runEngine fails"). Spied rather than proved
+  // end to end through a tainted grant reaching the adapter (`security/taint-grant.test.ts` already
+  // proves the grant side of taint end to end for a hand-tainted node; this is the one thing that test
+  // cannot reach: whether THIS field is the one that got there). The real `compileRunPlan` still runs
+  // (`mockImplementation` calls the captured original), so the rest of the run proceeds normally.
+  it("passes ctx.externalKbIds through to compileRunPlan's own taint.externalKbIds option", async () => {
+    const projectRoot = await createTempRepo('external-kb-ids');
+    const originalCompileRunPlan = planIndexModule.compileRunPlan;
+    const spy = vi
+      .spyOn(planIndexModule, 'compileRunPlan')
+      .mockImplementation((wf, context, options) => originalCompileRunPlan(wf, context, options));
+    try {
+      const externalKbIds = new Set(['KB-EXT-0001']);
+      const ctx = fixtureContext(projectRoot, { externalKbIds });
+      const workflow = [
+        'id: w',
+        'name: w',
+        'version: 1.0.0',
+        'description: d',
+        'steps:',
+        '  - id: a',
+        '    kind: agent',
+        '    agent: engineer',
+        '    brief: do the thing',
+        "    inputs: [ 'kb:KB-EXT-0001' ]",
+        '',
+      ].join('\n');
+
+      await runEngine(workflow, {}, ctx);
+
+      expect(spy).toHaveBeenCalled();
+      expect(spy.mock.calls[0]?.[2]).toEqual({ taint: { externalKbIds } });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // A resumeFrom RunState claiming a status the durable log itself has no corresponding events for is

@@ -485,3 +485,43 @@ describe('a tainted step is held to its claim at every autonomy level', () => {
     ).toContain('src/stray.ts');
   });
 });
+
+describe('a step tainted by its own declared mcp: input, compiled through the real pipeline end to end (PLAN-M14.md P30, 20 §20.5 point 3)', () => {
+  const MCP_INPUT_WORKFLOW = [
+    'id: extwf',
+    'name: External input workflow',
+    'version: 1.0.0',
+    'description: d',
+    'steps:',
+    '  - id: search',
+    '    kind: agent',
+    '    agent: po',
+    "    brief: 'search the tracker for related issues'",
+    "    inputs: [ 'mcp:jira/search_issues' ]",
+    '',
+  ].join('\n');
+
+  it("reaches the adapter with exec: false, network: 'none' -- the identical restriction an authored taint: external gets -- and block [4] lists the external input", async () => {
+    const projectRoot = await repo('mcp-input');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, { loadAgent: () => Promise.resolve(CAPABLE) }),
+    });
+    const stepNode = compiledStep(MCP_INPUT_WORKFLOW, 'extwf:search');
+    // Sanity: the real compile site (`compilePlan`, `PLAN-M14.md` P30) is what tainted this node --
+    // nothing here hand-sets `taint` the way `dispatch()`'s own helper does above.
+    expect(stepNode.taint).toBe('external');
+
+    await executeStep(stepNode, ctx);
+
+    const request = requests.find((candidate) => candidate.stepId === 'extwf:search');
+    if (request === undefined) throw new Error('no session dispatched for extwf:search');
+    // No `produces`/`outputs` claim: `write` is restricted the same way an authored `taint: external`
+    // step with nothing to write inside already is (`restrictGrantForTaint`'s own `mayWrite: false` row).
+    expect(request.tools).toEqual({ read: true, write: false, exec: false, network: 'none' });
+    expect(request.systemPrompt.text).toContain('External inputs for this step');
+    expect(request.systemPrompt.text).toContain('mcp:jira/search_issues');
+  });
+});

@@ -39,6 +39,12 @@ import {
 import type { ExpressionContext } from '../expr/index.ts';
 import type { AgentStep, FanoutStep, Workflow, WorkflowStep } from '../workflow/index.ts';
 import {
+  exactKbIdOf,
+  isExternalSchemeInputReference,
+  isFetchInputReference,
+  isSecureFetchInputReference,
+} from './input-refs.ts';
+import {
   toAgentId,
   type CompileIssue,
   type CompileResult,
@@ -49,6 +55,23 @@ import {
   type StepNodeOnFailure,
   type StepNodeRetryPolicy,
 } from './types.ts';
+
+/** `compilePlan`'s optional third argument (`PLAN-M14.md` P30): the second of the two taint sources
+ * `plan/types.ts`'s own `StepNode.taint` doc comment describes -- an authored `mcp:`/`fetch:` input
+ * scheme is always detected from the reference text alone (no option needed for that half), but "a KB
+ * entry carrying `external` provenance" can only be recognised by matching a step's declared `kb:`/
+ * `artifact:` input id against a set `compilePlan` itself has no way to compute (it never opens the KB).
+ * The caller (`@forge/cli`, via `collectExternalKbIds`) supplies that set here. Omitted entirely (every
+ * call site before this piece, and any call site with no KB open), no step taints this way -- only the
+ * scheme-derived half still applies, unchanged. */
+export interface CompilePlanTaintOptions {
+  /** KB entry / ADR / Runbook ids whose own `sources` carry `kind: 'external'` provenance (`08` §8.3). */
+  readonly externalKbIds?: ReadonlySet<string> | readonly string[] | undefined;
+}
+
+export interface CompilePlanOptions {
+  readonly taint?: CompilePlanTaintOptions | undefined;
+}
 
 /** `06` §6.2's own id format, verbatim: `${workflowId}:${stepId}[:${itemKey}]` — the bracketed segment
  * present only for a fanout-expanded item. The one function every later piece that needs to construct or
@@ -303,6 +326,10 @@ interface CompileEnv {
   /** The workflow's top-level `fanout` steps by id: what a `merge` over an *empty* collection needs to know
    * about the fanout it would have waited for (see `mergeDependsOn`). Empty for a standalone `expandFanout`. */
   readonly fanouts?: ReadonlyMap<string, FanoutStep>;
+  /** `PLAN-M14.md` P30: `CompilePlanOptions.taint.externalKbIds`, normalised to a `Set` once per
+   * `compilePlan` call rather than re-built per step. Empty for `expandFanout`'s own standalone entry
+   * point, which takes no taint option (nothing this milestone calls it for declares an external input). */
+  readonly externalKbIds: ReadonlySet<string>;
 }
 
 interface StepCompileOutcome {
@@ -524,6 +551,48 @@ function buildLeafNode(
     );
   }
 
+  // `PLAN-M14.md` P30: resolved once, ahead of the node literal below, so both the insecure-`fetch:`
+  // refusal and the derived-taint check (immediately below) read the same, already-template-resolved
+  // strings the node itself carries as `inputs` -- never re-resolving the raw `agentStep.inputs` a
+  // second time, which could in principle disagree with what actually landed on the node (it cannot,
+  // `resolveTemplate` is pure over the same `context`, but computing it twice would still be two
+  // opportunities for the two computations to silently drift apart).
+  const resolvedInputs = (agentStep?.inputs ?? []).map((ref) =>
+    safeResolveTemplate(ref, context, issues, compiledId),
+  );
+  // `10` §10.1: `fetch:` accepts only an `https:` URL. A `fetch:http://...` (or any other non-`https:`
+  // scheme) reference is refused outright, not silently treated as non-external and packed anyway --
+  // `20` §20.6's own "no plaintext secrets in flight" posture extends naturally to "no plaintext fetch
+  // of untrusted external content either." Checked against every agent step's `inputs`, not only a
+  // step that ends up tainted for some other reason: an insecure scheme is a real authoring mistake
+  // regardless of what else the step declares.
+  for (const ref of resolvedInputs) {
+    if (isFetchInputReference(ref) && !isSecureFetchInputReference(ref)) {
+      issues.push(
+        issue(
+          'insecure-fetch-input-scheme',
+          `Step "${compiledId}" declares input "${ref}", which uses "fetch:" with a scheme other than ` +
+            'https:; only fetch:<https-url> is allowed (10 §10.1, 20 §20.5/§20.6).',
+          compiledId,
+        ),
+      );
+    }
+  }
+  // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P30: the second of the two taint sources
+  // `plan/types.ts`'s own `StepNode.taint` doc comment describes -- present when this agent step's own
+  // (resolved) `inputs:` names an external scheme directly (`mcp:`/`fetch:https:`), or names a KB id the
+  // caller's own `externalKbIds` set marks as carrying `external` provenance (`08` §8.3). `agentStep`
+  // guards this the same way the authored-taint spread below already does: only an `'agent'`-kind step
+  // ever has real `inputs:` to derive this from (every other kind's `inputs` field is always `[]`, so
+  // `resolvedInputs` is empty and this is trivially `false`).
+  const derivedTaint =
+    agentStep !== undefined &&
+    resolvedInputs.some((ref) => {
+      if (isExternalSchemeInputReference(ref)) return true;
+      const id = exactKbIdOf(ref);
+      return id !== undefined && env.externalKbIds.has(id);
+    });
+
   const node: StepNode = {
     id: compiledId,
     kind: step.kind,
@@ -536,9 +605,7 @@ function buildLeafNode(
     // field (`SessionStep`'s own doc comment has the full reasoning) — two different authored fields,
     // one shared, kind-overloaded compiled field, matching `06` §6.2's own `StepNode` shape exactly.
     brief: agentStep?.brief ?? sessionStep?.question,
-    inputs: (agentStep?.inputs ?? []).map((ref) =>
-      safeResolveTemplate(ref, context, issues, compiledId),
-    ),
+    inputs: resolvedInputs,
     outputs: agentStep?.outputs ?? [],
     dependsOn,
     // `06` §6.2's `StepNode.produces` is shared by every kind; only `agent` and `command` steps author it
@@ -570,12 +637,14 @@ function buildLeafNode(
     ...(agentStep?.perspectives === undefined || agentStep.perspectives.length === 0
       ? {}
       : { perspectives: agentStep.perspectives }),
-    // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P27: the workflow author's own `AgentStep.taint`,
-    // carried through verbatim -- present only when authored (`'taint' in node` stays `false`
-    // otherwise), matching `gateEvidence`/`interactionMode`/`perspectives` immediately above. No other
-    // step kind ever reaches here with one: `agentStep` is `undefined` for every other kind, and
-    // `workflowStepSchema`'s own per-kind schemas make `taint:` unauthorable on them in real YAML.
-    ...(agentStep?.taint === undefined ? {} : { taint: agentStep.taint }),
+    // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P27/P30: the workflow author's own
+    // `AgentStep.taint` OR this step's own derived taint (computed just above), present only when at
+    // least one of the two holds -- matching `gateEvidence`/`interactionMode`/`perspectives` immediately
+    // above. No other step kind ever reaches here with one: `agentStep` is `undefined` for every other
+    // kind, and `workflowStepSchema`'s own per-kind schemas make `taint:` unauthorable on them in real
+    // YAML; `derivedTaint` is likewise structurally `false` for every non-agent kind (see its own
+    // comment above).
+    ...(agentStep?.taint === 'external' || derivedTaint ? { taint: 'external' as const } : {}),
     run:
       step.kind === 'command'
         ? // A `command` step's `run` is shell text: every substituted value (a run input, a story or epic field, a
@@ -855,7 +924,13 @@ export function expandFanout(
   context: ExpressionContext,
   workflowOnFailureDefault?: string,
 ): CompileResult {
-  const env: CompileEnv = { inputs: [], workflowId, workflowOnFailureDefault, depth: 0 };
+  const env: CompileEnv = {
+    inputs: [],
+    workflowId,
+    workflowOnFailureDefault,
+    depth: 0,
+    externalKbIds: new Set(),
+  };
   const outcome = compileFanout(step, workflowId, env, context, []);
   return outcome.issues.length > 0
     ? { success: false, issues: outcome.issues }
@@ -1035,13 +1110,18 @@ function collectFanouts(steps: readonly WorkflowStep[]): ReadonlyMap<string, Fan
  * and failure-escalation behaviour compiles those subtrees against its own, narrower context at the point
  * it needs to, the same "generic mechanism now, real content and remaining behaviour later" split
  * `SPEC-QUESTIONS.md` Q62 already established for this milestone's own scope. */
-export function compilePlan(workflow: Workflow, context: ExpressionContext): CompileResult {
+export function compilePlan(
+  workflow: Workflow,
+  context: ExpressionContext,
+  options: CompilePlanOptions = {},
+): CompileResult {
   const env: CompileEnv = {
     inputs: workflow.inputs ?? [],
     workflowId: workflow.id,
     workflowOnFailureDefault: workflow.onFailure?.default,
     depth: 0,
     fanouts: collectFanouts(workflow.steps),
+    externalKbIds: new Set(options.taint?.externalKbIds ?? []),
   };
   const nodes: StepNode[] = [];
   const issues: CompileIssue[] = [];

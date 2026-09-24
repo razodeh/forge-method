@@ -33,7 +33,7 @@ import { ForgeError } from '@forge/core/errors';
 
 import type { ExpressionContext } from '../expr/index.ts';
 import type { Workflow } from '../workflow/index.ts';
-import { compilePlan } from './compile.ts';
+import { compilePlan, type CompilePlanOptions } from './compile.ts';
 import { applyDeclaredStoryOrder } from './story-order.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
@@ -53,8 +53,12 @@ import type { RunPlanResult } from './types.ts';
  * known-wrong data — the identical "do not compound a more fundamental problem with cascading noise on
  * top of it" reasoning `@forge/engine/plan`'s own `checkPlanConsistency` (P10, `SPEC-QUESTIONS.md` Q72)
  * already established for its own, single-stage version of the same principle. */
-export function compileRunPlan(workflow: Workflow, context: ExpressionContext): RunPlanResult {
-  const compiled = compilePlan(workflow, context);
+export function compileRunPlan(
+  workflow: Workflow,
+  context: ExpressionContext,
+  options: CompilePlanOptions = {},
+): RunPlanResult {
+  const compiled = compilePlan(workflow, context, options);
   if (!compiled.success) return compiled;
 
   // `stage.stories[*].depends_on` (`09` §9.3): a story starts after the ones it depends on end, whether or not

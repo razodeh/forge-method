@@ -126,6 +126,65 @@ steps:
       'external',
     );
   });
+
+  it("tags a step declaring an mcp:/fetch:https: input, and a step naming a kb: id in the caller's externalKbIds set, without an authored taint: external anywhere (PLAN-M14.md P30, 20 §20.5 point 3)", () => {
+    const source = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: search
+    kind: agent
+    agent: pm
+    brief: b
+    inputs: [ "mcp:jira/search_issues" ]
+  - id: cites-external-kb-entry
+    kind: agent
+    agent: architect
+    brief: b
+    inputs: [ "kb:KB-ARCH-0001" ]
+  - id: ordinary
+    kind: agent
+    agent: architect
+    brief: b
+`;
+    const result = dryRunWorkflow(source, fixtureExpressionContext(), new Set(['KB-ARCH-0001']));
+    expect(result.plan.success).toBe(true);
+    if (!result.plan.success) return;
+    expect(result.plan.nodes.find((node) => node.id === 'w:search')?.taint).toBe('external');
+    expect(result.plan.nodes.find((node) => node.id === 'w:cites-external-kb-entry')?.taint).toBe(
+      'external',
+    );
+    expect(result.plan.nodes.find((node) => node.id === 'w:ordinary')?.taint).toBeUndefined();
+  });
+
+  it('the identical workflow with no externalKbIds argument still tags the mcp: step (needs no option) but not the kb: one', () => {
+    const source = `
+id: w
+name: W
+version: "1.0.0"
+description: d
+steps:
+  - id: search
+    kind: agent
+    agent: pm
+    brief: b
+    inputs: [ "mcp:jira/search_issues" ]
+  - id: cites-external-kb-entry
+    kind: agent
+    agent: architect
+    brief: b
+    inputs: [ "kb:KB-ARCH-0001" ]
+`;
+    const result = dryRunWorkflow(source, fixtureExpressionContext());
+    expect(result.plan.success).toBe(true);
+    if (!result.plan.success) return;
+    expect(result.plan.nodes.find((node) => node.id === 'w:search')?.taint).toBe('external');
+    expect(
+      result.plan.nodes.find((node) => node.id === 'w:cites-external-kb-entry')?.taint,
+    ).toBeUndefined();
+  });
 });
 
 describe('runWorkflow', () => {
@@ -202,6 +261,62 @@ describe('runWorkflow', () => {
       await readFile(path.join(project.dir, '.forge/state/last-run.json'), 'utf8'),
     ) as { runId: string };
     expect(lastRun.runId).toBe('run-fixed');
+  });
+
+  // `PLAN-M14.md` P30: a real run's own manifest records `externalKbIds` from the project's real KB
+  // tree, computed by `collectExternalKbIds` before anything else -- proved here against a real KB entry
+  // on disk (never a mocked `parseKbTree`), the write half of "forge resume recompiles the same tainted
+  // plan" (`resume.test.ts`'s own test proves the read half).
+  it("records the project's own KB entries carrying external provenance in the manifest (PLAN-M14.md P30)", async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, 'docs/forge/kb/architecture'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, 'docs/forge/kb/architecture/KB-ARCH-0001.md'),
+      `---
+id: KB-ARCH-0001
+type: knowledge
+section: architecture
+title: A test entry citing an MCP server
+status: active
+confidence: high
+owner: architect
+sources:
+  - kind: external
+    ref: mcp:confluence/get_page
+created: 2026-01-05
+updated: 2026-01-05
+review_by: 2026-04-05
+supersedes: []
+superseded_by: null
+related: []
+diagrams: []
+tags: []
+applies_to: []
+---
+
+## Statement
+A test statement.
+`,
+    );
+    await execa('git', ['add', '-A'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add a KB entry with external provenance'], {
+      cwd: project.dir,
+    });
+
+    await runWorkflow(testRunDeps(project), {
+      workflowId: FIXTURE_WORKFLOW_ID,
+      expressionContext: fixtureExpressionContext(),
+      runId: 'run-with-external-kb',
+      host: 'test-host',
+    });
+
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(project.dir, '.forge/state/runs/run-with-external-kb/manifest.json'),
+        'utf8',
+      ),
+    ) as { externalKbIds: readonly string[] };
+    expect(manifest.externalKbIds).toEqual(['KB-ARCH-0001']);
   });
 
   it('20 §20.10 S8: refuses to start a real, non-dry-run run against a dirty working tree, before acquiring the lock or writing any run state', async () => {

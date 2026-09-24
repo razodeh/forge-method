@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { pathExists, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import * as planIndexModule from '@forge/engine/plan';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
 import { currentLauncher } from '../../../src/commands/run/launcher-shim.ts';
@@ -37,12 +38,19 @@ import {
  * produces — without paying for a full run, for the two tests below that only care about what
  * `resumeWorkflow` does with a workflow source that fails to parse/compile by the time it re-reads it
  * fresh from disk. */
-async function writeManifest(project: TestProject, runId: string): Promise<void> {
+async function writeManifest(
+  project: TestProject,
+  runId: string,
+  externalKbIds?: readonly string[],
+): Promise<void> {
   await writeFileAtomic(
     project.paths.resolveState(`runs/${runId}/manifest.json`),
     JSON.stringify({
       workflowId: FIXTURE_WORKFLOW_ID,
       expressionContext: fixtureExpressionContext(),
+      // `PLAN-M14.md` P30: only written when a test actually cares -- every manifest write before this
+      // piece (and most of this file's own real-manifest fixtures) legitimately have no such key at all.
+      ...(externalKbIds === undefined ? {} : { externalKbIds }),
     }),
   );
 }
@@ -121,6 +129,45 @@ describe('resumeWorkflow', () => {
     await expect(
       resumeWorkflow(testRunDeps(project), { runId: 'run-never-started', host: 'test-host' }),
     ).rejects.toMatchObject({ code: 'RUN-054' });
+  });
+
+  // `PLAN-M14.md` P30: `resumeWorkflow` recompiles from the manifest's own `externalKbIds` snapshot, not
+  // a fresh KB read -- both of its own two real `compileRunPlan` call sites (its own direct recompile
+  // for `resumeRun`'s `ResumeContext`, and the one `runEngine` makes internally once handed
+  // `ctx.externalKbIds`) must agree with the manifest, and with each other. Spied (real implementation
+  // still runs via `mockImplementation`) rather than proved only through a tainted grant, the same
+  // "reach the one thing an end-to-end proof cannot isolate" reason `run-engine.test.ts`'s own identical
+  // spy gives.
+  it("recompiles with the manifest's own externalKbIds snapshot -- both of its own compileRunPlan call sites agree", async () => {
+    const project = await createTestProject();
+    await writeManifest(project, 'run-ext-kb', ['KB-ARCH-0001']);
+    const originalCompileRunPlan = planIndexModule.compileRunPlan;
+    const spy = vi
+      .spyOn(planIndexModule, 'compileRunPlan')
+      .mockImplementation((wf, context, options) => originalCompileRunPlan(wf, context, options));
+    try {
+      const result = await resumeWorkflow(testRunDeps(project), {
+        runId: 'run-ext-kb',
+        host: 'test-host',
+      });
+      expect(result.runState.runStatus).toBe('completed');
+      expect(spy.mock.calls.length).toBeGreaterThan(0);
+      for (const call of spy.mock.calls) {
+        expect(call[2]).toEqual({ taint: { externalKbIds: new Set(['KB-ARCH-0001']) } });
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an old manifest with no externalKbIds key at all (a pre-P30 run) recompiles with an empty set, never throwing', async () => {
+    const project = await createTestProject();
+    await writeManifest(project, 'run-pre-p30');
+    const result = await resumeWorkflow(testRunDeps(project), {
+      runId: 'run-pre-p30',
+      host: 'test-host',
+    });
+    expect(result.runState.runStatus).toBe('completed');
   });
 
   it('throws RUN-045 when the workflow source no longer parses by the time resume re-reads it', async () => {

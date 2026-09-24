@@ -24,6 +24,7 @@ import {
   integrationBranchFor,
   syncIntegrationBranchToTrunk,
 } from './context.ts';
+import { collectExternalKbIds } from './external-kb-ids.ts';
 import {
   createLauncherShimOrWarn,
   removeLiveLauncherShims,
@@ -78,10 +79,18 @@ export interface DryRunResult {
 /** `--dry-run`: `06` §6.2's own real compilation pipeline (`parseWorkflow` + `compileRunPlan`),
  * called directly rather than through `runEngine` — "plans and prints without spawning any session or
  * writing any file" (`03` §3.2's own `--dry-run` contract) means never reaching `runEngine`'s own
- * `driveToCompletion` at all, not merely a flag `runEngine` itself checks internally. */
+ * `driveToCompletion` at all, not merely a flag `runEngine` itself checks internally.
+ *
+ * `externalKbIds` (`PLAN-M14.md` P30): forwarded verbatim to `compileRunPlan`'s own `taint.externalKbIds`
+ * option, so a dry-run's printed plan tags a step exactly as a real run of the identical workflow would
+ * (`runWorkflow` computes this once, via `collectExternalKbIds`, and hands the same set to both this
+ * branch and the real-run branch below — "dry run and real run agree" is that one shared computation,
+ * not two independent KB reads that could disagree). Omitted, only the scheme-derived half of taint
+ * applies (an authored `mcp:`/`fetch:https:` input still taints; nothing tags a KB-id-provenance hit). */
 export function dryRunWorkflow(
   workflowSource: string,
   expressionContext: ExpressionContext,
+  externalKbIds?: ReadonlySet<string>,
 ): DryRunResult {
   const parsed = parseWorkflow(workflowSource);
   if (!parsed.success) {
@@ -89,7 +98,7 @@ export function dryRunWorkflow(
       issues: parsed.issues.map((issue) => issue.message).join('; '),
     });
   }
-  const plan = compileRunPlan(parsed.workflow, expressionContext);
+  const plan = compileRunPlan(parsed.workflow, expressionContext, { taint: { externalKbIds } });
   return { kind: 'dry-run', plan };
 }
 
@@ -155,9 +164,15 @@ export async function runWorkflow(
   options: RunWorkflowOptions,
 ): Promise<DryRunResult | RealRunResult> {
   const workflowSource = await readWorkflowSource(deps, options.workflowId);
+  // `PLAN-M14.md` P30: read once, from the project's own working tree (`deps.paths`, never a per-run
+  // integration worktree that may not exist yet -- both branches below run before one necessarily does),
+  // and handed identically to the `--dry-run` branch and the real run's own `RunEngineContext`, so the
+  // two agree on which steps tain from a KB-provenance hit instead of each independently re-reading a KB
+  // tree that could have moved between the two reads.
+  const externalKbIds = await collectExternalKbIds(deps.paths, deps.config.paths.kb);
 
   if (options.dryRun === true) {
-    return dryRunWorkflow(workflowSource, options.expressionContext);
+    return dryRunWorkflow(workflowSource, options.expressionContext, externalKbIds);
   }
 
   // `20` §20.10 S8 -- "the user's uncommitted work is sacred": `@forge/vcs`'s own
@@ -214,6 +229,11 @@ export async function runWorkflow(
         expressionContext: options.expressionContext,
         integrationTipAtStart: sync.integrationTipAtStart,
         syncedFromTrunk: sync.syncedFromTrunk,
+        // `PLAN-M14.md` P30: a snapshot of `externalKbIds` (sorted for a stable, diff-friendly file), so
+        // `forge resume` recompiles the identical tainted plan this run started with even if the KB has
+        // since changed (`resume.ts`'s own doc comment on `RunManifest.externalKbIds` has the full
+        // reasoning) -- never re-derived at resume time from whatever the KB says then.
+        externalKbIds: [...externalKbIds].sort(),
       }),
     );
     // `forge resume`'s own "the last (or given) run" (`03` §3.2.4) needs a real way to find "the
@@ -239,6 +259,7 @@ export async function runWorkflow(
       ask: deps.ask,
       expressionContext: options.expressionContext,
       lanesFromIntegration: true,
+      externalKbIds,
     });
     const runState = await runEngine(workflowSource, options.expressionContext, ctx);
     return { kind: 'run', runId, runState };

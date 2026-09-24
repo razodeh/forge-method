@@ -182,6 +182,26 @@ describe('kbEntrySchema — provenance is mandatory', () => {
   });
 });
 
+describe("kbEntrySchema — sources: [{ kind: 'external' }] (PLAN-M14.md P30, 20 §20.5 point 3)", () => {
+  it('validates with an mcp: ref', () => {
+    const result = kbEntrySchema.safeParse(
+      workedExample({ sources: [{ kind: 'external', ref: 'mcp:confluence/get_page' }] }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data.sources).toEqual([{ kind: 'external', ref: 'mcp:confluence/get_page' }]);
+  });
+
+  it('validates with a fetch: ref', () => {
+    const result = kbEntrySchema.safeParse(
+      workedExample({
+        sources: [{ kind: 'external', ref: 'fetch:https://example.com/incident-postmortem' }],
+      }),
+    );
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('kbEntrySchema — status/superseded_by consistency', () => {
   it('rejects status: superseded with superseded_by: null', () => {
     const result = kbEntrySchema.safeParse(workedExample({ status: 'superseded' }));

@@ -58,6 +58,7 @@ import type { Workflow, WorkflowStep } from '../workflow/index.ts';
 import { claimFixedPrefix, prefixesNest } from './claim-overlap.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { renderCycleAsMermaid } from './cycles.ts';
+import type { CompilePlanTaintOptions } from './compile.ts';
 import { compileRunPlan } from './run-plan.ts';
 import { storyChains, type StoryChain } from './story-order.ts';
 import type { ClaimOverlap, CriticalPathResult, StepNode } from './types.ts';
@@ -102,6 +103,12 @@ export interface StageRunPlanOptions {
    * the plan compiles against so that a workflow reading them compiles here as it does in the run. The stage's
    * own `stageId`, `vars` and `stage` win. */
   readonly extraContext?: ExpressionContext | undefined;
+  /** `PLAN-M14.md` P30: forwarded verbatim to both of this module's own `compileRunPlan` calls below, so a
+   * step's `inputs:` taints here exactly as it would in a real run compiling the identical workflow against
+   * the identical stage. Omitted (every caller before this piece), neither compile call tags a step from an
+   * `externalKbIds` hit -- an authored `mcp:`/`fetch:https:` input still taints regardless, since that half
+   * needs no option at all (`compilePlan`'s own doc comment). */
+  readonly taint?: CompilePlanTaintOptions | undefined;
 }
 
 export type StageFindingSeverity = 'error' | 'warning';
@@ -642,10 +649,11 @@ function stageOrderCreatesCycle(
   workflow: Workflow,
   context: ExpressionContext,
   failed: { readonly success: false; readonly issues: readonly { readonly code: string }[] },
+  taint: CompilePlanTaintOptions | undefined,
 ): boolean {
   if (!failed.issues.some((issue) => issue.code === 'dependency-cycle')) return false;
   const unordered = { ...context, stage: withoutStoryOrder(context.stage) };
-  return compileRunPlan(workflow, unordered).success;
+  return compileRunPlan(workflow, unordered, { taint }).success;
 }
 
 /** The stage's stories with no ordering between them (neither `runs_after` nor `depends_on`). */
@@ -729,8 +737,8 @@ export function compileStageRunPlan(
         ? stageContext
         : { ...extra, ...stageContext, vars: { ...extraVars, ...stageContext.vars } };
 
-    const compiled = compileRunPlan(workflow, context);
-    if (!compiled.success && stageOrderCreatesCycle(workflow, context, compiled)) {
+    const compiled = compileRunPlan(workflow, context, { taint: options.taint });
+    if (!compiled.success && stageOrderCreatesCycle(workflow, context, compiled, options.taint)) {
       const cycle = compiled.issues.find((issue) => issue.code === 'dependency-cycle');
       findings.push(
         finding(
