@@ -23608,3 +23608,86 @@ recommended as a dedicated follow-up piece: reuse the identical `programKey`-sty
 own program-name comparison.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P28`.
+
+## Q263 — M14 P20: `*.check.yaml` files attach to gates through `appliesTo`; `warn` is reported, never fails — a one-round critic (real test runs, not just reading) found one real, severe, but correctly-disclosed consequence (turned into two pinned regression tests rather than weakened) plus one genuine ordering bug (fixed, also pinned by mutation-proven tests)
+
+**Context.** `PLAN-M14.md` P20; depends on none. `loadGateRegistry` (`packages/cli/src/commands/run/
+gates.ts`) used to read only `.forge/checks/*.gate.yaml`. `15` §15.7's own "Custom gate checks"
+subsection and `19` §19.1's module layout row (`checks/*.check.yaml`) both already describe a standalone
+check file naming the gate(s) it attaches to via `appliesTo.gates` — nothing read that field before this
+piece; the preset-written `regulated-compliance-matrix.check.yaml` (`extensions/src/presets/
+registry.ts`, M2 P7) already shipped `appliesTo: {gates: ['G-Design']}` with no reader.
+
+**Built.** Every real `*.check.yaml` under `checksRoot` itself, `.forge/overrides/checks/` and
+`.forge/modules/<id>/checks/` for every module `.forge/manifest.yaml` lists (a new `discoverCheckFiles`,
+`gates.ts`, shared with `gateValidateAll`) is parsed by a new engine-side `validateCheckDocument`/
+`parseCheckDocument` (`packages/engine/src/gates/document.ts`, keys `id, name, description, run, parser,
+failOn, remedy, appliesTo, severity`; strict, unknown-key-with-did-you-mean, the same style
+`validateGateDocument` already uses for a `*.gate.yaml`) and, when its `appliesTo.gates` names gates the
+project actually has, attached to each: `severity: error` joins `checks.deterministic` (the array
+`evaluateGate`'s own `checks.every((check) => check.passed)` pass rule — unmodified, byte-identical —
+already reads); `severity: warn` joins a new `checks.warnings` field, evaluated through the identical
+`evaluateDeterministicCheck` pipeline but landing only in a new `GateEvaluationResult.warnings`, never
+consulted for `passed`. `DeterministicCheck`/`DeterministicCheckResult` gain an optional `source` (the
+attaching file's own `.forge/`-stripped display path) that `gate list/check/approve/waive --json` show —
+for check/approve/waive this required zero change to `report.ts`/`GateReport` (a `DeterministicCheckResult`
+carrying `source` flows through `buildGateReport`'s existing `checks: result.checks` passthrough
+automatically); `gate-commands.ts` separately widens `gateCheck`/`gateApprove`/`gateWaive`'s own return
+types to carry `warnings` alongside the unchanged `GateReport`, and `formatGateReport` prints a `WARN`
+line per failing one. An unparseable check file, one naming an unknown gate, or an id collision (with the
+gate's own checks, or an earlier attachment) is `GATE-506`, the identical code and "one broken file blocks
+every gate" consequence `Q229` D3 already established for a broken `*.gate.yaml`.
+
+`gateValidateAll` (`commands/workflow.ts`) gains three `GateValidationIssue` codes — `unknown-check-key`,
+`invalid-check-value`, `unknown-gate-in-appliesTo` — sharing `discoverCheckFiles` so the two can never
+scan a different file set, reporting every problem in every check file rather than throwing on the first
+(the same "one malformed gate cannot crash validate --all" philosophy the gate-document half already has).
+
+**Critic round 1 (fresh, context-free; ran the real suites itself rather than only reading them).**
+Found one real, severe-LOOKING finding that turned out to be exactly what the piece's own brief already
+disclosed, one companion test-coverage gap, and one genuine, separate ordering bug:
+
+1. Installing any of the four real shipped modules (`fm-web`/`fm-service`/`fm-data`/`fm-mobile`, via the
+   real `forge module add`) makes `loadGateRegistry` — and therefore every `forge gate` command — refuse
+   with `GATE-506`, reproduced directly by the critic, because those seven real shipped check files carry
+   no `appliesTo`/`severity` of their own at all yet. Judged, on inspection of the brief and `Q229` D3,
+   as the CORRECT, intended, already-disclosed consequence, not a bug to quietly work around: the piece's
+   own Discloses text states both halves verbatim ("one broken check file blocks `gate list/check/
+   approve` for every gate (Q229 D3's stance...)" and "shipped module checks carry no `appliesTo` until
+   P22"), and `PLAN-M14.md` P22's own `Depends on. P20, P9` makes the sequencing (P20 attaches the
+   mechanism; P22, landing after, gives the seven files the fields they need) explicit. Weakening the
+   fail-closed behaviour instead would have directly contradicted both `Q229` D3's binding stance and this
+   piece's own Discloses text. Response: two new regression tests were added (`gates.test.ts`,
+   `gate-validate.test.ts`) that copy the REAL `modules/fm-mobile/checks/device-matrix.check.yaml` into a
+   real project's `.forge/modules/fm-mobile/checks/` (what `installBundleTree` actually leaves on disk)
+   and pin BOTH halves of the disclosed behaviour: `loadGateRegistry` throws `GATE-506` naming the real
+   file; `gateValidateAll` does NOT throw on the identical input and instead reports diagnosable
+   `invalid-check-value` findings naming the missing `appliesTo`/`severity` — proving the brief's own
+   "`workflow validate --all` says which" escape hatch is real today. Both tests are designed to start
+   FAILING, correctly, the moment `PLAN-M14.md` P22 gives that file a real `appliesTo`/`severity` — the
+   intended signal that the temporary gap has closed, at which point they should be deleted or converted
+   to positive-attachment assertions by P22's own author.
+2. The test-coverage gap that let #1 go unnoticed in the original diff (no test drove the real
+   `loadGateRegistry`/`gateValidateAll` against a real shipped-module install, only a synthetic fixture) —
+   closed by the same two tests above.
+3. A genuine, separate bug: both `loadGateRegistry` and `gateValidateAll` had an early return on a
+   genuinely missing `checksRoot` (ENOENT) that silently skipped the new, independent
+   `.forge/overrides/checks/`/`.forge/modules/<id>/checks/` scans too — contradicting this piece's own
+   doc-comment claim that the two loaders "can never silently disagree on which files exist to attach or
+   validate." Fixed in both: a missing `checksRoot` now means zero `*.gate.yaml` files, not an early
+   return from the whole function; the override/module-root scans run regardless. Two new tests pin this
+   (one per function), each independently proven via mutation (reverting the fix on the live file, the
+   named test failing, then restoring) to actually catch the regression.
+
+No round 2 needed: the critic's own single round already ran every required real suite (`engine/test/
+gates/`, the CLI `gates`/`gate-commands`/`gate-validate`/`preset` suites, a scoped `gate-fail-closed.test.ts`
+smoke run) and, after judgment and the two fixes above, all findings were closed with real, passing,
+mutation-proven tests — a second round would have re-verified the same fixes with no new surface to find
+problems in.
+
+**Decision.** Ship as built, with the disclosed consequence intentionally left in place (per Q229 D3 and
+the piece's own Discloses text) and now regression-tested rather than merely asserted in prose; the
+ordering bug fixed. `PLAN-M14.md` P22 remains the piece that closes the temporary gap for real, and its
+own author should expect the two new pinned tests named above to need updating once it lands.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P20`.
