@@ -244,52 +244,86 @@ function stepDeclaresOutput(
   );
 }
 
-/** Every id a `sequence`'s own array-order chaining implicitly adds on top of whatever a child already
- * authors in its own `dependsOn` (`06` §6.2 rule 1, `types.ts`'s own `SequenceStep` doc comment: "forces
- * array-order execution among its own children") -- purely structural, unlike a `fanout`'s per-item
- * expansion or a `merge`'s own folded `dependsOn` (`plan/compile.ts`'s `mergeDependsOn`), both of which
- * need the real expression evaluator to resolve `over`/`item`, which this file has no access to (its own
- * top-of-file "no external knowledge needed" scope). Only ever a child's own immediate previous sibling
- * WITHIN THE SAME sequence, both always real, addressable ids (a `parallel`/`sequence` child is required
- * to declare its own `id`, `checkStepsHaveIds`) -- does not attempt to resolve a nested group sibling's
- * OWN further children the way the real compiler's `exitIds` propagation does (a `sequence` nested one
- * level down as a sibling stands for itself via its own declared id, the identical "a group's own id is
- * a real graph node" stance `checkNoCycles` already takes) -- narrower than `compilePlan`'s own real
- * `checkPlanConsistency`, but sound (never invents an edge that provably is not there) and closes the
- * gap a critic round found: a `show` question placed right after its real producer inside a plain
- * `sequence`, with no explicit `dependsOn` of its own -- the natural way to write it -- used to be
- * refused here as `elicit-show-not-produced` even though `compilePlan` correctly accepted it (`forge
- * workflow validate` calls only `validateStructure`, never `compilePlan`, so this file's own accuracy
- * here is not academic). A `fanout` is walked INTO (its own templated child may itself be a `sequence`
- * needing this same rule) but never treated as if it had a real per-item exit of its own: an
- * `elicit`/other step immediately after a `fanout` in an enclosing `sequence` still needs an authored
- * `dependsOn` of its own, since only evaluating `over` could ever say how many instances actually exist. */
+function addImplicit(implicit: Map<string, string[]>, id: string, values: readonly string[]): void {
+  if (values.length === 0) return;
+  const known = implicit.get(id);
+  if (known === undefined) {
+    implicit.set(id, [...values]);
+    return;
+  }
+  for (const value of values) if (!known.includes(value)) known.push(value);
+}
+
+/** Structurally walks `step` the identical way `plan/compile.ts`'s own `compileStepAtDepth` threads
+ * `inheritedDependsOn`/`exitIds` through a `parallel`/`sequence` group -- but over the UNEXPANDED,
+ * authored tree, with no expression evaluator (this file has none, by design, its own top-of-file "no
+ * external knowledge needed" scope), so a `fanout` is walked INTO (its own templated child may itself
+ * need this same rule) but treated as contributing NO real exit of its own: only evaluating `over` could
+ * ever say how many instances exist, or what each one's own real exit is, so a step right after a
+ * `fanout` in an enclosing `sequence` still needs an authored `dependsOn`. `inherited` is what came
+ * before `step` in whatever encloses it (an enclosing `sequence`'s own running chain, or `[]` for a
+ * top-level root -- `06` §6.2 rule 1's own worked example never chains separate top-level
+ * `workflow.steps` entries with each other, matching `compilePlan`'s own per-root `[]` seed). Returns
+ * `step`'s own real "exit" id(s) -- what a LATER sibling in the SAME enclosing `sequence` should treat as
+ * "ran after `step`": a leaf's own id; a `sequence`'s own LAST child's real exit (recursively resolved
+ * through however many more nested groups that child itself is, never merely that child's own bare id --
+ * a fresh critic round found the first version of this function stopped one level too early, recording
+ * only a nested group's own id as the edge and never propagating INTO what is actually inside it, which
+ * both failed to find a producer nested inside an EARLIER sibling group and failed to carry a producer
+ * found BEFORE a nested group down into that group's own first child); a `parallel`'s own children's real
+ * exits, unioned (every child starts independently off the identical incoming dependency, so "ran after
+ * the group" means "ran after all of them" -- `compileStepAtDepth`'s own `exitIds = [...exitIds,
+ * ...outcome.exitIds]` accumulation for `parallel`). An empty group (no children) falls back to its own
+ * declared `id`, if it has one -- the identical "a group's own id is a real graph node" stance
+ * `checkNoCycles` already takes, only reached here when there is genuinely nothing further to resolve
+ * into. As a side effect, records every step's own id (leaf or group) into `implicit`, keyed by that id,
+ * with exactly the `inherited` set it structurally received -- what `transitiveDependsOn` consults
+ * alongside a step's own authored `dependsOn`. */
+function structuralExits(
+  step: WorkflowStep,
+  inherited: readonly string[],
+  implicit: Map<string, string[]>,
+  depth: number,
+): readonly string[] {
+  if (depth > MAX_TRAVERSAL_DEPTH) return [];
+  if (step.kind === 'fanout') {
+    structuralExits(step.step, [], implicit, depth + 1);
+    return [];
+  }
+  if (step.kind === 'parallel' || step.kind === 'sequence') {
+    if (step.id !== undefined) addImplicit(implicit, step.id, inherited);
+    let running = inherited;
+    let exits: string[] = [];
+    for (const child of step.steps) {
+      const childExits = structuralExits(child, running, implicit, depth + 1);
+      if (step.kind === 'sequence') {
+        // Transparent when a child (a fanout, or an over-deep subtree) has no real exit of its own: the
+        // chain simply carries on from whatever it already had, the identical "an empty child does not
+        // erase the chain" rule `plan/compile.ts`'s own sequence handling already applies.
+        if (childExits.length > 0) running = childExits;
+        exits = [...childExits];
+      } else {
+        exits = [...exits, ...childExits];
+      }
+    }
+    if (exits.length > 0) return exits;
+    return step.id === undefined ? [] : [step.id];
+  }
+  if (step.id !== undefined) addImplicit(implicit, step.id, inherited);
+  return step.id === undefined ? [] : [step.id];
+}
+
+/** Every id `06` §6.2 rule 1's own structural grouping semantics ("sequence forces array-order
+ * execution among its own children") implicitly adds on top of whatever a step already authors in its
+ * own `dependsOn`, keyed by that step's own id (`structuralExits`'s own doc comment has the full
+ * reasoning) -- what `checkElicitShow`/`transitiveDependsOn` consult alongside `byId`'s authored edges. */
 function collectImplicitSequenceEdges(workflow: Workflow): ReadonlyMap<string, readonly string[]> {
   const implicit = new Map<string, string[]>();
-  const walk = (steps: readonly WorkflowStep[], depth: number): void => {
-    if (depth > MAX_TRAVERSAL_DEPTH) return;
-    for (const step of steps) {
-      if (step.kind === 'fanout') {
-        walk([step.step], depth + 1);
-        continue;
-      }
-      if (step.kind !== 'parallel' && step.kind !== 'sequence') continue;
-      if (step.kind === 'sequence') {
-        for (let index = 1; index < step.steps.length; index += 1) {
-          const child = step.steps[index];
-          const previous = step.steps[index - 1];
-          if (child?.id === undefined || previous?.id === undefined) continue;
-          const known = implicit.get(child.id);
-          if (known === undefined) implicit.set(child.id, [previous.id]);
-          else if (!known.includes(previous.id)) known.push(previous.id);
-        }
-      }
-      walk(step.steps, depth + 1);
-    }
-  };
-  walk(workflow.steps, 0);
-  walk(workflow.onComplete ?? [], 0);
-  for (const escalation of workflow.onFailure?.escalations ?? []) walk([escalation.do], 0);
+  for (const step of workflow.steps) structuralExits(step, [], implicit, 0);
+  for (const step of workflow.onComplete ?? []) structuralExits(step, [], implicit, 0);
+  for (const escalation of workflow.onFailure?.escalations ?? []) {
+    structuralExits(escalation.do, [], implicit, 0);
+  }
   return implicit;
 }
 

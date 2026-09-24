@@ -316,6 +316,64 @@ describe('an elicit question can `show` a register entry an earlier step produce
     );
   });
 
+  it('a producer reached through a NESTED sequence-within-sequence (the previous sibling is itself a group, not a leaf) is still a real ancestor (round-2 critic)', () => {
+    const workflow = parse([
+      [
+        '  - id: chain',
+        '    kind: sequence',
+        '    steps:',
+        '      - id: inner',
+        '        kind: sequence',
+        '        steps:',
+        '          - id: propose',
+        '            kind: agent',
+        '            agent: analyst',
+        '            outputs:',
+        '              - type: HandoffRecord',
+        '                subtype: level-proposal',
+        '      - id: confirm',
+        '        kind: elicit',
+        '        questions:',
+        '          - name: level',
+        '            prompt: "Question?"',
+        '            show: { type: HandoffRecord, subtype: level-proposal }',
+      ].join('\n'),
+    ]);
+    expect(
+      validateStructure(workflow).filter((issue) => issue.code.startsWith('elicit-show')),
+    ).toEqual([]);
+    expect(compilePlan(workflow, {}).success).toBe(true);
+  });
+
+  it("a producer found BEFORE a nested group is carried down into that group's own FIRST child too (round-2 critic, the reverse direction)", () => {
+    const workflow = parse([
+      [
+        '  - id: chain',
+        '    kind: sequence',
+        '    steps:',
+        '      - id: propose',
+        '        kind: agent',
+        '        agent: analyst',
+        '        outputs:',
+        '          - type: HandoffRecord',
+        '            subtype: level-proposal',
+        '      - id: inner',
+        '        kind: sequence',
+        '        steps:',
+        '          - id: confirm',
+        '            kind: elicit',
+        '            questions:',
+        '              - name: level',
+        '                prompt: "Question?"',
+        '                show: { type: HandoffRecord, subtype: level-proposal }',
+      ].join('\n'),
+    ]);
+    expect(
+      validateStructure(workflow).filter((issue) => issue.code.startsWith('elicit-show')),
+    ).toEqual([]);
+    expect(compilePlan(workflow, {}).success).toBe(true);
+  });
+
   it('compilePlan refuses it too, over the real compiled graph: forge run does not call validateStructure', () => {
     const workflow = parse([
       [
