@@ -354,7 +354,12 @@ describe('recordRollback', () => {
       // rollback record `deployRollbackCheck` (whose own `pick` is the narrower `isRehearsalTarget`, 14 §14.4
       // rule 2 "in staging") would then silently never read at all.
       'a production-only environment (not a rehearsal target)',
-      () => ({ env: 'ENV-003' }),
+      // `healthUrl` is overridden to PROD's own host (not STAGING's, `validFields`' default): under the
+      // reverted bug (gating on plain `isTarget`) this makes the record actually WRITE successfully --
+      // the real failure mode a critic round reproduced live -- rather than being refused for the
+      // unrelated reason of a health-host mismatch against the wrong environment's host, which would
+      // make this regression test pass before the fix for the wrong reason.
+      () => ({ env: 'ENV-003', healthUrl: 'https://app.example.com/healthz' }),
       'is not a delivery-target environment',
     ],
     ['from_sha not in history', () => ({ fromSha: 'a'.repeat(40) }), 'not in this repository'],

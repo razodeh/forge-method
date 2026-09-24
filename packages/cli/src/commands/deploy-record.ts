@@ -115,11 +115,12 @@ const DRY_RUN_REMEDY =
   'that is not in the future and not before that commit.';
 
 const ROLLBACK_REMEDY =
-  'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md as a delivery-target ' +
-  "environment, --from-sha and --to-sha naming commits in this repository's history with --to-sha a strict " +
-  'ancestor of --from-sha, --rehearsed-at as a zoned ISO-8601 instant that is not in the future and not before ' +
-  "--from-sha, and --health-url/--health-status/--health-checked-at showing a 2xx response on the environment's " +
-  'own (non-local) host at or after --rehearsed-at.';
+  'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md as a rehearsal-target ' +
+  'environment (a delivery target that is not positively production -- rollback is rehearsed in staging, not ' +
+  "production, 14 §14.4 rule 2), --from-sha and --to-sha naming commits in this repository's history with " +
+  '--to-sha a strict ancestor of --from-sha, --rehearsed-at as a zoned ISO-8601 instant that is not in the ' +
+  'future and not before --from-sha, and --health-url/--health-status/--health-checked-at showing a 2xx ' +
+  "response on the environment's own (non-local) host at or after --rehearsed-at.";
 
 const DEPLOYMENT_REMEDY =
   'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md, --sha naming a commit ' +
