@@ -60,7 +60,13 @@ async function describeJoinConflict(handle: LaneHandle): Promise<MergeConflictDe
   );
   // No declared claim exists yet at join time (before the step itself has run) -- the identical "nothing
   // meaningful to forward" reasoning `runMergeStep`'s own `declaredClaim: []` already documents.
-  return { laneId: handle.laneId, declaredClaim: [], conflictedFiles, diff, worktreePath: handle.path };
+  return {
+    laneId: handle.laneId,
+    declaredClaim: [],
+    conflictedFiles,
+    diff,
+    worktreePath: handle.path,
+  };
 }
 
 async function abortJoin(worktreePath: string): Promise<void> {
@@ -171,5 +177,7 @@ export async function mergeIntoLane(
   const finalSha = headAfter.trim();
   // A fast-forward moves HEAD to exactly `sha` (git makes no new commit); anything else -- a real merge
   // commit, or a conflict resolved by committing -- produces a new sha distinct from `sha`.
-  return finalSha === sha ? { kind: 'fast-forward', sha: finalSha } : { kind: 'merge', sha: finalSha };
+  return finalSha === sha
+    ? { kind: 'fast-forward', sha: finalSha }
+    : { kind: 'merge', sha: finalSha };
 }
