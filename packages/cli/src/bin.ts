@@ -1084,7 +1084,15 @@ function gateSubFlags(sub: string): Readonly<Record<string, boolean>> | undefine
 /** `forge gate <sub>`. `check`, `approve` and `waive` run the gate's checks, and every shipped check is a `forge ...`
  * command, so they run with the launcher shim first on `PATH` exactly as a run's gate step does: a checkout launch
  * (`node packages/cli/bin/forge.mjs`) has no `forge` on `PATH`, and without the shim every check would exit 127
- * (`PLAN-M13.md` P12, P41). */
+ * (`PLAN-M13.md` P12, P41).
+ *
+ * `PLAN-M14.md` P22: `commandEnv` also carries the caller's own real `FORGE_BASE_REF`, when set, read once
+ * from `realEnvSnapshot()` (this file's own one ambient environment read, R10) rather than left to `execa`'s
+ * own ambient `process.env` extension inside `runShellCommand` -- explicit here for the identical reason the
+ * FORGE run marker (`gateCommandMarker`, above) is read once and threaded through rather than re-read
+ * ambiently downstream. Outside a run this is the ONLY source `api:breaking-change`
+ * (`modules/fm-service/checks/api-breaking-change.check.yaml`) has for it; unset, that check fails with its
+ * own stated reason ("FORGE_BASE_REF is not set"), exactly as it does today. */
 async function runGateCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -1095,11 +1103,15 @@ async function runGateCommand(
   if (sub !== 'check' && sub !== 'approve' && sub !== 'waive') {
     return runGateSubcommand(paths, projectRoot, sub, rest, json, undefined);
   }
-  const shim = await createLauncherShimOrWarn(currentLauncher(realEnvSnapshot()), (message) => {
+  const env = realEnvSnapshot();
+  const shim = await createLauncherShimOrWarn(currentLauncher(env), (message) => {
     console.error(message);
   });
+  const baseRef = env['FORGE_BASE_REF'];
+  const commandEnv =
+    baseRef === undefined ? shim?.commandEnv : { ...shim?.commandEnv, FORGE_BASE_REF: baseRef };
   try {
-    return await runGateSubcommand(paths, projectRoot, sub, rest, json, shim?.commandEnv);
+    return await runGateSubcommand(paths, projectRoot, sub, rest, json, commandEnv);
   } finally {
     await shim?.cleanup();
   }
@@ -1897,11 +1909,12 @@ async function runAuditCommand(
  * remaining-commands mandate), never silently completed. */
 async function runConfigCommand(
   paths: ProjectPaths,
+  projectRoot: string,
   sub: string | undefined,
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
-  const ctx: ConfigCommandContext = { paths };
+  const ctx: ConfigCommandContext = { paths, projectRoot };
   if (sub === 'get') {
     const { positionals } = parseCommandFlags(rest, {});
     const [key] = positionals;
@@ -1914,13 +1927,19 @@ async function runConfigCommand(
     return EXIT_CODES.success;
   }
   if (sub === 'set') {
-    const { positionals } = parseCommandFlags(rest, {});
+    const { positionals, flags: setFlags } = parseCommandFlags(rest, { '--commit': false });
     const [key, value] = positionals;
     if (key === undefined || value === undefined || positionals.length > 2) {
       console.error('forge: "config set" needs a real <key> <value>.');
       return EXIT_CODES.usage;
     }
-    await configSet(ctx, key, value);
+    const commit = setFlags.has('--commit');
+    // The real FORGE run/step marker (`PLAN-M14.md` P37, P4/P15's identical `gateCommandMarker`):
+    // absent for a human's own shell, `{runId, stepId}` inside a run-spawned `command` step
+    // (`intake:record-level`) — read only for `--commit`, the one branch that can ever use it.
+    const marker = commit ? gateCommandMarker(realEnvSnapshot()) : undefined;
+    const commitCtx: ConfigCommandContext = marker === undefined ? ctx : { ...ctx, marker };
+    const { committed } = await configSet(commitCtx, key, value, { commit });
     // A round-3 critic finding: `configSet` (`commands/config.ts`) real-YAML-parses `value` before
     // writing (`execution.concurrency 4` stores the real number `4`, not the string `"4"`) — echoing
     // the raw, unparsed `value` string here made `config set --json`'s own `value` field disagree in
@@ -1931,7 +1950,7 @@ async function runConfigCommand(
     const stored = await configGet(ctx, key);
     console.log(
       json
-        ? JSON.stringify({ v: 1, key, value: stored })
+        ? JSON.stringify({ v: 1, key, value: stored, committed })
         : `forge config set ${key}: ${JSON.stringify(stored)}.`,
     );
     return EXIT_CODES.success;
@@ -3882,7 +3901,7 @@ async function main(): Promise<number> {
   }
   if (command === 'config') {
     const [configSub, ...configRest] = afterCommand;
-    return runConfigCommand(paths, configSub, configRest, flags.json);
+    return runConfigCommand(paths, projectRoot, configSub, configRest, flags.json);
   }
   if (command === 'cost') {
     return runCostCommand(paths, projectRoot, afterCommand, flags.json);
