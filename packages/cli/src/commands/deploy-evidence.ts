@@ -77,7 +77,13 @@ export interface DeployEvidenceContext {
   readonly clock?: Clock;
 }
 
-const STAGING = /\b(?:staging|stage|uat|pre-?prod(?:uction)?|non-?prod(?:uction)?)\b/i;
+// `STAGING`, `isTarget`, `isAncestor`, `commitProblem`, `instantProblem` and `rollbackProblem` are
+// exported (`PLAN-M14.md` P23) so `commands/deploy-record.ts` (`forge deploy record
+// <dry-run|rollback|deployment>`, the validating writer for these same records) can validate a
+// proposed record BEFORE writing it with the identical field-level rules these two checks already
+// apply, rather than re-deriving them: a second, drifted copy of "what makes a sha/instant/rollback
+// valid" is exactly the failure mode `deploy-evidence.ts`'s own doc comment above warns against.
+export const STAGING = /\b(?:staging|stage|uat|pre-?prod(?:uction)?|non-?prod(?:uction)?)\b/i;
 const PRODUCTION = /\b(?:production|prod)\b/i;
 const GIT_ENV = { GIT_NO_LAZY_FETCH: '1' } as const;
 const SHA = /^[0-9a-f]{7,64}$/;
@@ -107,7 +113,7 @@ function isNonTarget(environment: Environment): boolean {
   return NON_DELIVERY.test(said);
 }
 
-function isTarget(environment: Environment): boolean {
+export function isTarget(environment: Environment): boolean {
   return !isNonTarget(environment);
 }
 
@@ -169,7 +175,11 @@ async function resolveCommit(projectRoot: string, sha: string): Promise<string |
   return result.exitCode === 0 ? result.stdout.trim() : undefined;
 }
 
-async function isAncestor(projectRoot: string, older: string, newer: string): Promise<boolean> {
+export async function isAncestor(
+  projectRoot: string,
+  older: string,
+  newer: string,
+): Promise<boolean> {
   const result = await execa('git', ['merge-base', '--is-ancestor', older, newer], {
     cwd: projectRoot,
     reject: false,
@@ -180,7 +190,7 @@ async function isAncestor(projectRoot: string, older: string, newer: string): Pr
 
 /** A commit id the record names: present, well formed, in this repository, and in the history of the checked-out
  * commit. Returns the problem, or `undefined` when it is fine. */
-async function commitProblem(
+export async function commitProblem(
   ctx: DeployEvidenceContext,
   file: string,
   field: string,
@@ -211,7 +221,7 @@ async function commitTime(projectRoot: string, sha: string): Promise<number | un
 
 /** An instant with a zone, not in the future and not before `floor` (the commit it is about: a dry run or a rehearsal
  * cannot predate the code it ran on). */
-async function instantProblem(
+export async function instantProblem(
   ctx: DeployEvidenceContext,
   file: string,
   field: string,
@@ -328,7 +338,7 @@ async function dryRunProblem(
   });
 }
 
-async function rollbackProblem(
+export async function rollbackProblem(
   ctx: DeployEvidenceContext,
   committed: CommittedTree,
   environment: Environment,

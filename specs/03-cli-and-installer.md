@@ -110,6 +110,7 @@ interactively (`10` §10.1); a question with no answer and no terminal to ask on
 | `forge review [--diff <range>]` | Multi-perspective review (design/security/perf/testing). |
 | `forge refactor <target> --goal <text>` | Bounded, test-guarded refactor. |
 | `forge deploy <env>` | Execute the delivery workflow for an environment. |
+| `forge deploy record <dry-run\|rollback\|deployment>` | Validate and write the pipeline's own delivery record (`14` §14.3 rule 7) that `forge deploy --dry-run`/`--rollback-check` and `doctor --rule skeleton-deployed` read; writes nothing on a refusal. |
 
 ### 3.2.6 Collaboration commands
 

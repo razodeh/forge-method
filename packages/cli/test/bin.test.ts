@@ -2715,6 +2715,116 @@ describe('forge implement / forge refactor / forge deploy (real subprocess dispa
     const result = run(['deploy', '-C', dir]);
     expect(result.status).toBe(2);
   });
+
+  describe('forge deploy record <dry-run|rollback|deployment> (PLAN-M14.md P23)', () => {
+    it('exits 2 for `forge deploy record` with no real <kind> -- an environment named "record" is never deployed to', async () => {
+      const dir = await realProject();
+      const result = run(['deploy', 'record', '-C', dir]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('needs a real <kind>');
+    });
+
+    it('exits 2 for an unknown <kind>', async () => {
+      const dir = await realProject();
+      const result = run(['deploy', 'record', 'bogus', '-C', dir]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('needs a real <kind>');
+    });
+
+    it('exits 2 for a missing required flag, naming it', async () => {
+      const dir = await realProject();
+      const result = run([
+        'deploy',
+        'record',
+        'dry-run',
+        '--env',
+        'ENV-002',
+        '--sha',
+        'a'.repeat(40),
+        '-C',
+        dir,
+      ]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('--ran-at');
+    });
+
+    it('exits 2 for `forge deploy record dry-run` combined with --dry-run: it has no dry-run form', async () => {
+      const dir = await realProject();
+      const result = run([
+        'deploy',
+        'record',
+        'dry-run',
+        '--env',
+        'ENV-002',
+        '--sha',
+        'a'.repeat(40),
+        '--ran-at',
+        '2050-01-01T00:00:00Z',
+        '--dry-run',
+        '-C',
+        dir,
+      ]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('--dry-run');
+    });
+
+    it('refuses (exit 2) through the real CLI for each of the three forms when the environment is not recorded at all -- proves the real wiring reaches the real validating writer, not only a usage guard', async () => {
+      const dir = await realProject();
+      // `runInit` (`realProject`'s own fixture) only `git init`s -- no commit -- and this command reads the
+      // COMMITTED project (`readCommittedTree`), like every sibling check in `deploy-evidence.ts`/
+      // `rules-delivery.ts`. A real commit here is what lets the assertions below reach the real "no
+      // environment ENV-999 is recorded" refusal from `commands/deploy-record.ts`, not a generic
+      // "repository has no commit yet" one -- proving the real subprocess wiring reaches the real writer.
+      await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+      await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+      await execa('git', ['add', '-A'], { cwd: dir });
+      await execa('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: dir });
+      const forms = [
+        ['dry-run', ['--env', 'ENV-999', '--sha', 'a'.repeat(40), '--ran-at', '2050-01-01T00:00:00Z']],
+        [
+          'rollback',
+          [
+            '--env',
+            'ENV-999',
+            '--from-sha',
+            'a'.repeat(40),
+            '--to-sha',
+            'b'.repeat(40),
+            '--rehearsed-at',
+            '2050-01-01T00:00:00Z',
+            '--health-url',
+            'https://example.com/h',
+            '--health-status',
+            '200',
+            '--health-checked-at',
+            '2050-01-01T00:05:00Z',
+          ],
+        ],
+        [
+          'deployment',
+          [
+            '--env',
+            'ENV-999',
+            '--sha',
+            'a'.repeat(40),
+            '--deployed-at',
+            '2050-01-01T00:00:00Z',
+            '--health-url',
+            'https://example.com/h',
+            '--health-status',
+            '200',
+            '--health-checked-at',
+            '2050-01-01T00:05:00Z',
+          ],
+        ],
+      ] as const;
+      for (const [kind, flags] of forms) {
+        const result = run(['deploy', 'record', kind, ...flags, '-C', dir]);
+        expect(result.status, kind).toBe(2);
+        expect(result.stderr, kind).toContain('ENV-999');
+      }
+    });
+  });
 });
 
 describe('forge debug / forge review / forge panel / forge ask / forge session (real subprocess dispatch, PLAN-M12.md P4)', () => {
@@ -2849,4 +2959,81 @@ describe('forge debug / forge review / forge panel / forge ask / forge session (
   // here for that reason — the usage-error paths above already prove every one of these commands is
   // genuinely reachable via real argv up to the one real, live call this test suite must not make on a
   // developer's behalf; see `SPEC-QUESTIONS.md`.
+});
+
+// `PLAN-M14.md` P22: outside a run, `forge gate check` passes the caller's own real `FORGE_BASE_REF`
+// through (`runGateCommand`'s own `realEnvSnapshot()` read, `bin.ts`) rather than leaving it to `execa`'s
+// own ambient `process.env` extension inside `runShellCommand` — a real subprocess proof, a real spawned
+// `node -e ...` check reading `process.env.FORGE_BASE_REF` for real, no stubbing.
+describe('forge gate check outside a run passes FORGE_BASE_REF through from the caller (PLAN-M14.md P22)', () => {
+  const BASE_REF_GATE_ID = 'G-Bin-BaseRef';
+  /** Prints `{"ref": <FORGE_BASE_REF or "">, "errors": <0 or 1>}` — the identical "flat object, an
+   * errors field failOn reads" shape every real shipped check uses. */
+  const BASE_REF_GATE_YAML = `id: ${BASE_REF_GATE_ID}
+name: FORGE_BASE_REF probe fixture gate
+phase: verify
+checks:
+  deterministic:
+    - id: base-ref-probe
+      run: "node -e \\"const ref=process.env.FORGE_BASE_REF||'';console.log(JSON.stringify({ref,errors:ref===''?1:0}))\\""
+      parser: json
+      failOn: "errors > 0"
+  advisory: []
+openQuestionsPolicy: warn
+`;
+
+  /** A minimal, standalone project (not `realRunProject()`, which many other tests in this file share
+   * and this test has no need to touch): a real git repo, a real config, and this describe block's own
+   * real gate — everything `forge gate check` outside a run needs. */
+  async function baseRefProject(): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-bin-base-ref-'));
+    dirs.push(dir);
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(DEFAULT_CONFIG), 'utf8');
+    await mkdir(path.join(dir, '.forge/checks'), { recursive: true });
+    await writeFile(path.join(dir, '.forge/checks', `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML, 'utf8');
+    await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n', 'utf8');
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: dir });
+    // `gate check` outside a run still resolves a real `runId` for its own `GateReport`/audit trail
+    // (`resolveDispatchRunId`) — the identical `last-run.json` pointer a prior real `forge run` writes;
+    // this fixture is deliberately never a live run (`03` §3.2.4's own "outside a run" case), only a
+    // record of a past one, matching the real ad hoc "run `forge gate check` again later" scenario.
+    await mkdir(path.join(dir, '.forge/state'), { recursive: true });
+    await writeFile(
+      path.join(dir, '.forge/state/last-run.json'),
+      JSON.stringify({ runId: 'prior-run' }),
+      'utf8',
+    );
+    return dir;
+  }
+
+  it('FORGE_BASE_REF unset: the check fails on its own stated reason, exit EXIT_CODES.gateFailed (3)', async () => {
+    const dir = await baseRefProject();
+    const result = run(['gate', 'check', BASE_REF_GATE_ID, '--json', '-C', dir]);
+    expect(result.status).toBe(3);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly checks: readonly { readonly checkId: string; readonly stdout: string }[] };
+    };
+    const check = parsed.report.checks.find((c) => c.checkId === 'base-ref-probe');
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: '', errors: 1 });
+  });
+
+  it("FORGE_BASE_REF set in the caller's own shell: it is threaded through to the real spawned check, exit 0", async () => {
+    const dir = await baseRefProject();
+    const { stdout: sha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+    const tip = sha.trim();
+    const result = run(['gate', 'check', BASE_REF_GATE_ID, '--json', '-C', dir], {
+      FORGE_BASE_REF: tip,
+    });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly checks: readonly { readonly checkId: string; readonly stdout: string }[] };
+    };
+    const check = parsed.report.checks.find((c) => c.checkId === 'base-ref-probe');
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: tip, errors: 0 });
+  });
 });

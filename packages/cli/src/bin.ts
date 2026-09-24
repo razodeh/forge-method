@@ -121,6 +121,13 @@ import {
 } from './commands/diagram.ts';
 import { deployDryRunCheck, deployRollbackCheck } from './commands/deploy-evidence.ts';
 import {
+  recordDeployment,
+  recordDryRun,
+  recordRollback,
+  type DeployRecordContext,
+  type DeployRecordOutcome,
+} from './commands/deploy-record.ts';
+import {
   DIAGRAM_GATES,
   diagramDriftCheck,
   diagramValidateGate,
@@ -3229,6 +3236,16 @@ async function runDeployCommand(
   dryRun: boolean,
   json: boolean,
 ): Promise<number> {
+  // `forge deploy record <dry-run|rollback|deployment>` (`PLAN-M14.md` P23): a validating writer for the
+  // delivery records the two forms below (and `doctor --rule skeleton-deployed`) read. Routed on the bare
+  // first word, BEFORE `parseCommandFlags(args, DEPLOY_FLAGS)`, whose flag set has no entries for `record`'s
+  // own flags (`--env`, `--sha`, ...) at all -- and unconditionally, so an environment actually named
+  // "record" can never be deployed to through this command: `deploy record` with no real <kind> is refused
+  // by `runDeployRecordCommand` below rather than silently falling through to deploy an environment called
+  // "record".
+  if (args[0] === 'record') {
+    return runDeployRecordCommand(paths, projectRoot, args.slice(1), dryRun, json);
+  }
   const { values, flags, positionals } = parseCommandFlags(args, DEPLOY_FLAGS);
   const [env] = positionals;
   if (env === undefined && (dryRun || flags.has('--rollback-check'))) {
@@ -3285,6 +3302,121 @@ async function runDeployCommand(
     ...(confirmation !== undefined ? { confirmation } : {}),
   });
   return printWorkflowDispatchResult(`deploy ${env}`, result, json);
+}
+
+/** Every real flag each `deploy record` kind accepts, in the order `03` §3.2.5's own mandate text gives them --
+ * a plain `Record` lookup (unlike `gateSubFlags`'s `switch`) is fine here: an unknown `kind` narrows to
+ * `undefined` just as cleanly, and there is no per-kind logic beyond this list to branch on. */
+const DEPLOY_RECORD_KIND_FLAGS: Readonly<Record<string, readonly string[]>> = {
+  'dry-run': ['--env', '--sha', '--ran-at'],
+  rollback: [
+    '--env',
+    '--from-sha',
+    '--to-sha',
+    '--rehearsed-at',
+    '--health-url',
+    '--health-status',
+    '--health-checked-at',
+  ],
+  deployment: [
+    '--env',
+    '--sha',
+    '--deployed-at',
+    '--health-url',
+    '--health-status',
+    '--health-checked-at',
+  ],
+};
+
+/** `forge deploy record <dry-run|rollback|deployment>` (`PLAN-M14.md` P23): validates every required flag is
+ * present and well-formed, then delegates to `commands/deploy-record.ts`'s own field-level validation (the
+ * checks' own rules) BEFORE writing anything. `--dry-run` has no form here -- unlike `forge deploy <env>
+ * --dry-run` (a real compiled-plan preview), this command either validates-and-writes a real record for real
+ * or refuses; there is nothing meaningful to preview. */
+async function runDeployRecordCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const [kind, ...rest] = args;
+  const requiredFlags = kind === undefined ? undefined : DEPLOY_RECORD_KIND_FLAGS[kind];
+  if (kind === undefined || requiredFlags === undefined) {
+    console.error(
+      'forge: "deploy record" needs a real <kind> (dry-run|rollback|deployment); got ' +
+        `${kind === undefined ? 'nothing' : JSON.stringify(kind)}.`,
+    );
+    return EXIT_CODES.usage;
+  }
+  if (dryRun) {
+    console.error(
+      `forge: "deploy record ${kind}" needs a real run: it validates and writes a delivery record, so it ` +
+        'has no --dry-run form.',
+    );
+    return EXIT_CODES.usage;
+  }
+  const { values, positionals } = parseCommandFlags(
+    rest,
+    Object.fromEntries(requiredFlags.map((flag) => [flag, true])),
+  );
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const missing = requiredFlags.filter((flag) => values.get(flag) === undefined);
+  if (missing.length > 0) {
+    console.error(`forge: "deploy record ${kind}" needs ${missing.join(' ')}.`);
+    return EXIT_CODES.usage;
+  }
+  // Present for every flag `requiredFlags` names -- `missing` above already refused otherwise -- so `?? ''`
+  // here is unreachable, never a silently-accepted empty value.
+  const need = (flag: string): string => values.get(flag) ?? '';
+
+  const config = await readConfig(paths);
+  const ctx: DeployRecordContext = {
+    paths,
+    projectRoot,
+    kbRoot: config.paths.kb,
+    reportsRoot: config.paths.reports,
+  };
+  let outcome: DeployRecordOutcome;
+  if (kind === 'dry-run') {
+    outcome = await recordDryRun(ctx, {
+      env: need('--env'),
+      sha: need('--sha'),
+      ranAt: need('--ran-at'),
+    });
+  } else if (kind === 'rollback') {
+    outcome = await recordRollback(ctx, {
+      env: need('--env'),
+      fromSha: need('--from-sha'),
+      toSha: need('--to-sha'),
+      rehearsedAt: need('--rehearsed-at'),
+      healthUrl: need('--health-url'),
+      healthStatus: need('--health-status'),
+      healthCheckedAt: need('--health-checked-at'),
+    });
+  } else {
+    outcome = await recordDeployment(ctx, {
+      env: need('--env'),
+      sha: need('--sha'),
+      deployedAt: need('--deployed-at'),
+      healthUrl: need('--health-url'),
+      healthStatus: need('--health-status'),
+      healthCheckedAt: need('--health-checked-at'),
+    });
+  }
+  if (!outcome.ok) {
+    console.error(`forge deploy record ${kind}: ${outcome.message}.`);
+    console.error(outcome.remedy);
+    return EXIT_CODES.usage;
+  }
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, written: outcome.written })
+      : `forge deploy record ${kind}: wrote ${outcome.written}.`,
+  );
+  return EXIT_CODES.success;
 }
 
 const DEBUG_FLAGS = { '--from-failure': true } as const;

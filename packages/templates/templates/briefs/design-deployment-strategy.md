@@ -30,7 +30,9 @@ each unit:
   be rolled back is not acceptable; the ADR names any migration in this stage and how it stays
   compatible with the previous code version.
 - Deployment record: what is recorded for each deployment (artifact, SHA, config version, trigger,
-  duration, outcome).
+  duration, outcome), written with `forge deploy record deployment --env <ENV-id> --sha <commit>
+  --deployed-at <instant> --health-url --health-status --health-checked-at` and committed by the
+  pipeline — never a hand-authored file, since the command validates before writing.
 - Verification: the smoke test suite the later `forge test run --rule smoke` step will run, and what
   the rollback rehearsal (`forge deploy --rollback-check`, then the staging rehearsal `G-Deliver`
   requires) must show for this strategy's trigger and path to count as executed rather than assumed.
