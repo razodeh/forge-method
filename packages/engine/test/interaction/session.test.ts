@@ -554,7 +554,12 @@ describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landL
     const queued = events.find((event) => event.type === 'MergeQueued');
     const decideLaneId = queued?.laneId;
     expect(decideLaneId).toBeDefined();
-    const mergeEventTypes = new Set(['MergeQueued', 'MergeStarted', 'MergeCompleted', 'LaneRemoved']);
+    const mergeEventTypes = new Set([
+      'MergeQueued',
+      'MergeStarted',
+      'MergeCompleted',
+      'LaneRemoved',
+    ]);
     const mergeEvents = events.filter(
       (event) => mergeEventTypes.has(event.type) && event.laneId === decideLaneId,
     );
