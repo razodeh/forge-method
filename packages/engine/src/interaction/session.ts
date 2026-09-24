@@ -725,48 +725,22 @@ async function mergeDecideLane(
 ): Promise<StepOutcome['failure']> {
   const lane = ctx.laneRegistry.get(laneId);
   if (lane === undefined) return undefined;
-  try {
-    await ctx.telemetry.emit({ type: 'MergeQueued', stepId: node.id, laneId: lane.laneId });
-    await ctx.telemetry.emit({ type: 'MergeStarted', stepId: node.id, laneId: lane.laneId });
-    const outcome = await ctx.mergeQueue.process(
-      {
-        handle: lane,
-        stepId: laneId,
-        runId: ctx.runId,
-        declaredClaim: [],
-        conflictPolicy: 'abort',
-      },
-      {},
-    );
-    if (outcome.kind === 'clean' || outcome.kind === 'conflict-resolved') {
-      await ctx.telemetry.emit({
-        type: 'MergeCompleted',
-        stepId: node.id,
-        laneId: lane.laneId,
-        payload: { mergeCommitSha: outcome.mergeCommitSha },
-      });
-      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
-      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
-      ctx.laneRegistry.delete(laneId);
-      return undefined;
-    }
-    if (outcome.kind === 'already-integrated') {
-      await ctx.vcs.removeLane(lane, ctx.retainLaneWorktrees);
-      await ctx.telemetry.emit({ type: 'LaneRemoved', stepId: node.id, laneId: lane.laneId });
-      ctx.laneRegistry.delete(laneId);
-      return undefined;
-    }
-    return {
-      source: 'merge',
-      message: `DECIDE-phase lane for step ${node.id} could not be merged into integration (${outcome.kind}).`,
-    };
-  } catch (cause) {
-    return {
-      source: 'merge',
-      message: `DECIDE-phase lane for step ${node.id} failed to merge: ${cause instanceof Error ? cause.message : String(cause)}`,
-      cause,
-    };
-  }
+  const resolved = resolveLaneChecks(ctx, {
+    pre: ctx.mergeChecks?.pre,
+    post: ctx.mergeChecks?.post,
+    preSource: 'execution.mergeChecks.pre',
+    postSource: 'execution.mergeChecks.post',
+  });
+  if (!resolved.ok) return resolved.failure;
+  const result = await landLane(ctx, {
+    eventStepId: node.id,
+    laneStepId: laneId,
+    lane,
+    conflictPolicy: ctx.conflictPolicy ?? 'abort',
+    checks: resolved.value.checks,
+    skippedLayers: resolved.value.skipped,
+  });
+  return result.failure;
 }
 
 /** The project's own resolved agent roster (`.forge/agents/<id>.yaml`, what `forge init`/`forge compile`
