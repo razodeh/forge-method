@@ -18414,3 +18414,143 @@ a no-op/conflicting commit); its own test title still reads "Q224's seven warnin
 than editing a file mid-flight under a concurrent piece's own commit.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q270`.
+
+## M14 P41 — An `elicit` question can `show` a register entry an earlier step produced (`engine/src/workflow/{schema,types,validate}.ts`, `engine/src/plan/compile.ts`, `engine/src/dispatch/{outputs,elicit,types}.ts`, `core/src/errors/codes.ts`, `cli/src/commands/run/ask.ts`, `templates/templates/workflows/intake.workflow.yaml`, `templates/templates/briefs/propose-level.md`; regenerated `fixtures/greenfield-service/.forge/{workflows/intake.workflow.yaml,briefs/propose-level.md}`; edited `engine/test/dispatch/elicit.test.ts`, `engine/test/workflow/elicit-questions.test.ts`, `cli/test/commands/run/ask.test.ts`, `test/intake-workflow.test.ts`)
+
+**Mandate.** `ElicitQuestion` gains `show: {type, subtype?}`. Before asking, `runElicit` reads that
+register from `ctx.integrationPath` under the project's configured `docRoots` (the identical tree the
+output contract check validates a produced register against), via a new, additive
+`readRegisterEntries(tree, type, roots, subtype?)` export in `dispatch/outputs.ts` -- `subtype` as a
+fourth, optional parameter beyond the brief's own literal `(tree, type, roots)`, a disclosed
+interpretation, not a literal transcription. It locates the file via `outputPathFor` (a real path to
+read, not `outputGlob`'s own minimatch-escaped pattern), reuses P7's own `registerEntries`/
+`REGISTER_SCHEMAS` to extract entries, and narrows to the ones whose own subtype text carries `subtype`
+as a hyphenated word (`subtypeText`/`carriesSubtype`, reused here per ENTRY rather than across a whole
+produced set). `runElicit` takes the LAST such entry and hands its fields to the `AskPort` as
+`AskRequest.context: readonly string[]` (`renderEntryLines`, a new function: one line per scalar field,
+one per array item, `id` first, bounded both per-line and in total), printed by the CLI's terminal port
+sanitised one line at a time before the prompt (never on a retry), and never consulted when an answer
+comes from `--answers`. `ElicitationRequested` records `shown: {type, subtype, id}` per question.
+Fail-closed in the identical two-file split `duplicate-elicit-question` already has (`validateStructure`
+over the unexpanded graph, `compilePlan`'s own `checkPlanConsistency`/`elicitShowIssues` over the real,
+expanded one -- `forge run` never calls `validateStructure` first): `show.type` must be a `18` §18.7
+`collection: true` register (`elicit-show-not-a-register`) and the step must transitively depend on a
+step that declares producing that type/subtype in its own `outputs` (`elicit-show-not-produced`). Not
+found at run time fails the step with a new `RUN-105`, before `ElicitationRequested`.
+`intake.workflow.yaml`'s `confirm-level` gains `show: {type: HandoffRecord, subtype: level-proposal}`
+(alongside P37's own `record-level` in the same file, a serialisation note only); `propose-level.md`'s
+own line 2 is reworded, since the whole handoff entry is shown now, not only "your proposal ...
+verbatim" as it previously promised; the greenfield fixture copies of both are regenerated (header hash
+recomputed over the new body, verified byte-for-byte against `hasGeneratedFileDrifted`'s own
+`HEADER_LINE` both times a `prettier --write` re-wrap changed the brief's own body a second time).
+Answer binding, sanitisation, replay, `RUN-101`/`RUN-102` and the register reader's own existing rules
+are unchanged.
+
+**Mutation evidence.** All four named in the brief, each broken and confirmed red against the real
+committed code, then restored via `git checkout --`: reading from `ctx.projectRoot` instead of
+`ctx.integrationPath` (a dedicated dispatch test, the entry only exists on the integration branch);
+`show` dropped from `elicitQuestionSchema` (nine `elicit-questions.test.ts` tests fail to parse);
+`sanitizeRefusalText` removed from the CLI port's own `contextLines` (the sanitisation test catches the
+raw escape reaching the terminal buffer); the `RUN-105` refusal turned into a silent pass (the
+fail-closed dispatch test catches the step succeeding instead of failing). Every one of the eleven
+further findings from the three critic rounds below is separately mutation-proven the same way (broken,
+confirmed red with the exact reported symptom, restored), not merely asserted fixed.
+
+**Critic round 1** (fresh, context-free). Found four real issues, all fixed:
+
+1 (blocking). `readRegisterEntries` fed `outputGlob`'s own minimatch-escaped root straight into
+   `ProjectPaths.resolveWithin`, which expects a literal path, not a glob pattern: a configured
+   `paths.reports` outside the project tree threw `CFG-003` UNCAUGHT (a dangling `StepStarted` with no
+   terminal event, contradicting both this function's and `runElicit`'s own "never throws"
+   contracts), and a root holding an ordinary but glob-special character (`(`, `[`, `!`, ...) got its
+   escaping corrupted into the literal path, silently missing a real, produced entry. Switched to
+   `outputPathFor` (every `collection: true` type's own path template is a single fixed file, so its
+   unused `id` argument is always a safe no-op) and caught `CFG-003`.
+2 (worth fixing). `checkElicitShow` only ever walked the STATIC, authored `dependsOn` array, so a
+   producer reached purely through a `sequence`'s own array-order chaining (`06` §6.2 rule 1, no
+   explicit `dependsOn` -- the natural way to write it) was a false `elicit-show-not-produced`, even
+   though `compilePlan` correctly accepted the identical workflow -- real impact, since `forge workflow
+   validate` never calls `compilePlan`. Added `collectImplicitSequenceEdges`, a structural (no
+   expression evaluator) walk threading a sequence child's own implicit dependency on its immediate
+   previous sibling.
+3 (worth fixing, minor). No size bound on agent-produced register content reaching a human's terminal,
+   unlike this exact module family's own established convention (`outputs.ts`'s
+   `MAX_PROBLEM_CHARS`/`MAX_LISTED_FILES`/`clip()`). Added the identical per-line
+   (`MAX_CONTEXT_LINE_CHARS`, 700) and total-lines (`MAX_CONTEXT_LINES`, 50, "and N more" marker) caps.
+4 (minor). Every existing two-entry test made only the SECOND entry match the requested subtype, so
+   `.at(-1)`'s own "prefer the later of two matching entries" tie-break was never exercised. Added a
+   test with two entries that both match, proving the later one wins.
+
+**Self-review before the round-1 critic's report arrived** found one further real gap on its own:
+`checkElicitShow`'s first version used `addressable` (not `allSteps`) to decide which elicit steps to
+CHECK, so an `elicit` step sitting directly as a `fanout`'s own templated child (no `id` of its own by
+design) never had its `show` checked by `validateStructure` at all -- `checkUniqueElicitQuestions`
+already draws the correct line for anything about `ElicitStep.questions` (iterate `allSteps`); this
+piece's own first version diverged from that established precedent. Fixed to match it, with
+`transitiveDependsOn` taking a step's own `dependsOn` array directly rather than looking it up by a
+(possibly absent) id.
+
+**Critic round 2.** Found two real issues, one already independently closed by the self-review above
+(confirmed by the critic cross-checking the live commit before finalising its own report), one new:
+
+1 (already fixed, confirmed). The identical false-`elicit-show-not-produced` class as round-1 finding
+   2, one level of nesting deeper: `collectImplicitSequenceEdges` recorded only a sequence child's
+   immediate previous-sibling id, so a producer buried inside an EARLIER SIBLING GROUP (not a leaf) was
+   never found (the group's own bare id satisfies neither `stepDeclaresOutput` nor reaches into its own
+   children), and the reverse direction (a producer before a nested group, needing to reach that
+   group's own FIRST child) had the identical gap. Closed by replacing the sibling-pairing scheme with
+   `structuralExits`, a recursive walk mirroring `compileStepAtDepth`'s own `inheritedDependsOn`/
+   `exitIds` threading for `parallel`/`sequence` exactly (still no evaluator -- a `fanout` is walked
+   into but contributes no real exit of its own). Verified safe against this file's own
+   extensively-documented "a naive recursive walker here has blown the real stack before" lesson: tested
+   against a real, hand-built ~3000-level-deep `Workflow` object (bypassing `parseWorkflow`), no
+   `RangeError`, a clean `excessive-nesting-depth` instead; the pre-existing, unrelated
+   `workflow/validate.test.ts` depth tests (which now also exercise this function, since it runs inside
+   `validateStructure`) still pass unchanged.
+2 (new, worth fixing). `readRegisterEntries`'s `CFG-003`-only catch missed `CFG-004`
+   (`resolveWithin`'s OTHER throw code, for a resolved path landing under a denied prefix: `.git/`,
+   `.forge/state/`, `node_modules/`). `pathsSchema` puts no restriction on `paths.kb`/`paths.reports`/
+   etc. (unlike `paths.release`), so `paths.reports: .git` is real, schema-accepted project
+   configuration -- reproduced concretely (an uncaught `ForgeError` with the exact stack the critic
+   reported) and fixed by catching both codes.
+
+**Critic round 3 (final).** Found one real issue, one disclosed-not-fixed minor, everything else
+(the round-2 fixes' own correctness, their interaction with round 1/the self-found fix, every added
+test's non-vacuity) confirmed clean:
+
+1 (blocking). `pathExists(absolute)` sat OUTSIDE any try/catch, between the two blocks already
+   guarding `resolveWithin` (`CFG-003`/`CFG-004`) and `readTextFile`/`ArtifactDocument.parse` (a bare
+   catch) -- a THIRD, still-uncaught instance of the identical bug class, missed by both earlier rounds
+   because it lives in the function's own middle. `pathExists` throws its own `RUN-034` for a real
+   filesystem failure other than "not found" -- a permissions failure most notably. Reproduced
+   concretely (a real `chmod 0000` on the register file's own containing directory) and fixed by moving
+   the call inside the same try block as the read/parse that follows it.
+2 (disclosed, not fixed -- the critic's own verdict). A genuinely empty AND id-less group
+   (`{kind: sequence, steps: []}`, no `id`) is the one shape `structuralExits` still disagrees with
+   `compilePlan` on. Unreachable via real YAML (`parallelStepSchema`/`sequenceStepSchema` both require
+   `steps.min(1)`) and self-masking even via a hand-built `Workflow` object (the identical position is
+   already `checkStepsHaveIds`'s own separate, blocking `missing-step-id` finding; giving it any id
+   makes this disagreement disappear too). Recorded in `structuralExits`'s own doc comment; the failure
+   direction is the safe one (a spurious extra rejection, never a spurious acceptance).
+
+**Discloses.** Registers only (`collection: true`); no TUI renderer -- `packages/tui` has no `AskPort`
+implementation at all today, confirmed by inspection, so `show` is a terminal-only feature until one
+exists. The whole entry is shown, not the "verbatim proposal document" `propose-level.md` used to
+promise (reworded). `forge resume --answers` still cannot warn on a misspelt name (pre-existing,
+inherited, unrelated to this piece). `readRegisterEntries`'s own signature carries a fourth, optional
+`subtype` parameter beyond the brief's literal `(tree, type, roots)` -- the only way found to reuse P7's
+exact per-entry subtype-matching rule (`carriesSubtype`) without duplicating it at the call site. A
+shared-index incident, not self-caused: between one `git add` and the immediately following `git
+commit` for this piece's own first commit, the shared working tree's git INDEX was reset by a
+concurrent agent's own git operation (working-tree files untouched, confirmed via `git diff` before
+re-adding and committing again immediately) -- no content was lost, but recorded per the standing
+shared-working-tree discipline. `pnpm typecheck` at the repo root transiently failed, unrelated to this
+piece, while a different concurrent agent's own `packages/cli/src/commands/run/merge.ts` was mid-flight
+uncommitted against its own already-committed test file; resolved once that agent committed its own
+work (confirmed both via `git log`/`git status` at the time and a subsequent clean full-repo
+`pnpm typecheck`). `pathExists`'s own `RUN-034` for the constructor's `tree` root itself not existing is
+covered by the same `CFG-003`/`CFG-004` catch (the constructor call sits inside the same try); a
+permissions failure on the constructor's own root would surface the identical way `pathExists`'s
+mid-function failure now does.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q272`.
