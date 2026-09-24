@@ -283,7 +283,9 @@ export async function mergeLane(
   return {
     ...(landed.outcome === undefined ? {} : { outcome: landed.outcome }),
     ...(landed.failure === undefined ? {} : { failure: landed.failure }),
-    ...(landed.alreadyIntegrated === undefined ? {} : { alreadyIntegrated: landed.alreadyIntegrated }),
+    ...(landed.alreadyIntegrated === undefined
+      ? {}
+      : { alreadyIntegrated: landed.alreadyIntegrated }),
     checks: checksSummary,
     ...(warning === undefined ? {} : { warning }),
   };

@@ -47,8 +47,7 @@ export interface LandLaneDeps {
   readonly runId: string;
   readonly testCommands?: Readonly<Partial<Record<string, string>>> | undefined;
   readonly mergeChecks?:
-    | { readonly pre?: string | undefined; readonly post?: string | undefined }
-    | undefined;
+    { readonly pre?: string | undefined; readonly post?: string | undefined } | undefined;
   readonly conflictResolver?: MergeConflictResolver | undefined;
 }
 

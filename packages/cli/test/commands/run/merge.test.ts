@@ -118,7 +118,10 @@ async function mergeContextFor(
     runId,
     integrationPath,
     workflowsRoot: WORKFLOWS_ROOT,
-    config: { ...project.config, execution: { ...project.config.execution, ...executionOverrides } },
+    config: {
+      ...project.config,
+      execution: { ...project.config.execution, ...executionOverrides },
+    },
   };
 }
 
@@ -187,7 +190,7 @@ describe('mergeLane', () => {
     expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
   });
 
-  it('an override lands the lane despite the declared preCheck still failing, is named, and records events under the lane\'s own step id', async () => {
+  it("an override lands the lane despite the declared preCheck still failing, is named, and records events under the lane's own step id", async () => {
     const { project, laneId } = await readyLaneProject('run-merge-override-lands');
     const ctx = await mergeContextFor(project, 'run-merge-override-lands', {
       testCommands: { unit: 'true' },
@@ -210,13 +213,20 @@ describe('mergeLane', () => {
     // `MergeCompleted`, are this call's own, and both must carry the lane's own step id, not the merge
     // step's (`integrateLane`'s own convention for a lane no `merge` step lands, reused here).
     const started = await stepIdsOf(project, 'run-merge-override-lands', 'MergeStarted', laneId);
-    const completed = await stepIdsOf(project, 'run-merge-override-lands', 'MergeCompleted', laneId);
+    const completed = await stepIdsOf(
+      project,
+      'run-merge-override-lands',
+      'MergeCompleted',
+      laneId,
+    );
     expect(started.at(-1)).toBe(FIXTURE_STEP_IMPLEMENT_ID);
     expect(completed).toEqual([FIXTURE_STEP_IMPLEMENT_ID]);
   });
 
   it("a lane in no merge step's own landing scope falls back to execution.mergeChecks, naming it, and lands once it resolves", async () => {
-    const { project, laneId } = await readyDefaultLaneProject('run-merge-fallback', { pre: 'false' });
+    const { project, laneId } = await readyDefaultLaneProject('run-merge-fallback', {
+      pre: 'false',
+    });
 
     const failCtx = await mergeContextFor(project, 'run-merge-fallback', {
       mergeChecks: { post: 'unit' },

@@ -58,7 +58,9 @@ export type ResolvedMergeChecks =
  * (never the command text itself: it may hold secrets, `integrate.ts`'s own `describeChecks` and
  * `@forge/cli`'s `merge.ts` both display these; `PLAN-M14.md` P40's own critic round caught the two
  * duplicating this exact mapping and asked for one shared copy). */
-export function checkLabelsOf(commands: readonly MergeCheckCommand[] | undefined): readonly string[] {
+export function checkLabelsOf(
+  commands: readonly MergeCheckCommand[] | undefined,
+): readonly string[] {
   return (commands ?? []).map((entry) => entry.label ?? 'literal command');
 }
 
