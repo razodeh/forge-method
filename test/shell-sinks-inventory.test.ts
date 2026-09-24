@@ -13,6 +13,13 @@
  *
  * Verified by reading each call site (P28), not derived from the P27 list, which named two of these.
  *
+ * `PLAN-M14.md` P28 closed the two `open` rows `PLAN-M13.md` P28 disclosed
+ * (`packages/cli/src/commands/kb.ts`, `packages/engine/src/adopt/verification.ts`): both now route a
+ * stored command through `vetStoredCommand`/`runConfinedCommand`
+ * (`packages/engine/src/dispatch/confined-command.ts`, already listed below as `confined`) instead of
+ * starting a shell directly, so neither is a sink of its own any more and both rows are removed rather
+ * than relabelled.
+ *
  * @see specs/20 §20.1
  * @see specs/20 §20.5
  * @see SPEC-QUESTIONS.md Q222
@@ -109,24 +116,6 @@ const INVENTORY: Readonly<Record<string, Sink>> = {
     checks: 'author-trusted text run in the lane; no interpolation; parent environment',
     status: 'trusted',
   },
-  'packages/engine/src/adopt/verification.ts': {
-    source:
-      '`forge adopt` phase 5: a build and a test command DERIVED FROM THE BROWNFIELD REPOSITORY (package scripts, Makefile, ' +
-      'Dockerfile CMD), i.e. text a third party wrote',
-    checks:
-      'runs in a throwaway clone with a timeout; the parent environment is passed whole (no scrub), no grant, no denylist. ' +
-      'DISCLOSED, not fixed by P28 (Q222): the owner decides whether verification may run an untrusted repository’s commands at all',
-    status: 'open',
-  },
-  'packages/cli/src/commands/kb.ts': {
-    source:
-      '`forge kb verify`: the command stored in a KB entry’s verification field. KB entries are written by agents and by ' +
-      '`forge adopt`, so the text can be model-authored',
-    checks:
-      'a timeout and a truncated output; runs in the LIVE project tree with the whole parent environment; no grant, no ' +
-      'denylist, no scrub. DISCLOSED, not fixed by P28 (Q222): a stored command should pass the same vet as a proposed one',
-    status: 'open',
-  },
 };
 
 /** A line that starts a shell or a process: `shell: true` (or any `shell:` option that names a shell), a
@@ -217,15 +206,12 @@ describe('shell sinks (PLAN-M13.md P28)', () => {
     expect(stale).toEqual([]);
   });
 
-  it('the untrusted-source sinks that P28 leaves open are exactly the ones the Q entry discloses', () => {
+  it('no sink is left open: M14 P28 closed the two rows M13 P28 disclosed (kb.ts, adopt/verification.ts)', () => {
     const open = Object.entries(INVENTORY)
       .filter(([, sink]) => sink.status === 'open')
       .map(([file]) => file)
       .sort();
-    expect(open).toEqual([
-      'packages/cli/src/commands/kb.ts',
-      'packages/engine/src/adopt/verification.ts',
-    ]);
+    expect(open).toEqual([]);
   });
 
   it('the model-proposed path is the only one with the confined status, and its runner is the RCA shell', async () => {

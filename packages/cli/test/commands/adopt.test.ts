@@ -84,7 +84,7 @@ async function seedFixtureRepo(dir: string): Promise<void> {
 }
 
 function ctxFor(dir: string): AdoptContext {
-  return { paths: new ProjectPaths(dir) };
+  return { paths: new ProjectPaths(dir), env: process.env };
 }
 
 describe('adopt — the real, end-to-end standard-depth pipeline', () => {

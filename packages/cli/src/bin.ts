@@ -2060,7 +2060,13 @@ const KB_SUBCOMMANDS = [
 
 async function buildKbContext(paths: ProjectPaths): Promise<KbCommandContext> {
   const config = await readConfig(paths);
-  return { paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: config.project.level };
+  return {
+    paths,
+    kbRoot: KB_ROOT,
+    specsRoot: SPECS_ROOT,
+    level: config.project.level,
+    env: realEnvSnapshot(),
+  };
 }
 
 const KB_GRAPH_FLAGS = { '--hops': true } as const;
@@ -2225,7 +2231,11 @@ async function runKbCommand(
     // in this command is.
     const findings = sanitizeDeep(await kbVerify(ctx));
     const failing = findings.filter(
-      (f) => f.outcome === 'fail' || f.outcome === 'timeout' || f.outcome === 'error',
+      (f) =>
+        f.outcome === 'fail' ||
+        f.outcome === 'timeout' ||
+        f.outcome === 'error' ||
+        f.outcome === 'refused',
     );
     console.log(
       json

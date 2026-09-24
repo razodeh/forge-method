@@ -35,7 +35,7 @@ import {
 afterEach(cleanupAll);
 
 function ctx(project: TestProject): KbCommandContext {
-  return { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1' };
+  return { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1', env: {} };
 }
 
 describe('kbList / kbShow', () => {

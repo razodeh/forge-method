@@ -93,6 +93,7 @@ describe('E1 init', () => {
       kbRoot: config.paths.kb,
       specsRoot: config.paths.specs,
       level: config.project.level,
+      env: {},
     });
     expect(kbLintCheck.ok).toBe(true);
     const specGraphCheck = await checkSpecGraph({

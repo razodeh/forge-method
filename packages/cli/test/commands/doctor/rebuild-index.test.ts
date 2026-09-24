@@ -36,7 +36,7 @@ describe('runDoctor({ rebuildIndex: true })', () => {
     expect(report.v).toBe(1);
 
     const hits = await kbSearch(
-      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1' },
+      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1', env: {} },
       'Fixture knowledge entry',
     );
     expect(hits.some((hit) => hit.id === 'KB-ARCH-0001')).toBe(true);
@@ -65,7 +65,7 @@ describe('runDoctor({ rebuildIndex: true })', () => {
     expect(report.v).toBe(1);
 
     const hits = await kbSearch(
-      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1' },
+      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1', env: {} },
       'Fixture knowledge entry',
     );
     expect(hits.some((hit) => hit.id === 'KB-ARCH-0001')).toBe(true);

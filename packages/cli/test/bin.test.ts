@@ -2101,6 +2101,24 @@ describe('forge kb (real subprocess dispatch, PLAN-M12.md P4)', () => {
     expect(verifyParsed.findings[0]?.outcome).toBe('pass');
   });
 
+  it('exits non-zero for `forge kb verify` when a stored command is refused, not merely skipped (PLAN-M14.md P28)', async () => {
+    const dir = await realProject();
+    // `git push` reaches a remote under the `network: none` a stored command is vetted at
+    // (`vetStoredCommand`) -- refused before it ever runs, real real-subprocess dispatch end to end
+    // through the actual CLI composition root (`buildKbContext`'s own `realEnvSnapshot()`).
+    await writeKbEntryFixture(dir);
+    const entryPath = path.join(dir, 'docs/forge/kb/architecture/KB-ARCH-0001.md');
+    const entryText = await readFile(entryPath, 'utf8');
+    await writeFile(entryPath, entryText.replace('Command: `true`', 'Command: `git push`'));
+    const verify = run(['kb', 'verify', '--json', '-C', dir]);
+    expect(verify.status).not.toBe(0);
+    const verifyParsed = JSON.parse(verify.stdout) as {
+      readonly findings: readonly { readonly outcome: string; readonly detail: string }[];
+    };
+    expect(verifyParsed.findings[0]?.outcome).toBe('refused');
+    expect(verifyParsed.findings[0]?.detail).toMatch(/^refused \(/);
+  });
+
   it('exits non-zero for `forge kb show` with an unknown id (real KB-015)', async () => {
     const dir = await realProject();
     const result = run(['kb', 'show', 'KB-NOPE', '-C', dir]);

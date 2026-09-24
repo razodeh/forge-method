@@ -6,10 +6,14 @@
  * @see specs/17 §17.4
  * @see specs/17 §17.6
  */
-import { execa } from 'execa';
-
 import { ForgeError } from '@forge/core/errors';
 import type { ProjectPaths } from '@forge/core/fs';
+import {
+  PROPOSED_ENV_FIXED,
+  runConfinedCommand,
+  STORED_COMMAND_LIMITS,
+  vetStoredCommand,
+} from '@forge/engine/dispatch';
 import {
   extractVerificationCommand,
   lintKb,
@@ -38,6 +42,11 @@ export interface KbCommandContext {
    * "now," and this project's own determinism discipline (`QUALITY-BAR.md` R10) forbids reading it
    * ambiently. Defaults to the real time for real callers. */
   readonly now?: Date;
+  /** The real process environment a stored `## Verification` command is confined to
+   * (`runStoredVerificationCommand`'s own doc comment, `PLAN-M14.md` P28) — required, injected rather
+   * than read ambiently here (R10): `bin.ts`'s own `buildKbContext` is the one real caller allowed to
+   * read `process.env`, via `realEnvSnapshot()`. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 export async function loadLintSpecArtifacts(ctx: KbCommandContext): Promise<LintKbSpecArtifacts> {
@@ -170,7 +179,7 @@ export async function kbGraph(
   }
 }
 
-export type KbVerifyOutcome = 'pass' | 'fail' | 'timeout' | 'error' | 'skipped';
+export type KbVerifyOutcome = 'pass' | 'fail' | 'timeout' | 'error' | 'skipped' | 'refused';
 
 export interface KbVerifyFinding {
   readonly id: string;
@@ -179,11 +188,6 @@ export interface KbVerifyFinding {
   readonly outcome: KbVerifyOutcome;
   readonly detail: string;
 }
-
-/** Conservative, same order of magnitude as `@forge/engine/adopt`'s own `DEFAULT_BUILD_TIMEOUT_MS`/
- * `DEFAULT_TEST_TIMEOUT_MS` (`17` §17.2 phase 5) — this command has the identical "no spec-given
- * number for a stored command's own runtime budget" gap, resolved the same way. */
-const KB_VERIFY_TIMEOUT_MS = 300_000;
 
 function isKnowledgeEntry(
   entry: KbParsedEntry,
@@ -194,22 +198,42 @@ function isKnowledgeEntry(
 /** Runs `command` for real, in the live project's own current working tree (never a sandboxed clone —
  * unlike `forge adopt`'s own phase-5 VERIFICATION, this checks whether the code a developer already
  * has checked out still matches what a KB entry claims, not an isolated snapshot of it) and reports the
- * one real outcome. Mirrors `@forge/engine/adopt`'s own `runCommandCheck` (`17` §17.2 phase 5) for the
- * exit-code/timeout/signal handling — not shared, since that function's own sandbox-clone lifecycle
- * (`createSandboxClone`/`finally { rm(cloneDir) }`) does not apply here and `@forge/cli` has no
- * boundary-graph edge into `@forge/engine`'s internal, unexported helpers regardless. */
+ * one real outcome.
+ *
+ * The command is a real, stored KB entry's own text — written by an agent or by `forge adopt`
+ * (`kbVerify`'s own doc comment), so a hostile or simply careless entry cannot become an arbitrary shell
+ * command: it runs only after `vetStoredCommand` accepts it (the identical confinement `PLAN-M14.md`
+ * P28 gives `forge adopt`'s own detected build/test command, `@forge/engine/adopt/verification.ts`'s
+ * own `runCommandCheck`), then through `runConfinedCommand` (a scrubbed environment — `env`, never read
+ * ambiently here, R10 — closed stdin, the project root as cwd, a timeout and an output cap). A refused
+ * command never runs at all: reported as `outcome: 'refused'`, never `fail` (it disproved nothing) and
+ * never silently skipped (it is real, actionable drift in what the entry claims can even run), with a
+ * detail that starts `refused (<reason>)` and a remedy: move the command into a script the `##
+ * Verification` section names instead. */
 async function runStoredVerificationCommand(
   id: string,
   path: string,
   command: string,
   cwd: string,
+  env: Readonly<Record<string, string | undefined>>,
 ): Promise<KbVerifyFinding> {
   try {
-    const result = await execa(command, {
-      cwd,
-      shell: true,
-      reject: false,
-      timeout: KB_VERIFY_TIMEOUT_MS,
+    const refusal = await vetStoredCommand(command, cwd);
+    if (refusal !== undefined) {
+      return {
+        id,
+        path,
+        command,
+        outcome: 'refused',
+        detail:
+          `refused (${refusal.reason}): ${refusal.detail} Put the command in a script this ` +
+          'entry can name instead (a package.json script, a shell script committed to the repo).',
+      };
+    }
+    const result = await runConfinedCommand(command, cwd, {
+      limits: STORED_COMMAND_LIMITS,
+      parentEnv: env,
+      extraEnv: PROPOSED_ENV_FIXED,
     });
     if (result.timedOut) {
       return {
@@ -217,7 +241,7 @@ async function runStoredVerificationCommand(
         path,
         command,
         outcome: 'timeout',
-        detail: `"${command}" did not finish within ${String(KB_VERIFY_TIMEOUT_MS)}ms and was killed.`,
+        detail: `"${command}" did not finish within ${String(STORED_COMMAND_LIMITS.timeoutMs)}ms and was killed.`,
       };
     }
     if (result.exitCode === 0) {
@@ -227,16 +251,12 @@ async function runStoredVerificationCommand(
     // command's own output can run to many kilobytes, and the fact that it failed (plus enough output
     // to act on) matters more here than every byte of it.
     const output = (result.stderr || result.stdout).slice(0, 2000);
-    const exitDescription =
-      result.exitCode === undefined
-        ? `was terminated by signal ${result.signal ?? 'unknown'}`
-        : `exited ${String(result.exitCode)}`;
     return {
       id,
       path,
       command,
       outcome: 'fail',
-      detail: `"${command}" ${exitDescription}: ${output}`,
+      detail: `"${command}" exited ${String(result.exitCode)}: ${output}`,
     };
   } catch (cause) {
     return {
@@ -267,18 +287,18 @@ async function runStoredVerificationCommand(
  *
  * **Trust model, considered directly, not overlooked.** `command` ultimately traces back (via
  * RECONSTRUCTION, `PLAN-M10.md` P18) to a `package.json` `scripts.build`/`scripts.test` entry the
- * *target repository itself* wrote, and this function runs it unsandboxed. That is not a new class of
- * risk this command introduces: `@forge/engine/dispatch/shell.ts`'s own `runShellCommand` already runs
- * every gate check's own `run:` field and every `execution.testCommands` entry the identical way —
- * `execa(command, { cwd, shell: true })`, no sandbox, directly in the live project tree — because once
- * a codebase is *your own* FORGE project (adopted or not), running its own configured build/test
- * commands in its own working tree is the established norm this entire codebase already uses
- * everywhere else a project's own command runs post-onboarding; sandboxing exists specifically for
- * VERIFICATION's own onboarding-time scan of a repository nobody has decided to adopt yet
- * (`SPEC-QUESTIONS.md` Q159's own sandbox-clone rationale), not for a project you already run
- * `npm test`/`npm run build` against directly yourself. A hostile `package.json` script is a risk
- * `npm run build` itself already carries the moment a human runs it — this command does not create a
- * materially new attack surface, only automates a check a human could already run by hand.
+ * *target repository itself* wrote, or to whatever an agent typed into the entry's own `##
+ * Verification` section — so it is not confined the way a session's own `exec` grant confines a live
+ * model turn. `PLAN-M14.md` P28 closes the gap that left open before it: `runStoredVerificationCommand`
+ * (above) now runs `command` through the identical confinement a model-proposed command is held to
+ * (`vetStoredCommand`, `runConfinedCommand`, `@forge/engine/dispatch/confined-command.ts`) rather than
+ * straight to a shell with the whole parent environment — this does not run in a sandboxed clone the
+ * way `forge adopt`'s own onboarding-time VERIFICATION does (`SPEC-QUESTIONS.md` Q159's own sandbox-
+ * clone rationale is for a repository nobody has decided to adopt yet, not a project you already run
+ * `npm test`/`npm run build` against directly yourself), but it is no longer unvetted: a chained, network-
+ * reaching or secret-reading command is refused, never run, and the child that does run sees a scrubbed
+ * environment. Still disclosed, not fixed by this piece (Q222): a refused command's own remaining
+ * exec allowlist still lets a granted test runner run whatever project code it runs.
  */
 export async function kbVerify(ctx: KbCommandContext): Promise<readonly KbVerifyFinding[]> {
   const tree = await parseKbTree(ctx.paths, ctx.kbRoot);
@@ -303,7 +323,7 @@ export async function kbVerify(ctx: KbCommandContext): Promise<readonly KbVerify
       continue;
     }
     findings.push(
-      await runStoredVerificationCommand(entry.value.id, entry.path, command, projectRoot),
+      await runStoredVerificationCommand(entry.value.id, entry.path, command, projectRoot, ctx.env),
     );
   }
   return findings;

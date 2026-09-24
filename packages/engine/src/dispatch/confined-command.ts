@@ -28,11 +28,17 @@
  * policy can refuse a `curl` but not a script that opens a socket. The scrubbed environment is what keeps secrets
  * out of the child, and it is real; the rest lowers the odds and records the attempt. The remainder is in Q222.
  *
+ * `PLAN-M14.md` P28 adds `vetStoredCommand`/`STORED_COMMAND_LIMITS`: the identical confinement for a STORED
+ * command — `forge kb verify`'s own `## Verification` command and `forge adopt` phase 5's detected build/test
+ * command — which until this piece ran through `execa(command, { shell: true })` with the whole parent
+ * environment and no vet at all (`test/shell-sinks-inventory.test.ts`'s own `open` rows).
+ *
  * @see specs/20 §20.1
  * @see specs/20 §20.4
  * @see specs/20 §20.10
  * @see SPEC-QUESTIONS.md Q222
  * @see PLAN-M13.md P28
+ * @see PLAN-M14.md P28
  */
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -1060,6 +1066,33 @@ export async function vetProposedCommand(
   return undefined;
 }
 
+/**
+ * Whether a STORED command — one a KB entry's own `## Verification` section names (`forge kb verify`,
+ * `PLAN-M14.md` P28) or `forge adopt`'s own phase-5 detected build/test command, never a live model
+ * turn — may run at `root`. Composed from the two checks a proposed command is already held to, in
+ * order: `vetConfiguredCommand` (the syntax stage, then the network, package-manager, git and argument
+ * stages under `network: none`, the identical vet `execution.testCommands` is held to before a pattern
+ * is derived from it), then `vetProposedCommand` with a grant of EXACTLY the one command asked for
+ * (`exec: [command]`) — nothing wider, since a stored command has no exec pattern of its own to be one
+ * of, and this is what additionally runs the path-containment stage (secret files, `.git/` internals, a
+ * `..` escape) `vetConfiguredCommand` alone does not. `undefined` means it may run; otherwise the first
+ * refusal, from whichever stage found it.
+ *
+ * Neither stage is loosened for this caller: `test/shell-sinks-inventory.test.ts`'s own mutation
+ * evidence is that skipping the first stage here — reusing only `vetProposedCommand` — would silently
+ * let an `sh -c "..."`/`npx <package>` stored command through (`vetConfiguredCommand`'s own
+ * `configuredProgramRefusal` is the only stage that refuses either shape; `vetProposedCommand`'s own
+ * `model`-package-rule stage does not).
+ */
+export async function vetStoredCommand(
+  command: string,
+  root: string,
+): Promise<CommandRefusal | undefined> {
+  const configured = vetConfiguredCommand(command);
+  if (configured !== undefined) return configured;
+  return vetProposedCommand(command, { exec: [command], network: 'none' }, root);
+}
+
 /** Bounds on one confined command. */
 export interface ConfinedLimits {
   readonly timeoutMs: number;
@@ -1070,6 +1103,15 @@ export interface ConfinedLimits {
 export const PROPOSED_COMMAND_LIMITS: ConfinedLimits = {
   timeoutMs: 120_000,
   maxOutputBytes: 1_000_000,
+};
+
+/** A STORED command (`vetStoredCommand`'s own doc comment) is a project's own build or test run, not a
+ * short reproduction: generous enough for a real suite, capped well short of `ENGINE_COMMAND_LIMITS`
+ * (FORGE's own lane commands) since this runs code the project — or, for `forge adopt`, a repository
+ * nobody has decided to adopt yet — wrote, not FORGE's own controlled loop. */
+export const STORED_COMMAND_LIMITS: ConfinedLimits = {
+  timeoutMs: 300_000,
+  maxOutputBytes: 8_000_000,
 };
 
 /** FORGE's own commands in the lane (`forge test run`, the revert check) run the project's tests, which take

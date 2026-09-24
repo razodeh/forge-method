@@ -83,6 +83,7 @@ describe('checkKbLint', () => {
       kbRoot: KB_ROOT,
       specsRoot: SPECS_ROOT,
       level: project.config.project.level,
+      env: {},
     });
     expect(result.ok).toBe(true);
   });
@@ -123,6 +124,7 @@ Confirmed directly against the real system.
       kbRoot: KB_ROOT,
       specsRoot: SPECS_ROOT,
       level: project.config.project.level,
+      env: {},
     });
     expect(result.ok).toBe(false);
     expect(result.severity).toBe('hard');

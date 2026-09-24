@@ -177,7 +177,7 @@ describe('corrupt-state/ (21 E10)', () => {
 
     // The search index is a real, working index again too — not merely reported clean.
     const hits = await kbSearch(
-      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1' },
+      { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L1', env: {} },
       'Fixture knowledge entry',
     );
     expect(hits.some((hit) => hit.id === 'KB-ARCH-0001')).toBe(true);

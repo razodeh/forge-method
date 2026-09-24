@@ -154,7 +154,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
     { id: 'manifest-structure', promise: checkManifest(paths) },
     {
       id: 'kb-lint',
-      promise: checkKbLint({ paths, kbRoot, specsRoot, level: config.project.level }),
+      promise: checkKbLint({ paths, kbRoot, specsRoot, level: config.project.level, env }),
     },
     {
       id: 'spec-graph',
@@ -190,7 +190,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
 }
 
 export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
-  const { paths, projectRoot, config, fix, rebuildIndex } = options;
+  const { paths, projectRoot, config, fix, rebuildIndex, env } = options;
 
   // Never allowed to throw out of `runDoctor` — every one of `runChecks`'s own checks already
   // degrades a genuine crash into its own single failed `DoctorCheck` rather than aborting the whole
@@ -207,6 +207,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorReport> {
         kbRoot: config.paths.kb,
         specsRoot: config.paths.specs,
         level: config.project.level,
+        env,
       });
     } catch (cause: unknown) {
       rebuildIndexFailure = {

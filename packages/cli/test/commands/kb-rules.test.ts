@@ -25,7 +25,7 @@ const FIXTURE_KB = fileURLToPath(
 );
 
 function ctx(project: TestProject): KbCommandContext {
-  return { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L2' };
+  return { paths: project.paths, kbRoot: KB_ROOT, specsRoot: SPECS_ROOT, level: 'L2', env: {} };
 }
 
 async function fixtureProject(): Promise<TestProject> {

@@ -100,7 +100,17 @@ export {
   type ReserveIdsParams,
   type ScanTarget,
 } from './output-ids.ts';
-export { commandWords } from './confined-command.ts';
+export {
+  commandWords,
+  PROPOSED_ENV_FIXED,
+  runConfinedCommand,
+  STORED_COMMAND_LIMITS,
+  vetStoredCommand,
+  type CommandRefusal,
+  type CommandRefusalReason,
+  type ConfinedCommandResult,
+  type ConfinedLimits,
+} from './confined-command.ts';
 export {
   expandTrustedInvocation,
   isTestPath,

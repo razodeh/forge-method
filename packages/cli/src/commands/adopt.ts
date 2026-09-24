@@ -111,6 +111,14 @@ export interface AdoptOptions {
 export interface AdoptContext {
   readonly paths: ProjectPaths;
   readonly clock?: Clock;
+  /** The real process environment VERIFICATION's own detected build/test command is confined to
+   * (`runVerificationPhase`'s own `VerificationPhaseInput.env`, `PLAN-M14.md` P28) — required, matching
+   * `KbCommandContext.env`'s own "no ambient read here" rule (R10): `forge adopt` has no real CLI
+   * composition root yet (`bin.ts` does not dispatch it), so there is no single place to default this
+   * the way `buildKbContext` defaults `KbCommandContext.env` from `realEnvSnapshot()` for `forge kb
+   * verify` — a caller that wires `forge adopt` into the CLI supplies a real snapshot the identical way;
+   * a test supplies its own synthetic one. */
+  readonly env: Readonly<Record<string, string | undefined>>;
   readonly kbRoot?: string;
   readonly owner?: string;
   /** See this file's own top-of-file "CARTOGRAPHY/INFERENCE dispatch scope note." Defaults to an
@@ -433,6 +441,7 @@ export async function adopt(
         cartographyFindings: cartography.findings,
         inferenceFindings: inference.findings,
         clock,
+        env: ctx.env,
       });
 
   const reconstruction = await writeReconstruction(
@@ -591,6 +600,7 @@ export async function baselineDiff(
         cartographyFindings: [],
         inferenceFindings: [],
         clock,
+        env: ctx.env,
       });
   const gapAnalysis = analyzeGaps({
     survey: surveyResult.survey,
@@ -679,6 +689,7 @@ export async function adoptIncremental(
           cartographyFindings: [],
           inferenceFindings: [],
           clock,
+          env: ctx.env,
         });
     const gapAnalysis = analyzeGaps({
       survey: surveyResult.survey,

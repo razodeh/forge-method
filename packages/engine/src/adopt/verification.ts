@@ -64,6 +64,13 @@ import {
 import { errorMessage } from '@forge/vcs';
 import { execa } from 'execa';
 
+import {
+  PROPOSED_ENV_FIXED,
+  runConfinedCommand,
+  STORED_COMMAND_LIMITS,
+  vetStoredCommand,
+} from '../dispatch/confined-command.ts';
+
 /** Conservative defaults for a target repository this codebase has never seen before and cannot presume
  * anything about the scale of — `17` §17.2 gives no numbers for this budget, the identical spec-silence
  * shape `@forge/engine/adopt/analysis-node.ts`'s own `ANALYSIS_LIMITS` already resolves for a CARTOGRAPHY/
@@ -172,6 +179,16 @@ async function createSandboxClone(sourceRoot: string): Promise<string> {
  * Runs one real command (`npm run build`/`npm test`, or whatever `detectCommands` found) in a clean,
  * isolated clone of `sourceRoot`, with a real timeout, and reports the result as a `RawVerificationCheck`
  * — never throwing, per this file's own module doc comment.
+ *
+ * The command was DERIVED FROM THE TARGET REPOSITORY (`package.json`, a CI config file) — text a third
+ * party wrote, not FORGE's own — so it runs through the identical confinement `PLAN-M14.md` P28 gives a
+ * model-proposed command: `vetStoredCommand` (the syntax/network/package-manager/git/argument/path-
+ * containment stages, rooted at the sandbox clone, so a path-escape check contains the command to the
+ * clone rather than `sourceRoot` itself), then `runConfinedCommand` (the scrubbed environment — `env`,
+ * never read ambiently here, R10 — closed stdin, the clone as cwd, a timeout and an output cap). A
+ * refused command never runs at all: reported as `inconclusive`, per this file's own "failures are
+ * findings, not blockers" rule, with a detail that starts `refused (<reason>)` so a caller can tell a
+ * genuine drift finding from a command this repository's own text could not be trusted to run.
  */
 async function runCommandCheck(
   kind: 'build' | 'test',
@@ -179,6 +196,7 @@ async function runCommandCheck(
   command: string,
   timeoutMs: number,
   clock: Clock,
+  env: Readonly<Record<string, string | undefined>>,
 ): Promise<RawVerificationCheck> {
   const subject: VerificationSubject = {
     origin: 'repository',
@@ -200,11 +218,22 @@ async function runCommandCheck(
   }
 
   try {
-    const result = await execa(command, {
-      cwd: cloneDir,
-      shell: true,
-      reject: false,
-      timeout: timeoutMs,
+    const refusal = await vetStoredCommand(command, cloneDir);
+    if (refusal !== undefined) {
+      return {
+        kind,
+        subject,
+        outcome: 'inconclusive',
+        detail: `refused (${refusal.reason}): ${refusal.detail}`,
+        command,
+        measuredAt: clock.now(),
+      };
+    }
+
+    const result = await runConfinedCommand(command, cloneDir, {
+      limits: { timeoutMs, maxOutputBytes: STORED_COMMAND_LIMITS.maxOutputBytes },
+      parentEnv: env,
+      extraEnv: PROPOSED_ENV_FIXED,
     });
 
     if (result.timedOut) {
@@ -232,23 +261,11 @@ async function runCommandCheck(
     // TypeScript error dump, a stack trace per failing test) -- the fact that it failed, and enough of
     // the output to act on, matters far more here than every byte of it.
     const output = (result.stderr || result.stdout).slice(0, 2000);
-    // `result.exitCode` is `undefined` (not `0`, not any other number) when the process was terminated
-    // by a signal rather than exiting normally on its own -- with `shell: true` this is uncommon (the
-    // wrapping shell itself usually reports a real numeric exit status even for a signal-killed child)
-    // but real: a signal sent directly to the shell process itself (an OOM killer, `kill -9 $$` inside
-    // the command) leaves `exitCode` unset with `result.signal` populated instead. A gauntlet critic
-    // found the original version collapsed this into a fabricated "exited 1", discarding the one piece
-    // of information (which signal) that actually explains what happened -- reported honestly here
-    // instead, never guessed at as an ordinary exit code.
-    const exitDescription =
-      result.exitCode === undefined
-        ? `was terminated by signal ${result.signal ?? 'unknown'}`
-        : `exited ${String(result.exitCode)}`;
     return {
       kind,
       subject,
       outcome: 'fail',
-      detail: `"${command}" ${exitDescription}: ${output}`,
+      detail: `"${command}" exited ${String(result.exitCode)}: ${output}`,
       command,
       measuredAt: clock.now(),
     };
@@ -269,21 +286,26 @@ async function runCommandCheck(
 /** Runs the real, mandatory build and test checks (`17` §17.2 phase 5: "running the build and the test
  * suite is mandatory"), skipping either one this repository has no detected command for at all — an
  * absent command is not itself reported as a failed check (there is nothing to run), a disclosed,
- * intentional gap rather than a fabricated result. */
+ * intentional gap rather than a fabricated result.
+ *
+ * `env` is the real process environment the confined command is scrubbed FROM (`runCommandCheck`'s own
+ * doc comment) — required, and never read ambiently here (R10): the one real caller allowed to read
+ * `process.env` is the CLI composition root that calls this. */
 export async function runBuildAndTestChecks(
   sourceRoot: string,
   survey: Survey,
   clock: Clock,
+  env: Readonly<Record<string, string | undefined>>,
   buildTimeoutMs: number = DEFAULT_BUILD_TIMEOUT_MS,
   testTimeoutMs: number = DEFAULT_TEST_TIMEOUT_MS,
 ): Promise<readonly RawVerificationCheck[]> {
   const { build, test } = await detectCommands(sourceRoot, survey);
   const checks: RawVerificationCheck[] = [];
   if (build !== undefined) {
-    checks.push(await runCommandCheck('build', sourceRoot, build, buildTimeoutMs, clock));
+    checks.push(await runCommandCheck('build', sourceRoot, build, buildTimeoutMs, clock, env));
   }
   if (test !== undefined) {
-    checks.push(await runCommandCheck('test', sourceRoot, test, testTimeoutMs, clock));
+    checks.push(await runCommandCheck('test', sourceRoot, test, testTimeoutMs, clock, env));
   }
   return checks;
 }
@@ -298,6 +320,9 @@ export interface VerificationPhaseInput {
   readonly cartographyFindings: readonly CartographyFinding[];
   readonly inferenceFindings: readonly InferenceFinding[];
   readonly clock: Clock;
+  /** The real process environment a detected build/test command is confined to (`runCommandCheck`'s own
+   * doc comment, `PLAN-M14.md` P28) — required, injected rather than read ambiently here (R10). */
+  readonly env: Readonly<Record<string, string | undefined>>;
   readonly buildTimeoutMs?: number;
   readonly testTimeoutMs?: number;
 }
@@ -346,6 +371,7 @@ export async function runVerificationPhase(
     input.sourceRoot,
     input.survey,
     input.clock,
+    input.env,
     input.buildTimeoutMs,
     input.testTimeoutMs,
   );
