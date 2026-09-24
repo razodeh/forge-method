@@ -150,6 +150,26 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/** The outcome of one `restoreReviewedLane` attempt: what was found dirty, and whether the reset itself
+ * is actually trustworthy. Kept as two separate signals rather than one, because a critic round found
+ * collapsing them loses real information a caller needs: `resetLane` can itself fail (a stale git lock,
+ * a permissions error) independently of whether `changedFiles` could list what was dirty, and a caller
+ * reporting "restored" when the reset call actually threw would be reporting something that never
+ * happened. */
+interface ReviewedLaneRestoreOutcome {
+  /** Paths dirty before the reset attempt (`[]` when the lane was already clean); `undefined` only when
+   * they could not even be listed (the worktree itself is gone, or some other real I/O failure) -- the
+   * same fail-closed "cannot tell, so do not claim clean" stance the pre-existing guard's own
+   * `.catch(() => true)` already took for the identical uncertainty (`hasChanges`'s own doc comment). A
+   * caller must fail closed on `undefined` here exactly as that guard did, not read the absence of a
+   * proven dirty list as proof of a clean one. */
+  readonly dirtyPaths: readonly string[] | undefined;
+  /** Whether `resetLane` itself completed without throwing. `false` means the lane's actual state after
+   * this call is NOT confirmed -- whatever `dirtyPaths` says, a caller must not report the lane as
+   * restored, only that a reset was attempted. */
+  readonly resetOk: boolean;
+}
+
 /**
  * `PLAN-M14.md` P36: restores `reviewedLane` to `reviewedRevision` after the perspectives ran, on every
  * path the caller can be on -- not only the "every perspective ended ok" success path the pre-existing
@@ -160,47 +180,86 @@ function messageOf(cause: unknown): string {
  * dirty lane and failed the identical way forever.
  *
  * `resetLane` (`git reset --hard` + `git clean -fd`, ignored files untouched, `types.ts`'s own doc comment)
- * is called unconditionally here, not only after first confirming dirt: it is a no-op on an already-clean
+ * is attempted unconditionally here, not only after first confirming dirt: it is a no-op on an already-clean
  * lane, and that is what makes calling it from one place, on every path, simpler and safer than trying to
  * skip it exactly when it is not needed. `changedFiles` is read FIRST, before the reset, purely so a
  * caller can name what was restored (a failure message, an audit trail) -- reading it after the reset
- * would report nothing was ever there.
- *
- * Returns the paths that were dirty before the reset (`[]` when the lane was already clean); `undefined`
- * only when they could not even be listed (the worktree itself is gone, or some other real I/O failure) --
- * the same fail-closed "cannot tell, so do not claim clean" stance the pre-existing guard's own
- * `.catch(() => true)` already took. The reset itself is best-effort (its own failure never masks
- * whatever the caller was already about to report, e.g. a thrown adapter error this same call is racing
- * to restore behind): a lane this cannot actually clean is Q226 (f)'s own remaining, disclosed gap, not a
- * new failure mode this function invents.
+ * would report nothing was ever there. Its own failure is caught here (not left to propagate) so it never
+ * masks whatever the caller was already about to report -- e.g. a thrown adapter error this same call is
+ * racing to restore behind -- but it is caught into `resetOk`, not silently discarded: a caller must read
+ * it, not assume a caught failure means success. A lane this cannot actually clean is Q226 (f)'s own
+ * remaining, disclosed gap, not a new failure mode this function invents.
  */
 async function restoreReviewedLane(
   ctx: ExecuteStepContext,
   reviewedLane: LaneHandle,
   reviewedRevision: string,
-): Promise<readonly string[] | undefined> {
+): Promise<ReviewedLaneRestoreOutcome> {
   const dirtyPaths = await ctx.vcs
     .changedFiles(reviewedLane, reviewedRevision)
     .then((changed) => [...changed.committed, ...changed.uncommitted])
     .catch(() => undefined);
-  await ctx.vcs.resetLane(reviewedLane, reviewedRevision).catch(() => undefined);
-  return dirtyPaths;
+  const resetOk = await ctx.vcs
+    .resetLane(reviewedLane, reviewedRevision)
+    .then(() => true)
+    .catch(() => false);
+  return { dirtyPaths, resetOk };
 }
 
-/** The adapter-failure message (the `dispatchAgentStep` call itself threw) with a note naming whatever
- * `restoreReviewedLane` found and put back, so a reader is told the same thing the success-path `RUN-083`
+/** Whether the caller-visible outcome above must be treated as "the lane may still hold an unreviewed
+ * change" -- known dirty, OR genuinely unknown (fail closed on `dirtyPaths === undefined`, the identical
+ * stance the pre-existing guard's own `.catch(() => true)` already took), OR the reset itself did not
+ * provably succeed (so even a `dirtyPaths: []` read from before the attempt is not trustworthy proof the
+ * lane is clean now). Only `dirtyPaths: []` AND `resetOk: true` together prove the lane is genuinely, now,
+ * clean at `reviewedRevision`. */
+function reviewedLaneNeedsAttention(outcome: ReviewedLaneRestoreOutcome): boolean {
+  return outcome.dirtyPaths === undefined || outcome.dirtyPaths.length > 0 || !outcome.resetOk;
+}
+
+/** Describes what `restoreReviewedLane` actually found and did, honestly: never claims "restored" when
+ * `resetOk` is `false`, and never claims the lane was clean when `dirtyPaths` could not even be listed. */
+function describeRestoreOutcome(
+  reviewedLane: LaneHandle,
+  { dirtyPaths, resetOk }: ReviewedLaneRestoreOutcome,
+): string {
+  if (dirtyPaths === undefined) {
+    return resetOk
+      ? `whether a review perspective left the lane under review (${reviewedLane.path}) dirty could not be confirmed, though a reset of it to its reviewed revision was attempted`
+      : `whether a review perspective left the lane under review (${reviewedLane.path}) dirty could not be confirmed, and resetting it also failed -- inspect it directly before reusing it`;
+  }
+  if (dirtyPaths.length === 0) {
+    // Only reachable with `resetOk: false` -- both callers (the adapter-failure note and the success-path
+    // `reviewedLaneNeedsAttention` check) skip this function entirely for a known-empty `dirtyPaths` paired
+    // with a confirmed-ok reset, the one combination that proves the lane is genuinely clean. This is the
+    // rarer case: nothing was ever found dirty, but the reset attempt itself still failed -- worth
+    // disclosing even though there was nothing to restore.
+    return `resetting the lane under review (${reviewedLane.path}) to its reviewed revision failed, though nothing was found dirty there`;
+  }
+  return resetOk
+    ? `a review perspective also left the lane under review (${reviewedLane.path}) dirty before this failure; restored: ${dirtyPaths.join(', ')}`
+    : `a review perspective also left the lane under review (${reviewedLane.path}) dirty before this failure (${dirtyPaths.join(', ')}), and resetting it back also failed -- inspect it directly before reusing it`;
+}
+
+/** The adapter-failure message (the `dispatchAgentStep` call itself threw) with a note describing whatever
+ * `restoreReviewedLane` found and did, so a reader is told the same thing the success-path `RUN-083`
  * failure already says explicitly, instead of the restore happening silently underneath a message that
  * only describes the original throw. Unchanged when there was nothing to restore (no reviewed lane, or a
- * lane that was already clean): the ordinary adapter failure message, exactly as before this piece. */
+ * lane that was confirmed already clean and confirmed reset): the ordinary adapter failure message,
+ * exactly as before this piece. */
 function restoreFailureNote(
   message: string,
   reviewedLane: LaneHandle | undefined,
-  restoredPaths: readonly string[] | undefined,
+  restoreOutcome: ReviewedLaneRestoreOutcome | undefined,
 ): string {
-  if (reviewedLane === undefined || restoredPaths === undefined || restoredPaths.length === 0) {
+  if (reviewedLane === undefined || restoreOutcome === undefined) return message;
+  if (
+    restoreOutcome.dirtyPaths !== undefined &&
+    restoreOutcome.dirtyPaths.length === 0 &&
+    restoreOutcome.resetOk
+  ) {
     return message;
   }
-  return `${message} -- a review perspective also left the lane under review (${reviewedLane.path}) dirty before this failure; restored: ${restoredPaths.join(', ')}`;
+  return `${message} -- ${describeRestoreOutcome(reviewedLane, restoreOutcome)}`;
 }
 
 /** A `swarm-review` step declares its perspectives; an empty list would be an empty review, not a clean one. */
@@ -423,11 +482,12 @@ export async function runSwarmReviewStep(
 
   let interaction: InteractionOutcome;
   let agentId: string;
-  // `PLAN-M14.md` P36: whatever `restoreReviewedLane` found and put back, from the `finally` below --
-  // read after the try/catch to decide the success-path `RUN-083` failure, and inside the `catch` to
-  // annotate an adapter failure with what was restored. Initialised (not merely declared) so every read
-  // of it, on every path, is of a real value rather than one only some paths assign.
-  let restoredPaths: readonly string[] | undefined = undefined;
+  // `PLAN-M14.md` P36: whatever `restoreReviewedLane` found and did, from the `finally` below -- read
+  // after the try/catch to decide the success-path `RUN-083` failure, and inside the `catch` to annotate
+  // an adapter failure with what happened. Initialised (not merely declared) so every read of it, on
+  // every path, is of a real value rather than one only some paths assign. `undefined` only when there
+  // was never a reviewed lane to restore in the first place (no unmerged predecessor).
+  let restoreOutcome: ReviewedLaneRestoreOutcome | undefined = undefined;
   try {
     const agent = await ctx.assembly.loadAgent(String(node.agent));
     agentId = agent.id;
@@ -460,7 +520,7 @@ export async function runSwarmReviewStep(
       // `reviewedLane === undefined` (no unmerged predecessor the review is stacked on) leaves this
       // `undefined`: there is no predecessor lane of its own to restore.
       if (reviewedLane !== undefined) {
-        restoredPaths = await restoreReviewedLane(ctx, reviewedLane, reviewedRevision);
+        restoreOutcome = await restoreReviewedLane(ctx, reviewedLane, reviewedRevision);
       }
     }
   } catch (cause) {
@@ -479,17 +539,18 @@ export async function runSwarmReviewStep(
     return failed(node, startedAt, ctx.now(), emptyDetail, {
       source: 'adapter',
       code: isForgeError(cause) ? cause.code : undefined,
-      message: restoreFailureNote(message, reviewedLane, restoredPaths),
+      message: restoreFailureNote(message, reviewedLane, restoreOutcome),
     });
   }
 
   // The perspectives are read-only, but they ran inside a lane a merge will land: a change left in it would be
-  // carried into the integration branch under the implementer's step, unreviewed. `restoreReviewedLane`
-  // (above, in the `finally`) already put the lane back to `reviewedRevision` by this point -- what is
-  // checked here is only whether there was ever anything to restore, so the step still fails (typed
-  // `RUN-083`, not silently accepted) while the lane itself is already clean for the retry this failure's
-  // own message points at, rather than staying dirty and failing the identical way again.
-  if (reviewedLane !== undefined && restoredPaths !== undefined && restoredPaths.length > 0) {
+  // carried into the integration branch under the implementer's step, unreviewed. `restoreReviewedLane` (above,
+  // in the `finally`) already attempted to put the lane back to `reviewedRevision` by this point --
+  // `reviewedLaneNeedsAttention` is fail-closed the identical way the pre-existing guard's own
+  // `.catch(() => true)` was: known dirty, OR unknown (could not even be listed), OR the reset attempt itself
+  // did not provably succeed, all fail the step here (typed `RUN-083`, never silently accepted) rather than
+  // trusting an unconfirmed-clean lane. Only a lane confirmed clean AND confirmed reset lets the step succeed.
+  if (reviewedLane !== undefined && restoreOutcome !== undefined && reviewedLaneNeedsAttention(restoreOutcome)) {
     return failed(
       node,
       startedAt,
@@ -497,7 +558,7 @@ export async function runSwarmReviewStep(
       emptyDetail,
       outputFailure(
         node,
-        `a review perspective changed the lane under review (${reviewedLane.path}); the perspectives are read-only, so the lane was reset to ${reviewedRevision} and nothing was recorded (restored: ${restoredPaths.join(', ')}) -- the same step can be re-run on the now-clean lane`,
+        `a review perspective changed the lane under review (${reviewedLane.path}); the perspectives are read-only, so nothing was recorded -- ${describeRestoreOutcome(reviewedLane, restoreOutcome)}`,
       ),
     );
   }
