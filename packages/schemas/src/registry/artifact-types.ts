@@ -221,3 +221,48 @@ const DEFINITION_BY_ID: Record<ArtifactTypeId, ArtifactTypeDefinition> = Object.
 export function definitionForType(id: ArtifactTypeId): ArtifactTypeDefinition {
   return DEFINITION_BY_ID[id];
 }
+
+/**
+ * `18` §18.7's own path-template section-root segments: the literal first-segment words a
+ * `pathTemplate` can open with (`outputs.ts`'s `sectionRoot` maps each to a project's configured
+ * `DocRoots` value; this module knows nothing of `DocRoots` and only ever compares the literal
+ * segment text). `'plans'` is included for symmetry with that same set even though no registry
+ * `pathTemplate` opens with it today.
+ */
+const SECTION_ROOTS: ReadonlySet<string> = new Set(['specs', 'kb', 'plans', 'sessions', 'reports']);
+
+/**
+ * `type`'s `pathTemplate` with every placeholder turned into a glob fragment (`{id}-{slug}`/`{id}` ->
+ * `<idPrefix>-*`, every other `{word}` -> `*`) and its leading section-root segment dropped -- UNLESS
+ * dropping it would leave nothing but a bare file name (no interior `/` at all), in which case the
+ * root stays. A path that reduces to a single remaining segment after its root (`HandoffRecord`'s
+ * `handoffs.md`, `Risk`'s `risks.md`, `Vision`'s `vision.md`, ...) needs that root literally present
+ * to remain a meaningful suffix to check a real declared path against -- a bare `handoffs.md` would
+ * match a file of that name anywhere. A path with an interior directory after its root (`ADR`'s
+ * `decisions/{id}-{slug}.md` -> `decisions/ADR-*.md`) does not need it: the interior segment already
+ * gives the suffix its own specificity, and dropping the root is what makes the result independent of
+ * which literal value a project configures for that section (`outputGlob`, `@forge/engine`, builds
+ * the real configured-root glob on top of this very tail).
+ *
+ * A section root that is itself a placeholder (`Diagram`'s `{section}/views/{slug}.mmd`) is never one
+ * of `SECTION_ROOTS`'s literal names, so it is never dropped either -- it becomes its own `*` segment
+ * instead, exactly like any other placeholder (`registryTail('Diagram')` starts with a `*` segment,
+ * then `views`, then `*.mmd`).
+ *
+ * Root-agnostic by construction: unlike `outputGlob`, this takes no `DocRoots` and can be (and is)
+ * called from `@forge/agents`'s load-time loader, which has no project configuration to consult.
+ *
+ * @see specs/18 §18.7
+ */
+export function registryTail(type: ArtifactTypeId): string {
+  const definition = definitionForType(type);
+  const segments = definition.pathTemplate.split('/');
+  const [first, ...rest] = segments;
+  const dropRoot = first !== undefined && SECTION_ROOTS.has(first) && rest.length > 1;
+  const tailSegments = dropRoot ? rest : segments;
+  return tailSegments
+    .join('/')
+    .replace('{id}-{slug}', `${definition.idPrefix}-*`)
+    .replace('{id}', `${definition.idPrefix}-*`)
+    .replace(/\{\w+\}/g, '*');
+}

@@ -6,6 +6,8 @@
  * @see PLAN-M6.md A1
  */
 import { readTextFile, type ProjectPaths } from '@forge/core';
+import { ARTIFACT_SCHEMAS } from '@forge/schemas/json-schema';
+import { artifactTypeById, registryTail } from '@forge/schemas/registry';
 import { parse as parseYaml } from 'yaml';
 
 import { agentDefinitionSchema } from './schema.ts';
@@ -101,8 +103,89 @@ function checkReviewRoleShape(agent: AgentDefinition): readonly AgentIssue[] {
   ];
 }
 
+/**
+ * `outputs[]` entries whose `type` is a core-registry type (`artifactTypeById`, `18` §18.7) but whose
+ * `schema`, `path` or `cardinality` disagrees with what the registry demands (`PLAN-M14.md` P33):
+ *
+ * - `schema` must be `ARTIFACT_SCHEMAS[type].fileStem + '.schema.json'` -- the emitted schema file for
+ *   that type (`json-schema/emit.ts`), never a hand-picked or copy-pasted name.
+ * - `path` must END WITH `registryTail(type)` (`@forge/schemas/registry`) AT A PATH-SEGMENT BOUNDARY
+ *   (`endsWithTail`, below; matching the tail itself, or preceded by `/`) -- the type's own path
+ *   template, placeholders turned into glob fragments, its literal section-root segment dropped where
+ *   that still leaves a specific suffix. Root-agnostic FOR THE 15 TYPES whose tail keeps no literal
+ *   root word (an interior directory already gives the suffix its own specificity, independent of
+ *   whichever value a project configures for that section): this loader has no project configuration
+ *   to resolve a configured root against (unlike `outputGlob`, `@forge/engine`, which builds the full
+ *   configured-root glob on top of the same tail), so it can only check that much of the path. For the
+ *   other 7 (`registryTail`'s own "bare file name" case -- `Vision`, `Risk`, `Assumption`,
+ *   `OpenQuestion`, `Waiver`, `SessionRecord`, `HandoffRecord`), the kept literal root word genuinely
+ *   IS the part a relocated `paths.<section>` changes, so this check is not actually root-agnostic for
+ *   those seven -- a path written against a relocated root that no longer literally ends in that
+ *   default word is refused here even though it may be exactly correct for the project's own
+ *   configuration (real enforcement, `outputGlob`, judges it correctly regardless; this load-time
+ *   check is a narrower, sometimes-too-strict proxy for those seven types only).
+ * - `cardinality` must be `'many'` exactly when that tail still carries a placeholder (a glob
+ *   fragment -- `*`, only ever produced by replacing one), and ABSENT otherwise. `'single'`
+ *   (`schema.ts`'s own enum) is never correct for a registry type either way: it satisfies neither
+ *   branch, so it is refused by this same rule without a separate case.
+ *
+ * The identical rule `test/agent-outputs-registry.test.ts` enforces against every shipped agent copy
+ * (there with a real `roots` and the full `outputGlob`, since it can); this is the load-time half, with
+ * no roots available, checked against every agent document as it loads rather than only the shipped
+ * ones. A type the core registry does not know (a module-registered type such as `ComponentSpec`, or
+ * the special-cased `Code`) is not checked here at all -- `artifactTypeById` returns `undefined` for
+ * it, and this file has no module registry loaded to check it against instead (`PLAN-M14.md` P33's own
+ * Discloses: "module-registered types... are not checked").
+ */
+function endsWithTail(path: string, tail: string): boolean {
+  // A plain `path.endsWith(tail)` would also accept a path whose directory merely ends in the same
+  // TEXT as `tail`'s own leading segment (`'old-decisions/ADR-*.md'.endsWith('decisions/ADR-*.md')` is
+  // `true` in plain JS) -- exactly the copy-pasted-or-mistyped-directory mistake this rule exists to
+  // catch. Requiring a `/` (or nothing at all) immediately before the match closes that gap.
+  return path === tail || path.endsWith(`/${tail}`);
+}
+
+function checkOutputsAgreeWithRegistry(agent: AgentDefinition): readonly AgentIssue[] {
+  const issues: AgentIssue[] = [];
+  agent.outputs.forEach((output, index) => {
+    const definition = artifactTypeById(output.type);
+    if (definition === undefined) return;
+
+    const expectedSchema = `${ARTIFACT_SCHEMAS[definition.id].fileStem}.schema.json`;
+    if (output.schema !== expectedSchema) {
+      issues.push({
+        path: `outputs[${String(index)}].schema`,
+        message: `"${output.type}" is a core registry type (18 §18.7); schema must be "${expectedSchema}", not "${output.schema}".`,
+      });
+    }
+
+    const tail = registryTail(definition.id);
+    if (!endsWithTail(output.path, tail)) {
+      issues.push({
+        path: `outputs[${String(index)}].path`,
+        message: `"${output.type}" is a core registry type (18 §18.7); path must end with "${tail}" at a path-segment boundary, not "${output.path}".`,
+      });
+    }
+
+    const wantCardinality = tail.includes('*') ? 'many' : undefined;
+    if (output.cardinality !== wantCardinality) {
+      issues.push({
+        path: `outputs[${String(index)}].cardinality`,
+        message: `"${output.type}" is a core registry type (18 §18.7); cardinality must be ${
+          wantCardinality === undefined ? 'absent' : `"${wantCardinality}"`
+        }, not ${output.cardinality === undefined ? 'absent' : `"${output.cardinality}"`}.`,
+      });
+    }
+  });
+  return issues;
+}
+
 function semanticIssues(agent: AgentDefinition): readonly AgentIssue[] {
-  return [...checkArchitectNeverApproves(agent), ...checkReviewRoleShape(agent)];
+  return [
+    ...checkArchitectNeverApproves(agent),
+    ...checkReviewRoleShape(agent),
+    ...checkOutputsAgreeWithRegistry(agent),
+  ];
 }
 
 /** Never throws: a YAML syntax error, a zod schema violation, and every `semanticIssues` finding all

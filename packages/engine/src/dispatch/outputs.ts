@@ -80,6 +80,7 @@ import {
   handoffRecordSchema,
   interfaceContractSchema,
   openQuestionsFileSchema,
+  registryTail,
   risksFileSchema,
   waiverSchema,
   type ArtifactTypeDefinition,
@@ -136,18 +137,23 @@ const MATCH_OPTIONS = { dot: true, nonegate: true, nocomment: true } as const;
  * (`specs`, `kb`, `sessions`, `reports`) is replaced by that root; a template that opens with a placeholder
  * (`Diagram`'s `{section}/views/...`) lives in the knowledge body. Roots are escaped, so a root with glob
  * characters matches literally instead of widening the match.
+ *
+ * Built on `registryTail` (`@forge/schemas`, `PLAN-M14.md` P33): that root-agnostic function already turns
+ * every placeholder into a glob fragment and drops the type's own literal section-root segment wherever
+ * doing so leaves a still-specific suffix (an interior directory), keeping it only where the template would
+ * otherwise reduce to a bare file name (`HandoffRecord`'s `handoffs.md`, `Risk`'s `risks.md`, ...). Either
+ * way, this function's own job is unchanged: substitute the project's CONFIGURED root for whichever literal
+ * section name the template opens with (or fall back to `roots.kb`, exactly as before, for a placeholder
+ * root) -- if `registryTail`'s own result still carries that literal name as its own leading segment, it is
+ * peeled off first so the configured root is not doubled; every existing result stays byte-identical.
  */
 export function outputGlob(type: ArtifactTypeId, roots: DocRoots): string {
   const definition = definitionForType(type);
-  const [first = '', ...rest] = definition.pathTemplate.split('/');
-  const named = sectionRoot(first, roots);
-  const root = normalizeRoot(named ?? roots.kb);
-  const tail = (named === undefined ? [first, ...rest] : rest)
-    .join('/')
-    .replace('{id}-{slug}', `${definition.idPrefix}-*`)
-    .replace('{id}', `${definition.idPrefix}-*`)
-    .replace(/\{\w+\}/g, '*');
-  return root === '' ? tail : `${escapeGlob(root, { magicalBraces: true })}/${tail}`;
+  const first = definition.pathTemplate.split('/')[0] ?? '';
+  const root = normalizeRoot(sectionRoot(first, roots) ?? roots.kb);
+  const tail = registryTail(type);
+  const relative = tail.startsWith(`${first}/`) ? tail.slice(first.length + 1) : tail;
+  return root === '' ? relative : `${escapeGlob(root, { magicalBraces: true })}/${relative}`;
 }
 
 /**

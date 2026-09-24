@@ -23,7 +23,7 @@ inputs:
 outputs:
   - type: Task
     schema: task.schema.json
-    path: docs/forge/specs/tasks/{id}.md
+    path: docs/forge/specs/tasks/TASK-*.md
     cardinality: many
 
 kb_write: []

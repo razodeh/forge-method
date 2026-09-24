@@ -152,6 +152,89 @@ describe('loadAgentDefinition', () => {
     const result = loadAgentDefinition(source, 'test-architect.agent.yaml');
     expect(result.success).toBe(true);
   });
+
+  describe('outputs[] agree with the artifact registry (PLAN-M14.md P33)', () => {
+    it('accepts the ADR output exactly as the 05 §5.3 worked example declares it (the registry form loads)', () => {
+      const result = loadAgentDefinition(ARCHITECT, 'architect.agent.yaml');
+      expect(result.success).toBe(true);
+    });
+
+    it('flags a registry-typed output naming the wrong schema, at outputs[i].schema', () => {
+      const source = ARCHITECT.replace('schema: adr.schema.json', 'schema: prd.schema.json');
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const issue = result.issues.find((i) => i.path === 'outputs[0].schema');
+      expect(issue, JSON.stringify(result.issues)).toBeDefined();
+      expect(issue?.message).toContain('adr.schema.json');
+    });
+
+    it('flags a registry-typed output whose path does not end with the registry tail, at outputs[i].path', () => {
+      const source = ARCHITECT.replace(
+        'path: docs/forge/kb/decisions/ADR-*.md',
+        'path: docs/forge/kb/adrs/ADR-*.md',
+      );
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const issue = result.issues.find((i) => i.path === 'outputs[0].path');
+      expect(issue, JSON.stringify(result.issues)).toBeDefined();
+      expect(issue?.message).toContain('decisions/ADR-*.md');
+    });
+
+    it('flags a path whose directory only TEXTUALLY ends in the tail\'s own leading word, at a path-segment boundary (a plain string endsWith would wrongly accept "old-decisions/ADR-*.md")', () => {
+      const source = ARCHITECT.replace(
+        'path: docs/forge/kb/decisions/ADR-*.md',
+        'path: docs/forge/kb/old-decisions/ADR-*.md',
+      );
+      expect('docs/forge/kb/old-decisions/ADR-*.md'.endsWith('decisions/ADR-*.md')).toBe(true); // the plain-endsWith trap this test guards against
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      expect(result.issues.some((i) => i.path === 'outputs[0].path')).toBe(true);
+    });
+
+    it('flags a registry-typed output with cardinality missing where the registry tail holds a placeholder, at outputs[i].cardinality', () => {
+      const source = ARCHITECT.replace(
+        '  - type: ADR\n    schema: adr.schema.json\n    path: docs/forge/kb/decisions/ADR-*.md\n    cardinality: many\n',
+        '  - type: ADR\n    schema: adr.schema.json\n    path: docs/forge/kb/decisions/ADR-*.md\n',
+      );
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const issue = result.issues.find((i) => i.path === 'outputs[0].cardinality');
+      expect(issue, JSON.stringify(result.issues)).toBeDefined();
+      expect(issue?.message).toContain('"many"');
+    });
+
+    it('flags a registry-typed output declaring cardinality: single -- never valid on a registry type', () => {
+      const source = ARCHITECT.replace('cardinality: many', 'cardinality: single');
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      expect(result.issues.some((i) => i.path === 'outputs[0].cardinality')).toBe(true);
+    });
+
+    it('flags a HandoffRecord output declaring cardinality: many -- its registry tail holds no placeholder', () => {
+      const source = ARCHITECT.replace(
+        '  - type: HandoffRecord\n    schema: handoff-record.schema.json\n    path: docs/forge/reports/handoffs.md\n',
+        '  - type: HandoffRecord\n    schema: handoff-record.schema.json\n    path: docs/forge/reports/handoffs.md\n    cardinality: many\n',
+      );
+      const result = loadAgentDefinition(source, 'architect.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const issue = result.issues.find((i) => i.path === 'outputs[4].cardinality');
+      expect(issue, JSON.stringify(result.issues)).toBeDefined();
+      expect(issue?.message).toContain('absent');
+    });
+
+    it('does not check an output type the core registry does not have (Code, ComponentSpec)', () => {
+      const codeSource = ARCHITECT.replace('type: ADR', 'type: Code');
+      expect(loadAgentDefinition(codeSource, 'architect.agent.yaml').success).toBe(true);
+      const componentSource = ARCHITECT.replace('type: ADR', 'type: ComponentSpec');
+      expect(loadAgentDefinition(componentSource, 'architect.agent.yaml').success).toBe(true);
+    });
+  });
 });
 
 describe('readAgentDefinition', () => {

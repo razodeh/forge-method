@@ -9,6 +9,7 @@ export {
   artifactTypeById,
   artifactTypeByPrefix,
   definitionForType,
+  registryTail,
   type ArtifactTypeDefinition,
   type ArtifactTypeId,
 } from './artifact-types.ts';

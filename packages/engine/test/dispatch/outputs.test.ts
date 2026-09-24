@@ -121,6 +121,25 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
     expect(outputGlob('GateReport', ROOTS)).toBe('docs/forge/reports/gates/*-*.md');
   });
 
+  // `PLAN-M14.md` P33: `outputGlob` is now built on `registryTail` (`@forge/schemas`); every result below
+  // was pinned BEFORE that refactor and stays byte-identical -- the remaining 13 registry types the assertion
+  // above did not already cover, so all 22 are pinned here between the two tests.
+  it('is byte-identical to before the registryTail refactor, for every registry type (P33)', () => {
+    expect(outputGlob('Capability', ROOTS)).toBe('docs/forge/specs/capabilities/CAP-*.md');
+    expect(outputGlob('NFR', ROOTS)).toBe('docs/forge/specs/nfr/NFR-*.md');
+    expect(outputGlob('Task', ROOTS)).toBe('docs/forge/specs/tasks/TASK-*.md');
+    expect(outputGlob('DataModel', ROOTS)).toBe('docs/forge/specs/data/DM-*.md');
+    expect(outputGlob('Diagram', ROOTS)).toBe('docs/forge/kb/*/views/*.mmd');
+    expect(outputGlob('Assumption', ROOTS)).toBe('docs/forge/kb/assumptions.md');
+    expect(outputGlob('OpenQuestion', ROOTS)).toBe('docs/forge/kb/open-questions.md');
+    expect(outputGlob('Waiver', ROOTS)).toBe('docs/forge/reports/waivers.md');
+    expect(outputGlob('RCA', ROOTS)).toBe('docs/forge/sessions/rca/RCA-*.md');
+    expect(outputGlob('Defect', ROOTS)).toBe('docs/forge/reports/defects/DEF-*.md');
+    expect(outputGlob('Environment', ROOTS)).toBe('docs/forge/kb/delivery/environments.md');
+    expect(outputGlob('Runbook', ROOTS)).toBe('docs/forge/kb/ops/runbooks/RUN-*.md');
+    expect(outputGlob('ReviewReport', ROOTS)).toBe('docs/forge/sessions/reviews/REVIEW-*.md');
+  });
+
   it('honours a project that relocated its docs (paths.specs etc.)', () => {
     expect(outputGlob('Epic', { ...ROOTS, specs: 'documentation/specs' })).toBe(
       'documentation/specs/epics/EPIC-*.md',

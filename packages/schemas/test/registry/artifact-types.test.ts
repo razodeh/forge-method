@@ -15,7 +15,9 @@ import {
   artifactTypeById,
   artifactTypeByPrefix,
   definitionForType,
+  registryTail,
   type ArtifactTypeDefinition,
+  type ArtifactTypeId,
 } from '../../src/registry/artifact-types.ts';
 
 /** `specs/18` §18.7's table, row for row, transcribed independently of the production source. */
@@ -245,6 +247,81 @@ describe('definitionForType', () => {
   it('returns a definite definition for every registered type, with no undefined case to guard', () => {
     for (const type of ARTIFACT_TYPES) {
       expect(definitionForType(type.id)).toEqual(type);
+    }
+  });
+});
+
+/**
+ * `registryTail` (`PLAN-M14.md` P33): `pathTemplate` with placeholders turned into glob fragments and
+ * its leading section-root segment (`specs`, `kb`, `sessions`, `reports`) dropped wherever an interior
+ * directory is left to keep the suffix specific -- kept, literally, where dropping it would leave a
+ * bare file name. Pinned for EVERY registered type (not merely a sample) so the refactor this piece
+ * makes to `outputGlob` (`@forge/engine`) has a full, independent ground truth to be built on top of;
+ * `packages/engine/test/dispatch/outputs.test.ts`'s own `outputGlob` table asserts the composed result
+ * (this tail plus a configured root) is unchanged for every one of these same 22 types.
+ */
+describe('registryTail (P33)', () => {
+  const EXPECTED: Readonly<Record<ArtifactTypeId, string>> = {
+    Vision: 'specs/vision.md',
+    Capability: 'capabilities/CAP-*.md',
+    NFR: 'nfr/NFR-*.md',
+    Epic: 'epics/EPIC-*.md',
+    Story: 'stories/STORY-*.md',
+    Task: 'tasks/TASK-*.md',
+    ADR: 'decisions/ADR-*.md',
+    InterfaceContract: 'interfaces/*.yaml',
+    DataModel: 'data/DM-*.md',
+    Diagram: '*/views/*.mmd',
+    Risk: 'kb/risks.md',
+    Assumption: 'kb/assumptions.md',
+    OpenQuestion: 'kb/open-questions.md',
+    Waiver: 'reports/waivers.md',
+    SessionRecord: 'sessions/SESSION-*.md',
+    RCA: 'rca/RCA-*.md',
+    Defect: 'defects/DEF-*.md',
+    Environment: 'delivery/environments.md',
+    Runbook: 'ops/runbooks/RUN-*.md',
+    GateReport: 'gates/*-*.md',
+    HandoffRecord: 'reports/handoffs.md',
+    ReviewReport: 'reviews/REVIEW-*.md',
+  };
+
+  it('enumerates every registered type (a floor against a vacuous pass)', () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual(ARTIFACT_TYPES.map((type) => type.id).sort());
+  });
+
+  it.each(ARTIFACT_TYPES.map((type) => [type.id, EXPECTED[type.id]] as const))(
+    'registryTail(%s) = %s',
+    (id, expected) => {
+      expect(registryTail(id)).toBe(expected);
+    },
+  );
+
+  it('drops the literal section root when an interior directory is left, keeps it for a bare file name', () => {
+    // The seven types whose pathTemplate is exactly "<root>/<file>" (no interior directory): the root
+    // stays, so the tail still opens with that literal segment. Every other type either has an
+    // interior directory after its root (dropped) or an unrecognised, placeholder root (Diagram,
+    // never eligible for dropping): none of those repeats its own literal root segment as the tail's
+    // leading segment.
+    const rootKept: ReadonlySet<ArtifactTypeId> = new Set([
+      'Vision',
+      'Risk',
+      'Assumption',
+      'OpenQuestion',
+      'Waiver',
+      'SessionRecord',
+      'HandoffRecord',
+    ]);
+    for (const type of ARTIFACT_TYPES) {
+      const first = type.pathTemplate.split('/')[0] ?? '';
+      expect(registryTail(type.id).startsWith(`${first}/`), type.id).toBe(rootKept.has(type.id));
+    }
+  });
+
+  it('cardinality-many types (a "*" in the tail) and cardinality-absent types match the pathTemplate placeholder', () => {
+    for (const type of ARTIFACT_TYPES) {
+      const hasPlaceholder = /\{\w+\}/.test(type.pathTemplate);
+      expect(registryTail(type.id).includes('*'), type.id).toBe(hasPlaceholder);
     }
   });
 });

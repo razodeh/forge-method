@@ -40,7 +40,7 @@ import { artifactTypeById } from '@forge/schemas/registry';
 import { GATE_INDEX, WORKFLOW_INDEX } from '@forge/templates';
 
 import { loadAgentDefinition } from '../packages/agents/src/schema/load.ts';
-import type { AgentDefinition } from '../packages/agents/src/schema/types.ts';
+import type { AgentDefinition, AgentOutput } from '../packages/agents/src/schema/types.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const modulesDir = path.join(repoRoot, 'modules');
@@ -371,6 +371,67 @@ describe('agent outputs[] agree with the artifact registry (P18, C1)', () => {
       const types = agent.outputs.map((output) => output.type);
       expect(new Set(types).size, `${module}/${agent.id}: ${types.join(', ')}`).toBe(types.length);
     }
+  });
+});
+
+/**
+ * `PLAN-M14.md` P33's own mutation-evidence requirement, run for real: `loadAgentDefinition`'s new
+ * load-time check (`checkOutputsAgreeWithRegistry`, `packages/agents/src/schema/load.ts`) must agree
+ * with this file's own, independently-computed `outputGlob`-based check above -- for EVERY shipped
+ * agent copy's EVERY registered-type output, mutating its `schema`, `path` or `cardinality` away from
+ * what the registry demands must make `loadAgentDefinition` fail it too, at the matching `outputs[i].
+ * <field>` issue path. Each copy already passes the strict check above (so its pre-mutation fields are
+ * known-correct), and is re-parsed from a fresh `YAML.stringify` of the mutated, already-validated
+ * `AgentDefinition` object rather than hand-edited YAML text -- robust to exactly how the file itself
+ * is formatted, and the same reload path `readAgentDefinition` uses on any real file.
+ */
+/** A structural clone of one `AgentOutput`, its `readonly` fields dropped for this test's own deliberate
+ * mutation -- `AgentDefinition`'s own types stay `readonly` everywhere else in this file. */
+type MutableOutput = { -readonly [K in keyof AgentOutput]: AgentOutput[K] };
+
+describe("the loader (PLAN-M14.md P33) independently agrees with this file's own check (mutation evidence)", () => {
+  it("mutating one registered output's schema, path or cardinality on any shipped agent copy makes the loader fail it too", () => {
+    const problems: string[] = [];
+    let mutationsChecked = 0;
+    for (const { module, agent } of copies) {
+      agent.outputs.forEach((output, index) => {
+        if (artifactTypeById(output.type) === undefined) return; // not a core registry type -- out of this rule's scope
+
+        const expect_ = (field: string, mutate: (output: MutableOutput) => void): void => {
+          const clone = structuredClone(agent);
+          mutate(clone.outputs[index] as unknown as MutableOutput);
+          mutationsChecked += 1;
+          const result = loadAgentDefinition(
+            YAML.stringify(clone),
+            `${module}/${agent.id}.mutated.yaml`,
+          );
+          const expectedPath = `outputs[${String(index)}].${field}`;
+          if (result.success) {
+            problems.push(
+              `${module}/${agent.id}: mutating ${expectedPath} (${output.type}) did not fail`,
+            );
+          } else if (!result.issues.some((issue) => issue.path === expectedPath)) {
+            problems.push(
+              `${module}/${agent.id}: mutating ${expectedPath} (${output.type}) failed for a different reason: ${JSON.stringify(result.issues)}`,
+            );
+          }
+        };
+
+        expect_('schema', (mutable) => {
+          mutable.schema = 'not-a-real.schema.json';
+        });
+        expect_('path', (mutable) => {
+          mutable.path = 'ZZZ-NOT-A-REAL-REGISTRY-PATH-FOR-MUTATION-TESTING.txt';
+        });
+        expect_('cardinality', (mutable) => {
+          mutable.cardinality = mutable.cardinality === 'many' ? undefined : 'many';
+        });
+      });
+    }
+    // A floor against a vacuous pass: every module's copies together declare well over 60 registered
+    // outputs, times three field mutations each.
+    expect(mutationsChecked).toBeGreaterThan(180);
+    expect(problems).toEqual([]);
   });
 });
 
