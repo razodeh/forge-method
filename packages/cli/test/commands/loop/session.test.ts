@@ -25,7 +25,7 @@ import {
   type SessionType,
   type StartSessionOptions,
 } from '../../../src/commands/loop/session.ts';
-import { cleanupAll, createTestProject } from './helpers.ts';
+import { cleanupAll, createTestProject, writeFixtureTechnique } from './helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -120,6 +120,37 @@ describe('startSession', () => {
     });
     expect(result.record?.question).toContain('postgres');
     expect(result.record?.question).toContain('mongo');
+  });
+
+  it('tradeoff runs CONVERGE as a real steel-man debate when .forge/techniques/steel-man-debate.technique.yaml is materialised (PLAN-M14.md P29)', async () => {
+    const project = await createTestProject();
+    await writeFixtureTechnique(project.dir, 'steel-man-debate', {
+      bestFor: 'Contested decisions',
+      phase: 'converge',
+    });
+
+    const result = await startSession(sessionDeps(project), 'tradeoff', {
+      question: 'Postgres or Mongo?',
+      options: ['postgres', 'mongo'],
+    });
+
+    // `16` §16.5's own `technique` field names every real technique this session actually used --
+    // populated only when CONVERGE genuinely ran as `debate`, never for an ordinary panel round.
+    expect(result.record?.technique).toContain('steel-man-debate');
+    expect(result.outcome.notes).toBeUndefined();
+  });
+
+  it('tradeoff falls back to ordinary panel mode, with a visible note, when no technique is materialised', async () => {
+    const project = await createTestProject();
+    // No .forge/techniques/ at all -- createTestProject writes none by default.
+
+    const result = await startSession(sessionDeps(project), 'tradeoff', {
+      question: 'Postgres or Mongo?',
+      options: ['postgres', 'mongo'],
+    });
+
+    expect(result.record?.technique).not.toContain('steel-man-debate');
+    expect(result.outcome.notes?.some((note) => note.includes('steel-man-debate'))).toBe(true);
   });
 
   it('--roles overrides the real per-type participant roster', async () => {

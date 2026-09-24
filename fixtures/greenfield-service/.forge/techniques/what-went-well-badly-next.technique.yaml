@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=ec525215c5f63abbcdcf7d580af41e4ab7f31cf69c0c9b528b16f94c2b7dd9ce — edits will be overwritten; use overrides/
+id: what-went-well-badly-next
+name: What went well / badly / next
+bestFor: A straightforward retro on a completed stage or incident
+phases: [retro]
+prompt: >
+  Reviewing the stage or incident named by the framed question: "{{question}}". List what genuinely
+  went well (not politeness fillers), what genuinely went badly, and what to do differently next time
+  for each badly-went item. Every "next" item must be concrete enough to become a real action with an
+  owner, not a vague intention.

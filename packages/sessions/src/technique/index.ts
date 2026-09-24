@@ -9,4 +9,9 @@ export {
   type Technique,
   type TechniquePhase,
 } from './schema.ts';
-export { listTechniques, loadTechnique } from './load.ts';
+export {
+  listTechniques,
+  loadTechnique,
+  listTechniquesInDir,
+  loadTechniqueFromDir,
+} from './load.ts';

@@ -47,6 +47,15 @@ export interface BuildRunContextInput {
   /** Project-relative directory of materialized agent definitions (`.forge/agents`), which prompt
    * assembly loads the dispatched agent from. Required: every real run dispatches agents. */
   readonly agentsRoot: string;
+  /** Project-relative directory of the materialised, flat technique library (`PLAN-M14.md` P29) a
+   * `tradeoff` session's CONVERGE reads its `steel-man-debate` technique from
+   * (`ExecuteStepContext.techniquesRoot`, `@forge/engine/interaction/session.ts`'s own
+   * `loadSteelManTechnique`). Optional, unlike `agentsRoot`: omitted, `buildRunEngineContext` below
+   * sets the one real, materialised location every `forge init` project actually has
+   * (`.forge/techniques`) — the same "a sensible literal default over an unconfigurable requirement"
+   * choice `docRoots` already makes, so `forge review`/`debug`/`session`/`panel` (this interface's own
+   * other real callers, none of which pass this) need no change to keep working. */
+  readonly techniquesRoot?: string | undefined;
   readonly clock?: Clock;
   /** Environment overlay for every command step, gate check and merge check the run spawns: a `PATH` whose
    * first entry holds a `forge` that re-launches this CLI (`launcher-shim.ts`). Absent: nothing is added. */
@@ -676,6 +685,11 @@ export async function buildRunEngineContext(
       sessions: input.config.paths.sessions,
       reports: input.config.paths.reports,
     },
+    // `PLAN-M14.md` P29: the one real, materialised location every `forge init` project actually has
+    // (`BuildRunContextInput.techniquesRoot`'s own doc comment above has the fuller reasoning) --
+    // always set, never left for `loadSteelManTechnique`'s own identical fallback default to supply,
+    // so every real `forge run`/`review`/`debug`/`session`/`panel` context names it explicitly.
+    techniquesRoot: input.techniquesRoot ?? '.forge/techniques',
     now,
     laneRegistry: new Map(),
     limits: concurrencyLimits(input.config),

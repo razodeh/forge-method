@@ -57,7 +57,7 @@ import {
   assembleSessionRecord,
   expressesDisagreement,
   isGenericNonObjection,
-  loadTechnique,
+  loadTechniqueFromDir,
   type DecideInput,
   type DivergeInput,
   type PhaseDirective,
@@ -407,8 +407,13 @@ function escapeTableCell(text: string): string {
 /** `16` §16.5's own canonical `## Frame`/`## Diverge`/`## Converge`/`## Decisions`/`## Non-decisions`/
  * `## Actions` body sections, rendered from the real `SessionState` this run actually produced -- the
  * literal transcript-plus-decisions content `16.1`'s own "a session that produces only a transcript
- * has failed" describes, not merely the front matter `SessionRecord` alone carries. */
-function renderSessionBody(state: SessionState): string {
+ * has failed" describes, not merely the front matter `SessionRecord` alone carries.
+ *
+ * `notes` (`PLAN-M14.md` P29): this run's own real, disclosed degrades (`sessionNotes`'s own doc
+ * comment, `runSessionStep`) -- rendered as the leading lines of `## Converge`, the one phase every
+ * note this piece produces is actually about; `[]` renders nothing extra, identical to this function's
+ * own behaviour before this piece. */
+function renderSessionBody(state: SessionState, notes: readonly string[] = []): string {
   const framing = state.framing;
   const frameSection = framing
     ? [
@@ -435,8 +440,9 @@ function renderSessionBody(state: SessionState): string {
   const objectionLines = state.objections.map(
     (objection) => `- objection (${objection.by}): ${escapeTableCell(objection.text)}`,
   );
+  const noteLines = notes.map((note) => `- note: ${escapeTableCell(note)}`);
   const convergeSection =
-    [...clusterLines, ...objectionLines].join('\n') || '(no clusters or objections)';
+    [...noteLines, ...clusterLines, ...objectionLines].join('\n') || '(no clusters or objections)';
 
   const decisionsSection =
     state.decisions
@@ -524,10 +530,11 @@ async function persistSessionRecord(
   ctx: ExecuteStepContext,
   record: SessionRecord,
   state: SessionState,
+  notes: readonly string[] = [],
 ): Promise<void> {
   const paths = new ProjectPaths(ctx.projectRoot);
   const target = paths.resolveWithin(`${SESSIONS_DIR}/${record.id}.md`);
-  const text = `---\n${YAML.stringify(record)}---\n\n${renderSessionBody(state)}`;
+  const text = `---\n${YAML.stringify(record)}---\n\n${renderSessionBody(state, notes)}`;
   await writeFileAtomic(target, text);
   await writeFileAtomic(sessionStatePath(paths, record.id), JSON.stringify(state));
 }
@@ -781,18 +788,39 @@ async function loadProjectAgentRegistry(
 const STEEL_MAN_SESSION_TYPES: ReadonlySet<SessionType> = new Set<SessionType>(['tradeoff']);
 const STEEL_MAN_TECHNIQUE_ID = 'steel-man-debate';
 
-/** The real, on-disk `steel-man-debate` technique for this project, or `undefined` when this project
- * has no module shipping it. Techniques are not materialised into a project the way agents are (no
- * `.forge/techniques`), so this still reads `<project>/modules/*\/techniques` and a fresh `forge init` project
- * has none: its `tradeoff` sessions run CONVERGE as ordinary panel mode (disclosed, Q215). CONVERGE degrades to ordinary `panel`
- * mode when this comes back `undefined` -- a real fallback, not a crash, over an optional
- * anti-groupthink enhancement this session step's own core anatomy does not depend on. */
+/** Where `.forge/techniques/` sits when a caller's own context leaves `ExecuteStepContext.
+ * techniquesRoot` unset -- the one real, materialised location `forge init`/`forge upgrade` write it
+ * (`PLAN-M14.md` P29, `write-tree.ts`), the identical "a sensible literal default over an
+ * unconfigurable requirement" choice `docRoots`'s own doc comment already makes. `buildRunEngineContext`
+ * (`@forge/cli/commands/run/context.ts`) sets this same literal explicitly for every real run; this is
+ * the fallback for a context built without going through it at all (a hand-built test fixture). */
+const DEFAULT_TECHNIQUES_ROOT = '.forge/techniques';
+
+/** The real, on-disk `steel-man-debate` technique for this project, from the flat, materialised
+ * `.forge/techniques/` directory (`PLAN-M14.md` P29) -- no longer `<project>/modules/*\/techniques`,
+ * which a real `forge init` project does not have (the identical `modules/`-is-shipped-content-only
+ * correction `loadProjectAgentRegistry`'s own doc comment above already made for the roster, Q215).
+ *
+ * `undefined` when this project's `.forge/techniques/` has no `steel-man-debate.technique.yaml` at all
+ * -- a fresh project that has not run `forge init`, or one whose materialised copy was deleted. CONVERGE
+ * degrades to ordinary `panel` mode when this comes back `undefined`: a real fallback, not a crash,
+ * over an optional anti-groupthink enhancement this session step's own core anatomy does not depend on
+ * -- but now VISIBLY (the caller records a note in both the returned `StepOutcome` and the persisted
+ * `SessionRecord`), where before this piece every load error, including a genuinely malformed file, was
+ * silently swallowed here.
+ *
+ * A malformed file, or one whose own `id` disagrees with its file name, is NOT swallowed: `RUN-065`
+ * propagates, marked as a real assembly-style refusal (`markRefusal`, the identical treatment
+ * `loadProjectAgentRegistry` already gives `RUN-056`/`RUN-034`) so it fails this one step
+ * (`execute.ts`'s own `case 'session':` catch folds a marked refusal into a failed `StepOutcome`)
+ * instead of crashing the whole run. */
 async function loadSteelManTechnique(ctx: ExecuteStepContext): Promise<Technique | undefined> {
+  const techniquesRoot = ctx.techniquesRoot ?? DEFAULT_TECHNIQUES_ROOT;
+  const dir = new ProjectPaths(ctx.projectRoot).resolveWithin(techniquesRoot);
   try {
-    const modulesDir = new ProjectPaths(ctx.projectRoot).resolveWithin('modules');
-    return await loadTechnique(modulesDir, STEEL_MAN_TECHNIQUE_ID);
-  } catch {
-    return undefined;
+    return await loadTechniqueFromDir(dir, STEEL_MAN_TECHNIQUE_ID);
+  } catch (cause) {
+    throw isForgeError(cause) ? markRefusal(cause) : cause;
   }
 }
 
@@ -1208,6 +1236,7 @@ function domainRefusalOutcome(
   startedAt: number,
   finishedAt: number,
   error: ForgeError,
+  notes: readonly string[] = [],
 ): SessionStepResult {
   return {
     outcome: {
@@ -1217,6 +1246,7 @@ function domainRefusalOutcome(
       finishedAt,
       detail: { kind: 'agent', session: NO_AGENT_SESSION },
       failure: { source: 'gate', code: error.code, message: error.message, cause: error },
+      ...(notes.length === 0 ? {} : { notes }),
     },
   };
 }
@@ -1328,6 +1358,12 @@ export async function runSessionStep(
   const trackCost = (session: SessionResult): void => {
     costUsd += estimateSessionCostUsd(session);
   };
+  /** `PLAN-M14.md` P29's own visible degrade: a real disclosure of a genuine fallback this session step
+   * took, surfaced in both the returned `StepOutcome.notes` and the persisted `SessionRecord`'s own
+   * `## Converge` body (`renderSessionBody`) -- never merely swallowed. Today the one real trigger is
+   * CONVERGE round 1 wanting the `steel-man-debate` technique (`STEEL_MAN_SESSION_TYPES`) and finding
+   * none under `.forge/techniques/`. */
+  const sessionNotes: string[] = [];
   /** `undefined` until a round-cap/cost/wall-clock bound genuinely fires; once set, DECIDE dispatches
    * nothing further (this file's own `runSessionStep` doc comment addendum below has the fuller
    * reasoning) and the record is assembled with `truncated_bound` naming it. Deliberately distinct
@@ -1551,10 +1587,20 @@ export async function runSessionStep(
         // two internal rounds both end in a generic non-objection) degrades to this loop's own ordinary
         // per-round panel retries from round 2 onward, the same path every other session type uses.
         const nonCriticRole = convergePerspectives.find((role) => role !== CRITIC_ROLE);
-        const steelManTechnique =
-          round === 1 && STEEL_MAN_SESSION_TYPES.has(sessionType)
-            ? await loadSteelManTechnique(ctx)
-            : undefined;
+        const wantsSteelMan = round === 1 && STEEL_MAN_SESSION_TYPES.has(sessionType);
+        const steelManTechnique = wantsSteelMan ? await loadSteelManTechnique(ctx) : undefined;
+        // `PLAN-M14.md` P29's own visible degrade (`sessionNotes`'s own doc comment above): a
+        // `tradeoff` session's round 1 genuinely wanted the real `steel-man-debate` technique and found
+        // none under `.forge/techniques/` -- recorded here, once, regardless of whether a real proposer
+        // agent is *also* missing (checked separately below): the missing technique is its own real,
+        // independently disclosable fact.
+        if (wantsSteelMan && steelManTechnique === undefined) {
+          sessionNotes.push(
+            `Technique ${JSON.stringify(STEEL_MAN_TECHNIQUE_ID)} not found under ` +
+              `${ctx.techniquesRoot ?? DEFAULT_TECHNIQUES_ROOT}; CONVERGE ran as ordinary panel ` +
+              'instead of steel-man debate.',
+          );
+        }
         // A fresh critic round found an earlier draft fell back to the neutral `facilitator` agent as
         // the debate's own proposer whenever `nonCriticRole` had no real, registered `AgentDefinition`,
         // then still labelled that facilitator-authored content as `nonCriticRole` in the record --
@@ -1721,7 +1767,20 @@ export async function runSessionStep(
       const advance = machine.advanceToDecide(state);
       state = advance.state;
       if (advance.directive.kind === 'converge-refused') {
-        return domainRefusalOutcome(node.id, startedAt, ctx.now(), advance.directive.error);
+        // `sessionNotes` threaded through here too (`PLAN-M14.md` P29): not known to be reachable
+        // through this loop's own round-by-round branching as it stands today (the identical "no
+        // critic, or critic objected" condition that would let `advanceToDecide` accept CONVERGE is
+        // exactly the condition this loop's own `break` above already requires before it ever calls
+        // `advanceToDecide` at all) -- kept defensive rather than assumed unreachable, since
+        // `advanceToDecide` is `@forge/sessions`' own general-purpose gate, not owned by this loop, and
+        // a future change to either side must not silently drop a real, already-computed note.
+        return domainRefusalOutcome(
+          node.id,
+          startedAt,
+          ctx.now(),
+          advance.directive.error,
+          sessionNotes,
+        );
       }
     }
   }
@@ -1910,7 +1969,7 @@ export async function runSessionStep(
           : { truncatedBound: ideaCapBound }
         : { truncatedBound }),
     });
-    await persistSessionRecord(ctx, assembled, state);
+    await persistSessionRecord(ctx, assembled, state, sessionNotes);
     return assembled;
   });
 
@@ -1921,6 +1980,7 @@ export async function runSessionStep(
     finishedAt,
     detail: { kind: 'agent', session: decideSession },
     ...(decideFailure === undefined ? {} : { failure: decideFailure }),
+    ...(sessionNotes.length === 0 ? {} : { notes: sessionNotes }),
   };
   return { outcome, record };
 }

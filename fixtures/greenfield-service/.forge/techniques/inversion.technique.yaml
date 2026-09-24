@@ -1,0 +1,9 @@
+# forge:generated v=0.0.0 hash=d57ccea4c32b25ffaa80f7d3b1d4b797df37908f708d3e0ebc15b027b08be074 — edits will be overwritten; use overrides/
+id: inversion
+name: Inversion
+bestFor: Finding hidden assumptions
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". First answer the inverted question: how would we deliberately make
+  this fail, or make it worse? Generate ideas for that inverted question without restraint. Then
+  invert each one back into a real idea for the original question, naming the assumption it exposes.

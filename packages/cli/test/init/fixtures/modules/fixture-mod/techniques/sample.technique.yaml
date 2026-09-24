@@ -1,0 +1,5 @@
+id: sample
+name: Sample technique
+bestFor: fixture testing
+phases: [diverge]
+prompt: Do the fixture technique's own thing.

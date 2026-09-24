@@ -1,0 +1,11 @@
+# forge:generated v=0.0.0 hash=e399a592636529207291b98caf7a8e7b5cf19cbf19b14bfc76ff7e2afa3120c6 — edits will be overwritten; use overrides/
+id: steel-man-debate
+name: Steel-man debate
+bestFor: Contested decisions
+phases: [converge]
+# `16` §16.7 point 3's own named anti-groupthink measure.
+prompt: >
+  For each of the two (or more) contested options, first state the strongest possible case for every
+  *other* option -- as convincingly as that option's own proponent would state it -- before stating
+  the case for your own preferred option. A case for an option that has not first steel-manned every
+  alternative is not admissible input to CONVERGE.

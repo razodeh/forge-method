@@ -25,6 +25,7 @@ export const CHECKS_ROOT = 'docs/forge/checks';
 export const SPECS_ROOT = 'docs/forge/specs';
 export const REPORTS_ROOT = 'docs/forge/reports';
 export const AGENTS_ROOT = '.forge/agents';
+export const TECHNIQUES_ROOT = '.forge/techniques';
 
 export const FIXTURE_STORY_ID = 'STORY-014';
 export const FIXTURE_OWNER_ROLE = 'engineer';
@@ -145,6 +146,26 @@ export async function writeFixtureAgent(
     path.join(dir, '.forge', 'prompts', `${id}.system.md`),
     `Fixture role instructions for ${id}.\n`,
   );
+}
+
+/** `PLAN-M14.md` P29: writes one real, schema-valid `.forge/techniques/<id>.technique.yaml` -- the
+ * flat, materialised layout `loadTechniqueFromDir` (`@forge/sessions`) reads. Not called by
+ * `createTestProject` below (a real project fixture with no techniques at all, matching most real
+ * `forge init` projects that have not run one yet): a test that wants CONVERGE's steel-man debate
+ * calls this itself, so every other test's own panel-mode assertions stay unaffected. */
+export async function writeFixtureTechnique(
+  dir: string,
+  id: string,
+  options: { readonly bestFor?: string; readonly phase?: string } = {},
+): Promise<void> {
+  await mkdir(path.join(dir, TECHNIQUES_ROOT), { recursive: true });
+  const yaml = `id: ${id}
+name: ${id}
+bestFor: ${options.bestFor ?? 'fixture testing'}
+phases: [${options.phase ?? 'converge'}]
+prompt: Fixture technique prompt for ${id}.
+`;
+  await writeFile(path.join(dir, TECHNIQUES_ROOT, `${id}.technique.yaml`), yaml);
 }
 
 /** `05` §5.8: every tier maps to the fake adapter's one model, so agent steps resolve a real model. */

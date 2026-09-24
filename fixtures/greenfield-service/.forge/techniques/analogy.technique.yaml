@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=007e99292840c6e3b86baa4f1d4f178e6a1e31fc670cf38343466ade46c73caf — edits will be overwritten; use overrides/
+id: analogy
+name: Analogy
+bestFor: Novel problems with mature analogues
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Name two or three domains outside software (or outside this
+  product's own domain) that have already solved a structurally similar problem at scale. For each,
+  state concretely how they solved it, then propose an idea that transplants that mechanism here,
+  naming what has to change to fit.

@@ -50,6 +50,8 @@ const GENERATED_DIRS = [
   'workflows',
   'briefs',
   'prompts',
+  // `PLAN-M14.md` P29: `.forge/techniques/`, the flat, materialised technique library.
+  'techniques',
 ] as const;
 
 function sortKeys(value: unknown): unknown {
@@ -112,6 +114,9 @@ describe('fixtures/greenfield-service/.forge is what forge init generates today 
   it('has the generated tree at all (a floor against a vacuous pass)', () => {
     expect(generated.length).toBeGreaterThan(100);
     expect(readdirSync(path.join(fixtureForge, 'agents')).length).toBeGreaterThanOrEqual(29);
+    // `PLAN-M14.md` P29: `16` §16.4's own 25 real technique files (`@forge/sessions/technique/load.ts`'s
+    // own header has the identical count and reasoning).
+    expect(readdirSync(path.join(fixtureForge, 'techniques')).length).toBe(25);
   });
 
   it('no generated file was hand-edited: each header hash matches its body', () => {
@@ -140,6 +145,31 @@ describe('fixtures/greenfield-service/.forge is what forge init generates today 
       if (JSON.stringify(sortKeys(fixture.agent)) !== JSON.stringify(sortKeys(shipped))) {
         problems.push(`${id}: differs from what forge init resolves from modules/*/agents`);
       }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('every fixture technique is the shipped modules/fm-core/techniques file, verbatim (its own generated header aside) (PLAN-M14.md P29)', () => {
+    const problems: string[] = [];
+    const files = readdirSync(path.join(fixtureForge, 'techniques')).filter((file) =>
+      file.endsWith('.technique.yaml'),
+    );
+    expect(files.length).toBe(25);
+    for (const file of files) {
+      const fixtureContent = readFileSync(path.join(fixtureForge, 'techniques', file), 'utf8');
+      // No front matter in a `.technique.yaml` file: the header is one prepended `# ...\n` line
+      // (`withGeneratedHeader`'s own doc comment, `@forge/cli/init`), so the real body starts right
+      // after the first newline.
+      const body = fixtureContent.slice(fixtureContent.indexOf('\n') + 1);
+      const shippedPath = path.join(repoRoot, 'modules', 'fm-core', 'techniques', file);
+      let shipped: string;
+      try {
+        shipped = readFileSync(shippedPath, 'utf8');
+      } catch {
+        problems.push(`${file}: no shipped modules/fm-core/techniques file`);
+        continue;
+      }
+      if (body !== shipped) problems.push(`${file}: differs from the shipped file`);
     }
     expect(problems).toEqual([]);
   });

@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=028fe8b36760cf6ae78199544d3b048da3566de982d3fd65f6e1d270099b3170 — edits will be overwritten; use overrides/
+id: constraint-addition
+name: Constraint addition
+bestFor: Forcing simplicity
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Add one brutal, artificial constraint (10x the current users,
+  one-tenth the current budget, no network access) and generate ideas that would still work under it.
+  Repeat with at least one more brutal constraint. The goal is simplicity the group would not have
+  found without the pressure, not literal compliance with the artificial constraint.

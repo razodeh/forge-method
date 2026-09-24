@@ -425,6 +425,19 @@ export interface ExecuteStepContext {
    * Omitted, such a lane is integrated with no checks (`PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226). */
   readonly mergeChecks?:
     { readonly pre?: string | undefined; readonly post?: string | undefined } | undefined;
+  /** Project-relative directory of the materialised, flat technique library `.forge/techniques/`
+   * (`PLAN-M14.md` P29, `forge init`/`forge upgrade`'s own `writeRegenerableContent`) --
+   * `@forge/engine/interaction/session.ts`'s own `loadSteelManTechnique` reads a `tradeoff` session's
+   * CONVERGE steel-man technique through it (`16` §16.7 point 3), via `@forge/sessions`'
+   * `loadTechniqueFromDir`. The same "a sensible literal default over an unconfigurable requirement"
+   * choice `docRoots` above already makes: omitted, `buildRunEngineContext` (`@forge/cli/commands/run/
+   * context.ts`) sets the one real, materialised location every `forge init` project actually has
+   * (`.forge/techniques`), and `loadSteelManTechnique` falls back to the identical literal for any
+   * context built without going through it at all (a hand-built test fixture). Never `<project>/
+   * modules/*\/techniques`, which a real `forge init` project does not have (the identical
+   * `modules/`-is-shipped-content-only correction `agentsRoot`'s own doc comment already made for the
+   * roster, Q215). */
+  readonly techniquesRoot?: string | undefined;
 }
 
 /** The `paths` config keys a `18` §18.7 artifact path template's first segment (`specs/...`, `kb/...`,
@@ -569,4 +582,14 @@ export interface StepOutcome {
    * `DeterministicCheckResult.reason?` stays a plain optional field rather than two full result shapes:
    * the marginal type-safety is not worth doubling every variant here. */
   readonly failure?: StepFailureInfo;
+  /** Human-readable notices about a real, disclosed degrade this step's own work took while still
+   * succeeding -- distinct from `failure` (the step did not fail) and from `detail` (kind-specific
+   * data, not prose a human reads). Only a `session`-kind step populates this today (`PLAN-M14.md` P29):
+   * a `tradeoff` session's CONVERGE running as ordinary panel instead of the real `steel-man-debate`
+   * technique because `.forge/techniques/steel-man-debate.technique.yaml` is absent (`16` §16.7 point
+   * 3) -- visibly, here and in the persisted `SessionRecord`'s own `## Converge` body
+   * (`renderSessionBody`, `@forge/engine/interaction/session.ts`), where the identical degrade used to
+   * be silent (every load error swallowed). Absent for every step with nothing to disclose, never an
+   * empty array standing in for "nothing happened." */
+  readonly notes?: readonly string[] | undefined;
 }

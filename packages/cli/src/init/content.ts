@@ -120,6 +120,61 @@ export async function readSkillFiles(): Promise<readonly ContentFile[]> {
   return walkSkills('');
 }
 
+/** Every real `*.technique.yaml` file directly inside `moduleDir`'s own `techniques/` subdirectory --
+ * `[]` if the module ships none at all (`19` §19.1's own module layout lists `techniques/` as one of
+ * several optional per-module content kinds). Mirrors `@forge/agents`' own `loadAgentRegistry`-internal
+ * `agentFilesIn` (identical shape, a different file suffix) -- no shared helper exists between the two
+ * packages for this, since neither has a boundary-graph edge to the other (`@forge/cli` depends on
+ * both, never the reverse). */
+async function techniqueFilesIn(moduleDir: AbsolutePath): Promise<readonly ContentFile[]> {
+  const techniquesDir = path.join(moduleDir, 'techniques') as AbsolutePath;
+  let entries;
+  try {
+    entries = await listDirEntriesSorted(techniquesDir);
+  } catch {
+    return [];
+  }
+  const files: ContentFile[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory || !entry.name.endsWith('.technique.yaml')) continue;
+    const content = await readTextFile(path.join(techniquesDir, entry.name) as AbsolutePath);
+    files.push({ relPath: entry.name, content });
+  }
+  return files;
+}
+
+/** Every real technique (`modules/<module>/techniques/*.technique.yaml`), copied verbatim into
+ * `.forge/techniques/` (`PLAN-M14.md` P29) -- unlike {@link readResolvedAgents}, a technique has no
+ * `extends` chain to resolve at all (`techniqueSchema`, `@forge/sessions`, declares no such field), so
+ * this reads each shipped file's own real bytes directly rather than parsing and re-serialising it
+ * (`YAML.stringify` would silently drop a shipped file's own comments --
+ * `steel-man-debate.technique.yaml`'s own `16` §16.7 point 3 citation, for one real example). The flat,
+ * one-file-per-id destination layout `loadTechniqueFromDir` (`@forge/sessions`) reads has no
+ * per-module subdirectory of its own, so a basename collision across two modules is checked here
+ * (`readIndexed`'s own identical guard, above) -- today only `fm-core` ships a `techniques/` directory
+ * at all, so this never fires yet, but a second module doing so would otherwise silently overwrite the
+ * first's file with no report at all. */
+export async function readTechniqueFiles(modulesDir: string): Promise<readonly ContentFile[]> {
+  const moduleEntries = await listDirEntriesSorted(modulesDir as AbsolutePath);
+  const files: ContentFile[] = [];
+  const seenBy = new Map<string, string>();
+  for (const moduleEntry of moduleEntries) {
+    if (!moduleEntry.isDirectory) continue;
+    const moduleDir = path.join(modulesDir, moduleEntry.name) as AbsolutePath;
+    for (const file of await techniqueFilesIn(moduleDir)) {
+      const collidesWith = seenBy.get(file.relPath);
+      if (collidesWith !== undefined) {
+        throw new Error(
+          `Basename collision writing regenerable content: "${moduleEntry.name}/techniques/${file.relPath}" and "${collidesWith}" both resolve to "${file.relPath}".`,
+        );
+      }
+      seenBy.set(file.relPath, `${moduleEntry.name}/techniques/${file.relPath}`);
+      files.push(file);
+    }
+  }
+  return [...files].sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+}
+
 /** Every real roster agent (`modules/<module>/agents/<id>.agent.yaml`), resolved through its own
  * `extends` chain — `.forge/agents/`'s own real content, standing in for real prompt compilation
  * (`@forge/agents` A5, not yet built) until that piece exists. See `SPEC-QUESTIONS.md` Q103. */

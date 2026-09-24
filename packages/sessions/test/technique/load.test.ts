@@ -13,10 +13,18 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { techniqueSchema } from '../../src/technique/schema.ts';
-import { listTechniques, loadTechnique } from '../../src/technique/load.ts';
+import {
+  listTechniques,
+  loadTechnique,
+  listTechniquesInDir,
+  loadTechniqueFromDir,
+} from '../../src/technique/load.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const realModulesDir = new ProjectPaths(repoRoot).resolveWithin('modules');
+
+const MINIMAL_TECHNIQUE = (id: string, phases: string): string =>
+  `id: ${id}\nname: ${id}\nbestFor: testing\nphases: [${phases}]\nprompt: do the thing\n`;
 
 // `16` §16.4's own three tables (12 divergent + 8 convergent) plus its own retro prose row (6 named
 // techniques, one of which -- five-whys -- is shared with the divergent table): 20 + 5 new = 25 real
@@ -87,10 +95,13 @@ describe('the real, shipped modules/fm-core/techniques/ library', () => {
     expect(retro.map((t) => t.id)).toContain('five-whys');
   });
 
-  it('rejects an unknown technique id with RUN-065', async () => {
-    await expect(loadTechnique(realModulesDir, 'not-a-real-technique')).rejects.toMatchObject({
-      code: 'RUN-065',
-    });
+  it('rejects an unknown technique id with RUN-065, naming modules/*/techniques/ -- the tree this call actually searched, never .forge/techniques (round-1 critic finding)', async () => {
+    const error: unknown = await loadTechnique(realModulesDir, 'not-a-real-technique').catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: 'RUN-065' });
+    expect((error as Error).message).toContain("any module's techniques/ directory");
+    expect((error as Error).message).not.toContain('.forge/techniques');
   });
 });
 
@@ -120,9 +131,6 @@ describe('loadTechnique/listTechniques against a fresh fixture tree', () => {
       },
     };
   }
-
-  const MINIMAL_TECHNIQUE = (id: string, phases: string): string =>
-    `id: ${id}\nname: ${id}\nbestFor: testing\nphases: [${phases}]\nprompt: do the thing\n`;
 
   it('reads techniques from more than one module, combined into one list', async () => {
     const { modulesDir, write } = freshModulesDir();
@@ -171,5 +179,84 @@ describe('loadTechnique/listTechniques against a fresh fixture tree', () => {
     const { modulesDir, write } = freshModulesDir();
     write('fm-core', 'a', MINIMAL_TECHNIQUE('a', 'diverge'));
     await expect(loadTechnique(modulesDir, 'nope')).rejects.toMatchObject({ code: 'RUN-065' });
+  });
+});
+
+describe('loadTechniqueFromDir/listTechniquesInDir -- the flat, one-per-project .forge/techniques/ layout (PLAN-M14.md P29)', () => {
+  let tmpRoot: string | undefined;
+
+  afterEach(() => {
+    if (tmpRoot !== undefined) rmSync(tmpRoot, { recursive: true, force: true });
+    tmpRoot = undefined;
+  });
+
+  function freshFlatDir(): {
+    dir: AbsolutePath;
+    write: (fileName: string, yaml: string) => void;
+  } {
+    const root = mkdtempSync(path.join(tmpdir(), 'forge-sessions-techniques-flat-'));
+    tmpRoot = root;
+    const dir = new ProjectPaths(root).resolveWithin('techniques');
+    mkdirSync(dir, { recursive: true });
+    return {
+      dir,
+      write: (fileName, yaml) => {
+        writeFileSync(path.join(dir, fileName), yaml);
+      },
+    };
+  }
+
+  it('loads every real technique file directly under the directory, no module subdirectory', async () => {
+    const { dir, write } = freshFlatDir();
+    write('a.technique.yaml', MINIMAL_TECHNIQUE('a', 'diverge'));
+    write('b.technique.yaml', MINIMAL_TECHNIQUE('b', 'converge'));
+    const techniques = await listTechniquesInDir(dir);
+    expect(techniques.map((t) => t.id).sort()).toEqual(['a', 'b']);
+  });
+
+  it('listTechniquesInDir(phase) filters like listTechniques', async () => {
+    const { dir, write } = freshFlatDir();
+    write('a.technique.yaml', MINIMAL_TECHNIQUE('a', 'diverge'));
+    write('b.technique.yaml', MINIMAL_TECHNIQUE('b', 'converge'));
+    expect((await listTechniquesInDir(dir, 'diverge')).map((t) => t.id)).toEqual(['a']);
+    expect((await listTechniquesInDir(dir, 'converge')).map((t) => t.id)).toEqual(['b']);
+  });
+
+  it('loadTechniqueFromDir resolves a technique by id', async () => {
+    const { dir, write } = freshFlatDir();
+    write('steel-man-debate.technique.yaml', MINIMAL_TECHNIQUE('steel-man-debate', 'converge'));
+    const technique = await loadTechniqueFromDir(dir, 'steel-man-debate');
+    expect(technique?.id).toBe('steel-man-debate');
+  });
+
+  it('an absent id returns undefined, not a throw -- the caller degrades to panel, visibly', async () => {
+    const { dir, write } = freshFlatDir();
+    write('a.technique.yaml', MINIMAL_TECHNIQUE('a', 'diverge'));
+    await expect(loadTechniqueFromDir(dir, 'steel-man-debate')).resolves.toBeUndefined();
+  });
+
+  it('an absent directory is an empty list / undefined for any id, not a throw', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'forge-sessions-techniques-flat-'));
+    tmpRoot = root;
+    const dir = new ProjectPaths(root).resolveWithin('no-such-techniques-dir');
+    await expect(listTechniquesInDir(dir)).resolves.toEqual([]);
+    await expect(loadTechniqueFromDir(dir, 'steel-man-debate')).resolves.toBeUndefined();
+  });
+
+  it('a malformed file throws ForgeError RUN-065 naming the real file path', async () => {
+    const { dir, write } = freshFlatDir();
+    write('broken.technique.yaml', 'id: broken\n');
+    const error = await listTechniquesInDir(dir).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'RUN-065' });
+    expect((error as { details?: { path?: string } }).details?.path).toContain(
+      'broken.technique.yaml',
+    );
+    await expect(loadTechniqueFromDir(dir, 'broken')).rejects.toMatchObject({ code: 'RUN-065' });
+  });
+
+  it('a file whose id disagrees with its file name is refused RUN-065 (it must not lend its content to another id)', async () => {
+    const { dir, write } = freshFlatDir();
+    write('a.technique.yaml', MINIMAL_TECHNIQUE('impostor', 'diverge'));
+    await expect(listTechniquesInDir(dir)).rejects.toMatchObject({ code: 'RUN-065' });
   });
 });

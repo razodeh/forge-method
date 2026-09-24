@@ -849,17 +849,32 @@ export const ERROR_CODES = {
       'non-empty reason before assembling its record.',
   },
   'RUN-065': {
-    // `@forge/sessions`'s own technique loader (`16` §16.4, `PLAN-M10.md` P9): a caller asked for a
-    // technique id no `modules/*/techniques/*.technique.yaml` file declares -- a real, ordinary
-    // caller-input error, distinct from a shipped technique file itself failing to parse (an
-    // authoring bug in this repo's own content, thrown as a plain `Error` the same way
-    // `loadAgentRegistry` already does for the identical distinction).
+    // `@forge/sessions`'s own technique loader (`16` §16.4, `PLAN-M10.md` P9, `PLAN-M14.md` P29). Two
+    // real, distinct triggers share this code, told apart by whether `issues` is set: (1) a caller
+    // asked for a technique id nothing registers (`loadTechnique(modulesDir, id)`, still kept for its
+    // own shipped-module-tree callers, searching `modules/*/techniques/`) -- ordinary caller input,
+    // `path`/`issues` absent; (2) the real, materialised-project flat-directory loader
+    // (`loadTechniqueFromDir`, `.forge/techniques/`) found a `<id>.technique.yaml` file that fails to
+    // parse/validate, or whose own `id` field disagrees with its file name (the identical id/filename
+    // check `RUN-056` already makes for `.forge/agents/`, `@forge/engine/dispatch/assembly-context.ts`)
+    // -- naming the real file path, the same optional-detail branch `BUD-002`'s own `spent` already
+    // uses. `loadTechniqueFromDir`'s own "id not found" case never reaches this branch at all -- it
+    // returns `undefined` so its one real caller (`loadSteelManTechnique`) can degrade to panel mode
+    // visibly instead (a round-1 critic finding: the `issues === undefined` branch's message must stay
+    // naming `modules/*/techniques/`, the only tree that trigger ever actually searches -- `.forge/
+    // techniques` would be a real, misleading claim about where the search happened). A shipped
+    // `modules/*/techniques/*.technique.yaml` file itself failing to parse is still an authoring bug in
+    // this repo's own content, thrown as a plain `Error` the same way `loadAgentRegistry` already does
+    // for the identical distinction -- unchanged by this piece.
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: { techniqueId: string }) =>
-      `No technique ${show(d.techniqueId)} is registered under any module's techniques/ directory.`,
+    message: (d: { techniqueId: string; path?: string; issues?: string }) =>
+      d.issues === undefined
+        ? `No technique ${show(d.techniqueId)} is registered under any module's techniques/ directory.`
+        : `The technique file ${show(d.path)} failed to load: ${show(d.issues)}.`,
     remedy:
-      'Check the technique id against modules/*/techniques/*.technique.yaml, or add a new one.',
+      'Check the technique id against modules/*/techniques/*.technique.yaml, or (for a materialised ' +
+      'project) .forge/techniques/<id>.technique.yaml -- run `forge upgrade` to regenerate it.',
   },
   'RUN-066': {
     // `@forge/sessions`'s own `assembleSessionRecord` (`16` §16.5, `PLAN-M10.md` P9): the assembled

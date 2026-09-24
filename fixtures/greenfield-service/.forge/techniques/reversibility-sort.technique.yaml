@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=21e63fdd3973b326555c9ac0d69a505602aa03e62265dd82597657c8d2f888ba — edits will be overwritten; use overrides/
+id: reversibility-sort
+name: Reversibility sort
+bestFor: Any decision batch
+phases: [converge]
+prompt: >
+  For each surviving cluster, classify it as a one-way door (expensive or impossible to reverse) or a
+  two-way door (cheap to reverse if wrong), stating what reversing it would actually cost. Decide
+  every two-way door quickly, with minimal debate; route one-way doors to a slower, more scrutinised
+  path (a `tradeoff` session, a weighted rubric) rather than deciding them at the same speed.

@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=4fa5c378ecc731f629dfadaa6ad0c7094b1b7cdbb3bf3fb10bcefa109eb8e187 — edits will be overwritten; use overrides/
+id: first-principles
+name: First-principles decomposition
+bestFor: Escaping an inherited design
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Ignore the current implementation entirely. List the fundamental
+  constraints that actually bind this problem (physics, budget, law, an NFR, a hard external
+  dependency) -- not conventions carried over from the existing design. Then propose ideas built back
+  up from only those real constraints, each one naming which fundamental constraint it respects.

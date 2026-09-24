@@ -1,0 +1,11 @@
+# forge:generated v=0.0.0 hash=37d9890bd8e8c49acd4d876d2d5fd4085c79408315337b2bcd98bc6ba169f9d9 — edits will be overwritten; use overrides/
+id: weighted-rubric
+name: Weighted rubric
+bestFor: Technical selection
+phases: [converge]
+# `11` §11.0's own decision-framework scoring model, applied here as a convergent technique.
+prompt: >
+  Define the real evaluation criteria for this decision and assign each a weight, all weights summing
+  to 1.0. Score every surviving option against each criterion on a fixed scale, state the reasoning
+  behind each score, and compute the weighted total. Do not let the total override a criterion the
+  group agrees is a hard blocker regardless of score.

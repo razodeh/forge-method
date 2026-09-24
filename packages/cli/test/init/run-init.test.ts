@@ -100,6 +100,17 @@ describe('runInit', () => {
     expect(readFileSync(agentPath, 'utf8')).toContain('id: tester');
   });
 
+  it('copies the fixture module’s one technique into .forge/techniques, with a real generated header (PLAN-M14.md P29)', async () => {
+    const dir = await tempDir();
+    await runInit(dir, BASE, deps());
+    const techniquePath = path.join(dir, '.forge/techniques/sample.technique.yaml');
+    expect(existsSync(techniquePath)).toBe(true);
+    const written = readFileSync(techniquePath, 'utf8');
+    expect(written.startsWith('# forge:generated v=')).toBe(true);
+    expect(written).toContain('hash=');
+    expect(written).toContain('id: sample');
+  });
+
   it('runs a real `git init` when none exists and --git-init is not explicitly disabled', async () => {
     const dir = await tempDir();
     await runInit(dir, BASE, deps());

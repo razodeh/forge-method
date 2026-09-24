@@ -363,4 +363,33 @@ describe('runUpgrade', () => {
       expect(await readFile(filePath, 'utf8')).toBe(edited);
     });
   });
+
+  describe('`.forge/techniques/` is a regenerable directory too (PLAN-M14.md P29)', () => {
+    const TECHNIQUE_REL_PATH = '.forge/techniques/sample.technique.yaml';
+
+    it('reports no drift for an unedited technique file, and take-theirs reports real drift for a hand-edited one', async () => {
+      const project = await createTestProject();
+      const unedited = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      const uneditedFile = unedited.regeneratedFiles?.find(
+        (file) => file.path === TECHNIQUE_REL_PATH,
+      );
+      expect(uneditedFile).toMatchObject({ generated: true });
+      expect(uneditedFile?.conflict).toBeUndefined();
+
+      const filePath = path.join(project.dir, TECHNIQUE_REL_PATH);
+      await writeFile(filePath, `${await readFile(filePath, 'utf8')}\n# hand-edited\n`);
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { onConflict: 'take-theirs' },
+        baseDeps(project),
+      );
+
+      const technique = report.regeneratedFiles?.find((file) => file.path === TECHNIQUE_REL_PATH);
+      expect(technique?.conflict).toBe('take-theirs');
+      expect(await readFile(filePath, 'utf8')).not.toContain('# hand-edited');
+      expect(await readFile(filePath, 'utf8')).toContain('id: sample');
+    });
+  });
 });

@@ -1,0 +1,11 @@
+# forge:generated v=0.0.0 hash=7767c8ca3473cec40a6b331a299ba02a45af7b4219507d28e5eb2886f3d2ad8b — edits will be overwritten; use overrides/
+id: data-driven
+name: Data-driven retro
+bestFor: A retro grounded in real run telemetry rather than recollection
+phases: [retro]
+# `16` §16.6's own named metric set for the mandatory stage retro.
+prompt: >
+  Pull the stage's own real numbers: velocity, cost per story, gate failure rates, flake rates,
+  rework ratio, and review finding counts by perspective. State what changed versus the previous
+  stage for each metric, and only draw a process-change conclusion from a metric that actually moved
+  -- a flat metric is evidence there is nothing to fix there, not a metric to theorise around.

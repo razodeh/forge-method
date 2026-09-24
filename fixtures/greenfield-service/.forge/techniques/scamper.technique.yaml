@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=2fba2a1cafa96998e1543bbd892ad263cc70926ac467802b60cf40fbc9f6bbd9 — edits will be overwritten; use overrides/
+id: scamper
+name: SCAMPER
+bestFor: Improving something that exists
+phases: [diverge]
+prompt: >
+  Framed question: "{{question}}". Walk the existing flow or feature through each SCAMPER lens in
+  turn -- Substitute, Combine, Adapt, Modify, Put to another use, Eliminate, Reverse -- and raise one
+  idea per lens that changes the current design under that lens. Do not evaluate or rank yet; every
+  idea is welcome, including ones that seem obviously wrong.

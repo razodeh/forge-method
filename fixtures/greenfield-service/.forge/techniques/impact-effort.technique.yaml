@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=81918daa72c5e845b2d4dd49bbe4973e696583ffa17b9d8b4ffa3a44f193c005 — edits will be overwritten; use overrides/
+id: impact-effort
+name: Impact/effort matrix
+bestFor: Prioritisation
+phases: [converge]
+prompt: >
+  For each surviving cluster, place it on a 2x2 grid by estimated impact (low/high) and estimated
+  effort (low/high), stating the concrete reasoning for each placement. Favour high-impact/low-effort
+  clusters first; flag any high-effort/low-impact cluster as a strong elimination candidate rather
+  than silently dropping it.

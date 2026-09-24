@@ -587,10 +587,11 @@ describe('runSessionStep — RUN-039 scoping', () => {
   });
 });
 
-/** A real, on-disk `modules/fm-core/techniques/steel-man-debate.technique.yaml` -- byte-for-byte the
- * same real, shipped content this repo's own `modules/fm-core/techniques/steel-man-debate.technique.
- * yaml` carries, so this test exercises the identical real technique `loadSteelManTechnique`
- * (`session.ts`) would load from a real project, not a synthetic stand-in with different content. */
+/** A real, on-disk `.forge/techniques/steel-man-debate.technique.yaml` -- byte-for-byte the same real,
+ * shipped content this repo's own `modules/fm-core/techniques/steel-man-debate.technique.yaml` carries,
+ * so this test exercises the identical real technique `loadSteelManTechnique` (`session.ts`) would load
+ * from a real project's own materialised copy (`PLAN-M14.md` P29) -- never the `modules/*\/techniques`
+ * source tree a real `forge init` project does not have. */
 const STEEL_MAN_TECHNIQUE_YAML = `
 id: steel-man-debate
 name: Steel-man debate
@@ -605,7 +606,7 @@ prompt: >
 
 async function withSteelManTechnique(projectRoot: string): Promise<void> {
   const target = new ProjectPaths(projectRoot).resolveWithin(
-    'modules/fm-core/techniques/steel-man-debate.technique.yaml',
+    '.forge/techniques/steel-man-debate.technique.yaml',
   );
   await writeFileAtomic(target, STEEL_MAN_TECHNIQUE_YAML);
 }
@@ -786,7 +787,7 @@ describe('runSessionStep — anti-groupthink measures (16 §16.7)', () => {
   it('measure 3 (fallback): a tradeoff session with no steel-man-debate technique installed still completes, via ordinary panel-mode CONVERGE', async () => {
     const projectRoot = await createTempRepo('anti-groupthink-steelman-fallback');
     await withRealAgentRoster(projectRoot);
-    // Deliberately no `withSteelManTechnique` call -- no modules/fm-core/techniques/ at all.
+    // Deliberately no `withSteelManTechnique` call -- no .forge/techniques/ at all.
     const { wrapped, stepIds } = recordingAdapter(new FakePlatformAdapter());
     const ctx = createTestContext({ projectRoot, adapter: wrapped });
     const stepNode = node({

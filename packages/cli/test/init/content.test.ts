@@ -15,6 +15,7 @@ import {
   readFrameworkFiles,
   readResolvedAgents,
   readSkillFiles,
+  readTechniqueFiles,
   readWorkflowFiles,
 } from '../../src/init/content.ts';
 
@@ -57,6 +58,30 @@ describe('reading real @forge/templates content', () => {
     for (const file of skillMdFiles) {
       expect(file.relPath.split('/')).toHaveLength(2);
     }
+  });
+});
+
+describe('reading real technique content, verbatim (PLAN-M14.md P29)', () => {
+  it('reads the fixture module’s one technique file', async () => {
+    const files = await readTechniqueFiles(fixtureModulesDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.relPath).toBe('sample.technique.yaml');
+    expect(files[0]?.content).toContain('id: sample');
+  });
+
+  it('reads every real technique file from modules/*/techniques against the repo root, verbatim (no extends resolution)', async () => {
+    const repoRoot = path.resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
+    const files = await readTechniqueFiles(path.join(repoRoot, 'modules'));
+    // `16` §16.4's own three tables (12 divergent + 8 convergent) plus its own six-technique retro
+    // prose row (one, `five-whys`, shared with the divergent table) -- 25 real files, `load.ts`'s own
+    // header (`@forge/sessions`) has the identical count and reasoning.
+    expect(files).toHaveLength(25);
+    for (const file of files) expect(file.relPath.endsWith('.technique.yaml')).toBe(true);
+    const steelMan = files.find((file) => file.relPath === 'steel-man-debate.technique.yaml');
+    expect(steelMan).toBeDefined();
+    // Verbatim: the shipped file's own comment survives -- a parse-then-`YAML.stringify` round trip
+    // (the way `readResolvedAgents` resolves `extends`) would silently drop it.
+    expect(steelMan?.content).toContain('anti-groupthink');
   });
 });
 

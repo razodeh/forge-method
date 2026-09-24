@@ -12,7 +12,7 @@ import nodePath from 'node:path';
 
 import { execa } from 'execa';
 import type { AbsolutePath } from '@forge/core';
-import { ProjectPaths, writeFileAtomic } from '@forge/core/fs';
+import { ProjectPaths, readTextFile, writeFileAtomic } from '@forge/core/fs';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { FakePlatformAdapter } from '@forge/testkit';
 import type { PlatformAdapter, SessionRequest } from '@forge/adapter-kit';
@@ -23,8 +23,12 @@ import {
   listProjectAgents,
 } from '../../src/dispatch/assembly-context.ts';
 import { executeStep } from '../../src/dispatch/execute.ts';
-import { runSessionStep } from '../../src/interaction/session.ts';
+import { runSessionStep, SESSIONS_DIR } from '../../src/interaction/session.ts';
 import { createTestContext, node } from '../dispatch/helpers.ts';
+
+async function readSessionFile(root: string, fileName: string): Promise<string> {
+  return readTextFile(new ProjectPaths(root).resolveWithin(`${SESSIONS_DIR}/${fileName}`));
+}
 
 async function tempRepo(): Promise<string> {
   const dir = await mkdtemp(nodePath.join(tmpdir(), 'forge-session-roster-'));
@@ -79,6 +83,19 @@ prompt:
 
 async function writeAgent(root: string, dir: string, file: string, text: string): Promise<void> {
   await writeFileAtomic(new ProjectPaths(root).resolveWithin(`${dir}/${file}`), text);
+}
+
+/** `PLAN-M14.md` P29: `.forge/techniques/<id>.technique.yaml`, the flat, materialised layout
+ * `loadTechniqueFromDir` reads. */
+async function writeTechnique(root: string, id: string, yaml: string): Promise<void> {
+  await writeFileAtomic(
+    new ProjectPaths(root).resolveWithin(`.forge/techniques/${id}.technique.yaml`),
+    yaml,
+  );
+}
+
+function techniqueYaml(id: string): string {
+  return `id: ${id}\nname: ${id}\nbestFor: Contested decisions\nphases: [converge]\nprompt: Steel-man the opposing side before your own.\n`;
 }
 
 function recording(adapter: FakePlatformAdapter): {
@@ -136,6 +153,72 @@ const SESSION = node({
   kind: 'session',
   sessionType: 'brainstorm',
   brief: 'Which onboarding flow ships first',
+});
+
+const TRADEOFF = node({
+  id: 'wf:roster-tradeoff',
+  kind: 'session',
+  sessionType: 'tradeoff',
+  brief: 'Postgres or Mongo for the new service',
+});
+
+describe('the technique library is .forge/techniques (P29)', () => {
+  it('a project with .forge/techniques/steel-man-debate.technique.yaml and NO modules/ runs tradeoff CONVERGE in debate mode', async () => {
+    const root = await tempRepo();
+    await writeAgent(root, '.forge/agents', 'architect.yaml', agentYaml('architect', ['a.b']));
+    await writeTechnique(root, 'steel-man-debate', techniqueYaml('steel-man-debate'));
+    const { wrapped, stepIds } = recording(new FakePlatformAdapter());
+
+    const result = await runSessionStep(
+      TRADEOFF,
+      createTestContext({ projectRoot: root, adapter: wrapped }),
+    );
+
+    // Debate mode dispatches round 1 unconditionally (`dispatchDebate`), regardless of how the debate
+    // itself later resolves -- the real, structural proof CONVERGE actually ran as `debate`, not panel.
+    expect(stepIds.some((id) => id.includes('proposer:round-1'))).toBe(true);
+    expect(stepIds.some((id) => id.includes('critic:round-1'))).toBe(true);
+    // No degrade happened: nothing to disclose.
+    expect(result.outcome.notes).toBeUndefined();
+  });
+
+  it('without the file, CONVERGE runs as ordinary panel mode, with a visible note in the outcome and the record', async () => {
+    const root = await tempRepo();
+    await writeAgent(root, '.forge/agents', 'architect.yaml', agentYaml('architect', ['a.b']));
+    // No .forge/techniques/ at all.
+    const { wrapped, stepIds } = recording(new FakePlatformAdapter());
+
+    const result = await runSessionStep(
+      TRADEOFF,
+      createTestContext({ projectRoot: root, adapter: wrapped }),
+    );
+
+    expect(stepIds.some((id) => id.includes('proposer:round-1'))).toBe(false);
+    expect(stepIds.some((id) => id.includes('critic:round-1'))).toBe(false);
+    expect(result.outcome.notes).toBeDefined();
+    expect(result.outcome.notes?.some((note) => note.includes('steel-man-debate'))).toBe(true);
+    // The identical note also lands in the persisted record's own `## Converge` body.
+    if (result.record === undefined) throw new Error('expected a real record');
+    const onDisk = await readSessionFile(root, `${result.record.id}.md`);
+    expect(onDisk).toContain('steel-man-debate');
+    expect(onDisk).toContain('note:');
+  });
+
+  it('a malformed technique file fails the step with RUN-065 naming the path, instead of silently degrading', async () => {
+    const root = await tempRepo();
+    await writeAgent(root, '.forge/agents', 'architect.yaml', agentYaml('architect', ['a.b']));
+    await writeTechnique(root, 'steel-man-debate', 'just a string, not a mapping\n');
+
+    const outcome = await executeStep(
+      TRADEOFF,
+      createTestContext({ projectRoot: root, adapter: new FakePlatformAdapter() }),
+    );
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-065');
+    expect(outcome.failure?.source).toBe('prompt');
+    expect(outcome.failure?.message).toContain('steel-man-debate.technique.yaml');
+  });
 });
 
 describe('the session roster is .forge/agents', () => {

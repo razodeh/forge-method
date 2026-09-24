@@ -1,0 +1,14 @@
+# forge:generated v=0.0.0 hash=83331d97a24d8da3c5df8053763f22c316a1ae4f2b33efc71799b9b372cac729 — edits will be overwritten; use overrides/
+id: five-whys
+name: Five whys
+bestFor: Retros and RCA
+# Real, named content in both `16` §16.4's own Divergent techniques table (this row) and its own
+# retro-techniques prose row -- one real technique, two real phases. See `schema.ts`'s own doc
+# comment for why `phases` is an array rather than the plan's singular `phase` wording, and
+# `SPEC-QUESTIONS.md` for the recorded decision.
+phases: [diverge, retro]
+prompt: >
+  Framed question: "{{question}}". State the observed symptom precisely. Ask "why did that happen?"
+  and record a real, falsifiable answer -- not a restatement of the symptom. Repeat against each new
+  answer, five times or until you reach a root cause that is actually actionable (a decision, a
+  missing check, a process gap) rather than an unfalsifiable "human error."

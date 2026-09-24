@@ -202,6 +202,7 @@ forge init . --yes \
 │  ├─ templates/                resolved templates (regenerable)
 │  ├─ checks/                   gate check definitions (regenerable)
 │  ├─ skills/                   resolved skill packets (regenerable)
+│  ├─ techniques/               technique library, 16 §16.4 (regenerable)
 │  ├─ overrides/                YOUR customization — hand-authored, committed, never regenerated
 │  │   ├─ agents/ skills/ mcp/ workflows/ frameworks/ templates/ checks/ style/ catalog/
 │  ├─ overrides.local/          personal customization (gitignored)

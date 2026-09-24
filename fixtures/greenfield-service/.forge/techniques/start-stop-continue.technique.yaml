@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=d8db0d6466acae1284d64a80705c4529474c99542e8211bf8e9d48703e85e44f — edits will be overwritten; use overrides/
+id: start-stop-continue
+name: Start / stop / continue
+bestFor: A retro focused on concrete process change
+phases: [retro]
+prompt: >
+  Reviewing the stage named by the framed question: "{{question}}". Name practices to start doing,
+  practices to stop doing, and practices to keep doing exactly as they are. A "stop" item without a
+  named replacement (or an explicit "nothing needs to replace it") is not acceptable -- process gaps
+  left open by a stop are exactly what the next incident finds.

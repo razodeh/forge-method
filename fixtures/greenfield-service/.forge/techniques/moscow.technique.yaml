@@ -1,0 +1,10 @@
+# forge:generated v=0.0.0 hash=5af223a8ce3567ce1c92bebebfb98f069bd2a92bec1d82d7c14d6f277ae2a4a1 — edits will be overwritten; use overrides/
+id: moscow
+name: MoSCoW
+bestFor: Stage scoping
+phases: [converge]
+prompt: >
+  Sort every surviving cluster into exactly one of Must, Should, Could, or Won't for this stage,
+  stating the concrete reason for each placement against the stage's own goal. A cluster with no
+  stated reason for its bucket has not actually been sorted -- send it back rather than defaulting it
+  to Could.

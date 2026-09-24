@@ -16,8 +16,15 @@
  * technique (all of which cite exactly one phase) trivially expressible as a one-element array, so
  * this costs nothing for the 24 techniques that don't need it. See `SPEC-QUESTIONS.md`.
  *
+ * This shape is unchanged by `PLAN-M14.md` P29, which only adds where a technique is *read from* at
+ * runtime (`.forge/techniques/`, a flat, materialised, one-file-per-id copy of the identical shipped
+ * `modules/*\/techniques/*.technique.yaml` content this schema already validates) -- `load.ts`'s own
+ * `loadTechniqueFromDir`/`listTechniquesInDir` validate every file, from either location, against this
+ * exact schema; no new field, no relaxed field.
+ *
  * @see specs/16 §16.4
  * @see PLAN-M10.md P9
+ * @see PLAN-M14.md P29
  * @see SPEC-QUESTIONS.md
  */
 import { z } from 'zod';

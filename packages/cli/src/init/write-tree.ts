@@ -24,6 +24,7 @@ import {
   readPromptFiles,
   readResolvedAgents,
   readSkillFiles,
+  readTechniqueFiles,
   readWorkflowFiles,
   type ContentFile,
 } from './content.ts';
@@ -158,7 +159,7 @@ export async function writeRegenerableContent(
   modulesDir: string,
   conflictOptions?: ConflictHandlingOptions,
 ): Promise<readonly WrittenFile[]> {
-  const [workflows, frameworks, checks, artifacts, skills, agents, briefs, prompts] =
+  const [workflows, frameworks, checks, artifacts, skills, agents, briefs, prompts, techniques] =
     await Promise.all([
       readWorkflowFiles(),
       readFrameworkFiles(),
@@ -168,6 +169,7 @@ export async function writeRegenerableContent(
       readResolvedAgents(modulesDir),
       readBriefFiles(),
       readPromptFiles(),
+      readTechniqueFiles(modulesDir),
     ]);
   const version = readPackageVersion('@forge/agents');
 
@@ -207,6 +209,14 @@ export async function writeRegenerableContent(
   );
   written.push(
     ...(await writeGeneratedDir(target, '.forge/prompts', prompts, version, conflictOptions)),
+  );
+  // `PLAN-M14.md` P29: `16` §16.4's technique library, materialised the identical regenerable-directory
+  // way every content kind above already is -- `.forge/techniques/<id>.technique.yaml`, one file per
+  // real technique, read back by `@forge/sessions`' own flat-directory loader
+  // (`loadTechniqueFromDir`/`listTechniquesInDir`), never the `modules/*\/techniques` source tree a
+  // real project does not have.
+  written.push(
+    ...(await writeGeneratedDir(target, '.forge/techniques', techniques, version, conflictOptions)),
   );
   return written;
 }

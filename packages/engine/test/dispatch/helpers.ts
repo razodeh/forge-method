@@ -168,6 +168,10 @@ export function createTestContext(
     ...(overrides.docRoots === undefined ? {} : { docRoots: overrides.docRoots }),
     ...(overrides.ask === undefined ? {} : { ask: overrides.ask }),
     ...(overrides.answers === undefined ? {} : { answers: overrides.answers }),
+    // `PLAN-M14.md` P29: absent unless a test overrides it, matching every other optional
+    // `ExecuteStepContext` field above -- `loadSteelManTechnique`'s own default (`.forge/techniques`)
+    // then applies, identical to a real context built without `buildRunEngineContext`.
+    ...(overrides.techniquesRoot === undefined ? {} : { techniquesRoot: overrides.techniquesRoot }),
   };
 }
 
