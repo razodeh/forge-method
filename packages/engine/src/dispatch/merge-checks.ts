@@ -53,6 +53,15 @@ export type ResolvedMergeChecks =
     }
   | { readonly ok: false; readonly failure: StepFailureInfo };
 
+/** The labels a resolved check's own commands carry — the config key a named set's layer resolved to
+ * (`execution.testCommands.<layer>`), or `'literal command'` for one that came from a bare shell command
+ * (never the command text itself: it may hold secrets, `integrate.ts`'s own `describeChecks` and
+ * `@forge/cli`'s `merge.ts` both display these; `PLAN-M14.md` P40's own critic round caught the two
+ * duplicating this exact mapping and asked for one shared copy). */
+export function checkLabelsOf(commands: readonly MergeCheckCommand[] | undefined): readonly string[] {
+  return (commands ?? []).map((entry) => entry.label ?? 'literal command');
+}
+
 /** Whether `value` is a set name (`fast`, `full`) or a layer name, i.e. not a literal shell command. */
 export function isCheckSetName(value: string): boolean {
   return Object.hasOwn(CHECK_SETS, value) || (LAYERS as readonly string[]).includes(value);

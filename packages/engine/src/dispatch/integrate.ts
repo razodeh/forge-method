@@ -10,7 +10,7 @@
  *
  * @see specs/06 §6.4, §6.5
  */
-import { resolveMergeChecks } from './merge-checks.ts';
+import { checkLabelsOf, resolveMergeChecks } from './merge-checks.ts';
 import type {
   ExecuteStepContext,
   LaneHandle,
@@ -312,10 +312,11 @@ function describeChecks(
   checks: MergeCandidateChecks,
   skipped: ResolvedLaneChecks['skipped'] | undefined,
 ): Record<string, unknown> | undefined {
-  const label = (commands: MergeCandidateChecks['preCommands']): readonly string[] =>
-    (commands ?? []).map((entry) => entry.label ?? 'literal command');
-  const pre = label(checks.preCommands);
-  const post = label(checks.postCommands);
+  // `PLAN-M14.md` P40: shared with `@forge/cli`'s own `merge.ts` (`checkLabelsOf`, `merge-checks.ts`) —
+  // a critic round caught the two independently duplicating this exact "label, never the command text
+  // itself" mapping.
+  const pre = checkLabelsOf(checks.preCommands);
+  const post = checkLabelsOf(checks.postCommands);
   const skippedPre = skipped?.pre ?? [];
   const skippedPost = skipped?.post ?? [];
   if (pre.length + post.length + skippedPre.length + skippedPost.length === 0) return undefined;

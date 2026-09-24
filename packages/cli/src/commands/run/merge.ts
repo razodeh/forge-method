@@ -26,6 +26,7 @@
 import { ForgeError, SYSTEM_CLOCK, renderCause, type Clock } from '@forge/core';
 import { pathExists, readTextFile, type ProjectPaths } from '@forge/core/fs';
 import {
+  checkLabelsOf,
   createMergeQueueFacade,
   createTelemetryFacade,
   createVcsFacade,
@@ -33,7 +34,6 @@ import {
   resolveLaneChecks,
   type LaneHandle,
   type LandLaneDeps,
-  type MergeCandidateChecks,
   type MergeOutcome,
   type StepFailureInfo,
 } from '@forge/engine/dispatch';
@@ -182,10 +182,6 @@ async function declaredChecksFor(
   }
 }
 
-function labelsOf(commands: MergeCandidateChecks['preCommands']): readonly string[] {
-  return (commands ?? []).map((entry) => entry.label ?? 'literal command');
-}
-
 /** `PLAN-M14.md` P40 (`SPEC-QUESTIONS.md` Q232 decision 19): a merge with no configured test layers stays
  * refused, not silently landed — reached only when both `pre`/`post` resolved to zero real commands
  * (`resolveMergeChecks` itself already refuses a *named* set none of whose layers is configured; this is
@@ -265,8 +261,8 @@ export async function mergeLane(
   }
   const { checks, skipped } = resolved.value;
   const checksSummary: MergeCheckSummary = {
-    pre: labelsOf(checks.preCommands),
-    post: labelsOf(checks.postCommands),
+    pre: checkLabelsOf(checks.preCommands),
+    post: checkLabelsOf(checks.postCommands),
     ...(skipped.pre.length + skipped.post.length === 0 ? {} : { skippedLayers: skipped }),
   };
   if ((checks.preCommands?.length ?? 0) === 0 && (checks.postCommands?.length ?? 0) === 0) {

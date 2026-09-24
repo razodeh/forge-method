@@ -70,6 +70,7 @@ export {
 } from './outputs.ts';
 export {
   CHECK_SETS,
+  checkLabelsOf,
   isCheckSetName,
   resolveMergeChecks,
   type ResolvedMergeChecks,

@@ -151,6 +151,42 @@ describe('mergeLane', () => {
     expect(lanes.find((lane) => lane.laneId === laneId)?.status).toBe('ready');
   });
 
+  it("runs the run's own declared fast preCheck and full postCheck (06 §6.5's own worked example), landing and reporting labels and skipped layers", async () => {
+    const { project, laneId } = await readyLaneProject('run-merge-fast-full');
+    // `declaredChecksFor` reads the workflow FRESH off disk every call (never trusted stale from when the
+    // run started) — the same technique the "no longer compiles" test below uses, here with a still-valid
+    // edit: the merge policy's checks change from the always-failing literal `"false"` to the real
+    // `fast`/`full` named sets, after the run already left the lane `'ready'`.
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      FIXTURE_WORKFLOW_WITH_MERGE_SOURCE.replace(
+        'policy: { conflict: abort }',
+        'policy: { conflict: abort, preChecks: fast, postChecks: full }',
+      ),
+    );
+    // `typecheck`/`lint` configured, `unit`/`integration`/`contract` left unconfigured: real, non-empty
+    // `skippedLayers` on both sides (`full` names two layers `fast` does not).
+    const ctx = await mergeContextFor(project, 'run-merge-fast-full', {
+      testCommands: { typecheck: 'true', lint: 'true' },
+    });
+
+    const result = await mergeLane(ctx, laneId);
+
+    expect(result.failure).toBeUndefined();
+    expect(result.outcome?.kind).toBe('clean');
+    expect(result.checks).toEqual({
+      pre: ['execution.testCommands.typecheck', 'execution.testCommands.lint'],
+      post: ['execution.testCommands.typecheck', 'execution.testCommands.lint'],
+      skippedLayers: { pre: ['unit'], post: ['unit', 'integration', 'contract'] },
+    });
+
+    const written = await readFile(
+      path.join(ctx.integrationPath, `${FIXTURE_ITEM_ID}.txt`),
+      'utf8',
+    );
+    expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
+  });
+
   it('an override lands the lane despite the declared preCheck still failing, is named, and records events under the lane\'s own step id', async () => {
     const { project, laneId } = await readyLaneProject('run-merge-override-lands');
     const ctx = await mergeContextFor(project, 'run-merge-override-lands', {
@@ -250,6 +286,20 @@ describe('mergeLane', () => {
       'not-a-real-workflow: true\n',
     );
     const ctx = await mergeContextFor(project, 'run-merge-non-compiling', {
+      mergeChecks: { pre: 'true' },
+    });
+
+    const result = await mergeLane(ctx, laneId);
+
+    expect(result.warning).toContain(FIXTURE_WORKFLOW_ID);
+    expect(result.failure).toBeUndefined();
+    expect(result.outcome?.kind).toBe('clean');
+  });
+
+  it('falls back to execution.mergeChecks with a warning when the workflow file no longer exists at all', async () => {
+    const { project, laneId } = await readyLaneProject('run-merge-deleted-workflow');
+    await rm(path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`));
+    const ctx = await mergeContextFor(project, 'run-merge-deleted-workflow', {
       mergeChecks: { pre: 'true' },
     });
 
