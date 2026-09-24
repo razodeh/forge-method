@@ -33,8 +33,13 @@
  * `spec:ac-coverage` reads only the results of the layers this invocation ran (test layers are run first,
  * whatever their place in the list). It never reads an earlier report from disk: nothing on it says which code it
  * describes. With no layer listed it is `unverifiable`. A trailing ` --scope story` or ` --story` (`09` §9.8's
- * spelling) is accepted; the Story schema has no test-path list to scope by, so the whole layer command runs (never
- * a weaker check than asked for) and the message says so.
+ * spelling) runs only the story's own test files (`PLAN-M14.md` P26): `files_expected` filtered to what
+ * looks like a test (`isTestPath`), each glob expanded against the real tree and every resulting path
+ * validated (`validateTestPath`, `PLAN-M14.md` P5) before the layer's command runs once, scoped to exactly
+ * that closed list. `files_expected` naming no test files runs the whole layer instead (never a weaker check
+ * than asked for) and the message says so; a path that fails validation, a symlink, or more than 50 files
+ * makes the check `unverifiable` naming the reason, and nothing runs — scoping down is never allowed to
+ * silently widen into a full run, or silently drop a claim it could not honour.
  *
  * Fail closed. Any id with no deterministic implementation here (`review:blocking-findings == 0`,
  * `security:secrets-scan`, `docs:public-api-documented`, `kb:no-new-contradictions`, `test:nfr`, a project's own
@@ -62,13 +67,17 @@
  * @see specs/09 §9.5, §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
- * @see PLAN-M14.md P1, P25
- * @see SPEC-QUESTIONS.md Q213, Q232, Q233
+ * @see PLAN-M14.md P1, P5, P25, P26
+ * @see SPEC-QUESTIONS.md Q213, Q230, Q232, Q233
  */
+import { lstat } from 'node:fs/promises';
+
 import { isForgeError } from '@forge/core';
-import type { ProjectPaths } from '@forge/core/fs';
+import { listDirEntriesSorted, type DirEntry, type ProjectPaths } from '@forge/core/fs';
+import { isTestPath, validateTestPath } from '@forge/engine/dispatch';
 import { evaluateDodProfile, readDodProfile, type DodParseResult } from '@forge/methods/dod';
 import { storySchema, type Story } from '@forge/schemas';
+import { minimatch } from 'minimatch';
 
 import { listSpecArtifacts } from './shared.ts';
 import type { TestOutcome } from './loop/test/reporter.ts';
@@ -145,6 +154,22 @@ export interface StoryVerifyContext {
   readonly testCommands: TestCommands;
   readonly flakeConfig?: TestRunContext['flakeConfig'];
   readonly runTests?: TestRunner;
+  /** `execution.testRoots`, passed straight to `validateTestPath`'s matching rule (`PLAN-M14.md` P26) for a
+   * ` --scope story` check's own expanded test-path list. `undefined` (the project configures none) falls
+   * back to `validateTestPath`'s own built-in `isTestPath` rule — the identical fallback every other real
+   * caller of `validateTestPath` already gets.
+   *
+   * Honestly, narrower today than that makes it sound: `resolveScopedTestFiles`'s own first gate
+   * (`files_expected.filter(isTestPath)`, the plan's own literal wording) is `execution.testRoots`-UNAWARE,
+   * so a raw `files_expected` entry naming only a project's own non-conventionally-named test directory
+   * (e.g. `spec/**`, with no `.test.`/`.spec.` filename anywhere) never reaches this field at all — it is
+   * filtered out before any expansion is attempted, `testRoots` configured or not. The one case this field
+   * DOES change today: `execution.testRoots: []` (configured, but deliberately empty — "accepts no path at
+   * all," `validateTestPath`'s own doc comment) refuses every candidate outright, even a conventionally
+   * named `tests/a.test.ts` `isTestPath`'s own built-in fallback would otherwise accept. Threaded through in
+   * full, not narrowed to just that one case, because narrowing it here would silently stop mattering the
+   * moment a later piece makes the first gate `testRoots`-aware too. */
+  readonly testRoots?: readonly string[] | undefined;
 }
 
 interface Resolution {
@@ -191,6 +216,240 @@ function splitScope(id: string): { readonly key: string; readonly scoped: boolea
   const trimmed = id.trim();
   const stripped = trimmed.replace(/\s+--(?:scope\s+story|story)$/, '');
   return { key: stripped, scoped: stripped !== trimmed };
+}
+
+// --- ` --scope story`'s own test-path narrowing (PLAN-M14.md P26, P5's validateTestPath) ------------------
+
+/** How many of a scoped `test:<layer>` check's own resolved test files may be handed to the runner at once
+ * — beyond this the whole check is refused as `unverifiable`, naming the real count, rather than silently
+ * truncated (which would drop part of the story's own claim) or silently run in full (a weaker check than
+ * `--scope story` asked for). `09` §9.3 gives no cap of its own; this is a deliberate, disclosed ceiling. */
+const MAX_SCOPED_TEST_FILES = 50;
+
+/** A hard ceiling on directories one glob's own expansion will list — distinct from `MAX_SCOPED_TEST_FILES`
+ * above, which only bounds MATCHED files: a glob that matches nothing (a directory cycle entirely inside
+ * the project root — `resolveWithin`'s own containment check has no reason to reject one, since it never
+ * leaves the root — or simply an unexpectedly large mismatched subtree) would otherwise recurse without
+ * ever tripping the file cap at all. Generous; a real project's own test tree is nowhere near this large. */
+const MAX_DIRS_VISITED = 5000;
+
+/** `minimatch`'s own real special characters — a `files_expected` entry with none of these is a plain,
+ * literal path (`09` §9.3 allows either a glob or a literal), checked for existence directly and never
+ * walked as a directory (`resolveWithin` on the entry's own full path would not be one). */
+const GLOB_META = /[*?[\]{}]/;
+
+/** The engine's own established glob-matching convention (`outputs.ts`'s `MATCH_OPTIONS`): a leading `!`/`#`
+ * is literal, matched with `dot: true` so a test file under a dotted directory is not silently excluded. */
+const MATCH_OPTIONS = { dot: true, nonegate: true, nocomment: true } as const;
+
+/** `glob`'s own leading run of path segments that hold no glob metacharacter — the directory this piece
+ * walks from, so expansion never has to scan the whole project for a pattern that names its own directory
+ * (`tests/**`'s own real base is `tests`, not the project root). Empty only when the very first segment is
+ * itself a glob (e.g. `*.test.ts`), in which case the walk below starts at the project root. */
+function literalPrefix(glob: string): string {
+  const literal: string[] = [];
+  for (const segment of glob.split('/')) {
+    if (GLOB_META.test(segment)) break;
+    literal.push(segment);
+  }
+  return literal.join('/');
+}
+
+type GlobExpansion =
+  | { readonly files: readonly string[]; readonly capped: false }
+  | {
+      readonly files: readonly string[];
+      readonly capped: true;
+      readonly reason: 'too-many-files' | 'too-many-directories';
+    };
+
+/** Shared, mutable across one glob's whole recursive walk (a plain counter, not a return value threaded by
+ * hand through every frame): how many directories `expandGlob` has listed so far, checked against
+ * `MAX_DIRS_VISITED`. */
+interface WalkBudget {
+  dirsVisited: number;
+}
+
+/**
+ * Whether every path segment of `relative`, from the project root down — not just its own final component,
+ * `lstat`'s only real guarantee: opening a path transparently resolves every earlier component the OS-usual
+ * way, so `lstat('a/b')` says nothing about whether `a` is itself a symlink — both exists and is not a
+ * symlink. Checked segment by segment, each its own `lstat`, rather than one `lstat` on the joined string: a
+ * fresh critic round reproduced directly, against the real `storyVerify`, that trusting a single `lstat` on
+ * a MULTI-segment `relative` (`literalPrefix(glob)`, `expandGlob`'s own starting directory, can span more
+ * than one literal path segment: `aliasTests/subdir/*.test.ts`) let a symlinked ANCESTOR segment
+ * (`aliasTests`) go unchecked as long as the final, deepest segment (`subdir`) was itself a real directory —
+ * a real test file reached only through the symlink was scoped, run, and reported as verified. Any segment
+ * this function cannot `lstat` (does not exist, denied) is treated the identical, conservative way a real
+ * symlink is: not safe to walk, contributes nothing — never a crash, never a guess.
+ */
+async function everySegmentIsReal(ctx: StoryVerifyContext, relative: string): Promise<boolean> {
+  if (relative === '') return true;
+  let prefix = '';
+  for (const segment of relative.split('/')) {
+    prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+    try {
+      if ((await lstat(ctx.paths.resolveWithin(prefix))).isSymbolicLink()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Every real, non-directory, non-symlink file under `ctx.projectRoot`'s `relative` directory whose
+ * project-relative path matches `glob` — depth-first, bounded by `budget`: the moment as many matches as
+ * `budget` are already found, the walk stops and reports `capped: 'too-many-files'` rather than continuing
+ * to exhaust a runaway glob; `MAX_DIRS_VISITED` is a second, independent bound (`capped:
+ * 'too-many-directories'`) for a glob that matches nothing at all, so a directory cycle or an unexpectedly
+ * large mismatched subtree cannot recurse forever just because the file cap never trips. A directory this
+ * function cannot list (missing, denied, unreadable) contributes nothing from that subtree rather than
+ * aborting the whole expansion — the same "a real, disclosed limitation, never a crash" stance
+ * `validateTestPath` itself takes for a path it cannot `lstat`.
+ *
+ * A symlinked directory is never itself listed, and never walked through as an ancestor: `relative` —
+ * `literalPrefix(glob)`, possibly several literal segments, on the very first call; exactly one new segment
+ * appended to an already-checked parent on every recursive one — is checked segment by segment via
+ * `everySegmentIsReal` *before* `listDirEntriesSorted` ever runs on it, so a glob whose own base directory
+ * (at any depth, not only its own final segment) is a symlink is refused exactly like one discovered three
+ * levels into an ordinary walk. `listDirEntriesSorted`'s own `isDirectory` (used to decide whether a
+ * DISCOVERED entry is even a candidate to recurse into at all) already reflects the entry, not its target,
+ * on every filesystem this project has observed — a symlinked directory reports `isDirectory: false` — but
+ * Node's own docs allow a `stat`-following fallback on a filesystem whose `readdir` does not report
+ * `d_type`, under which that would no longer hold; `everySegmentIsReal`, never fooled by that fallback, is
+ * what actually guarantees no directory is ever followed through a symlink, not `isDirectory` alone. A
+ * symlinked *file* is still picked up as a plain, non-directory candidate (never itself `lstat`-checked
+ * here — that would just repeat `validateTestPath`'s own check for every non-matching file in the tree, not
+ * only the ones actually selected), and `validateTestPath` (below, in `resolveScopedTestFiles`) is what
+ * actually refuses it, naming the reason.
+ */
+async function expandGlob(
+  ctx: StoryVerifyContext,
+  glob: string,
+  budget: number,
+  relative = literalPrefix(glob),
+  found: string[] = [],
+  walkBudget: WalkBudget = { dirsVisited: 0 },
+): Promise<GlobExpansion> {
+  walkBudget.dirsVisited += 1;
+  if (walkBudget.dirsVisited > MAX_DIRS_VISITED) {
+    return { files: found, capped: true, reason: 'too-many-directories' };
+  }
+  if (!(await everySegmentIsReal(ctx, relative))) {
+    return { files: found, capped: false };
+  }
+  let entries: readonly DirEntry[];
+  try {
+    entries = await listDirEntriesSorted(ctx.paths.resolveWithin(relative));
+  } catch {
+    return { files: found, capped: false };
+  }
+  for (const entry of entries) {
+    if (found.length >= budget) return { files: found, capped: true, reason: 'too-many-files' };
+    const child = relative === '' ? entry.name : `${relative}/${entry.name}`;
+    if (entry.isDirectory) {
+      const inner = await expandGlob(ctx, glob, budget, child, found, walkBudget);
+      if (inner.capped) return inner;
+    } else if (minimatch(child, glob, MATCH_OPTIONS)) {
+      found.push(child);
+    }
+  }
+  return { files: found, capped: false };
+}
+
+type ScopedTestFiles =
+  /** `files_expected` names no test-shaped path at all: the whole layer runs, as before P26. */
+  | { readonly kind: 'whole-layer' }
+  /** A closed, validated, sorted, de-duplicated list, ready to hand to the runner as `TestRunOptions.files`. */
+  | { readonly kind: 'scoped'; readonly files: readonly string[] }
+  /** Scoping was attempted and could not be honoured: the whole check is `unverifiable`, naming `reason`, and
+   * nothing runs — never silently widened back into a full run, and never silently dropped. */
+  | { readonly kind: 'unverifiable'; readonly reason: string };
+
+/** A glob's own literal prefix (before any wildcard) escaping the project — absolute, or a `..` segment —
+ * named directly, the same way `validateTestPath` names it for a literal path, rather than left to surface
+ * as `expandGlob`'s generic "contributes nothing" (a directory `resolveWithin` refuses to resolve reads the
+ * identical way a directory that simply does not exist does, from inside `expandGlob`'s own try/catch — a
+ * true, but far less specific, reason than the real one). */
+function globEscapeReason(glob: string): string | undefined {
+  if (glob.startsWith('/')) return 'the path is absolute; it must be project-relative';
+  if (literalPrefix(glob).split('/').includes('..')) return 'the path contains ".."';
+  return undefined;
+}
+
+/**
+ * `story.files_expected` filtered to what looks like a test (`isTestPath`, the same heuristic `run-plan.ts`
+ * already reads these globs with), each entry expanded against the real tree and every resulting path run
+ * through `validateTestPath` (`PLAN-M14.md` P5) — a plain token, project-relative, an existing real file
+ * that is never itself a symlink, under a configured `execution.testRoots` entry or `validateTestPath`'s own
+ * built-in rule. One bad entry anywhere in the list — a malformed token, a `..` escape, a symlink, a glob
+ * that matches nothing that exists, or more than `MAX_SCOPED_TEST_FILES` files combined — makes the WHOLE
+ * check `unverifiable`: a degraded, partial scope would itself be a check this invocation cannot honestly
+ * claim to have run.
+ */
+async function resolveScopedTestFiles(
+  ctx: StoryVerifyContext,
+  story: Story,
+): Promise<ScopedTestFiles> {
+  const candidates = story.files_expected.filter(isTestPath);
+  if (candidates.length === 0) return { kind: 'whole-layer' };
+
+  const combined = new Set<string>();
+  for (const entry of candidates) {
+    if (!GLOB_META.test(entry)) {
+      combined.add(entry);
+      continue;
+    }
+    const escape = globEscapeReason(entry);
+    if (escape !== undefined) {
+      return {
+        kind: 'unverifiable',
+        reason: `"${entry}" (from files_expected) is not a valid test path: ${escape}.`,
+      };
+    }
+    const expansion = await expandGlob(ctx, entry, MAX_SCOPED_TEST_FILES + 1);
+    if (expansion.capped) {
+      // Already unusable — this entry alone is reason enough; the remaining candidates are left
+      // unexpanded rather than doing more work whose result cannot change the outcome.
+      const because =
+        expansion.reason === 'too-many-directories'
+          ? 'the search visited an unexpectedly large number of directories'
+          : `more than ${String(MAX_SCOPED_TEST_FILES)} files match "${entry}" alone`;
+      return {
+        kind: 'unverifiable',
+        reason: `the story's own test paths could not be safely expanded (${because}); list fewer, narrower entries in files_expected, or run without --scope story.`,
+      };
+    }
+    if (expansion.files.length === 0) {
+      return {
+        kind: 'unverifiable',
+        reason: `"${entry}" (from files_expected) matches no existing file.`,
+      };
+    }
+    for (const file of expansion.files) combined.add(file);
+  }
+  if (combined.size > MAX_SCOPED_TEST_FILES) {
+    return {
+      kind: 'unverifiable',
+      reason: `the story's own test paths could not be safely expanded (more than ${String(MAX_SCOPED_TEST_FILES)} files match combined); list fewer, narrower entries in files_expected, or run without --scope story.`,
+    };
+  }
+
+  const sorted = [...combined].sort();
+  for (const file of sorted) {
+    const checked = await validateTestPath(file, {
+      root: ctx.projectRoot,
+      testRoots: ctx.testRoots,
+    });
+    if (!checked.ok) {
+      return {
+        kind: 'unverifiable',
+        reason: `"${file}" (from files_expected) is not a valid test path: ${checked.detail}.`,
+      };
+    }
+  }
+  return { kind: 'scoped', files: sorted };
 }
 
 /** At most this many failing test names are quoted in a message: enough to act on, not a transcript. */
@@ -269,6 +528,7 @@ async function runLayer(
   ctx: StoryVerifyContext,
   layer: TestLayer,
   scoped: boolean,
+  story: Story,
   memory: RunMemory,
 ): Promise<Resolution> {
   const command = ctx.testCommands[layer];
@@ -277,6 +537,22 @@ async function runLayer(
       status: 'unverifiable',
       message: `execution.testCommands.${layer} is not configured, so the ${layer} tests cannot run.`,
     };
+  }
+  let files: readonly string[] | undefined;
+  let scopeNote = '';
+  if (scoped) {
+    // `scoped` only, never for a plain `test:<layer>`: an unscoped check keeps running the whole
+    // configured layer command exactly as before P26, no glob expansion, no `validateTestPath` call.
+    const resolved = await resolveScopedTestFiles(ctx, story);
+    if (resolved.kind === 'unverifiable') {
+      return { status: 'unverifiable', message: `${layer} tests: ${resolved.reason}` };
+    }
+    if (resolved.kind === 'whole-layer') {
+      scopeNote = ' (the whole layer ran: files_expected names no test files to scope by)';
+    } else {
+      files = resolved.files;
+      scopeNote = ` (scoped to the story's own test file${resolved.files.length === 1 ? '' : 's'}: ${resolved.files.join(', ')})`;
+    }
   }
   // Only this layer's command is handed over, so `test:unit` never runs (or is failed by) another layer.
   const result = await (ctx.runTests ?? testRun)(
@@ -287,15 +563,12 @@ async function runLayer(
       persistState: false,
       ...(ctx.flakeConfig !== undefined ? { flakeConfig: ctx.flakeConfig } : {}),
     },
-    {},
+    files !== undefined ? { files } : {},
     () => createSystemTempPath('forge-story-verify'),
   );
   memory.ranLayer = true;
   if ((result.problems ?? []).length > 0) memory.incomplete = true;
   memory.outcomes.push(...(result.outcomes ?? []));
-  const scopeNote = scoped
-    ? ' (the whole layer ran: a Story has no test-path list to scope it by)'
-    : '';
   return outcomeFromRun(result, `${layer} tests (\`${command}\`)`, scopeNote, true);
 }
 
@@ -353,7 +626,7 @@ async function resolveCheckId(
   if (key === 'build:typecheck') return runRule(ctx, 'typecheck');
   if (key === 'build:lint') return runRule(ctx, 'lint');
   const layer = TEST_LAYERS.find((candidate) => key === `test:${candidate}`);
-  if (layer !== undefined) return runLayer(ctx, layer, scoped, memory);
+  if (layer !== undefined) return runLayer(ctx, layer, scoped, story, memory);
   if (key === 'spec:ac-coverage') return checkAcCoverage(story, memory);
   return {
     status: 'unverifiable',

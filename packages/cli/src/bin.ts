@@ -3199,6 +3199,7 @@ async function runStoryCommand(
       kbRoot: KB_ROOT,
       testCommands: config.execution.testCommands,
       flakeConfig: config.quality.flake,
+      testRoots: config.execution.testRoots,
     },
     storyId,
     phaseFlag ?? 'verify',

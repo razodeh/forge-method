@@ -88,6 +88,13 @@ export interface TestRunContext {
  * directly, never shelling a project-authored command. */
 export interface TestRunOptions {
   readonly rule?: 'lint' | 'typecheck' | 'oracle-lint';
+  /** Scopes the default rule's own test-layer command(s) to exactly these already-validated,
+   * project-relative test file paths (`PLAN-M14.md` P26, `story.ts`'s only real caller — its own
+   * `validateTestPath`-checked expansion of a story's `files_expected`) — reaches `runAndNormalize`'s
+   * own file-scoping seam as a closed positional list, never a pattern. Ignored when `rule` is set
+   * (lint/typecheck/oracle-lint have no per-file form). `undefined` or `[]` runs the whole configured
+   * layer command, unchanged. */
+  readonly files?: readonly string[];
 }
 
 /** `failed`/`errors` are always both present (`test:run`'s own `failOn: 'failed > 0'` and `test:
@@ -113,8 +120,12 @@ const DEFAULT_RUN_LAYERS = ['unit', 'integration', 'contract', 'e2e'] as const;
 
 async function runDefaultRule(
   ctx: TestRunContext,
+  options: TestRunOptions,
   createTempPath: () => string,
 ): Promise<TestRunResult> {
+  // `[]` reads the same as absent: a caller narrowing to zero files has nothing to scope to, not a
+  // request to run zero tests silently.
+  const files = options.files !== undefined && options.files.length > 0 ? options.files : undefined;
   const ecosystem = await detectEcosystem(ctx.paths);
   if (ecosystem === 'unknown') {
     return {
@@ -146,7 +157,15 @@ async function runDefaultRule(
     const command = ctx.testCommands[layer];
     if (command === undefined) continue;
     declaredAny = true;
-    const result = await runAndNormalize(command, ctx.projectRoot, ecosystem, createTempPath);
+    const result = await runAndNormalize(
+      command,
+      ctx.projectRoot,
+      ecosystem,
+      createTempPath,
+      undefined,
+      undefined,
+      files,
+    );
     if (result.outcome === 'tool-error') {
       problems.push(`testCommands.${layer} ("${command}") failed to run: ${result.message}`);
       continue;
@@ -420,5 +439,5 @@ export async function testRun(
   if (options.rule === 'lint') return runLintRule(ctx);
   if (options.rule === 'typecheck') return runTypecheckRule(ctx);
   if (options.rule === 'oracle-lint') return runOracleLintRule(ctx);
-  return runDefaultRule(ctx, createTempPath);
+  return runDefaultRule(ctx, options, createTempPath);
 }

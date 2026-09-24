@@ -115,6 +115,31 @@ describe('testRun — default rule (real vitest)', () => {
     expect(result.failed).toBe(2);
   });
 
+  it('`options.files` (PLAN-M14.md P26) scopes the declared layer command to exactly those files', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'a.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-500-1 in scope', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'b.test.js'),
+      // Would fail the whole run if it were still included — proves `files` truly narrows it.
+      `import { test, expect } from 'vitest'; test('AC-500-2 out of scope', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+
+    const result = await testRun(
+      ctx(dir, { unit: VITEST_CMD }),
+      { files: ['a.test.js'] },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.failed).toBe(0);
+    expect(result.problems).toBeUndefined();
+  });
+
   it('reports a real problem and forces failed >= 1 when no layer command is configured', async () => {
     const dir = await tempDir();
     await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');

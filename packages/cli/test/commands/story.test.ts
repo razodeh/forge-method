@@ -17,10 +17,10 @@
  * @see specs/09 §9.5, §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
- * @see PLAN-M14.md P1, P25
+ * @see PLAN-M14.md P1, P5, P25, P26
  */
 import { createRequire } from 'node:module';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
@@ -51,6 +51,7 @@ async function writeStory(
     readonly id?: string;
     readonly acceptance?: readonly string[];
     readonly dod_profile?: string;
+    readonly files_expected?: readonly string[];
   } = {},
 ): Promise<string> {
   const id = overrides.id ?? 'STORY-001';
@@ -67,7 +68,7 @@ async function writeStory(
   doc.set(['status'], 'in-progress');
   doc.set(['size'], 'M');
   doc.set(['owner_role'], 'backend');
-  doc.set(['files_expected'], ['src/fixture/**']);
+  doc.set(['files_expected'], overrides.files_expected ?? ['src/fixture/**']);
   doc.set(['context_refs'], []);
   doc.set(
     ['acceptance'],
@@ -113,6 +114,11 @@ const profileWithDone = (...entries: readonly string[]): string =>
 interface Call {
   readonly rule: string | undefined;
   readonly layers: readonly string[];
+  /** `TestRunOptions.files` (`PLAN-M14.md` P26) — `undefined` for every call `--scope story` did not
+   * narrow (the same as the field being absent: `toEqual` reads the two as equal). A real, required
+   * field (not `files?:`) so `options.files`'s own `readonly string[] | undefined` type is assignable
+   * under `exactOptionalPropertyTypes`. */
+  readonly files: readonly string[] | undefined;
 }
 
 const persisted: boolean[] = [];
@@ -129,7 +135,11 @@ function recorder(answer: (call: Call) => TestRunResult): {
   const runner: TestRunner = (ctx, options) => {
     // Recorded so a test can assert the shared report and flake history are never written to.
     persisted.push(ctx.persistState !== false);
-    const call = { rule: options.rule, layers: Object.keys(ctx.testCommands) };
+    const call = {
+      rule: options.rule,
+      layers: Object.keys(ctx.testCommands),
+      files: options.files,
+    };
     calls.push(call);
     return Promise.resolve(answer(call));
   };
@@ -148,6 +158,7 @@ function ctxFor(
   project: TestProject,
   testCommands: TestCommands = {},
   runTests?: TestRunner,
+  testRoots?: readonly string[],
 ): StoryVerifyContext {
   return {
     paths: project.paths,
@@ -156,6 +167,7 @@ function ctxFor(
     kbRoot: KB_ROOT,
     testCommands,
     ...(runTests !== undefined ? { runTests } : {}),
+    ...(testRoots !== undefined ? { testRoots } : {}),
   };
 }
 
@@ -399,6 +411,247 @@ describe('storyVerify: build and test checks', () => {
     // Verifying a story must never write the project-wide report or flake history.
     expect(persisted.length).toBeGreaterThan(0);
     expect(persisted.every((persist) => !persist)).toBe(true);
+  });
+
+  describe("--scope story narrows to the story's own validated test files (M14 P26)", () => {
+    it('a literal test path in files_expected runs once with files: exactly that path, unrelated entries dropped', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await writeFile(path.join(project.dir, 'tests/a.test.ts'), '', 'utf8');
+      await writeStory(project, { files_expected: ['tests/a.test.ts', 'src/a.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([{ rule: undefined, layers: ['unit'], files: ['tests/a.test.ts'] }]);
+      expect(report.passed).toBe(true);
+      expect(report.checks[0]?.message).toContain("the story's own test file");
+    });
+
+    it('a glob in files_expected expands against the real tree to existing files only', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests/sub'), { recursive: true });
+      await writeFile(path.join(project.dir, 'tests/a.test.ts'), '', 'utf8');
+      await writeFile(path.join(project.dir, 'tests/sub/b.test.ts'), '', 'utf8');
+      await writeStory(project, { files_expected: ['tests/**'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([
+        {
+          rule: undefined,
+          layers: ['unit'],
+          files: ['tests/a.test.ts', 'tests/sub/b.test.ts'],
+        },
+      ]);
+    });
+
+    it('a malformed, shell-shaped test path refuses the whole check as unverifiable, calling the runner never', async () => {
+      const project = await createTestProject();
+      await writeStory(project, { files_expected: ['tests/x.test.ts;touch /tmp/c'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('not a valid test path');
+    });
+
+    it('a path-escaping test path ("..") refuses the whole check as unverifiable, calling the runner never', async () => {
+      const project = await createTestProject();
+      await writeStory(project, { files_expected: ['../x.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+    });
+
+    it('a symlinked test path is refused, never followed as the real test file', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await writeFile(path.join(project.dir, 'tests/real.test.ts'), '', 'utf8');
+      await symlink(
+        path.join(project.dir, 'tests/real.test.ts'),
+        path.join(project.dir, 'tests/link.test.ts'),
+      );
+      await writeStory(project, { files_expected: ['tests/link.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('symlink');
+    });
+
+    it('more than 50 matched files refuses the whole check, naming the cap, calling the runner never', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await Promise.all(
+        Array.from({ length: 51 }, (_, i) =>
+          writeFile(path.join(project.dir, `tests/f${String(i)}.test.ts`), '', 'utf8'),
+        ),
+      );
+      await writeStory(project, { files_expected: ['tests/**'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('50');
+    });
+
+    it('the cap also engages across several files_expected entries combined, none over the cap alone', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests/a'), { recursive: true });
+      await mkdir(path.join(project.dir, 'tests/b'), { recursive: true });
+      // 30 + 30 = 60 combined, over the cap, though neither glob alone matches more than 50.
+      await Promise.all([
+        ...Array.from({ length: 30 }, (_, i) =>
+          writeFile(path.join(project.dir, `tests/a/f${String(i)}.test.ts`), '', 'utf8'),
+        ),
+        ...Array.from({ length: 30 }, (_, i) =>
+          writeFile(path.join(project.dir, `tests/b/f${String(i)}.test.ts`), '', 'utf8'),
+        ),
+      ]);
+      await writeStory(project, { files_expected: ['tests/a/**', 'tests/b/**'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('50');
+    });
+
+    it('a glob that expands to a symlinked file refuses the whole check, never treating it as a real match', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await writeFile(path.join(project.dir, 'tests/real.test.ts'), '', 'utf8');
+      await symlink(
+        path.join(project.dir, 'tests/real.test.ts'),
+        path.join(project.dir, 'tests/link.test.ts'),
+      );
+      // Unlike the literal-path symlink case above, this reaches `expandGlob`'s own walk (the glob
+      // matches BOTH the real file and the symlink) — proves the walk hands a discovered symlink to
+      // `validateTestPath` rather than silently treating it as a valid match or silently dropping it.
+      await writeStory(project, { files_expected: ['tests/**'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('symlink');
+    });
+
+    it('a symlinked directory is never recursed into during expansion: files reachable only through it are invisible', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await mkdir(path.join(project.dir, 'outside'), { recursive: true });
+      await writeFile(path.join(project.dir, 'outside/hidden.test.ts'), '', 'utf8');
+      await symlink(path.join(project.dir, 'outside'), path.join(project.dir, 'tests/linked'));
+      // `tests/linked` itself (the symlink's own name) does not match this pattern — only something
+      // reached BY RECURSING INTO it, `tests/linked/hidden.test.ts`, would. If `expandGlob` ever
+      // recursed into a symlinked directory, this test would find `hidden.test.ts` as a real match;
+      // instead nothing matches at all, so the check is unverifiable, never a pass.
+      await writeStory(project, { files_expected: ['tests/**/*.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('matches no existing file');
+    });
+
+    it("a glob whose own literal prefix IS a symlinked directory is refused, not walked through it (a round-2 critic reproduction: only a discovered child directory was lstat-checked, never the glob's own starting directory)", async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'realTests'), { recursive: true });
+      await writeFile(path.join(project.dir, 'realTests/foo.test.ts'), '', 'utf8');
+      await symlink(path.join(project.dir, 'realTests'), path.join(project.dir, 'aliasTests'));
+      // `expandGlob`'s very first call resolves `literalPrefix('aliasTests/*.test.ts')` to `aliasTests`
+      // itself — a symlink. Before the round-2 fix this directory was listed (and its real contents
+      // matched) without ever being `lstat`-checked, because the pre-existing check ran only inside the
+      // parent's loop, over children discovered WHILE listing a directory — never over the directory a
+      // walk started at.
+      await writeStory(project, { files_expected: ['aliasTests/*.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('matches no existing file');
+    });
+
+    it("a symlink in a NON-FINAL segment of a multi-segment literal prefix is refused too (a round-3 critic reproduction: lstat only reports its own final path component, so checking the joined string 'aliasTests/subdir' as one unit never sees that 'aliasTests' itself is the symlink)", async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'realTests/subdir'), { recursive: true });
+      await writeFile(path.join(project.dir, 'realTests/subdir/foo.test.ts'), '', 'utf8');
+      await symlink(path.join(project.dir, 'realTests'), path.join(project.dir, 'aliasTests'));
+      // `literalPrefix('aliasTests/subdir/*.test.ts')` is the two-segment string `aliasTests/subdir` —
+      // `subdir` (the final, checked component) is a genuinely real directory; only `aliasTests` (an
+      // ancestor, not the final component) is the symlink. Before the round-3 fix a single `lstat` on the
+      // whole joined string reported `isSymbolicLink: false` (correctly, for `subdir` itself) and the walk
+      // proceeded straight through the symlinked ancestor.
+      await writeStory(project, { files_expected: ['aliasTests/subdir/*.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('matches no existing file');
+    });
+
+    it('more than MAX_DIRS_VISITED directories under one glob refuses the whole check, even when nothing matches', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      // 5,001 empty sibling directories: the glob matches nothing anywhere in this tree (there is no
+      // `*.test.ts` file at all), so only the directory-visit cap — not the file cap — can be what stops
+      // this walk; without it, `expandGlob` would keep listing every one of them and still report a
+      // clean, empty "matches no existing file" rather than a capped refusal.
+      await Promise.all(
+        Array.from({ length: 5001 }, (_, i) =>
+          mkdir(path.join(project.dir, `tests/d${String(i)}`), { recursive: true }),
+        ),
+      );
+      await writeStory(project, { files_expected: ['tests/**/*.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([]);
+      expect(statusOf(report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(report.checks[0]?.message).toContain('unexpectedly large number of directories');
+    }, 30_000);
+
+    it('files_expected naming no test files runs the whole layer, with the current (not the pre-P26) reason', async () => {
+      const project = await createTestProject();
+      await writeStory(project, { files_expected: ['src/fixture.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      const report = await verify(project, { unit: 'vitest unit' }, runner);
+      expect(calls).toEqual([{ rule: undefined, layers: ['unit'], files: undefined }]);
+      expect(report.checks[0]?.message).toContain('the whole layer ran');
+      expect(report.checks[0]?.message).toContain('files_expected names no test files');
+    });
+
+    it("ctx.testRoots reaches validateTestPath for real: an explicitly empty execution.testRoots ([], 'accepts no path at all') refuses even a conventionally-named tests/ file that isTestPath's own built-in fallback would otherwise accept", async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, 'tests'), { recursive: true });
+      await writeFile(path.join(project.dir, 'tests/a.test.ts'), '', 'utf8');
+      await writeStory(project, { files_expected: ['tests/a.test.ts'] });
+      await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+      const { runner, calls } = recorder(() => LAYER_OK);
+      // `testRoots: undefined` (the default elsewhere in this file) falls back to `isTestPath`'s own
+      // built-in rule and accepts `tests/a.test.ts`; `testRoots: []` is a real, different configuration
+      // (set, but empty) that accepts no path at all — the one observable case where `ctx.testRoots`
+      // changes `--scope story`'s outcome, since the plan's own top-level `files_expected.filter(isTestPath)`
+      // gate is otherwise unaware of `execution.testRoots` entirely.
+      const outcome = await storyVerify(
+        ctxFor(project, { unit: 'vitest unit' }, runner, []),
+        'STORY-001',
+      );
+      if (outcome.kind !== 'verified') throw new Error(`expected verified, got ${outcome.kind}`);
+      expect(calls).toEqual([]);
+      expect(statusOf(outcome.report, 'test:unit --scope story')).toBe('unverifiable');
+      expect(outcome.report.checks[0]?.message).toContain('not a valid test path');
+    });
   });
 
   it('a layer that fails is fail, and a layer that could not run is unverifiable: different statuses', async () => {

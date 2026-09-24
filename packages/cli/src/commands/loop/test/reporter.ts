@@ -156,6 +156,7 @@ async function runVitest(
   cwd: string,
   testNameFilter?: string,
   fileFilter?: string,
+  files?: readonly string[],
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -188,10 +189,17 @@ async function runVitest(
   // are themselves symlinks (exactly what `mkdtemp`'s own real temp directories sit behind), the
   // un-resolved mismatch produced a `path.relative` result matching zero real files, silently
   // defaulting every retry on that host to "not a flake" with no error at all.
+  // `files` (`PLAN-M14.md` P26, `story.ts`'s own validated test-path list — plural, no `testNameFilter`,
+  // never combined with the single-file `fileFilter` above) is already project-relative, exactly the
+  // form `validateTestPath` returns: unlike `fileFilter` (an absolute path off vitest's own prior JSON
+  // output) it needs no `realpath`/`relative` conversion, just one shell-quoted positional argument per
+  // file, space-joined — vitest accepts any number of positional file arguments in one invocation.
   const fileArg =
-    fileFilter === undefined
-      ? ''
-      : ` ${shellQuote(path.relative(await realpath(cwd), fileFilter))}`;
+    files !== undefined && files.length > 0
+      ? ` ${files.map((file) => shellQuote(file)).join(' ')}`
+      : fileFilter === undefined
+        ? ''
+        : ` ${shellQuote(path.relative(await realpath(cwd), fileFilter))}`;
   const filterFlag =
     testNameFilter === undefined ? '' : ` -t ${shellQuote(`^${escapeRegExp(testNameFilter)}$`)}`;
   const result = await runShellCommand(`${command}${fileArg} --reporter=json${filterFlag}`, cwd);
@@ -299,6 +307,7 @@ async function runPytest(
   createTempPath: () => string,
   testNameFilter?: string,
   fileFilter?: string,
+  files?: readonly string[],
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -309,6 +318,15 @@ async function runPytest(
       message: `testCommands value ("${command}") contains shell chaining (&&, ||, ;, |, redirection, or command substitution) — cannot safely append --junitxml to it.`,
     };
   }
+  // `files` (`PLAN-M14.md` P26): pytest's own real positional form — one or more file paths given
+  // directly on the command line, each shell-quoted — rather than `-k`/a node id (that form still needs
+  // `testNameFilter`, below, which `files` is never combined with). Unlike the `-k`/node-id filter flag,
+  // this positional form works with no test name at all: `fileFilter` alone, with no `testNameFilter`,
+  // is never a real call shape below and stays ignored, exactly as before.
+  const fileArgs =
+    files !== undefined && files.length > 0
+      ? ` ${files.map((file) => shellQuote(file)).join(' ')}`
+      : '';
   // `testNameFilter` (P7's own retry-in-isolation, `run.ts`) is addressed by a real, exact pytest
   // node id (`<file>::<name>`) whenever `fileFilter` (`TestOutcome.file`) is also known — a fresh
   // critic round reproduced directly that the first draft's `-k <name>` substring/expression match
@@ -329,7 +347,7 @@ async function runPytest(
         : ` ${shellQuote(`${classnameToPath(fileFilter)}::${testNameFilter}`)}`;
   try {
     const result = await runShellCommand(
-      `${command} --junitxml=${shellQuote(xmlPath)}${filterFlag}`,
+      `${command}${fileArgs} --junitxml=${shellQuote(xmlPath)}${filterFlag}`,
       cwd,
     );
     let xml: string;
@@ -393,6 +411,11 @@ function truncate(text: string): string {
  * (`PLAN-M8.md` P7, F-TEST-6) is this pair's only real caller. `fileFilter` alone (with no
  * `testNameFilter`) is never a real call shape and is ignored.
  *
+ * `files` (`PLAN-M14.md` P26), when given, scopes this invocation to exactly that closed, already
+ * project-relative list of real test files, positionally — `run.ts`'s own `TestRunOptions.files` is
+ * this parameter's only real caller (`story.ts`'s own validated story test-path list); never combined
+ * with `testNameFilter`/`fileFilter` above, a different pair with a different real caller.
+ *
  * Overloaded, not one flat `string | undefined` signature: `'missing-command'` is only ever real for
  * a caller that genuinely does not have a command yet (`run.ts`'s own `command === undefined`
  * continue-guard runs *before* either of its own two call sites here) — encoding that at the type
@@ -406,6 +429,7 @@ export async function runAndNormalize(
   createTempPath: () => string,
   testNameFilter?: string,
   fileFilter?: string,
+  files?: readonly string[],
 ): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>>;
 export async function runAndNormalize(
   command: string | undefined,
@@ -414,6 +438,7 @@ export async function runAndNormalize(
   createTempPath: () => string,
   testNameFilter?: string,
   fileFilter?: string,
+  files?: readonly string[],
 ): Promise<RunAndNormalizeResult>;
 export async function runAndNormalize(
   command: string | undefined,
@@ -422,12 +447,13 @@ export async function runAndNormalize(
   createTempPath: () => string,
   testNameFilter?: string,
   fileFilter?: string,
+  files?: readonly string[],
 ): Promise<RunAndNormalizeResult> {
   if (command === undefined) return { outcome: 'missing-command' };
   const result =
     ecosystem === 'python'
-      ? await runPytest(command, cwd, createTempPath, testNameFilter, fileFilter)
-      : await runVitest(command, cwd, testNameFilter, fileFilter);
+      ? await runPytest(command, cwd, createTempPath, testNameFilter, fileFilter, files)
+      : await runVitest(command, cwd, testNameFilter, fileFilter, files);
   if (!result.ok) return { outcome: 'tool-error', message: result.message };
   return { outcome: 'ran', report: { outcomes: result.outcomes } };
 }

@@ -277,6 +277,36 @@ test('AC-202-2 genuinely fails', () => { expect(1).toBe(2); });
       { name: 'a test with no file name', acId: undefined, status: 'pass' },
     ]);
   });
+
+  it('`files` (PLAN-M14.md P26) scopes a real run to exactly the given files, positionally — a file left out never runs', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'a.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-400-1 in scope', () => { expect(1).toBe(1); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'b.test.js'),
+      // Would fail if it ran — proves `files` really narrows the run rather than running the whole
+      // layer anyway ("files dropped" would turn this green).
+      `import { test, expect } from 'vitest'; test('AC-400-2 out of scope', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+
+    const result = await runAndNormalize(
+      `${process.execPath} ${REAL_VITEST_ENTRY} run --root .`,
+      dir,
+      'js',
+      UNUSED_TEMP_PATH,
+      undefined,
+      undefined,
+      ['a.test.js'],
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]).toMatchObject({ acId: 'AC-400-1', status: 'pass' });
+  });
 });
 
 describe('runAndNormalize — python (real pytest)', () => {
@@ -431,6 +461,37 @@ def test_param(x):
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]?.status).toBe('pass');
+  });
+
+  it('`files` (PLAN-M14.md P26) addresses real files positionally, with no testNameFilter, quoting a path that contains a space', async () => {
+    const dir = await tempDir();
+    const spacedDir = path.join(dir, 'a dir with spaces');
+    await mkdir(spacedDir, { recursive: true });
+    await writeFile(
+      path.join(spacedDir, 'test_in_scope.py'),
+      `def test_AC_401_1_passes():\n    assert True\n`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'test_out_of_scope.py'),
+      // Would fail if it ran — proves the positional form really narrows the run.
+      `def test_AC_401_2_would_fail():\n    assert False\n`,
+      'utf8',
+    );
+
+    const result = await runAndNormalize(
+      'pytest -q',
+      dir,
+      'python',
+      () => path.join(dir, 'junit'),
+      undefined,
+      undefined,
+      ['a dir with spaces/test_in_scope.py'],
+    );
+
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes).toHaveLength(1);
+    expect(result.report.outcomes[0]).toMatchObject({ acId: 'AC-401-1', status: 'pass' });
   });
 });
 

@@ -8,7 +8,7 @@
  * @see specs/09 §9.8
  * @see specs/10 §10.6
  * @see PLAN-M13.md P22
- * @see PLAN-M14.md P1, P25
+ * @see PLAN-M14.md P1, P5, P25, P26
  */
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -82,11 +82,14 @@ const STORY = {
 
 /** A bare project: the config (`readConfig` needs only that), one Story and one DoD profiles file. `checks`
  * populates the `verify` list by default (the phase `forge story verify` runs with no `--phase`); pass
- * `phase: 'done'` to populate the `done` list instead, for a `--phase done` case. */
+ * `phase: 'done'` to populate the `done` list instead, for a `--phase done` case. `filesExpected` overrides
+ * the fixture's own default `files_expected` (`['src/a.ts']`, which names no test file at all — `--scope
+ * story` cases, M14 P26, need a real one). */
 async function project(
   checks: readonly string[],
   testCommands: Readonly<Record<string, string>> = {},
   phase: 'verify' | 'done' = 'verify',
+  filesExpected?: readonly string[],
 ): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-story-verify-'));
   dirs.push(dir);
@@ -97,9 +100,11 @@ async function project(
   };
   await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(config), 'utf8');
   await mkdir(path.join(dir, 'docs/forge/specs/stories'), { recursive: true });
+  const story =
+    filesExpected === undefined ? STORY : { ...STORY, files_expected: [...filesExpected] };
   await writeFile(
     path.join(dir, 'docs/forge/specs/stories/STORY-001.md'),
-    `---\n${YAML.stringify(STORY)}---\n\nBody.\n`,
+    `---\n${YAML.stringify(story)}---\n\nBody.\n`,
     'utf8',
   );
   await mkdir(path.join(dir, 'docs/forge/kb/engineering'), { recursive: true });
@@ -237,6 +242,41 @@ describe('forge story verify (real subprocess)', () => {
     expect(red.status).toBe(1);
     const body = JSON.parse(red.stdout) as { checks: { check: string; status: string }[] };
     expect(body.checks.map((entry) => entry.status)).toEqual(['fail', 'fail']);
+  }, 120_000);
+
+  it("accepts the real, scoped vitest command line for --scope story, narrowing to the story's own test file (M14 P26)", async () => {
+    const require = createRequire(import.meta.url);
+    const vitestPackage = require.resolve('vitest/package.json');
+    const bin = (require(vitestPackage) as { bin: Record<string, string> }).bin['vitest'];
+    if (bin === undefined) throw new Error('vitest has no bin entry');
+    const command = `${process.execPath} ${path.join(path.dirname(vitestPackage), bin)} run --root .`;
+    const dir = await project(
+      ['{ check: test:unit --scope story }', '{ check: spec:ac-coverage }'],
+      { unit: command },
+      'verify',
+      ['sample.test.js'],
+    );
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `import { test, expect } from 'vitest'; test('AC-001-1 in scope', () => { expect(1 + 1).toBe(2); });`,
+      'utf8',
+    );
+    // Not in files_expected: a red test here must never affect the scoped check — proving the real,
+    // literal `... sample.test.js --reporter=json` command line this piece appends was actually
+    // narrowed by real vitest, not merely accepted while still running the whole layer.
+    await writeFile(
+      path.join(dir, 'other.test.js'),
+      `import { test, expect } from 'vitest'; test('a red test out of scope', () => { expect(1).toBe(2); });`,
+      'utf8',
+    );
+    const result = forge(['story', 'verify', 'STORY-001', '--json'], dir);
+    expect(result.status).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      checks: { check: string; status: string; message: string }[];
+    };
+    expect(body.checks.map((entry) => entry.status)).toEqual(['pass', 'pass']);
+    expect(body.checks[0]?.message).toContain("the story's own test file");
   }, 120_000);
 
   it('a configured typecheck command runs and its answer decides the check (config wiring, not a stub)', async () => {
