@@ -22781,3 +22781,111 @@ correctly out of this piece's stated Surface, confirmed a nitpick by both critic
 design, per the plan's own explicit mechanism.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P33`.
+
+## Q258 — M14 P32: one agent reader (`readProjectAgent`) in the CLI; `forge debug`/`review`/`panel` request their own agent's declared limits; DECIDE owner resolved by lexical topic match — a two-round critic loop found one real gap and five nitpicks in round 1 (all fixed), zero new findings in round 2
+
+**Context.** `PLAN-M14.md` P32, depending on nothing. Before this piece, `packages/cli/src/commands/
+loop/agent-loader.ts` had its own `loadProjectAgent`: a second, CLI-only reader of `.forge/agents/
+<id>.yaml`, distinct from `@forge/engine/dispatch`'s own `readProjectAgent` that dispatch, `forge
+debug` and `run/gate-commands.ts` already used. `loadProjectAgent` had no check that a file's own
+declared `id` matched its file name, and folded every I/O error (not just a genuinely missing file)
+into `RUN-056` — two real behaviours `readProjectAgent` does not share. Separately, `forge debug`/
+`forge review`/`forge panel` build a synthetic, hand-made `StepNode` (`buildAdHocStepNode`, none of
+the three runs inside a compiled workflow) and requested a single fixed `AD_HOC_LIMITS` constant (20
+turns / 600000ms / $2.00) for every real session, regardless of which agent was actually dispatched or
+what that agent's own `05` §5.3 `limits` block declared. And `resolveDecisionOwner` (the private
+function `runSessionStep`'s DECIDE phase uses to pick who rules on a `decisions_owned` decision) always
+picked the first roster-order candidate with any `decisions_owned` entry, never reading the framed
+question at all.
+
+**Built.** `loop/agent-loader.ts` is deleted; `agent.ts`'s `agentShow`, `doctor/model-tiers.ts`'s
+`checkModelTiers`, `loop/panel.ts` and `loop/review.ts` now call `readProjectAgent`
+(`@forge/engine/dispatch`) directly, so an id/file mismatch is refused (`RUN-056`) and a genuine I/O
+failure (e.g. `EISDIR`) propagates unwrapped through every real caller, not just the ones that already
+used it. `loop/index.ts`'s barrel export and the `RUN-056`/`bin.ts` doc comments follow the rename.
+`buildAdHocStepNode` (`ad-hoc-step.ts`) gains a required 4th `limits: StepNodeLimits` argument; a new
+`agentStepLimits(agent)` helper converts an agent's declared `max_turns`/`wall_clock_ms`/`max_cost_usd`
+into that shape, and `forge debug`/`forge review`/`forge panel` now pass it for every real session
+request (and the synthetic node prompt assembly's block [6] reads), replacing `AD_HOC_LIMITS`
+everywhere except `ad-hoc-step.ts`'s own export (still pinned by a new `ask.test.ts` test, since `forge
+ask` remains the one command with no real agent dispatch to read a declared limit from at all).
+`resolveDecisionOwner` now takes the framed question (`state.framing?.question ?? node.brief ?? ''`)
+and does lexical topic matching (`questionWords`/`topicNamedIn`): among the same eligible candidates as
+before (facilitator/critic excluded, registered, non-empty `decisions_owned` — this filter is
+byte-for-byte unchanged), the one whose own `decisions_owned` topics the question names the most
+(matching on whole, `.`/`_`/`-`-split words, case-insensitive, no stemming) wins; a tie among the top
+scorers, or an all-zero score, falls back to the original first-with-any rule. The DECIDE brief now
+names the one matched topic explicitly when a real match won ("The framed question names your own
+"<topic>" topic directly, which is why you rule here."), omitted on the fallback path. Who is ever
+*eligible* to decide is unchanged; only which already-eligible candidate the machinery picks can shift.
+
+**Round 1 (fresh, context-free): one real gap, five nitpicks, all fixed.** The real gap: the new
+lexical topic-matching algorithm's TIE branch (two different candidates each matching the question
+equally) had no test. Fixed: a new `session-roster.test.ts` test with three candidates
+(`ux`/`data-architect`/`ops-architect`) where the latter two tie on the shared word "consistency" and
+`ux` — whose own topic never matches — wins via the fallback rule, proving a tie never arbitrarily
+picks one of the tied candidates. The five nitpicks, all fixed: (1) `AD_HOC_LIMITS`'s doc comment
+overstated that `forge ask` "still names"/uses the constant, when `ask.ts` never references it at all —
+reworded, and a real regression-pin test added directly to `ask.test.ts`; (2) `questionWords`'s doc
+comment wrongly claimed a `.`/`_`/`-`-only split (copy-pasted from `topicNamedIn`'s own comment) when
+the real regex splits on any run of non-alphanumeric characters — reworded to match; (3) the new
+`git grep -l loadProjectAgent` regression test in `agent-loader.test.ts` was not word-bounded — added
+`-w`; (4) `RUN-056`'s updated doc comment named every caller of `readProjectAgent` except `forge
+doctor` — added; (5) a process issue, not code: this piece's own isolated `bin.ts` hunk (a shared file
+another concurrent piece, P26, is also actively editing) was found unstaged with the concurrent piece's
+own unrelated hunk staged in its place — the shared git index had been touched again after this
+piece's own `git apply --cached` isolation. Re-isolated immediately before the actual commit (see
+Shared working tree below) rather than left stale.
+
+**Round 2 (fresh, context-free; independently hand-traced `resolveDecisionOwner` against the real code
+for the new tie test rather than trusting the test's own comment, and actually ran every directly
+relevant suite — 598/598 — plus a full `pnpm typecheck`, 21/21 packages): zero new findings.** Two
+trivial, non-blocking observations offered only because the brief asked for a dead-code/test-quality
+check, neither needing action: `AD_HOC_LIMITS` remains exported production code with zero real callers
+(already disclosed, by design, in its own doc comment); one test description string referred to "this
+command's own doc comment" when it meant `ad-hoc-step.ts`'s doc comment specifically — reworded for
+precision anyway, no behavioural change.
+
+**Mutation evidence.** Three real breaks, each with the named test(s) failing for the stated reason,
+then restored via precise `Edit` reversal (not `git checkout --`, which would have discarded this
+piece's own uncommitted work along with the mutation) and re-verified green: `debug.ts`'s two
+`SessionRequest.limits` sites and its `buildAdHocStepNode` call reverted to the old `AD_HOC_LIMITS`
+wiring — the new debug.test.ts limits test failed, showing `maxTurns: 20` where `10` was expected;
+`topicNamedIn` mutated to `return false` unconditionally — the new "data-architect" topic-match test in
+`session-roster.test.ts` failed, falling back to `architect` instead; `agentShow` mutated to bypass the
+id-vs-filename check (mirroring the deleted `loadProjectAgent`'s own missing check) — the new
+`agent-loader.test.ts` mismatch test failed, and (as a side effect of the mutation's own inline
+comment literally containing the string) the `git grep loadProjectAgent` regression test failed too.
+
+**Verification.** `pnpm typecheck` clean across all 21 packages, both mid-piece and immediately before
+the commit. Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) clean on every
+touched file. Scoped, directly relevant suites green throughout, including the full
+`core/test/errors.test.ts` (464 tests, unchanged pass count — this piece only edited an existing
+error's doc comment, not its behaviour, but the standing rule was followed anyway): `agent-loader.test.ts`,
+`ask.test.ts`, `agent.test.ts`, `model-tiers.test.ts`, `model-tiers-init.test.ts`, `panel.test.ts`,
+`review.test.ts`, `debug.test.ts`, `session-roster.test.ts`, `session.test.ts` — 598 tests, all green,
+re-run a final time after round 2's fixes. Rule 14/15 clean-`git worktree` verification at the final
+commit: see the report; typecheck and the same directly-relevant suites reproduced green there too.
+
+**Shared working tree.** `packages/cli/src/bin.ts` (P26, `forge story verify`'s own concurrent work,
+adding an unrelated `testRoots:` call-site argument around line 3199) and `packages/core/src/errors/
+codes.ts` were the two files this piece shares with concurrent work; `codes.ts` stayed a single,
+uncontested hunk throughout (`git diff` re-checked before every edit). `bin.ts` needed real hand-built-
+patch isolation (`git diff -- bin.ts > patch; git apply --cached` on just this piece's own hunk) —
+twice, because the shared git index was independently touched by the concurrent piece a second time
+between this piece's first isolation and its own critic round, landing this piece's hunk unstaged with
+the other piece's hunk staged in its place (round 1 finding 5 above). Re-isolated via `git reset --
+bin.ts` (scoped to that one path, confirmed via `git diff --cached --stat` that no other agent's
+already-staged work was disturbed) immediately followed by a fresh `git apply --cached` and the commit
+itself, to minimize the window. The committed blob was verified directly (`git show <sha>:
+packages/cli/src/bin.ts`) to contain only this piece's one-line doc-comment change at the DECIDE-owner
+paragraph, not the concurrent `testRoots:` line. Every `git add` was exact-file; `-A`/`.` never used;
+`git stash` never used.
+
+**Discloses.** Topic matching is lexical (word-level, case-insensitive, no stemming/synonyms):
+"decompose" does not match a topic word spelled "decomposition," by design, per the brief. `forge ask`
+keeps `AD_HOC_LIMITS` as the one real command-shaped concept still associated with that constant, even
+though `ask.ts` itself never imports it (it throws `USR-003` unconditionally, before any agent or
+limits concept is ever reached).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P32`.
