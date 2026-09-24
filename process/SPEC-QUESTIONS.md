@@ -22680,3 +22680,104 @@ workflow-engine `kind: 'session'` step, only for `forge session <type>`). `P43` 
 covers `.forge/techniques/`) is the next piece per the plan's own ordering, not built here.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P29`.
+
+## Q257 — M14 P33: `registryTail(type)` in `@forge/schemas`, `outputGlob` built on it, and the loader refuses a mismatched registered output — a two-round critic loop found one real bug and one doc-comment overclaim in round 1 (both fixed), a fourth real finding (a pre-existing test fixture) surfaced independently while broadening test coverage (fixed), zero new findings in round 2
+
+**Context.** `PLAN-M14.md` P33, depending on nothing. Before this piece, only `test/agent-outputs-registry.test.ts`
+checked a registered output's `path`/`schema`/`cardinality` against `18` §18.7's registry — and only for the
+34 shipped agent copies that test loads, at CI time. `loadAgentDefinition` itself (the code path every real
+`forge agent validate`, `forge run`, and module-authored agent goes through) had no such check at all.
+
+**Built.** `registryTail(type)`, new in `@forge/schemas/registry`: a registered type's `pathTemplate` with
+every placeholder turned into a glob fragment and its literal section-root segment dropped wherever an
+interior directory is left to keep the suffix specific on its own — kept, literally, only for the seven types
+whose template reduces to a bare file name once the root is gone (`Vision`, `Risk`, `Assumption`,
+`OpenQuestion`, `Waiver`, `SessionRecord`, `HandoffRecord`), since a bare `handoffs.md` would match a file of
+that name anywhere. Root-agnostic by construction (no `DocRoots` parameter), so it is callable from the
+load-time loader, which has no project configuration. `outputGlob` (`@forge/engine`) is rebuilt on top of it —
+root computation untouched, the tail's own leading literal root segment peeled back off before the real
+configured root is substituted, if `registryTail` kept one — pinned byte-identical to the pre-refactor
+implementation for all 22 registry types (the existing 9-type pin plus a new 13-type pin), under the default
+root, a relocated root, and a hostile root needing glob-escaping. `loadAgentDefinition` gains
+`checkOutputsAgreeWithRegistry`: any registered-type `outputs[]` entry is an issue (naming `outputs[i].<field>`
+and the registry's own value) unless `schema` matches `ARTIFACT_SCHEMAS[type].fileStem + '.schema.json'`,
+`path` ends with `registryTail(type)` at a real path-segment boundary, and `cardinality` is `'many'` exactly
+when the tail holds a placeholder and absent otherwise (`'single'` is refused either way, no separate case). A
+type the core registry does not know is not checked at all.
+
+**Round 1 (fresh, context-free): 3 findings — 1 real bug fixed, 1 doc-comment overclaim fixed, 1 nitpick
+disclosed.** (1) `output.path.endsWith(tail)` had no path-segment-boundary check —
+`'old-decisions/ADR-*.md'.endsWith('decisions/ADR-*.md')` is `true` in plain JS, so a mistyped or copy-pasted
+sibling directory would wrongly pass, exactly the mistake the rule exists to catch. Fixed with a new
+`endsWithTail(path, tail)` helper (`path === tail || path.endsWith('/' + tail)`) and a dedicated regression
+test using the exact counter-example. (2) The doc comment overclaimed "root-agnostic" for all 22 types, when
+seven of them (the bare-file-name set above) keep a literal root word that a relocated `paths.<section>` DOES
+change — real enforcement (`outputGlob`) still judges those correctly; only this load-time proxy is narrower
+than the comment said. Fixed as a doc-comment-only correction (the kept-root behaviour itself is pinned by the
+plan's own worked example, `registryTail('HandoffRecord') === 'reports/handoffs.md'`, so it was never a
+"change the code" situation). (3) `ARTIFACT_SCHEMAS`'s transitive `zod-to-json-schema` import weight — left
+as-is and disclosed, since the plan's own Mandate text explicitly names this exact symbol as the mechanism.
+
+**A fourth real finding, self-caught while broadening test coverage past the plan's own listed Surface** (M13-
+AGENT-NOTES's own scoped-test discipline, run before either critic round returned): `packages/cli/test/
+commands/agent.test.ts` failed on a pre-existing fixture, `packages/cli/test/init/fixtures/modules/fixture-mod/
+agents/tester.agent.yaml`, whose `Task` output declared a literal, unsubstituted `path: .../tasks/{id}.md` —
+schema-valid and unchecked before this piece, now correctly refused. Fixed with a one-line change to the
+registry's own glob shape (`tasks/TASK-*.md`). A repo-wide sweep (every `*.agent.yaml` under `modules/`, every
+test fixture directory, the materialized `fixtures/greenfield-service/.forge/agents/*.yaml` snapshot) found no
+other genuinely affected fixture — two other literal-placeholder outputs exist (`critic`'s `ObjectionList`,
+`techwriter`'s `DocsSet`) but both are unregistered types this rule correctly skips by design.
+
+**Round 2 (fresh, context-free; independently re-derived every fix and re-ran the full required suite itself,
+including reverting and re-verifying the fixture fix): zero new findings.** All four findings above confirmed
+correct by reading the current code/tests directly rather than trusting the description handed to it. Two
+disclosed, non-blocking observations: `outputPathFor` (same file, unchanged) still duplicates the original
+inline logic rather than also building on `registryTail` — outside this piece's own stated Surface
+(`outputs.ts` "isolated hunk" names only `outputGlob`), not a bug; and `PLAN-M14.md` P33's own "Discloses"
+text still says "the rule is root-agnostic" verbatim, now imprecise next to the corrected code comment — the
+shared plan document itself was deliberately not edited by this piece (recorded here instead).
+
+**Mutation evidence.** Four real breaks, each confirmed failing for the stated reason then restored (the
+feature was uncommitted at mutation time, so a preserved file backup stood in for `git checkout --`, which
+would have reverted the whole uncommitted feature, not just the mutation): the `path.endsWith` check disabled
+(load-time test plus ~44 shipped-roster failures in the independent agreement test); `registryTail` no longer
+substituting `{id}` with `<idPrefix>-*` (11 failures across the per-type pinned table, the `outputGlob`
+byte-identical table, and the agreement test); `cardinality: 'single'` accepted (exactly one test, matching
+the plan's own predicted granularity); `endsWithTail` reverted to a plain `endsWith` (exactly the new
+`old-decisions` regression test, nothing else). `test/agent-outputs-registry.test.ts` also gained a permanent,
+committed mutation-evidence describe block: 192 real mutations (64 registered outputs across all 34 shipped
+agent copies × schema/path/cardinality), each independently confirming the loader agrees with that file's own
+check — this is what "the loader agrees with the repo test" (the plan's own closing Tests-first clause) means
+on every future run, not just at commit time.
+
+**Verification.** `pnpm typecheck` (21/21, fresh, zero cache reuse) and the combined `pnpm lint`
+(`eslint . --max-warnings 0 && prettier --check .`, both clean) in a clean `git worktree` at the final commit
+`6eaa204` (`wt-p33-verify-ab038cbd`); `pnpm run boundaries` clean. No error code added or re-pointed, so the
+standing full-`errors.test.ts` rule does not apply. Scoped, all green: `packages/schemas/test` (110),
+`packages/engine/test/dispatch` (788, all 22 files, including the real end-to-end `output-contract`/
+`output-claim` lane tests exercising the refactored `outputGlob`), `packages/agents/test` (1073, all 32
+files), `test/agent-outputs-registry.test.ts` (121, up from 120), `test/greenfield-fixture-generated.test.ts`
+(7), the eight named root workflow/prompt/determinism test files (112), and the fixture's own blast radius
+across `packages/cli/test` (`commands/agent`, `init/{manifest,content,run-init}`, `commands/{overlay,module,
+workflow,spec/integration-rules}`, `commands/run/{output-claim,output-contract,kb-output-ids}`; 300+ tests).
+`test/live-smoke.test.ts` confirmed a clean skip (no `FORGE_LIVE`, per M13-AGENT-NOTES rule 4).
+
+**Shared working tree.** No file overlap with concurrent pieces this wave (P26 `story.ts`; P32 `loop/
+session.ts` and a `cli/commands/loop/*` refactor; P34 `dispatch/lane-base.ts`, new `vcs/join.ts`), confirmed by
+`git status`/`git diff` before every edit. One real incident: `packages/cli/src/bin.ts` carried another
+agent's concurrently-staged (uncommitted) hunk at commit time; `git commit -- <exact 9 paths>` (verified first
+with `--dry-run`) committed only this piece's own files — confirmed after by `git show --stat` (exactly 9
+files) and `git diff -- bin.ts` (the other agent's edit still fully present in the working tree, un-lost, just
+reset out of the index by the pathspec-scoped commit, as `git` does for any unnamed path). `git stash` never
+used; every `git add`/`git commit` exact-file.
+
+**Discloses.** Module-registered types (`ComponentSpec`) are not checked; overrides are validated only through
+`forge agent validate` on the resolved definition (`05` §5.10); the rule is root-agnostic for 15 of the 22
+types and a narrower, sometimes-too-strict proxy for the other 7 (round 1 finding 2) — `PLAN-M14.md` P33's own
+Discloses text still says "the rule is root-agnostic" without that qualification and was not edited here.
+`outputPathFor` still duplicates the pre-refactor inline logic rather than building on `registryTail` too —
+correctly out of this piece's stated Surface, confirmed a nitpick by both critic rounds, not a bug.
+`ARTIFACT_SCHEMAS`'s transitive `zod-to-json-schema` import weight (round 1 finding 3) is unresolved by
+design, per the plan's own explicit mechanism.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P33`.
