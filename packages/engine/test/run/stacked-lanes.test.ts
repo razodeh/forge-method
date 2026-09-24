@@ -732,10 +732,11 @@ describe('which predecessor a lane stacks on', () => {
     expect(failure?.message).toContain('shared.txt');
     // `LANE-JOIN-CONFLICT` classifies as `conflict` -- `classify.test.ts`'s own dedicated unit test pins
     // the mapping directly; here only the code itself (what that mapping keys off) is asserted.
-    // No worktree or branch was left behind for the joining step -- only x's and y's own.
+    // No worktree or branch was left behind for the joining step -- only x's and y's own. `slugifyStepId`
+    // turns `cf:c` into `cf-c-<hash>` (`:` folds to `-`), so that -- not a bare `c-` -- is the real prefix.
     const worktrees = await git(project.projectRoot, 'worktree', 'list', '--porcelain');
-    expect(worktrees).not.toContain(`forge/${RUN_ID}/c-`);
-    const branches = await git(project.projectRoot, 'branch', '--list', `forge/${RUN_ID}/c-*`);
+    expect(worktrees).not.toContain(`forge/${RUN_ID}/cf-c-`);
+    const branches = await git(project.projectRoot, 'branch', '--list', `forge/${RUN_ID}/cf-c-*`);
     expect(branches.trim()).toBe('');
     // x and y's own lanes are untouched: still registered, no LaneAbandoned/LaneRemoved for either.
     expect(
@@ -1434,4 +1435,99 @@ describe('crash and resume of a stacked chain is idempotent', () => {
       );
     },
   );
+});
+
+describe('PLAN-M14.md P34: crash and resume of an in-lane join', () => {
+  // A genuine two-predecessor join: `c`'s own lane creation runs a real `git merge` (not a fast-forward),
+  // so a crash right before `LaneCreated` is recorded catches the join's own git work already done, with
+  // nothing yet telling a resumed run it happened.
+  const source = workflowOf('cj', [
+    agent('x', { produces: ['x.txt'] }),
+    agent('y', { produces: ['y.txt'] }),
+    agent('c', { dependsOn: ['x', 'y'], produces: ['c.txt'] }),
+    mergeStep(['c']),
+  ]);
+  const WRITES: Writes = {
+    x: [{ relativePath: 'x.txt', content: 'x\n' }],
+    y: [{ relativePath: 'y.txt', content: 'y\n' }],
+    c: [{ relativePath: 'c.txt', content: 'c\n' }],
+  };
+  const PROBE = ['x.txt', 'y.txt'];
+
+  function crashingContext(
+    project: Project,
+    adapter: PlatformAdapter,
+    type: string,
+    step: string,
+  ): RunEngineContext {
+    const base = contextFor(project, { adapter });
+    let crashed = false;
+    return {
+      ...base,
+      telemetry: {
+        emit: async (event) => {
+          if (!crashed && event.type === type && event.stepId === step) {
+            crashed = true;
+            throw new Error(`simulated crash at ${type} of ${step}`);
+          }
+          return base.telemetry.emit(event);
+        },
+      },
+    };
+  }
+
+  it("a crash after the join's own git work but before LaneCreated is recorded: the orphaned, already-joined lane is reclaimed (removed, not reused), and the resumed run gets exactly one LaneCreated for c, with both x.txt and y.txt still visible", async () => {
+    const project = await createProject('join-crash-before-created');
+    const first = scriptedAdapter(WRITES, PROBE);
+
+    await expect(
+      runEngine(source, {}, crashingContext(project, first.adapter, 'LaneCreated', 'cj:c')),
+    ).rejects.toThrow('simulated crash at LaneCreated of cj:c');
+
+    // Before resume: the orphaned lane worktree is real, on disk, already holding the join's own merge
+    // commit (both x.txt and y.txt) -- but no LaneCreated was ever recorded for it. `slugifyStepId` turns
+    // `cj:c` into `cj-c-<hash>` (`:` folds to `-`), so that -- not a bare `c-` -- is the real prefix.
+    const orphanBranches = await git(
+      project.projectRoot,
+      'branch',
+      '--list',
+      `forge/${RUN_ID}/cj-c-*`,
+    );
+    expect(orphanBranches.trim()).not.toBe('');
+    expect(
+      (await eventsOf(project)).some(
+        (event) => event.type === 'LaneCreated' && event.stepId === 'cj:c',
+      ),
+    ).toBe(false);
+
+    const second = scriptedAdapter(WRITES, PROBE);
+    const ctx = contextFor(project, { adapter: second.adapter });
+    const parsed = parseWorkflow(source);
+    if (!parsed.success) throw new Error('workflow does not parse');
+    const compiled = compileRunPlan(parsed.workflow, {});
+    if (!compiled.success) throw new Error('workflow does not compile');
+    const steps = new Map<string, StepNode>(compiled.nodes.map((n) => [n.id, n] as const));
+    const resumed = await resumeRun(RUN_ID, { ...ctx, steps });
+    const state = await runEngine(source, {}, ctx, resumed);
+
+    expect(state.runStatus).toBe('completed');
+    // The step started completely afresh (a fresh join, from the same two predecessor lanes), so it still
+    // sees both files -- the orphan was reclaimed (removed), never resumed into.
+    expect(second.seen.get('cj:c')).toEqual(['x.txt', 'y.txt']);
+    const created = (await eventsOf(project)).filter(
+      (event) => event.type === 'LaneCreated' && event.stepId === 'cj:c',
+    );
+    expect(created).toHaveLength(1);
+    expect(created[0]?.payload).toMatchObject({ joinedFrom: ['cj:x', 'cj:y'] });
+    expect(await mergedStepOrder(project)).toEqual(['cj:x', 'cj:y', 'cj:c']);
+    expect(await filesOnIntegration(project)).toEqual(
+      expect.arrayContaining(['x.txt', 'y.txt', 'c.txt']),
+    );
+    expect(await git(project.integrationPath, 'status', '--porcelain')).toBe('');
+    expect(ctx.laneRegistry.size).toBe(0);
+    // The orphaned pre-crash lane branch is gone too -- reclaimed, not merely abandoned in place.
+    expect(
+      (await git(project.projectRoot, 'branch', '--list', `forge/${RUN_ID}/cj-c-*`)).trim(),
+    ).toBe('');
+  });
 });
