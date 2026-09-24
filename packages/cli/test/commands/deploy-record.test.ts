@@ -314,9 +314,49 @@ describe('recordRollback', () => {
     expect(typeof written.health.status).toBe('number');
   });
 
+  // Critic round 1 (real bug, empirically proven): `bin.ts`'s `runDeployRecordCommand` used to build its
+  // `DeployRecordContext` with no `documentRoots` at all, defaulting to the narrow `[kbRoot, reportsRoot]`
+  // `staleProblem`'s own default falls back to -- while the real check (`deployRollbackCheck`, wired a few
+  // lines away in the SAME file) builds its context with the wide `[kb, specs, plans, sessions, reports]`
+  // list. A `--from-sha` that is not exactly `HEAD`, where the only intervening commit touches `specs/` (in
+  // the wide list, not the narrow one), used to make the WRITER refuse a record the CHECK would have accepted
+  // -- reproduced here directly against `recordRollback` itself (not the CLI dispatcher, which this suite does
+  // not spawn) by passing the two different `documentRoots` lists explicitly, exactly as the two `bin.ts` call
+  // sites now agree to build them.
+  it('a --from-sha behind HEAD by a specs-only commit is accepted with the wide documentRoots (parity with the check), refused with the narrow default', async () => {
+    const fx = await project([STAGING]);
+    await writeAndCommit(fx.dir, { 'docs/forge/specs/stories/S-1.md': 'x' });
+    const wide = {
+      ...fx.ctx,
+      documentRoots: [
+        KB_ROOT,
+        'docs/forge/specs',
+        'docs/forge/plans',
+        'docs/forge/sessions',
+        REPORTS_ROOT,
+      ],
+    };
+    const accepted = await recordRollback(wide, validFields(fx));
+    expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
+
+    const narrow = { ...fx.ctx, documentRoots: [KB_ROOT, REPORTS_ROOT] };
+    const refused = await recordRollback(narrow, validFields(fx));
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.message).toContain('is out of date');
+  });
+
   it.each<[string, (fx: Fixture) => Partial<ReturnType<typeof validFields>>, string]>([
     ['unknown env', () => ({ env: 'ENV-999' }), 'no environment ENV-999 is recorded'],
     ['not a target', () => ({ env: 'ENV-001' }), 'is not a delivery-target environment'],
+    [
+      // Critic round 1 (real bug, empirically proven): `resolveEnvironment` used to gate `recordRollback` on
+      // plain `isTarget`, which a pure-production environment satisfies -- so this used to WRITE a "successful"
+      // rollback record `deployRollbackCheck` (whose own `pick` is the narrower `isRehearsalTarget`, 14 §14.4
+      // rule 2 "in staging") would then silently never read at all.
+      'a production-only environment (not a rehearsal target)',
+      () => ({ env: 'ENV-003' }),
+      'is not a delivery-target environment',
+    ],
     ['from_sha not in history', () => ({ fromSha: 'a'.repeat(40) }), 'not in this repository'],
     ['to_sha not in history', () => ({ toSha: 'b'.repeat(40) }), 'not in this repository'],
     ['equal shas', (fx) => ({ toSha: fx.base }), 'from a commit to itself'],
@@ -351,9 +391,10 @@ describe('recordRollback', () => {
       'health.checked_at',
     ],
   ])('refuses %s, with a real reason and no file written', async (_label, delta, expected) => {
-    const fx = await project([DEV, STAGING]);
-    const outcome = await recordRollback(fx.ctx, { ...validFields(fx), ...delta(fx) });
-    await expectRefused(outcome, fx.dir, file('ENV-002'), expected);
+    const fx = await project([DEV, STAGING, PROD]);
+    const overrides = delta(fx);
+    const outcome = await recordRollback(fx.ctx, { ...validFields(fx), ...overrides });
+    await expectRefused(outcome, fx.dir, file(overrides.env ?? 'ENV-002'), expected);
     if (!outcome.ok) {
       expect(outcome.remedy).toContain('--from-sha');
       expect(outcome.remedy).toContain('--to-sha');

@@ -3392,11 +3392,25 @@ async function runDeployRecordCommand(
   const need = (flag: string): string => values.get(flag) ?? '';
 
   const config = await readConfig(paths);
+  // The identical `documentRoots` the check branch above builds (`deployDryRunCheck`/`deployRollbackCheck`'s
+  // own context) -- a critic round proved live that leaving this out (defaulting to the narrower
+  // `[kbRoot, reportsRoot]` `DeployEvidenceContext.documentRoots` itself falls back to) made `record rollback`
+  // spuriously refuse a record the real check would have accepted, whenever `--from-sha` was not exactly `HEAD`
+  // and an intervening commit touched only `specs/`/`plans/`/`sessions/`: the writer's own `staleProblem` call
+  // (inside the reused `rollbackProblem`) saw that as "outside the document roots" while the check's wider list
+  // would not have.
   const ctx: DeployRecordContext = {
     paths,
     projectRoot,
     kbRoot: config.paths.kb,
     reportsRoot: config.paths.reports,
+    documentRoots: [
+      config.paths.kb,
+      config.paths.specs,
+      config.paths.plans,
+      config.paths.sessions,
+      config.paths.reports,
+    ],
   };
   let outcome: DeployRecordOutcome;
   if (kind === 'dry-run') {

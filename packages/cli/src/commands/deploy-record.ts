@@ -7,10 +7,10 @@
  * `docs/forge/reports/deployments/<ENV-id>.{dry-run,rollback}.json` or `<ENV-id>.json` was to hand-author JSON —
  * easy to get subtly wrong (an unzoned instant, a `to_sha` that is not actually an ancestor, a health check on the
  * wrong host) in a way nothing catches until the *next* gate run, far from the mistake. This command validates a
- * proposed record with the exact same field-level rules the checks apply — `STAGING`, `isTarget`, `isAncestor`,
- * `commitProblem`, `instantProblem` and `rollbackProblem`, exported from `deploy-evidence.ts` for exactly this
- * reuse — and writes nothing at all if any of them fails (`14` §14.3 rule 7's "machine-readable results" are
- * worthless if a broken one can land).
+ * proposed record with the exact same field-level rules the checks apply — `STAGING`, `isTarget`,
+ * `isRehearsalTarget`, `isAncestor`, `commitProblem`, `instantProblem` and `rollbackProblem`, exported from
+ * `deploy-evidence.ts` for exactly this reuse — and writes nothing at all if any of them fails (`14` §14.3
+ * rule 7's "machine-readable results" are worthless if a broken one can land).
  *
  * **What is NOT checked here.** Staleness (`14` §14.4 rule 2, "for this stage's changes") is a property of the
  * record *relative to the commit history at the moment the check reads it*, not at the moment it is written: a
@@ -20,9 +20,13 @@
  * correct: at write time `from_sha` is ordinarily `HEAD` itself (zero diff), so it passes; the moment a later
  * commit changes something outside the document roots, the *check* reports it stale, exactly per the Discloses.
  *
- * **Which environments each form accepts.** `dry-run` and `rollback` require a real delivery-*target* environment
- * (`isTarget`, matching `deployDryRunCheck`/`deployRollbackCheck`'s own `pick`) — a dev/preview/local/sandbox
- * environment needs no such record. `deployment` accepts ANY registered environment, target or not: its shape
+ * **Which environments each form accepts.** `dry-run` requires a real delivery-*target* environment (`isTarget`,
+ * matching `deployDryRunCheck`'s own `pick`). `rollback` requires a *rehearsal*-target environment
+ * (`isRehearsalTarget`, matching `deployRollbackCheck`'s own `pick`: a target that is not positively
+ * production, `14` §14.4 rule 2 "in staging") — NOT plain `isTarget` (a critic round proved live that gating
+ * on plain `isTarget` let this write a "successful" rollback record for a pure-production environment that
+ * `deployRollbackCheck` would then silently never read at all, reporting "no staging environment recorded" as
+ * if nothing had been written). `deployment` accepts ANY registered environment, target or not: its shape
  * (`14` §14.4 rule 5's generic "deployments are recorded") is what `skeletonDeployedViolations` reads for the
  * *development* environment specifically (`11` F-INIT-7) — filtering `deployment` by `isTarget` (which excludes
  * dev) would make it impossible to ever record the one deployment `G-Foundation` actually asks for.
@@ -31,6 +35,16 @@
  * checks require), anything else is written through unparsed. Either way, the checks' own `typeof status !==
  * 'number'`/2xx-range test is what produces the refusal message, so a malformed value is diagnosed identically
  * whether it is caught here or later by the check.
+ *
+ * **`recordDeployment` is stricter than `deploymentProblem` on `deployed_at`/`health.checked_at`, deliberately.**
+ * The check this kind models (`doctor/rules-delivery.ts`'s `deploymentProblem`) only runs bare `parsesAsInstant`
+ * on those two fields (format only, no future or floor check) — but `recordDeployment` runs the fuller
+ * `instantProblem` (format, not-in-the-future, and, for `deployed_at`, not-before-the-commit), matching what
+ * `dry-run`/`rollback` already enforce for their own instants. This is the mandate's own general instant rule
+ * ("zoned instants, not future by the injected clock, not before the commit") applied uniformly rather than
+ * only where the read-side check happens to enforce it; it is strictly safe-direction (it can only refuse a
+ * record `deploymentProblem` would have accepted, never accept one it would refuse), disclosed here per a
+ * critic round's finding since nothing else in this file said so explicitly.
  *
  * @see specs/03 §3.2.5
  * @see specs/10 §10.3
@@ -45,6 +59,7 @@ import { environmentsFileSchema, type Environment } from '@forge/schemas';
 import {
   commitProblem,
   instantProblem,
+  isRehearsalTarget,
   isTarget,
   rollbackProblem,
   type DeployEvidenceContext,
@@ -112,15 +127,38 @@ const DEPLOYMENT_REMEDY =
   'before that commit, and --health-url/--health-status/--health-checked-at showing a 2xx response on the ' +
   "environment's own (non-local) host at or after --deployed-at.";
 
+/** The `isTarget`/`isRehearsalTarget` eligibility gate `resolveEnvironment` applies for a kind, paired with the
+ * refusal text naming what disqualifies an environment — kept together so the message always matches the exact
+ * predicate actually enforced (a critic round found `recordRollback` enforcing plain `isTarget` while its
+ * refusal text and its remedy both already read as if the narrower `isRehearsalTarget` applied, which made the
+ * bug read as intentional instead of a mismatch). `undefined` (used by `deployment`, see the module doc
+ * comment) means every registered environment is eligible. */
+interface EnvironmentGate {
+  readonly matches: (environment: Environment) => boolean;
+  readonly disqualifies: string;
+}
+
+const TARGET_GATE: EnvironmentGate = {
+  matches: isTarget,
+  disqualifies: 'a development, preview, review, ephemeral, sandbox or local one',
+};
+
+const REHEARSAL_TARGET_GATE: EnvironmentGate = {
+  matches: isRehearsalTarget,
+  disqualifies:
+    'a development, preview, review, ephemeral, sandbox, local, or (positively) production one -- rollback ' +
+    'is rehearsed in staging, not production (14 §14.4 rule 2)',
+};
+
 /** The registered environment named `envId`, read from the COMMITTED register exactly like the checks read it
  * (`readCommittedTree`: an uncommitted edit to `environments.md` changes nothing here) — or the reason it cannot
- * be used. `requireTarget` mirrors `deployDryRunCheck`/`deployRollbackCheck`'s own `isTarget` pick; `deployment`
- * records pass `false` (see the module doc comment on why). */
+ * be used. `gate` mirrors the corresponding check's own `pick` exactly (see `EnvironmentGate`'s own doc
+ * comment); `deployment` passes `undefined` (see the module doc comment on why). */
 async function resolveEnvironment(
   ctx: DeployRecordContext,
   committed: CommittedTree,
   envId: string,
-  requireTarget: boolean,
+  gate: EnvironmentGate | undefined,
 ): Promise<
   | { readonly ok: true; readonly environment: Environment }
   | { readonly ok: false; readonly message: string }
@@ -157,12 +195,10 @@ async function resolveEnvironment(
   if (environment === undefined) {
     return { ok: false, message: `no environment ${envId} is recorded in ${file}` };
   }
-  if (requireTarget && !isTarget(environment)) {
+  if (gate !== undefined && !gate.matches(environment)) {
     return {
       ok: false,
-      message:
-        `${envId} is not a delivery-target environment (${file}: its purpose is a development, preview, ` +
-        'review, ephemeral, sandbox or local one)',
+      message: `${envId} is not a delivery-target environment for this record (${file}: its purpose is ${gate.disqualifies})`,
     };
   }
   return { ok: true, environment };
@@ -211,7 +247,7 @@ export async function recordDryRun(
 ): Promise<DeployRecordOutcome> {
   const repository = await readRepository(ctx);
   if (!repository.ok) return repository.outcome;
-  const resolved = await resolveEnvironment(ctx, repository.tree, fields.env, true);
+  const resolved = await resolveEnvironment(ctx, repository.tree, fields.env, TARGET_GATE);
   if (!resolved.ok) return refuse(resolved.message, DRY_RUN_REMEDY);
 
   const file = `${ctx.reportsRoot}/deployments/${fields.env}.dry-run.json`;
@@ -245,7 +281,12 @@ export async function recordRollback(
 ): Promise<DeployRecordOutcome> {
   const repository = await readRepository(ctx);
   if (!repository.ok) return repository.outcome;
-  const resolved = await resolveEnvironment(ctx, repository.tree, fields.env, true);
+  const resolved = await resolveEnvironment(
+    ctx,
+    repository.tree,
+    fields.env,
+    REHEARSAL_TARGET_GATE,
+  );
   if (!resolved.ok) return refuse(resolved.message, ROLLBACK_REMEDY);
 
   const file = `${ctx.reportsRoot}/deployments/${fields.env}.rollback.json`;
@@ -281,7 +322,7 @@ export async function recordDeployment(
 ): Promise<DeployRecordOutcome> {
   const repository = await readRepository(ctx);
   if (!repository.ok) return repository.outcome;
-  const resolved = await resolveEnvironment(ctx, repository.tree, fields.env, false);
+  const resolved = await resolveEnvironment(ctx, repository.tree, fields.env, undefined);
   if (!resolved.ok) return refuse(resolved.message, DEPLOYMENT_REMEDY);
 
   const file = `${ctx.reportsRoot}/deployments/${fields.env}.json`;

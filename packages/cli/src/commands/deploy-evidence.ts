@@ -77,12 +77,15 @@ export interface DeployEvidenceContext {
   readonly clock?: Clock;
 }
 
-// `STAGING`, `isTarget`, `isAncestor`, `commitProblem`, `instantProblem` and `rollbackProblem` are
-// exported (`PLAN-M14.md` P23) so `commands/deploy-record.ts` (`forge deploy record
-// <dry-run|rollback|deployment>`, the validating writer for these same records) can validate a
-// proposed record BEFORE writing it with the identical field-level rules these two checks already
-// apply, rather than re-deriving them: a second, drifted copy of "what makes a sha/instant/rollback
-// valid" is exactly the failure mode `deploy-evidence.ts`'s own doc comment above warns against.
+// `STAGING`, `isTarget`, `isRehearsalTarget`, `isAncestor`, `commitProblem`, `instantProblem` and
+// `rollbackProblem` are exported (`PLAN-M14.md` P23) so `commands/deploy-record.ts` (`forge deploy
+// record <dry-run|rollback|deployment>`, the validating writer for these same records) can validate
+// a proposed record BEFORE writing it with the identical field-level and environment-selection rules
+// these two checks already apply, rather than re-deriving them: a second, drifted copy of "what makes
+// a sha/instant/rollback/environment valid" is exactly the failure mode this file's own doc comment
+// above warns against -- and exactly what a critic round found `record rollback` had done by gating
+// on plain `isTarget` instead of this file's own narrower `isRehearsalTarget` (see that function's
+// own doc comment).
 export const STAGING = /\b(?:staging|stage|uat|pre-?prod(?:uction)?|non-?prod(?:uction)?)\b/i;
 const PRODUCTION = /\b(?:production|prod)\b/i;
 const GIT_ENV = { GIT_NO_LAZY_FETCH: '1' } as const;
@@ -118,8 +121,14 @@ export function isTarget(environment: Environment): boolean {
 }
 
 /** Where a rollback must be rehearsed (`14` §14.4 rule 2: staging): every target that is not positively production,
- * so an unclassifiable environment is not exempt. */
-function isRehearsalTarget(environment: Environment): boolean {
+ * so an unclassifiable environment is not exempt.
+ *
+ * Exported (`PLAN-M14.md` P23, critic round 1): `commands/deploy-record.ts`'s `recordRollback` gates its own
+ * `--env` on this, not the broader `isTarget` -- a critic round proved live that using plain `isTarget` let
+ * `record rollback` write a "successful" record for a pure-production environment that `deployRollbackCheck`
+ * (whose own `pick` is this exact function) would then silently never read, reporting "No staging environment
+ * is recorded" as if nothing had been written at all. */
+export function isRehearsalTarget(environment: Environment): boolean {
   return isTarget(environment) && !isProductionOnly(environment.purpose);
 }
 
