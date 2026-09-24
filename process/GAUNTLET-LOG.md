@@ -16646,3 +16646,142 @@ compiled level — see Mutation evidence above for why that is a deliberate, dis
 gap.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q255`.
+
+## M14 P29 — Techniques materialised into `.forge/techniques/`, read by one flat-directory loader (`sessions/technique/{load,schema,index}.ts`, `engine/interaction/session.ts`, `engine/dispatch/types.ts`, `cli/commands/run/context.ts`, `cli/init/{content,write-tree,types}.ts`, `core/errors/codes.ts`, `fixtures/greenfield-service/.forge/techniques/` (new, 25 files), `specs/03-cli-and-installer.md`; new/edited tests in `sessions/test/technique/load.test.ts`, `engine/test/interaction/{session-roster,session}.test.ts`, `engine/test/dispatch/helpers.ts`, `cli/test/init/{content,run-init}.test.ts`, `cli/test/commands/upgrade/run-upgrade.test.ts`, `cli/test/commands/loop/{helpers,session}.test.ts`, `test/greenfield-fixture-generated.test.ts`)
+
+**Built.** `forge init`/`forge upgrade` now materialise the 25 real
+`modules/fm-core/techniques/*.technique.yaml` files into `.forge/techniques/<id>.technique.yaml`
+(`readTechniqueFiles`, `@forge/cli/init/content.ts`, copied byte-for-byte — a technique has no
+`extends` chain, so unlike `readResolvedAgents` this never parses and re-serialises, which would
+silently drop a shipped file's own comments), through the identical `writeGeneratedDir`/
+`writeRegenerableContent` mechanism every other `.forge/<kind>/` content already goes through: hash
+header stamped, drift-detected, conflict-resolved on re-init/upgrade exactly like `.forge/agents`/
+`.forge/workflows`/etc. `fixtures/greenfield-service/.forge/techniques/` is the real, regenerated
+25-file snapshot, verified byte-identical (post-header) against the shipped source.
+
+`@forge/sessions/technique/load.ts` gains `listTechniquesInDir`/`loadTechniqueFromDir` — a second,
+flat, one-file-per-id reader for `.forge/techniques/`, with no per-module subdirectory at all, kept
+alongside (not replacing) the existing module-scoped `listTechniques`/`loadTechnique` pair (still real,
+still used by whatever reads the shipped module tree directly). A malformed file, or one whose own
+`id` disagrees with its file name, throws `ForgeError` `RUN-065` naming the real path — the identical
+id/filename check `RUN-056` already makes for `.forge/agents/`. `techniqueSchema` itself
+(`sessions/technique/schema.ts`) is untouched — only its doc comment gained a note about the new
+materialised location.
+
+`@forge/engine/interaction/session.ts`'s `loadSteelManTechnique` (CONVERGE's `16` §16.7 point 3
+steel-man-debate technique for `tradeoff` sessions) now reads exclusively from a project's own
+materialised `.forge/techniques/` (a new, optional `ExecuteStepContext.techniquesRoot`, defaulting to
+`.forge/techniques`) — never `<project>/modules/*/techniques`, which a real `forge init` project does
+not have, closing for techniques the identical `modules/`-is-shipped-content-only gap Q215 already
+closed for the agent roster. `buildRunEngineContext` (`@forge/cli/commands/run/context.ts`) always
+sets `techniquesRoot: '.forge/techniques'` explicitly for every real run/review/debug/session/panel
+context. An absent technique still degrades CONVERGE to ordinary panel mode, but now VISIBLY: a note
+is pushed into both the returned `StepOutcome.notes` (a new, optional, additive field) and the
+persisted `SessionRecord`'s own `## Converge` body (`renderSessionBody`) — before this piece every
+technique-load error, malformed file included, was silently swallowed. A malformed/mismatched file is
+no longer swallowed at all: it propagates as a real, marked refusal (`markRefusal`, the identical
+treatment `loadProjectAgentRegistry` already gives `RUN-056`/`RUN-034`), so the step fails `RUN-065`
+instead of silently falling back to panel.
+
+`RUN-065` (`core/errors/codes.ts`) is extended, not replaced: its pre-existing "unknown technique id"
+trigger (`loadTechnique(modulesDir, id)`, still searching `modules/*/techniques/` only) keeps its
+original message text unchanged; a new, optional `path`/`issues` detail pair (branched on whether
+`issues` is set) covers the new "malformed/mismatched materialised file" trigger, naming the real file
+path. The remedy now covers both triggers honestly.
+
+**Round 1 (fresh, context-free): 1 real finding, fixed.**
+1. **Must fix.** `RUN-065`'s new message, in the `issues === undefined` branch (the pre-existing
+   "unknown technique id" trigger, reachable only through `loadTechnique(modulesDir, id)`, which
+   searches `modules/*/techniques/` and never `.forge/techniques`), wrongly said "is registered under
+   .forge/techniques" — a real, misleading claim about where the search actually happened, since
+   `loadTechniqueFromDir`'s own "id not found" case never throws `RUN-065` at all (it returns
+   `undefined` so its one caller, `loadSteelManTechnique`, can degrade to panel mode). Untested: every
+   existing `RUN-065` test checked only `.code`, never the rendered message text for this branch, and
+   `errors.test.ts`'s own exhaustive `SAMPLE_DETAILS`-driven test always supplies `issues`, so it only
+   ever exercised the *other* branch. Fixed: reverted this branch's text to name
+   `modules/*/techniques/` (the only tree it ever searches), added a doc comment recording the
+   distinction, and added a new test in `sessions/test/technique/load.test.ts` asserting the rendered
+   `.message` text (not just `.code`) for this exact branch.
+
+**Round 2 (fresh, context-free; independently re-traced the round-1 fix's own call graph — confirmed
+`loadTechnique`'s only throw site never sets `path`/`issues`, and `loadTechniqueFromDir`'s "id not
+found" case never throws at all — and re-ran every directly relevant suite, 150/150 green): zero real
+findings.** Two disclosed, non-blocking observations, both addressed without a further critic round:
+1. The `sessionNotes` argument round 1 added to the `domainRefusalOutcome` call on the
+   `converge-refused` path (pre-existing code this piece did not introduce) is real and correct by
+   inspection but was not known to be reachable through the CONVERGE round loop's own branching as
+   written, and had no test reaching it. Addressed with a comment at the call site
+   (`interaction/session.ts`) recording exactly why it is kept defensive rather than assumed
+   unreachable (`advanceToDecide` is `@forge/sessions`' own general-purpose gate, not owned by this
+   loop) — not with a synthetic test manufacturing a reachability this loop's own logic does not
+   actually produce today.
+2. The Mandate's parenthetical "(a note in the outcome and record, printed by `forge run`)" is
+   literally true for `forge session <type>` (`bin.ts` JSON-dumps the full `SessionStepResult`, notes
+   included) but not for `forge run <workflow>` executing a `kind: 'session'` step:
+   `executeStep`'s own trailing telemetry emit (`dispatch/execute.ts`) attaches `StepOutcome.failure`
+   as payload only for a *failed* outcome, so a succeeded outcome's `.notes` never reaches the event
+   log or anything `forge run` itself prints — pre-existing architecture (no `StepOutcome` field but
+   `.failure` is threaded through `executeStep`'s telemetry for any step kind on success), not a
+   regression this piece introduces, and closing it would mean rewiring `executeStep`'s telemetry
+   generally — a separate piece's own scope. Disclosed here rather than silently left.
+
+**Mutation evidence (real, not narrated; each broken, the named test(s) shown to fail with the real
+diagnostic, then restored and re-verified green).**
+- `loadSteelManTechnique` reverted to `resolveWithin('modules')` (reading the module-scoped tree
+  again): `session-roster.test.ts`'s "NO modules/, debate mode" test failed
+  (`expected false to be true` on the `proposer:round-1` stepId assertion) and its "malformed →
+  RUN-065" test failed (`expected 'succeeded' to be 'failed'` — with `modules/` read instead, the
+  malformed `.forge/techniques/` file is simply never found, so the session silently degrades to panel
+  instead of failing).
+- The `sessionNotes.push(...)` call removed from the CONVERGE round-1 block: `session-roster.test.ts`'s
+  "panel mode plus the note" test failed (`expected undefined to be defined` on `result.outcome.notes`).
+- `write-tree.ts`'s `writeGeneratedDir(target, '.forge/techniques', ...)` call removed (techniques
+  read but never written): `run-init.test.ts`'s new technique-header test failed
+  (`expected false to be true` on `existsSync(techniquePath)`); the identical writer path is what
+  `run-upgrade.test.ts`'s own technique-drift test exercises, so this is the same real code both
+  depend on.
+
+**Rule 14/15 (clean `git worktree` at the final commit `b81ac43`).** `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 packages clean), `pnpm run boundaries` (clean, exit 0).
+Combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) clean. Scoped, in that
+worktree: the full `core/test/errors.test.ts` (464, per this milestone's own standing rule for a piece
+adding/re-pointing an error code), `sessions/test/technique/load.test.ts` (45),
+`engine/test/interaction/session-roster.test.ts` (13), `engine/test/interaction/session.test.ts` (48),
+`cli/test/init/content.test.ts` (9), `cli/test/init/run-init.test.ts` (25),
+`cli/test/commands/upgrade/run-upgrade.test.ts` (18), `cli/test/commands/loop/session.test.ts` (30),
+`test/greenfield-fixture-generated.test.ts` (7) — 659/659 green. Also scoped (outside the clean
+worktree, on the shared tree, before the commit): full `sessions/test`, `engine/test/dispatch`,
+`engine/test/interaction`, `engine/test/run`, `cli/test/init`, `cli/test/commands/run`,
+`cli/test/commands/loop`, `cli/test/commands/upgrade`, `test/workspace-floor.test.ts`,
+`test/fm-core-module.test.ts`, `test/spec-cli-examples.test.ts`, `cli/test/commands/{agent,module,
+workflow,overlay}.test.ts`, `cli/test/init/manifest.test.ts` — all green (one pre-existing
+concurrency-load flake in `session.test.ts`'s "two premortem session steps... no lost update" test,
+confirmed to pass reliably in isolation and unrelated to this piece's own changes, per this
+milestone's own documented "ambient load" methodology, `M14-AGENT-NOTES.md`).
+
+**Shared working tree.** `core/errors/codes.ts` was correctly flagged as concurrency risk (P19 was
+concurrently adding `GATE-511` far away in the same file): `git status`/`git diff` were re-checked
+before every edit and immediately before the feat commit, confirming the working-tree diff for that
+file was exactly this piece's own isolated `RUN-065` hunk before it was staged — by the time of the
+actual commit, P19's own feat and docs commits had already landed on `main`, so the RUN-065 hunk was a
+clean, ordinary diff against the current `HEAD` (no hand-built patch/`git apply --cached` surgery
+needed). `cli/commands/run/context.ts` was flagged as a possible P27 overlap (its dry-run
+taint-printing work); confirmed by `git diff`/`git rev-parse HEAD:<path>` that P27 never touched this
+file at all. `fixtures/greenfield-service/.forge/techniques/` is genuinely new territory (confirmed no
+one else had touched `fixtures/greenfield-service/` beyond P27's own, disjoint
+`.forge/workflows/{adopt,migrate}.workflow.yaml` edits, which had already landed by the time this
+piece's own techniques were generated and staged). Every `git add` was exact-file; `-A`/`.` never
+used.
+
+**Discloses (per the plan's own Discloses list, plus the two items round 2 raised).** Copied verbatim
+(no `extends` chain for a technique — confirmed directly against `techniqueSchema`); Q215's other
+left-open items (which agents get `may_approve`, etc.) not touched here. The
+`domainRefusalOutcome`/`converge-refused` notes-threading (round 2, item 1 above) is defensive and
+commented, not proven reachable. "(...printed by `forge run`)" (round 2, item 2 above) holds for
+`forge session <type>` but not yet for a `kind: 'session'` step inside `forge run <workflow>` —
+`executeStep`'s own telemetry emit does not thread any `StepOutcome` field but `.failure` through on
+success, for any step kind, a pre-existing architectural gap this piece's own Surface does not cover
+closing. `P43` (the `forge upgrade` regenerable-file classifier) is the next piece that reads the new
+`.forge/techniques/` directory, per the plan's own ordering — not built here.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q256`.
