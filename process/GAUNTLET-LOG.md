@@ -17162,3 +17162,110 @@ to become `testRoots`-aware itself for a non-empty configured value to matter; d
 deliberate ceilings `09` §9.3 does not itself state.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q259`.
+
+## M14 P34 — A step with several unmerged predecessors is built on an in-lane merge of their heads onto the integration tip (`vcs/src/join.ts` (new), `vcs/src/index.ts`, `engine/dispatch/{lane-base,types,facades,steps}.ts`, `engine/failures/classify.ts`, `engine/interaction/swarm-review-step.ts`, `specs/06-orchestration-and-parallelism.md`; new/edited tests in `vcs/test/join.test.ts` (new), `engine/test/run/stacked-lanes.test.ts`, `engine/test/failures/classify.test.ts`, `test/build-stage-lane-landing.test.ts`)
+
+**Context.** `PLAN-M14.md` P34; depends on none, lands after the already-landed P3. Before this piece a
+new lane's base was always exactly one sha: the integration tip with no unmerged same-merge-scope
+predecessor; a sole predecessor's own head (P38's byte-identical "stacked lane" rule); or, for two or
+more unrelated unmerged predecessors, the tip alone with `LaneCreated.payload.unstackedPredecessors`
+naming the ones silently not seen (Q226 open item (a), a deliberate blind spot at the time) — and even
+the single-predecessor case could silently miss whatever the engine auto-integrated elsewhere after
+that predecessor's own lane was created (Q226 open item (e)).
+
+**Built.** `resolveLaneBase` (`dispatch/lane-base.ts`) now resolves the integration tip plus, separately,
+`heads` — every outermost same-scope unmerged predecessor head (`sharesMergeScope`, contained heads
+dropped via `isAncestor`, unchanged), in the COMPILED PLAN's own node order (`ctx.stepGraph`'s own `Map`
+iteration order, the identical order `integrateSucceededLanes` sweeps), never `dependsOn`'s own list
+order. Still read-only (`resolveRevision`/`isAncestor` only, no lane touched), so `swarm-review-step.ts`
+keeps calling it directly before any lane of the review's own exists; it now also exposes `stackedOn` as
+a read-only PREDICTION for that one caller.
+
+`createLaneForStep` (`dispatch/steps.ts`) creates the lane from the tip, then joins each head into it,
+in that plan order, via a new `VcsFacade.mergeIntoLane` backed by a new `vcs/src/join.ts`: `git merge
+<sha> -m <message>`, never `--no-ff` (a fast-forward — the common one-predecessor, unmoved-tip case — is
+byte-identical to the old stacking rule; a real merge commit, tagged `Forge-Step`/`Forge-Run`,
+otherwise — including the Q226 (e) case, now fixed, since a stale single predecessor's join simply is
+not a fast-forward anymore, and gets a real merge commit instead of silently branching from the tip).
+`LaneCreated` fires only once every join has completed (a half-made lane a failure leaves behind is
+force-removed, never becomes `LaneCreated`), with `payload.baseSha` = the lane's own post-join HEAD
+(what resume restores and claim enforcement diffs against — the actual Q226 (e) fix), `integrationTip`
+always, `stackedOn` only when there is exactly one head total AND its own join fast-forwarded,
+`joinedFrom` naming every head a real merge commit was needed for (with two or more heads, EVERY one
+goes into `joinedFrom`, even one that individually fast-forwards first — the overall lane is a join, not
+simply one predecessor's own lane). `unstackedPredecessors` is gone: Q226 (a) is fixed, every unmerged
+predecessor is genuinely seen.
+
+A join conflict follows a conflict policy the identical way `processMergeCandidate` already dispatches
+on one for landing: `abort` returns `{kind:'conflict', files}` as data; `agent`/`human` with no resolver
+throws the existing `VCS-MISSING-CONFLICT-RESOLVER`; a resolver gets a real `MergeConflictDescription`
+(reusing `@forge/vcs`'s own type/helper directly) and its resolution is committed with the trailer-
+bearing message. A new `LANE-JOIN-CONFLICT` (`source: 'vcs'`, classified `conflict` in `classify.ts`,
+the identical mapping `MERGE-CONFLICT-UNRESOLVED` already has) is what `createLaneForStep` returns for
+the unresolved case; the half-made lane is force-removed either way. `createVcsFacade` gained an
+optional `{conflictPolicy, conflictResolver}` (default `abort`, no resolver, bound once at
+construction) — nothing in this milestone's own real wiring passes anything else yet, the identical
+still-open gap Q226 (b) already records for the merge queue's own resolver (disclosed, not fixed, out
+of Surface). `specs/06` §6.4's stacked-lane bullet is rewritten for the join.
+
+**Round 1 (fresh, context-free): two real gaps, both fixed; no bug in the join mechanism itself.**
+(1) The brief's own promised crash-mid-join regression test was missing from the first commit — caught
+independently by this piece and by the critic within moments of each other. Fixed: a genuine
+two-predecessor join (one fast-forward, one real merge commit) crashed right before `LaneCreated`
+proves the orphan is reclaimed (removed, never reused) and the resumed attempt starts fresh with
+exactly one eventual `LaneCreated`. Writing that fix also surfaced this piece's own earlier
+"conflicting heads under abort" test asserting a branch-name glob (`c-*`) that could never match the
+real branch (`slugifyStepId('cf:c')` → `cf-c-<hash>`) — a VACUOUS pass regardless of what was actually
+left behind; fixed to the real prefix and re-verified genuinely true. (2) `buildJoinCommitMessage`
+interpolated a predecessor's step id and the run id straight into the join commit's own trailers with
+no newline guard, unlike `@forge/vcs`'s own `assertSingleLine` the landing-time analogue already applies
+to the identical fields — a step id is workflow-authored, not fully trusted, and a newline could forge
+a second trailer line into the permanent audit trail. Fixed: refused before any write, for every join
+head and the run id, reusing the existing `VCS-INVALID-COMMIT-FIELD` (already covered by `classify.ts`'s
+`VCS-INVALID-*` rule, no new mapping needed); a new unit test against a hand-built compiled graph proves
+it, and a real mutation (the check disabled) confirmed the test catches it. Also fixed: an
+eslint-flagged unnecessary cast, and a spec-wording overclaim (tightened to say plainly only `abort` is
+wired in production today, citing Q226 (b)).
+
+**Round 2 (fresh, context-free): zero real bugs.** Independently re-derived `slugifyStepId`'s real
+output to confirm the round-1 glob fix is actually correct. Independently re-ran a live mutation against
+the newline guard (confirmed failure, restored cleanly). Verified the spec-wording fix against the real
+production call site and Q226's own actual text (grepped directly). Verified the cast removal is sound
+by comparing the two description types field-by-field under `strictFunctionTypes`. One wording nit,
+fixed: "before any git operation at all" overclaimed (`resolveLaneBase` already performs its own
+read-only git calls just before); reworded to the precise claim. One real, pre-existing, out-of-Surface
+gap disclosed, not fixed: the ORDINARY per-step lane commit builder (`buildCommitMessage`, used by every
+agent/command step, not just joins) has the identical missing-newline-guard shape — predates this
+piece, not introduced by it — flagged for the owner as a follow-up.
+
+**Mutation evidence (real: mutate, run scoped tests, confirm failure, restore via `git checkout --`,
+re-confirm green).** No join at all: 8 tests failed (the brief named 5). `dependsOn` order instead of
+plan order: exactly the one test built to catch it. `LaneCreated` moved before the join loop: exactly
+the crash-mid-join test failed. `--no-ff` forced: 3 tests failed across `vcs`- and engine-level. The
+`abort` branch bypassed: 3 tests failed, one revealing the unguarded fallback behaviour. The
+`agent`/`human` missing-resolver guard removed: 2 tests failed, one showing the raw `TypeError` the
+guard prevents. `baseSha` reported as the pre-join tip: the strict-claim test failed (real join content
+wrongly reverted as out-of-claim). The `LANE-JOIN-CONFLICT` → `conflict` classify mapping removed: fell
+through to `transient` exactly as predicted. The newline guard disabled: the new unit test failed
+exactly as expected (both rounds did this one independently).
+
+**Shared working tree.** Exact-file `git add` throughout. `packages/cli/src/bin.ts` turned up staged by
+a concurrent agent mid-`git add` once; unstaged (`git restore --staged`, index only) before committing.
+One real self-caused mistake, caught and recovered with no data loss: a mutation-restore
+`git checkout --` against `dispatch/steps.ts` run before that file's own first real commit existed,
+silently reverting the whole file to its pre-P34 state — caught immediately, recovered by re-applying
+the known-correct content, verified by typecheck plus the full scoped suite. Two later close calls of
+the identical shape (local lint/prettier fixes made but never staged into any of the first three
+commits) were caught by the rule 14/15 clean-worktree `pnpm lint`, fixed with two small follow-ups.
+
+**Discloses.** A swarm-review whose own base would be a join (or an unpredictable fast-forward) reads
+the project checkout, as before. `human` conflict policy still has no resolver anywhere (Q226 (b),
+unchanged). An old, pre-P34 log's own `unstackedPredecessors` is simply ignored on resume. The landing
+rebase still replays a joined lane's own predecessor commits by patch-id until P35's own `replayFrom`.
+`reclaimOrphanedWorktrees`/`removeLaneWorktree` (neither touched by this piece) were EMPIRICALLY
+verified (a naturally-completed conflict, and a real `SIGKILL` mid-`git merge`) to already correctly
+reclaim a lane crashed mid-join with no changes needed. `buildCommitMessage`'s own identical
+missing-newline-guard shape (round 2's finding) is real, pre-existing and out of Surface — not fixed
+here.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q260`.
