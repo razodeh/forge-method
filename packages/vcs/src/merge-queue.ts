@@ -51,6 +51,18 @@ export interface MergeCandidate {
    * lane branch could forge an `id` with an embedded newline, `SPEC-QUESTIONS.md` Q229's threat model). */
   readonly reviewVerdict?: string | undefined;
   readonly reviewReportId?: string | undefined;
+  /** `PLAN-M14.md` P35: when set, `processMergeCandidate` rebases with `git rebase --onto <integrationHead>
+   * <replayFrom>` instead of the ordinary `git rebase <integrationHead>` — replaying only the lane's own
+   * commits (`replayFrom..HEAD`), never a stacked predecessor's own commits that already reached the
+   * integration branch some other way. Set by a caller only once it knows the lane really is built on a
+   * predecessor whose own content has already landed: a stale, pre-resolution replay of that predecessor's
+   * (superseded) commits could apply cleanly and silently reintroduce content a landing-time conflict
+   * resolution had already rejected — this is what `replayFrom` exists to prevent, not an optimisation.
+   * Must be an ancestor of the lane's own current HEAD (`VCS-GIT-OPERATION-FAILED` otherwise, checked before
+   * any git state is touched); `undefined` (every candidate with no stacked predecessor, or one whose
+   * predecessor has not landed yet) is the ordinary, unchanged rebase — this field changes nothing for the
+   * common case. */
+  readonly replayFrom?: string | undefined;
 }
 
 export interface ConflictedFile {
@@ -64,11 +76,41 @@ export interface ConflictedFile {
   readonly status: string;
 }
 
+/** `PLAN-M14.md` P35: the commit `REBASE_HEAD` names while a rebase is stopped on a real conflict — the
+ * lane's own commit that failed to replay cleanly, which `subject`/`forgeStep` let a resolver (especially
+ * an agent one, `PLAN-M14.md` P38) refer to by more than a bare sha. `forgeStep` is the commit's own
+ * `Forge-Step` trailer (`buildCommitMessage`, `@forge/engine/dispatch`) when it has one — absent for a
+ * commit this codebase itself never made (a hand-authored one on a hand-edited lane branch), not
+ * fabricated. */
+export interface MergeConflictCommit {
+  readonly sha: string;
+  readonly subject: string;
+  readonly forgeStep?: string | undefined;
+}
+
+/** `PLAN-M14.md` P35: one conflict this landing's own rebase resolved — `MergeOutcome`'s `conflict-resolved`
+ * kind carries one per resolution (`describeConflict`'s own `conflictedFiles`/`commit`, captured at the
+ * moment the resolver actually resolved it), so a caller (`landLane`) can emit a `MergeConflict{reason:
+ * 'resolved'}` event per real resolution rather than one that only ever describes the LAST of several. */
+export interface MergeResolution {
+  readonly files: readonly string[];
+  readonly commit?: MergeConflictCommit | undefined;
+}
+
 /** Enough for a caller-supplied resolver (human or agent) to actually resolve the conflict: which files
  * and how each is conflicted, a best-effort diff, and where to find them on disk — plus the lane's own
  * declared intent, per `06` §6.5 step 2. */
 export interface MergeConflictDescription {
   readonly laneId: LaneId;
+  /** `PLAN-M14.md` P35: the step and run this lane belongs to — `laneId` alone is a slugified, lossy
+   * rendering of the step id (`lanes.ts`'s own `slugifyStepId` doc comment), so a resolver that actually
+   * needs to know "which step is this" (an agent resolver's own prompt, `PLAN-M14.md` P38) cannot recover
+   * it from `laneId` alone. Populated by `processMergeCandidate` below from `MergeCandidate.stepId`/
+   * `.runId`, always available there. `undefined` for a conflict this same type also describes at a
+   * different point in the lane's life with no step/run of its own to name (`@forge/vcs`'s own in-lane
+   * join, `join.ts`, `PLAN-M14.md` P34, out of this piece's own scope) — never fabricated. */
+  readonly stepId?: string | undefined;
+  readonly runId?: string | undefined;
   readonly declaredClaim: readonly string[];
   readonly conflictedFiles: readonly ConflictedFile[];
   /** `git diff`'s own conflict-marker output. Reliable for the most common shape (both sides modified
@@ -79,6 +121,13 @@ export interface MergeConflictDescription {
    * inspect `worktreePath` directly too, for any shape. */
   readonly diff: string;
   readonly worktreePath: string;
+  /** `PLAN-M14.md` P35: the lane's own commit `REBASE_HEAD` names (`git rev-parse --verify REBASE_HEAD`)
+   * while this conflict is being described — absent when the worktree is not actually mid-rebase at the
+   * moment of the check (this type's own in-lane-join use, `join.ts`, never rebases at all; a future,
+   * differently-triggered conflict of this same shape). Never absent for a conflict `processMergeCandidate`
+   * itself describes: its own rebase loop only ever calls `describeConflict` while a rebase is genuinely
+   * stopped on a conflict. */
+  readonly commit?: MergeConflictCommit | undefined;
 }
 
 /** `agent` and `human` policy both ultimately mean "call this" — which one it represents in practice is
@@ -128,7 +177,21 @@ export interface ProcessMergeCandidateOptions {
   readonly preChecks: readonly PreMergeCheck[];
   /** Run in order against the integration worktree, post-merge; same stop-at-first-failure behaviour. */
   readonly postChecks: readonly PostMergeCheck[];
+  /** `PLAN-M14.md` P35: the most resolutions this call will attempt before giving up — past it, the rebase
+   * is aborted and the outcome is `{kind:'conflict-unresolved', reason:'resolution-cap'}` rather than
+   * calling the resolver again; a resolver that itself never converges (a real, if rare, agent-resolver
+   * failure mode, `PLAN-M14.md` P38) must not be allowed to loop this call forever. Defaults to
+   * `DEFAULT_MAX_RESOLUTIONS` (5) when omitted; overridable so a test can prove the cap without
+   * constructing that many real conflicts. */
+  readonly maxResolutions?: number | undefined;
 }
+
+/** `ProcessMergeCandidateOptions.maxResolutions`'s own default — chosen as a generous-but-finite bound: a
+ * real lane with more than a handful of independent conflicts against the current integration head is
+ * itself a strong signal something is wrong (a lane badly out of date, or a resolver that keeps producing
+ * content the next commit conflicts with again), better surfaced as a typed, actionable outcome than
+ * retried indefinitely. */
+const DEFAULT_MAX_RESOLUTIONS = 5;
 
 export type MergeOutcome =
   | { readonly kind: 'clean'; readonly mergeCommitSha: string }
@@ -138,10 +201,33 @@ export type MergeOutcome =
    * lane's content is in the integration branch. `git merge --no-ff` would report "Already up to date" and
    * `HEAD` would be another lane's merge commit, which a failing post-merge check would then revert. */
   | { readonly kind: 'already-integrated' }
-  | { readonly kind: 'conflict-resolved'; readonly mergeCommitSha: string }
+  | {
+      readonly kind: 'conflict-resolved';
+      readonly mergeCommitSha: string;
+      /** `PLAN-M14.md` P35: one entry per conflict this landing's own rebase actually resolved — more than
+       * one when resolving an earlier conflict and continuing the rebase reveals a further, independent
+       * one (`06` §6.5 step 2's own loop, `describeConflict`'s doc comment). In plan/rebase order: the
+       * order a caller (`landLane`, `@forge/engine/dispatch`) would emit one `MergeConflict{reason:
+       * 'resolved'}` event per entry, before the single `MergeCompleted` this whole landing produces. */
+      readonly resolutions: readonly MergeResolution[];
+    }
   | {
       readonly kind: 'conflict-unresolved';
-      readonly reason: 'abort-policy' | 'resolver-unresolved';
+      /** `PLAN-M14.md` P35: `'resolution-cap'` is reached without ever consulting `conflictPolicy`/
+       * `conflictResolver` a second more time than `maxResolutions` allows — distinct from
+       * `'resolver-unresolved'` (the resolver itself gave up on one specific conflict). */
+      readonly reason: 'abort-policy' | 'resolver-unresolved' | 'resolution-cap';
+      /** `PLAN-M14.md` P35: the paths in conflict at the moment this outcome was produced — read via the
+       * same `conflictedFilePaths` this file's own loop already uses to detect a conflict in the first
+       * place, so a caller (`landLane`'s own `MergeConflict` event) can name them without re-deriving
+       * anything itself. Never empty: every path this reports here is, by construction, one the rebase
+       * loop is genuinely stopped on. */
+      readonly files: readonly string[];
+      /** `PLAN-M14.md` P35: extra, reason-specific context with no field of its own — today, only
+       * `'resolution-cap'` populates it (naming the cap actually hit, since `reason` alone does not say
+       * what `maxResolutions` was configured to). Absent for the other two reasons, which the `reason`
+       * string alone already fully explains. */
+      readonly detail?: string | undefined;
     }
   | { readonly kind: 'pre-check-failed'; readonly checkResult: CheckResult }
   | {
@@ -234,8 +320,53 @@ async function runRebaseStep(
   }
 }
 
-function attemptRebase(laneWorktreePath: string, ontoSha: string): Promise<'clean' | 'conflict'> {
-  return runRebaseStep(laneWorktreePath, [ontoSha], `rebasing onto "${ontoSha}"`);
+/** `PLAN-M14.md` P35: with `replayFrom`, `git rebase --onto <ontoSha> <replayFrom>` replays only the
+ * lane's own commits (`replayFrom..HEAD`) — never a stacked predecessor's own commits, which already
+ * reached `ontoSha` some other way and would otherwise be replayed a second time (the "stale pre-
+ * resolution replay" this field exists to prevent, `MergeCandidate.replayFrom`'s own doc comment). Plain
+ * `git rebase <ontoSha>` (no `--onto`) otherwise — byte-identical to this function's own pre-P35 behaviour. */
+function attemptRebase(
+  laneWorktreePath: string,
+  ontoSha: string,
+  replayFrom: string | undefined,
+): Promise<'clean' | 'conflict'> {
+  return replayFrom === undefined
+    ? runRebaseStep(laneWorktreePath, [ontoSha], `rebasing onto "${ontoSha}"`)
+    : runRebaseStep(
+        laneWorktreePath,
+        ['--onto', ontoSha, replayFrom],
+        `rebasing onto "${ontoSha}", replaying only the lane's own commits after "${replayFrom}"`,
+      );
+}
+
+/** `PLAN-M14.md` P35: checked before `attemptRebase` ever runs with a real `replayFrom` — `git rebase
+ * --onto <newbase> <upstream>` computes what to replay as `<upstream>..HEAD`, which is only meaningful
+ * when `<upstream>` is genuinely in the lane's own history; an `upstream` outside it (a caller error, or
+ * a `baseSha` recorded against a lane that was since rebuilt) would otherwise silently replay the wrong
+ * — potentially enormous, unrelated — set of commits rather than failing loudly. Checked here, not left
+ * to git's own rebase to discover, so the failure is reported before any git state is touched (the lane
+ * worktree stays exactly as it was) rather than after a rebase has already started. */
+async function assertReplayFromInLaneHistory(
+  laneWorktreePath: string,
+  replayFrom: string,
+): Promise<void> {
+  const result = await execa('git', ['merge-base', '--is-ancestor', replayFrom, 'HEAD'], {
+    cwd: laneWorktreePath,
+    reject: false,
+  });
+  if (result.exitCode === 0) return;
+  throw new VcsError({
+    code: 'VCS-GIT-OPERATION-FAILED',
+    message:
+      `replayFrom "${replayFrom}" is not usable as a rebase --onto upstream in the lane worktree at ` +
+      `"${laneWorktreePath}": ` +
+      (result.exitCode === 1
+        ? "it is not an ancestor of the lane's own current HEAD."
+        : `checking failed: ${result.stderr}`),
+    remedy:
+      "replayFrom must be a commit reachable from the lane's own HEAD (ordinarily the lane's own " +
+      'recorded baseSha) -- inspect the lane worktree directly.',
+  });
 }
 
 /** Resumes a rebase after a resolver has fixed a conflict's content — may itself immediately reveal a
@@ -252,6 +383,37 @@ async function abortRebase(laneWorktreePath: string): Promise<void> {
   );
 }
 
+/** `PLAN-M14.md` P35: the lane's own commit `REBASE_HEAD` names, while a rebase is genuinely stopped on a
+ * conflict — `undefined` (not thrown) when it does not resolve at all, since a caller of this type outside
+ * `processMergeCandidate`'s own rebase loop (`join.ts`'s in-lane join, which never rebases) is not
+ * mid-rebase to begin with (`MergeConflictDescription.commit`'s own doc comment). `--quiet` so a genuinely
+ * absent `REBASE_HEAD` (the "not mid-rebase" case) does not itself print to stderr. */
+async function describeRebaseHeadCommit(
+  laneWorktreePath: string,
+): Promise<MergeConflictCommit | undefined> {
+  const rebaseHead = await execa('git', ['rev-parse', '--quiet', '--verify', 'REBASE_HEAD'], {
+    cwd: laneWorktreePath,
+    reject: false,
+  });
+  if (rebaseHead.exitCode !== 0) return undefined;
+  const sha = rebaseHead.stdout.trim();
+  const { stdout: subject } = await wrapGitFailure(
+    () => execa('git', ['log', '-1', '--format=%s', sha], { cwd: laneWorktreePath }),
+    `reading the conflicting commit's subject in the lane worktree at "${laneWorktreePath}"`,
+  );
+  const { stdout: forgeStepRaw } = await wrapGitFailure(
+    () =>
+      execa(
+        'git',
+        ['log', '-1', '--format=%(trailers:key=Forge-Step,valueonly,separator=%x1f)', sha],
+        { cwd: laneWorktreePath },
+      ),
+    `reading the conflicting commit's own Forge-Step trailer in the lane worktree at "${laneWorktreePath}"`,
+  );
+  const forgeStep = forgeStepRaw.trim();
+  return { sha, subject: subject.trim(), ...(forgeStep === '' ? {} : { forgeStep }) };
+}
+
 async function describeConflict(candidate: MergeCandidate): Promise<MergeConflictDescription> {
   const paths = await conflictedFilePaths(candidate.handle.path);
   const conflictedFiles = await conflictStatuses(candidate.handle.path, paths);
@@ -259,12 +421,16 @@ async function describeConflict(candidate: MergeCandidate): Promise<MergeConflic
     () => execa('git', ['diff'], { cwd: candidate.handle.path }),
     `reading the conflict diff in the lane worktree at "${candidate.handle.path}"`,
   );
+  const commit = await describeRebaseHeadCommit(candidate.handle.path);
   return {
     laneId: candidate.handle.laneId,
+    stepId: candidate.stepId,
+    runId: candidate.runId,
     declaredClaim: candidate.declaredClaim,
     conflictedFiles,
     diff,
     worktreePath: candidate.handle.path,
+    ...(commit === undefined ? {} : { commit }),
   };
 }
 
@@ -448,17 +614,38 @@ export async function processMergeCandidate(
     });
   }
 
+  // `PLAN-M14.md` P35: checked before any git state is touched (assertReplayFromInLaneHistory's own doc
+  // comment) — a bad replayFrom must never reach `git rebase --onto` itself.
+  if (candidate.replayFrom !== undefined) {
+    await assertReplayFromInLaneHistory(candidate.handle.path, candidate.replayFrom);
+  }
   const integrationHeadSha = await resolveRevision(options.integrationPath, 'HEAD');
-  let rebaseState = await attemptRebase(candidate.handle.path, integrationHeadSha);
-  let wasConflictResolved = false;
+  let rebaseState = await attemptRebase(
+    candidate.handle.path,
+    integrationHeadSha,
+    candidate.replayFrom,
+  );
+  // `PLAN-M14.md` P35: one entry per conflict actually resolved -- `MergeOutcome`'s own `conflict-resolved`
+  // doc comment has the fuller "why a list, not a count" reasoning.
+  const resolutions: MergeResolution[] = [];
+  // `PLAN-M14.md` P35: how many resolutions this call has already spent — checked BEFORE the resolver is
+  // ever called again, so a cap of N lets the resolver run at most N times, never N+1 (the mutation
+  // evidence this piece pins: "cap removed: count 6" for a cap of 5 -- the resolver must be called exactly
+  // the cap, not the cap plus the one that would have revealed the cap was exceeded).
+  const maxResolutions = options.maxResolutions ?? DEFAULT_MAX_RESOLUTIONS;
+  let resolutionCount = 0;
 
   // A loop, not a single if-branch: resolving one conflict and continuing the rebase can immediately
   // reveal a *second*, independent conflict on the lane's next commit — ordinary for any lane with more
   // than one commit, not an edge case. Each iteration re-dispatches on policy exactly like the first.
   while (rebaseState === 'conflict') {
     if (candidate.conflictPolicy === 'abort') {
+      // `PLAN-M14.md` P35: `files` read before the abort below, while the conflict markers this reports
+      // still exist in the worktree -- never the fuller `describeConflict` (no resolver will ever see this
+      // one under `abort`, so its diff/commit are not worth the extra git calls).
+      const files = await conflictedFilePaths(candidate.handle.path);
       await abortRebase(candidate.handle.path);
-      return { kind: 'conflict-unresolved', reason: 'abort-policy' };
+      return { kind: 'conflict-unresolved', reason: 'abort-policy', files };
     }
     if (options.conflictResolver === undefined) {
       await abortRebase(candidate.handle.path);
@@ -470,6 +657,16 @@ export async function processMergeCandidate(
         remedy: 'Pass a conflictResolver in the options, or set conflictPolicy to "abort".',
       });
     }
+    if (resolutionCount >= maxResolutions) {
+      const files = await conflictedFilePaths(candidate.handle.path);
+      await abortRebase(candidate.handle.path);
+      return {
+        kind: 'conflict-unresolved',
+        reason: 'resolution-cap',
+        files,
+        detail: `stopped after reaching the resolution cap of ${String(maxResolutions)}`,
+      };
+    }
     // A gauntlet verify round found that every *documented* exit from this loop cleans up the rebase
     // first, but a conflictResolver (or describeConflict's own git calls) itself throwing — a realistic
     // failure mode for what `06` §6.5 calls "spawn a merge-resolver step," a whole separate agent
@@ -479,9 +676,14 @@ export async function processMergeCandidate(
     // arbitrary caller-defined error type) — only the cleanup is added, best-effort: if the abort itself
     // also fails here, the original resolver/describeConflict error is still what the caller most needs
     // to see, so that secondary failure is swallowed rather than replacing it.
+    // `PLAN-M14.md` P35: described once, kept, and reused for `resolutions` below on success -- not
+    // re-derived, so the `files`/`commit` a `MergeConflict{reason:'resolved'}` event later reports are
+    // exactly what the resolver itself was actually shown, not a fresh (possibly already-stale) re-read.
+    let conflict: MergeConflictDescription;
     let resolution: 'resolved' | 'unresolved';
     try {
-      resolution = await options.conflictResolver(await describeConflict(candidate));
+      conflict = await describeConflict(candidate);
+      resolution = await options.conflictResolver(conflict);
     } catch (cause) {
       try {
         await abortRebase(candidate.handle.path);
@@ -492,11 +694,19 @@ export async function processMergeCandidate(
     }
     if (resolution === 'unresolved') {
       await abortRebase(candidate.handle.path);
-      return { kind: 'conflict-unresolved', reason: 'resolver-unresolved' };
+      return {
+        kind: 'conflict-unresolved',
+        reason: 'resolver-unresolved',
+        files: conflict.conflictedFiles.map((file) => file.path),
+      };
     }
+    resolutionCount += 1;
+    resolutions.push({
+      files: conflict.conflictedFiles.map((file) => file.path),
+      ...(conflict.commit === undefined ? {} : { commit: conflict.commit }),
+    });
     await stageResolution(candidate.handle.path);
     rebaseState = await continueRebase(candidate.handle.path);
-    wasConflictResolved = true;
   }
 
   // Nothing left to merge (see `MergeOutcome`'s `already-integrated`): the rebase dropped every commit of the lane.
@@ -563,7 +773,7 @@ export async function processMergeCandidate(
     return { kind: 'post-check-failed-reverted', checkResult: postCheckFailure, revertCommitSha };
   }
 
-  return wasConflictResolved
-    ? { kind: 'conflict-resolved', mergeCommitSha }
+  return resolutions.length > 0
+    ? { kind: 'conflict-resolved', mergeCommitSha, resolutions }
     : { kind: 'clean', mergeCommitSha };
 }
