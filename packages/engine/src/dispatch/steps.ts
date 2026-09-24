@@ -1390,11 +1390,23 @@ async function resolveSwarmReviewLanding(
  * a superset of `stackedOn`/`joinedFrom` -- has already confirmed nothing upstream is in `notLanded`. The
  * explicit per-id check below is kept anyway rather than trusting that invariant implicitly: cheap,
  * self-documenting, and safe (a false negative here only means the ordinary rebase runs, never a lossy
- * one) even for a plan shape this reasoning has not anticipated. */
-function replayFromFor(lane: LaneHandle, notLanded: ReadonlySet<string>): string | undefined {
+ * one) even for a plan shape this reasoning has not anticipated.
+ *
+ * Exported (not merely a closure inside `runMergeStep`) so the `notLanded` guard above is directly
+ * testable in isolation: `runMergeStep`'s own loop, the one real call site, never actually reaches this
+ * function for a `stackedOn`/`joinedFrom` predecessor genuinely still in `notLanded` (`blockedBy`
+ * already `continue`s past it first, per the paragraph above) -- so no test built only through
+ * `runMergeStep`/`executeStep` can ever exercise this guard's own `false` branch. The identical
+ * "defensive, currently unreachable through the real call site, still worth a real test of its own"
+ * situation this codebase's own `conflictStatuses`/`revertMerge` (`@forge/vcs`) already established the
+ * "export it, feed it a real edge case" pattern for. */
+export function replayFromFor(
+  lane: LaneHandle,
+  notLanded: ReadonlySet<string>,
+): string | undefined {
   const predecessors = lane.stackedOn === undefined ? (lane.joinedFrom ?? []) : [lane.stackedOn];
   if (predecessors.length === 0) return undefined;
-  // MUTATION: notLanded check removed
+  if (predecessors.some((id) => notLanded.has(id))) return undefined;
   return lane.baseSha;
 }
 

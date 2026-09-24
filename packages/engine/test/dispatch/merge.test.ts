@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
 import { integrateLane } from '../../src/dispatch/integrate.ts';
+import { replayFromFor } from '../../src/dispatch/steps.ts';
 import type { ExecuteStepContext, LaneHandle } from '../../src/dispatch/types.ts';
 import type { StepNode } from '../../src/plan/index.ts';
 import { createTestContext, node, readFileInRepo } from './helpers.ts';
@@ -167,6 +168,90 @@ describe('runMergeStep', () => {
       'MergeQueued',
       'MergeStarted',
       'MergeCompleted',
+    ]);
+  });
+
+  it("PLAN-M14.md P35: a single lane's landing that resolves TWO independent conflicts emits one MergeConflict{resolved} per resolution, in order, all before the one MergeCompleted", async () => {
+    const projectRoot = await createTempRepo('merge-multi-resolution');
+    const ctx = createTestContext({ projectRoot, runId: 'run-multi-resolution' });
+    await executeStep(
+      node({
+        id: 'wf:produce',
+        kind: 'command',
+        run: "printf 'f1-lane\\n' > f1.txt",
+        produces: ['f1.txt'],
+      }),
+      ctx,
+    );
+    // A SECOND, real commit added directly to the same lane (`runLaneLifecycle`'s own single commit
+    // already happened above) -- two separate lane commits, each touching a distinct file, so each one's
+    // own rebase-replay conflicts independently, only the second revealed once `--continue` runs on the
+    // first: the identical construction `vcs/test/merge-queue.test.ts`'s own "routes a SECOND,
+    // independent conflict" test uses one layer down. `wf:produce`'s own declared claim (`f1.txt` only)
+    // is irrelevant here -- claim enforcement already ran and passed before this manual addition.
+    const lane = ctx.laneRegistry.get('wf:produce');
+    if (lane === undefined) throw new Error('no lane');
+    await writeFile(path.join(lane.path, 'f2.txt'), 'f2-lane\n');
+    await execa('git', ['add', '-A'], { cwd: lane.path });
+    await execa('git', ['commit', '-m', 'a second, manually-added lane commit for f2.txt'], {
+      cwd: lane.path,
+    });
+    // Integration independently changes BOTH the same files before the lane lands.
+    await writeFile(path.join(projectRoot, 'f1.txt'), 'f1-integration\n');
+    await writeFile(path.join(projectRoot, 'f2.txt'), 'f2-integration\n');
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '-m', 'integration change to both files'], { cwd: projectRoot });
+
+    const resolvedFiles: string[][] = [];
+    const mergeOutcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:produce'],
+        mergePolicy: { conflict: 'agent' },
+      }),
+      {
+        ...ctx,
+        conflictResolver: async (conflict) => {
+          resolvedFiles.push(conflict.conflictedFiles.map((file) => file.path));
+          for (const file of conflict.conflictedFiles) {
+            await writeFile(path.join(conflict.worktreePath, file.path), `${file.path}-resolved\n`);
+          }
+          return 'resolved';
+        },
+      },
+    );
+
+    expect(mergeOutcome.status).toBe('succeeded');
+    expect(resolvedFiles).toEqual([['f1.txt'], ['f2.txt']]);
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-multi-resolution')) events.push(event);
+    const mergeEvents = events.filter(
+      (event) => event.type === 'MergeConflict' || event.type === 'MergeCompleted',
+    );
+    expect(mergeEvents.map((event) => event.type)).toEqual([
+      'MergeConflict',
+      'MergeConflict',
+      'MergeCompleted',
+    ]);
+    const payloads = mergeEvents.slice(0, 2).map(
+      (event) =>
+        event.payload as {
+          reason?: string;
+          files?: readonly string[];
+          commit?: { readonly sha: string; readonly subject: string };
+        },
+    );
+    // `commit` is populated per resolution too (this landing's rebase really was stopped on each file's
+    // own commit in turn) -- not asserted field-by-field (the sha is real and non-deterministic across
+    // runs), only that each entry's own subject is the right one for that resolution.
+    expect(payloads.map((payload) => ({ reason: payload.reason, files: payload.files }))).toEqual([
+      { reason: 'resolved', files: ['f1.txt'] },
+      { reason: 'resolved', files: ['f2.txt'] },
+    ]);
+    expect(payloads.map((payload) => payload.commit?.subject)).toEqual([
+      'forge(wf): wf:produce',
+      'a second, manually-added lane commit for f2.txt',
     ]);
   });
 
@@ -559,6 +644,48 @@ describe('runMergeStep', () => {
     // init + produce-a + produce-b + merge-a + merge-b == 5, at minimum (a merge commit may add one
     // more depending on fast-forward-ability, so this asserts a floor, not an exact count).
     expect(commitCount).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('replayFromFor (PLAN-M14.md P35) — unit-level, direct', () => {
+  // A fresh critic round found `runMergeStep`'s own loop -- this function's one real call site -- never
+  // actually reaches it for a `stackedOn`/`joinedFrom` predecessor genuinely still in `notLanded`: the
+  // broader `blockedBy` check (a superset, `upstreamOf`) already `continue`s past such a lane first, so
+  // no test built only through `runMergeStep`/`executeStep` can ever exercise this function's own
+  // `notLanded` guard returning `undefined`. These tests call it directly instead -- the identical
+  // "export it, feed it a real edge case" pattern `@forge/vcs`'s own `conflictStatuses`/`revertMerge`
+  // already use for the analogous "defensive, not reachable through the real call site" situation.
+  const laneHandle = (overrides: Partial<LaneHandle> = {}): LaneHandle => ({
+    laneId: 'lane-1',
+    path: '/tmp/lane-1',
+    branch: 'forge/run/lane-1',
+    ...overrides,
+  });
+
+  it('a stacked lane whose sole predecessor already landed (not in notLanded): baseSha', () => {
+    const lane = laneHandle({ stackedOn: 'wf:a', baseSha: 'deadbeef' });
+    expect(replayFromFor(lane, new Set())).toBe('deadbeef');
+  });
+
+  it('a stacked lane whose sole predecessor is STILL in notLanded: undefined (the guard this piece adds)', () => {
+    const lane = laneHandle({ stackedOn: 'wf:a', baseSha: 'deadbeef' });
+    expect(replayFromFor(lane, new Set(['wf:a']))).toBeUndefined();
+  });
+
+  it('a joined lane where every predecessor already landed: baseSha', () => {
+    const lane = laneHandle({ joinedFrom: ['wf:x', 'wf:y'], baseSha: 'cafef00d' });
+    expect(replayFromFor(lane, new Set())).toBe('cafef00d');
+  });
+
+  it('a joined lane where only ONE of several predecessors is still in notLanded: undefined -- any one unlanded predecessor is enough to withhold it', () => {
+    const lane = laneHandle({ joinedFrom: ['wf:x', 'wf:y'], baseSha: 'cafef00d' });
+    expect(replayFromFor(lane, new Set(['wf:y']))).toBeUndefined();
+  });
+
+  it('a lane with neither stackedOn nor joinedFrom (an ordinary, unstacked lane): always undefined, regardless of notLanded', () => {
+    const lane = laneHandle({ baseSha: 'f00dbabe' });
+    expect(replayFromFor(lane, new Set())).toBeUndefined();
+    expect(replayFromFor(lane, new Set(['wf:anything']))).toBeUndefined();
   });
 });
 
