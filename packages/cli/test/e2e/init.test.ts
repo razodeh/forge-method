@@ -121,18 +121,19 @@ describe('E1 init', () => {
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
     expect(agentFindings.every((finding) => finding.severity === 'warning')).toBe(true);
     expect(agentFindings.every((finding) => finding.code === 'unregistered-output-type')).toBe(true);
+    const expectedUnregisteredOutputs: readonly (readonly [agentId: string, type: string])[] = [
+      ['compliance', 'ComplianceMatrix'],
+      ['critic', 'ObjectionList'],
+      ['domain-modeler', 'ContextMap'],
+      ['finops', 'CostModel'],
+      ['frontend', 'ComponentSpec'],
+      ['techwriter', 'Readme'],
+      ['techwriter', 'DocsSet'],
+    ];
     expect(
       agentFindings.map((finding) => `${finding.agentId}:${finding.message}`).sort(),
     ).toEqual(
-      [
-        ['compliance', 'ComplianceMatrix'],
-        ['critic', 'ObjectionList'],
-        ['domain-modeler', 'ContextMap'],
-        ['finops', 'CostModel'],
-        ['frontend', 'ComponentSpec'],
-        ['techwriter', 'Readme'],
-        ['techwriter', 'DocsSet'],
-      ]
+      expectedUnregisteredOutputs
         .map(
           ([agentId, type]) =>
             `${agentId}:outputs names ${JSON.stringify(type)}, which is neither a registered artifact type (18 §18.7) nor "Code".`,
