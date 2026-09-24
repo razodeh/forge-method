@@ -17744,3 +17744,76 @@ code, so this is an untested interaction between two independently well-tested p
 code path).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q264`.
+
+## M14 P22 — The seven shipped module checks gain `appliesTo`/`severity`; the in-run evaluator supplies `FORGE_BASE_REF` (`modules/*/checks/*.check.yaml`, `modules/*/module.yaml`, `cli/commands/run/context.ts`, `cli/bin.ts`; new/edited tests in `test/gates.test.ts`, `cli/test/commands/run/{gates,context}.test.ts`, `cli/test/commands/{gate-validate,module}.test.ts`, `cli/test/bin.test.ts`; doc-comment fix in `cli/test/commands/gate-fail-closed.test.ts`)
+
+**Context.** `PLAN-M14.md` P22; depends on P20 (`Q263`) and P9, both already landed. `Q263` named this
+piece as the one that closes its own disclosed gap for real: before this piece, none of
+`modules/*/checks/*.check.yaml` carried a real `appliesTo`/`severity`, so installing `fm-web`/
+`fm-service`/`fm-data`/`fm-mobile` made `loadGateRegistry` refuse every gate (`GATE-506`) — a real,
+correctly fail-closed consequence `Q263`'s own regression tests pinned specifically to start failing once
+this piece landed.
+
+**Built.** Each of the seven check files gains a real `appliesTo.gates`/`severity: error`:
+`contract:verify`/`api:breaking-change` (`fm-service`) join `G-Integration` (`19` §19.1's own worked
+example); `a11y:audit`/`bundle:size` (`fm-web`), `lineage:coverage`/`data-quality:tests` (`fm-data`) and
+`device-matrix:coverage` (`fm-mobile`) join `G-Verify` (`10` §10.3's own catalogue) — a content proposal
+each file's own doc comment says the project owner may re-place. No `run`/`failOn`/`id`/`parser`/`remedy`
+string changed (confirmed by diff and by the 84 existing `fm-*-checks.test.ts` tests staying green
+unmodified); each `module.yaml`'s own `checks:` list gains a comment stating it stays documentary, its
+DATA byte-identical.
+
+`buildRunEngineContext` (`context.ts`) gains `integrationTipAtStartOfRun`, a tolerant read of the run's
+own `runs/<runId>/manifest.json` (`integrationTipAtStart`, P9's real write) — supplied, when present, as
+`FORGE_BASE_REF` in the env ONLY `createGateEvaluator`'s own in-run evaluator uses (never `mergeQueue`'s
+own env or the `commandEnv` field `RunEngineContext` itself returns, both still `input.commandEnv`
+unmodified). Absent for `forge review`/`debug`/`session`/`panel` (no manifest) and a manifest that cannot
+be read: `api:breaking-change` simply fails with its own already-existing stated reason. Neither
+`runWorkflow` nor `resumeWorkflow` needed a change: both already write/read the identical manifest around
+`buildRunEngineContext`'s own call. `bin.ts`'s `runGateCommand` (`forge gate check/approve/waive` outside
+a run) threads `FORGE_BASE_REF` from `realEnvSnapshot()` explicitly into `commandEnv`, the same
+"read once, pass explicitly" stance the FORGE run marker already takes there.
+
+Two `Q263`-era tests that pinned the now-closed gap are replaced with real positive-attachment proof plus
+this piece's own mutation evidence; `gate-fail-closed.test.ts`'s stale "P22 hasn't landed" doc comments
+are corrected to state the real, still-true reason its own module-check derivation stays hand-rolled
+regardless (no manifest at its own templates-only fixture root).
+
+**Tests.** `test/gates.test.ts` (all seven files scanned dynamically — would catch an eighth file or a
+lost `appliesTo` — count, gate-id validity, severity, exact id/gate/severity table); `cli/test/commands/
+run/gates.test.ts` and `cli/test/commands/gate-validate.test.ts` (real `fm-mobile` install attaches for
+real to a real `G-Verify`/reports zero findings; `appliesTo`/`severity` stripped from the real file —
+parsed/re-serialised via `YAML.parse`/`stringify`, never a text strip — is `GATE-506`/reported
+diagnosably); `cli/test/commands/run/context.test.ts` (a real spawned `node -e ...` check receives
+`FORGE_BASE_REF` from the run's own manifest; absent with no `integrationTipAtStart` or no manifest at
+all); `cli/test/commands/module.test.ts` (real `forge module add fm-core`+`fm-web`, real `gate list`/
+`gate check` against the real `G-Verify` gate; `bundle:size` re-pointed at `G-Deliver` in a mutated copy
+attaches there instead); `cli/test/bin.test.ts` (a real subprocess `forge gate check` outside a run:
+unset fails on its own reason exiting `EXIT_CODES.gateFailed`, set is threaded through to a real spawned
+check, exit 0).
+
+**Mutation evidence** (the three named in the brief, each broken, run red, restored green): `appliesTo`
+removed from `modules/fm-web/checks/a11y.check.yaml` — `test/gates.test.ts` fails (2 tests); the
+`FORGE_BASE_REF` wiring reverted in `context.ts` — `context.test.ts`'s in-run test fails; `bundle:size`'s
+`appliesTo` re-pointed to `G-Deliver` in the real shipped file — `module.test.ts`'s `gate list`-shaped
+test fails. Each restored via `git checkout --` against a real prior commit, reconfirmed green.
+
+**Critic round 1 (fresh, context-free; ran the real seven `run:` scripts directly, strict-parsed all
+seven YAML files, ran `test/gates.test.ts` for real, traced `execa`'s env-merge semantics and the
+manifest's single-writer/atomic-write lifecycle). Zero MAJOR, two MINOR, both administrative rather than
+code defects, no round 2 needed:**
+1. The piece's own main commit, at review time, carried unrelated cosmetic reformatting swept in from a
+   concurrent, unrelated piece (`M14 P23`'s own `deploy-record.ts`/test/two briefs/`docs/method-guide.md`)
+   during a shared-working-tree incident — see `SPEC-QUESTIONS.md` `Q265`'s own full, honest account.
+   Confirmed cosmetic-only by the critic (whitespace/quoting, zero logic), not a content defect.
+2. No `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` entry existed yet at review time — this entry closes that.
+
+**Decision.** Ship as built; no code change resulted from the critic round.
+
+**Discloses.** Installing `fm-web`/`fm-data`/`fm-mobile` now makes `G-Verify` genuinely fail (not merely
+refuse to load) until built/documented/waived (`Q229` D4, working as designed). `store-release`
+(`fm-mobile`) may want `device-matrix:coverage` on `G-Deliver` instead — left as `G-Verify` here, a
+content proposal, not decided. `module.yaml`'s `checks:` lists are still not cross-checked against each
+module's own real check-file `appliesTo` content (unchanged from `Q263`).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q265`.

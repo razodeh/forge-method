@@ -23829,3 +23829,142 @@ and confirmed rather than assumed. The two round-1 nitpicks (multiple-`Forge-Ste
 concatenation; the untested `replayFrom` + still-conflicts combination) stand, re-affirmed in round 2.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P35`.
+
+## Q265 — M14 P22: the seven shipped module checks gain `appliesTo`/`severity`; the in-run evaluator supplies `FORGE_BASE_REF` — a one-round critic (real test execution, real script runs, not just reading) found zero MAJOR findings and two MINOR, purely administrative ones; the real defect this piece closes was `Q263`'s own disclosed gap, not a new bug
+
+**Context.** `PLAN-M14.md` P22; depends on P20 (`Q263`) and P9, both already landed. `Q263`'s own
+Decision text named this piece as "the piece that closes the temporary gap for real": before this piece,
+none of `modules/*/checks/*.check.yaml` carried a real `appliesTo`/`severity`, so `loadGateRegistry`
+(`Q263`'s own real `appliesTo` attachment mechanism) refused every gate the moment a project installed
+one of `fm-web`/`fm-service`/`fm-data`/`fm-mobile` (`GATE-506`) — a real, reproduced, and correctly
+fail-closed consequence, pinned by two of `Q263`'s own regression tests specifically so they would start
+failing, correctly, once this piece landed.
+
+**Built.** Each of the seven `modules/*/checks/*.check.yaml` files now declares a real `appliesTo.gates`
+and `severity: error`: `contract:verify`/`api:breaking-change` (`fm-service`) join `G-Integration`,
+matching `19` §19.1's own worked example, which names this exact check-id pair alongside that gate;
+`a11y:audit`/`bundle:size` (`fm-web`), `lineage:coverage`/`data-quality:tests` (`fm-data`) and
+`device-matrix:coverage` (`fm-mobile`) join `G-Verify` (`10` §10.3's own catalogue) — a content proposal
+each file's own doc comment says the project owner may re-place (`device-matrix:coverage` names
+`G-Deliver`/`store-release.workflow.yaml`'s own gate step as the obvious alternative). Not one `run`,
+`failOn`, `id`, `parser` or `remedy` string changed — confirmed both by diff inspection and by
+`packages/engine/test/gates/fm-{web,service,data,mobile}-checks.test.ts` (84 tests) staying green
+unmodified. Each `module.yaml`'s own `checks:` list gains a comment saying explicitly that it stays
+documentary (`loadGateRegistry` never reads it for attachment, only each check file's own `appliesTo`
+does) — the list's own DATA is confirmed byte-identical via `git diff`, never touched.
+
+`buildRunEngineContext` (`packages/cli/src/commands/run/context.ts`) gains `integrationTipAtStartOfRun`,
+a tolerant read of the run's own `runs/<runId>/manifest.json` (`integrationTipAtStart`, `P9`'s already-
+landed real write) — when present, supplied as `FORGE_BASE_REF` in the env `createGateEvaluator`'s own
+in-run gate evaluator uses, and ONLY there: `mergeQueue`'s own env and the `commandEnv` field returned on
+`RunEngineContext` (what command steps and merge checks read) both still use `input.commandEnv`
+unmodified, so no project's own merge pre/post-check command sees a surprise `FORGE_BASE_REF` it never
+asked for. Absent — never a hard failure — for `forge review`/`debug`/`session`/`panel` (none of which
+write a manifest at all) and for a manifest that cannot be read/parsed: `api:breaking-change` (the one
+shipped check that reads it) then fails with its own already-existing stated reason ("FORGE_BASE_REF is
+not set") rather than this call refusing to build a context over an unrelated gap. Neither `runWorkflow`
+nor `resumeWorkflow` needed a change of their own: both already write/read the identical manifest, before
+and after `buildRunEngineContext` is ever called respectively.
+
+`runGateCommand` (`bin.ts`, `forge gate check/approve/waive` outside a run) also threads `FORGE_BASE_REF`
+from `realEnvSnapshot()` (this file's own one ambient environment read, `R10`) explicitly into
+`commandEnv`, the same "read once, pass explicitly" stance the FORGE run marker already takes there,
+rather than leaving it to `execa`'s own ambient `process.env` extension inside `runShellCommand`.
+
+Two existing tests that pinned `Q263`'s own disclosed "module checks aren't attachable yet" gap
+(`cli/test/commands/run/gates.test.ts`, `cli/test/commands/gate-validate.test.ts`) are replaced, per
+`Q263`'s own instruction to their future reader, with real positive-attachment proof plus this piece's
+own mutation evidence (`appliesTo`/`severity` stripped from a REAL shipped file, parsed/re-serialised via
+`YAML.parse`/`YAML.stringify` rather than a fragile text strip, since the real file's own doc comments
+legitimately mention "appliesTo" in prose); `gate-fail-closed.test.ts`'s stale doc comments (which
+explained its own hand-rolled module-check derivation as "P22 hasn't landed yet") are corrected to state
+the real, still-true reason that derivation stays hand-rolled regardless (its own fixture root carries no
+`.forge/manifest.yaml` for real attachment to find).
+
+**Tests.** `test/gates.test.ts` (new: all seven files scanned dynamically from `modules/*/checks/`, not a
+hardcoded list — would catch an eighth file or one losing its `appliesTo` — count, `appliesTo.gates`
+naming a real shipped gate id, `severity` present, and the full id/gate/severity table asserted exactly);
+`cli/test/commands/run/gates.test.ts` (real `fm-mobile` install attaches `device-matrix:coverage` to a
+real `G-Verify` gate; `appliesTo` stripped from the real file is `GATE-506`); `cli/test/commands/
+gate-validate.test.ts` (the identical real `fm-mobile` install now reports zero findings;
+`appliesTo`/`severity` stripped is reported diagnosably, never a throw); `cli/test/commands/run/
+context.test.ts` (a real spawned `node -e ...` check, via a real `.gate.yaml` fixture and a real
+`ctx.gates.evaluate` call, receives `FORGE_BASE_REF` from the run's own manifest; absent with no
+`integrationTipAtStart` or no manifest at all — the `forge review`/`debug`/`session`/`panel` case);
+`cli/test/commands/module.test.ts` (real `forge module add fm-core`+`fm-web`, real `gate list`/`gate
+check` against the real `G-Verify` gate: both checks fail on their own stated reason with no `dist/`,
+`source` shown; `bundle:size` re-pointed at `G-Deliver` in a mutated copy attaches there instead of
+`G-Verify`); `cli/test/bin.test.ts` (a real subprocess `forge gate check` outside a run: `FORGE_BASE_REF`
+unset fails on its own reason exiting `EXIT_CODES.gateFailed`; set in the caller's own shell, threaded
+through to a real spawned check, exit 0).
+
+**Mutation evidence** (all three named in the piece's own brief, each broken, run red, then restored
+green): `appliesTo` removed from `modules/fm-web/checks/a11y.check.yaml` — `test/gates.test.ts` fails (2
+tests, both citing the missing `appliesTo` structurally); `FORGE_BASE_REF` wiring reverted in
+`context.ts` (`env: gateEnv` back to `env: input.commandEnv`) — `context.test.ts`'s own "supplies...
+FORGE_BASE_REF" test fails (the real spawned check receives no ref); `bundle:size`'s `appliesTo`
+re-pointed to `G-Deliver` in the real shipped file — `module.test.ts`'s own "attaches... to the real
+G-Verify gate" test fails (`bundle:size` is no longer found under `G-Verify`). Each restored via `git
+checkout --` (a real, prior commit existed for every mutated file before mutating it) and reconfirmed
+green.
+
+**Critic round 1 (fresh, context-free; executed every shipped check's real `run:` script directly,
+strict-mode-parsed all seven YAML files for duplicate keys, ran `test/gates.test.ts` for real, traced
+`runShellCommand`'s `execa` env-merge semantics and the manifest's single-writer/atomic-write lifecycle
+via its own sub-delegation). Zero MAJOR findings. Two MINOR, both administrative rather than code
+defects:**
+1. The piece's own main commit, at the time of review, carried unrelated cosmetic reformatting from a
+   concurrent, unrelated piece (`M14 P23`'s own `deploy-record.ts`/its test/two briefs/
+   `docs/method-guide.md`) — see this entry's own Discloses paragraph for the full, honest account of
+   how a fast-moving shared working tree produced this, independently of any content defect (the critic
+   confirmed every such hunk is whitespace/quoting only, zero logic change). Not something this piece's
+   own code needed to fix; recorded here as the process incident it is.
+2. No `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` entry existed yet at the moment the critic looked — this
+   entry, and the piece's own gauntlet-log docs commit, close that.
+No round 2: the one round already exercised every real path the brief's own Tests-first/Mutation-evidence
+text names, judged both findings as administrative-only, and found nothing in the actual implementation
+to fix.
+
+**Decision.** Ship as built. The `appliesTo`/`severity` placements are this piece's own content proposal
+(`10` §10.3, `19` §19.1) — the Discloses paragraph below names two the project owner may want to
+re-place. No code change resulted from the critic round.
+
+**Discloses.** Installing `fm-web`/`fm-data`/`fm-mobile` now makes `G-Verify` genuinely fail (not merely
+refuse to load) until the project has a real `dist/`, pipeline docs, or a device matrix — or until it is
+waived; this is `Q229` D4's fail-closed stance, working as designed, not a regression. `store-release`
+(`fm-mobile`) may want `device-matrix:coverage` on `G-Deliver` instead of `G-Verify`, per its own workflow
+step already gating there — left as `G-Verify` per this piece's own content proposal, not decided here.
+`module.yaml`'s `checks:` lists are still not cross-checked against each module's own real `checks/*.
+check.yaml` `appliesTo` content (a module could in principle list an id its own check files disagree
+with) — unchanged from `Q263`.
+
+**Shared-working-tree incident (honest account, `M13-AGENT-NOTES.md` rule 14/`Q264`'s own precedent).**
+This piece landed during an unusually active concurrent wave (`M14 P23` "forge deploy record", `M14 P37`
+"config set --commit", others) sharing this exact working tree. `cli/test/bin.test.ts`'s own `FORGE_BASE_REF`
+coverage (this piece's own content) was swept into `P23`'s own commit (`42c769c`) by that agent's own
+broad `git add`, not this piece's own commit — verified correct and passing regardless, not re-committed
+separately (it was already landed). `bin.ts` itself collided twice with `M14 P37`'s own concurrent,
+unrelated `runConfigCommand`/`main()` edits to the SAME file while this piece edited `runGateCommand`;
+isolated via a hand-built `git apply --cached` patch (never a blanket `git add` on the shared file) after
+`git restore --staged` cleared an accidental co-staging the other agent's own `git add` had produced.
+Separately, a self-inflicted mistake, caught and fixed within the same working session: an early `git
+commit` (no pathspec) picked up the full shared index at that moment, including several files staged by
+other agents entirely unrelated to this piece (`P23`'s own follow-up `deploy-record.ts`/test/two briefs/
+`docs/method-guide.md`, `M14 P37`'s own early `vcs/commit.ts`/`vcs/index.ts`/`vcs/test/
+commit-paths.test.ts`) under this piece's own commit message — caught immediately via `git show --stat
+HEAD`, fixed with `git reset --soft HEAD~1` (keeps everything staged, discards only the bad commit
+record) followed by `git commit -- <exact 18 paths>` (pathspec-limited); no other agent's staged work was
+lost. A LATER amend by another agent's own tooling, outside this piece's control, re-merged some of
+`P23`'s own genuine follow-up fix to `deploy-record.ts`/its test/the two briefs/`docs/method-guide.md`
+into this piece's already-clean commit's own tree (renaming its hash `dbf0d58` → `3a2febf` in the
+process) — content on both sides is correct and independently verified (the critic's own MINOR finding
+#1 above confirms every such hunk is cosmetic-only), only the commit BOUNDARY is now inaccurate (`P23`'s
+own follow-up fix has no commit message of its own); not rewritten further, since three more commits
+already stack on top of it in the shared history and rewriting that deep risks real damage to other
+agents' own work in progress. `packages/engine/test/dispatch/conflict-resolver.test.ts` (untracked,
+another agent's own in-flight work, never touched by this piece) broke `pnpm typecheck` for `@forge/engine`
+at one point during this piece's own work; not this piece's file, not fixed here (`M13-AGENT-NOTES.md`
+rule 8) — `forge-method` (`@forge/cli`) and every package this piece actually touches typecheck clean
+independently, confirmed repeatedly across the session.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P22`.
