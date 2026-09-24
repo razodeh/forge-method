@@ -84,6 +84,12 @@ export interface LandLaneOptions {
    * lands a lane no `merge` step scoped at all, so no review-verdict context was ever computed for it. */
   readonly reviewVerdict?: string | undefined;
   readonly reviewReportId?: string | undefined;
+  /** `PLAN-M14.md` P35: `@forge/vcs`'s own `MergeCandidate.replayFrom`, passed straight through to
+   * `MergeQueueFacade.process` unchanged -- see its own doc comment (`merge-queue.ts`) for what it does
+   * and why. `runMergeStep` (`steps.ts`) is the one caller that ever computes a real value for this;
+   * `integrateLane` below never supplies one (an auto-integrated lane can never itself be a joined one,
+   * `sharesMergeScope`'s own structural guarantee, `lane-base.ts`). */
+  readonly replayFrom?: string | undefined;
 }
 
 export interface LandLaneResult {
@@ -112,7 +118,7 @@ export async function landLane(
   options: LandLaneOptions,
 ): Promise<LandLaneResult> {
   const { eventStepId, laneStepId, lane, conflictPolicy, checks, skippedLayers } = options;
-  const { reviewVerdict, reviewReportId } = options;
+  const { reviewVerdict, reviewReportId, replayFrom } = options;
   const reviewFields =
     reviewVerdict === undefined || reviewReportId === undefined
       ? {}
@@ -164,14 +170,39 @@ export async function landLane(
         declaredClaim: [],
         conflictPolicy,
         ...reviewFields,
+        ...(replayFrom === undefined ? {} : { replayFrom }),
       },
       checks,
+      // `PLAN-M14.md` P35: `ctx.conflictResolver`, preferred by the real facade over its own
+      // constructor-bound resolver (`createMergeQueueFacade`'s own doc comment) -- `undefined` here is a
+      // legitimate value (every caller before P38), not a special case: `MergeQueueFacade.process`'s own
+      // `options` parameter is optional precisely so a hand-built facade need not implement this at all.
+      { conflictResolver: ctx.conflictResolver },
     ),
   );
   if (!mergeResult.ok) return { failure: mergeResult.failure };
   const merge = mergeResult.value;
 
   if (merge.kind === 'clean' || merge.kind === 'conflict-resolved') {
+    // `PLAN-M14.md` P35: one `MergeConflict{reason:'resolved'}` event per conflict this landing actually
+    // resolved, BEFORE the single `MergeCompleted` this whole landing produces -- `merge.resolutions`'
+    // own doc comment (`@forge/vcs`'s `MergeOutcome`) has the "why a list, one event per entry" reasoning.
+    // Sequential, not `Promise.all`: `18` §18.10's own append-only log has no other ordering guarantee
+    // across concurrent `emit` calls, and these must read in resolution order, before `MergeCompleted`.
+    if (merge.kind === 'conflict-resolved') {
+      for (const resolution of merge.resolutions) {
+        await ctx.telemetry.emit({
+          type: 'MergeConflict',
+          stepId: eventStepId,
+          laneId: lane.laneId,
+          payload: {
+            reason: 'resolved',
+            files: resolution.files,
+            ...(resolution.commit === undefined ? {} : { commit: resolution.commit }),
+          },
+        });
+      }
+    }
     await ctx.telemetry.emit({
       type: 'MergeCompleted',
       stepId: eventStepId,
@@ -212,7 +243,14 @@ export async function landLane(
       type: 'MergeConflict',
       stepId: eventStepId,
       laneId: lane.laneId,
-      payload: { reason: merge.reason },
+      // `PLAN-M14.md` P35: `files`/`detail` alongside `reason` -- `MergeOutcome.conflict-unresolved`'s own
+      // doc comment (`@forge/vcs`'s `merge-queue.ts`) has the "why files is never empty, why detail is
+      // reason-specific" reasoning.
+      payload: {
+        reason: merge.reason,
+        files: merge.files,
+        ...(merge.detail === undefined ? {} : { detail: merge.detail }),
+      },
     });
     return {
       outcome: merge,

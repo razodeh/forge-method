@@ -78,7 +78,12 @@ interface ContextOptions {
   readonly gates?: ReadonlyMap<string, GateDefinition>;
   readonly conflictPolicy?: 'agent' | 'human' | 'abort';
   readonly claimPolicy?: 'strict' | 'warn';
+  /** The `MergeQueueFacade`'s own constructor-bound resolver (`createMergeQueueFacade`'s second argument). */
   readonly resolver?: Parameters<typeof createMergeQueueFacade>[1];
+  /** `PLAN-M14.md` P35: `ExecuteStepContext.conflictResolver` -- a PER-CALL resolver `landLane` prefers over
+   * `resolver` above when both are set (`createMergeQueueFacade`'s own doc comment, `facades.ts`). Distinct
+   * from `resolver` so a test can prove which one actually won. */
+  readonly conflictResolver?: Parameters<typeof createMergeQueueFacade>[1];
   readonly laneRegistry?: Map<string, LaneHandle>;
 }
 
@@ -110,6 +115,9 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
     limits: UNLIMITED,
     seed: 'seed-1',
     ...(options.conflictPolicy === undefined ? {} : { conflictPolicy: options.conflictPolicy }),
+    ...(options.conflictResolver === undefined
+      ? {}
+      : { conflictResolver: options.conflictResolver }),
   };
 }
 
@@ -363,7 +371,7 @@ describe('conflicting lanes follow the configured policy', () => {
    * lanes end up genuinely conflicting at integration. */
   async function conflictingRun(
     prefix: string,
-    options: Pick<ContextOptions, 'conflictPolicy' | 'resolver'>,
+    options: Pick<ContextOptions, 'conflictPolicy' | 'resolver' | 'conflictResolver'>,
   ) {
     const project = await createProject(prefix);
     const { adapter } = scriptedAdapter(
@@ -416,6 +424,68 @@ describe('conflicting lanes follow the configured policy', () => {
 
     expect(state.runStatus).toBe('completed');
     expect(await git(project.integrationPath, 'show', 'HEAD:same.txt')).toBe('resolved');
+    // `PLAN-M14.md` P35: `landLane` emits `MergeConflict{reason:'resolved', files}` BEFORE `MergeCompleted`
+    // -- a resolved landing-time conflict is no longer silent in the event log the way it was before this
+    // piece (only the unresolved case ever got a `MergeConflict` event). Scoped to `cf:b`'s own events:
+    // `cf:a` integrates cleanly first (no conflict at all, since integration is still empty then), so its
+    // own `MergeCompleted` is not part of the sequence this test is about.
+    const events = await eventsOf(project, 'run-lane');
+    const mergeEvents = events.filter(
+      (event) =>
+        event.stepId === 'cf:b' &&
+        (event.type === 'MergeConflict' || event.type === 'MergeCompleted'),
+    );
+    expect(mergeEvents.map((event) => event.type)).toEqual(['MergeConflict', 'MergeCompleted']);
+    const conflictPayload = mergeEvents[0]?.payload as
+      { reason?: string; files?: readonly string[] } | undefined;
+    expect(conflictPayload?.reason).toBe('resolved');
+    expect(conflictPayload?.files).toEqual(['same.txt']);
+  });
+
+  it("PLAN-M14.md P35: ExecuteStepContext.conflictResolver (per-call) is preferred over the facade's own constructor-bound resolver when both are set", async () => {
+    let constructorResolverCalls = 0;
+    const constructorResolver: ContextOptions['resolver'] = async (conflict) => {
+      constructorResolverCalls += 1;
+      await writeFile(path.join(conflict.worktreePath, 'same.txt'), 'from constructor resolver\n');
+      return 'resolved';
+    };
+    let perCallResolverCalls = 0;
+    const perCallResolver: ContextOptions['conflictResolver'] = async (conflict) => {
+      perCallResolverCalls += 1;
+      await writeFile(path.join(conflict.worktreePath, 'same.txt'), 'from per-call resolver\n');
+      return 'resolved';
+    };
+    const { project, state } = await conflictingRun('conflict-per-call-resolver', {
+      conflictPolicy: 'agent',
+      resolver: constructorResolver,
+      conflictResolver: perCallResolver,
+    });
+
+    expect(state.runStatus).toBe('completed');
+    expect(perCallResolverCalls).toBe(1);
+    expect(constructorResolverCalls).toBe(0);
+    expect(await git(project.integrationPath, 'show', 'HEAD:same.txt')).toBe(
+      'from per-call resolver',
+    );
+  });
+
+  it('PLAN-M14.md P35: with no per-call resolver set, the facade falls back to its own constructor-bound resolver unchanged', async () => {
+    let constructorResolverCalls = 0;
+    const constructorResolver: ContextOptions['resolver'] = async (conflict) => {
+      constructorResolverCalls += 1;
+      await writeFile(path.join(conflict.worktreePath, 'same.txt'), 'from constructor resolver\n');
+      return 'resolved';
+    };
+    const { project, state } = await conflictingRun('conflict-constructor-fallback', {
+      conflictPolicy: 'agent',
+      resolver: constructorResolver,
+    });
+
+    expect(state.runStatus).toBe('completed');
+    expect(constructorResolverCalls).toBe(1);
+    expect(await git(project.integrationPath, 'show', 'HEAD:same.txt')).toBe(
+      'from constructor resolver',
+    );
   });
 });
 

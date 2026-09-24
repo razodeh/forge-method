@@ -42,7 +42,50 @@ export interface LaneHandle {
   readonly laneId: string;
   readonly path: string;
   readonly branch: string;
+  /** `PLAN-M14.md` P35: the sha this lane's own work commits begin after — for a lane created with no
+   * joined predecessor, the integration tip it branched from (`LaneCreated.payload.baseSha`,
+   * `createLaneForStep`); for a lane joined with one or more unmerged predecessors (`PLAN-M14.md` P34),
+   * the point right after every predecessor head was merged in. `runMergeStep`'s own `replayFrom`
+   * (`merge-queue.ts`) is this value: a rebase at landing time then replays only what is at or after it,
+   * never a joined predecessor's own (possibly already-superseded, rewritten-by-its-own-landing) commits.
+   * Set by `createLaneForStep` (`steps.ts`) on every fresh lane, and by `repopulateLaneRegistry`
+   * (`@forge/engine/resume/orchestrate.ts`) on resume, from `RunState.laneOrigins`. Absent for a
+   * hand-built `LaneHandle` a test constructs directly without going through either. */
+  readonly baseSha?: string | undefined;
+  /** `PLAN-M14.md` P34/P35: the step id of this lane's sole joined predecessor, when joining it was a
+   * fast-forward (byte-identical to the old, pre-P34 stacking rule) — see `LaneCreated.payload.stackedOn`'s
+   * own doc comment (`steps.ts`) for the full "stackedOn vs joinedFrom" distinction. Never set together
+   * with `joinedFrom`. */
+  readonly stackedOn?: string | undefined;
+  /** `PLAN-M14.md` P34/P35: every joined predecessor's step id, when joining needed a real merge commit
+   * (more than one head, or a single head whose join was not a fast-forward) — see
+   * `LaneCreated.payload.joinedFrom`'s own doc comment (`steps.ts`). Never set together with `stackedOn`.
+   * Absent (not merely empty) for a lane created with no joined predecessor at all. */
+  readonly joinedFrom?: readonly string[] | undefined;
 }
+
+/** `@forge/vcs`'s own `MergeConflictDescription`/`MergeConflictResolver` (`merge-queue.ts`, `PLAN-M14.md`
+ * P35), re-declared structurally for the identical "do not force every consumer of `@forge/engine/dispatch`
+ * to also resolve `@forge/vcs`'s own types" reason `LaneHandle` above already gives — distinct from
+ * `JoinConflictDescription`/`JoinConflictResolver` below (the in-lane join's own, unchanged-by-this-piece
+ * shape, `PLAN-M14.md` P34): this is the merge QUEUE's own (landing-time) conflict description, which
+ * `PLAN-M14.md` P35 widens with `stepId`/`runId`/`commit` so a resolver can identify the lane's step, not
+ * merely its (lossy-slugified) `laneId`. */
+export interface MergeConflictDescription {
+  readonly laneId: string;
+  readonly stepId?: string | undefined;
+  readonly runId?: string | undefined;
+  readonly declaredClaim: readonly string[];
+  readonly conflictedFiles: readonly { readonly path: string; readonly status: string }[];
+  readonly diff: string;
+  readonly worktreePath: string;
+  readonly commit?:
+    | { readonly sha: string; readonly subject: string; readonly forgeStep?: string | undefined }
+    | undefined;
+}
+export type MergeConflictResolver = (
+  conflict: MergeConflictDescription,
+) => Promise<'resolved' | 'unresolved'>;
 
 /** The thin seam over `@forge/vcs`'s own lane/claim functions — "this piece has no opinion on the real
  * mechanism, only on how to interpret its result," the identical stance `@forge/engine/gates`' own
@@ -210,6 +253,13 @@ export interface MergeCandidateLike {
    * `Forge-Review-Verdict` trailer from these two fields when both are present. */
   readonly reviewVerdict?: string | undefined;
   readonly reviewReportId?: string | undefined;
+  /** `PLAN-M14.md` P35: `@forge/vcs`'s own `MergeCandidate.replayFrom`, carried through unchanged — see
+   * its own doc comment (`merge-queue.ts`). `runMergeStep` (`steps.ts`) sets this to the lane's own
+   * `baseSha` when every `stackedOn`/`joinedFrom` predecessor named on the `LaneHandle` has already landed;
+   * every other caller (an auto-integrated lane, `integrateLane`, which — `sharesMergeScope`'s own
+   * structural guarantee — can never itself be a joined lane, so this never applies there) leaves it
+   * `undefined`, the ordinary, unchanged rebase. */
+  readonly replayFrom?: string | undefined;
 }
 
 /** `@forge/vcs`'s own `MergeOutcome` discriminated union, re-declared structurally for the identical
@@ -219,10 +269,30 @@ export type MergeOutcome =
   | { readonly kind: 'clean'; readonly mergeCommitSha: string }
   /** Nothing was left to merge after the rebase: the lane's content is already in the integration branch. */
   | { readonly kind: 'already-integrated' }
-  | { readonly kind: 'conflict-resolved'; readonly mergeCommitSha: string }
+  | {
+      readonly kind: 'conflict-resolved';
+      readonly mergeCommitSha: string;
+      /** `PLAN-M14.md` P35: see `@forge/vcs`'s own `MergeOutcome`'s identical doc comment (`merge-queue.ts`)
+       * for what each entry is and why a list. */
+      readonly resolutions: readonly {
+        readonly files: readonly string[];
+        readonly commit?:
+          | {
+              readonly sha: string;
+              readonly subject: string;
+              readonly forgeStep?: string | undefined;
+            }
+          | undefined;
+      }[];
+    }
   | {
       readonly kind: 'conflict-unresolved';
-      readonly reason: 'abort-policy' | 'resolver-unresolved';
+      /** `PLAN-M14.md` P35: `'resolution-cap'` alongside the two pre-existing reasons — see `@forge/vcs`'s
+       * own `MergeOutcome`'s identical doc comment (`merge-queue.ts`). */
+      readonly reason: 'abort-policy' | 'resolver-unresolved' | 'resolution-cap';
+      /** `PLAN-M14.md` P35: see `@forge/vcs`'s own `MergeOutcome`'s identical doc comment. */
+      readonly files: readonly string[];
+      readonly detail?: string | undefined;
     }
   | {
       readonly kind: 'pre-check-failed';
@@ -253,8 +323,20 @@ export interface MergeCheckCommand {
   readonly label?: string | undefined;
 }
 
+/** `PLAN-M14.md` P35: `MergeQueueFacade.process`'s own optional third argument -- a per-call
+ * `conflictResolver`, preferred over any resolver `createMergeQueueFacade` was constructed with
+ * (`facades.ts`'s own doc comment has the fuller "why per-call, why preferred" reasoning). `undefined`
+ * (every caller before this piece) falls back to the facade's own constructor-bound resolver, unchanged. */
+export interface MergeQueueProcessOptions {
+  readonly conflictResolver?: MergeConflictResolver | undefined;
+}
+
 export interface MergeQueueFacade {
-  process(candidate: MergeCandidateLike, checks: MergeCandidateChecks): Promise<MergeOutcome>;
+  process(
+    candidate: MergeCandidateLike,
+    checks: MergeCandidateChecks,
+    options?: MergeQueueProcessOptions,
+  ): Promise<MergeOutcome>;
   /** Whether everything on `handle`'s branch is already in the integration branch (`git merge-base
    * --is-ancestor`): a lane whose step changed nothing (its branch is still at its base), or one a crash left
    * merged but not yet removed (`PLAN-M13.md` P19). Such a lane has nothing to land, and merging it again would
@@ -475,6 +557,24 @@ export interface ExecuteStepContext {
    * `modules/`-is-shipped-content-only correction `agentsRoot`'s own doc comment already made for the
    * roster, Q215). */
   readonly techniquesRoot?: string | undefined;
+  /** `PLAN-M14.md` P35: moved here from `@forge/engine/run`'s own `RunEngineContext` (which still declares
+   * no field of its own — it inherits this one — `run-engine.ts`'s own usage is unchanged) so a plain
+   * `ExecuteStepContext` fixture (this module's own test helpers) can set it without needing
+   * `RunEngineContext`'s wider, run-driving shape (`limits`/`seed`/...). How the engine resolves a conflict
+   * when it integrates a lane no `merge` step lands (`PLAN-M13.md` P19): `.forge/config.yaml`'s
+   * `execution.conflictPolicy` (`18` §18.3). Omitted, `'abort'`: a conflicting lane fails its step and is
+   * kept for inspection (`'agent'` and `'human'` need a resolver on the merge queue, `conflictResolver`
+   * below or `createMergeQueueFacade`'s own constructor argument; without one they fail the same way, as
+   * data). Explicit `merge` steps keep their own declared `policy.conflict`, never this field. */
+  readonly conflictPolicy?: 'agent' | 'human' | 'abort';
+  /** `PLAN-M14.md` P35: a per-call conflict resolver `landLane` (`integrate.ts`) passes to
+   * `ctx.mergeQueue.process`, preferred by `createMergeQueueFacade` over its own constructor-bound resolver
+   * (`facades.ts`). Lets a caller supply one resolver per run (this field) without needing to reconstruct
+   * the whole `MergeQueueFacade` around it — the identical "why per-call" reasoning
+   * `MergeQueueProcessOptions`'s own doc comment gives. `undefined` (every caller before P38) means "use
+   * whatever the facade was constructed with, if anything" — this piece adds the seam; nothing yet supplies
+   * a real resolver through it (`Discloses`). */
+  readonly conflictResolver?: MergeConflictResolver | undefined;
 }
 
 /** The `paths` config keys a `18` §18.7 artifact path template's first segment (`specs/...`, `kb/...`,

@@ -33,7 +33,7 @@ import {
 import type { BudgetState } from '../budget/types.ts';
 import { readRecordedAnswers } from '../dispatch/elicit.ts';
 import { executeStep } from '../dispatch/execute.ts';
-import { integrateLane, resolveLaneChecks, type ConflictPolicy } from '../dispatch/integrate.ts';
+import { integrateLane, resolveLaneChecks } from '../dispatch/integrate.ts';
 import type { ExecuteStepContext, StepFailureInfo, StepOutcome } from '../dispatch/types.ts';
 import { compileRunPlan, stepsLandedByMerges, type StepNode } from '../plan/index.ts';
 import { reconstructRunState } from '../resume/reconstruct.ts';
@@ -66,12 +66,8 @@ export interface RunEngineContext extends ExecuteStepContext {
    * one layer down — this field is where a real caller (`@forge/cli`'s own `buildRunEngineContext`,
    * from `.forge/config.yaml`'s own real `budget` block) now supplies one for the first time. */
   readonly budget?: BudgetConfig;
-  /** How the engine resolves a conflict when it integrates a lane no `merge` step lands (`PLAN-M13.md` P19):
-   * `.forge/config.yaml`'s `execution.conflictPolicy` (`18` §18.3). Omitted, `'abort'`: a conflicting lane
-   * fails its step and is kept for inspection (`'agent'` and `'human'` need a resolver on the merge queue,
-   * `createMergeQueueFacade`'s second argument; without one they fail the same way, as data). Explicit `merge`
-   * steps keep their own declared `policy.conflict`. */
-  readonly conflictPolicy?: ConflictPolicy;
+  // `conflictPolicy` moved to `ExecuteStepContext` (`PLAN-M14.md` P35, `dispatch/types.ts`'s own doc
+  // comment on it) -- inherited from there, not redeclared here. `ctx.conflictPolicy` below is unchanged.
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {

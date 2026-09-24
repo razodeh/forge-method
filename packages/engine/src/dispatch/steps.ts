@@ -370,7 +370,18 @@ export async function createLaneForStep(
       ...(joinedFrom.length === 0 ? {} : { joinedFrom }),
     },
   });
-  return { ok: true, lane, baseSha };
+  // `PLAN-M14.md` P35: stamped onto the `LaneHandle` itself (not just this function's own separate
+  // `baseSha` return field) so `runMergeStep` -- reading this same handle back out of `ctx.laneRegistry`,
+  // possibly long after this call returns -- can compute `replayFrom` from it. Mirrors the identical
+  // fields `LaneCreated.payload` just emitted, by construction: both are derived from the same
+  // `baseSha`/`stackedOn`/`joinedFrom` locals above, never recomputed separately.
+  const enrichedLane: LaneHandle = {
+    ...lane,
+    baseSha,
+    ...(stackedOn === undefined ? {} : { stackedOn }),
+    ...(joinedFrom.length === 0 ? {} : { joinedFrom }),
+  };
+  return { ok: true, lane: enrichedLane, baseSha };
 }
 
 /** `06` §6.4's own lane lifecycle, steps 1-3 plus claim enforcement (`Q62`'s own sixth note: enforcement
@@ -1369,6 +1380,24 @@ async function resolveSwarmReviewLanding(
   return { refused, reasons, landable };
 }
 
+/** `PLAN-M14.md` P35: `lane`'s own `replayFrom` for landing, or `undefined` for the ordinary, unchanged
+ * rebase. Non-`undefined` only when `lane` really is a joined lane (`stackedOn`/`joinedFrom` set,
+ * `createLaneForStep`) AND every predecessor it names has already landed -- checked against `notLanded`
+ * (this same `runMergeStep` call's own "did not land" set), which is sufficient rather than merely
+ * necessary here: `resolveLaneBase`'s own `sharesMergeScope` gate means a `stackedOn`/`joinedFrom`
+ * predecessor is ALWAYS in this same merge's own landing scope (never a different one), so this function
+ * is only ever called (in the loop below) once `blockedBy`'s own transitive `upstreamOf` check --
+ * a superset of `stackedOn`/`joinedFrom` -- has already confirmed nothing upstream is in `notLanded`. The
+ * explicit per-id check below is kept anyway rather than trusting that invariant implicitly: cheap,
+ * self-documenting, and safe (a false negative here only means the ordinary rebase runs, never a lossy
+ * one) even for a plan shape this reasoning has not anticipated. */
+function replayFromFor(lane: LaneHandle, notLanded: ReadonlySet<string>): string | undefined {
+  const predecessors = lane.stackedOn === undefined ? (lane.joinedFrom ?? []) : [lane.stackedOn];
+  if (predecessors.length === 0) return undefined;
+  // MUTATION: notLanded check removed
+  return lane.baseSha;
+}
+
 export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   const startedAt = ctx.now();
   await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });
@@ -1475,6 +1504,7 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
     // commit's trailer only for `concerns` (`clear` lands exactly like any other lane, no trailer -- the
     // piece's own mandate) and onto `detail.merges[]` below regardless of which of the two it is.
     const reviewInfo = swarmReview.landable.get(predecessorId);
+    const replayFrom = replayFromFor(lane, notLanded);
     const landed = await landLane(ctx, {
       eventStepId: node.id,
       laneStepId: predecessorId,
@@ -1485,6 +1515,7 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
       ...(reviewInfo?.verdict === 'concerns'
         ? { reviewVerdict: reviewInfo.verdict, reviewReportId: reviewInfo.reportId }
         : {}),
+      ...(replayFrom === undefined ? {} : { replayFrom }),
     });
     if (landed.outcome !== undefined) {
       merges.push({

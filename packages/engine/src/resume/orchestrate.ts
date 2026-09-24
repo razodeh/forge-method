@@ -408,7 +408,18 @@ async function repopulateLaneRegistry(
       staleLaneIds.add(laneId);
       continue;
     }
-    ctx.laneRegistry.set(origin.stepId, lane);
+    // `PLAN-M14.md` P35: `baseSha`/`stackedOn`/`joinedFrom` from `RunState.laneOrigins` (itself read from
+    // this same lane's own `LaneCreated` event, `reconstruct.ts`) -- so a resumed run's own `runMergeStep`
+    // can still compute `replayFrom` for a lane repopulated here, exactly as it would for one created
+    // fresh in the same process (`createLaneForStep`'s own identical stamping, `steps.ts`). `@forge/vcs`'s
+    // own `LaneHandle` (`lane` above) has no such fields; `ctx.laneRegistry`'s own wider, dispatch-layer
+    // `LaneHandle` type does, so they are added here rather than on `lane` itself.
+    ctx.laneRegistry.set(origin.stepId, {
+      ...lane,
+      baseSha: origin.baseSha,
+      ...(origin.stackedOn === undefined ? {} : { stackedOn: origin.stackedOn }),
+      ...(origin.joinedFrom === undefined ? {} : { joinedFrom: origin.joinedFrom }),
+    });
   }
   return staleLaneIds;
 }

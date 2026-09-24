@@ -29,7 +29,15 @@ interface Accumulator {
   readonly laneStatuses: Map<string, LaneReconstructedStatus>;
   spentUsd: number;
   readonly sessionIds: Map<string, string>;
-  readonly laneOrigins: Map<string, { readonly stepId: string; readonly baseSha: string }>;
+  readonly laneOrigins: Map<
+    string,
+    {
+      readonly stepId: string;
+      readonly baseSha: string;
+      readonly stackedOn?: string;
+      readonly joinedFrom?: readonly string[];
+    }
+  >;
   readonly artifactPaths: Set<string>;
   runFailure: RunFailureSummary | undefined;
 }
@@ -98,6 +106,19 @@ function extractStringField(payload: unknown, field: string): string | undefined
   if (typeof payload !== 'object' || payload === null) return undefined;
   const value = (payload as Record<string, unknown>)[field];
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/** `PLAN-M14.md` P35: `LaneCreated.payload.joinedFrom` (`createLaneForStep`) — read the identical
+ * defensive way `extractStringField` reads a single string: anything other than a non-empty array of
+ * non-empty strings yields `undefined` (never a partially-trusted array with some entries silently
+ * dropped, which could misrepresent which predecessors this lane was actually joined with). */
+function extractStringArrayField(payload: unknown, field: string): readonly string[] | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)[field];
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.every((entry) => typeof entry === 'string' && entry.trim() !== '')
+    ? (value as readonly string[])
+    : undefined;
 }
 
 /** `RunAborted` cascades: every step not already in one of the three terminal-or-skipped statuses
@@ -197,7 +218,16 @@ function applyEvent(acc: Accumulator, event: ForgeEvent): Accumulator {
         const stepId = event.stepId;
         const baseSha = extractStringField(event.payload, 'baseSha');
         if (stepId !== undefined && baseSha !== undefined) {
-          acc.laneOrigins.set(event.laneId, { stepId, baseSha });
+          // `PLAN-M14.md` P35: `stackedOn`/`joinedFrom` read the identical leniency `baseSha` already
+          // gets -- absent or malformed leaves them simply unset, never invented.
+          const stackedOn = extractStringField(event.payload, 'stackedOn');
+          const joinedFrom = extractStringArrayField(event.payload, 'joinedFrom');
+          acc.laneOrigins.set(event.laneId, {
+            stepId,
+            baseSha,
+            ...(stackedOn === undefined ? {} : { stackedOn }),
+            ...(joinedFrom === undefined ? {} : { joinedFrom }),
+          });
         }
       }
       return acc;

@@ -28,7 +28,10 @@ import {
   type JoinConflictPolicy,
   type LaneHandle as VcsLaneHandle,
   type MergeCandidate,
-  type MergeConflictResolver,
+  // Aliased: this module also imports a same-named, dispatch-layer `MergeConflictResolver` from
+  // `./types.ts` below (`PLAN-M14.md` P35) -- the identical "re-declared, not imported" bridge every
+  // other vcs/dispatch type pair in this file already needs one of (`VcsLaneHandle`).
+  type MergeConflictResolver as VcsMergeConflictResolver,
   type PreMergeCheck,
 } from '@forge/vcs';
 
@@ -40,6 +43,7 @@ import type {
   LaneHandle,
   MergeCandidateLike,
   MergeCheckCommand,
+  MergeConflictResolver,
   MergeQueueFacade,
   NewDispatchEvent,
   TelemetryFacade,
@@ -68,7 +72,15 @@ const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
  * `MergeConflictResolver` (`JoinConflictDescription` mirrors `MergeConflictDescription` field for field) --
  * the identical "re-declared, not imported" bridge `asVcsLaneHandle` already provides for `LaneHandle`, so
  * no cast is even needed here: TypeScript already accepts one in place of the other structurally. */
-function asVcsConflictResolver(resolver: JoinConflictResolver): MergeConflictResolver {
+function asVcsConflictResolver(resolver: JoinConflictResolver): VcsMergeConflictResolver {
+  return resolver;
+}
+
+/** `PLAN-M14.md` P35: the identical "structurally identical, no cast needed" bridge above, for the merge
+ * QUEUE's own (landing-time) resolver pair instead of the in-lane join's: dispatch's own `MergeConflictResolver`
+ * (`types.ts`) mirrors `@forge/vcs`'s own `MergeConflictResolver` field for field (including the new
+ * `stepId`/`runId`/`commit`). */
+function asVcsMergeQueueResolver(resolver: MergeConflictResolver): VcsMergeConflictResolver {
   return resolver;
 }
 
@@ -456,14 +468,25 @@ export function createMergeQueueFacade(
   const env = options.env;
   const limits = options.checkLimits ?? MERGE_CHECK_LIMITS;
   return {
-    async process(candidate, checks) {
+    // `PLAN-M14.md` P35: `options?.conflictResolver`, when supplied, wins over the resolver this facade was
+    // constructed with -- a per-call override, not a permanent replacement of it (a later `process` call
+    // with no `options` still falls back to the constructor-bound one, unchanged). `candidate.replayFrom`
+    // needs no separate handling here: `asVcsMergeCandidate`'s own cast already carries every field of
+    // `candidate` through, this one included.
+    async process(candidate, checks, options) {
+      const resolvedConflictResolver = options?.conflictResolver ?? conflictResolver;
       return enqueueForIntegrationPath(integrationPath, async () => {
         // A process killed inside a rebase (in the lane) or a merge (in the integration worktree) leaves that
         // git operation half done; a resumed run's second attempt would fail on it forever. Abandoned first.
         await abortInterruptedGitOperation(candidate.handle.path, 'rebase');
         await abortInterruptedGitOperation(integrationPath, 'merge');
         return processMergeCandidate(asVcsMergeCandidate(candidate), {
-          ...omitUndefinedValues({ conflictResolver }),
+          ...omitUndefinedValues({
+            conflictResolver:
+              resolvedConflictResolver === undefined
+                ? undefined
+                : asVcsMergeQueueResolver(resolvedConflictResolver),
+          }),
           integrationPath,
           preChecks: toMergeChecks(commandsOf(checks.preCommands, checks.preCheck), env, limits),
           postChecks: toMergeChecks(commandsOf(checks.postCommands, checks.postCheck), env, limits),

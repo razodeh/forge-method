@@ -91,7 +91,22 @@ export interface RunState {
    * to keep enforcing claims against after a resume — re-resolving `ctx.integrationBase` fresh at resume
    * time would silently use whatever integration has advanced to since, not the base this lane's own
    * work was actually diffed against the first time. */
-  readonly laneOrigins: ReadonlyMap<string, { readonly stepId: string; readonly baseSha: string }>;
+  readonly laneOrigins: ReadonlyMap<
+    string,
+    {
+      readonly stepId: string;
+      readonly baseSha: string;
+      /** `PLAN-M14.md` P35: `LaneCreated.payload.stackedOn`/`.joinedFrom` (`createLaneForStep`,
+       * `@forge/engine/dispatch`), carried the identical "most recent transition wins" way `baseSha`
+       * above already is (in practice a lane has exactly one `LaneCreated`, so "most recent" and "only"
+       * coincide). `repopulateLaneRegistry` (`orchestrate.ts`) stamps both back onto the reconstructed
+       * `LaneHandle` so a resumed run's own `runMergeStep` can still compute `replayFrom` for a lane
+       * whose `StepStarted` never resolved before the crash. Absent for a lane created with no joined
+       * predecessor, or one whose `LaneCreated` predates this field (never fabricated). */
+      readonly stackedOn?: string;
+      readonly joinedFrom?: readonly string[];
+    }
+  >;
   /** Every real, on-disk artifact path a resumed run has produced so far — from `ArtifactCreated`/
    * `ArtifactUpdated`'s own invented `payload.path` (project-root-relative, `@forge/core`'s own
    * `ProjectPaths.resolveWithin` shape), the identical "spec gives no payload shape, this piece invents

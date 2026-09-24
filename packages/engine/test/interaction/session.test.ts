@@ -472,7 +472,11 @@ describe('runSessionStep — critic muted in DIVERGE, unmuted in CONVERGE', () =
       adapter,
       mergeQueue: {
         process: () =>
-          Promise.resolve({ kind: 'conflict-unresolved', reason: 'abort-policy' } as const),
+          Promise.resolve({
+            kind: 'conflict-unresolved',
+            reason: 'abort-policy',
+            files: ['decide.txt'],
+          } as const),
       },
     });
     const stepNode = node({

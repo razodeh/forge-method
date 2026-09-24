@@ -412,6 +412,49 @@ describe('runMergeStep', () => {
     expect(ctx.laneRegistry.has('wf:produce')).toBe(true);
   });
 
+  it('PLAN-M14.md P35: the identical fixture succeeds when ExecuteStepContext.conflictResolver supplies a per-call resolver, even though the facade itself was built with none', async () => {
+    const projectRoot = await createTempRepo('merge-per-call-resolver');
+    let resolverCalled = false;
+    const ctx = createTestContext({
+      projectRoot,
+      runId: 'run-merge-per-call-resolver',
+      // No mergeQueue override here: createTestContext's own default facade is built with no
+      // constructor-bound resolver at all (the identical default the test above relies on).
+      conflictResolver: async (conflict) => {
+        resolverCalled = true;
+        await writeFile(path.join(conflict.worktreePath, 'out.txt'), 'resolved-version\n');
+        return 'resolved';
+      },
+    });
+    await executeStep(
+      node({
+        id: 'wf:produce',
+        kind: 'command',
+        run: 'echo lane-version > out.txt',
+        produces: ['out.txt'],
+      }),
+      ctx,
+    );
+    await writeFile(path.join(projectRoot, 'out.txt'), 'integration-version\n');
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '-m', 'integration change'], { cwd: projectRoot });
+
+    const mergeOutcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:produce'],
+        mergePolicy: { conflict: 'agent' },
+      }),
+      ctx,
+    );
+
+    expect(mergeOutcome.status).toBe('succeeded');
+    expect(resolverCalled).toBe(true);
+    await expect(readFileInRepo(projectRoot, 'out.txt')).resolves.toBe('resolved-version\n');
+    expect(ctx.laneRegistry.has('wf:produce')).toBe(false);
+  });
+
   it("a multi-lane merge step keeps every lane's own outcome in detail.merges, and reports the first real failure even when an earlier lane in the same call succeeded", async () => {
     const projectRoot = await createTempRepo('merge-multi-mixed');
     const ctx = createTestContext({ projectRoot, runId: 'run-merge-multi-mixed' });
@@ -516,6 +559,69 @@ describe('runMergeStep', () => {
     // init + produce-a + produce-b + merge-a + merge-b == 5, at minimum (a merge commit may add one
     // more depending on fast-forward-ability, so this asserts a floor, not an exact count).
     expect(commitCount).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('runMergeStep — replayFrom (PLAN-M14.md P35)', () => {
+  it("a lane stacked on a predecessor that lands with a RESOLVED conflict is itself landed with --onto: the landing resolver is called ZERO times for the stacked lane's own landing", async () => {
+    const projectRoot = await createTempRepo('merge-replay-from');
+    const resolverCalls: string[][] = [];
+    const conflictResolver = async (conflict: {
+      readonly conflictedFiles: readonly { readonly path: string }[];
+      readonly worktreePath: string;
+    }): Promise<'resolved'> => {
+      resolverCalls.push(conflict.conflictedFiles.map((file) => file.path));
+      await writeFile(path.join(conflict.worktreePath, 'shared.txt'), 'resolved-version\n');
+      return 'resolved';
+    };
+    const base = createTestContext({ projectRoot, runId: 'run-replay-from', conflictResolver });
+    const nodeA = node({
+      id: 'wf:a',
+      kind: 'command',
+      run: 'echo a-version > shared.txt',
+      produces: ['shared.txt'],
+    });
+    const nodeB = node({
+      id: 'wf:b',
+      kind: 'command',
+      run: 'echo b > b-out.txt',
+      dependsOn: ['wf:a'],
+      produces: ['b-out.txt'],
+    });
+    const nodeMerge = node({
+      id: 'wf:merge',
+      kind: 'merge',
+      dependsOn: ['wf:b'],
+      mergePolicy: { conflict: 'agent' },
+    });
+    const ctx = withStepGraph(base, [nodeA, nodeB, nodeMerge]);
+
+    expect((await executeStep(nodeA, ctx)).status).toBe('succeeded');
+    expect((await executeStep(nodeB, ctx)).status).toBe('succeeded');
+    // b's own lane stacks on a's ORIGINAL lane (a fast-forward join: nothing has landed yet at this
+    // point, so the tip b's lane is created from still contains a's own, still-unlanded commit).
+    expect(ctx.laneRegistry.get('wf:b')).toMatchObject({ stackedOn: 'wf:a' });
+
+    // A "concurrent" change lands directly on the integration branch between b's own lane creation and
+    // a's own landing -- what makes a's own rebase-at-landing-time genuinely conflict (the identical
+    // technique `vcs/test/merge-queue.test.ts`'s own conflict fixtures use, one layer down).
+    await writeFile(path.join(projectRoot, 'shared.txt'), 'concurrent-version\n');
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '-m', 'concurrent integration change'], { cwd: projectRoot });
+
+    const mergeOutcome = await executeStep(nodeMerge, ctx);
+
+    expect(mergeOutcome.status).toBe('succeeded');
+    // Exactly one resolution, for a's own conflict -- landing b calls the resolver zero times.
+    expect(resolverCalls).toEqual([['shared.txt']]);
+    await expect(readFileInRepo(projectRoot, 'shared.txt')).resolves.toBe('resolved-version\n');
+    await expect(readFileInRepo(projectRoot, 'b-out.txt')).resolves.toContain('b');
+    // Exactly two merge commits (a's, b's) -- never a third, stale copy of a's own pre-resolution diff.
+    const mergeCommits = await execa('git', ['log', '--merges', '--format=%H'], {
+      cwd: projectRoot,
+    });
+    expect(mergeCommits.stdout.split('\n').filter((line) => line !== '')).toHaveLength(2);
+    expect(ctx.laneRegistry.size).toBe(0);
   });
 });
 

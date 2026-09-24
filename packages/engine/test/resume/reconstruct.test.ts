@@ -313,6 +313,51 @@ describe('reconstructRunState', () => {
     expect(state.laneOrigins.get('lane-a')).toEqual({ stepId: 'wf:a', baseSha: 'deadbeef' });
   });
 
+  it('PLAN-M14.md P35: LaneCreated also records stackedOn/joinedFrom when the payload carries them, leniently (malformed entries dropped, never fabricated)', async () => {
+    const events = [
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:b',
+        laneId: 'lane-b',
+        payload: { baseSha: 'deadbeef', stackedOn: 'wf:a' },
+      }),
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:c',
+        laneId: 'lane-c',
+        payload: { baseSha: 'cafef00d', joinedFrom: ['wf:x', 'wf:y'] },
+      }),
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:d',
+        laneId: 'lane-d',
+        payload: { baseSha: 'f00dbabe' },
+      }),
+      // Malformed joinedFrom (not an array of non-empty strings) is simply dropped, not fabricated
+      // or partially trusted -- baseSha still records, since it is independently valid.
+      event({
+        type: 'LaneCreated',
+        stepId: 'wf:e',
+        laneId: 'lane-e',
+        payload: { baseSha: 'ba5eba11', joinedFrom: ['wf:x', 42, ''] },
+      }),
+    ];
+    const state = await reconstructRunState(asAsyncIterable(events));
+    expect(state.laneOrigins.get('lane-b')).toEqual({
+      stepId: 'wf:b',
+      baseSha: 'deadbeef',
+      stackedOn: 'wf:a',
+    });
+    expect(state.laneOrigins.get('lane-c')).toEqual({
+      stepId: 'wf:c',
+      baseSha: 'cafef00d',
+      joinedFrom: ['wf:x', 'wf:y'],
+    });
+    // No stackedOn/joinedFrom in the payload at all -- neither key present, never `undefined` values.
+    expect(state.laneOrigins.get('lane-d')).toEqual({ stepId: 'wf:d', baseSha: 'f00dbabe' });
+    expect(state.laneOrigins.get('lane-e')).toEqual({ stepId: 'wf:e', baseSha: 'ba5eba11' });
+  });
+
   it('LaneCreated with no stepId or a malformed/missing baseSha leaves laneOrigins untouched for that lane, without throwing', async () => {
     const events = [
       event({ type: 'LaneCreated', laneId: 'lane-a', payload: { baseSha: 'deadbeef' } }),

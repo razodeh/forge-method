@@ -172,6 +172,13 @@ export function createTestContext(
     // `ExecuteStepContext` field above -- `loadSteelManTechnique`'s own default (`.forge/techniques`)
     // then applies, identical to a real context built without `buildRunEngineContext`.
     ...(overrides.techniquesRoot === undefined ? {} : { techniquesRoot: overrides.techniquesRoot }),
+    // `PLAN-M14.md` P35: absent unless a test overrides it -- `landLane`'s own `ctx.conflictPolicy`/
+    // `ctx.conflictResolver` reads then simply see nothing, the identical "opt-in only" shape every other
+    // optional field above already has.
+    ...(overrides.conflictPolicy === undefined ? {} : { conflictPolicy: overrides.conflictPolicy }),
+    ...(overrides.conflictResolver === undefined
+      ? {}
+      : { conflictResolver: overrides.conflictResolver }),
   };
 }
 
