@@ -100,6 +100,19 @@ export interface RcaRefusedCommand {
   readonly detail: string;
 }
 
+/** One of the project's own configured test commands FORGE will run exactly as written for a proposed
+ * reproduction, plus which filter flag (if any) the `<command> <path> [-t/-g/-k <token>]` extension
+ * (`dispatch/test-path.ts`'s `expandTrustedInvocation`, `PLAN-M14.md` P5) recognises for it — `undefined`
+ * for a wrapper such as `pnpm test`, which the extension only ever offers the bare `<command> <path>` form
+ * for. The real caller (`forge debug`) computes `filterFlag` once, from the identical table the vet itself
+ * consults (`trustedCommandFilterFlag`), so `runnableCommandsNote` (below) can never advertise a filter flag
+ * the vet would not actually accept; a test injects the flag directly, without needing a real runner
+ * installed. */
+export interface RunnableCommand {
+  readonly command: string;
+  readonly filterFlag?: '-t' | '-g' | '-k';
+}
+
 /** `runRcaLoop`'s own real dependencies — every one injected so the loop stays unit-testable against
  * a fake, per `PLAN-M8.md` P8's own Surface text. `cwd` is the real project root every `runShell`
  * call runs against (never a lane path of its own — `runParticipantSession`'s own doc comment
@@ -116,10 +129,11 @@ export interface RcaLoopDeps {
   readonly now: () => number;
   readonly cwd: string;
   /** The project's own test commands FORGE will run exactly as written for a proposed reproduction (`execution.testCommands`,
-   * derived into the shell's grant, `PLAN-M13.md` P23). REPRODUCE's instructions name them, because the phase's session is
+   * derived into the shell's grant, `PLAN-M13.md` P23), each with its own filter-flag info for the `<command> <path>
+   * [-t/-g/-k <token>]` extension (`PLAN-M14.md` P24/P5). REPRODUCE's instructions name them, because the phase's session is
    * read-only and cannot look them up: "an existing failing test" (`13` §13.2 step 2's first preference) is only proposable
    * if the model knows the command that runs it. Absent or empty: the instructions say nothing about any. */
-  readonly runnableCommands?: readonly string[] | undefined;
+  readonly runnableCommands?: readonly RunnableCommand[] | undefined;
 }
 
 /** One hypothesis, settled one way or the other — `rcaSchema`'s own `hypotheses[]` shape, verbatim

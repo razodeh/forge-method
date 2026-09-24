@@ -7,7 +7,7 @@
  * scripted model. The grant is built by the derivation (`deriveTestExec`/`grantWithTestExec`) from a diagnostician that
  * declares no test runner, so the command runs only because the project configured it.
  */
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -47,12 +47,15 @@ const DIAGNOSTICIAN: ToolGrant = {
 async function lane(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-p23-rca-'));
   dirs.push(dir);
-  // The fake test command: counts its runs, fails until the fix (a marker file) exists.
+  // The fake test command: counts its runs, records its own argv (one JSON line per run — the
+  // `<command> <path>` extension's own real argv reaching the runner, `PLAN-M14.md` P24), fails until the
+  // fix (a marker file) exists.
   await writeFile(
     path.join(dir, 'test-unit.mjs'),
     [
       "import { appendFileSync, existsSync } from 'node:fs';",
       "appendFileSync('runs.log', 'run\\n');",
+      "appendFileSync('argv.log', JSON.stringify(process.argv.slice(2)) + '\\n');",
       "process.exit(existsSync('fixed.marker') ? 0 : 1);",
       '',
     ].join('\n'),
@@ -90,13 +93,17 @@ function deps(
   root: string,
   testCommands: Record<string, string>,
   proposals: readonly string[],
-  extras: Partial<RcaLoopDeps> = {},
+  extras: Partial<RcaLoopDeps> & { readonly testRoots?: readonly string[] } = {},
 ): { readonly deps: RcaLoopDeps; readonly requests: RcaSessionRequest[] } {
+  // `testRoots` is a `createRcaShell`-level option (`RcaShellOptions`, `PLAN-M14.md` P24), not part of
+  // `RcaLoopDeps` itself — pulled out of `extras` before the rest is spread onto the loop deps below.
+  const { testRoots, ...loopExtras } = extras;
   const derived = deriveTestExec(testCommands, testLayersForBrief('debug-isolate'));
   const shell = createRcaShell({
     grant: grantWithTestExec(DIAGNOSTICIAN, derived),
     trustedCommands: derived.patterns,
     root,
+    testRoots,
     parentEnv: process.env,
   });
   const requests: RcaSessionRequest[] = [];
@@ -133,7 +140,7 @@ function deps(
       clock: CLOCK,
       now: () => 0,
       cwd: root,
-      ...extras,
+      ...loopExtras,
     },
   };
 }
@@ -143,6 +150,20 @@ async function runs(root: string): Promise<number> {
     return (await readFile(path.join(root, 'runs.log'), 'utf8')).split('\n').filter(Boolean).length;
   } catch {
     return 0;
+  }
+}
+
+/** Every real argv (beyond the script's own path) the fake test command was actually invoked with, one entry
+ * per real run, in order — the ground truth for whether REPRODUCE and PROVE ran the identical string. */
+async function argvCalls(root: string): Promise<readonly (readonly string[])[]> {
+  try {
+    const text = await readFile(path.join(root, 'argv.log'), 'utf8');
+    return text
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as readonly string[]);
+  } catch {
+    return [];
   }
 }
 
@@ -164,7 +185,7 @@ describe('REPRODUCE and PROVE run the configured test command', () => {
   it('REPRODUCE’s instructions name the project’s test commands, so the model can propose one it could not look up (its session is read-only)', async () => {
     const root = await lane();
     const { deps: loopDeps, requests } = deps(root, { unit: TEST_COMMAND }, [TEST_COMMAND], {
-      runnableCommands: [TEST_COMMAND],
+      runnableCommands: [{ command: TEST_COMMAND }],
     });
     await runRcaLoop(defect(), loopDeps);
     const reproduce = requests.find((request) => request.prompt.startsWith('REPRODUCE attempt 1'));
@@ -178,6 +199,86 @@ describe('REPRODUCE and PROVE run the configured test command', () => {
     await runRcaLoop(defect(), loopDeps);
     const reproduce = requests.find((request) => request.prompt.startsWith('REPRODUCE attempt 1'));
     expect(reproduce?.prompt).not.toContain('test commands run exactly');
+  });
+});
+
+describe('REPRODUCE/PROVE run <command> <path> (PLAN-M14.md P5/P24, the whole-layer reproduction gap)', () => {
+  it('REPRODUCE proposes <command> <path>: it runs once with that path as its own argv, the fix makes it pass, PROVE re-runs the IDENTICAL string (never the bare layer alone), and the RCA record holds it', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    const proposal = `${TEST_COMMAND} tests/x.test.ts`;
+    const { deps: loopDeps } = deps(root, { unit: TEST_COMMAND }, [proposal]);
+
+    const outcome = await runRcaLoop(defect(), loopDeps);
+
+    expect(outcome.outcome).toBe('recorded');
+    if (outcome.outcome !== 'recorded') throw new Error('unreachable');
+    expect(outcome.record.reproduction).toBe(proposal);
+    expect(outcome.refusedCommands).toBeUndefined();
+    // Two real runs (REPRODUCE, then PROVE), both with the identical argv — the path, never the bare layer.
+    expect(await argvCalls(root)).toEqual([['tests/x.test.ts'], ['tests/x.test.ts']]);
+  });
+
+  it('a proposed path that fails validation (an escape) is refused as test-path — never silently treated as not-in-grant — recorded in refusedCommands, and named in the next REPRODUCE attempt’s prompt', async () => {
+    const root = await lane();
+    const bad = `${TEST_COMMAND} ../escape.test.ts`;
+    const { deps: loopDeps, requests } = deps(root, { unit: TEST_COMMAND }, [bad, TEST_COMMAND]);
+
+    const outcome = await runRcaLoop(defect(), loopDeps);
+
+    expect(outcome.outcome).toBe('recorded');
+    if (outcome.outcome !== 'recorded') throw new Error('unreachable');
+    expect(outcome.refusedCommands).toEqual([
+      expect.objectContaining({
+        phase: 'reproduce',
+        command: bad,
+        code: 'RUN-095',
+        reason: 'test-path',
+      }),
+    ]);
+    // The refused attempt never ran the script at all; the bare fallback then reproduces and proves normally.
+    expect(await argvCalls(root)).toEqual([[], []]);
+    const secondAttempt = requests.find((request) =>
+      request.prompt.startsWith('REPRODUCE attempt 2'),
+    );
+    const priorAttempts = secondAttempt?.untrusted?.find(
+      (block) => block.label === 'prior-attempts',
+    );
+    expect(priorAttempts?.text).toContain(`${bad} [refused (test-path)]`);
+  });
+
+  it('testRoots narrows the extension: a path outside the configured root is refused as test-path even though it matches the built-in isTestPath fallback by name', async () => {
+    const root = await lane();
+    await writeFile(path.join(root, 'outside.test.ts'), '');
+    const proposal = `${TEST_COMMAND} outside.test.ts`;
+    const { deps: loopDeps } = deps(root, { unit: TEST_COMMAND }, [proposal, TEST_COMMAND], {
+      testRoots: ['tests'],
+    });
+
+    const outcome = await runRcaLoop(defect(), loopDeps);
+
+    expect(outcome.outcome).toBe('recorded');
+    if (outcome.outcome !== 'recorded') throw new Error('unreachable');
+    expect(outcome.refusedCommands).toEqual([
+      expect.objectContaining({ command: proposal, reason: 'test-path' }),
+    ]);
+  });
+});
+
+describe('the REPRODUCE note distinguishes a known table runner from a plain wrapper (PLAN-M14.md P24)', () => {
+  it('a runnableCommand flagged as a known runner shows its own filter flag; one without shows none', async () => {
+    const root = await lane();
+    const { deps: loopDeps, requests } = deps(root, { unit: TEST_COMMAND }, [TEST_COMMAND], {
+      runnableCommands: [{ command: 'vitest', filterFlag: '-t' }, { command: TEST_COMMAND }],
+    });
+    await runRcaLoop(defect(), loopDeps);
+    const reproduce = requests.find((request) => request.prompt.startsWith('REPRODUCE attempt 1'));
+    expect(reproduce?.prompt).toContain(
+      '`vitest` (add `-t <name>` after the path to filter by test name)',
+    );
+    expect(reproduce?.prompt).toContain(`; \`${TEST_COMMAND}\`.`);
+    expect(reproduce?.prompt).not.toContain(`\`${TEST_COMMAND}\` (add`);
   });
 });
 
@@ -220,7 +321,7 @@ describe('the note shows a command exactly as it is granted', () => {
     async (command) => {
       const root = await lane();
       const { deps: loopDeps, requests } = deps(root, { unit: command }, [command], {
-        runnableCommands: [command],
+        runnableCommands: [{ command }],
       });
       await runRcaLoop(defect(), loopDeps);
       const reproduce = requests.find((request) =>

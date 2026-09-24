@@ -32,6 +32,7 @@ import type {
   RcaRecordDraft,
   RcaRefusedCommand,
   RcaShellResult,
+  RunnableCommand,
   RunRcaSession,
 } from './types.ts';
 
@@ -220,11 +221,26 @@ function revertCheckScript(reproductionCommand: string): string {
 /** REPRODUCE's note of the project's own test commands (`RcaLoopDeps.runnableCommands`): each is run as written, so each is
  * offered verbatim in a code span, the way block [6] shows it (a JSON-escaped string would put a `\"` where the command has a
  * `"`, and a model copying it would propose a string that is not the granted one). A configured command holds no backtick
- * (`checkTestCommand`), so a span cannot be closed early. Empty when there are none. */
-function runnableCommandsNote(commands: readonly string[] | undefined): string {
+ * (`checkTestCommand`), so a span cannot be closed early. Empty when there are none.
+ *
+ * Beyond the bare, whole-layer command, the note also states the `<command> <path>` extension
+ * (`dispatch/test-path.ts`'s `expandTrustedInvocation`, `PLAN-M14.md` P5/P24, wired live for `forge debug` by
+ * `rca/shell.ts`'s `createRcaShell`): one existing test file's own project-relative path, appended to a
+ * command, runs just that file instead of the whole layer — the "whole-layer reproduction" gap
+ * `SPEC-QUESTIONS.md` Q230 names. A command's own `filterFlag` is stated ONLY for a command
+ * `RunnableCommand.filterFlag` actually marks as a recognised runner (vitest/jest `-t`, mocha `-g`, pytest
+ * `-k`) — never claimed for every command, which would tell the model a filter the vet does not in fact
+ * accept for a plain wrapper such as `pnpm test`. */
+function runnableCommandsNote(commands: readonly RunnableCommand[] | undefined): string {
   if (commands === undefined || commands.length === 0) return '';
-  const listed = commands.map((command) => `\`${command}\``).join('; ');
-  return ` This project's own test commands run exactly as written (nothing may be added to one; each is a whole test layer, so any failing test in it fails it): ${listed}. Propose one of them verbatim when an existing failing test shows the defect.`;
+  const listed = commands
+    .map(({ command, filterFlag }) =>
+      filterFlag === undefined
+        ? `\`${command}\``
+        : `\`${command}\` (add \`${filterFlag} <name>\` after the path to filter by test name)`,
+    )
+    .join('; ');
+  return ` This project's own test commands run exactly as written, as a whole test layer (nothing may be added to one beyond what this note itself allows: any of these commands, followed by one existing test file's project-relative path, runs just that file — \`<command> <path>\` — so any failing test in the WHOLE layer only fails a bare, path-less proposal): ${listed}. Propose the narrowest form that still shows the defect: one file (filtered by test name too, where offered) when that alone reproduces it, the bare whole-layer command only when no single file does.`;
 }
 
 /** `runRcaLoop`'s own real dependencies + input — see `types.ts`. `costBudgetUsd`, when given, is

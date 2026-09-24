@@ -1,21 +1,19 @@
 /**
- * `createRcaShell` — `forge debug`'s real, unmodified `runShell` (`packages/cli/src/commands/loop/debug.ts`,
- * `runnable = fixGrant.exec === false ? [] : reproduceExec.patterns` passed as `trustedCommands`, since P23) —
- * is unaffected by `PLAN-M14.md` P5's `<trusted> <path> [-t <token>]` extension (`test-path.ts`,
- * `confined-command.ts`'s `vetProposedCommand`).
- *
- * `debug.ts` calls `createRcaShell({ grant, trustedCommands, root, parentEnv, onRefused })` — it never passes
- * `allowTrustedPathExtension` (`confined-command.ts`'s new `VetOptions` field, unset by every existing caller),
- * and `createRcaShell` itself forwards nothing beyond `trustedCommands` into `vetProposedCommand`'s options
- * (read directly from `rca/shell.ts`'s source, not assumed). So a REPRODUCE/PROVE proposal that adds a file
- * argument to one of the project's own configured test commands — exactly the shape this piece's validator
- * exists to accept once a caller opts in — must still be refused through the real, unmodified `createRcaShell`,
- * the same way it always was before `test-path.ts` existed. This file exercises that through the real function,
- * not a stub, so this piece's own claim ("the validator only, nothing consumes it yet") is a tested fact about
- * the real RCA-loop entry point, not just an assertion in a doc comment.
+ * `createRcaShell` — `forge debug`'s real `runShell` (`packages/cli/src/commands/loop/debug.ts`) — is the ONE
+ * caller `PLAN-M14.md` P24 deliberately turns `VetOptions.allowTrustedPathExtension` on for
+ * (`confined-command.ts`, `test-path.ts`'s `<trusted> <path> [-t/-g/-k <token>]` extension, built gated-off by
+ * P5). Before P24, this file pinned the OPPOSITE fact (`createRcaShell` forwarded nothing beyond
+ * `trustedCommands`, so the shape was refused exactly as before `test-path.ts` existed) — that gate is now
+ * deliberately open, read directly from `rca/shell.ts`'s own current source, not assumed: `createRcaShell`
+ * itself sets `allowTrustedPathExtension: true` and forwards `options.testRoots` on every proposed-command vet.
+ * This file now pins the opened gate is exactly as narrow as `PLAN-M14.md` P24's own mandate: a proposal only
+ * runs when it is one of `trustedCommands`, verbatim, plus one real, validated test path (or the extra word is
+ * refused as `test-path`, never silently treated as `not-in-grant` the way an unrelated extra word still is) —
+ * never a wider grant for anything else.
  *
  * @see SPEC-QUESTIONS.md Q230
  * @see PLAN-M14.md P5
+ * @see PLAN-M14.md P24
  */
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -36,22 +34,70 @@ async function lane(): Promise<string> {
   return dir;
 }
 
-describe('createRcaShell: the debug.ts call shape (trustedCommands, no new opt-in) never accepts the <path> extension', () => {
-  it('a real, existing test file appended to a configured trusted command is still not-in-grant, exactly as before this piece', async () => {
+describe('createRcaShell: PLAN-M14.md P24 deliberately opens the <trusted> <path> extension, narrowly', () => {
+  it('a real, existing test file appended to a configured trusted command now runs — the extension P5 gated off is live for the RCA loop specifically', async () => {
     const root = await lane();
     await mkdir(path.join(root, 'tests'));
     await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
     // The identical shape debug.ts builds: an agent grant with no exec pattern of its own that covers the
-    // configured command, plus trustedCommands from execution.testCommands — no allowTrustedPathExtension,
-    // because debug.ts (unmodified by this piece) does not know that option exists.
+    // configured command, plus trustedCommands from execution.testCommands — no `not-in-grant` refusal is
+    // possible for this proposal through the ordinary grant check alone.
     const runShell = createRcaShell({
       grant: { exec: [], network: 'none' },
-      trustedCommands: ['pnpm vitest run'],
+      trustedCommands: ['true'],
       root,
       parentEnv: process.env,
     });
-    const result = await runShell('pnpm vitest run tests/x.test.ts', root, 'proposed');
+    const result = await runShell('true tests/x.test.ts', root, 'proposed');
+    expect(result.refusal).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('a path outside the configured execution.testRoots is refused as test-path, not silently accepted — testRoots really reaches the vet', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'));
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    // Matches the built-in isTestPath fallback by name, but sits OUTSIDE the one configured root: only
+    // narrowing by testRoots (not the unconfigured fallback) can refuse this.
+    await writeFile(path.join(root, 'outside.test.ts'), '');
+    const runShell = createRcaShell({
+      grant: { exec: [], network: 'none' },
+      trustedCommands: ['true'],
+      root,
+      testRoots: ['tests'],
+      parentEnv: process.env,
+    });
+    const inside = await runShell('true tests/x.test.ts', root, 'proposed');
+    expect(inside.refusal).toBeUndefined();
+    expect(inside.exitCode).toBe(0);
+
+    const outside = await runShell('true outside.test.ts', root, 'proposed');
+    expect(outside.refusal).toMatchObject({ code: 'RUN-095', reason: 'test-path' });
+    expect(outside.exitCode).toBe(126);
+  });
+
+  it('an extra word that is not a real, validated test path is refused as test-path (never silently widened to any file argument)', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: { exec: [], network: 'none' },
+      trustedCommands: ['true'],
+      root,
+      parentEnv: process.env,
+    });
+    const result = await runShell('true ../escape.test.ts', root, 'proposed');
+    expect(result.refusal).toMatchObject({ code: 'RUN-095', reason: 'test-path' });
     expect(result.exitCode).toBe(126);
+  });
+
+  it('a proposal that is not one of trustedCommands at all still gets the ordinary not-in-grant refusal, unaffected by the extension being open', async () => {
+    const root = await lane();
+    const runShell = createRcaShell({
+      grant: { exec: [], network: 'none' },
+      trustedCommands: ['true'],
+      root,
+      parentEnv: process.env,
+    });
+    const result = await runShell('false', root, 'proposed');
     expect(result.refusal).toMatchObject({ code: 'RUN-095', reason: 'not-in-grant' });
   });
 

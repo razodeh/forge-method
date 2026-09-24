@@ -114,6 +114,7 @@ export {
 export {
   expandTrustedInvocation,
   isTestPath,
+  trustedCommandFilterFlag,
   validateTestPath,
   type TestPathCheck,
   type TestPathProblem,

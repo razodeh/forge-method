@@ -57,6 +57,7 @@ import {
   promptRecordDirName,
   readProjectAgent,
   testLayersForBrief,
+  trustedCommandFilterFlag,
   type AssembledSession,
   type DocRoots,
 } from '@forge/engine/dispatch';
@@ -915,6 +916,10 @@ async function runDebugLoop(
       grant: fixGrant,
       trustedCommands: runnable,
       root: lane.path,
+      // `execution.testRoots`: narrows the `<trusted> <path>` extension's own matching rule to the
+      // project's own configured test directories (`PLAN-M14.md` P5/P24); `undefined` when the project
+      // has not configured the key, which falls back to `validateTestPath`'s own built-in `isTestPath` rule.
+      testRoots: deps.config.execution.testRoots,
       parentEnv: deps.env,
       onRefused: async (refusal) => {
         await runCtx.telemetry.emit({
@@ -936,7 +941,14 @@ async function runDebugLoop(
     // (`QUALITY-BAR.md` R10: no direct `Date.now()`/`crypto.randomUUID()` in production code).
     now: runCtx.now,
     cwd: lane.path,
-    runnableCommands: runnable,
+    // Each command's own filter flag (`-t`/`-g`/`-k`, or none) comes from the identical table
+    // `vetProposedCommand` itself consults (`trustedCommandFilterFlag`, `PLAN-M14.md` P24), so REPRODUCE's
+    // note (`runnableCommandsNote`) never advertises a flag the vet would not actually accept for that
+    // specific command.
+    runnableCommands: runnable.map((command) => {
+      const filterFlag = trustedCommandFilterFlag(command);
+      return filterFlag === undefined ? { command } : { command, filterFlag };
+    }),
   };
 
   let recorded = false;

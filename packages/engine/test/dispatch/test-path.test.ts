@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   expandTrustedInvocation,
   isTestPath,
+  trustedCommandFilterFlag,
   validateTestPath,
   type TestPathProblem,
 } from '../../src/dispatch/test-path.ts';
@@ -353,5 +354,46 @@ describe('expandTrustedInvocation: shape matching', () => {
     );
     expect(result.matched).toBe(true);
     expect(result.matched && !result.ok && result.problem).toBe('malformed');
+  });
+});
+
+describe('trustedCommandFilterFlag: the identical table expandTrustedInvocation itself vets against, exposed so a caller can say what a command supports before any command is proposed (PLAN-M14.md P24)', () => {
+  it.each([
+    ['vitest', '-t'],
+    ['pnpm vitest run', '-t'],
+    ['jest', '-t'],
+    ['npx jest', '-t'],
+    ['mocha', '-g'],
+    ['pytest', '-k'],
+    ['python -m pytest', '-k'],
+  ] as const)('%s -> %s', (trusted, flag) => {
+    expect(trustedCommandFilterFlag(trusted)).toBe(flag);
+  });
+
+  it.each(['pnpm test', 'npm run test:unit', 'go test ./...', 'true'])(
+    '%s -> undefined (a wrapper or a program RUNNER_FILTER_FLAGS does not know)',
+    (trusted) => {
+      expect(trustedCommandFilterFlag(trusted)).toBeUndefined();
+    },
+  );
+
+  it('agrees with expandTrustedInvocation itself: whenever the flag is defined, a proposal using it (with a real path) actually matches, and the wrong flag does not', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'), { recursive: true });
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    const flag = trustedCommandFilterFlag('vitest');
+    expect(flag).toBe('-t');
+    const right = await expandTrustedInvocation(
+      ['vitest', 'tests/x.test.ts', flag as string, 'name'],
+      ['vitest'],
+      { root },
+    );
+    expect(right).toEqual({ matched: true, ok: true, path: 'tests/x.test.ts', token: 'name' });
+    const wrong = await expandTrustedInvocation(
+      ['vitest', 'tests/x.test.ts', '-k', 'name'],
+      ['vitest'],
+      { root },
+    );
+    expect(wrong).toEqual({ matched: false });
   });
 });

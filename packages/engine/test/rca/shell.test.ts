@@ -3,7 +3,7 @@
  * a proposed command is vetted against the agent's grant and run confined; an engine command is run confined without
  * the vet; a refusal is a typed result (`RUN-095`), not an exception and not an execution.
  */
-import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -138,6 +138,40 @@ describe('createRcaShell', () => {
     const result = await runShell('yes', root, 'proposed');
     expect(result.outputLimitExceeded).toBe(true);
     expect(result.stdout.length).toBeLessThanOrEqual(500);
+  });
+
+  it('a proposal accepted via the <trusted> <path> extension (PLAN-M14.md P5/P24) gets the engine’s own limits, not the tighter proposed-command budget', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'), { recursive: true });
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    await writeFile(path.join(root, 'sleep.mjs'), 'setTimeout(() => process.exit(0), 1000);\n');
+    const runShell = createRcaShell({
+      grant: { exec: [], network: 'none' },
+      trustedCommands: ['node sleep.mjs'],
+      root,
+      parentEnv: process.env,
+      // A model’s own ad-hoc reproduction would be killed by this before the script’s 1s delay elapses; the
+      // engine’s own limits below are generous enough that it is not.
+      proposedLimits: { timeoutMs: 200, maxOutputBytes: 10_000 },
+      engineLimits: { timeoutMs: 5_000, maxOutputBytes: 10_000 },
+    });
+    const result = await runShell('node sleep.mjs tests/x.test.ts', root, 'proposed');
+    expect(result.timedOut).not.toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.refusal).toBeUndefined();
+  });
+
+  it('the same accepted <trusted> <path> proposal is refused for a project that configures no execution.testCommands (trustedCommands empty): the extension never widens an untrusted grant', async () => {
+    const root = await lane();
+    await mkdir(path.join(root, 'tests'), { recursive: true });
+    await writeFile(path.join(root, 'tests', 'x.test.ts'), '');
+    const runShell = createRcaShell({
+      grant: { exec: [], network: 'none' },
+      root,
+      parentEnv: process.env,
+    });
+    const result = await runShell('true tests/x.test.ts', root, 'proposed');
+    expect(result.refusal).toMatchObject({ code: 'RUN-095', reason: 'not-in-grant' });
   });
 
   it('the default limits are finite (a proposed command can never run unbounded)', async () => {

@@ -216,6 +216,17 @@ function splitTrustedCommand(trusted: string): readonly string[] {
   return trusted.trim().split(/ +/).filter(Boolean);
 }
 
+/** The filter flag `expandTrustedInvocation` would recognise for `trusted`'s own words — `undefined` for a
+ * program `RUNNER_FILTER_FLAGS` does not know (a wrapper such as `pnpm test`, which gets the bare
+ * `<trusted> <path>` form only). Exported so a caller can say, BEFORE any command is proposed, which of the
+ * project's own configured commands this module's `<trusted> <path> [-t/-g/-k <token>]` shape actually
+ * extends with a filter token — from the identical table `expandTrustedInvocation` itself vets a proposal
+ * against, never a second, hand-copied list that could silently drift from it and overclaim (or underclaim)
+ * what a proposal will really be accepted for (`rca/loop.ts`'s own REPRODUCE note, `PLAN-M14.md` P24). */
+export function trustedCommandFilterFlag(trusted: string): '-t' | '-g' | '-k' | undefined {
+  return runnerFlagFor(splitTrustedCommand(trusted));
+}
+
 export type TrustedInvocationMatch =
   | { readonly matched: false }
   | { readonly matched: true; readonly ok: true; readonly path: string; readonly token?: string }
