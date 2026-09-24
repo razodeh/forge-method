@@ -9,7 +9,7 @@
  * @see specs/13 §13.3
  * @see PLAN-M13.md P17
  */
-import { mkdir, mkdtemp, readdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -1582,15 +1582,19 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     ).toBe('');
   });
 
-  it('a perspective that changes the lane under review fails the step: nothing is recorded, no review lane exists, and the message names the lane', async () => {
+  it('a perspective that changes the lane under review fails the step with RUN-083, restores the lane, and the same step re-run on the now-clean lane succeeds (PLAN-M14.md P36)', async () => {
     const projectRoot = await createTempRepo('stacked-mutates');
     const fake = new FakePlatformAdapter();
     // A misbehaving adapter (the fake enforces the read-only grant, so it is the adapter that writes): the security
-    // perspective's session leaves a file in the directory it was given.
+    // perspective's session leaves a file in the directory it was given, but only on its first run -- the second,
+    // retried run below must actually observe a clean lane, not merely a stray file the earlier run happens not
+    // to recreate.
     const adapter = fake;
+    let planted = false;
     const original = fake.startSession.bind(fake);
     fake.startSession = async (request) => {
-      if (request.stepId === `${REVIEW}:review:security`) {
+      if (request.stepId === `${REVIEW}:review:security` && !planted) {
+        planted = true;
         await mkdir(path.join(request.cwd, 'src'), { recursive: true });
         await writeFile(path.join(request.cwd, 'src', 'planted.txt'), 'backdoor\n');
       }
@@ -1607,15 +1611,166 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     const ctx = { ...base, stepGraph };
     expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
     const implementLane = ctx.laneRegistry.get(IMPL);
+    if (implementLane === undefined) throw new Error('the implement step left no lane');
+    const implementHead = (
+      await execa('git', ['rev-parse', implementLane.branch], { cwd: projectRoot })
+    ).stdout;
 
     const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
 
     const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-083');
     expect(failure.message).toContain('changed the lane under review');
-    expect(failure.message).toContain(implementLane?.path ?? 'missing');
+    expect(failure.message).toContain(implementLane.path);
+    expect(failure.message).toContain('planted.txt');
+    expect(failure.message.toLowerCase()).toContain('restored');
     expect(ctx.laneRegistry.has(REVIEW)).toBe(false);
     const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
     expect(types).not.toContain('ArtifactCreated');
+    // The lane was actually put back, not merely reported dirty: clean working tree, HEAD unmoved.
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: implementLane.path })).stdout,
+    ).toBe('');
+    expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: implementLane.path })).stdout).toBe(
+      implementHead,
+    );
+
+    // The identical step, re-run on the now-clean lane, succeeds -- a retry no longer fails the same way
+    // forever against a lane the first attempt left dirty.
+    const retry = await executeStep(stepGraph.get(REVIEW)!, ctx);
+    expect(retry.status).toBe('succeeded');
+    const reviewLane = ctx.laneRegistry.get(REVIEW);
+    expect(await filesOnBranch(projectRoot, reviewLane?.branch ?? '')).toContain(
+      `${REVIEWS_DIR}/REVIEW-001.md`,
+    );
+  });
+
+  it('a perspective that writes a stray file and then throws restores the lane before the adapter failure is reported, naming what was restored (PLAN-M14.md P36)', async () => {
+    const projectRoot = await createTempRepo('stacked-throws');
+    const fake = new FakePlatformAdapter();
+    const original = fake.startSession.bind(fake);
+    fake.startSession = async (request) => {
+      if (request.stepId === `${REVIEW}:review:security`) {
+        await mkdir(path.join(request.cwd, 'src'), { recursive: true });
+        await writeFile(path.join(request.cwd, 'src', 'stray.txt'), 'backdoor\n');
+        throw new Error('simulated adapter crash');
+      }
+      return original(request);
+    };
+    scriptPerspectives(fake, REVIEW, cleanPerspectives());
+    const stepGraph = graphOf();
+    const base = createTestContext({
+      projectRoot,
+      adapter: fake,
+      assembly: reviewerAssembly(projectRoot),
+      integrationBase: 'main',
+    });
+    const ctx = { ...base, stepGraph };
+    expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
+    const implementLane = ctx.laneRegistry.get(IMPL);
+    if (implementLane === undefined) throw new Error('the implement step left no lane');
+    const implementHead = (
+      await execa('git', ['rev-parse', implementLane.branch], { cwd: projectRoot })
+    ).stdout;
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.source).toBe('adapter');
+    expect(failure.message).toContain('simulated adapter crash');
+    expect(failure.message).toContain('stray.txt');
+    expect(failure.message.toLowerCase()).toContain('restored');
+    expect(ctx.laneRegistry.has(REVIEW)).toBe(false);
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).not.toContain('ArtifactCreated');
+
+    // The lane is clean at exactly the revision the review started reading (`base.value.sha`).
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: implementLane.path })).stdout,
+    ).toBe('');
+    expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: implementLane.path })).stdout).toBe(
+      implementHead,
+    );
+  });
+
+  it('a perspective that modifies a tracked file (not just adds one) has it restored too', async () => {
+    const projectRoot = await createTempRepo('stacked-modifies-tracked');
+    const fake = new FakePlatformAdapter();
+    const original = fake.startSession.bind(fake);
+    fake.startSession = async (request) => {
+      if (request.stepId === `${REVIEW}:review:security`) {
+        await writeFile(path.join(request.cwd, 'src', 'a.txt'), 'tampered\n');
+      }
+      return original(request);
+    };
+    scriptPerspectives(fake, REVIEW, cleanPerspectives());
+    const stepGraph = graphOf();
+    const base = createTestContext({
+      projectRoot,
+      adapter: fake,
+      assembly: reviewerAssembly(projectRoot),
+      integrationBase: 'main',
+    });
+    const ctx = { ...base, stepGraph };
+    expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
+    const implementLane = ctx.laneRegistry.get(IMPL);
+    if (implementLane === undefined) throw new Error('the implement step left no lane');
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-083');
+    expect(failure.message).toContain('a.txt');
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: implementLane.path })).stdout,
+    ).toBe('');
+    const content = await readFile(path.join(implementLane.path, 'src', 'a.txt'), 'utf8');
+    expect(content).toBe('green\n');
+  });
+
+  it('an ignored file a perspective writes survives the restore ("git clean -fd", never "-fdx")', async () => {
+    const projectRoot = await createTempRepo('stacked-ignored');
+    await writeFile(path.join(projectRoot, '.gitignore'), '*.log\n');
+    await execa('git', ['add', '.gitignore'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'ignore logs'], { cwd: projectRoot });
+    const fake = new FakePlatformAdapter();
+    const original = fake.startSession.bind(fake);
+    fake.startSession = async (request) => {
+      if (request.stepId === `${REVIEW}:review:security`) {
+        await writeFile(path.join(request.cwd, 'debug.log'), 'noise\n');
+        await mkdir(path.join(request.cwd, 'src'), { recursive: true });
+        await writeFile(path.join(request.cwd, 'src', 'stray.txt'), 'backdoor\n');
+      }
+      return original(request);
+    };
+    scriptPerspectives(fake, REVIEW, cleanPerspectives());
+    const stepGraph = graphOf();
+    const base = createTestContext({
+      projectRoot,
+      adapter: fake,
+      assembly: reviewerAssembly(projectRoot),
+      integrationBase: 'main',
+    });
+    const ctx = { ...base, stepGraph };
+    expect((await executeStep(implementNode(), ctx)).status).toBe('succeeded');
+    const implementLane = ctx.laneRegistry.get(IMPL);
+    if (implementLane === undefined) throw new Error('the implement step left no lane');
+
+    const outcome = await executeStep(stepGraph.get(REVIEW)!, ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.message).toContain('stray.txt');
+    expect(failure.message).not.toContain('debug.log');
+    // `git status --porcelain` never lists an ignored file, so this alone confirms the tracked/untracked
+    // side of the restore; the ignored file's survival is checked directly below.
+    expect(
+      (await execa('git', ['status', '--porcelain'], { cwd: implementLane.path })).stdout,
+    ).toBe('');
+    await expect(
+      readFile(path.join(implementLane.path, 'src', 'stray.txt'), 'utf8'),
+    ).rejects.toThrow();
+    const ignored = await readFile(path.join(implementLane.path, 'debug.log'), 'utf8');
+    expect(ignored).toBe('noise\n');
   });
 
   it('a review with no unmerged predecessor keeps reading the project checkout, as before', async () => {

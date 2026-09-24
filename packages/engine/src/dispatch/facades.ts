@@ -22,6 +22,7 @@ import {
   mergeIntoLane,
   processMergeCandidate,
   removeLaneWorktree,
+  resetLaneWorktree,
   resolveRevision,
   VcsError,
   wrapGitFailure,
@@ -150,6 +151,9 @@ export function createVcsFacade(
     async hasChanges(handle, baseSha) {
       const changed = await diffLaneChanges(asVcsLaneHandle(handle), baseSha);
       return changed.length > 0;
+    },
+    async resetLane(handle, targetRevision) {
+      await resetLaneWorktree(asVcsLaneHandle(handle), targetRevision);
     },
     async changedFiles(handle, baseSha) {
       const vcsHandle = asVcsLaneHandle(handle);

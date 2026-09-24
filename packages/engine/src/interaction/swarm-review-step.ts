@@ -150,6 +150,59 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/**
+ * `PLAN-M14.md` P36: restores `reviewedLane` to `reviewedRevision` after the perspectives ran, on every
+ * path the caller can be on -- not only the "every perspective ended ok" success path the pre-existing
+ * guard checked (below, still typed `RUN-083`). Before this, `hasChanges` ran only once `dispatchAgentStep`
+ * had already returned: a perspective session that threw straight out of it (an adapter crash, mid-write)
+ * skipped the guard entirely and left whatever it had written behind, and a dirty lane the guard DID catch
+ * on the success path was reported but never cleaned, so a retry of the identical step read the identical
+ * dirty lane and failed the identical way forever.
+ *
+ * `resetLane` (`git reset --hard` + `git clean -fd`, ignored files untouched, `types.ts`'s own doc comment)
+ * is called unconditionally here, not only after first confirming dirt: it is a no-op on an already-clean
+ * lane, and that is what makes calling it from one place, on every path, simpler and safer than trying to
+ * skip it exactly when it is not needed. `changedFiles` is read FIRST, before the reset, purely so a
+ * caller can name what was restored (a failure message, an audit trail) -- reading it after the reset
+ * would report nothing was ever there.
+ *
+ * Returns the paths that were dirty before the reset (`[]` when the lane was already clean); `undefined`
+ * only when they could not even be listed (the worktree itself is gone, or some other real I/O failure) --
+ * the same fail-closed "cannot tell, so do not claim clean" stance the pre-existing guard's own
+ * `.catch(() => true)` already took. The reset itself is best-effort (its own failure never masks
+ * whatever the caller was already about to report, e.g. a thrown adapter error this same call is racing
+ * to restore behind): a lane this cannot actually clean is Q226 (f)'s own remaining, disclosed gap, not a
+ * new failure mode this function invents.
+ */
+async function restoreReviewedLane(
+  ctx: ExecuteStepContext,
+  reviewedLane: LaneHandle,
+  reviewedRevision: string,
+): Promise<readonly string[] | undefined> {
+  const dirtyPaths = await ctx.vcs
+    .changedFiles(reviewedLane, reviewedRevision)
+    .then((changed) => [...changed.committed, ...changed.uncommitted])
+    .catch(() => undefined);
+  await ctx.vcs.resetLane(reviewedLane, reviewedRevision).catch(() => undefined);
+  return dirtyPaths;
+}
+
+/** The adapter-failure message (the `dispatchAgentStep` call itself threw) with a note naming whatever
+ * `restoreReviewedLane` found and put back, so a reader is told the same thing the success-path `RUN-083`
+ * failure already says explicitly, instead of the restore happening silently underneath a message that
+ * only describes the original throw. Unchanged when there was nothing to restore (no reviewed lane, or a
+ * lane that was already clean): the ordinary adapter failure message, exactly as before this piece. */
+function restoreFailureNote(
+  message: string,
+  reviewedLane: LaneHandle | undefined,
+  restoredPaths: readonly string[] | undefined,
+): string {
+  if (reviewedLane === undefined || restoredPaths === undefined || restoredPaths.length === 0) {
+    return message;
+  }
+  return `${message} -- a review perspective also left the lane under review (${reviewedLane.path}) dirty before this failure; restored: ${restoredPaths.join(', ')}`;
+}
+
 /** A `swarm-review` step declares its perspectives; an empty list would be an empty review, not a clean one. */
 function noPerspectives(node: StepNode): StepFailureInfo {
   const error = new ForgeError('RUN-046', { stepId: node.id, mode: 'swarm-review' });
@@ -370,6 +423,11 @@ export async function runSwarmReviewStep(
 
   let interaction: InteractionOutcome;
   let agentId: string;
+  // `PLAN-M14.md` P36: whatever `restoreReviewedLane` found and put back, from the `finally` below --
+  // read after the try/catch to decide the success-path `RUN-083` failure, and inside the `catch` to
+  // annotate an adapter failure with what was restored. Initialised (not merely declared) so every read
+  // of it, on every path, is of a real value rather than one only some paths assign.
+  let restoredPaths: readonly string[] | undefined = undefined;
   try {
     const agent = await ctx.assembly.loadAgent(String(node.agent));
     agentId = agent.id;
@@ -387,13 +445,24 @@ export async function runSwarmReviewStep(
       ...node,
       limits: { ...node.limits, maxCostUsd: node.limits.maxCostUsd / perspectives.length },
     };
-    interaction = await dispatchAgentStep(shared, agent, ctx, 'swarm-review', {
-      perspectives,
-      failFast: true,
-      // Recorded as each session ends: a later perspective that throws must not lose what was already spent.
-      onParticipant: (participant) => recordUsage(node, ctx, model, participant),
-      ...(reviewedLane === undefined ? {} : { cwd: reviewedLane.path }),
-    });
+    try {
+      interaction = await dispatchAgentStep(shared, agent, ctx, 'swarm-review', {
+        perspectives,
+        failFast: true,
+        // Recorded as each session ends: a later perspective that throws must not lose what was already spent.
+        onParticipant: (participant) => recordUsage(node, ctx, model, participant),
+        ...(reviewedLane === undefined ? {} : { cwd: reviewedLane.path }),
+      });
+    } finally {
+      // `PLAN-M14.md` P36: restored on every path THIS call can end on -- a clean return (including one
+      // where a participant session itself ended `ok: false`, checked below) or a throw straight out of it
+      // (caught below) alike -- not merely the success path the pre-existing guard used to check alone.
+      // `reviewedLane === undefined` (no unmerged predecessor the review is stacked on) leaves this
+      // `undefined`: there is no predecessor lane of its own to restore.
+      if (reviewedLane !== undefined) {
+        restoredPaths = await restoreReviewedLane(ctx, reviewedLane, reviewedRevision);
+      }
+    }
   } catch (cause) {
     // The event log failing (a usage record the hook could not append) is `executeStep`'s to report (`RUN-038`).
     if (cause instanceof TelemetryError) throw cause;
@@ -410,29 +479,27 @@ export async function runSwarmReviewStep(
     return failed(node, startedAt, ctx.now(), emptyDetail, {
       source: 'adapter',
       code: isForgeError(cause) ? cause.code : undefined,
-      message,
+      message: restoreFailureNote(message, reviewedLane, restoredPaths),
     });
   }
 
   // The perspectives are read-only, but they ran inside a lane a merge will land: a change left in it would be
-  // carried into the integration branch under the implementer's step, unreviewed. Checked before anything is
-  // recorded, and failed closed.
-  if (reviewedLane !== undefined) {
-    // `reviewedRevision` is exactly `stackedHead.sha` here (computed above, in the identical branch this
-    // `reviewedLane !== undefined` check mirrors): reused rather than re-derived.
-    const dirtied = await ctx.vcs.hasChanges(reviewedLane, reviewedRevision).catch(() => true);
-    if (dirtied) {
-      return failed(
+  // carried into the integration branch under the implementer's step, unreviewed. `restoreReviewedLane`
+  // (above, in the `finally`) already put the lane back to `reviewedRevision` by this point -- what is
+  // checked here is only whether there was ever anything to restore, so the step still fails (typed
+  // `RUN-083`, not silently accepted) while the lane itself is already clean for the retry this failure's
+  // own message points at, rather than staying dirty and failing the identical way again.
+  if (reviewedLane !== undefined && restoredPaths !== undefined && restoredPaths.length > 0) {
+    return failed(
+      node,
+      startedAt,
+      ctx.now(),
+      emptyDetail,
+      outputFailure(
         node,
-        startedAt,
-        ctx.now(),
-        emptyDetail,
-        outputFailure(
-          node,
-          `a review perspective changed the lane under review (${reviewedLane.path}); the perspectives are read-only, so nothing was recorded and the lane needs inspecting before it is merged`,
-        ),
-      );
-    }
+        `a review perspective changed the lane under review (${reviewedLane.path}); the perspectives are read-only, so the lane was reset to ${reviewedRevision} and nothing was recorded (restored: ${restoredPaths.join(', ')}) -- the same step can be re-run on the now-clean lane`,
+      ),
+    );
   }
   const participants = interaction.participants ?? [];
   // `dispatchAgentStep` builds this outcome from the first perspective's session.

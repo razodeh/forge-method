@@ -150,6 +150,17 @@ export interface VcsFacade {
    * already does — not attempting a real `git commit` against an empty diff and treating the resulting
    * "nothing to commit" failure as though the step itself had gone wrong. */
   hasChanges(handle: LaneHandle, baseSha: string): Promise<boolean>;
+  /** `PLAN-M14.md` P36: resets `handle`'s own worktree back to `targetRevision` — `git reset --hard` plus
+   * `git clean -fd` (ignored files left untouched), `@forge/vcs`'s own real `resetLaneWorktree`
+   * (`vcs/src/lanes.ts`), the identical mechanism `@forge/engine/resume`'s own `rollbackLaneToBase`
+   * already uses for the analogous "a step crashed mid-write, put the lane back" case (`resume/rollback.ts`).
+   * `swarm-review-step.ts` is this method's first real caller: a lane a review is stacked on (`PLAN-M13.md`
+   * P38) must come back to exactly the revision the review read, on every path a perspective session can
+   * leave it dirty on (a misbehaving adapter that returns, and one that throws), not merely the one the
+   * pre-existing read-only guard used to check after the fact. `git reset --hard` moves the branch tip
+   * itself, not only the worktree contents, so a `handle` whose HEAD had drifted past `targetRevision` (never
+   * expected for that one caller, whose perspectives are read-only and never commit) is put back too. */
+  resetLane(handle: LaneHandle, targetRevision: string): Promise<void>;
   /** The files a lane produced against `baseSha`, split by whether they reached the lane branch: `committed`
    * is what `baseSha..HEAD` changed (added, modified or deleted -- exactly what a later merge would carry
    * into the integration branch), `uncommitted` what exists only in the worktree or index (never merged).

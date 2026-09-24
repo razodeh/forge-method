@@ -144,4 +144,20 @@ describe('resolveMergeChecks', () => {
     const result = resolveMergeChecks('unit', { unit: '  ' }, source);
     expect(result.ok).toBe(false);
   });
+
+  it('SPEC-QUESTIONS.md Q226 (f)/(g), left open, pinned unchanged by PLAN-M14.md P36: a skipped layer in a set that has at least one configured layer never fails the merge by itself -- only a set with NO configured layer at all does', () => {
+    // Q226 (g): "A skipped layer in a set is disclosed on the event and the outcome but does not fail the
+    // merge; making a skipped layer of `full` an error unless the config opts in is a policy choice" --
+    // still open, an owner call this piece does not make. P36's own scope is Q226 (f)'s first half (the
+    // swarm-review guard restoring the lane it reviews on every path, `swarm-review-step.test.ts`); this
+    // pins today's actual, unchanged behaviour of the neighbouring, still-open (g) so a future change to
+    // it is a deliberate one, not a silent side effect of something nearby.
+    const result = resolveMergeChecks('full', { typecheck: 'tsc' }, source);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.commands).toEqual([
+      { command: 'tsc', label: 'execution.testCommands.typecheck' },
+    ]);
+    expect(result.skipped).toEqual(['lint', 'unit', 'integration', 'contract']);
+  });
 });
