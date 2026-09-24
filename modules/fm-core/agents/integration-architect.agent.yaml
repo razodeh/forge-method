@@ -79,9 +79,11 @@ limits:
   max_cost_usd: 6.0
 
 parallel_safety:
-  # No exclusive file ownership claimed -- `docs/forge/specs/interfaces/**` is architect's own exclusive
-  # claim (05 §5.3's own worked example, unavoidable); this role's own interface-contract work lands in
-  # the same namespace as a contribution architect owns, the same reasoning kb_propose above documents.
+  # No exclusive file ownership claimed -- see the longer reasoning above `kb_write` (`PLAN-M14.md` P42):
+  # marking this role exclusive over `docs/forge/specs/interfaces/**`, its own `InterfaceContract` output
+  # path, would just move the identical `output-ownership-overlap` violation onto architect's own
+  # declared `InterfaceContract` output at that same path. Neither role needs `file_ownership` over it to
+  # write there -- the real claim is `produces` plus declared `outputs`' own registry paths (`06` §6.7).
   file_ownership: []
   exclusive: false
 

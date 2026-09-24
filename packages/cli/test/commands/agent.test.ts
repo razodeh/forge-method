@@ -317,13 +317,16 @@ describe('agentValidateAll — real, complete A2/A3 roster', () => {
   // (`PLAN-M13.md` P1 added the check, P3a/P3b authored the content), no `output-ownership-overlap` error
   // remains (`PLAN-M14.md` P42 reconciled architect/orchestrator/em's own `file_ownership`), and no
   // `kb-write-overlap`/`ceiling-exceeded`/`unknown-*` finding fires either: genuinely clean of every ERROR.
-  // Not genuinely clean of every finding: exactly Q224's own seven `unregistered-output-type` WARNINGS
-  // remain, one per real output type the registry, `Code`, nor (this validator has no project- or
-  // repo-level notion of "which modules are installed", `SPEC-QUESTIONS.md`'s own Discloses for P42) a
-  // module's own `provides.artifactTypes` names -- each a deliberate, already-justified content choice
-  // (Q224: "no step declares one" on four roles no shipped workflow runs; `fm-web`'s own real
-  // `ComponentSpec`), not a bug this piece's own new check should silently paper over.
-  it('reports exactly Q224\'s seven unregistered-output-type warnings against the real, complete, currently-shipped roster, and no error', async () => {
+  // Not genuinely clean of every finding: seven `unregistered-output-type` WARNINGS remain, one per real
+  // output type the registry, `Code`, nor (this validator has no project- or repo-level notion of "which
+  // modules are installed", `SPEC-QUESTIONS.md`'s own Discloses for P42) a module's own
+  // `provides.artifactTypes` names -- each a deliberate, already-justified content choice (Q224: "no
+  // step declares one" on four roles no shipped workflow runs, its own six such types; `fm-web`'s own
+  // real `ComponentSpec`, the one Q224 itself tracked separately rather than as part of "the seven"; the
+  // count of seven matches Q224's own by coincidence, not by an identical set -- `ContextMap` counts
+  // once here, not twice, since only one module's copy of `domain-modeler` survives materialization), not
+  // a bug this piece's own new check should silently paper over.
+  it('reports exactly seven unregistered-output-type warnings against the real, complete, currently-shipped roster, and no error', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-agent-real-'));
     try {
       const result = await runInit(

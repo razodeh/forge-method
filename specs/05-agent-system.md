@@ -378,9 +378,11 @@ validates against reality. Unknown/unavailable model → doctor error with the a
   declared `shared`; `file_ownership` globs don't overlap with another agent marked `exclusive`; no
   agent's declared output lies inside another agent's `exclusive` `file_ownership`
   (`output-ownership-overlap`, an error); every declared output names a registered artifact type
-  (`18` §18.7), `Code`, or a type a module registers itself, else a warning
-  (`unregistered-output-type`); declared frameworks exist; prompts referenced exist; tool grants don't
-  exceed the module's ceiling.
+  (`18` §18.7) or `Code`, else a warning (`unregistered-output-type`) -- a type a module registers
+  itself via its own `provides.artifactTypes` is intended to be exempt too, but the check has no
+  project- or repo-level notion yet of which modules are installed to test that against, so it is
+  reported the same as a genuinely unregistered type until a later piece closes that gap; declared
+  frameworks exist; prompts referenced exist; tool grants don't exceed the module's ceiling.
 - `forge agent compile` emits platform-native assets (e.g. Claude Code subagent files) so the roles
   are also usable directly inside the host platform's own UI — a deliberate escape hatch for humans
   who want to talk to a single role without a run.

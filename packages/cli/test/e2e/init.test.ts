@@ -28,9 +28,12 @@
  * empty content file now fails this test with the offending id.
  *
  * **`PLAN-M14.md` P42.** `forge agent validate --all` is no longer literally `[]`: its own new
- * `unregistered-output-type` check fires exactly Q224's own seven times, a deliberate, already-justified
- * content gap (`SPEC-QUESTIONS.md`), not a regression -- asserted explicitly, by real agent id and
- * message, below, alongside "no error of any kind" (which IS still asserted unconditionally).
+ * `unregistered-output-type` check fires exactly seven times, a deliberate, already-justified content
+ * gap (`SPEC-QUESTIONS.md` Q224: six of the seven are its own already-tracked declarations on roles no
+ * shipped step runs; the seventh is `fm-web`'s own real `ComponentSpec`, which Q224 tracked separately
+ * rather than as part of its own "seven" -- the count matches by coincidence, not an identical set) --
+ * asserted explicitly, by real agent id and message, below, alongside "no error of any kind" (which IS
+ * still asserted unconditionally).
  *
  * @see specs/22 M6
  * @see PLAN-M6.md C9
@@ -111,10 +114,10 @@ describe('E1 init', () => {
 
     // This milestone's own exit-test line, part 1: `forge agent validate --all`. Not genuinely clean of
     // every finding right now -- `PLAN-M14.md` P42's own `unregistered-output-type` warning fires exactly
-    // Q224's own seven times (six real output types no shipped step runs, plus `fm-web`'s own
-    // `ComponentSpec`, `SPEC-QUESTIONS.md`), a deliberate content choice, not a bug -- but genuinely clean
-    // of every ERROR: no `output-ownership-overlap`, `kb-write-overlap`, `ceiling-exceeded` or
-    // `unknown-*`/`schema` finding.
+    // seven times (six of Q224's own already-tracked declarations on roles no shipped step runs, plus
+    // `fm-web`'s own real `ComponentSpec`, which Q224 tracked separately, `SPEC-QUESTIONS.md`), a
+    // deliberate content choice, not a bug -- but genuinely clean of every ERROR: no
+    // `output-ownership-overlap`, `kb-write-overlap`, `ceiling-exceeded` or `unknown-*`/`schema` finding.
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
     expect(agentFindings.every((finding) => finding.severity === 'warning')).toBe(true);
     expect(agentFindings.every((finding) => finding.code === 'unregistered-output-type')).toBe(true);

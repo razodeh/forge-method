@@ -107,7 +107,7 @@ const ENGINE_WRITTEN_TYPES: ReadonlySet<string> = new Set(['ReviewReport']);
  * steps declare, e.g. a `HandoffRecord` in `reports/handoffs.md` for an agent that owns only its own KB
  * section), plus `plan-stages:review-stages` and `store-release:prepare-store-submission`, which P15 gave
  * `outputs` and which are therefore checked for the first time. `PLAN-M14.md` P42 (`SPEC-QUESTIONS.md`)
- * adds four more (32 -> 36): architect's own `parallel_safety.file_ownership` dropped
+ * adds four more (33 -> 37): architect's own `parallel_safety.file_ownership` dropped
  * `docs/forge/kb/decisions/**`/`docs/forge/specs/interfaces/**` (both real `output-ownership-overlap`
  * violations against other roles' declared `ADR`/`InterfaceContract` outputs, `05` §5.9's new rule), so
  * the four architect-run steps that declare `ADR`/`InterfaceContract` (`shape-solution:select-architecture`,

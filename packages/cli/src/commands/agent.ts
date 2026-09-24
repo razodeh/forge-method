@@ -205,12 +205,17 @@ const DEFAULT_DOC_ROOTS: DocRoots = DEFAULT_CONFIG.paths;
  * whose `type` names neither a `18` §18.7 registry type (`artifactTypeById`) nor the special-cased
  * `Code` (`src/**`, an implementation role's own real output, never itself a registered artifact) is a
  * warning, not an error -- a role no shipped step runs may still name a real, human-meaningful
- * deliverable type the registry has no entry for (`SPEC-QUESTIONS.md` Q224's own seven such
- * declarations on the shipped roster, kept deliberately there, not removed here). A type a module
- * registers itself via its own `provides.artifactTypes` (`fm-web/module.yaml`'s own `ComponentSpec`) is,
- * by this same measure, ALSO reported: this function has no project- or repo-level notion of "which
- * modules are installed" to check that third case against (`AgentCommandContext` carries only
- * `paths`/`agentsRoot`) -- see `SPEC-QUESTIONS.md`'s own Discloses for this piece. */
+ * deliverable type the registry has no entry for (`SPEC-QUESTIONS.md` Q224's own six such declarations
+ * on roles no shipped step runs, kept deliberately there, not removed here). A type a module registers
+ * itself via its own `provides.artifactTypes` (`fm-web/module.yaml`'s own `ComponentSpec`) is, by this
+ * same measure, ALSO reported: this function has no project- or repo-level notion of "which modules are
+ * installed" to check that third case against (`AgentCommandContext` carries only `paths`/`agentsRoot`)
+ * -- see `SPEC-QUESTIONS.md`'s own Discloses for this piece. Against the real, materialized (deduped)
+ * roster this yields seven warnings, the same COUNT Q224 itself already reached (Q224's own six types,
+ * `ContextMap` counted once here rather than twice since only one module's copy of `domain-modeler`
+ * survives materialization, plus this one real `ComponentSpec` false-positive Q224 tracked separately,
+ * not as part of "the seven") -- a coincidence of count, not the identical set; see the shipped-roster
+ * test for the real, current, itemized seven. */
 function unregisteredOutputTypeFindings(
   agents: readonly AgentDefinition[],
 ): readonly AgentValidationFinding[] {
